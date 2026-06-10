@@ -36,7 +36,11 @@ const class Object {
 public:
     /**
      * Return a hash code for this object.
-     * Default implementation returns 0 — subclasses should override.
+     *
+     * Default implementation returns `0`. Subclasses should override this
+     * method when they need value-based hashing.
+     *
+     * @return A hash code for this object.
      */
     const hash() : int {
         return 0;
@@ -44,7 +48,10 @@ public:
 
     /**
      * Return the ::k::Class object describing the concrete class of this object.
-     * Delegates to the C runtime helper __k_object_get_class.
+     *
+     * Delegates to the C runtime helper `__k_object_get_class`.
+     *
+     * @return The runtime class descriptor of this object.
      */
     final const getClass() : const Class& {
         return __k_object_get_class(this);

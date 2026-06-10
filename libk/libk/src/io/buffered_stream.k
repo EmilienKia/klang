@@ -20,14 +20,12 @@ module k;
 
 namespace io {
 
-// ═════════════════════════════════════════════════════════════════════════════
-// BufferedInputStream — Adds an internal buffer to an underlying InputStream
-// to reduce the number of actual read calls.
-//
-// Default buffer size is 8192 bytes.
-//
-// Inspired by java.io.BufferedInputStream (without mark/reset).
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Buffer reads from an underlying input stream.
+ *
+ * `BufferedInputStream` reduces backend read calls by maintaining an internal
+ * byte buffer.
+ */
 public class BufferedInputStream : public FilterInputStream {
     _bbuf   : byte[]!;
     _bpos   : int;
@@ -35,12 +33,21 @@ public class BufferedInputStream : public FilterInputStream {
     _bsize  : int;
 
 public:
-    /** Construct with default buffer size (8192). */
+    /**
+     * Construct with default buffer size (8192 bytes).
+     *
+     * @param input Wrapped input stream.
+     */
     BufferedInputStream(input: InputStream*) : FilterInputStream(input), _bbuf(null), _bpos(0), _bcount(0), _bsize(8192) {
         _bbuf = new byte[8192];
     }
 
-    /** Construct with explicit buffer size. */
+    /**
+     * Construct with a caller-defined buffer size.
+     *
+     * @param input Wrapped input stream.
+     * @param size Internal buffer size in bytes.
+     */
     BufferedInputStream(input: InputStream*, size: int) : FilterInputStream(input), _bbuf(null), _bpos(0), _bcount(0), _bsize(size) {
         _bbuf = new byte[size];
     }
@@ -139,26 +146,33 @@ private:
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// BufferedOutputStream — Adds an internal buffer to an underlying OutputStream
-// to reduce the number of actual write calls.
-//
-// Default buffer size is 8192 bytes.
-//
-// Inspired by java.io.BufferedOutputStream.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Buffer writes to an underlying output stream.
+ *
+ * `BufferedOutputStream` accumulates bytes in memory and flushes them in
+ * larger chunks to reduce backend write calls.
+ */
 public class BufferedOutputStream : public FilterOutputStream {
     _bbuf   : byte[]!;
     _bcount : int;
     _bsize  : int;
 
 public:
-    /** Construct with default buffer size (8192). */
+    /**
+     * Construct with default buffer size (8192 bytes).
+     *
+     * @param output Wrapped output stream.
+     */
     BufferedOutputStream(output: OutputStream*) : FilterOutputStream(output), _bbuf(null), _bcount(0), _bsize(8192) {
         _bbuf = new byte[8192];
     }
 
-    /** Construct with explicit buffer size. */
+    /**
+     * Construct with a caller-defined buffer size.
+     *
+     * @param output Wrapped output stream.
+     * @param size Internal buffer size in bytes.
+     */
     BufferedOutputStream(output: OutputStream*, size: int) : FilterOutputStream(output), _bbuf(null), _bcount(0), _bsize(size) {
         _bbuf = new byte[size];
     }

@@ -19,87 +19,64 @@ module k;
 
 namespace annotations {
 
-/*
- * Meta-annotation that specifies the retention policy of the annotated
- * annotation type.
+/**
+ * Specify how long an annotation instance is retained.
  *
- * When applied to an annotation type, @Retention controls whether instances
- * of that annotation are kept only in the compiler's internal model (SOURCE)
- * or are also synthesized into the binary output as RTTI metadata (RUNTIME).
+ * Apply `@Retention` to an annotation type to control whether instances of
+ * that annotation remain available only during compilation (`SOURCE`) or are
+ * also emitted into runtime metadata (`RUNTIME`).
  *
- * If @Retention is not present on an annotation type, the default policy
- * is RUNTIME.
- *
- * Equivalent in purpose to java.lang.annotation.Retention.
+ * If `@Retention` is omitted on an annotation type, the default policy is
+ * `RUNTIME`.
  */
 @Retention(Policy::RUNTIME)
 @Target({ElementType::ANNOTATION})
 annotation Retention {
-    /*
-     * Describes where the annotation data is retained.
+    /**
+     * Enumerate the supported retention policies.
      *
-     * SOURCE  -- The annotation is kept in the compiler model / AST only.
-     *            It is NOT emitted into the generated binary (no RTTI constant).
-     *            Useful for compile-time-only checks (e.g. @Target itself).
-     *
-     * RUNTIME -- The annotation is retained in the binary as an RTTI constant
-     *            global, accessible via reflection at runtime.  This is the
-     *            default policy when @Retention is absent.
+     * `SOURCE` keeps the annotation only in the compiler model.
+     * `RUNTIME` keeps the annotation in emitted runtime metadata.
      */
     enum Policy {
         SOURCE;
         RUNTIME;
     };
 
-    /* The retention policy for the annotated annotation type. */
+    /**
+     * Define the retention policy for the annotated annotation type.
+     */
     policy : Policy = Policy::RUNTIME;
 }
 
-/*
- * Meta-annotation indicating that the annotated annotation type is
- * automatically inherited by subclasses.
+/**
+ * Mark an annotation type as inheritable by subclasses.
  *
- * When a class is annotated with an @Inherited annotation, every subclass
- * of that class implicitly carries the same annotation instance -- unless
- * the subclass provides its own explicit instance of the same annotation
- * type, which then overrides the inherited one.
+ * When `@Inherited` is applied to an annotation type, subclasses implicitly
+ * inherit that annotation from their base class unless they provide their own
+ * explicit instance of the same annotation type.
  *
- * @Inherited has no effect on interfaces; only class inheritance propagates
- * annotations.
- *
- * Equivalent in purpose to java.lang.annotation.Inherited.
+ * This rule applies to class inheritance only, not to interfaces.
  */
 @Retention(Policy::RUNTIME)
 @Target({ElementType::ANNOTATION})
 annotation Inherited {
 }
 
-/*
- * Meta-annotation that restricts the kinds of program elements to which the
- * annotated annotation type may be applied.
+/**
+ * Restrict the element kinds on which an annotation may appear.
  *
- * When @Target is present on an annotation type, the compiler enforces that
- * the annotation may only appear on the listed element types.  Applying it
- * to an unlisted element type results in a compile-time error.
+ * When `@Target` is present on an annotation type, the compiler enforces that
+ * the annotation may only be applied to the listed element kinds.
  *
- * If @Target is absent, the annotation may be applied to any element type.
- * If @Target is present but the value array is empty, the annotation cannot
- * be applied anywhere -- this is a compile-time error.
- *
- * Equivalent in purpose to java.lang.annotation.Target.
+ * If `@Target` is absent, the annotation may be applied to any supported
+ * element kind.
  */
 @Retention(Policy::RUNTIME)
 @Target({ElementType::ANNOTATION})
 annotation Target {
-    /*
-     * Enumerates the kinds of program elements that can carry annotations.
-     *
-     * CLASS      -- a class declaration (keyword 'class').
-     * INTERFACE  -- an interface declaration (keyword 'interface').
-     * ANNOTATION -- an annotation type declaration (keyword 'annotation').
-     * FUNCTION   -- a function declaration (member or free function).
-     * CONSTRUCTOR -- a constructor declaration.
-     * PARAMETER  -- a function or constructor parameter.
+    /**
+     * Enumerate the program element kinds that may carry annotations.
      */
     enum ElementType {
         CLASS;
@@ -110,22 +87,26 @@ annotation Target {
         PARAMETER;
     };
 
-    /* The set of element types on which the annotated annotation is allowed. */
+    /**
+     * List the element kinds on which the annotated annotation type is allowed.
+     */
     value : ElementType[];
 }
 
-/*
- * Marks a function or constructor as compiler-intrinsic.
+/**
+ * Mark a function or constructor as compiler intrinsic.
  *
- * When @Intrinsic is applied, the compiler does NOT generate the normal
- * body for the annotated function/constructor. Instead, it dispatches to a
- * built-in code generation path identified by 'name'.
+ * When `@Intrinsic` is applied, the compiler skips normal body generation and
+ * dispatches to a built-in code-generation path identified by `name`.
  *
- * This annotation is source-only: never exported in KDI or RTTI.
+ * This annotation is source-only and is not exported in KDI or RTTI.
  */
 @Retention(Policy::SOURCE)
 @Target({ElementType::FUNCTION, ElementType::CONSTRUCTOR})
 annotation Intrinsic {
+    /**
+     * Identify the compiler intrinsic implementation to use.
+     */
     name : const char[];
 }
 

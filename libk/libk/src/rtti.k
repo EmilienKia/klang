@@ -34,6 +34,8 @@ const interface TypeInfo {
     /**
      * Return the name of the type.
      * This name is the same as the name of the type in the source code without any context qualification.
+     *
+     * @return The unqualified source-level type name.
      */
     const getName() : const char[]?;
 }
@@ -46,34 +48,46 @@ const interface AggregateType : public TypeInfo {
     /**
      * Return the fully qualified name of the type (including module and namespaces).
      * For example, "::mymodule::MyClass" or "::k::String".
+     *
+     * @return The fully qualified type name.
      */
     const getFullName() : const char[]?;
 
     /**
      * Return the base interfaces and classes of the type, if any.
      * Each element is a TypeInfo descriptor.
+     *
+     * @return The direct base types, or `null` if none are recorded.
      */
     const getBases() : const TypeInfo?[]?;
 
     /**
      * Return the nested types (classes and interfaces) declared inside this type, if any.
      * Each element is a TypeInfo descriptor.
+     *
+     * @return The nested types, or `null` if none are recorded.
      */
     const getNested() : const TypeInfo?[]?;
 
     /**
      * Return the enclosing type that this type is nested in, if any.
      * Returns null if this type is a top-level (non-nested) type.
+     *
+     * @return The enclosing aggregate type, or `null` for a top-level type.
      */
     const getEnclosing() : const TypeInfo?;
 
     /**
      * Return the declared visibility of this type.
+     *
+     * @return The declared type visibility.
      */
     const getVisibility() : Visibility;
 
     /**
      * Return true if this type is declared as a static nested type.
+     *
+     * @return `true` when the type is declared static.
      */
     const isStatic() : bool;
 }
@@ -89,6 +103,8 @@ final const class Parameter {
 
     /**
      * Return the name of the parameter.
+     *
+     * @return The parameter name.
      */
     const getName() : const char[]? {
         return name;
@@ -97,6 +113,8 @@ final const class Parameter {
     /**
      * Return the annotations applied to this parameter.
      * Returns null if the parameter has no annotations.
+     *
+     * @return The parameter annotations, or `null` if none are present.
      */
     const getAnnotations() : const Annotation?[]? {
         return annotations;
@@ -126,6 +144,8 @@ final const class Function {
 
     /**
      * Return the short (unqualified) name of the function.
+     *
+     * @return The unqualified function name.
      */
     const getName() : const char[]? {
         return name;
@@ -134,6 +154,8 @@ final const class Function {
     /**
      * Return the fully qualified name of the function
      * (including module, namespaces, and enclosing class if any).
+     *
+     * @return The fully qualified function name.
      */
     const getFullName() : const char[]? {
         return fullName;
@@ -142,6 +164,8 @@ final const class Function {
     /**
      * Return the enclosing aggregate type (class or interface) that owns this function.
      * Returns null if this is a non-member (free) function.
+     *
+     * @return The owning aggregate type, or `null` for a free function.
      */
     const getOwner() : const AggregateType? {
         return owner;
@@ -149,6 +173,8 @@ final const class Function {
 
     /**
      * Return the declared visibility of this function.
+     *
+     * @return The declared function visibility.
      */
     const getVisibility() : Visibility {
         return (Visibility) (flags & 3u);
@@ -156,6 +182,8 @@ final const class Function {
 
     /**
      * Return true if this function is declared as static.
+     *
+     * @return `true` when the function is static.
      */
     const isStatic() : bool {
         return (flags & 4u) != 0u;
@@ -164,6 +192,8 @@ final const class Function {
     /**
      * Return true if this function is a member of an aggregate type (class or interface).
      * Returns false for non-member (free) functions.
+     *
+     * @return `true` for member functions, `false` for free functions.
      */
     const isMember() : bool {
         return (flags & 8u) != 0u;
@@ -172,6 +202,8 @@ final const class Function {
     /**
      * Return the annotations applied to this function.
      * Returns null if the function has no annotations.
+     *
+     * @return The function annotations, or `null` if none are present.
      */
     const getAnnotations() : const Annotation?[]? {
         return annotations;
@@ -180,6 +212,8 @@ final const class Function {
     /**
      * Return the parameters of this function.
      * Returns null if the function has no parameters.
+     *
+     * @return The function parameters, or `null` if none are present.
      */
     const getParameters() : const Parameter?[]? {
         return parameters;
@@ -198,6 +232,8 @@ final const class Constructor {
 
     /**
      * Return the number of parameters of this constructor (excluding 'this').
+     *
+     * @return The constructor parameter count.
      */
     const getParamCount() : int {
         return paramCount;
@@ -206,6 +242,8 @@ final const class Constructor {
     /**
      * Return the annotations applied to this constructor.
      * Returns null if the constructor has no annotations.
+     *
+     * @return The constructor annotations, or `null` if none are present.
      */
     const getAnnotations() : const Annotation?[]? {
         return annotations;
@@ -214,6 +252,8 @@ final const class Constructor {
     /**
      * Return the parameters of this constructor.
      * Returns null if the constructor has no parameters.
+     *
+     * @return The constructor parameters, or `null` if none are present.
      */
     const getParameters() : const Parameter?[]? {
         return parameters;

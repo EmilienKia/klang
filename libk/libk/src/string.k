@@ -18,23 +18,25 @@
 
 module k;
 
-// ═════════════════════════════════════════════════════════════════════════════
-// Encoding — the three Unicode storage/transfer encodings supported by the
-// string classes and the character-array conversion helpers.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Enumerate the Unicode encodings supported by the string library.
+ *
+ * These values are used by `String`, `StringBuilder`, and the character-array
+ * conversion helpers to describe UTF-8, UTF-16, and UTF-32 storage.
+ */
 public enum Encoding {
     UTF8;
     UTF16;
     UTF32;
 };
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ConsolidationPolicy — chooses the storage encoding used when a StringBuilder
-// is converted to an immutable String (toString / operator() String).
-//   MostCompact  : pick the encoding with the smallest byte footprint (default).
-//   FirstFragment: use the encoding of the builder's first fragment.
-//   ForceUtf8 / ForceUtf16 / ForceUtf32 : always use the named encoding.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Choose how a `StringBuilder` selects the encoding of a generated `String`.
+ *
+ * `MostCompact` selects the smallest encoded representation.
+ * `FirstFragment` reuses the native encoding of the first fragment.
+ * `ForceUtf8`, `ForceUtf16`, and `ForceUtf32` force a specific result encoding.
+ */
 public enum ConsolidationPolicy {
     MostCompact;
     FirstFragment;
@@ -43,22 +45,27 @@ public enum ConsolidationPolicy {
     ForceUtf32;
 };
 
-// ═════════════════════════════════════════════════════════════════════════════
-// CharHelpers — Static utility methods for char[] buffer operations.
-//
-// All methods are public and static, intended to be called as:
-//   CharHelpers::copy(dst, 0, src, 0, count)
-//   CharHelpers::equals(a, b, len)
-//
-// Parameters use const char[] for read-only access so that owners (char[]!),
-// pointers (char[]*), links (char[]+), views (char[]?), and references
-// (char[]) can all be passed without ownership transfer.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Provide low-level utilities for character buffers and Unicode transcoding.
+ *
+ * `CharHelpers` centralises common operations on `char[]`, UTF-8 byte arrays,
+ * and UTF-16 code-unit arrays. Most methods operate on buffer slices described
+ * by an offset and a logical length.
+ */
 public final class CharHelpers {
 public:
 
-    /** Copy `count` chars from src[srcOff..] to dst[dstOff..].
-     *  Buffers must not overlap. */
+    /**
+     * Copy characters from one UTF-32 buffer into another.
+     *
+     * Buffers must not overlap.
+     *
+     * @param dst Destination buffer.
+     * @param dstOff Destination start offset.
+     * @param src Source buffer.
+     * @param srcOff Source start offset.
+     * @param count Number of code points to copy.
+     */
     public static copy(dst: char[], dstOff: unsigned int, src: const char[], srcOff: unsigned int, count: unsigned int) {
         i : int = 0;
         while (i < count) {
@@ -67,8 +74,18 @@ public:
         }
     }
 
-    /** Copy `count` chars in reverse order to safely handle overlapping
-     *  regions when dstOff > srcOff within the same buffer. */
+    /**
+     * Copy overlapping UTF-32 ranges backward.
+     *
+     * Use this helper when `dst` and `src` refer to overlapping regions and the
+     * destination begins after the source range.
+     *
+     * @param dst Destination buffer.
+     * @param dstOff Destination start offset.
+     * @param src Source buffer.
+     * @param srcOff Source start offset.
+     * @param count Number of code points to copy.
+     */
     public static copyBackward(dst: char[], dstOff: unsigned int, src: const char[], srcOff: unsigned int, count: unsigned int) {
         i : int = count;
         while (i > 0) {
@@ -77,8 +94,14 @@ public:
         }
     }
 
-    /** Compare `len` chars starting from position 0 in both arrays.
-     *  Returns true if all characters match. */
+    /**
+     * Compare two UTF-32 buffers from offset `0`.
+     *
+     * @param a First buffer.
+     * @param b Second buffer.
+     * @param len Number of code points to compare.
+     * @return `true` if all compared code points are equal.
+     */
     public static equals(a: const char[], b: const char[], len: unsigned int) : bool {
         i : int = 0;
         while (i < len) {
@@ -88,8 +111,16 @@ public:
         return true;
     }
 
-    /** Compare `len` chars at given offsets in both arrays.
-     *  Returns true if all characters match. */
+    /**
+     * Compare two UTF-32 subranges.
+     *
+     * @param a First buffer.
+     * @param aOff Start offset in `a`.
+     * @param b Second buffer.
+     * @param bOff Start offset in `b`.
+     * @param len Number of code points to compare.
+     * @return `true` if all compared code points are equal.
+     */
     public static equalsAt(a: const char[], aOff: unsigned int, b: const char[], bOff: unsigned int, len: unsigned int) : bool {
         i : int = 0;
         while (i < len) {
@@ -99,7 +130,14 @@ public:
         return true;
     }
 
-    /** Fill `count` positions in dst starting at dstOff with char `c`. */
+    /**
+     * Fill a UTF-32 buffer range with a repeated code point.
+     *
+     * @param dst Destination buffer.
+     * @param dstOff Start offset to fill.
+     * @param c Code point value to write.
+     * @param count Number of positions to fill.
+     */
     public static fill(dst: char[], dstOff: unsigned int, c: char, count: unsigned int) {
         i : int = 0;
         while (i < count) {
@@ -108,8 +146,15 @@ public:
         }
     }
 
-    /** Find first occurrence of char `c` in buf[off..off+len).
-     *  Returns index relative to buf start, or -1 if not found. */
+    /**
+     * Find the first occurrence of a code point in a UTF-32 buffer range.
+     *
+     * @param buf Buffer to search.
+     * @param off Start offset.
+     * @param len Number of code points to inspect.
+     * @param c Code point to search for.
+     * @return The absolute index in `buf`, or `-1` if not found.
+     */
     public static findChar(buf: const char[], off: unsigned int, len: unsigned int, c: char) : int {
         i : int = 0;
         while (i < len) {
@@ -122,8 +167,15 @@ public:
         return -1;
     }
 
-    /** Find last occurrence of char `c` in buf[off..off+len).
-     *  Returns index relative to buf start, or -1 if not found. */
+    /**
+     * Find the last occurrence of a code point in a UTF-32 buffer range.
+     *
+     * @param buf Buffer to search.
+     * @param off Start offset.
+     * @param len Number of code points to inspect.
+     * @param c Code point to search for.
+     * @return The absolute index in `buf`, or `-1` if not found.
+     */
     public static rfindChar(buf: const char[], off: unsigned int, len: unsigned int, c: char) : int {
         i : int = len;
         while (i > 0) {
@@ -136,10 +188,19 @@ public:
         return -1;
     }
 
-    /** Find first occurrence of needle[nOff..nOff+nLen) in
-     *  haystack[hOff..hOff+hLen).
-     *  Returns index relative to haystack start, or -1 if not found.
-     *  Uses brute-force O(n*m) algorithm. */
+    /**
+     * Find the first occurrence of a UTF-32 subrange inside another.
+     *
+     * Uses a brute-force `O(n*m)` search.
+     *
+     * @param haystack Buffer to search in.
+     * @param hOff Start offset in `haystack`.
+     * @param hLen Length of the searched range in `haystack`.
+     * @param needle Buffer holding the sought sequence.
+     * @param nOff Start offset in `needle`.
+     * @param nLen Length of the sought sequence.
+     * @return The absolute index in `haystack`, or `-1` if not found.
+     */
     public static find(haystack: const char[], hOff: unsigned int, hLen: unsigned int, needle: const char[], nOff: unsigned int, nLen: unsigned int) : int {
         if (nLen == 0) {
             r : int = hOff;
@@ -158,9 +219,17 @@ public:
         return -1;
     }
 
-    /** Find last occurrence of needle[nOff..nOff+nLen) in
-     *  haystack[hOff..hOff+hLen).
-     *  Returns index relative to haystack start, or -1 if not found. */
+    /**
+     * Find the last occurrence of a UTF-32 subrange inside another.
+     *
+     * @param haystack Buffer to search in.
+     * @param hOff Start offset in `haystack`.
+     * @param hLen Length of the searched range in `haystack`.
+     * @param needle Buffer holding the sought sequence.
+     * @param nOff Start offset in `needle`.
+     * @param nLen Length of the sought sequence.
+     * @return The absolute index in `haystack`, or `-1` if not found.
+     */
     public static rfind(haystack: const char[], hOff: unsigned int, hLen: unsigned int, needle: const char[], nOff: unsigned int, nLen: unsigned int) : int {
         if (nLen == 0) {
             r : int = hOff + hLen;
@@ -178,8 +247,16 @@ public:
         return -1;
     }
 
-    /** Lexicographic compare of `len` chars at given offsets.
-     *  Returns <0 if a < b, 0 if equal, >0 if a > b. */
+    /**
+     * Compare two UTF-32 subranges lexicographically.
+     *
+     * @param a First buffer.
+     * @param aOff Start offset in `a`.
+     * @param b Second buffer.
+     * @param bOff Start offset in `b`.
+     * @param len Number of code points to compare.
+     * @return A negative value, `0`, or a positive value depending on ordering.
+     */
     public static compare(a: const char[], aOff: unsigned int, b: const char[], bOff: unsigned int, len: unsigned int) : int {
         i : int = 0;
         while (i < len) {
@@ -544,19 +621,13 @@ public:
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// String — Immutable, final class wrapping a null-terminated char buffer.
-//
-// After construction every String instance satisfies:
-//   • _size >= 0 (number of code points, excluding any terminator)
-//   • _store holds the content in one of three encodings (UTF-8/16/32).
-//     For an empty string (_size == 0) the active alternative is UTF-32
-//     with a null buffer (no allocation).
-//   • The active union alternative determines rawEncoding().
-//
-// The public API always exposes code points as `char` (UTF-32) regardless
-// of the underlying storage encoding.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Represent an immutable Unicode string.
+ *
+ * `String` stores content internally using one of three encodings (UTF-8,
+ * UTF-16, or UTF-32), while exposing a code-point oriented public API based on
+ * `char` values.
+ */
 const final class String {
     // CharStore — discriminated union backing String's compact storage.
     // Alternative order fixes the Kind index: utf8=0, utf16=1, utf32=2.
@@ -576,13 +647,22 @@ private:
 public:
     // ── Constructors ────────────────────────────────────────────────────
 
-    /** Default: empty string (no data; UTF-32 by convention). */
+    /**
+     * Construct an empty string.
+     */
     String() : _size(0) {
         _store.utf32 = null;
     }
 
-    /** Construct a String from a UTF-32 owner buffer (takes ownership).
-     *  The buffer must be null-terminated at position `sz`. */
+    /**
+     * Construct a string from an owned UTF-32 buffer.
+     *
+     * The buffer is taken over by the string and must contain a trailing null
+     * terminator at position `sz`.
+     *
+     * @param buf Owned UTF-32 buffer.
+     * @param sz Number of code points, excluding the terminator.
+     */
     String(buf : char[]!, sz : unsigned int) : _size(sz) {
         _store.utf32 = buf;
     }
@@ -625,7 +705,11 @@ public:
         other._size = 0u;
     }
 
-    /** Construct from a const char[] (string literal) → UTF-32 storage. */
+    /**
+     * Construct a string from a UTF-32 character array.
+     *
+     * @param src Source array whose size includes the trailing null terminator.
+     */
     String(src : const char[]) : _size(0) {
         if (src.size > 1u) {
             _size = src.size - 1u;
@@ -637,8 +721,11 @@ public:
         }
     }
 
-    /** Construct from a UTF-8 `unsigned byte[]` (e.g. a `u8"…"` literal),
-     *  stored as UTF-8. src.size includes the trailing null byte. */
+    /**
+     * Construct a string from a UTF-8 byte array.
+     *
+     * @param src UTF-8 source array whose size includes the trailing null byte.
+     */
     String(src : const unsigned byte[]) : _size(0) {
         if (src.size > 1u) {
             _size = CharHelpers::utf8CodePointCount(src, src.size - 1u);
@@ -650,8 +737,11 @@ public:
         }
     }
 
-    /** Construct from a UTF-16 `unsigned short[]` (e.g. a `u"…"` literal),
-     *  stored as UTF-16. src.size includes the trailing null code unit. */
+    /**
+     * Construct a string from a UTF-16 code-unit array.
+     *
+     * @param src UTF-16 source array whose size includes the trailing null code unit.
+     */
     String(src : const unsigned short[]) : _size(0) {
         if (src.size > 1u) {
             _size = CharHelpers::utf16CodePointCount(src, src.size - 1u);
@@ -663,8 +753,12 @@ public:
         }
     }
 
-    /** Construct from a UTF-32 `char[]`, transcoded to the requested storage
-     *  encoding `enc`. */
+    /**
+     * Construct a string from UTF-32 data using a requested storage encoding.
+     *
+     * @param src UTF-32 source array whose size includes the trailing null terminator.
+     * @param enc Target internal storage encoding.
+     */
     String(src : const char[], enc : Encoding) : _size(0) {
         n : unsigned int = 0u;
         if (src.size > 1u) {
@@ -685,7 +779,11 @@ public:
         }
     }
 
-    /** Construct from a StringBuilder → UTF-32 storage. */
+    /**
+     * Construct an immutable string from a builder.
+     *
+     * @param sb Builder whose content is copied into the new string.
+     */
     String(sb : const StringBuilder&) : _size(0) {
         _size = sb.size();
         if (_size > 0u) {
@@ -718,14 +816,28 @@ public:
 
     // ── Accessors (all const — implicit in a const class) ───────────────
 
-    /** Number of characters (excluding the terminal '\0'). */
+    /**
+     * Return the number of code points stored in the string.
+     *
+     * @return The character count, excluding the trailing null terminator.
+     */
     const size() : unsigned int { return _size; }
 
-    /** True when the string contains no characters. */
+    /**
+     * Tell whether the string is empty.
+     *
+     * @return `true` when the string contains no code points.
+     */
     const empty() : bool { return _size == 0; }
 
-    /** Return the character (code point) at logical position `index`.
-     *  No bounds check. O(index) for UTF-8/UTF-16, O(1) for UTF-32. */
+    /**
+     * Return the code point at a logical position.
+     *
+     * No bounds check is performed.
+     *
+     * @param index Zero-based code-point index.
+     * @return The code point at `index`.
+     */
     const at(index : unsigned int) : char {
         idx : int = (int) _store.index();
         if (idx == 2) {
@@ -743,7 +855,11 @@ public:
         return at(index);
     }
 
-    /** The underlying storage encoding. */
+    /**
+     * Return the internal storage encoding used by this string.
+     *
+     * @return The active storage encoding.
+     */
     const rawEncoding() : Encoding {
         idx : int = (int) _store.index();
         if (idx == 0) return Encoding::UTF8;
@@ -1003,47 +1119,13 @@ public:
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// StringBuilder — Mutable string builder backed by an array of fragments.
-//
-// Internally it stores:
-//   - _pool:      owner of a flat char buffer holding all fragment data
-//   - _poolUsed:  bytes currently used in the pool
-//   - _poolCap:   allocated pool capacity
-//   - _starts:    owner of unsigned int array — start offset of each fragment
-//   - _lens:      owner of unsigned int array — length of each fragment
-//   - _fragCount: number of active fragments
-//   - _fragCap:   allocated capacity of _starts/_lens arrays
-//   - _totalSize: total number of characters across all fragments
-//
-// Fragment data is appended to the end of _pool. Logical ordering is tracked
-// by the _starts/_lens arrays. Insertions add new data at the pool tail and
-// insert a metadata entry (shifting only unsigned int indices, not char data).
-//
-// Consolidation (merging all fragments into a single contiguous buffer)
-// happens only when converting to String or when a mutation requires
-// contiguous access (reverse, trim, remove).
-// ═════════════════════════════════════════════════════════════════════════════
-// ═════════════════════════════════════════════════════════════════════════════
-// StringBuilder — Mutable string builder with heterogeneous, multi-encoding
-// fragment storage.
-//
-// Content is appended as a sequence of fragments, each kept in its NATIVE
-// encoding (no transcoding on append). Three growable pools hold the raw units:
-//   - _poolU8  : unsigned byte[]  — UTF-8 fragments
-//   - _poolU16 : unsigned short[] — UTF-16 fragments
-//   - _poolU32 : char[]           — UTF-32 fragments
-// Four parallel metadata arrays describe each fragment in logical order:
-//   - _fragEnc   : 0=UTF8, 1=UTF16, 2=UTF32
-//   - _fragStart : start offset (in pool units) within the matching pool
-//   - _fragUnits : number of pool units the fragment occupies
-//   - _fragCp    : number of code points in the fragment
-//
-// The public API is char-based (code points). Random read access decodes per
-// fragment; bulk reads decode everything to UTF-32 on demand. Any in-place
-// MUTATION first consolidates all fragments into a single UTF-32 fragment, so
-// mutation logic always operates on a contiguous _poolU32 buffer.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Build strings incrementally from mutable Unicode fragments.
+ *
+ * `StringBuilder` stores appended fragments in their native encodings and
+ * exposes a code-point oriented API. It is optimized for incremental assembly
+ * followed by conversion into an immutable `String`.
+ */
 class StringBuilder {
     _poolU8    : unsigned byte[]!;    _u8Used  : unsigned int;   _u8Cap  : unsigned int;
     _poolU16   : unsigned short[]!;   _u16Used : unsigned int;   _u16Cap : unsigned int;
@@ -1059,7 +1141,9 @@ class StringBuilder {
 public:
     // ── Constructors ────────────────────────────────────────────────────
 
-    /** Default: empty builder (no allocation). */
+    /**
+     * Construct an empty builder.
+     */
     StringBuilder() : _u8Used(0), _u8Cap(0), _u16Used(0), _u16Cap(0), _u32Used(0), _u32Cap(0), _fragCount(0), _fragCap(0), _totalSize(0) {
         _poolU8 = null;
         _poolU16 = null;
@@ -1331,16 +1415,28 @@ public:
 
     // ── Accessors ───────────────────────────────────────────────────────
 
-    /** Total number of characters (code points) across all fragments. */
+    /**
+     * Return the total number of code points across all fragments.
+     *
+     * @return The logical character count.
+     */
     const size() : unsigned int { return _totalSize; }
 
-    /** True when the builder contains no characters. */
+    /**
+     * Tell whether the builder currently contains no characters.
+     *
+     * @return `true` when the builder is empty.
+     */
     const empty() : bool { return _totalSize == 0; }
 
-    /** The native storage encoding of the first fragment, or UTF-32 if empty.
-     *  Note: a builder may hold fragments of mixed encodings; this reports the
-     *  encoding of the first one (and the encoding chosen by the FirstFragment
-     *  consolidation policy). */
+    /**
+     * Return the native encoding of the first fragment.
+     *
+     * A builder may contain fragments of mixed encodings; this accessor reports
+     * the first fragment encoding, or `UTF32` for an empty builder.
+     *
+     * @return The encoding of the first fragment, or `UTF32` when empty.
+     */
     const rawEncoding() : Encoding {
         if (_fragCount == 0u) return Encoding::UTF32;
         e : int = (int) _fragEnc[0];
@@ -1349,8 +1445,14 @@ public:
         return Encoding::UTF32;
     }
 
-    /** Return the character (code point) at the given logical position.
-     *  Read-only. O(fragCount + intra-fragment offset). No bounds check. */
+    /**
+     * Return the code point at a logical position.
+     *
+     * No bounds check is performed.
+     *
+     * @param index Zero-based code-point index.
+     * @return The code point at `index`.
+     */
     const charAt(index : unsigned int) : char {
         pos : unsigned int = 0u;
         i : unsigned int = 0u;
@@ -1418,12 +1520,21 @@ public:
         return toString(ConsolidationPolicy::MostCompact);
     }
 
-    /** Build an immutable String using the default (MostCompact) policy. */
+    /**
+     * Build an immutable string using the default consolidation policy.
+     *
+     * @return A new immutable `String`.
+     */
     const toString() : String {
         return toString(ConsolidationPolicy::MostCompact);
     }
 
-    /** Build an immutable String, choosing the storage encoding per `policy`. */
+    /**
+     * Build an immutable string with a chosen consolidation policy.
+     *
+     * @param policy Policy used to choose the resulting storage encoding.
+     * @return A new immutable `String`.
+     */
     const toString(policy : ConsolidationPolicy) : String {
         if (_totalSize == 0u) {
             emptyStr : String;
@@ -1433,7 +1544,12 @@ public:
         return _buildString(enc);
     }
 
-    /** Build an immutable String stored in the given encoding `enc`. */
+    /**
+     * Build an immutable string stored in a specific encoding.
+     *
+     * @param enc Requested storage encoding for the resulting string.
+     * @return A new immutable `String`.
+     */
     const toString(enc : Encoding) : String {
         if (_totalSize == 0u) {
             emptyStr : String;
@@ -1592,7 +1708,14 @@ public:
         return this;
     }
 
-    /** Append a String, mirroring its native storage encoding (no transcode). */
+    /**
+     * Append the content of a string.
+     *
+     * The appended fragment keeps the string's native storage encoding.
+     *
+     * @param s String to append.
+     * @return This builder.
+     */
     append(s : const String&) : StringBuilder& {
         n : unsigned int = s.size();
         if (n == 0u) return this;
@@ -1624,8 +1747,12 @@ public:
         return this;
     }
 
-    /** Append a const char[] (e.g. a string literal) as a UTF-32 fragment.
-     *  src.size is expected to include the null terminator. */
+    /**
+     * Append a UTF-32 character array.
+     *
+     * @param src Source array whose size includes the trailing null terminator.
+     * @return This builder.
+     */
     append(src : const char[]) : StringBuilder& {
         if (src.size <= 1u) return this;
         n : unsigned int = src.size - 1u;
@@ -1700,7 +1827,12 @@ public:
         return this;
     }
 
-    /** Append a single character (UTF-32 fragment). */
+    /**
+     * Append a single code point.
+     *
+     * @param c Code point to append.
+     * @return This builder.
+     */
     appendChar(c : char) : StringBuilder& {
         start : unsigned int = _u32Used;
         _ensureU32(1u);
@@ -1710,8 +1842,15 @@ public:
         return this;
     }
 
-    /** Set the code point at logical position `index`. No-op if out of range.
-     *  Consolidates to UTF-32 first, then writes in place. */
+    /**
+     * Replace a code point at a logical position.
+     *
+     * If `index` is out of range, the builder is left unchanged.
+     *
+     * @param index Zero-based code-point index.
+     * @param c Replacement code point.
+     * @return This builder.
+     */
     set(index : unsigned int, c : char) : StringBuilder& {
         if (index >= _totalSize) return this;
         _consolidate();
@@ -2080,15 +2219,12 @@ private:
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// CharRef — Write-proxy returned by StringBuilder's non-const subscript/at().
-//
-//   sb[i] = c;          // writes code point c via StringBuilder.set(i, c)
-//   x : char = (char) sb[i];   // explicit read of the current code point
-//
-// CharRef holds a (non-owning) link back to its StringBuilder plus a logical
-// code-point index. It is invalidated by any structural mutation of the builder.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Represent a mutable proxy to one `StringBuilder` code point.
+ *
+ * `CharRef` is returned by mutable indexed access on `StringBuilder` and allows
+ * expressions such as `sb[i] = c`.
+ */
 class CharRef {
     _sb  : StringBuilder+;
     _idx : unsigned int;

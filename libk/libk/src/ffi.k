@@ -19,14 +19,35 @@ module k;
 
 namespace ffi {
 
+/**
+ * Declare that a function is implemented by an external foreign symbol.
+ *
+ * Use this annotation on a function declaration to bind it to an implementation
+ * provided by another language or runtime, typically C.
+ */
 @annotations::Retention(Policy::SOURCE)
 @annotations::Target({ElementType::FUNCTION})
 annotation Extern {
+    /**
+     * Name the foreign language or ABI used by the target symbol.
+     */
     language : const char[];
+    /**
+     * Optionally name the foreign library that exports the symbol.
+     */
     library : const char[]? = null;
+    /**
+     * Optionally override the foreign symbol name to bind.
+     */
     symbol : const char[]? = null;
 }
 
+/**
+ * Mark a parameter as a C-style string for FFI marshaling.
+ *
+ * This annotation is used on FFI parameters whose ABI representation is a
+ * null-terminated native string rather than a regular K array descriptor.
+ */
 @annotations::Retention(Policy::SOURCE)
 @annotations::Target({ElementType::PARAMETER})
 annotation CString {

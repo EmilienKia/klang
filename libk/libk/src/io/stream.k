@@ -20,46 +20,51 @@ module k;
 
 namespace io {
 
-// ═════════════════════════════════════════════════════════════════════════════
-// InputStream — Abstract interface for reading bytes.
-//
-// read() returns the next byte as an int (0–255), or -1 on end of stream.
-// read(buf, off, len) reads up to len bytes into buf starting at off;
-// returns the number of bytes actually read, or -1 on end of stream.
-//
-// Inspired by java.io.InputStream (without mark/reset).
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Define the base contract for byte-oriented input streams.
+ *
+ * `read()` returns the next byte as an `int` in `[0,255]`, or `-1` at end of
+ * stream. Bulk reads fill caller-provided buffers and report the number of
+ * bytes actually read.
+ */
 public interface InputStream {
     /**
      * Read a single byte.
-     * Returns the byte value as an int in the range 0–255,
-     * or -1 if the end of the stream has been reached.
+     *
+     * @return The next byte as an int in `[0,255]`, or `-1` at end of stream.
      */
     read() : int;
 
     /**
-     * Read up to `len` bytes into `buf` starting at offset `off`.
-     * Returns the number of bytes actually read, or -1 if the end
-     * of the stream has been reached before any byte was read.
+     * Read up to `len` bytes into `buf` starting at `off`.
+     *
+     * @param buf Destination byte buffer.
+     * @param off Destination start offset.
+     * @param len Maximum number of bytes to read.
+     * @return Number of bytes read, or `-1` if end of stream is reached first.
      */
     read(buf: byte[], off: unsigned int, len: unsigned int) : int;
 
     /**
      * Read up to `buf.size` bytes into `buf`.
-     * Returns the number of bytes actually read, or -1 if the end
-     * of the stream has been reached before any byte was read.
+     *
+     * @param buf Destination byte buffer.
+     * @return Number of bytes read, or `-1` if end of stream is reached first.
      */
     read(buf: byte[]) : int;
 
     /**
-     * Skip over and discard `n` bytes of data from this stream.
-     * Returns the actual number of bytes skipped.
+     * Skip and discard up to `n` bytes.
+     *
+     * @param n Requested number of bytes to skip.
+     * @return Actual number of bytes skipped.
      */
     skip(n: unsigned long) : unsigned long;
 
     /**
-     * Return the number of bytes that can be read without blocking.
-     * Default semantic: returns 0 (no guarantee).
+     * Return a non-blocking availability estimate.
+     *
+     * @return Number of bytes that can be read without blocking.
      */
     available() : int;
 
@@ -70,30 +75,36 @@ public interface InputStream {
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// OutputStream — Abstract interface for writing bytes.
-//
-// write(b) writes the low 8 bits of b.
-// write(buf, off, len) writes len bytes from buf starting at off.
-//
-// Inspired by java.io.OutputStream (without mark/reset).
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Define the base contract for byte-oriented output streams.
+ *
+ * Single-byte writes use the low 8 bits of the provided integer value. Bulk
+ * writes consume caller-provided buffers.
+ */
 public interface OutputStream {
     /**
-     * Write a single byte. The byte to write is the low 8 bits of `b`.
-     * Returns this stream for fluent chaining.
+     * Write a single byte.
+     *
+     * @param b Source value; low 8 bits are written.
+     * @return This stream.
      */
     write(b: int) : OutputStream&;
 
     /**
-     * Write `len` bytes from `buf` starting at offset `off`.
-     * Returns this stream for fluent chaining.
+     * Write `len` bytes from `buf` starting at `off`.
+     *
+     * @param buf Source byte buffer.
+     * @param off Source start offset.
+     * @param len Number of bytes to write.
+     * @return This stream.
      */
     write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream&;
 
     /**
-     * Write all bytes from `buf` (buf.size bytes).
-     * Returns this stream for fluent chaining.
+     * Write all bytes from `buf`.
+     *
+     * @param buf Source byte buffer.
+     * @return This stream.
      */
     write(buf: const byte[]) : OutputStream&;
 
@@ -111,12 +122,12 @@ public interface OutputStream {
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayInputStream — Reads bytes from an in-memory byte array.
-//
-// The stream owns a copy of the source data. Reads advance through the
-// buffer sequentially; read() returns -1 when all bytes are consumed.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Read bytes from an in-memory array.
+ *
+ * The stream stores an internal copy of the source bytes and advances a read
+ * cursor as data is consumed.
+ */
 public class ByteArrayInputStream : public InputStream {
     _buf   : byte[]!;
     _pos   : int;
@@ -189,12 +200,12 @@ public:
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayOutputStream — Writes bytes to a growable in-memory byte array.
-//
-// Provides toByteArray() to retrieve a copy of the written data,
-// size() to query the current byte count, and reset() to start over.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Write bytes to a growable in-memory array.
+ *
+ * The stream accumulates written bytes and exposes helpers to query size,
+ * reset content, and retrieve a copy of the accumulated data.
+ */
 public class ByteArrayOutputStream : public OutputStream {
     _buf   : byte[]!;
     _count : int;

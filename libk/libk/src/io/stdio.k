@@ -18,19 +18,15 @@
 
 module k;
 
-// ═════════════════════════════════════════════════════════════════════════════
-// Standard I/O streams — stdin, stdout, stderr
-//
-// Provides three public global references connected to the standard C streams:
-//   - k::io::stdin  : InputStream&   (reads from libc stdin)
-//   - k::io::stdout : PrintStream&   (writes to libc stdout)
-//   - k::io::stderr : PrintStream&   (writes to libc stderr)
-//
-// The underlying objects are private to the library and constructed from raw
-// CFile* handles obtained via FFI.  The compiler's global init-order resolver
-// ensures correct construction order (streams first, then print wrappers,
-// then references).
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Provide access to the process standard I/O streams.
+ *
+ * This namespace exposes public references bound to the standard C streams:
+ * `stdin`, `stdout`, and `stderr`.
+ *
+ * The underlying stream objects are private library globals created from raw
+ * C `FILE*` handles obtained via FFI.
+ */
 
 namespace io {
 
@@ -43,9 +39,17 @@ private _stderrStream : FileOutputStream(__k_io_file_get_stderr());
 private _stdoutPrint : PrintStream(&_stdoutStream);
 private _stderrPrint : PrintStream(&_stderrStream);
 
-// ── Public references: standard I/O entry points ─────────────────────────
+/**
+ * Read bytes from the process standard input stream.
+ */
 public stdin  : InputStream& = _stdinStream;
+/**
+ * Write formatted text to the process standard output stream.
+ */
 public stdout : PrintStream& = _stdoutPrint;
+/**
+ * Write formatted text to the process standard error stream.
+ */
 public stderr : PrintStream& = _stderrPrint;
 
 } // namespace io

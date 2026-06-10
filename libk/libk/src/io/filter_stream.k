@@ -20,16 +20,12 @@ module k;
 
 namespace io {
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FilterInputStream — A wrapper that delegates all reads to an underlying
-// InputStream. Subclasses override specific methods to add behaviour
-// (buffering, data decoding, etc.).
-//
-// The wrapped stream is held by link (non-owning, non-null, rebindable).
-// The caller is responsible for the lifetime of the underlying stream.
-//
-// Inspired by java.io.FilterInputStream.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Delegate input operations to an underlying stream.
+ *
+ * `FilterInputStream` is intended as a base class for input decorators such as
+ * buffered or typed readers.
+ */
 public class FilterInputStream : public InputStream {
 protected:
     _in : InputStream*;
@@ -38,6 +34,8 @@ public:
     /**
      * Construct a FilterInputStream wrapping the given stream.
      * The stream is held by pointer — the caller retains ownership.
+     *
+     * @param input Wrapped input stream.
      */
     FilterInputStream(input: InputStream*) : _in(input) {}
 
@@ -72,16 +70,12 @@ public:
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FilterOutputStream — A wrapper that delegates all writes to an underlying
-// OutputStream. Subclasses override specific methods to add behaviour
-// (buffering, data encoding, etc.).
-//
-// The wrapped stream is held by link (non-owning, non-null, rebindable).
-// The caller is responsible for the lifetime of the underlying stream.
-//
-// Inspired by java.io.FilterOutputStream.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Delegate output operations to an underlying stream.
+ *
+ * `FilterOutputStream` is intended as a base class for output decorators such
+ * as buffered, data, or printing streams.
+ */
 public class FilterOutputStream : public OutputStream {
 protected:
     _out : OutputStream*;
@@ -90,6 +84,8 @@ public:
     /**
      * Construct a FilterOutputStream wrapping the given stream.
      * The stream is held by pointer — the caller retains ownership.
+     *
+     * @param output Wrapped output stream.
      */
     FilterOutputStream(output: OutputStream*) : _out(output) {}
 

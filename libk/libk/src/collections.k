@@ -29,42 +29,84 @@ module k;
  */
 template<typename T>
 interface Collection {
-    /** Return the number of elements in the collection. */
+    /**
+     * Return the number of elements in the collection.
+     *
+     * @return Element count.
+     */
     getSize() : int;
 
-    /** Return true if the collection contains no elements. */
+    /**
+     * Tell whether the collection is empty.
+     *
+     * @return `true` when no element is stored.
+     */
     isEmpty() : bool;
 
-    /** Insert a copy of value at the front of the collection. */
+    /**
+     * Insert a value at the front of the collection.
+     *
+     * @param value Value to insert.
+     */
     pushFront(value : T&);
 
-    /** Insert a copy of value at the back of the collection. */
+    /**
+     * Insert a value at the back of the collection.
+     *
+     * @param value Value to insert.
+     */
     pushBack(value : T&);
 
     /**
      * Insert a copy of value at the given index.
      * If index <= 0, inserts at the front.
      * If index >= size, inserts at the back.
+     *
+     * @param index Target insertion index.
+     * @param value Value to insert.
      */
     insert(index : int, value : T&);
 
-    /** Return a mutable reference to the front element. Undefined if empty. */
+    /**
+     * Return a mutable reference to the front element.
+     *
+     * @return Front element reference.
+     */
     peekFront() : T&;
 
-    /** Return a mutable reference to the back element. Undefined if empty. */
+    /**
+     * Return a mutable reference to the back element.
+     *
+     * @return Back element reference.
+     */
     peekBack() : T&;
 
-    /** Return a mutable reference to the element at the given index. Undefined if out of bounds. */
+    /**
+     * Return a mutable reference to an element at a given index.
+     *
+     * @param index Zero-based element index.
+     * @return Element reference at `index`.
+     */
     get(index : int) : T&;
 
-    /** Remove the front element. Returns true if an element was removed. */
+    /**
+     * Remove the front element.
+     *
+     * @return `true` when an element was removed.
+     */
     removeFront() : bool;
 
-    /** Remove the last element. Returns true if an element was removed. */
+    /**
+     * Remove the back element.
+     *
+     * @return `true` when an element was removed.
+     */
     removeBack() : bool;
 
-    /** Remove all elements. */
-    clear();
+     /**
+      * Remove all elements from the collection.
+      */
+     clear();
 }
 
 /**
@@ -149,17 +191,29 @@ class LinkedList : public Collection<T> {
         clear();
     }
 
-    /** Return true if the list contains no elements. */
+    /**
+     * Tell whether the list is empty.
+     *
+     * @return `true` when no element is stored.
+     */
     const isEmpty() : bool {
         return _size == 0;
     }
 
-    /** Return the number of elements in the list. */
+    /**
+     * Return the number of elements in the list.
+     *
+     * @return Element count.
+     */
     const getSize() : int {
         return _size;
     }
 
-    /** Insert a copy of value at the front of the list. */
+    /**
+     * Insert a value at the front of the list.
+     *
+     * @param value Value to insert.
+     */
     pushFront(value : T&) {
         node : LinkedListNode! = new LinkedListNode();
         node.setValue(value);
@@ -171,7 +225,11 @@ class LinkedList : public Collection<T> {
         _size = _size + 1;
     }
 
-    /** Insert a copy of value at the back of the list. */
+    /**
+     * Insert a value at the back of the list.
+     *
+     * @param value Value to insert.
+     */
     pushBack(value : T&) {
         node : LinkedListNode! = new LinkedListNode();
         node.setValue(value);
@@ -186,9 +244,13 @@ class LinkedList : public Collection<T> {
     }
 
     /**
-     * Insert a copy of value at the given index. O(n).
-     * If index <= 0, inserts at the front.
+     * Insert a value at the given index.
+     *
+     * Searches linearly; O(n). If index <= 0, inserts at the front.
      * If index >= size, inserts at the back.
+     *
+     * @param index Target insertion index.
+     * @param value Value to insert.
      */
     insert(index : int, value : T&) {
         node : LinkedListNode! = new LinkedListNode();
@@ -679,6 +741,7 @@ class DoubleLinkedList : public Collection<T> {
                 next = next->_prev;
                 i = i - 1;
             }
+            // next is at position 'index', we insert before it
             node : DoubleLinkedListNode! = new DoubleLinkedListNode();
             node.emplaceValue(args...);
             node._next = next->_prev->_next;

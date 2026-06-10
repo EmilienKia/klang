@@ -89,6 +89,8 @@ struct Expected {
      * - If other holds a result, this holds the same result value.
      * - If other holds an error, this holds the same error value.
      * - If other is in an undefined state, this is also left undefined.
+     *
+     * @param other Source expected object to copy.
      */
     Expected(other : Expected<R, E>&) {
         if (other.hasResult()) {
@@ -104,6 +106,8 @@ struct Expected {
 
     /**
      * Return true if this Expected holds a successful result.
+     *
+     * @return `true` when the active alternative is `result`.
      */
     const hasResult() : bool {
         return _storage.index() == Storage::Kind::result;
@@ -111,6 +115,8 @@ struct Expected {
 
     /**
      * Return true if this Expected holds an error.
+     *
+     * @return `true` when the active alternative is `error`.
      */
     const hasError() : bool {
         return _storage.index() == Storage::Kind::error;
@@ -119,6 +125,8 @@ struct Expected {
     /**
      * Set this Expected to hold a successful result value.
      * Any previously stored value is overwritten.
+     *
+     * @param value Result value to store.
      */
     setResult(value : R&) {
         _storage.result = value;
@@ -127,6 +135,8 @@ struct Expected {
     /**
      * Set this Expected to hold an error value.
      * Any previously stored value is overwritten.
+     *
+     * @param value Error value to store.
      */
     setError(value : E&) {
         _storage.error = value;
@@ -136,6 +146,8 @@ struct Expected {
      * Return the result value.
      * Precondition: hasResult() must be true.
      * Behavior is undefined if called when hasError() is true.
+     *
+     * @return The stored result value.
      */
     const getResult() : R {
         return _storage.result;
@@ -145,6 +157,8 @@ struct Expected {
      * Return the error value.
      * Precondition: hasError() must be true.
      * Behavior is undefined if called when hasResult() is true.
+     *
+     * @return The stored error value.
      */
     const getError() : E {
         return _storage.error;
@@ -152,6 +166,9 @@ struct Expected {
 
     /**
      * Return the result value, or the provided default if this holds an error.
+     *
+     * @param defaultValue Value returned when this object does not hold a result.
+     * @return The stored result value, or `defaultValue`.
      */
     const getResultOr(defaultValue : R&) : R {
         if (_storage.index() == Storage::Kind::result) {
@@ -162,6 +179,9 @@ struct Expected {
 
     /**
      * Return the error value, or the provided default if this holds a result.
+     *
+     * @param defaultValue Value returned when this object does not hold an error.
+     * @return The stored error value, or `defaultValue`.
      */
     const getErrorOr(defaultValue : E&) : E {
         if (_storage.index() == Storage::Kind::error) {
@@ -172,6 +192,9 @@ struct Expected {
 
     /**
      * Static factory — create an Expected<R, E> holding a successful result.
+     *
+     * @param value Result value to wrap.
+     * @return A new expected object holding `value` as a result.
      */
     public static expected(value : R&) : Expected<R, E> {
         e : Expected<R, E>;
@@ -181,6 +204,9 @@ struct Expected {
 
     /**
      * Static factory — create an Expected<R, E> holding an error.
+     *
+     * @param value Error value to wrap.
+     * @return A new expected object holding `value` as an error.
      */
     public static unexpected(value : E&) : Expected<R, E> {
         e : Expected<R, E>;
@@ -191,6 +217,9 @@ struct Expected {
     /**
      * Static factory — alias for unexpected().
      * Provided for readability when the error type is an error code or exception.
+     *
+     * @param value Error value to wrap.
+     * @return A new expected object holding `value` as an error.
      */
     public static error(value : E&) : Expected<R, E> {
         return unexpected(value);

@@ -29,24 +29,20 @@ module k;
 
 namespace io {
 
-// ═════════════════════════════════════════════════════════════════════════════
-// PrintStream — Adds convenient print/println methods to an OutputStream.
-//
-// Converts primitive values to their textual representation and writes
-// them to the underlying stream. All print/println methods return a
-// self-reference (PrintStream&) for fluent chaining.
-//
-// The wrapped stream is held by pointer (non-owning) — the caller is
-// responsible for the lifetime of the underlying stream.
-//
-// Inspired by java.io.PrintStream.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Write textual representations of primitive values to an output stream.
+ *
+ * `PrintStream` provides overloaded `print` and `println` helpers for primitive
+ * and string-like values and supports fluent chaining.
+ */
 public class PrintStream : public FilterOutputStream {
 
 public:
     /**
      * Construct a PrintStream wrapping the given output stream.
      * The stream is held by pointer — the caller retains ownership.
+     *
+     * @param output Wrapped output stream.
      */
     PrintStream(output: OutputStream*) : FilterOutputStream(output) {}
 

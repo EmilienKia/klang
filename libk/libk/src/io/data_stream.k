@@ -18,10 +18,21 @@
 
 module k;
 
-// ── FFI declarations for bitcast and native byte-order helpers ───────────
+/**
+ * Runtime helper: convert float values to raw integer bit patterns.
+ */
 @ffi::Extern("C") __k_io_float_to_bits(f: float) : int;
+/**
+ * Runtime helper: convert raw integer bit patterns to float values.
+ */
 @ffi::Extern("C") __k_io_bits_to_float(bits: int) : float;
+/**
+ * Runtime helper: convert double values to raw integer bit patterns.
+ */
 @ffi::Extern("C") __k_io_double_to_bits(d: double) : long;
+/**
+ * Runtime helper: convert raw integer bit patterns to double values.
+ */
 @ffi::Extern("C") __k_io_bits_to_double(bits: long) : double;
 
 @ffi::Extern("C") __k_io_native_bytes_to_short(buf: const byte*) : int;
@@ -34,13 +45,11 @@ module k;
 
 namespace io {
 
-// ═════════════════════════════════════════════════════════════════════════════
-// DataInput — Interface for reading primitive types from a byte stream.
-//
-// All multi-byte values use the platform native byte order.
-//
-// Inspired by java.io.DataInput.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Read primitive values from a byte stream.
+ *
+ * Multi-byte values are interpreted using native platform byte order.
+ */
 public interface DataInput {
     /** Read a single signed byte. */
     readByte() : byte;
@@ -91,13 +100,11 @@ public interface DataInput {
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// DataOutput — Interface for writing primitive types to a byte stream.
-//
-// All multi-byte values use the platform native byte order.
-//
-// Inspired by java.io.DataOutput.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Write primitive values to a byte stream.
+ *
+ * Multi-byte values are encoded using native platform byte order.
+ */
 public interface DataOutput {
     /** Write a single byte. */
     writeByte(v: byte) : DataOutput&;
@@ -134,23 +141,20 @@ public interface DataOutput {
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// DataInputStream — Reads primitive types from an underlying InputStream
-// using the platform native byte order.
-//
-// Extends FilterInputStream for stream delegation, implements DataInput
-// for typed reading.
-//
-// NOTE: Virtual dispatch through a DataInput& reference is not yet supported
-//       by the compiler (secondary base limitation). Use direct calls on the
-//       DataInputStream object instead.
-//
-// Inspired by java.io.DataInputStream.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Read primitive values from an underlying input stream.
+ *
+ * `DataInputStream` combines `InputStream` delegation with typed primitive
+ * reading helpers.
+ */
 public class DataInputStream : public FilterInputStream, public DataInput {
 
 public:
-    /** Construct a DataInputStream wrapping the given input stream. */
+    /**
+     * Construct a data input stream wrapper.
+     *
+     * @param input Wrapped input stream.
+     */
     DataInputStream(input: InputStream+) : FilterInputStream(input) {}
 
     // ── DataInput implementation ─────────────────────────────────────────
@@ -232,27 +236,28 @@ public:
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// DataOutputStream — Writes primitive types to an underlying OutputStream
-// using the platform native byte order.
-//
-// Extends FilterOutputStream for stream delegation, implements DataOutput
-// for typed writing.
-//
-// NOTE: Virtual dispatch through a DataOutput& reference is not yet supported
-//       by the compiler (secondary base limitation). Use direct calls on the
-//       DataOutputStream object instead.
-//
-// Inspired by java.io.DataOutputStream.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Write primitive values to an underlying output stream.
+ *
+ * `DataOutputStream` combines `OutputStream` delegation with typed primitive
+ * writing helpers.
+ */
 public class DataOutputStream : public FilterOutputStream, public DataOutput {
     _written  : int;
 
 public:
-    /** Construct a DataOutputStream wrapping the given output stream. */
+    /**
+     * Construct a data output stream wrapper.
+     *
+     * @param output Wrapped output stream.
+     */
     DataOutputStream(output: OutputStream+) : FilterOutputStream(output), _written(0) {}
 
-    /** Return the total number of bytes written so far. */
+    /**
+     * Return the total number of bytes written through this stream.
+     *
+     * @return Cumulative byte count.
+     */
     const size() : int {
         return _written;
     }

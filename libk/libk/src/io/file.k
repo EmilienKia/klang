@@ -20,9 +20,9 @@ module k;
 
 namespace io {
 
-// ═════════════════════════════════════════════════════════════════════════════
-// CFile — Opaque struct representing a C FILE* stream handle.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Opaque wrapper type representing a native C `FILE*` handle.
+ */
 public struct CFile {
 }
 
@@ -49,11 +49,9 @@ public struct CFile {
 @ffi::Extern("C") __k_io_file_get_stderr() : CFile*;
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FileDescriptor — Wraps an OS-level file descriptor (integer).
-//
-// Inspired by java.io.FileDescriptor.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Wrap a platform file descriptor value.
+ */
 public struct FileDescriptor {
     _fd : int;
 
@@ -61,26 +59,36 @@ public:
     /** Default constructor — invalid descriptor (-1). */
     FileDescriptor() : _fd(-1) {}
 
-    /** Construct from a raw OS file descriptor. */
+    /**
+     * Construct from a raw descriptor value.
+     *
+     * @param fd Native file descriptor.
+     */
     FileDescriptor(fd: int) : _fd(fd) {}
 
-    /** Return the raw OS file descriptor. */
+    /**
+     * Return the wrapped descriptor value.
+     *
+     * @return Native file descriptor integer.
+     */
     const getFd() : int {
         return _fd;
     }
 
-    /** Return true if this descriptor refers to an open file (fd >= 0). */
+    /**
+     * Tell whether this descriptor value is valid.
+     *
+     * @return `true` when `fd >= 0`.
+     */
     const valid() : bool {
         return _fd >= 0;
     }
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// File — Represents a file or directory path on the filesystem.
-//
-// Inspired by java.io.File.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Represent a filesystem path and related file operations.
+ */
 public class File {
     _path : char[]!;
     _len  : int;
@@ -89,6 +97,8 @@ public:
     /**
      * Construct a File from a path string.
      * The path must be null-terminated (include \0 at the end of the literal).
+     *
+     * @param path Null-terminated path string.
      */
     File(path: const char[]) : _path(null), _len(0) {
         _len = path.size;
@@ -101,12 +111,20 @@ public:
         _path[_len] = (char) 0;
     }
 
-    /** Return the path as a view. */
+    /**
+     * Return the path string.
+     *
+     * @return Path characters.
+     */
     const getPath() : const char[]? {
         return _path;
     }
 
-    /** Return the length of the path string. */
+    /**
+     * Return the path length.
+     *
+     * @return Number of characters in the stored path.
+     */
     const getPathLength() : int {
         return _len;
     }
@@ -166,16 +184,18 @@ public:
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FileInputStream — An InputStream that reads bytes from a file.
-//
-// Inspired by java.io.FileInputStream.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Read bytes from a file-backed input stream.
+ */
 public class FileInputStream : public InputStream {
     _fp : CFile*;
 
 public:
-    /** Construct a FileInputStream from a path string. */
+    /**
+     * Open a file for reading.
+     *
+     * @param path Null-terminated file path.
+     */
     FileInputStream(path: const char[]) : _fp(null) {
         f : File(path);
         p : const char[]? = f.getPath();
@@ -190,7 +210,11 @@ public:
      */
     FileInputStream(fp: CFile*) : _fp(fp) {}
 
-    /** Return true if the underlying file was opened successfully. */
+    /**
+     * Tell whether the stream currently has an open native handle.
+     *
+     * @return `true` when the underlying file is open.
+     */
     const isOpen() : bool {
         return _fp != null;
     }
@@ -247,23 +271,30 @@ public:
 }
 
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FileOutputStream — An OutputStream that writes bytes to a file.
-//
-// Inspired by java.io.FileOutputStream.
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * Write bytes to a file-backed output stream.
+ */
 public class FileOutputStream : public OutputStream {
     _fp : CFile*;
 
 public:
-    /** Construct a FileOutputStream from a path string (write mode). */
+    /**
+     * Open a file for writing (truncate mode).
+     *
+     * @param path Null-terminated file path.
+     */
     FileOutputStream(path: const char[]) : _fp(null) {
         f : File(path);
         p : const char[]? = f.getPath();
         _fp = __k_io_file_fopen(&p[0], &"wb\0"[0]);
     }
 
-    /** Construct a FileOutputStream from a path string with append flag. */
+    /**
+     * Open a file for writing with optional append mode.
+     *
+     * @param path Null-terminated file path.
+     * @param append `true` to append, `false` to truncate.
+     */
     FileOutputStream(path: const char[], append: bool) : _fp(null) {
         f : File(path);
         p : const char[]? = f.getPath();
@@ -282,7 +313,11 @@ public:
      */
     FileOutputStream(fp: CFile*) : _fp(fp) {}
 
-    /** Return true if the underlying file was opened successfully. */
+    /**
+     * Tell whether the stream currently has an open native handle.
+     *
+     * @return `true` when the underlying file is open.
+     */
     const isOpen() : bool {
         return _fp != null;
     }

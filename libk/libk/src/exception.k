@@ -50,6 +50,8 @@ public:
 
     /**
      * Construct a throwable with the given error code.
+     *
+     * @param code Application- or runtime-defined error code.
      */
     Throwable(code: int) {
         _code = code;
@@ -58,6 +60,9 @@ public:
     /**
      * Construct a throwable with the given error code and a cause.
      * The cause is the exception that triggered this one (chaining).
+     *
+     * @param code Application- or runtime-defined error code.
+     * @param cause Throwable that caused this one, or `null`.
      */
     Throwable(code: int, cause: Throwable?) {
         _code = code;
@@ -66,6 +71,8 @@ public:
 
     /**
      * Return the error code.
+     *
+     * @return The throwable error code.
      */
     const getCode() : int {
         return _code;
@@ -73,6 +80,8 @@ public:
 
     /**
      * Return the cause of this throwable, or null if there is no cause.
+     *
+     * @return The cause throwable, or `null` if absent.
      */
     const getCause() : Throwable* {
         return _cause;
@@ -80,6 +89,8 @@ public:
 
     /**
      * Return true if this throwable has a cause.
+     *
+     * @return `true` when a cause throwable is present.
      */
     const hasCause() : bool {
         return _cause != null;
