@@ -40,6 +40,7 @@ struct symbol_ref {
     std::string scope;
     std::string type_desc;
     std::string link;
+    std::string brief;
 };
 
 std::string type_to_string(const kdi_type& t) {
@@ -279,9 +280,15 @@ void add_reference(std::vector<symbol_ref>& refs,
                    std::string name,
                    std::string scope,
                    std::string type_desc,
-                   std::string link)
+                   std::string link,
+                   std::string brief = {})
 {
-    refs.push_back({std::move(kind), std::move(name), std::move(scope), std::move(type_desc), std::move(link)});
+    refs.push_back({std::move(kind),
+                    std::move(name),
+                    std::move(scope),
+                    std::move(type_desc),
+                    std::move(link),
+                    std::move(brief)});
 }
 
 bool write_union_page(const kdi_union& un,
@@ -333,7 +340,7 @@ bool write_union_page(const kdi_union& un,
     const fs::path from = module_root;
     const std::string link = rel_link(from, file_path);
     const std::string scope = strip_prefix(parent_scope(un.fq_name), root_fq);
-    add_reference(refs, "union", un.name, scope, "union", link);
+    add_reference(refs, "union", un.name, scope, "union", link, compact_doc_brief(un.doc));
 
     for (size_t i = 0; i < alternatives.size(); ++i) {
         const auto& alt = alternatives[i];
@@ -386,7 +393,7 @@ bool write_enum_page(const kdi_enum& en,
 
     const std::string link = rel_link(module_root, file_path);
     const std::string scope = strip_prefix(parent_scope(en.fq_name), root_fq);
-    add_reference(refs, "enum", en.name, scope, "enum", link);
+    add_reference(refs, "enum", en.name, scope, "enum", link, compact_doc_brief(en.doc));
     return true;
 }
 
@@ -617,7 +624,13 @@ bool write_aggregate_page(const kdi_aggregate& agg,
 
     const std::string type_link = rel_link(module_root, file_path);
     const std::string type_scope = strip_prefix(parent_scope(agg.fq_name), root_fq);
-    add_reference(refs, aggregate_kind_to_string(agg.kind), agg.name, type_scope, aggregate_kind_to_string(agg.kind), type_link);
+    add_reference(refs,
+                  aggregate_kind_to_string(agg.kind),
+                  agg.name,
+                  type_scope,
+                  aggregate_kind_to_string(agg.kind),
+                  type_link,
+                  compact_doc_brief(agg.doc));
 
     for (size_t i = 0; i < fields.size(); ++i) {
         const auto& field = fields[i];
@@ -635,7 +648,8 @@ bool write_aggregate_page(const kdi_aggregate& agg,
                       var.name,
                       strip_prefix(agg.fq_name, root_fq),
                       type_to_string(var.type),
-                      type_link + "#static-var-" + make_slug(var.name) + "-" + std::to_string(i));
+                      type_link + "#static-var-" + make_slug(var.name) + "-" + std::to_string(i),
+                      compact_doc_brief(var.doc));
     }
     for (size_t i = 0; i < methods.size(); ++i) {
         const auto& method = methods[i];
@@ -644,7 +658,8 @@ bool write_aggregate_page(const kdi_aggregate& agg,
                       method.name,
                       strip_prefix(agg.fq_name, root_fq),
                       make_signature(method.name, method.params, &method.return_type),
-                      type_link + "#method-" + make_slug(method.name) + "-" + std::to_string(i));
+                      type_link + "#method-" + make_slug(method.name) + "-" + std::to_string(i),
+                      compact_doc_brief(method.doc));
     }
     for (size_t i = 0; i < constructors.size(); ++i) {
         add_reference(refs,
@@ -652,7 +667,8 @@ bool write_aggregate_page(const kdi_aggregate& agg,
                       agg.name,
                       strip_prefix(agg.fq_name, root_fq),
                       make_signature(agg.name, constructors[i].params, nullptr),
-                      type_link + "#ctor-" + std::to_string(i));
+                      type_link + "#ctor-" + std::to_string(i),
+                      compact_doc_brief(constructors[i].doc));
     }
     if (agg.destructor.has_value()) {
         add_reference(refs,
@@ -660,7 +676,8 @@ bool write_aggregate_page(const kdi_aggregate& agg,
                       "~" + agg.name,
                       strip_prefix(agg.fq_name, root_fq),
                       "destructor",
-                      type_link + "#dtor");
+                      type_link + "#dtor",
+                      compact_doc_brief(agg.destructor->doc));
     }
 
     return true;
@@ -843,7 +860,8 @@ bool write_namespace_tree(const kdi_namespace& ns,
                   ns_name,
                   strip_prefix(parent_scope(ns.fq_name), root_fq),
                   "namespace",
-                  rel_link(module_root, ns_dir / "index.md"));
+                  rel_link(module_root, ns_dir / "index.md"),
+                  compact_doc_brief(ns.doc));
 
     for (size_t i = 0; i < functions.size(); ++i) {
         const auto& fn = functions[i];
@@ -852,7 +870,8 @@ bool write_namespace_tree(const kdi_namespace& ns,
                       fn.name,
                       strip_prefix(parent_scope(fn.fq_name), root_fq),
                       make_signature(fn.name, fn.params, &fn.return_type),
-                      rel_link(module_root, ns_dir / "index.md") + "#" + fn_anchors[i]);
+                      rel_link(module_root, ns_dir / "index.md") + "#" + fn_anchors[i],
+                      compact_doc_brief(fn.doc));
     }
     for (size_t i = 0; i < variables.size(); ++i) {
         const auto& var = variables[i];
@@ -861,7 +880,8 @@ bool write_namespace_tree(const kdi_namespace& ns,
                       var.name,
                       strip_prefix(parent_scope(var.fq_name), root_fq),
                       type_to_string(var.type),
-                      rel_link(module_root, ns_dir / "index.md") + "#" + var_anchors[i]);
+                      rel_link(module_root, ns_dir / "index.md") + "#" + var_anchors[i],
+                      compact_doc_brief(var.doc));
     }
 
     for (const auto& agg : aggregates) {
@@ -921,12 +941,12 @@ bool write_reference_indexes(const fs::path& module_root,
     std::ostringstream by_name;
     by_name << "# Name References\n\n";
     by_name << "- Total symbols: `" << refs.size() << "`\n\n";
-    by_name << "| Name | Kind | Scope | Type |\n";
-    by_name << "|---|---|---|---|\n";
+    by_name << "| Name | Kind | Scope | Type | Brief |\n";
+    by_name << "|---|---|---|---|---|\n";
     for (const auto& ref : refs) {
         by_name << "| [`" << ref.name << "`](" << ref.link << ") | `" << ref.kind << "` | `"
                 << (ref.scope.empty() ? "<root>" : ref.scope) << "` | `"
-                << ref.type_desc << "` |\n";
+                << ref.type_desc << "` | " << md_escape(ref.brief) << " |\n";
     }
     if (!write_file(module_root / "name-references.md", by_name.str(), error_message))
         return false;
@@ -945,12 +965,12 @@ bool write_reference_indexes(const fs::path& module_root,
         if (ref.kind != current_kind) {
             current_kind = ref.kind;
             by_type << "## " << current_kind << "\n\n";
-            by_type << "| Name | Scope | Type |\n";
-            by_type << "|---|---|---|\n";
+            by_type << "| Name | Scope | Type | Brief |\n";
+            by_type << "|---|---|---|---|\n";
         }
         by_type << "| [`" << ref.name << "`](" << ref.link << ") | `"
                 << (ref.scope.empty() ? "<root>" : ref.scope)
-                << "` | `" << ref.type_desc << "` |\n";
+                << "` | `" << ref.type_desc << "` | " << md_escape(ref.brief) << " |\n";
     }
 
     return write_file(module_root / "typed-references.md", by_type.str(), error_message);

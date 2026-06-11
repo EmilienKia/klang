@@ -146,12 +146,16 @@ TEST_CASE("docgen: generate markdown tree with module root index", "[docgen]") {
     REQUIRE(thing_md.find("- [Inner](Thing.Inner.md) - Nested helper payload.") != std::string::npos);
 
     const std::string refs = read_text_file(module_root / "name-references.md");
+    REQUIRE(refs.find("| Name | Kind | Scope | Type | Brief |") != std::string::npos);
     REQUIRE(refs.find("[`Thing`](Thing.md)") != std::string::npos);
+    REQUIRE(refs.find("Main sample class used by docgen tests.") != std::string::npos);
     REQUIRE(refs.find("`namespace`") != std::string::npos);
     REQUIRE(refs.find("[doc](") == std::string::npos);
 
     const std::string typed_refs = read_text_file(module_root / "typed-references.md");
+    REQUIRE(typed_refs.find("| Name | Scope | Type | Brief |") != std::string::npos);
     REQUIRE(typed_refs.find("[`Thing`](Thing.md)") != std::string::npos);
+    REQUIRE(typed_refs.find("Main sample class used by docgen tests.") != std::string::npos);
     REQUIRE(typed_refs.find("[doc](") == std::string::npos);
 
     fs::remove_all(output_dir, ec);
@@ -196,11 +200,15 @@ TEST_CASE("docgen: generate html tree with direct links on names", "[docgen]") {
     REQUIRE(thing_page.find(">detail<") == std::string::npos);
 
     const std::string name_refs = read_text_file(module_root / "name-references.html");
+    REQUIRE(name_refs.find("<th>Brief</th>") != std::string::npos);
     REQUIRE(name_refs.find("<a href=\"Thing.html\">Thing</a>") != std::string::npos);
+    REQUIRE(name_refs.find("Main sample class used by docgen tests.") != std::string::npos);
     REQUIRE(name_refs.find(">doc<") == std::string::npos);
 
     const std::string typed_refs = read_text_file(module_root / "typed-references.html");
+    REQUIRE(typed_refs.find("<th>Brief</th>") != std::string::npos);
     REQUIRE(typed_refs.find("<a href=\"Thing.html\">Thing</a>") != std::string::npos);
+    REQUIRE(typed_refs.find("Main sample class used by docgen tests.") != std::string::npos);
     REQUIRE(typed_refs.find(">doc<") == std::string::npos);
 
     fs::remove_all(output_dir, ec);

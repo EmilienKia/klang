@@ -302,6 +302,7 @@ struct symbol_ref_html {
     std::string scope;
     std::string type_desc;
     std::string link;
+    std::string brief;
 };
 
 struct html_ctx {
@@ -658,10 +659,10 @@ static void append_doc_function_html(std::ostringstream& out, const std::optiona
 
 static void add_ref(std::vector<symbol_ref_html>& refs,
                     std::string kind, std::string name, std::string scope,
-                    std::string type_desc, std::string link)
+                    std::string type_desc, std::string link, std::string brief = {})
 {
     refs.push_back({std::move(kind), std::move(name), std::move(scope),
-                    std::move(type_desc), std::move(link)});
+                    std::move(type_desc), std::move(link), std::move(brief)});
 }
 
 // ─── Compute namespace directory from root ────────────────────────────────────
@@ -735,7 +736,7 @@ static bool write_enum_page_html(const kdi_enum& en,
 
     const std::string link = rel_link_h(ctx.module_root, file_path);
     const std::string scope = strip_pfx(parent_scope_h(en.fq_name), ctx.root_fq);
-    add_ref(refs, "enum", en.name, scope, "enum", link);
+    add_ref(refs, "enum", en.name, scope, "enum", link, compact_doc_brief_h(en.doc));
     return true;
 }
 
@@ -815,7 +816,7 @@ static bool write_union_page_html(const kdi_union& un,
 
     const std::string link = rel_link_h(ctx.module_root, file_path);
     const std::string scope = strip_pfx(parent_scope_h(un.fq_name), ctx.root_fq);
-    add_ref(refs, "union", un.name, scope, "union", link);
+    add_ref(refs, "union", un.name, scope, "union", link, compact_doc_brief_h(un.doc));
 
     for (size_t i = 0; i < alts.size(); ++i) {
         const auto& alt = alts[i];
@@ -1091,7 +1092,7 @@ static bool write_aggregate_page_html(const kdi_aggregate& agg,
     // Register references
     const std::string type_link = rel_link_h(ctx.module_root, file_path);
     const std::string type_scope = strip_pfx(parent_scope_h(agg.fq_name), ctx.root_fq);
-    add_ref(refs, kind, agg.name, type_scope, kind, type_link);
+    add_ref(refs, kind, agg.name, type_scope, kind, type_link, compact_doc_brief_h(agg.doc));
 
     for (size_t i = 0; i < fields.size(); ++i) {
         const auto& f = fields[i];
@@ -1100,23 +1101,30 @@ static bool write_aggregate_page_html(const kdi_aggregate& agg,
     }
     for (size_t i = 0; i < svars.size(); ++i) {
         const auto& v = svars[i];
-        add_ref(refs, "static-variable", v.name, strip_pfx(agg.fq_name, ctx.root_fq), type_to_string_h(v.type),
-                type_link + "#svar-" + make_slug_h(v.name) + "-" + std::to_string(i));
+        add_ref(refs,
+                "static-variable",
+                v.name,
+                strip_pfx(agg.fq_name, ctx.root_fq),
+                type_to_string_h(v.type),
+                type_link + "#svar-" + make_slug_h(v.name) + "-" + std::to_string(i),
+                compact_doc_brief_h(v.doc));
     }
     for (size_t i = 0; i < methods.size(); ++i) {
         const auto& m = methods[i];
         add_ref(refs, "method", m.name, strip_pfx(agg.fq_name, ctx.root_fq),
                 make_sig(m.name, m.params, &m.return_type),
-                type_link + "#method-" + make_slug_h(m.name) + "-" + std::to_string(i));
+                type_link + "#method-" + make_slug_h(m.name) + "-" + std::to_string(i),
+                compact_doc_brief_h(m.doc));
     }
     for (size_t i = 0; i < ctors.size(); ++i) {
         add_ref(refs, "constructor", agg.name, strip_pfx(agg.fq_name, ctx.root_fq),
                 make_sig(agg.name, ctors[i].params, nullptr),
-                type_link + "#ctor-" + std::to_string(i));
+                type_link + "#ctor-" + std::to_string(i),
+                compact_doc_brief_h(ctors[i].doc));
     }
     if (agg.destructor.has_value())
         add_ref(refs, "destructor", "~" + agg.name, strip_pfx(agg.fq_name, ctx.root_fq),
-                "destructor", type_link + "#dtor");
+                "destructor", type_link + "#dtor", compact_doc_brief_h(agg.destructor->doc));
 
     return true;
 }
@@ -1334,7 +1342,8 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
     const std::string ns_name = ns.name.empty() ? ctx.root_fq : ns.name;
     add_ref(refs, "namespace", ns_name,
             strip_pfx(parent_scope_h(ns.fq_name), ctx.root_fq), "namespace",
-            rel_link_h(ctx.module_root, ns_dir / "index.html"));
+            rel_link_h(ctx.module_root, ns_dir / "index.html"),
+            compact_doc_brief_h(ns.doc));
 
     // Register function/variable references
     for (size_t i = 0; i < functions.size(); ++i) {
@@ -1342,14 +1351,16 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
         add_ref(refs, "function", fn.name,
                 strip_pfx(parent_scope_h(fn.fq_name), ctx.root_fq),
                 make_sig(fn.name, fn.params, &fn.return_type),
-                rel_link_h(ctx.module_root, ns_dir / "index.html") + "#" + fn_ids[i]);
+                rel_link_h(ctx.module_root, ns_dir / "index.html") + "#" + fn_ids[i],
+                compact_doc_brief_h(fn.doc));
     }
     for (size_t i = 0; i < variables.size(); ++i) {
         const auto& v = variables[i];
         add_ref(refs, "variable", v.name,
                 strip_pfx(parent_scope_h(v.fq_name), ctx.root_fq),
                 type_to_string_h(v.type),
-                rel_link_h(ctx.module_root, ns_dir / "index.html") + "#" + var_ids[i]);
+                rel_link_h(ctx.module_root, ns_dir / "index.html") + "#" + var_ids[i],
+                compact_doc_brief_h(v.doc));
     }
 
     // Write type pages
@@ -1388,7 +1399,7 @@ static bool write_reference_indexes_html(const html_ctx& ctx,
                 << "Total: <code>" << refs.size() << "</code> symbol(s).</p>\n"
                 << "<h2 class=\"sh\">All Symbols</h2>\n"
                 << "<table class=\"stbl\">\n"
-                << "<thead><tr><th>Name</th><th>Kind</th><th>Scope</th><th>Type</th></tr></thead>\n"
+                << "<thead><tr><th>Name</th><th>Kind</th><th>Scope</th><th>Type</th><th>Brief</th></tr></thead>\n"
                 << "<tbody>\n";
         for (const auto& r : refs)
             content << "<tr>"
@@ -1396,6 +1407,7 @@ static bool write_reference_indexes_html(const html_ctx& ctx,
                     << "<td class=\"tk\">" << kind_badge(r.kind) << "</td>"
                     << "<td class=\"tk\">" << html_escape(r.scope.empty() ? "<root>" : r.scope) << "</td>"
                     << "<td class=\"tt\">" << hcode(r.type_desc) << "</td>"
+                    << "<td class=\"tk\">" << html_escape(r.brief) << "</td>"
                     << "</tr>\n";
         content << "</tbody></table>\n";
 
@@ -1427,13 +1439,14 @@ static bool write_reference_indexes_html(const html_ctx& ctx,
                 content << "<h2 class=\"sh\">" << kind_badge(r.kind)
                         << " " << html_escape(r.kind) << "</h2>\n"
                         << "<table class=\"stbl\">\n"
-                        << "<thead><tr><th>Name</th><th>Scope</th><th>Type</th></tr></thead>\n"
+                        << "<thead><tr><th>Name</th><th>Scope</th><th>Type</th><th>Brief</th></tr></thead>\n"
                         << "<tbody>\n";
             }
             content << "<tr>"
                     << "<td class=\"tn\"><a href=\"" << r.link << "\">" << html_escape(r.name) << "</a></td>"
                     << "<td class=\"tk\">" << html_escape(r.scope.empty() ? "<root>" : r.scope) << "</td>"
                     << "<td class=\"tt\">" << hcode(r.type_desc) << "</td>"
+                    << "<td class=\"tk\">" << html_escape(r.brief) << "</td>"
                     << "</tr>\n";
         }
         if (!current_kind.empty()) content << "</tbody></table>\n";
