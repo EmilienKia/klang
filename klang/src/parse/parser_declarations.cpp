@@ -265,6 +265,24 @@ std::vector<ast::decl_ptr> parser::parse_declarations()
 {
     std::vector<ast::decl_ptr> declarations;
     while(true) {
+        // Tolerate spurious empty declarations: a stray ';' standing where a
+        // declaration is expected (between two declarations or after the last
+        // one) is consumed and reported as a warning. This applies in every
+        // declaration context (unit, namespace, aggregate, ...). Non-block
+        // declarations that explicitly require a terminating ';' consume it
+        // themselves and therefore do not trigger this warning.
+        {
+            lex::lex_holder semi_holder(_lexer);
+            auto lsemi = _lexer.get();
+            if (lsemi == lex::punctuator::SEMICOLON) {
+                semi_holder.sync();
+                warn(static_cast<unsigned int>(k::diag::parser_diag::WARN_SPURIOUS_SEMICOLON),
+                     lsemi, "Spurious ';': empty declaration is ignored");
+                continue;
+            }
+            semi_holder.rollback();
+        }
+
         size_t pre_parse = _lexer.tell();
         ast::decl_ptr declaration = parse_declaration();
         if (!declaration) break;
@@ -1301,10 +1319,9 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_MISSING_CLOSE_BRACE), _lexer.pick_current(), "Enum closing brace is expected");
     }
 
-    // Expect terminal semicolon
-    if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
-        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_MISSING_SEMICOLON), _lexer.pick_current(), "Expected ';' after enum declaration");
-    }
+    // The trailing ';' after the closing brace is not part of the enum
+    // declaration. A spurious ';' here is tolerated as an empty declaration by
+    // parse_declarations() (which emits a warning), like every block declaration.
 
     return std::make_shared<ast::enum_decl>(specifiers, kw_enum, enum_name, explicit_underlying_type, base_name, open_brace_val, close_brace_val, entries);
 }

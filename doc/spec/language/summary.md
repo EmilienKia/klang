@@ -1034,8 +1034,12 @@ p : Point { .x = 10, .y = 20 };
 > Details: [enums.md](enums/enums.md)
 
 ```
-{ Specifier } 'enum' Identifier [ ':' TypeSpec ] '{' { EnumEntry } '}' ';'
+{ Specifier } 'enum' Identifier [ ':' TypeSpec ] '{' { EnumEntry } '}'
 ```
+
+Like every block declaration, an enum has no trailing `;`. A stray `;` after
+the closing brace is tolerated as an empty declaration (reported with a
+warning) by the enclosing declaration list.
 
 ### 19.1 Entries
 

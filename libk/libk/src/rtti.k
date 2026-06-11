@@ -24,7 +24,7 @@ enum Visibility {
     PUBLIC = 0;
     PROTECTED = 1;
     PRIVATE = 2;
-};
+}
 
 /**
  * Base RTTI type information descriptor.

@@ -41,7 +41,7 @@ annotation Retention {
     enum Policy {
         SOURCE;
         RUNTIME;
-    };
+    }
 
     /**
      * Define the retention policy for the annotated annotation type.
@@ -85,7 +85,7 @@ annotation Target {
         FUNCTION;
         CONSTRUCTOR;
         PARAMETER;
-    };
+    }
 
     /**
      * List the element kinds on which the annotated annotation type is allowed.

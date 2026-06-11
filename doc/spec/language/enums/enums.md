@@ -13,7 +13,7 @@ all declared values as the *underlying type*.
 
 ```
 EnumDecl:
-    { Specifier } 'enum' Identifier [ ':' TypeSpec ] '{' { EnumEntry } '}' ';'
+    { Specifier } 'enum' Identifier [ ':' TypeSpec ] '{' { EnumEntry } '}'
 
 EnumEntry:
     Identifier
@@ -23,6 +23,10 @@ EnumEntry:
     [ 'default' ] ';'
 ```
 
+Like every block declaration (`struct`, `class`, `union`, ...), an enum has no
+trailing `;`. A stray `;` after the closing brace is tolerated as an empty
+declaration and reported with a warning by the enclosing declaration list.
+
 ### Example
 
 ```k
@@ -30,7 +34,7 @@ enum Color {
     RED = 0;
     GREEN = 1;
     BLUE = 2 default;
-};
+}
 ```
 
 ### Rules

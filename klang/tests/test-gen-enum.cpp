@@ -18,6 +18,7 @@
 
 #include <catch2/catch_all.hpp>
 
+#include "../src/errors.hpp"
 #include "helpers.hpp"
 
 using namespace k::parse;
@@ -86,6 +87,93 @@ TEST_CASE("Parse enum — empty enum", "[parser][enum]") {
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
     CHECK(decl->entries.empty());
+}
+
+TEST_CASE("Parse enum — no trailing semicolon required", "[parser][enum]") {
+    test_logger log;
+    k::source src{"enum Color { RED = 0; GREEN = 1; BLUE = 2; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_enum_decl();
+    REQUIRE(decl);
+    CHECK(std::string{decl->name.content} == "Color");
+    REQUIRE(decl->entries.size() == 3);
+}
+
+TEST_CASE("Parse enum — no trailing semicolon between declarations", "[parser][enum]") {
+    test_logger log;
+    // Two enums back-to-back without trailing ';' followed by a function.
+    k::source src{"enum A { X; } enum B { Y; } f() : int { return 0; }"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE(unit);
+    REQUIRE(unit->declarations.size() == 3);
+    CHECK_FALSE(log.has_warning());
+}
+
+namespace {
+    bool has_spurious_semicolon_warning(const test_logger& log) {
+        for (const auto& d : log.diagnostics) {
+            if (d.level == k::log::diagnostic::severity::warning
+                && d.code == static_cast<unsigned int>(k::diag::parser_diag::WARN_SPURIOUS_SEMICOLON)) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+TEST_CASE("Parse enum — stray trailing ';' is a warned empty declaration", "[parser][enum][warning]") {
+    test_logger log;
+    k::source src{"enum Color { RED; GREEN; };"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE(unit);
+    REQUIRE(unit->declarations.size() == 1);
+    CHECK(has_spurious_semicolon_warning(log));
+}
+
+TEST_CASE("Parse — stray ';' between declarations is warned, one per ';'", "[parser][warning]") {
+    test_logger log;
+    k::source src{"struct A { } ;; struct B { } ;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE(unit);
+    REQUIRE(unit->declarations.size() == 2);
+    unsigned int warnings = 0;
+    for (const auto& d : log.diagnostics) {
+        if (d.level == k::log::diagnostic::severity::warning
+            && d.code == static_cast<unsigned int>(k::diag::parser_diag::WARN_SPURIOUS_SEMICOLON)) {
+            ++warnings;
+        }
+    }
+    CHECK(warnings == 3);
+}
+
+TEST_CASE("Parse — stray ';' warned inside namespace and aggregate", "[parser][warning]") {
+    test_logger log;
+    k::source src{"namespace n { struct S { } ; } enum E { A; } ;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE(unit);
+    unsigned int warnings = 0;
+    for (const auto& d : log.diagnostics) {
+        if (d.level == k::log::diagnostic::severity::warning
+            && d.code == static_cast<unsigned int>(k::diag::parser_diag::WARN_SPURIOUS_SEMICOLON)) {
+            ++warnings;
+        }
+    }
+    CHECK(warnings == 2);
+}
+
+TEST_CASE("Parse — required ';' of non-block declarations is not warned", "[parser][warning]") {
+    test_logger log;
+    // 'using' and a global variable declaration both legitimately end with ';'.
+    k::source src{"using foo::bar; x : int = 3; enum E { A; }"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE(unit);
+    REQUIRE(unit->declarations.size() == 3);
+    CHECK_FALSE(has_spurious_semicolon_warning(log));
 }
 
 // ============================================================

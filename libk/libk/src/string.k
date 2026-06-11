@@ -28,7 +28,7 @@ public enum Encoding {
     UTF8;
     UTF16;
     UTF32;
-};
+}
 
 /**
  * Choose how a `StringBuilder` selects the encoding of a generated `String`.
@@ -43,7 +43,7 @@ public enum ConsolidationPolicy {
     ForceUtf8;
     ForceUtf16;
     ForceUtf32;
-};
+}
 
 /**
  * Provide low-level utilities for character buffers and Unicode transcoding.

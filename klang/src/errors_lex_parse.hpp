@@ -194,6 +194,7 @@ enum class parser_diag : unsigned int {
     ERR_MULTIPLE_VARARGS                          = 0x01B2,
     // Warnings (0x01C0–0x01CF)
     WARN_SPURIOUS_FUN_PREFIX                      = 0x01C0,
+    WARN_SPURIOUS_SEMICOLON                       = 0x01C1,
     // Exception-related parser errors (0x01D0–0x01DF)
     ERR_THROW_EXPECT_EXPRESSION                   = 0x01D0,
     ERR_THROW_MISSING_SEMICOLON                   = 0x01D1,

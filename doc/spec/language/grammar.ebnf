@@ -291,6 +291,13 @@ Declaration
     | FunctionDecl
     | VariableDecl
     ;
+    (* A stray ';' standing where a Declaration is expected (between two
+       declarations or after the last one) is an empty declaration: it is
+       consumed and reported with a warning, in every declaration context
+       (unit, namespace, aggregate, ...). This is why block declarations
+       (struct, class, interface, annotation, union, enum) never need a
+       trailing ';'. Non-block declarations (using, friend, variable, ...)
+       still require their own terminating ';'. *)
 
 VisibilityDecl
     = ( 'public' | 'protected' | 'private' ) , ':'
@@ -339,8 +346,11 @@ BaseSpec
 EnumDecl
     = { Specifier } , 'enum' , Identifier ,
       [ ':' , TypeSpec ] ,
-      '{' , { EnumEntry } , '}' , ';'
+      '{' , { EnumEntry } , '}'
     ;
+    (* Like every block declaration, an enum has no trailing ';'. A stray ';'
+       after the closing brace is tolerated as an empty declaration (with a
+       warning) by the enclosing declaration list. *)
     (* Disambiguation for ':' TypeSpec:
        - if TypeSpec resolves to an enum type, it is the base enum (derivation);
        - if TypeSpec resolves to a primitive integer or aggregate type, it is
