@@ -221,9 +221,19 @@ public:
 
     // ── InputStream implementation ───────────────────────────────────────
 
-    read() : int {
-        if (_fp == null) return -1;
-        return __k_io_file_fread_byte(_fp);
+    read() : Optional<byte> {
+        if (_fp == null) {
+            empty : Optional<byte>;
+            return empty;
+        }
+        raw : int = __k_io_file_fread_byte(_fp);
+        if (raw < 0) {
+            empty : Optional<byte>;
+            return empty;
+        }
+        val : byte = (byte) raw;
+        result : Optional<byte>(val);
+        return result;
     }
 
     read(buf: byte[], off: unsigned int, len: unsigned int) : int {
@@ -239,8 +249,8 @@ public:
     skip(n: unsigned long) : unsigned long {
         skipped : unsigned long = 0;
         while (skipped < n) {
-            b : int = read();
-            if (b == -1) return skipped;
+            b : Optional<byte> = read();
+            if (b.hasValue() == false) return skipped;
             skipped = skipped + 1;
         }
         return skipped;

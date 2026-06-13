@@ -44,7 +44,7 @@ public:
 
     // ── InputStream implementation (all delegated) ───────────────────────
 
-    read() : int {
+    read() : Optional<byte> {
         return _in->read();
     }
 

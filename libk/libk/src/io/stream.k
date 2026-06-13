@@ -23,17 +23,18 @@ namespace io {
 /**
  * Define the base contract for byte-oriented input streams.
  *
- * `read()` returns the next byte as an `int` in `[0,255]`, or `-1` at end of
- * stream. Bulk reads fill caller-provided buffers and report the number of
- * bytes actually read.
+ * `read()` returns the next byte as an `Optional<byte>`, set when a byte was
+ * successfully read, or empty at end of stream. Bulk reads fill
+ * caller-provided buffers and report the number of bytes actually read.
  */
 public interface InputStream {
     /**
      * Read a single byte.
      *
-     * @return The next byte as an int in `[0,255]`, or `-1` at end of stream.
+     * @return An `Optional<byte>` containing the next byte if one is available,
+     *         or an empty Optional at end of stream.
      */
-    read() : int;
+    read() : Optional<byte>;
 
     /**
      * Read up to `len` bytes into `buf` starting at `off`.
@@ -156,11 +157,15 @@ public:
 
     // ── InputStream implementation ───────────────────────────────────────
 
-    read() : int {
-        if (_pos >= _count) return -1;
-        val : int = ((int) _buf[_pos]) & 0xFF;
+    read() : Optional<byte> {
+        if (_pos >= _count) {
+            empty : Optional<byte>;
+            return empty;
+        }
+        val : byte = _buf[_pos];
         _pos = _pos + 1;
-        return val;
+        result : Optional<byte>(val);
+        return result;
     }
 
     read(buf: byte[], off: unsigned int, len: unsigned int) : int {

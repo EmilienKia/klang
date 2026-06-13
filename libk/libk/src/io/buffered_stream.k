@@ -54,14 +54,18 @@ public:
 
     // ── InputStream overrides ────────────────────────────────────────────
 
-    read() : int {
+    read() : Optional<byte> {
         if (_bpos >= _bcount) {
             _fill();
-            if (_bpos >= _bcount) return -1;
+            if (_bpos >= _bcount) {
+                empty : Optional<byte>;
+                return empty;
+            }
         }
-        val : int = ((int) _bbuf[_bpos]) & 0xFF;
+        val : byte = _bbuf[_bpos];
         _bpos = _bpos + 1;
-        return val;
+        result : Optional<byte>(val);
+        return result;
     }
 
     read(buf: byte[], off: unsigned int, len: unsigned int) : int {
