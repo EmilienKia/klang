@@ -147,14 +147,14 @@ TEST_CASE("ByteArrayInputStream read returns bytes then -1", "[libk][io][bais]")
             buf[1] = (byte) 20;
             buf[2] = (byte) 30;
             bais : k::io::ByteArrayInputStream(buf, 3);
-            v0 : int = bais.read();
-            v1 : int = bais.read();
-            v2 : int = bais.read();
-            eof : int = bais.read();
+            v0 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
+            v1 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
+            v2 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
+            atEof : bool = bais.read().hasValue();
             if (v0 != 10) return 1;
             if (v1 != 20) return 2;
             if (v2 != 30) return 3;
-            if (eof != -1) return 4;
+            if (atEof) return 4;
             return 0;
         }
     )SRC");
@@ -208,7 +208,7 @@ TEST_CASE("ByteArrayInputStream skip", "[libk][io][bais]") {
             buf[3] = (byte) 40; buf[4] = (byte) 50;
             bais : k::io::ByteArrayInputStream(buf, 5);
             skipped : long = bais.skip(3);
-            val : int = bais.read();
+            val : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
             if (skipped != 3) return 1;
             if (val != 40) return 2;
             return 0;
@@ -272,15 +272,15 @@ TEST_CASE("Round-trip BAOS to BAIS", "[libk][io][baos][bais]") {
             arr : byte[]* = baos.toByteArray();
             bais : k::io::ByteArrayInputStream(arr, baos.size());
 
-            v0 : int = bais.read();
-            v1 : int = bais.read();
-            v2 : int = bais.read();
-            eof : int = bais.read();
+            v0 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
+            v1 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
+            v2 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
+            atEof : bool = bais.read().hasValue();
 
             if (v0 != 100) return 1;
             if (v1 != 200) return 2;
             if (v2 != 42) return 3;
-            if (eof != -1) return 4;
+            if (atEof) return 4;
             return 0;
         }
     )SRC");

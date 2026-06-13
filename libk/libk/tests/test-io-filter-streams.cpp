@@ -58,14 +58,14 @@ TEST_CASE("FilterInputStream delegates read()", "[libk][io][filter]") {
             bais : k::io::ByteArrayInputStream(buf, 3);
             fis : k::io::FilterInputStream(&bais);
 
-            v0 : int = fis.read();
-            v1 : int = fis.read();
-            v2 : int = fis.read();
-            eof : int = fis.read();
+            v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            v1 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            v2 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            atEof : bool = fis.read().hasValue();
             if (v0 != 10) return 1;
             if (v1 != 20) return 2;
             if (v2 != 30) return 3;
-            if (eof != -1) return 4;
+            if (atEof) return 4;
             return 0;
         }
     )SRC");
@@ -209,13 +209,13 @@ TEST_CASE("FilterInputStream delegates skip()", "[libk][io][filter]") {
 
             skipped : unsigned long = fis.skip(2uL);
             if (skipped != 2uL) return 1;
-            v : int = fis.read();
+            v : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             if (v != 30) return 2;
             // skip beyond remaining
             skipped = fis.skip(10uL);
             if (skipped != 2uL) return 3;
-            eof : int = fis.read();
-            if (eof != -1) return 4;
+            atEof : bool = fis.read().hasValue();
+            if (atEof) return 4;
             return 0;
         }
     )SRC");
@@ -240,7 +240,7 @@ TEST_CASE("FilterInputStream delegates close()", "[libk][io][filter]") {
             bais : k::io::ByteArrayInputStream(buf, 2);
             fis : k::io::FilterInputStream(&bais);
 
-            v : int = fis.read();
+            v : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             if (v != 1) return 1;
             fis.close();
             // After close on ByteArrayInputStream, nothing crashes
@@ -323,12 +323,12 @@ TEST_CASE("Filter streams round-trip", "[libk][io][filter]") {
             bais : k::io::ByteArrayInputStream(arr, baos.size());
             fis : k::io::FilterInputStream(&bais);
 
-            v0 : int = fis.read();
-            v1 : int = fis.read();
-            eof : int = fis.read();
+            v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            v1 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            atEof : bool = fis.read().hasValue();
             if (v0 != 42) return 1;
             if (v1 != 99) return 2;
-            if (eof != -1) return 3;
+            if (atEof) return 3;
             return 0;
         }
     )SRC");

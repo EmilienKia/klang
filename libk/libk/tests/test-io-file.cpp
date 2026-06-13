@@ -270,9 +270,9 @@ TEST_CASE("FileInputStream read single bytes written by FileOutputStream", "[lib
             fis : k::io::FileInputStream("/tmp/klang_test_fis_single");
             if (!fis.isOpen()) return 1;
 
-            v0 : int = fis.read();
-            v1 : int = fis.read();
-            v2 : int = fis.read();
+            v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            v1 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            v2 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             fis.close();
 
             if (v0 != 10) return 2;
@@ -306,12 +306,12 @@ TEST_CASE("FileInputStream read returns -1 at EOF", "[libk][io][file]") {
 
             // Read 1 byte, then expect -1
             fis : k::io::FileInputStream("/tmp/klang_test_fis_eof");
-            v0 : int = fis.read();
-            v1 : int = fis.read();
+            v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            atEof : bool = fis.read().hasValue();
             fis.close();
 
             if (v0 != 42) return 1;
-            if (v1 != -1) return 2;
+            if (atEof) return 2;
             return 0;
         }
     )SRC");
@@ -350,9 +350,9 @@ TEST_CASE("FileOutputStream append mode", "[libk][io][file]") {
 
             // Read back all 3 bytes
             fis : k::io::FileInputStream("/tmp/klang_test_fos_append");
-            v0 : int = fis.read();
-            v1 : int = fis.read();
-            v2 : int = fis.read();
+            v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            v1 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
+            v2 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             fis.close();
 
             if (v0 != 1) return 2;
@@ -512,12 +512,12 @@ TEST_CASE("FileOutputStream to FileInputStream round-trip", "[libk][io][file]") 
             fis : k::io::FileInputStream("/tmp/klang_test_roundtrip");
             j : int = 0;
             while (j < 256) {
-                v : int = fis.read();
+                v : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
                 if (v != j) return j + 1;
                 j = j + 1;
             }
             // Next read should be EOF
-            if (fis.read() != -1) return 257;
+            if (fis.read().hasValue()) return 257;
             fis.close();
             return 0;
         }

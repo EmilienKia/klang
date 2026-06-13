@@ -59,19 +59,19 @@ TEST_CASE("BufferedInputStream single byte reads", "[libk][io][buffered]") {
             bais : k::io::ByteArrayInputStream(data, 5);
             bis : k::io::BufferedInputStream(&bais, 3);
 
-            v0 : int = bis.read();
-            v1 : int = bis.read();
-            v2 : int = bis.read();
-            v3 : int = bis.read();
-            v4 : int = bis.read();
-            eof : int = bis.read();
+            v0 : int = (int)(unsigned byte) bis.read().getOr((byte) 0);
+            v1 : int = (int)(unsigned byte) bis.read().getOr((byte) 0);
+            v2 : int = (int)(unsigned byte) bis.read().getOr((byte) 0);
+            v3 : int = (int)(unsigned byte) bis.read().getOr((byte) 0);
+            v4 : int = (int)(unsigned byte) bis.read().getOr((byte) 0);
+            atEof : bool = bis.read().hasValue();
 
             if (v0 != 10) return 1;
             if (v1 != 20) return 2;
             if (v2 != 30) return 3;
             if (v3 != 40) return 4;
             if (v4 != 50) return 5;
-            if (eof != -1) return 6;
+            if (atEof) return 6;
             return 0;
         }
     )SRC");
@@ -265,13 +265,13 @@ TEST_CASE("Buffered streams round-trip", "[libk][io][buffered]") {
 
             i = 0;
             while (i < 10) {
-                val : int = bis.read();
+                val : int = (int)(unsigned byte) bis.read().getOr((byte) 0);
                 expected : int = i + 100;
                 if (val != expected) return i + 1;
                 i = i + 1;
             }
-            eof : int = bis.read();
-            if (eof != -1) return 99;
+            atEof : bool = bis.read().hasValue();
+            if (atEof) return 99;
             return 0;
         }
     )SRC");

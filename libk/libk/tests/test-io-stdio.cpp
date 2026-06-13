@@ -91,10 +91,11 @@ TEST_CASE("stdio: read stdin and echo to stdout", "[libk][io][stdio]") {
     auto res = compile_and_run(R"SRC(
         module __stdio_echo__;
         main() : int {
-            b : int = k::io::stdin.read();
-            while (b != -1) {
-                k::io::stdout.write(b);
-                b = k::io::stdin.read();
+            buf : byte[1];
+            n : int = k::io::stdin.read(buf, 0, 1);
+            while (n > 0) {
+                k::io::stdout.write((int) buf[0]);
+                n = k::io::stdin.read(buf, 0, 1);
             }
             k::io::stdout.flush();
             return 0;
@@ -118,10 +119,11 @@ TEST_CASE("stdio: read stdin, write stdout and stderr", "[libk][io][stdio]") {
         module __stdio_rw__;
         main() : int {
             k::io::stderr.print("start ");
-            b : int = k::io::stdin.read();
-            while (b != -1) {
-                k::io::stdout.write(b);
-                b = k::io::stdin.read();
+            buf : byte[1];
+            n : int = k::io::stdin.read(buf, 0, 1);
+            while (n > 0) {
+                k::io::stdout.write((int) buf[0]);
+                n = k::io::stdin.read(buf, 0, 1);
             }
             k::io::stdout.flush();
             k::io::stderr.println("done");

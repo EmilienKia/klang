@@ -404,7 +404,17 @@ void type_reference_resolver::validate_primitive_variable(var_init_context& ctx)
         // Align init expr type to variable type
         auto cast = adapt_type(expr, ctx.var_type);
         if (!cast) {
-            // TODO throw_error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_NS_COLLISION_ENFORCED), ...)
+            // The initialiser cannot be implicitly converted to the variable's
+            // primitive/enum type. Report a type mismatch instead of silently
+            // accepting an incompatible initialisation (which would reinterpret
+            // memory and produce garbage values or crashes at run time).
+            throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_INIT_TYPE_MISMATCH), ctx.var_lexeme,
+                "Incompatible types in initialisation of variable '{}': "
+                "the initialiser of type '{}' cannot be implicitly converted to the target type '{}'; "
+                "use an explicit cast if a narrowing conversion is intended",
+                {ctx.var.get_fq_name(),
+                 expr->get_type() ? expr->get_type()->to_string() : "?",
+                 ctx.var_type ? ctx.var_type->to_string() : "?"});
         } else if (cast != expr) {
             // Casted, assign casted expression as return expr.
             // Step 3: Single init arg → call adapt_type to insert implicit cast if needed

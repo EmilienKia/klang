@@ -181,6 +181,7 @@ klang_gen_test(klang-tests-gen-core 90
         tests/test-gen-func-ref.cpp
         tests/test-gen-intrinsic.cpp
         tests/test-gen-string-literal.cpp
+        tests/test-gen-variable-init.cpp
         tests/test-gen-init-order.cpp
         tests/test-gen-static-ctor-dtor.cpp
         tests/test-gen-static-local.cpp
