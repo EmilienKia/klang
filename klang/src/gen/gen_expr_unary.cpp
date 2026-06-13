@@ -99,24 +99,35 @@ void symbol_resolver::visit_binary_expression(binary_expression& expr)
 
 void type_reference_resolver::visit_binary_expression(binary_expression& expr)
 {
-    auto& left = expr.left();
-    auto& right = expr.right();
-
-    if(!left || !right) {
+    if(!expr.left() || !expr.right()) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
             "Internal error: binary expression has a null left or right operand; "
             "this indicates a malformed AST or a compiler bug");
     }
 
-    left->accept(*this);
-    right->accept(*this);
+    // Visit the left operand and consume any replacement produced by inline
+    // temporary construction (e.g. S(args) as an operand).
+    _replacement_expr = nullptr;
+    expr.left()->accept(*this);
+    if (_replacement_expr) {
+        expr.assign_left(_replacement_expr);
+        _replacement_expr = nullptr;
+    }
 
-    if(!type::is_resolved(left->get_type())) {
+    // Visit the right operand similarly.
+    _replacement_expr = nullptr;
+    expr.right()->accept(*this);
+    if (_replacement_expr) {
+        expr.assign_right(_replacement_expr);
+        _replacement_expr = nullptr;
+    }
+
+    if(!type::is_resolved(expr.left()->get_type())) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F007), expr.first_lexeme(),
             "Internal error: the left operand of a binary operator could not be type-resolved; "
             "the type of each operand must be known before the binary expression can be typed");
     }
-    if(!type::is_resolved(right->get_type())) {
+    if(!type::is_resolved(expr.right()->get_type())) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F008), expr.first_lexeme(),
             "Internal error: the right operand of a binary operator could not be type-resolved; "
             "the type of each operand must be known before the binary expression can be typed");

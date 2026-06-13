@@ -159,8 +159,7 @@ public:
         i : int = 0;
         while (i < len) {
             if (buf[off + i] == c) {
-                r : int = off + i;
-                return r;
+                return off + i;
             }
             i = i + 1;
         }
@@ -181,8 +180,7 @@ public:
         while (i > 0) {
             i = i - 1;
             if (buf[off + i] == c) {
-                r : int = off + i;
-                return r;
+                return off + i;
             }
         }
         return -1;
@@ -203,16 +201,14 @@ public:
      */
     public static find(haystack: const char[], hOff: unsigned int, hLen: unsigned int, needle: const char[], nOff: unsigned int, nLen: unsigned int) : int {
         if (nLen == 0) {
-            r : int = hOff;
-            return r;
+            return (int) hOff;
         }
         if (nLen > hLen) return -1;
         limit : int = hLen - nLen + 1;
         i : int = 0;
         while (i < limit) {
             if (equalsAt(haystack, hOff + i, needle, nOff, nLen)) {
-                r : int = hOff + i;
-                return r;
+                return hOff + i;
             }
             i = i + 1;
         }
@@ -232,16 +228,14 @@ public:
      */
     public static rfind(haystack: const char[], hOff: unsigned int, hLen: unsigned int, needle: const char[], nOff: unsigned int, nLen: unsigned int) : int {
         if (nLen == 0) {
-            r : int = hOff + hLen;
-            return r;
+            return hOff + hLen;
         }
         if (nLen > hLen) return -1;
         i : int = hLen - nLen + 1;
         while (i > 0) {
             i = i - 1;
             if (equalsAt(haystack, hOff + i, needle, nOff, nLen)) {
-                r : int = hOff + i;
-                return r;
+                return hOff + i;
             }
         }
         return -1;
@@ -899,8 +893,7 @@ public:
      *  Returns the starting index, or -1 if not found. */
     const rfind(needle : const String&) : int {
         if (needle._size == 0) {
-            r : int = _size;
-            return r;
+            return (int) _size;
         }
         if (_size == 0) return -1;
         b : char[]! = _u32();
@@ -988,24 +981,21 @@ public:
      *  If start + len > size(), the result is truncated. */
     const substr(start : unsigned int, len : unsigned int) : String {
         if (start >= _size) {
-            emptyStr : String;
-            return emptyStr;
+            return String();
         }
         actual : unsigned int = len;
         if (start + actual > _size) {
             actual = _size - start;
         }
         if (actual == 0) {
-            emptyStr : String;
-            return emptyStr;
+            return String();
         }
         src : char[]! = _u32();
         allocSz : unsigned int = actual + 1;
         buf : char[]! = new char[allocSz];
         CharHelpers::copy(buf, 0u, src, start, actual);
         buf[actual] = (char) 0;
-        result : String(buf, actual);
-        return result;
+        return String(buf, actual);
     }
 
     /** Return a new String containing the first `count` characters. */
@@ -1016,8 +1006,7 @@ public:
     /** Return a new String containing the last `count` characters. */
     const last(count : unsigned int) : String {
         if (count >= _size) {
-            copy : String(this);
-            return copy;
+            return String(this);
         }
         return substr(_size - count, count);
     }
@@ -1484,14 +1473,12 @@ public:
      *  code point via set(); `(char) sb[i]` reads it. The proxy is invalidated
      *  by any structural mutation (insert/remove/clear/…). */
     operator [](index : unsigned int) : CharRef {
-        r : CharRef(this, index);
-        return r;
+        return CharRef(this, index);
     }
 
     /** Mutable element access (named form) — returns a write-proxy. */
     at(index : unsigned int) : CharRef {
-        r : CharRef(this, index);
-        return r;
+        return CharRef(this, index);
     }
 
     /** Copy all fragment content into `dst` (UTF-32 code points) at `dstOff`. */
@@ -1611,8 +1598,7 @@ public:
             return r;
         }
         if (_totalSize == 0u) return -1;
-        tmp : String(this);
-        return tmp.rfind(needle);
+        return String(this).rfind(needle);
     }
 
     /** Return true if the content contains character `c`. */
@@ -1643,39 +1629,34 @@ public:
     /** Count non-overlapping occurrences of `needle`. */
     const count(needle : const String&) : unsigned int {
         if (needle.size() == 0u) return 0u;
-        tmp : String(this);
-        return tmp.count(needle);
+        return String(this).count(needle);
     }
 
     /** Return true if the content begins with `prefix`. */
     const beginsWith(prefix : const String&) : bool {
         if (prefix.size() > _totalSize) return false;
         if (prefix.size() == 0u) return true;
-        tmp : String(this);
-        return tmp.beginsWith(prefix);
+        return String(this).beginsWith(prefix);
     }
 
     /** Return true if the content ends with `suffix`. */
     const endsWith(suffix : const String&) : bool {
         if (suffix.size() > _totalSize) return false;
         if (suffix.size() == 0u) return true;
-        tmp : String(this);
-        return tmp.endsWith(suffix);
+        return String(this).endsWith(suffix);
     }
 
     /** Extract a substring as a new String (UTF-32 storage). */
     const substr(start : unsigned int, len : unsigned int) : String {
         if (start >= _totalSize) {
-            empty : String;
-            return empty;
+            return String();
         }
         actual : unsigned int = len;
         if (start + actual > _totalSize) {
             actual = _totalSize - start;
         }
         if (actual == 0u) {
-            empty : String;
-            return empty;
+            return String();
         }
         buf : char[]! = new char[actual + 1u];
         i : unsigned int = 0u;
@@ -1684,8 +1665,7 @@ public:
             i = i + 1u;
         }
         buf[actual] = (char) 0;
-        result : String(buf, actual);
-        return result;
+        return String(buf, actual);
     }
 
     /** Return a new String containing the first `count` characters. */
@@ -1694,8 +1674,7 @@ public:
     /** Return a new String containing the last `count` characters. */
     const last(count : unsigned int) : String {
         if (count >= _totalSize) {
-            copy : String(this);
-            return copy;
+            return String(this);
         }
         return substr(_totalSize - count, count);
     }
@@ -1867,8 +1846,7 @@ public:
     /** Prepend a const char[] at the beginning. */
     prepend(src : const char[]) : StringBuilder& {
         if (src.size > 1u) {
-            tmp : String(src);
-            return insert(0u, tmp);
+            return insert(0u, String(src));
         }
         return this;
     }
@@ -1898,8 +1876,7 @@ public:
 
     /** Insert a const char[] at the given logical position. */
     insert(pos : unsigned int, src : const char[]) : StringBuilder& {
-        tmp : String(src);
-        return insert(pos, tmp);
+        return insert(pos, String(src));
     }
 
     /** Remove `count` characters starting at position `start`. */
@@ -1927,8 +1904,7 @@ public:
 
     /** Replace `count` characters starting at `start` with a char[] literal. */
     replace(start : unsigned int, count : unsigned int, src : const char[]) : StringBuilder& {
-        tmp : String(src);
-        return replace(start, count, tmp);
+        return replace(start, count, String(src));
     }
 
     /** Replace all non-overlapping occurrences of `needle` with `replacement`. */
@@ -2021,9 +1997,7 @@ public:
     const operator ==(other : const StringBuilder&) : bool {
         if (_totalSize != other._totalSize) return false;
         if (_totalSize == 0u) return true;
-        a : String(this);
-        b : String(other);
-        return a == b;
+        return String(this) == String(other);
     }
 
     /** Inequality. */
@@ -2213,8 +2187,7 @@ private:
     /** Build an immutable String holding the content in encoding `enc`. */
     const _buildString(enc : Encoding) : String {
         dec : char[]! = _decodeAll();
-        result : String(dec, enc);
-        return result;
+        return String(dec, enc);
     }
 }
 

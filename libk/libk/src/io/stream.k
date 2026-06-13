@@ -159,13 +159,11 @@ public:
 
     read() : Optional<byte> {
         if (_pos >= _count) {
-            empty : Optional<byte>;
-            return empty;
+            return Optional<byte>();
         }
         val : byte = _buf[_pos];
         _pos = _pos + 1;
-        result : Optional<byte>(val);
-        return result;
+        return Optional<byte>(val);
     }
 
     read(buf: byte[], off: unsigned int, len: unsigned int) : int {

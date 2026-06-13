@@ -58,14 +58,12 @@ public:
         if (_bpos >= _bcount) {
             _fill();
             if (_bpos >= _bcount) {
-                empty : Optional<byte>;
-                return empty;
+                return Optional<byte>();
             }
         }
         val : byte = _bbuf[_bpos];
         _bpos = _bpos + 1;
-        result : Optional<byte>(val);
-        return result;
+        return Optional<byte>(val);
     }
 
     read(buf: byte[], off: unsigned int, len: unsigned int) : int {

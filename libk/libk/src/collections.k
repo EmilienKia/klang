@@ -986,8 +986,7 @@ class Vector : public Collection<T> {
         if (_size == _capacity) {
             grow(_size + 1);
         }
-        idx : int = _size;
-        _slot.construct(idx, args...);
+        _slot.construct(_size, args...);
         _size = _size + 1;
     }
 
@@ -1063,14 +1062,12 @@ class Vector : public Collection<T> {
 
     /** Return a mutable reference to the back element. Undefined if empty. */
     peekBack() : T& {
-        idx : int = _size - 1;
-        return _slot.get(idx);
+        return _slot.get(_size - 1);
     }
 
     /** Return a const reference to the back element. Undefined if empty. */
     const peekBack() : const T& {
-        idx : int = _size - 1;
-        return _slot.get(idx);
+        return _slot.get(_size - 1);
     }
 
     /** Return a mutable reference to the element at the given index. Undefined if out of bounds. */
@@ -1102,8 +1099,7 @@ class Vector : public Collection<T> {
     removeBack() : bool {
         if (_size == 0) return false;
         _size = _size - 1;
-        idx : int = _size;
-        _slot.destruct(idx);
+        _slot.destruct(_size);
         return true;
     }
 
@@ -1123,8 +1119,7 @@ class Vector : public Collection<T> {
             i = i + 1;
         }
         _size = _size - 1;
-        idx : int = _size;
-        _slot.destruct(idx);
+        _slot.destruct(_size);
         return true;
     }
 

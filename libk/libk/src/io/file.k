@@ -223,17 +223,14 @@ public:
 
     read() : Optional<byte> {
         if (_fp == null) {
-            empty : Optional<byte>;
-            return empty;
+            return Optional<byte>();
         }
         raw : int = __k_io_file_fread_byte(_fp);
         if (raw < 0) {
-            empty : Optional<byte>;
-            return empty;
+            return Optional<byte>();
         }
         val : byte = (byte) raw;
-        result : Optional<byte>(val);
-        return result;
+        return Optional<byte>(val);
     }
 
     read(buf: byte[], off: unsigned int, len: unsigned int) : int {
@@ -249,8 +246,7 @@ public:
     skip(n: unsigned long) : unsigned long {
         skipped : unsigned long = 0;
         while (skipped < n) {
-            b : Optional<byte> = read();
-            if (b.hasValue() == false) return skipped;
+            if (read().hasValue() == false) return skipped;
             skipped = skipped + 1;
         }
         return skipped;

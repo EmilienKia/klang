@@ -151,8 +151,7 @@ struct Optional {
      *   opt : Optional<int> = Optional<int>::empty();
      */
     static empty() : Optional<T> {
-        o : Optional<T>;
-        return o;
+        return Optional<T>();
     }
 }
 

@@ -213,9 +213,7 @@ public:
     }
 
     readBool() : bool {
-        opt : Optional<byte>(_in->read());
-        zero : byte = (byte) 0;
-        return opt.hasValue() && opt.get() != zero;
+        return Optional<byte>(_in->read()).getOr((byte) 0) != (byte) 0;
     }
 
     readFully(buf: byte[], off: unsigned int, len: unsigned int) {
@@ -344,6 +342,9 @@ public:
 }
 
 } // namespace io
+
+
+
 
 
 
