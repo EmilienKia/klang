@@ -279,6 +279,13 @@ TemplateArg
     | ConditionalExpr                                            (* value argument — must be a compile-time constant *)
     ;
 
+GenericDeclaration
+    = 'generic' , '<' , TemplateParameterList , '>'
+    ;
+    (* Like TemplateDeclaration but restricted to type parameters only.
+       Value parameters (Identifier or TypeSpec TemplateParameterKind) are forbidden.
+       GenericDeclaration can prefix aggregate and function declarations. *)
+
 (* ---------- Declarations ------------------------------------------------- *)
 
 Declaration
@@ -287,6 +294,7 @@ Declaration
     | UsingDecl
     | FriendDecl
     | AggregateDecl
+    | UnionDecl
     | EnumDecl
     | FunctionDecl
     | VariableDecl
@@ -326,7 +334,7 @@ FriendFilter
 (* ---------- Aggregates (struct / class / interface / annotation) ---------- *)
 
 AggregateDecl
-    = { AnnotationDef } , [ TemplateDeclaration ] , { Specifier } ,
+    = { AnnotationDef } , [ TemplateDeclaration | GenericDeclaration ] , { Specifier } ,
       ( 'struct' | 'class' | 'interface' | 'annotation' ) ,
       Identifier ,
       [ ':' , BaseClause ] ,
@@ -416,12 +424,19 @@ AnnotationDef
 
 FunctionDecl
     = { AnnotationDef } , [ TemplateDeclaration | GenericDeclaration ] , { Specifier } ,
-      ( FunctionHead | OperatorFunctionHead | DestructorHead ) ,
-      '(' , [ ParameterList ] , ')' ,
-      [ NamedReturnVar ] ,
-      [ ':' , ( ReturnTypeOrMemberInitList ) ] ,
-      [ ThrowsClause ] ,
-      FunctionBody
+      (   (* Standard function, regular operator, subscript operator, destructor *)
+          ( FunctionHead | OperatorFunctionHead | DestructorHead ) ,
+          '(' , [ ParameterList ] , ')' ,
+          [ NamedReturnVar ] ,
+          [ ':' , ReturnTypeOrMemberInitList ] ,
+          [ ThrowsClause ] ,
+          FunctionBody
+      |   (* Casting / conversion operator — the '()' is the operator symbol, no param list follows *)
+          CastOperatorFunctionHead ,
+          [ ':' , TypeSpec ] ,                                   (* type is required unless body is '-> delete' *)
+          [ ThrowsClause ] ,
+          FunctionBody
+      )
     ;
 
 FunctionHead
@@ -438,7 +453,11 @@ DestructorHead
 
 OperatorFunctionHead
     = 'operator' , OperatorSymbol
-    | 'operator' , '(' , ')'                                    (* cast operator *)
+    | 'operator' , '[' , ']'                                     (* subscript operator *)
+    ;
+
+CastOperatorFunctionHead
+    = 'operator' , '(' , ')'                                     (* casting / conversion operator *)
     ;
 
 OperatorSymbol
@@ -488,7 +507,7 @@ StaticDep
 
 FunctionBody
     = BlockStatement
-    | '->' , ( 'default' | 'delete' ) , ';'                     (* aliasing *)
+    | '->' , ( 'default' | 'delete' ) , ';'                     (* aliasing; '-> default' only for constructors and assignment operators *)
     | '->' , QualifiedIdentifier ,
              [ '(' , [ TypeSpecList ] , ')' ] , ';'              (* redirect *)
     | ';'                                                        (* abstract / bodyless *)
