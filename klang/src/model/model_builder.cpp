@@ -33,11 +33,8 @@
 namespace k::model {
 
     namespace {
-        bool has_non_empty_doc_comment(const parse::ast::doc_comment_list& comments) {
-            for (const auto& c : comments) {
-                if (!c.content.empty()) return true;
-            }
-            return false;
+        bool has_doc(const std::optional<parse::ast::documentation>& doc) {
+            return doc.has_value() && !doc->empty();
         }
     } // anonymous namespace
 
@@ -84,10 +81,10 @@ namespace k::model {
         if(name.qname) {
             _unit.set_unit_name(name.qname->to_name());
         }
-        if (has_non_empty_doc_comment(name.doc_comments)) {
+        if (has_doc(name.doc)) {
             auto unit_ptr = _unit.shared_as<model::unit>();
             if (unit_ptr) {
-                unit_ptr->set_documentation(doc::build_typed_doc<doc::unit_doc>(unit_ptr, name.doc_comments));
+                unit_ptr->set_documentation(doc::build_typed_doc<doc::unit_doc>(unit_ptr, *name.doc));
             }
         }
     }
@@ -152,8 +149,8 @@ namespace k::model {
 
         trace("[model_builder::visit_namespace_decl] namespace '{}'", {std::string{ns.name->content}});
 
-        if (has_non_empty_doc_comment(ns.doc_comments) && !namesp->get_documentation()) {
-            namesp->set_documentation(doc::build_typed_doc<doc::namespace_doc>(namesp, ns.doc_comments));
+        if (has_doc(ns.doc) && !namesp->get_documentation()) {
+            namesp->set_documentation(doc::build_typed_doc<doc::namespace_doc>(namesp, *ns.doc));
         }
 
         // Push namespace context
@@ -298,8 +295,8 @@ namespace k::model {
         bool is_static_nested = lex::keyword::has(st.specifiers, lex::keyword::STATIC);
         agg->set_static_nested(is_static_nested);
         agg->set_ast_aggregate_decl(st.shared_as<parse::ast::aggregate_decl>());
-        if (has_non_empty_doc_comment(st.doc_comments)) {
-            agg->set_documentation(doc::build_typed_doc<doc::aggregate_doc>(agg, st.doc_comments));
+        if (has_doc(st.doc)) {
+            agg->set_documentation(doc::build_typed_doc<doc::aggregate_doc>(agg, *st.doc));
         }
 
         // Detect if the final specifier is present
@@ -527,8 +524,8 @@ namespace k::model {
 
         auto un = parent_scope->define_union(std::string{st.name.content});
         un->set_ast_aggregate_decl(st.shared_as<parse::ast::aggregate_decl>());
-        if (has_non_empty_doc_comment(st.doc_comments)) {
-            un->set_documentation(doc::build_typed_doc<doc::union_doc>(un, st.doc_comments));
+        if (has_doc(st.doc)) {
+            un->set_documentation(doc::build_typed_doc<doc::union_doc>(un, *st.doc));
         }
 
         // Store raw base union name for resolution in the symbol resolver
@@ -660,8 +657,8 @@ namespace k::model {
 
         auto en = parent_scope->define_enum(std::string{decl.name.content});
         en->set_ast_enum_decl(decl.shared_as<parse::ast::enum_decl>());
-        if (has_non_empty_doc_comment(decl.doc_comments)) {
-            en->set_documentation(doc::build_typed_doc<doc::enum_doc>(en, decl.doc_comments));
+        if (has_doc(decl.doc)) {
+            en->set_documentation(doc::build_typed_doc<doc::enum_doc>(en, *decl.doc));
         }
 
         // Resolve visibility
@@ -740,9 +737,9 @@ namespace k::model {
             std::dynamic_pointer_cast<parse::ast::variable_decl>(_current_ast_decl);
         std::shared_ptr<parse::ast::declaration> var_decl_as_decl =
             std::dynamic_pointer_cast<parse::ast::declaration>(var_decl_doc_source);
-        if (var_decl_as_decl && has_non_empty_doc_comment(var_decl_as_decl->doc_comments)) {
+        if (var_decl_as_decl && has_doc(var_decl_as_decl->doc)) {
             if (auto elem = std::dynamic_pointer_cast<model::element>(var)) {
-                elem->set_documentation(doc::build_typed_doc<doc::variable_doc>(elem, var_decl_as_decl->doc_comments));
+                elem->set_documentation(doc::build_typed_doc<doc::variable_doc>(elem, *var_decl_as_decl->doc));
             }
         }
         // Store the AST node on the variable for source location reporting in diagnostics.
@@ -1011,8 +1008,8 @@ namespace k::model {
 
         // Wire AST function_decl to the model function
         function->set_ast_function_decl(func.shared_as<parse::ast::function_decl>());
-        if (has_non_empty_doc_comment(func.doc_comments)) {
-            function->set_documentation(doc::build_function_doc(function, func.doc_comments));
+        if (has_doc(func.doc)) {
+            function->set_documentation(doc::build_function_doc(function, *func.doc));
         }
 
         // ── Template function handling ──

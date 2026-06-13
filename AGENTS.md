@@ -147,8 +147,9 @@ A missing transitive KDI is a **fatal error**.
 
 | File | Purpose |
 |------|---------|
-| `ast.hpp / .cpp` | All AST node types (`unit`, `module_name`, `import`, `function_decl`, `block_statement`, `expression`, …) |
+| `ast.hpp / .cpp` | All AST node types (`unit`, `module_name`, `import`, `function_decl`, `block_statement`, `expression`, …). `ast::documentation` and its sub-structs (`doc_param`, `doc_return`, `doc_throws`, `doc_template_param`, `doc_tag`) are defined here; `ast_node` carries `std::optional<documentation> doc` |
 | `ast_dump.hpp` | Pretty-printer for AST nodes |
+| `doc_comment_parser.hpp / .cpp` | `parse_documentation()` — single-pass conversion from raw `lex::doc_comment` lexemes to `ast::documentation` (marker cleaning + generic tag extraction). Produces `{brief, description, entries[]}` with no semantic interpretation — all tag semantics are deferred to `model/documentation.cpp`. |
 | `parser.hpp` | `parser` class declaration (all 50+ public methods) |
 | `parser.cpp` | **Stub** — see split files below |
 | `parser_declarations.cpp` | Constructors, `parse_unit`, module/import, declarations, aggregates, enums, templates, functions, parameters, type specs |
@@ -200,6 +201,7 @@ The semantic model — all classes after parsing.
 | `model_builder.hpp / .cpp` | `model_builder` — visitor that walks AST and constructs the `k::model::unit` |
 | `model_visitor.hpp / .cpp` | `model_visitor` — double-dispatch visitor base for all model nodes |
 | `model_dump.hpp` | `unit_dump` — debug printer for the model tree |
+| `documentation.hpp / .cpp` | Model documentation structs (`doc_entity`, `function_doc`, …); `build_typed_doc` / `build_function_doc` perform all semantic interpretation of generic `ast::doc_entry` items (param/return/throws/tparam/tagged) and copy the result to model doc nodes. No text parsing — marker cleaning done in `parse/doc_comment_parser.cpp`. |
 | `imported.hpp / .cpp` | `imported_function`, `imported_constructor`, `imported_aggregate`, etc. — model nodes for KDI-imported symbols |
 | `import.hpp` | `imported_module` descriptor |
 | `mangler.hpp / .cpp` | Name mangling / demangling |
@@ -400,6 +402,7 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Understand import system | `model/tools/kdi_importer.cpp`, `model/imported.hpp` |
 | Understand union types | `model/model_union.hpp`, `gen/gen_struct.cpp` (visit_union), `gen/gen_expr_member.cpp` (union access), `gen/gen_statements.cpp` (emit_union_cleanup) |
 | Understand union inheritance | `model/model_union.hpp` (base_union, reindex, all_alternatives_ptrs), `gen/gen_struct.cpp` (symbol_resolver::visit_union base resolution), `gen/gen_operators_assign.cpp` (upcast/downcast codegen), `gen/resolvers_scope_lookup.cpp` (is_base_union_of, lookup_union) |
+| Understand doc-comment parsing | `parse/doc_comment_parser.hpp/.cpp` (marker cleaning + generic `{tag,content}` entry extraction), `parse/ast.hpp` (`ast::documentation` with `entries[]`), `model/documentation.hpp/.cpp` (semantic interpretation: entries → param/return/throws/tparam/tagged) |
 | Add a test | `klang/tests/test-gen-*.cpp` (follow existing pattern with `helpers.cpp`) |
 
 ---

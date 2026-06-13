@@ -40,6 +40,101 @@ Comment
     | '//' , { ? any character except LineTerminator ? }   (* line comment *)
     ;
 
+(* ---------- Documentation comments -------------------------------------- *)
+(*                                                                          *)
+(*  Documentation comments are lexically distinct from regular comments    *)
+(*  (they use different opening markers).  Their body is structurally       *)
+(*  parsed by the compiler into an ast::documentation node that is          *)
+(*  attached to the declaration immediately following (forward) or          *)
+(*  preceding (backward) the comment.                                       *)
+(*                                                                          *)
+(*  Lexical forms:                                                          *)
+(*    ///  — forward single-line   doc-line-fwd                             *)
+(*    //!  — backward single-line  doc-line-bwd                             *)
+(*    /**  — forward block         doc-block-fwd                            *)
+(*    /*!  — backward block        doc-block-bwd                            *)
+(*                                                                          *)
+(*  During lexical cleaning, per-line '*'/'!' decoration, the opening       *)
+(*  marker, the closing '*/', and pure-decoration border lines (===, ---…)  *)
+(*  are stripped so that the parser receives only the meaningful text.      *)
+(*                                                                          *)
+(*  Attachment rules:                                                       *)
+(*    Forward (///,/**) comments attach to the next declaration.           *)
+(*    Backward (//!,/!*) comments attach to the previous declaration.      *)
+(*    Multiple consecutive forward comments are merged before parsing.      *)
+(*    When both forward and backward comments exist on the same node,       *)
+(*    the forward comment wins for brief/description; entries are merged.   *)
+(* ------------------------------------------------------------------------ *)
+
+DocComment
+    = DocLineFwd , { DocLineFwd }
+    | DocBlockFwd
+    | DocLineBwd , { DocLineBwd }
+    | DocBlockBwd
+    ;
+
+DocLineFwd  = '///' , DocLineText , LineTerminator ;
+DocLineBwd  = '//!' , DocLineText , LineTerminator ;
+DocBlockFwd = '/**' , DocBlockBody , '*/' ;
+DocBlockBwd = '/*!' , DocBlockBody , '*/' ;
+
+(* After lexical cleaning, the raw text is parsed according to DocBody: *)
+
+DocBlockBody = DocBody ;
+
+DocBody
+    = [ DocBriefSection ]
+      { DocDescriptionSection }
+      { DocEntry }
+    ;
+
+DocBriefSection
+    = DocFreeLine , { DocFreeLine }
+    (* First contiguous group of non-blank, non-tag lines. *)
+    ;
+
+DocDescriptionSection
+    = DocBlankLine , DocFreeLine , { DocFreeLine }
+    (* Additional free-text section preceded by a blank line. *)
+    ;
+
+DocEntry
+    = ( '@' | '\' ) , DocTagName , DocEntryContent
+    (*  A named tag.  DocTagName is stored lower-cased.                          *)
+    (*  The semantic meaning of DocTagName is resolved at model-building time,    *)
+    (*  NOT at parse time — keeping the tag vocabulary open and extensible        *)
+    (*  without any grammar or compiler change.                                  *)
+    (*  Well-known tags currently interpreted by the compiler:                   *)
+    (*    param              name desc  — function parameter documentation       *)
+    (*    return | returns   desc       — return value documentation             *)
+    (*    throws | throw |                                                        *)
+    (*      exception        type desc  — documented exception                  *)
+    (*    tparam | typeparam name desc  — template parameter documentation       *)
+    (*    <any other name>   content    — stored as a generic tagged entry       *)
+    ;
+
+DocEntryContent
+    = { DocFreeLine }
+    (* Continuation lines: lines not starting with '@' or '\'.                   *)
+    (* May be empty.  Multi-line content is joined with '\n'.                    *)
+    ;
+
+DocTagName
+    = IdentifierLetter , { IdentifierLetterOrDigit | '-' }
+    ;
+
+DocFreeLine
+    = ? any cleaned text line not starting with '@' or '\' ?
+    ;
+
+DocBlankLine
+    = ? a line whose content is empty after lexical cleaning ?
+    ;
+
+DocLineText
+    = { ? any character except LineTerminator ? }
+    ;
+
 (* ---------- Identifiers ------------------------------------------------- *)
 
 IdentifierLetter

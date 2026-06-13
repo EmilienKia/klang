@@ -41,39 +41,50 @@ namespace k::parse {
     namespace ast {
 
     /**
-     * A documentation-comment block attached to an AST node.
+     * A single documentation tag entry.
      *
-     * Each doc_comment lexeme emitted by the lexer produces one block.
-     * Multiple blocks may be attached to the same node (stored in the
-     * node's doc_comments vector, in source order).
+     * Produced by the doc-comment parser when it encounters a line starting
+     * with '@' or '\'.  The tag name is stored in lower-case; the content
+     * holds the full raw text that follows the tag name (possibly spanning
+     * multiple continuation lines, joined with '\n').
      *
-     * content holds the cleaned text: opening/closing markers are
-     * stripped, per-line decoration (leading '*' or '!') is removed,
-     * pure-decoration border lines (===, ---…) are dropped, and
-     * common leading indentation is normalised.
+     * The semantic meaning of a tag (e.g. splitting "@param a desc" into
+     * name + description) is NOT interpreted at parse time: it is resolved
+     * at model-building time by build_function_doc(), keeping the tag set
+     * open and extensible without any grammar change.
      */
-    struct doc_comment_block {
-        enum class doc_type {
-            LINE_FWD,   ///< /// form — forward, single-line
-            LINE_BWD,   ///< //! form — backward, single-line
-            BLOCK_FWD,  ///< /** form — forward, block
-            BLOCK_BWD   ///< /*! form — backward, block
-        };
-
-        doc_type type;
-        /** Cleaned documentation text. */
-        std::string content;
-
-        doc_comment_block(doc_type type, std::string content)
-            : type(type), content(std::move(content)) {}
+    struct doc_entry {
+        std::string tag;      ///< tag name in lower-case, e.g. "param", "return", "deprecated"
+        std::string content;  ///< raw content after the tag name (may be multi-line)
     };
 
-    /** Ordered list of documentation-comment blocks attached to one node. */
-    using doc_comment_list = std::vector<doc_comment_block>;
+    /**
+     * Structured documentation attached to an AST node.
+     *
+     * Produced in a single pass during parsing: the lexer emits raw
+     * doc_comment lexemes; the doc-comment parser cleans markers,
+     * concatenates text, splits free text into brief/description, and
+     * records @-tag lines as generic doc_entry values — all before model
+     * building.
+     *
+     * Semantic interpretation of entries (param/return/throws/tparam/…)
+     * is deferred to model-building time, making the tag vocabulary fully
+     * extensible without parser or AST changes.
+     */
+    struct documentation {
+        std::string             brief;        ///< first free-text paragraph
+        std::string             description;  ///< subsequent free-text paragraphs
+        std::vector<doc_entry>  entries;      ///< ordered list of @-tag entries (generic)
+
+        /** Returns true when all fields are empty (no useful documentation). */
+        bool empty() const {
+            return brief.empty() && description.empty() && entries.empty();
+        }
+    };
 
     struct ast_node  : public std::enable_shared_from_this<ast_node> {
-            /** Documentation comments associated with this node, in source order. */
-            doc_comment_list doc_comments;
+            /** Structured documentation attached to this node (nullopt when absent). */
+            std::optional<documentation> doc;
 
             virtual void visit(ast_visitor &visitor) = 0;
 

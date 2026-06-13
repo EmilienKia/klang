@@ -1127,6 +1127,13 @@ TEST_CASE("Parse typed enum reports missing entry name diagnostic", "[parser][en
 //
 // Doc-comment AST association tests
 //
+// Doc-comments are parsed during the parse phase into a fully generic
+// ast::documentation node:  { brief, description, entries[] }
+// where each entry is  { tag, content }  with no semantic interpretation.
+//
+// Semantic interpretation of entries (@param → name+desc, @return, @throws,
+// @tparam, generic tags) happens at model-building time in build_function_doc().
+//
 
 TEST_CASE("Forward line doc-comment attaches to function declaration",
           "[parser][doc-comment]") {
@@ -1136,10 +1143,8 @@ TEST_CASE("Forward line doc-comment attaches to function declaration",
     auto unit = parser.parse_unit();
 
     REQUIRE(unit->declarations.size() == 1);
-    const auto& docs = unit->declarations[0]->doc_comments;
-    REQUIRE(docs.size() == 1);
-    REQUIRE(docs[0].type == ast::doc_comment_block::doc_type::LINE_FWD);
-    REQUIRE(docs[0].content == "The function doc");
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    REQUIRE(unit->declarations[0]->doc->brief == "The function doc");
 }
 
 TEST_CASE("Block forward doc-comment attaches to function declaration",
@@ -1150,10 +1155,8 @@ TEST_CASE("Block forward doc-comment attaches to function declaration",
     auto unit = parser.parse_unit();
 
     REQUIRE(unit->declarations.size() == 1);
-    const auto& docs = unit->declarations[0]->doc_comments;
-    REQUIRE(docs.size() == 1);
-    REQUIRE(docs[0].type == ast::doc_comment_block::doc_type::BLOCK_FWD);
-    REQUIRE(docs[0].content == "Block doc");
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    REQUIRE(unit->declarations[0]->doc->brief == "Block doc");
 }
 
 TEST_CASE("Backward line doc-comment attaches to variable declaration",
@@ -1164,24 +1167,21 @@ TEST_CASE("Backward line doc-comment attaches to variable declaration",
     auto unit = parser.parse_unit();
 
     REQUIRE(unit->declarations.size() == 1);
-    const auto& docs = unit->declarations[0]->doc_comments;
-    REQUIRE(docs.size() == 1);
-    REQUIRE(docs[0].type == ast::doc_comment_block::doc_type::LINE_BWD);
-    REQUIRE(docs[0].content == "backward doc");
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    REQUIRE(unit->declarations[0]->doc->brief == "backward doc");
 }
 
-TEST_CASE("Multiple forward doc-comments all attach to next declaration",
+TEST_CASE("Multiple forward doc-comments merge into a single brief",
           "[parser][doc-comment]") {
     test_logger log;
+    // Two consecutive /// lines with no blank line → merged into one brief paragraph.
     k::source src{"/// First block\n/// Second block\nfoo() : int;"};
     k::parse::parser parser(log, src);
     auto unit = parser.parse_unit();
 
     REQUIRE(unit->declarations.size() == 1);
-    const auto& docs = unit->declarations[0]->doc_comments;
-    REQUIRE(docs.size() == 2);
-    REQUIRE(docs[0].content == "First block");
-    REQUIRE(docs[1].content == "Second block");
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    REQUIRE(unit->declarations[0]->doc->brief == "First block\nSecond block");
 }
 
 TEST_CASE("Doc-comment attaches to struct declaration",
@@ -1192,10 +1192,8 @@ TEST_CASE("Doc-comment attaches to struct declaration",
     auto unit = parser.parse_unit();
 
     REQUIRE(unit->declarations.size() == 1);
-    const auto& docs = unit->declarations[0]->doc_comments;
-    REQUIRE(docs.size() == 1);
-    REQUIRE(docs[0].type == ast::doc_comment_block::doc_type::BLOCK_FWD);
-    REQUIRE(docs[0].content == "A struct");
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    REQUIRE(unit->declarations[0]->doc->brief == "A struct");
 }
 
 TEST_CASE("Doc-comment attaches to inner member of struct",
@@ -1209,9 +1207,8 @@ TEST_CASE("Doc-comment attaches to inner member of struct",
     auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
     REQUIRE(agg);
     REQUIRE(agg->declarations.size() == 1);
-    const auto& inner_docs = agg->declarations[0]->doc_comments;
-    REQUIRE(inner_docs.size() == 1);
-    REQUIRE(inner_docs[0].content == "member doc");
+    REQUIRE(agg->declarations[0]->doc.has_value());
+    REQUIRE(agg->declarations[0]->doc->brief == "member doc");
 }
 
 TEST_CASE("Backward block doc-comment inside aggregate attaches to aggregate itself",
@@ -1225,10 +1222,8 @@ TEST_CASE("Backward block doc-comment inside aggregate attaches to aggregate its
     auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
     REQUIRE(agg);
     // Backward doc inside body → attached to the aggregate node
-    const auto& agg_docs = agg->doc_comments;
-    REQUIRE(agg_docs.size() == 1);
-    REQUIRE(agg_docs[0].type == ast::doc_comment_block::doc_type::BLOCK_BWD);
-    REQUIRE(agg_docs[0].content == "doc for Foo");
+    REQUIRE(agg->doc.has_value());
+    REQUIRE(agg->doc->brief == "doc for Foo");
 }
 
 TEST_CASE("Block doc-comment content is cleaned: markers and * decoration stripped",
@@ -1245,9 +1240,9 @@ foo() : int;
     auto unit = parser.parse_unit();
 
     REQUIRE(unit->declarations.size() == 1);
-    const auto& docs = unit->declarations[0]->doc_comments;
-    REQUIRE(docs.size() == 1);
-    REQUIRE(docs[0].content == "First line\nSecond line");
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    // Two lines in the same paragraph → both in brief.
+    REQUIRE(unit->declarations[0]->doc->brief == "First line\nSecond line");
 }
 
 TEST_CASE("Block doc-comment border lines are stripped",
@@ -1265,9 +1260,8 @@ foo() : int;
     auto unit = parser.parse_unit();
 
     REQUIRE(unit->declarations.size() == 1);
-    const auto& docs = unit->declarations[0]->doc_comments;
-    REQUIRE(docs.size() == 1);
-    REQUIRE(docs[0].content == "Content line");
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    REQUIRE(unit->declarations[0]->doc->brief == "Content line");
 }
 
 TEST_CASE("Doc-comment attaches to module declaration",
@@ -1278,9 +1272,146 @@ TEST_CASE("Doc-comment attaches to module declaration",
     auto unit = parser.parse_unit();
 
     REQUIRE(unit->module_name);
-    const auto& docs = unit->module_name->doc_comments;
-    REQUIRE(docs.size() == 1);
-    REQUIRE(docs[0].content == "Module doc");
+    REQUIRE(unit->module_name->doc.has_value());
+    REQUIRE(unit->module_name->doc->brief == "Module doc");
 }
 
+TEST_CASE("Doc-comment brief and description separated by blank line",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{R"(
+/**
+ * Brief sentence.
+ *
+ * Extended description paragraph.
+ */
+foo() : int;
+)"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    CHECK(unit->declarations[0]->doc->brief == "Brief sentence.");
+    CHECK(unit->declarations[0]->doc->description == "Extended description paragraph.");
+}
+
+TEST_CASE("Doc-comment @param tag stored as generic entry at AST level",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{R"(
+/**
+ * Add two values.
+ * @param a first operand
+ * @param b second operand
+ */
+add(a: int, b: int) : int;
+)"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    CHECK(d.brief == "Add two values.");
+    // At AST level: two generic entries, no semantic splitting yet.
+    REQUIRE(d.entries.size() == 2);
+    CHECK(d.entries[0].tag     == "param");
+    CHECK(d.entries[0].content == "a first operand");
+    CHECK(d.entries[1].tag     == "param");
+    CHECK(d.entries[1].content == "b second operand");
+}
+
+TEST_CASE("Doc-comment @return tag stored as generic entry at AST level",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"/** Compute sum.\n * @return the result */\nadd(a: int, b: int) : int;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    REQUIRE(d.entries.size() == 1);
+    CHECK(d.entries[0].tag     == "return");
+    CHECK(d.entries[0].content == "the result");
+}
+
+TEST_CASE("Doc-comment @throws tag stored as generic entry at AST level",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"/** Brief.\n * @throws MyError when invalid */\nfoo() : void;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    REQUIRE(d.entries.size() == 1);
+    CHECK(d.entries[0].tag     == "throws");
+    CHECK(d.entries[0].content == "MyError when invalid");
+}
+
+TEST_CASE("Doc-comment @tparam tag stored as generic entry at AST level",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"/** Brief.\n * @tparam T element type */\nfoo() : void;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    REQUIRE(d.entries.size() == 1);
+    CHECK(d.entries[0].tag     == "tparam");
+    CHECK(d.entries[0].content == "T element type");
+}
+
+TEST_CASE("Doc-comment unknown tag stored as generic entry at AST level",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"/** Brief.\n * @deprecated use bar() instead */\nfoo() : void;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    REQUIRE(d.entries.size() == 1);
+    CHECK(d.entries[0].tag     == "deprecated");
+    CHECK(d.entries[0].content == "use bar() instead");
+}
+
+TEST_CASE("Doc-comment multi-line entry content captured as continuation",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{R"(
+/**
+ * Brief.
+ * @param b second value line1
+ *   line2
+ */
+foo(b: int) : int;
+)"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    REQUIRE(d.entries.size() == 1);
+    CHECK(d.entries[0].tag     == "param");
+    CHECK(d.entries[0].content == "b second value line1\nline2");
+}
+
+TEST_CASE("No doc-comment leaves node doc as nullopt",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"foo() : int;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE_FALSE(unit->declarations[0]->doc.has_value());
+}
 

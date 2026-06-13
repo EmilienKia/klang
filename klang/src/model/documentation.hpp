@@ -24,10 +24,7 @@
 #include <string>
 #include <vector>
 
-namespace k::parse::ast {
-struct doc_comment_block;
-using doc_comment_list = std::vector<doc_comment_block>;
-}
+#include "../parse/ast.hpp"
 
 namespace k::model {
 class element;
@@ -81,25 +78,33 @@ struct function_doc : public doc_entity {
     std::vector<tagged_doc> tags;
 };
 
-void parse_doc_comments(doc_entity& target, const parse::ast::doc_comment_list& comments);
-void parse_doc_comments(function_doc& target, const parse::ast::doc_comment_list& comments);
-
+/**
+ * Build a doc_entity (or any subtype) from a structured AST documentation node.
+ * Copies brief + description; function-specific fields are ignored for
+ * non-function doc types.
+ */
 std::shared_ptr<doc_entity> build_doc_entity(
     const std::shared_ptr<element>& owner,
-    const parse::ast::doc_comment_list& comments);
+    const parse::ast::documentation& doc);
 
+/**
+ * Build a function_doc from a structured AST documentation node.
+ * Copies all fields: brief, description, params, returns, throws,
+ * template_params, and generic tags.
+ */
 std::shared_ptr<function_doc> build_function_doc(
     const std::shared_ptr<element>& owner,
-    const parse::ast::doc_comment_list& comments);
+    const parse::ast::documentation& doc);
 
 template<typename DocT>
 std::shared_ptr<DocT> build_typed_doc(
     const std::shared_ptr<element>& owner,
-    const parse::ast::doc_comment_list& comments)
+    const parse::ast::documentation& doc)
 {
     auto out = std::make_shared<DocT>();
-    parse_doc_comments(*out, comments);
-    out->owner = owner;
+    out->brief       = doc.brief;
+    out->description = doc.description;
+    out->owner       = owner;
     return out;
 }
 

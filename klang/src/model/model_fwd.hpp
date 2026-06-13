@@ -36,8 +36,7 @@
 
 namespace k::parse::ast {
 struct ast_node;
-struct doc_comment_block;
-using doc_comment_list = std::vector<doc_comment_block>;
+struct documentation;
 struct function_decl;
 struct parameter_spec;
 struct aggregate_decl;

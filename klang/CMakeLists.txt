@@ -11,6 +11,8 @@ add_library(klang
         src/parse/parser_declarations.cpp
         src/parse/parser_statements.cpp
         src/parse/parser_expressions.cpp
+        src/parse/doc_comment_parser.hpp
+        src/parse/doc_comment_parser.cpp
         src/parse/ast.cpp
         src/model/context.cpp
         src/model/context.hpp
