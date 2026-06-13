@@ -487,6 +487,8 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 - **Template-qualified scope call**: expression calls support `Type<T>::func(args...)`,
   `ns::Type<T>::func(args...)`, and `::ns::Type<T>::func(args...)`.
   It applies to static members and explicit non-virtual member calls (`Type<T>::method(obj, ...)`).
+  The call result can be chained with further member access — e.g. a static factory
+  `Optional<byte>::empty().getOr(x)` — its (possibly template) return type is instantiated.
 
 ### 8.7 Temporary Construction
 

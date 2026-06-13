@@ -117,6 +117,52 @@
       `charAt(i)` to read; `sb[i] = c` to write).
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts — workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
 - [ ] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases; extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
+- [ ] Inline method call on a template-aggregate value chained from a one-liner is
+      now supported. Bugs (a), (b) and (c) below are all **fixed**. Repro tests:
+      `[libk][optional][inline]` in `test-optional.cpp`.
+  - (a) ✅ **FIXED — Nested-template member unresolved on return-by-value.** A template
+        aggregate whose member has a nested template type (e.g. `Optional<T>` holds
+        `_slot : UniSlot<T>`) used to be instantiated with that nested member left as
+        `<<unresolved:UniSlot>>` when the enclosing template was first materialised as
+        a by-value function **return type** (diagnostic `000F4`). Fixed in
+        `gen/resolvers_aggregate.cpp`: `aggregate_type_resolver::try_instantiate_template_type`
+        now (1) transitively resolves nested-template member-variable types after
+        instantiation, and (2) resolves a template-parameter argument (e.g. `T`) via the
+        enclosing concrete aggregate's `tpl_args` / concrete function's substitution map
+        when it is no longer in scope — mirroring the `type_reference_resolver` path.
+        Regression tests: `Optional<int>/<byte> getOr on function-returned struct rvalue
+        (inline)` (`[libk][optional][inline]`) in `test-optional.cpp`.
+  - (b) ✅ **FIXED — Inline temporary construction of a template type** in expression
+        position (`Optional<byte>(value)`, e.g. chained `.getOr(0)`). It used to be
+        looked up as a free function and reported as `000FD` ("No function named
+        'Optional' found"). Two fixes in `gen/`:
+        (1) `type_reference_resolver::visit_function_invocation_expression` now, when the
+        callee carries explicit template args and no template function matched, synthesises
+        an `unresolved_type` from the callee name + AST template args and calls
+        `try_instantiate_template_type`, producing a `temporary_construction_expression`
+        of the instantiated aggregate (`gen_expr_invocation.cpp`); a public
+        `unresolved_type::set_ast_template_args` was added (`model/type.hpp`).
+        (2) `type_reference_resolver::visit_member_of_object_expression` now picks up the
+        sub-expression's `_replacement_expr` so member access (`.getOr(...)`) operates on
+        the rewritten temporary — this also enables `S(args).method()` for non-template
+        types (`gen_expr_member.cpp`). Regression test:
+        `Optional inline-constructed temporary getOr (without named variable)`
+        (`[libk][optional][inline]`) in `test-optional.cpp`.
+  - (c) ✅ **FIXED — Static-factory call through a template-qualified type** in
+        expression position, chained (`Optional<byte>::empty().getOr(0)`). Two fixes:
+        (1) Parsing: `parse/parser_expressions.cpp` (`parse_postfix_expr`) now accepts
+        `.`/`->` (in addition to `(`) after a template argument list on a primary
+        identifier, so `Type<args>.member` no longer mis-parses the `<` as a relational
+        operator (was diagnostic `00034`). Note K uses `::` for static member access
+        (like non-template types); the `.` form now produces a clean "undefined symbol"
+        rather than a parse error.
+        (2) Semantics: `type_reference_resolver::visit_function_invocation_expression`
+        now instantiates an unresolved *template return type* of a resolved call (e.g.
+        the static factory's declared `Optional<T>` → `Optional<byte>`), so a chained
+        member access sees a concrete struct type instead of `<<unresolved:Optional>>`
+        (was diagnostic `000F2`) (`gen_expr_invocation.cpp`). Regression test:
+        `Optional template-qualified static factory call (inline)`
+        (`[libk][optional][inline]`) in `test-optional.cpp`.
 
 ### libk
 - Refactor libk C functions wrapping to reduce intermediate method counts

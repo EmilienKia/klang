@@ -244,6 +244,13 @@ public:
         return _ast_template_args;
     }
 
+    /** Set the AST-level template arguments (e.g. when synthesising an unresolved
+     *  template type reference from a call-site like Optional<byte>(args)). */
+    void set_ast_template_args(std::vector<std::shared_ptr<k::parse::ast::template_arg>> args) {
+        _ast_template_args = std::move(args);
+        _has_explicit_template_args = true;
+    }
+
     /** True if model-level template argument overrides are present (set by substitute_type). */
     bool has_model_template_args() const { return !_model_template_args.empty(); }
 

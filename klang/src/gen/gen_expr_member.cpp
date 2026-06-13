@@ -57,7 +57,18 @@ void symbol_resolver::visit_member_of_expression(member_of_expression& expr) {
  *   6. For enum members: resolve enum entry on an enum-typed sub-expression.
  */
 void type_reference_resolver::visit_member_of_object_expression(member_of_object_expression& expr) {
+    // Reset the pending replacement so we only consume one produced by THIS
+    // sub-expression (not a stale value left over from a nested visit).
+    _replacement_expr = nullptr;
     expr.sub_expr()->accept(*this);
+    // The sub-expression may rewrite itself (e.g. a function_invocation_expression
+    // for `S(args)` becomes a temporary_construction_expression). Pick up the
+    // replacement so member access operates on the rewritten node and its type.
+    if (_replacement_expr) {
+        expr.sub_expr() = _replacement_expr;
+        expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
+        _replacement_expr = nullptr;
+    }
     auto type = expr.sub_expr()->get_type();
 
     // Handle vbptr path: sub_expr was cast to pointer<VirtualBase> by the type resolver (this visit)

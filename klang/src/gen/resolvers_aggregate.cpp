@@ -33,6 +33,16 @@
 namespace k::model::gen {
 // aggregate_type_resolver
 
+// Forward declaration: resolves a single (possibly composite) type reference,
+// triggering template instantiation for unresolved template types. Defined
+// later in this file; declared here so try_instantiate_template_type can use it
+// to transitively resolve nested-template member-variable types.
+static std::shared_ptr<type>
+resolve_one_type(const std::shared_ptr<type>& t,
+                 aggregate_type_resolver& resolver,
+                 const element& context_elem,
+                 std::shared_ptr<context> ctx);
+
 std::shared_ptr<aggregate>
 aggregate_type_resolver::resolve_struct_from(const element& elem, const k::name& qualified_name) {
     if (qualified_name.empty()) return {};
@@ -221,6 +231,63 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
                     if (resolved && type::is_resolved(resolved)) {
                         arg_type = resolved;
+                    }
+                    // If still unresolved, the arg may be a template parameter name
+                    // (e.g. "T") that is no longer in scope because we are resolving a
+                    // NESTED template type (UniSlot<T>) inside an already-instantiated
+                    // enclosing template (Optional<int>).  Recover the concrete type
+                    // from the substitution map carried by the enclosing concrete
+                    // function or aggregate.  Mirrors type_reference_resolver step 3.
+                    if (!type::is_resolved(arg_type)) {
+                        // (a) Enclosing concrete function's substitution map.
+                        const function* owning_fn = dynamic_cast<const function*>(&context_elem);
+                        if (!owning_fn) {
+                            if (auto parent_fn = context_elem.ancestor<function>()) {
+                                owning_fn = parent_fn.get();
+                            }
+                        }
+                        if (owning_fn && owning_fn->has_tpl_instantiation_subst()) {
+                            const auto& fn_subst = owning_fn->get_tpl_instantiation_subst();
+                            auto sit = fn_subst.find(unres_arg->type_id().to_string());
+                            if (sit == fn_subst.end() && !unres_arg->type_id().empty()) {
+                                sit = fn_subst.find(unres_arg->type_id().back());
+                            }
+                            if (sit != fn_subst.end() && sit->second && type::is_resolved(sit->second)) {
+                                arg_type = sit->second;
+                            }
+                        }
+                    }
+                    if (!type::is_resolved(arg_type)) {
+                        // (b) Enclosing concrete aggregate's template param→arg mapping.
+                        const aggregate* owning_agg = dynamic_cast<const aggregate*>(&context_elem);
+                        if (!owning_agg) {
+                            if (auto parent_agg = context_elem.ancestor<aggregate>()) {
+                                owning_agg = parent_agg.get();
+                            }
+                        }
+                        if (owning_agg && owning_agg->has_tpl_args()) {
+                            auto tpl_base_name = owning_agg->get_tpl_base_name();
+                            std::shared_ptr<aggregate> tpl_def;
+                            if (auto parent_ns = owning_agg->parent<ns>()) {
+                                tpl_def = parent_ns->get_aggregate(tpl_base_name);
+                            }
+                            if (tpl_def && tpl_def->get_tpl_info()) {
+                                const auto& params = tpl_def->get_tpl_info()->params;
+                                const auto& args = owning_agg->get_tpl_args();
+                                for (size_t pi = 0; pi < params.size() && pi < args.size(); ++pi) {
+                                    if (params[pi].is_type_param() && args[pi].is_type()) {
+                                        std::string pname = params[pi].name;
+                                        if (pname == unres_arg->type_id().to_string() ||
+                                            (!unres_arg->type_id().empty() && pname == unres_arg->type_id().back())) {
+                                            if (args[pi].type_arg && type::is_resolved(args[pi].type_arg)) {
+                                                arg_type = args[pi].type_arg;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 } else if (arg_type) {
                     // Wrapper type (pointer, owner, reference, etc.) around an unresolved inner type.
@@ -557,6 +624,35 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     kl->inject_vptr_field("__vptr__");
                 }
             }
+        }
+    }
+
+    // 5g. Transitively resolve member-variable types that still carry an
+    //     unresolved nested template type (e.g. _slot : UniSlot<T> -> UniSlot<int>).
+    //     The instantiator substitutes the template parameter, but a nested
+    //     template member remains an unresolved_type carrying template args and
+    //     must itself be instantiated. The type_reference_resolver (Pass 1.b)
+    //     does this inline; the aggregate_type_resolver must do it too, because
+    //     a template instantiated via a by-value function RETURN type is added
+    //     to its own (possibly already-processed) parent namespace and the
+    //     namespace walk never revisits it to resolve its members. Mirrors
+    //     type_reference_resolver::try_instantiate_template_type step 7.
+    auto resolve_member_vars = [&](aggregate& agg) {
+        for (auto& child : agg.get_children()) {
+            auto mv = std::dynamic_pointer_cast<member_variable_definition>(child);
+            if (!mv) continue;
+            auto var_type = mv->get_type();
+            if (!var_type || type::is_resolved(var_type)) continue;
+            auto resolved = resolve_one_type(var_type, *this, *mv, _context);
+            if (resolved && type::is_resolved(resolved)) {
+                mv->set_type(resolved);
+            }
+        }
+    };
+    resolve_member_vars(*concrete);
+    for (auto& child : concrete->get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            resolve_member_vars(*nested);
         }
     }
 

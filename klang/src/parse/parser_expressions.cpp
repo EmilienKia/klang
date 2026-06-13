@@ -617,8 +617,11 @@ ast::expr_ptr parser::parse_postfix_expr()
     // ── Template function call disambiguation ────────────────────────────
     // If the primary expression is an identifier and the next token is '<',
     // try to parse template arguments.  If successful AND followed by '(',
-    // this is a template function call (e.g. identity<int>(42)).
-    // Otherwise, roll back and let '<' be parsed as a comparison operator.
+    // this is a template function call (e.g. identity<int>(42)) or a template
+    // temporary construction (e.g. Optional<byte>(x)).  If followed by '.' or
+    // '->', this is a static/factory member access on a template-qualified type
+    // (e.g. Optional<byte>.empty()).  Otherwise, roll back and let '<' be parsed
+    // as a comparison operator.
     if (auto ident_expr = std::dynamic_pointer_cast<ast::identifier_expr>(any)) {
         lex::lex_holder tpl_holder(_lexer);
         size_t save_tpl = _lexer.tell();
@@ -628,23 +631,27 @@ ast::expr_ptr parser::parse_postfix_expr()
             bool was_explicit = false;
             auto tpl_args = parse_template_arg_list(&was_explicit);
             if (was_explicit && !tpl_args.empty()) {
-                // Check if followed by '(' — confirms this is a function call
-                auto peek_paren = _lexer.get();
-                if (peek_paren == lex::punctuator::PARENTHESIS_OPEN) {
-                    _lexer.unget(); // put '(' back for the postfix loop below
+                // Check if followed by '(' (call/construction) or '.'/'->'
+                // (static member access) — confirms a template type/function use.
+                auto peek_next = _lexer.get();
+                if (peek_next == lex::punctuator::PARENTHESIS_OPEN
+                    || peek_next == lex::operator_::DOT
+                    || peek_next == lex::operator_::ARROW) {
+                    _lexer.unget(); // put the token back for the postfix loop below
                     ident_expr->template_args = std::move(tpl_args);
                     ident_expr->explicit_template_args = true;
-                    // Continue — the postfix loop will pick up the '(' and create
-                    // a parenthesis_postfix_expr (function call).
+                    // Continue — the postfix loop will pick up the '(' / '.' / '->'.
                 } else {
-                    // Not a function call — rollback the template args
+                    // Not a call or member access — rollback the template args
                     _lexer.seek(save_tpl);
                     tpl_holder.rollback();
                 }
             } else if (was_explicit && tpl_args.empty()) {
-                // Empty template arg list <>( — also valid for default params
-                auto peek_paren = _lexer.get();
-                if (peek_paren == lex::punctuator::PARENTHESIS_OPEN) {
+                // Empty template arg list <> — also valid for default params
+                auto peek_next = _lexer.get();
+                if (peek_next == lex::punctuator::PARENTHESIS_OPEN
+                    || peek_next == lex::operator_::DOT
+                    || peek_next == lex::operator_::ARROW) {
                     _lexer.unget();
                     ident_expr->template_args = {};
                     ident_expr->explicit_template_args = true;

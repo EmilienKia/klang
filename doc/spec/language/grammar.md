@@ -411,6 +411,10 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     | `'['` [Expression](#expression) `']'`
     | `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
     | `(` `'.'` | `'->'` `)` [IdentifierExpr](#identifierexpr)
+    *A primary identifier may carry a [TemplateArgList](#templatearglist) (e.g. `Optional<byte>`).
+    In expression context the parser commits to the `'<' … '>'` template-argument list only
+    when the matching `'>'` is immediately followed by `'('`, `'.'`, or `'->'`
+    (call / temporary construction, or member access); otherwise `'<'` is the less-than operator.*
 <a id="primaryexpr"></a>**PrimaryExpr:**
     [Literal](#literal)
     | `'this'`

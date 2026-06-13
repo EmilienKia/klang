@@ -945,6 +945,24 @@ TemplateQualifiedScopeExpr
     (* Expression context supports Type<T>::member, ns::Type<T>::member,
        and ::ns::Type<T>::member forms. *)
 
+(* ---------- Expression-context template-argument disambiguation ---------- *)
+(*                                                                           *)
+(* A PrimaryExpr identifier may carry a TemplateArgList (e.g. Optional<byte>) *)
+(* via QualifiedIdentifier / IdentifierSegment, forming a template-qualified  *)
+(* primary that the following PostfixOp applies to:                          *)
+(*                                                                           *)
+(*     Type<Args> '(' [ ExpressionList ] ')'   -- call / temporary object    *)
+(*     Type<Args> '.'  Identifier              -- member / static access      *)
+(*     Type<Args> '->' Identifier              -- member through pointer      *)
+(*                                                                           *)
+(* Because '<' is ambiguous with the less-than operator, in expression       *)
+(* context the parser tentatively scans a TemplateArgList after a primary    *)
+(* identifier and commits to it ONLY when the matching '>' is immediately     *)
+(* followed by one of '(' , '.' , or '->' .  Otherwise it backtracks and     *)
+(* treats '<' as the relational less-than operator.                          *)
+(* (Static member access itself uses '::', as for non-template types;        *)
+(*  the '.' / '->' forms parse but resolve as ordinary member access.)        *)
+
 (* ---------- Brace Initializer Lists ------------------------------------- *)
 
 BraceInitList

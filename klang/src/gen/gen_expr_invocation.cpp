@@ -1278,7 +1278,22 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             // expression: allocate a stack temporary, call the constructor, and
             // register for destructor cleanup.
             {
-                auto resolved_type = resolve_type_by_name(callee->get_name(), expr);
+                std::shared_ptr<type> resolved_type;
+
+                // ── Template temporary construction: S<Args...>(args...) ───────
+                // If the callee carries explicit template arguments (e.g.
+                // Optional<byte>(x)) and no template function matched, treat it as
+                // a temporary construction of the instantiated template aggregate:
+                // synthesise an unresolved template type reference and instantiate.
+                if (callee->has_ast_template_args()) {
+                    auto unres = _context->create_unresolved(callee->get_name());
+                    unres->set_ast_template_args(callee->get_ast_template_args());
+                    resolved_type = try_instantiate_template_type(unres, expr);
+                }
+
+                if (!resolved_type) {
+                    resolved_type = resolve_type_by_name(callee->get_name(), expr);
+                }
                 if (resolved_type) {
                     auto resolved_nc = type::remove_const(resolved_type);
                     // Strip reference wrapper if present (resolve_type_by_name may return ref<struct>)
@@ -1345,6 +1360,23 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         callee->set_target(best.func);
         auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_candidate);
         expr.set_type(resolved_return_type ? resolved_return_type : best.func->get_return_type());
+
+        // If the resolved return type is still an unresolved template type — e.g. a
+        // template-qualified static factory call like Optional<byte>::empty() whose
+        // declared return type is Optional<T> → Optional<byte> — instantiate it so a
+        // chained member access (.getOr(...)) sees a concrete struct type.
+        if (auto ret_type = expr.get_type()) {
+            auto bare_ret = type::remove_const(ret_type);
+            if (auto unres_ret = std::dynamic_pointer_cast<unresolved_type>(bare_ret)) {
+                if (unres_ret->has_template_args()) {
+                    if (auto inst = try_instantiate_template_type(unres_ret, *best.func)) {
+                        if (std::dynamic_pointer_cast<struct_type>(inst) || type::is_resolved(inst)) {
+                            expr.set_type(type::is_const(ret_type) ? inst->get_const() : inst);
+                        }
+                    }
+                }
+            }
+        }
 
         if (is_free_to_member_call) {
             // Member function found via free-function syntax: func(obj, args...)

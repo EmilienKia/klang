@@ -160,15 +160,11 @@ public:
     // ── DataInput implementation ─────────────────────────────────────────
 
     readByte() : byte {
-        opt : Optional<byte>(_in->read());
-        zero : byte = (byte) 0;
-        return opt.getOr(zero);
+        return Optional<byte>(_in->read()).getOr((byte) 0);
     }
 
     readChar() : char {
-        opt : Optional<byte>(_in->read());
-        zero : byte = (byte) 0;
-        return (char) opt.getOr(zero);
+        return (char) Optional<byte>(_in->read()).getOr((byte) 0);
     }
 
     readShort() : short {
