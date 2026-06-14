@@ -3431,3 +3431,77 @@ TEST_CASE("cross-module template — intrinsic member template with variadic pac
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE( result.exit_code == 42 );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [homonym-imports] Known limitation — two *imported* templates with the same
+// short name from different modules.
+//
+// A consumer imports two libraries, each exporting a top-level template named
+// `Box`. It instantiates each, qualified, as `boxa::Box<int>` and
+// `boxb::Box<int>`, which have different layouts (1 vs 2 fields) and different
+// behaviour. Expected: 21 + (10 + 10) = 41.
+//
+// CURRENT LIMITATION: imported templates are re-injected by flattening them into
+// the consumer's *root* namespace (the `module <ns>;`-rename trick in
+// `kdi_importer::materialise_template_def`). This is required so that imported
+// top-level symbols stay reachable *unqualified* (`import lib;` behaves like
+// `using namespace lib;`). As a side effect, two homonymous imported templates
+// collide on their short name in root and get merged — the second silently wins.
+//
+// The instantiation `struct_type` *identity* registry is already collision-safe
+// (origin-qualified key, see `[template][instantiation][ns-collision]`); the
+// remaining gap is the model-level *symbol* clash. Fixing it cleanly requires a
+// deeper change: scope lookup must resolve unqualified imported symbols from
+// their origin namespaces (an `import`-as-`using-namespace` mechanism) so the
+// flatten can be dropped and homonymous imports require qualification.
+// Tracked in TODO.md.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Known-limitation: homonymous imported templates from different modules",
+          "[.][import][template][homonym-imports]") {
+    SKIP("Two imported templates with the same short name from different modules "
+         "still clash at the model/symbol level because imported templates are "
+         "flattened into the consumer root for unqualified access. Requires "
+         "import-as-using-namespace scope lookup; tracked in TODO.md.");
+
+    std::vector<LibSpec> libs = {
+        { R"K(
+            module boxa;
+            template<typename T>
+            struct Box {
+                v : T;
+            public:
+                Box(x : T) { v = x; }
+                const get() : T { return v; }
+            }
+        )K" },
+        { R"K(
+            module boxb;
+            template<typename T>
+            struct Box {
+                v1 : T;
+                v2 : T;
+            public:
+                Box(x : T) { v1 = x; v2 = x; }
+                const sum() : T { return v1 + v2; }
+            }
+        )K" }
+    };
+
+    auto result = build_exec_with_libs(libs,
+        R"K(
+            module box_exec;
+            import boxa;
+            import boxb;
+            main() : int {
+                ba : boxa::Box<int>(21);
+                bb : boxb::Box<int>(10);
+                return ba.get() + bb.sum();   // 21 + (10 + 10) = 41
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 41 );
+}
+

@@ -948,6 +948,14 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         // The source is a complete template declaration.  Wrap in a module
         // declaration matching the parent namespace so model_builder places
         // the template in the correct namespace.
+        //
+        // NOTE: this `module <ns>;` trick renames the root namespace and thus
+        // *flattens* the re-parsed template into the consumer's root namespace.
+        // This is intentional for now: imported top-level symbols (including
+        // function templates) must be reachable *unqualified* from the consumer
+        // (i.e. `import mylib;` behaves like `using namespace mylib;`). Homing the
+        // template under root::<origin> instead would break that unqualified
+        // access. See TODO.md for the deeper origin-aware-homing follow-up.
         std::string wrapped_src;
         const std::string& ns_fq = parent_kdi_ns.fq_name;
         if (!ns_fq.empty()) {
@@ -976,9 +984,10 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
 
         // ── 5. Tag the re-parsed template with its originating module namespace ──
         //    Imported template definitions are re-homed under the consumer module's
-        //    namespace, which loses their true origin. Record it (normalised, no root
-        //    prefix) on the template's tpl_info so the local instantiator can build an
-        //    origin-qualified registry key and avoid cross-namespace collisions.
+        //    root namespace (the module-rename trick above), which loses their true
+        //    origin. Record it (normalised, no root prefix) on the template's
+        //    tpl_info so the local instantiator can build an origin-qualified
+        //    registry key and avoid cross-namespace instantiation-identity collisions.
         {
             std::string origin = (ns_fq.size() >= 2 && ns_fq[0] == ':' && ns_fq[1] == ':')
                                  ? ns_fq.substr(2) : ns_fq;
