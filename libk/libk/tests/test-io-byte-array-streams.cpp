@@ -318,3 +318,67 @@ TEST_CASE("ByteArrayOutputStream bulk write", "[libk][io][baos]") {
     CHECK(fn() == 0);
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════════
+// KNOWN LIMITATION — copy-initialising an Optional<byte> from an imported
+// method's rvalue return value.
+//
+// Storing the result of an imported method that returns a generic template
+// instantiation (here k::io::ByteArrayInputStream::read() -> Optional<byte>)
+// into a local variable of the same type fails to resolve a viable copy
+// constructor:
+//
+//     o : Optional<byte> = bais.read();   // Error 0x000D9 / 0x000FF
+//
+// Root cause: the consumer module ends up with TWO distinct struct_type
+// objects for the same instantiation `k::Optional__byte`:
+//   * one created by the KDI importer (get_or_create_imported_aggregate),
+//     used as read()'s return type, and
+//   * one synthesised locally (try_instantiate_template_type) so the consumer
+//     can construct the value with a real body.
+// The struct-identity checks in compute_cast_weight / adapt_type compare by
+// pointer, so the rvalue (imported instantiation) does not bind to the copy
+// constructor parameter `Optional<byte>&` of the local instantiation.
+//
+// The same expression succeeds when the rvalue comes from a *local* function
+// or method returning Optional<byte>, confirming the divergence is the
+// imported-vs-local instantiation identity.
+//
+// Workaround used throughout these tests: consume the rvalue inline via
+// chained calls — `bais.read().getOr((byte) 0)` and `bais.read().hasValue()`.
+//
+// Tracked in TODO.md ("Imported generic-template instantiation identity").
+// Remove the SKIP() once imported and locally-synthesised instantiations of
+// the same generic template are unified into a single struct_type.
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayInputStream read() rvalue copy-init into Optional<byte>",
+          "[libk][io][bais][known-limitation]") {
+    SKIP("Imported generic-template instantiation identity: copy-initialising "
+         "Optional<byte> from an imported method's rvalue does not match the "
+         "local instantiation's copy constructor. See TODO.md and the comment "
+         "above this test.");
+
+    auto jit = jit_k(R"SRC(
+        module __bais_opt_copy_init__;
+
+        test_copy_init() : int {
+            sz : int = 1;
+            buf : byte[]! = new byte[sz];
+            buf[0] = (byte) 42;
+            bais : k::io::ByteArrayInputStream(buf, 1);
+            // This is the construct that currently fails to compile:
+            o : Optional<byte> = bais.read();
+            if (!o.hasValue()) return 1;
+            if ((int)(unsigned byte) o.get() != 42) return 2;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_copy_init");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+
+

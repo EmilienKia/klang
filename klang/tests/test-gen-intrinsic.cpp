@@ -28,6 +28,9 @@
 // Common K source fragment for the Intrinsic annotation + UniSlot template
 // The annotation uses 'int' for the name field to avoid char[] RTTI layout issues in tests.
 // The real stdlib version uses const char[]; the intrinsic matching is done by raw_name only.
+// UniSlot::construct mirrors the real stdlib signature: a variadic member template
+// `template<typename...Args> construct(Args...args)`. A non-variadic `construct()` mock
+// would diverge from the real intrinsic and exercise an unsupported declaration shape.
 static constexpr const char* UNISLOT_PREAMBLE = R"SRC(
         namespace annotations {
             annotation Intrinsic {
@@ -48,7 +51,8 @@ static constexpr const char* UNISLOT_PREAMBLE = R"SRC(
             ~UniSlot();
 
             @annotations::Intrinsic(1)
-            construct();
+            template<typename...Args>
+            construct(Args...args);
 
             @annotations::Intrinsic(2)
             destruct();
