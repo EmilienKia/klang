@@ -90,6 +90,7 @@
 
 #include "resolvers.hpp"
 #include "generators.hpp"
+#include "gen_helpers.hpp"
 
 #include "../model/mangler.hpp"
 #include "../model/context.hpp"
@@ -1496,6 +1497,12 @@ void declaration_generator::visit_klass(klass& klass) {
             llvm::GlobalValue::ExternalLinkage,
             rtti_const, rtti_name);
 
+        // Template instantiations and type-erased generic templates: merge the RTTI
+        // global across modules (linkonce_odr + COMDAT) so cross-module type identity
+        // holds and static links don't see duplicate strong symbols.
+        if (should_merge_aggregate_symbols(klass)) {
+            apply_instantiation_linkage(_context->module(), rtti_gv, rtti_name);
+        }
 
         // Store on vtable_layout so implementation_generator can use it for vtable slot 0
         klass.get_vtable()->llvm_rtti_global = rtti_gv;
@@ -1530,6 +1537,13 @@ void declaration_generator::visit_klass(klass& klass) {
         true, llvm::GlobalValue::ExternalLinkage,
         vtable_const, vtable_name);
     vt->llvm_global = vtable_gv;
+    // Template instantiations and type-erased generic templates: merge the vtable
+    // global across modules (linkonce_odr + COMDAT) so all modules share a single
+    // vtable (cross-module virtual dispatch and RTTI identity) and static links
+    // don't see duplicate strong symbols.
+    if (should_merge_aggregate_symbols(klass)) {
+        apply_instantiation_linkage(_context->module(), vtable_gv, vtable_name);
+    }
 }
 
 // implementation_generator::visit_klass
@@ -2210,8 +2224,15 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                 auto* fn_gv = new llvm::GlobalVariable(
                     _context->module(), fn_rtti_type,
                     /*isConstant=*/true,
-                    llvm::GlobalValue::ExternalLinkage,
+                    // Private: member-function RTTI reflection descriptors are referenced
+                    // only by baked pointers in this module's RTTI (never looked up by
+                    // mangled name), and their unqualified root-homed names (e.g. ::get for
+                    // type-erased generic templates) would otherwise collide as strong
+                    // symbols when two such modules are statically linked. Module-local
+                    // linkage matches the already-private constructor/parameter descriptors.
+                    llvm::GlobalValue::PrivateLinkage,
                     fn_const, fn_rtti_name);
+                fn_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
                 return fn_gv;
             };
 

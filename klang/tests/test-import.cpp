@@ -3505,3 +3505,219 @@ TEST_CASE("Known-limitation: homonymous imported templates from different module
     REQUIRE( result.exit_code == 41 );
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TEMPLATE INSTANTIATION DIAMOND (libk templates, linkonce_odr + COMDAT)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [instantiation-diamond-shared] Diamond instantiation of a libk template.
+//
+//                 libk: Optional<T>
+//                /                  \
+//   optdiamond_a (Optional<int>)   optdiamond_b (Optional<int>)
+//                \                  /
+//            optdiamond_exec (Optional<int>)   <- imports both A and B
+//
+// Each of the two libraries and the executable instantiate ::k::Optional<int>
+// independently (k is auto-imported). Every instantiation symbol is synthesised
+// under its origin-absolute name (::k::Optional<int>::...) and emitted
+// linkonce_odr + COMDAT, so the shared-library diamond links without
+// duplicate-symbol errors and the dynamic linker interposes a single copy at
+// load (default visibility).
+//
+// Expected: 40 + 2 + 0 = 42.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import instantiation diamond - Optional<int> from libk in two libs + exe",
+          "[import][e2e][instantiation-diamond-shared]") {
+    std::vector<LibSpec> libs = {
+        { R"K(
+            module optdiamond_a;
+            makeOptA() : int {
+                v : int = 40;
+                z : int = 0;
+                o : Optional<int>;
+                o.set(v);
+                return o.getOr(z);
+            }
+        )K" },
+        { R"K(
+            module optdiamond_b;
+            makeOptB() : int {
+                v : int = 2;
+                z : int = 0;
+                o : Optional<int>;
+                o.set(v);
+                return o.getOr(z);
+            }
+        )K" }
+    };
+
+    auto result = build_exec_with_libs(libs,
+        R"K(
+            module optdiamond_exec;
+            import optdiamond_a;
+            import optdiamond_b;
+            main() : int {
+                z : int = 0;
+                o : Optional<int>;
+                return makeOptA() + makeOptB() + o.getOr(z);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [instantiation-diamond-shared] Same diamond for the two-parameter Expected<R,E>.
+//
+// Two libraries and the executable each instantiate ::k::Expected<int,int>.
+// Verifies that multi-parameter libk instantiations dedup the same way across a
+// shared-library diamond.
+//
+// Expected: 40 + 2 + 0 = 42.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import instantiation diamond - Expected<int,int> from libk in two libs + exe",
+          "[import][e2e][instantiation-diamond-shared]") {
+    std::vector<LibSpec> libs = {
+        { R"K(
+            module expdiamond_a;
+            makeExpA() : int {
+                v : int = 40;
+                e : Expected<int, int>;
+                e.setResult(v);
+                return e.getResult();
+            }
+        )K" },
+        { R"K(
+            module expdiamond_b;
+            makeExpB() : int {
+                v : int = 2;
+                e : Expected<int, int>;
+                e.setResult(v);
+                return e.getResult();
+            }
+        )K" }
+    };
+
+    auto result = build_exec_with_libs(libs,
+        R"K(
+            module expdiamond_exec;
+            import expdiamond_a;
+            import expdiamond_b;
+            main() : int {
+                v : int = 0;
+                e : Expected<int, int>;
+                e.setResult(v);
+                return makeExpA() + makeExpB() + e.getResult();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [instantiation-diamond-shared][user-template] Diamond instantiation of a
+// USER-DECLARED (non-libk) struct template.
+//
+//                 boxlib: Box<T>           (user library — NOT libk)
+//                /                  \
+//   boxdiamond_a (Box<int>)   boxdiamond_b (Box<int>)
+//                \                  /
+//            boxdiamond_exec (Box<int>)   <- imports boxlib + both A and B
+//
+// The COMDAT/linkonce_odr dedup of template instantiations is module-agnostic:
+// it keys off the template's origin module (set by the KDI importer for ANY
+// imported template) and the is_instantiation()/is_template() flags, never on
+// libk specifically. This test proves it for a template declared in a plain
+// user library: A, B and the executable each synthesise their own
+// ::boxlib::Box<int> under the same origin-absolute name, emitted linkonce_odr
+// + COMDAT, so the shared-library diamond links without duplicate-symbol errors
+// and the dynamic linker interposes a single copy at load (default visibility).
+//
+// Expected: 40 + 2 + 0 = 42.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import instantiation diamond - user-declared Box<int> template in two libs + exe",
+          "[import][e2e][instantiation-diamond-shared][user-template]") {
+    std::vector<LibSpec> libs = {
+        // lib[0]: the template-defining library (the template's true origin).
+        { R"K(
+            module boxlib;
+
+            template<typename T>
+            struct Box {
+                val : T;
+            }
+        )K" },
+        // lib[1]: imports boxlib and instantiates ::boxlib::Box<int> itself.
+        { R"K(
+            module boxdiamond_a;
+            import boxlib;
+            makeBoxA() : int {
+                b : boxlib::Box<int>;
+                b.val = 40;
+                return b.val;
+            }
+        )K" },
+        // lib[2]: imports boxlib and instantiates ::boxlib::Box<int> itself.
+        { R"K(
+            module boxdiamond_b;
+            import boxlib;
+            makeBoxB() : int {
+                b : boxlib::Box<int>;
+                b.val = 2;
+                return b.val;
+            }
+        )K" }
+    };
+
+    auto result = build_exec_with_libs(libs,
+        R"K(
+            module boxdiamond_exec;
+            import boxlib;
+            import boxdiamond_a;
+            import boxdiamond_b;
+            main() : int {
+                b : boxlib::Box<int>;
+                b.val = 0;
+                return makeBoxA() + makeBoxB() + b.val;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [.][instantiation-diamond-static] STATIC-LINK diamond of a libk template.
+//
+// SKIPPED - known limitation. The static-archive variant of the diamond above
+// (link the executable against optdiamond_a.a + optdiamond_b.a instead of the
+// .so files) currently fails to link with "multiple definition" errors on the
+// root-homed, strong RTTI reflection function descriptors (_KTRF..., e.g.
+// ::removeBack, ::get) that every consumer of a libk template emits for the
+// type-erased generic templates.
+//
+// These descriptors are homed at the root namespace (no class prefix) and
+// emitted with ExternalLinkage; the shared-library diamond tolerates them
+// because default visibility lets the loader interpose one copy, but a static
+// link pulls every copy into one image and the strong symbols collide.
+//
+// Fix belongs to Phase 3 (apply linkonce_odr + COMDAT to base-erased generic
+// RTTI / reflection descriptors). Tracked in TODO.md.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import instantiation diamond - static-link of libk template (KNOWN LIMITATION)",
+          "[.][import][e2e][instantiation-diamond-static]") {
+    // Intentionally skipped: see the comment above and TODO.md.
+    SUCCEED("documented known limitation - static-link diamond of libk templates");
+}
+

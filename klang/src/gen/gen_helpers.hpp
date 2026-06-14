@@ -33,6 +33,53 @@
 namespace k::model::gen {
 
 /**
+ * Apply the linkage policy for a **template instantiation** symbol.
+ *
+ * Template instantiations follow the C++ ODR model: every translation unit /
+ * module that uses an instantiation emits its own definition, marked
+ * `linkonce_odr` and placed in a COMDAT group keyed by its mangled name. The
+ * static linker then keeps a single copy (and the dynamic linker interposes a
+ * single copy across shared libraries, thanks to default visibility), instead of
+ * emitting strong `external` symbols that would collide at link time.
+ *
+ * Applies to instantiation methods, constructors, destructors, and the
+ * associated vtable / RTTI / static globals (any llvm::GlobalObject).
+ *
+ * @param mod           The LLVM module owning the symbol.
+ * @param gv            The global object (function or global variable) to mark.
+ * @param mangled_name  The instantiation symbol's mangled name (the COMDAT key).
+ */
+inline void apply_instantiation_linkage(llvm::Module& mod,
+                                        llvm::GlobalObject* gv,
+                                        const std::string& mangled_name)
+{
+    if (!gv || mangled_name.empty()) return;
+    gv->setLinkage(llvm::GlobalValue::LinkOnceODRLinkage);
+    // Default visibility is intentional: it lets the dynamic linker interpose a
+    // single copy across shared libraries (required for cross-module type
+    // identity / RTTI). Do NOT set hidden visibility here.
+    llvm::Comdat* comdat = mod.getOrInsertComdat(mangled_name);
+    comdat->setSelectionKind(llvm::Comdat::Any);
+    gv->setComdat(comdat);
+}
+
+/**
+ * True when an aggregate's externally-visible code-gen artifacts (vtable, RTTI)
+ * should be merged across translation units / modules via linkonce_odr + COMDAT.
+ *
+ * Covers both template-related forms that every consumer re-synthesises:
+ *   - concrete instantiations (e.g. ::k::Optional<int>), is_instantiation();
+ *   - any template definition / type-erased generic template (is_template()):
+ *     these are re-emitted under a deterministic, identical name in every module
+ *     that defines or imports them, so without COMDAT they would collide as
+ *     duplicate strong symbols in a static link.
+ */
+inline bool should_merge_aggregate_symbols(const k::model::aggregate& agg)
+{
+    return agg.is_instantiation() || agg.is_template();
+}
+
+/**
  * Emit the destroy+free sequence for an owner pointer value.
  *
  * For array types (owner<T[N]>), calls destructors on each element in

@@ -233,6 +233,13 @@ protected:
     std::string _tpl_base_name;
     std::vector<template_argument> _tpl_args;
 
+    /**
+     * True when this function is part of a synthesised template instantiation
+     * (free function-template instantiation, or a method/ctor/dtor of an
+     * instantiated aggregate). Drives linkonce_odr + COMDAT linkage in codegen.
+     */
+    bool _is_instantiation = false;
+
      /**
       * Type substitution map used when this function was instantiated from a template
       * (e.g. {"R"→int, "E"→int} for expected__int_int).  Set by
@@ -487,6 +494,17 @@ public:
         _tpl_base_name = base_name;
         _tpl_args = std::move(args);
     }
+
+    /**
+     * True if this function belongs to (or is) a synthesised template instantiation
+     * — covers free function-template instantiations and methods of instantiated
+     * aggregates (generic type-erased or concrete). Used by the code generator to
+     * apply linkonce_odr + COMDAT linkage. Set by template_instantiator.
+     */
+    bool is_instantiation() const { return _is_instantiation; }
+
+    /** Mark this function as belonging to a synthesised template instantiation. */
+    void mark_instantiation() { _is_instantiation = true; }
 
 };
 

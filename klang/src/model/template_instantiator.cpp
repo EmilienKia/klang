@@ -1061,6 +1061,8 @@ void template_instantiator::clone_nested_aggregate(
     nested->set_visibility(src.get_visibility());
     nested->_ast_node = src.get_ast_node();
     nested->_documentation = src.get_documentation();
+    // Nested aggregate of an instantiation is itself part of the instantiation.
+    nested->mark_instantiation();
 
     // Copy base class specs (raw names — resolved later by resolution passes)
     // Substitute template type parameters in base names (e.g. "Collection<T>" → "Collection<int>")
@@ -1216,6 +1218,8 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
 
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);
+    // Mark as a synthesised instantiation so codegen applies linkonce_odr + COMDAT.
+    concrete->mark_instantiation();
 
     // Copy bases (with template parameter substitution in raw names)
     for (auto& bs : tpl_def.get_bases()) {
@@ -1411,6 +1415,8 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
     concrete->set_visibility(tpl_def.get_visibility());
     concrete->_ast_node = tpl_def.get_ast_node();
     concrete->_documentation = tpl_def.get_documentation();
+    // Mark as a synthesised instantiation so codegen applies linkonce_odr + COMDAT.
+    concrete->mark_instantiation();
 
     // Keep the synthesized symbol on the base aggregate name (no arg suffix).
 
@@ -1513,6 +1519,8 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
 
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);
+    // Mark as a synthesised instantiation so codegen applies linkonce_odr + COMDAT.
+    concrete->mark_instantiation();
 
     // Store the type substitution map so that type_reference_resolver can
     // resolve template aggregate types (e.g. Expected<R,E>) used inside the

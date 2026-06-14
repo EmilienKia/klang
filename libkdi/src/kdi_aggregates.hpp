@@ -138,6 +138,20 @@ struct kdi_template_def {
     std::string entity_kind;   ///< "struct", "class", "interface", "function"
     std::string visibility;    ///< "public" or "protected"
     bool is_generic = false;   ///< true for `generic<...>` declarations
+    /**
+     * True origin module namespace of a **re-exported** template, normalised
+     * (no leading "::"), e.g. "k" for `::k::Optional`.
+     *
+     * Empty when the template is owned by the module that produced this KDI.
+     *
+     * A library that imports another module's template (e.g. `k::Optional`) and
+     * uses it re-homes that template under its own namespace, which loses the true
+     * origin. Recording it here lets a downstream importer tag the template with
+     * its real origin, so every module that instantiates it synthesises the *same*
+     * origin-absolute symbol (`::k::Optional<int>`) and the COMDAT dedup works
+     * across a transitive diamond (A and B both import k; C imports A and B).
+     */
+    std::string origin_module;
     std::vector<kdi_template_param> params; ///< template parameter descriptors
     std::string source;        ///< raw K source text (full declaration + body)
     std::shared_ptr<kdi_aggregate> aggregate_signature; ///< template declaration signature for aggregates

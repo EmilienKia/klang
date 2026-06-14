@@ -502,16 +502,25 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             concrete->assign_name(ancestor->get_name().with_back(concrete->get_short_name()));
         }
     }
+    // For instantiations of IMPORTED templates, override with an ORIGIN-ABSOLUTE
+    // name (::<origin>::Name) — independent of the synthesising module — so the
+    // mangled symbol is identical across every module that instantiates it and
+    // linkonce_odr/COMDAT can merge the copies (C++ ODR model). Local-template
+    // instantiations keep their model-tree-derived name (already origin-correct).
+    if (ti && !ti->origin_module_ns_fq.empty()) {
+        concrete->assign_name(unit::make_origin_absolute_name(
+            ti->origin_module_ns_fq, concrete->get_short_name()));
+    }
     concrete->update_mangled_name();
 
     // 5d. Update FQ names and mangled names for children (functions, constructors, etc.)
     for (auto& child : concrete->get_children()) {
         if (auto fn = std::dynamic_pointer_cast<function>(child)) {
-            // Build FQ name from parent chain (mirrors symbol_resolver::visit_named_element)
-            if (fn->get_fq_name().empty() && !fn->get_short_name().empty()) {
-                if (auto parent_named = fn->template parent<named_element>()) {
-                    fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
-                }
+            // Build FQ name from parent chain (mirrors symbol_resolver::visit_named_element).
+            // Re-derive unconditionally so an origin-absolute rename of the parent
+            // propagates to the methods' mangled symbols.
+            if (auto parent_named = fn->template parent<named_element>()) {
+                fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
             }
             fn->update_mangled_name();
         }

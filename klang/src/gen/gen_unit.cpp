@@ -689,8 +689,14 @@ void implementation_generator::visit_unit(unit &unit) {
                 auto* fn_gv = new llvm::GlobalVariable(
                     _context->module(), fn_rtti_type,
                     /*isConstant=*/true,
-                    llvm::GlobalValue::ExternalLinkage,
+                    // Private: free-function RTTI reflection descriptors are referenced
+                    // only by baked pointers in this module's unit RTTI (never looked up
+                    // by mangled name). Module-local linkage avoids strong-symbol
+                    // collisions when modules that re-emit the same descriptors are
+                    // statically linked (mirrors the member-function descriptors).
+                    llvm::GlobalValue::PrivateLinkage,
                     fn_const, fn_rtti_name);
+                fn_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
                 return fn_gv;
             };
 

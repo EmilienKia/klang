@@ -524,6 +524,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 template_instantiator::populate_function_from_template_public(
                                     concrete, *tpl_func, subst, val_subst, pack_subst);
                                 concrete->set_tpl_instantiation_info(base_name, model_args);
+                                concrete->mark_instantiation();
                                 ti->instantiations[key] = concrete;
                             }
                         }
@@ -616,6 +617,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 template_instantiator::populate_function_from_template_public(
                                     concrete, *tpl_func, subst, val_subst, pack_subst);
                                 concrete->set_tpl_instantiation_info(base_name, deduced_args);
+                                concrete->mark_instantiation();
                                 ti->instantiations[key] = concrete;
                             }
                         }

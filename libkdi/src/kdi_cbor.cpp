@@ -1329,6 +1329,7 @@ cbor_item_t* encode_template_def(const kdi_template_def& d) {
     map_push(m, "entity_kind", cbor_str(d.entity_kind));
     map_push(m, "visibility", cbor_str(d.visibility));
     if (d.is_generic) map_push(m, "is_generic", cbor_bool(true));
+    if (!d.origin_module.empty()) map_push(m, "origin_module", cbor_str(d.origin_module));
     cbor_item_t* params = cbor_new_indefinite_array();
     for (auto& p : d.params) cbor_array_push(params, cbor_move(encode_template_param(p)));
     map_push(m, "params", params);
@@ -1346,6 +1347,7 @@ kdi_template_def decode_template_def(cbor_item_t* item, const std::string& path)
     d.visibility  = opt_string(item, "visibility");
     d.is_generic  = opt_bool(item, "is_generic", false);
     auto* pa = map_get(item, "params");
+    d.origin_module = opt_string(item, "origin_module");
     if (pa && cbor_isa_array(pa)) {
         size_t n = cbor_array_size(pa);
         for (size_t i = 0; i < n; ++i)

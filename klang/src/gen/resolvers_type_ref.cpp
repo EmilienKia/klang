@@ -1340,16 +1340,23 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             concrete_agg->assign_name(ancestor->get_name().with_back(concrete_agg->get_short_name()));
         }
     }
+    // For instantiations of IMPORTED templates, override with an ORIGIN-ABSOLUTE
+    // name so the mangled symbol is identical across modules (linkonce_odr/COMDAT
+    // dedup). See unit::make_origin_absolute_name.
+    if (ti && !ti->origin_module_ns_fq.empty()) {
+        concrete_agg->assign_name(unit::make_origin_absolute_name(
+            ti->origin_module_ns_fq, concrete_agg->get_short_name()));
+    }
     concrete_agg->update_mangled_name();
 
     // 6d. Update FQ names and mangled names for children (functions, constructors, etc.)
+    //     Re-derive unconditionally so an origin-absolute rename of the parent
+    //     aggregate propagates to the methods' mangled symbols.
     auto update_children_names = [](aggregate& agg) {
         for (auto& child : agg.get_children()) {
             if (auto fn = std::dynamic_pointer_cast<function>(child)) {
-                if (fn->get_fq_name().empty() && !fn->get_short_name().empty()) {
-                    if (auto parent_named = fn->template parent<named_element>()) {
-                        fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
-                    }
+                if (auto parent_named = fn->template parent<named_element>()) {
+                    fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
                 }
                 fn->update_mangled_name();
             }
@@ -1360,10 +1367,8 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     // Also update FQ/mangled names for nested aggregates and their children
     for (auto& child : concrete_agg->get_children()) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
-            if (nested->get_fq_name().empty() && !nested->get_short_name().empty()) {
-                if (auto ancestor = nested->template ancestor<named_element>()) {
-                    nested->assign_name(ancestor->get_name().with_back(nested->get_short_name()));
-                }
+            if (auto ancestor = nested->template ancestor<named_element>()) {
+                nested->assign_name(ancestor->get_name().with_back(nested->get_short_name()));
             }
             nested->update_mangled_name();
             update_children_names(*nested);

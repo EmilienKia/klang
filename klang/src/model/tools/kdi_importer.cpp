@@ -851,8 +851,11 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
         // Tag the template with its originating module namespace (normalised, no root
         // prefix) so the local instantiator can build an origin-qualified registry key.
+        // Prefer the TRUE origin recorded on a re-exported template's KDI; fall back to
+        // the namespace it is declared in within the current KDI.
         if (ti) {
-            const std::string& ofq = parent_kdi_ns.fq_name;
+            std::string ofq = tdef.origin_module;
+            if (ofq.empty()) ofq = parent_kdi_ns.fq_name;
             ti->origin_module_ns_fq = (ofq.size() >= 2 && ofq[0] == ':' && ofq[1] == ':')
                                       ? ofq.substr(2) : ofq;
         }
@@ -989,8 +992,17 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         //    tpl_info so the local instantiator can build an origin-qualified
         //    registry key and avoid cross-namespace instantiation-identity collisions.
         {
-            std::string origin = (ns_fq.size() >= 2 && ns_fq[0] == ':' && ns_fq[1] == ':')
-                                 ? ns_fq.substr(2) : ns_fq;
+            // Prefer the template's TRUE origin module when the KDI records it
+            // (set for re-exported templates: a lib that imported k::Optional and
+            // re-exports it carries origin_module="k"). Otherwise fall back to the
+            // namespace this template was declared in within the current KDI.
+            std::string origin = tdef.origin_module;
+            if (origin.empty()) {
+                origin = (ns_fq.size() >= 2 && ns_fq[0] == ':' && ns_fq[1] == ':')
+                         ? ns_fq.substr(2) : ns_fq;
+            } else if (origin.size() >= 2 && origin[0] == ':' && origin[1] == ':') {
+                origin = origin.substr(2);
+            }
             auto tag = [&origin](tpl_info* ti) {
                 if (ti && ti->origin_module_ns_fq.empty()) ti->origin_module_ns_fq = origin;
             };

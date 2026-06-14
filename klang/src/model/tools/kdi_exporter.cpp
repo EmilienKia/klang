@@ -1493,6 +1493,12 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     def.entity_kind = entity_kind;
     def.visibility = (vis == PROTECTED) ? "protected" : "public";
 
+    // Record the true origin module of a re-exported template (empty when this
+    // template is owned by the module producing the KDI). Lets a downstream
+    // importer tag the template with its real origin so every module that
+    // instantiates it synthesises the same origin-absolute symbol (COMDAT dedup).
+    def.origin_module = ti.origin_module_ns_fq;
+
     bool is_generic = ti.is_generic;
     if (entity) {
         if (auto agg_ptr = dynamic_cast<const aggregate*>(entity)) {

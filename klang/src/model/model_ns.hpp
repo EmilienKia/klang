@@ -393,6 +393,17 @@ public:
                                                         const std::string& short_inst_name);
 
     /**
+     * Build the ORIGIN-ABSOLUTE name of a template instantiation:
+     * "::<origin_ns_fq>::<short_name>" (root-prefixed), e.g. origin "k" + "Optional"
+     * → ::k::Optional. Any leading root prefix ("::") on @p origin_ns_fq is stripped
+     * first; multi-level origins ("a::b") become nested name parts. Used so a
+     * consumer-synthesised instantiation of an imported template gets the same
+     * mangled symbol as in its origin module, enabling linkonce_odr/COMDAT dedup.
+     */
+    static k::name make_origin_absolute_name(const std::string& origin_ns_fq,
+                                             const std::string& short_name);
+
+    /**
      * Return (or create) the imported_variable model node for @p kdi_var.
      * Keyed by mangled_name.  Resolves the variable type.
      */

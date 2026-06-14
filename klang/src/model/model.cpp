@@ -1282,6 +1282,24 @@ std::string unit::make_instantiation_registry_key(std::string origin_ns_fq,
     return origin_ns_fq + "::" + short_inst_name;
 }
 
+k::name unit::make_origin_absolute_name(const std::string& origin_ns_fq,
+                                        const std::string& short_name) {
+    std::string ofq = origin_ns_fq;
+    // Strip a leading root prefix ("::a::b" -> "a::b").
+    if (ofq.size() >= 2 && ofq[0] == ':' && ofq[1] == ':') ofq = ofq.substr(2);
+    std::vector<std::string> parts;
+    for (std::size_t pos = 0;;) {
+        auto sep = ofq.find("::", pos);
+        std::string part = (sep == std::string::npos) ? ofq.substr(pos)
+                                                       : ofq.substr(pos, sep - pos);
+        if (!part.empty()) parts.push_back(part);
+        if (sep == std::string::npos) break;
+        pos = sep + 2;
+    }
+    parts.push_back(short_name);
+    return k::name(true, parts);
+}
+
 std::shared_ptr<ns> unit::get_root_namespace() {
     if(!_root_ns) {
         _root_ns = ns::make_shared(shared_as<unit>(), "");

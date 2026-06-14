@@ -884,6 +884,13 @@ void declaration_generator::visit_function(function &function) {
     llvm::FunctionType *func_type = llvm::FunctionType::get(ret_type, param_types, false);
     llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.get_mangled_name(), *_context->_module);
 
+    // Template instantiations use linkonce_odr + COMDAT so identical
+    // instantiations are merged across translation units / modules (C++ ODR model).
+    if (function.is_instantiation() ||
+        (function.get_owner() && function.get_owner()->is_instantiation())) {
+        apply_instantiation_linkage(*_context->_module, func, function.get_mangled_name());
+    }
+
     if (use_sret) {
         // Mark the first parameter with the StructRet attribute
         func->addParamAttr(0, llvm::Attribute::get(**_context, llvm::Attribute::StructRet,

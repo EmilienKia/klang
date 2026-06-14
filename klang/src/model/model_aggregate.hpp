@@ -153,6 +153,15 @@ protected:
     std::string _tpl_base_name;
     std::vector<template_argument> _tpl_args;
 
+    /**
+     * True when this aggregate is a template instantiation synthesised by
+     * template_instantiator (either the type-erased "generic" model — which keeps
+     * the base name and has no tpl args — or the per-arg "concrete" model). Used by
+     * the code generator to apply linkonce_odr + COMDAT linkage so identical
+     * instantiations are merged across translation units / modules.
+     */
+    bool _is_instantiation = false;
+
     aggregate(std::shared_ptr<element> parent) :
         element(parent) {}
 
@@ -372,6 +381,17 @@ public:
         _tpl_base_name = base_name;
         _tpl_args = std::move(args);
     }
+
+    /**
+     * True if this aggregate is a template instantiation synthesised by the
+     * template_instantiator (covers both the generic type-erased model and the
+     * concrete per-arg model). Distinct from has_tpl_args(), which is false for
+     * generic synthesised aggregates.
+     */
+    bool is_instantiation() const { return _is_instantiation; }
+
+    /** Mark this aggregate as a synthesised template instantiation. */
+    void mark_instantiation() { _is_instantiation = true; }
 };
 
 /**

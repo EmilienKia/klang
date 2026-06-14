@@ -394,6 +394,7 @@ static json to_json(const kdi_template_def& d) {
     json j = {{"name", d.name}, {"fq_name", d.fq_name}, {"entity_kind", d.entity_kind},
               {"visibility", d.visibility}, {"params", params}, {"source", d.source}};
     if (d.is_generic) j["is_generic"] = true;
+    if (!d.origin_module.empty()) j["origin_module"] = d.origin_module;
     if (d.aggregate_signature) j["aggregate_signature"] = to_json(*d.aggregate_signature);
     if (d.function_signature) j["function_signature"] = to_json(*d.function_signature);
     return j;
@@ -405,6 +406,7 @@ static kdi_template_def from_json_template_def(const json& j) {
     d.entity_kind = j.at("entity_kind");
     d.visibility  = j.value("visibility", "public");
     d.is_generic  = j.value("is_generic", false);
+    d.origin_module = j.value("origin_module", "");
     for (auto& p : j.value("params", json::array()))
         d.params.push_back(from_json_template_param(p));
     d.source = j.value("source", "");

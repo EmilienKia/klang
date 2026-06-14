@@ -25,21 +25,27 @@
     - [ ] Nested-node template collection runtime remains unstable under JIT for non-trivial list patterns (allocation/link/destruction path)
     - [ ] Imported template aggregate methods from KDI/signature-only metadata do not yet materialize executable bodies in consumer modules; this currently blocks re-enabling template stdlib collections end-to-end
     - [ ] Origin-aware homing of imported template definitions: re-injected imported templates are flattened into the consumer module's **root** namespace (via the `module <ns>;`-rename trick in `kdi_importer::materialise_template_def`), so two *imported* templates with the same short name from different modules (`a::Box`, `b::Box`) clash at the model/symbol level (the flatten dedups by short name in root). The instantiation `struct_type` registry is already collision-safe (keyed by an origin-qualified name via `unit::make_instantiation_registry_key`; see test `[template][instantiation][ns-collision]`), but the *model-level* symbol clash remains. **Why the naive fix is blocked**: simply homing the re-parsed template under `root::<origin>` (nested-`namespace` wrapping instead of the module-rename trick) breaks **unqualified access** to imported top-level symbols — `import mylib;` currently behaves like `using namespace mylib;`, so imported function templates must be reachable as bare `sum_pair<int>(...)`. Homing them under `::consumer::mylib::sum_pair` makes unqualified lookup fail (proven: it regresses the 4 `[cross-tpl][consumer-inst]` function-template tests in `test-import.cpp`). The real fix is therefore **deeper than homing**: scope lookup (`resolvers_scope_lookup.cpp`) must resolve unqualified imported symbols from their origin namespaces (an `import`-as-`using-namespace` mechanism) so the flatten can be dropped; homonymous imports then naturally require qualification. See skipped test `[import][template][homonym-imports][.]` documenting the target behaviour.
-  - Covariance for generics (invariant only in Phase 1; co/contra-variance is a future feature)
-
-- Review casting algorithm and implicit casting strategy (char[]! -> const char[]?  ou  char[]! -> const char[], etc.)
-- Add support of foreach loops
-- Add placement new operator and support for custom allocators
-- Add non-construct memory allocation and deallocation intrinsics (e.g. `alloc(size)`, `dealloc(ptr, size)`) for manual memory management
-- Add FFI memcopy/memmove intrinsics for efficient raw memory manipulation
-- Add return type covariance
-- Add "virtual" symbols (parent, self, etc.)
-- Enumerations
-    - [ ] Enum methods (functions declared inside enum body)
-    - [ ] Standalone template enum declarations (`template<T> enum ...`)
-    - [ ] Pattern matching / `match` expression on enum values (depends on switch/case)
-    - [ ] Bitflags / combined enum values (bitwise operations on enums)
-    - [ ] `values()` / `count()` / `name()` intrinsics on enums
+    - [x] **Static-link diamond of a libk template instantiation** (cross-module COMDAT,
+      base-erased generic RTTI) — **DONE**. Two libs A and B plus an executable C all
+      instantiate the same libk template (`::k::Optional<int>`, `::k::Expected<int,int>`):
+      the *shared-library* diamond works (origin-absolute names + `linkonce_odr` + COMDAT,
+      loader interposes one copy — tests `[import][e2e][instantiation-diamond-shared]`), and
+      the *static-archive* diamond now links and runs too. Every consumer of a libk template
+      re-emits that template's RTTI / vtable / reflection descriptors; they are now emitted
+      with merge-friendly linkage so a static link resolves them to a single definition
+      instead of failing on duplicate strong symbols:
+        - vtable / RTTI globals (`_KTV` / `_KTRI`) of any template / generic / instantiation
+          aggregate → `linkonce_odr` + COMDAT (`gen_class.cpp` `visit_klass`, guarded by
+          `should_merge_aggregate_symbols` = `is_instantiation() || is_template()`);
+        - reflection function descriptors (`_KTRF`, member + free) → module-local
+          (`PrivateLinkage`) since they are referenced only by baked pointers, never by name
+          (`gen_class.cpp`, `gen_unit.cpp`) — matching the already-private ctor/param descriptors.
+      Regression test: `[klangc][instantiation-diamond-static]` in `test-klangc-static-diamond.cpp`
+      (builds two `.a` archives + statically links an executable + runs → 42).
+      Remaining (minor, non-blocking): a consumer still *over-emits* RTTI for imported generic
+      templates it never instantiates (e.g. a lib using only `Optional<int>` emits Collection/
+      Vector/LinkedList RTTI); now harmless (weak/private) but wasteful — curbing it belongs to
+      the KDI recipe-only rework (Phase 4).
 - Add unions, typed unions (discriminated/tagged unions à la std::variant)
     - [ ] Enum-based discriminant interrogation (`u.type()` → enum)
     - [ ] Union extension / inheritance (derive union from another union)
