@@ -459,9 +459,29 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     // 5. Return existing struct_type or create a new one
     if (concrete->get_struct_type()) return concrete->get_struct_type();
 
-    std::shared_ptr<struct_type> st_type{
-        new struct_type(concrete->get_short_name(), concrete->shared_as<aggregate>())};
-    _context->add_struct(st_type);
+    // Unify with any KDI-imported instantiation of the same template via the registry
+    // on unit. The key is qualified by the template's originating namespace (its
+    // origin tag for imported templates, or its enclosing namespace for locally
+    // declared ones) so that same-named templates from different namespaces never
+    // collide (see unit::make_instantiation_registry_key / _instantiation_struct_types).
+    std::string origin_ns_fq = (ti && !ti->origin_module_ns_fq.empty())
+                               ? ti->origin_module_ns_fq
+                               : (parent_ns ? parent_ns->get_fq_name() : std::string{});
+    const std::string inst_key = unit::make_instantiation_registry_key(
+        origin_ns_fq, concrete->get_short_name());
+    std::shared_ptr<struct_type> st_type;
+    if (auto existing = _unit.find_instantiation_struct_type(inst_key)) {
+        // Reuse the struct_type already created for this instantiation (possibly by
+        // the KDI importer). Rebind it to this locally-synthesised concrete aggregate,
+        // which carries real method/constructor bodies for code generation.
+        st_type = existing;
+        st_type->reassign_aggregate(concrete->shared_as<aggregate>());
+    } else {
+        st_type = std::shared_ptr<struct_type>{
+            new struct_type(concrete->get_short_name(), concrete->shared_as<aggregate>())};
+        _context->add_struct(st_type);
+        _unit.register_instantiation_struct_type(inst_key, st_type);
+    }
     concrete->set_struct_type(st_type);
 
     // 5b. Create 'this' parameters for member functions (requires struct_type)

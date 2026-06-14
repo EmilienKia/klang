@@ -380,6 +380,57 @@ TEST_CASE("[L] Template-qualified explicit member call bypasses virtual dispatch
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [M] Cross-namespace instantiation identity: two same-named templates declared
+//      in different namespaces, instantiated with the SAME argument, must map to
+//      DISTINCT struct_types (no registry collision).
+//
+//  Regression guard for the template-instantiation struct_type registry: it is
+//  keyed by an origin-namespace–qualified key (a::Box__int vs b::Box__int). With a
+//  bare short-name key ("Box__int") both instantiations would collide to a single
+//  struct_type — and since the two Box templates have different layouts (1 vs 2
+//  fields), reusing one struct_type for the other corrupts member access.
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[M] Same-named templates in different namespaces are distinct types",
+          "[template][instantiation][ns-collision]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        namespace a {
+            template<typename T>
+            struct Box {
+                v : T;
+            public:
+                Box(x : T) { v = x; }
+                const get() : T { return v; }
+            }
+        }
+
+        namespace b {
+            template<typename T>
+            struct Box {
+                v1 : T;
+                v2 : T;
+            public:
+                Box(x : T) { v1 = x; v2 = x; }
+                const sum() : T { return v1 + v2; }
+            }
+        }
+
+        run() : int {
+            ba : a::Box<int>(21);
+            bb : b::Box<int>(10);
+            return ba.get() + bb.sum();   // 21 + (10 + 10) = 41
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("_KFN4test3runEv");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 41);
+}
+
+
 
 
 

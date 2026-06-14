@@ -1272,6 +1272,16 @@ void unit::set_unit_name(const name& unit_name) {
     get_root_namespace()->assign_name(unit_name.with_root_prefix());
 }
 
+std::string unit::make_instantiation_registry_key(std::string origin_ns_fq,
+                                                  const std::string& short_inst_name) {
+    // Strip a leading root prefix ("::a::b" -> "a::b") so the importer- and
+    // local-instantiator-derived origins normalise to the same form.
+    if (origin_ns_fq.size() >= 2 && origin_ns_fq[0] == ':' && origin_ns_fq[1] == ':')
+        origin_ns_fq = origin_ns_fq.substr(2);
+    if (origin_ns_fq.empty()) return short_inst_name;
+    return origin_ns_fq + "::" + short_inst_name;
+}
+
 std::shared_ptr<ns> unit::get_root_namespace() {
     if(!_root_ns) {
         _root_ns = ns::make_shared(shared_as<unit>(), "");

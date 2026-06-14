@@ -172,7 +172,29 @@ protected:
      */
     std::unordered_map<std::string, std::shared_ptr<enumeration>>        _imported_enums;
 
+    /**
+     * Registry of struct_types for template instantiations, keyed by an
+     * origin-namespace–qualified instantiation key (e.g. "k::Optional__byte"),
+     * built by make_instantiation_registry_key().
+     *
+     * Both the KDI importer (get_or_create_imported_aggregate) and the local
+     * template instantiator (try_instantiate_template_type) consult this registry so
+     * that the same instantiation always maps to a single struct_type object.
+     * Pointer-based struct-identity checks in overload/cast resolution then treat
+     * imported and locally-synthesised instantiations as the same type.
+     *
+     * The key is qualified by the originating module's namespace so that two
+     * same-named templates imported from different namespaces (e.g. a::Optional and
+     * b::Optional) never collide to a single struct_type. The importer derives the
+     * namespace from the instantiation's fully-qualified KDI name; the local
+     * instantiator derives it from the template's origin tag (tpl_info::
+     * origin_module_ns_fq) or, for locally-declared templates, its enclosing
+     * namespace.
+     */
+    std::unordered_map<std::string, std::weak_ptr<struct_type>> _instantiation_struct_types;
+
     std::shared_ptr<global_main_function> _global_main_func;
+
 
     /**
      * Source objects for re-parsed template definitions imported from KDI.
@@ -335,6 +357,40 @@ public:
     std::shared_ptr<imported_aggregate>
     get_or_create_imported_aggregate(const k::name& fq_name,
                                      std::shared_ptr<context> ctx);
+
+    /**
+     * Look up the unified struct_type for a template instantiation by its
+     * origin-qualified registry key (see make_instantiation_registry_key).
+     * @return the shared struct_type, or nullptr if none registered yet.
+     */
+    std::shared_ptr<struct_type>
+    find_instantiation_struct_type(const std::string& key) const {
+        auto it = _instantiation_struct_types.find(key);
+        if (it == _instantiation_struct_types.end()) return nullptr;
+        return it->second.lock();
+    }
+
+    /**
+     * Register the unified struct_type for a template instantiation under its
+     * origin-qualified registry key (see make_instantiation_registry_key).
+     */
+    void register_instantiation_struct_type(const std::string& key,
+                                            const std::shared_ptr<struct_type>& st) {
+        if (st) _instantiation_struct_types[key] = st;
+    }
+
+    /**
+     * Compose the canonical key for the template-instantiation struct_type registry.
+     *
+     * Qualifies the mangled short instantiation name (e.g. "Optional__byte") with the
+     * originating module's namespace (e.g. "k") so that same-named templates from
+     * different namespaces map to distinct struct_types. Any leading root prefix
+     * ("::") on @p origin_ns_fq is stripped. Returns "<origin>::<short>", or just
+     * "<short>" when @p origin_ns_fq is empty (template declared in this unit with no
+     * enclosing namespace).
+     */
+    static std::string make_instantiation_registry_key(std::string origin_ns_fq,
+                                                        const std::string& short_inst_name);
 
     /**
      * Return (or create) the imported_variable model node for @p kdi_var.

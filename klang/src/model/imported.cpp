@@ -830,7 +830,38 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
     const std::string& llvm_type_name = kdi_agg->mangled_name.empty()
                                         ? struct_key : kdi_agg->mangled_name;
 
-    auto st = std::make_shared<struct_type>(struct_key, std::weak_ptr<aggregate>(agg));
+    // For template instantiations, consult the unification registry (keyed by the
+    // mangled short instantiation name) so the imported and any locally-synthesised
+    // instantiation of the same template share a single struct_type
+    // (see unit::_instantiation_struct_types). A non-instantiation aggregate is never
+    // duplicated (the _imported_aggregates cache guards that), so only instantiations
+    // need this.
+    const bool is_instantiation = kdi_agg->template_origin.has_value();
+    // Origin-qualified registry key: qualify the short instantiation name with the
+    // originating template's namespace (derived from template_origin.base_fq_name,
+    // e.g. "k::Optional" -> origin "k"). Built via the same helper the local
+    // instantiator uses, so both map the same instantiation to one struct_type while
+    // same-named templates from different namespaces stay distinct.
+    std::string inst_key;
+    if (is_instantiation) {
+        const std::string& base_fq = kdi_agg->template_origin->base_fq_name;
+        std::string origin_ns;
+        if (auto pos = base_fq.rfind("::"); pos != std::string::npos) {
+            origin_ns = base_fq.substr(0, pos);
+        }
+        inst_key = make_instantiation_registry_key(origin_ns, kdi_agg->name);
+    }
+    std::shared_ptr<struct_type> st;
+    if (is_instantiation) {
+        st = find_instantiation_struct_type(inst_key);
+    }
+    const bool reused_st = static_cast<bool>(st);
+    if (!st) {
+        st = std::make_shared<struct_type>(struct_key, std::weak_ptr<aggregate>(agg));
+        if (is_instantiation) {
+            register_instantiation_struct_type(inst_key, st);
+        }
+    }
     agg->set_struct_type(st);
     ctx->add_struct(st);
 
@@ -977,7 +1008,13 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
     }
 
     // Wire the struct_type with the LLVM type and named fields.
-    if (llvm_st) {
+    // When the struct_type was reused from the unification registry and already
+    // carries an LLVM type (a locally-synthesised instantiation resolved it
+    // first), keep that one — re-attaching would needlessly replace an
+    // equivalent type. Otherwise attach the KDI-derived layout.
+    if (reused_st && st->is_resolved()) {
+        // Already resolved by the locally-synthesised instantiation; leave as-is.
+    } else if (llvm_st) {
         ctx->attach_llvm_struct_type(st, llvm_st, std::move(named_fields));
     } else {
         // Fallback: opaque placeholder (no named fields — codegen will fail on unsized)

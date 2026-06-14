@@ -1260,9 +1260,31 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     //    This is essential for self-referential types (e.g. _next : Node<T>*):
     //    the recursive try_instantiate_template_type call hits step 5 above
     //    and returns the already-created struct_type instead of recursing.
-    std::shared_ptr<struct_type> st_type{
-        new struct_type(concrete_agg->get_short_name(), concrete_agg->shared_as<aggregate>())};
-    _context->add_struct(st_type);
+    //
+    //    For unification with any KDI-imported instantiation of the same template,
+    //    consult the registry on unit. The key is qualified by the template's
+    //    originating namespace (its origin tag for imported templates, or its
+    //    enclosing namespace for locally declared ones) so that same-named templates
+    //    from different namespaces never collide (see
+    //    unit::make_instantiation_registry_key / _instantiation_struct_types).
+    std::string origin_ns_fq = (ti && !ti->origin_module_ns_fq.empty())
+                               ? ti->origin_module_ns_fq
+                               : (parent_ns_ptr ? parent_ns_ptr->get_fq_name() : std::string{});
+    const std::string inst_key = unit::make_instantiation_registry_key(
+        origin_ns_fq, concrete_agg->get_short_name());
+    std::shared_ptr<struct_type> st_type;
+    if (auto existing = _unit.find_instantiation_struct_type(inst_key)) {
+        // Reuse the struct_type already created for this instantiation (possibly by
+        // the KDI importer). Rebind it to this locally-synthesised concrete aggregate,
+        // which carries real method/constructor bodies for code generation.
+        st_type = existing;
+        st_type->reassign_aggregate(concrete_agg->shared_as<aggregate>());
+    } else {
+        st_type = std::shared_ptr<struct_type>{
+            new struct_type(concrete_agg->get_short_name(), concrete_agg->shared_as<aggregate>())};
+        _context->add_struct(st_type);
+        _unit.register_instantiation_struct_type(inst_key, st_type);
+    }
     concrete_agg->set_struct_type(st_type);
 
     // 6b. Create 'this' parameters for member functions, constructors,

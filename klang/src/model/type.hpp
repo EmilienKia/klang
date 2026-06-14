@@ -759,6 +759,17 @@ public:
     std::string to_string() const override;
     std::shared_ptr<aggregate> get_struct() const;
 
+    /**
+     * Rebind the owning aggregate of this struct_type.
+     *
+     * Used when unifying the KDI-imported and locally-synthesised instantiations
+     * of the same generic template into a single struct_type: the locally
+     * synthesised concrete aggregate carries real method/constructor bodies, so
+     * the shared struct_type must point to it (rather than the signature-only
+     * imported aggregate) for code generation to emit those bodies.
+     */
+    void reassign_aggregate(std::weak_ptr<k::model::aggregate> st) { _struct = std::move(st); }
+
     inline fields_t::size_type fields_size()const {return _fields.size();}
     inline fields_t::const_iterator fields_begin()const {return _fields.begin();}
     inline fields_t::const_iterator fields_end()const {return _fields.end();}

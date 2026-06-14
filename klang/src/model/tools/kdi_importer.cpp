@@ -849,6 +849,13 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         ctx->push_template_param_scope(param_names);
 
         auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
+        // Tag the template with its originating module namespace (normalised, no root
+        // prefix) so the local instantiator can build an origin-qualified registry key.
+        if (ti) {
+            const std::string& ofq = parent_kdi_ns.fq_name;
+            ti->origin_module_ns_fq = (ofq.size() >= 2 && ofq[0] == ':' && ofq[1] == ':')
+                                      ? ofq.substr(2) : ofq;
+        }
 
         if (tdef.aggregate_signature) {
             if (auto existing = target_ns->get_aggregate(tdef.name)) {
@@ -966,6 +973,24 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         auto saved_name = _unit.get_unit_name();
         k::model::model_builder::visit(_logger, ctx, *ast_unit, _unit);
         _unit.set_unit_name(saved_name);
+
+        // ── 5. Tag the re-parsed template with its originating module namespace ──
+        //    Imported template definitions are re-homed under the consumer module's
+        //    namespace, which loses their true origin. Record it (normalised, no root
+        //    prefix) on the template's tpl_info so the local instantiator can build an
+        //    origin-qualified registry key and avoid cross-namespace collisions.
+        {
+            std::string origin = (ns_fq.size() >= 2 && ns_fq[0] == ':' && ns_fq[1] == ':')
+                                 ? ns_fq.substr(2) : ns_fq;
+            auto tag = [&origin](tpl_info* ti) {
+                if (ti && ti->origin_module_ns_fq.empty()) ti->origin_module_ns_fq = origin;
+            };
+            // The re-parsed template is homed under the consumer root namespace.
+            auto root = _unit.get_root_namespace();
+            if (auto agg = root->get_aggregate(tdef.name))  tag(agg->get_tpl_info());
+            if (auto fn  = root->get_function(tdef.name))   tag(fn->get_tpl_info());
+            if (auto un  = root->get_union(tdef.name))      tag(un->get_tpl_info());
+        }
 
     } catch (const std::exception&) {
         // If parsing/building fails, silently skip this template definition.

@@ -211,7 +211,22 @@ struct tpl_info {
     std::vector<template_param_descriptor> params;
 
     /**
-     * True if this template was declared with the 'generic' keyword.
+    /**
+     * For templates imported from another module's KDI: the originating module's
+     * normalised fully-qualified namespace, WITHOUT a leading root prefix
+     * (e.g. "k" for ::k::Optional, "a::b" for ::a::b::Vec).
+     *
+     * Empty for templates declared in the current compilation unit.
+     *
+     * Imported templates are re-homed under the consumer module's namespace, which
+     * loses their true origin. This tag preserves it so the template-instantiation
+     * registry key (unit::make_instantiation_registry_key) can be qualified by the
+     * origin namespace — preventing two same-named templates imported from different
+     * namespaces from colliding to a single struct_type in the registry.
+     */
+    std::string origin_module_ns_fq;
+
+    /** True if this template was declared with the 'generic' keyword.
      *
      * When true:
      *  - All parameters are type parameters (no value parameters).
