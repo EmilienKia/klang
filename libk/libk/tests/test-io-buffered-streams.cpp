@@ -56,7 +56,7 @@ TEST_CASE("BufferedInputStream single byte reads", "[libk][io][buffered]") {
             data : byte[]! = new byte[sz];
             data[0] = (byte) 10; data[1] = (byte) 20; data[2] = (byte) 30;
             data[3] = (byte) 40; data[4] = (byte) 50;
-            bais : k::io::ByteArrayInputStream(data, 5);
+            bais : k::io::ArrayInputStream<byte>(data, 5);
             bis : k::io::BufferedInputStream(&bais, 3);
 
             v0 : int = (int)(unsigned byte) bis.read().getOr((byte) 0);
@@ -94,7 +94,7 @@ TEST_CASE("BufferedInputStream bulk read smaller than buffer", "[libk][io][buffe
             data : byte[]! = new byte[sz];
             data[0] = (byte) 1; data[1] = (byte) 2; data[2] = (byte) 3;
             data[3] = (byte) 4; data[4] = (byte) 5; data[5] = (byte) 6;
-            bais : k::io::ByteArrayInputStream(data, 6);
+            bais : k::io::ArrayInputStream<byte>(data, 6);
             bis : k::io::BufferedInputStream(&bais, 8);
 
             dsz : int = 4;
@@ -128,7 +128,7 @@ TEST_CASE("BufferedInputStream available", "[libk][io][buffered]") {
                 data[i] = (byte) i;
                 i = i + 1;
             }
-            bais : k::io::ByteArrayInputStream(data, 10);
+            bais : k::io::ArrayInputStream<byte>(data, 10);
             bis : k::io::BufferedInputStream(&bais, 4);
             // Before first read, available = underlying (10)
             a0 : int = bis.available();
@@ -156,7 +156,7 @@ TEST_CASE("BufferedOutputStream flush forces data through", "[libk][io][buffered
         module __bos_flush__;
 
         test_flush() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             bos : k::io::BufferedOutputStream(&baos, 8);
 
             bos.write(10);
@@ -166,7 +166,7 @@ TEST_CASE("BufferedOutputStream flush forces data through", "[libk][io][buffered
             bos.flush();
             sizeAfter : int = baos.size();
             if (sizeAfter != 2) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 10) return 2;
             if (arr[1] != (byte) 20) return 3;
             return 0;
@@ -187,7 +187,7 @@ TEST_CASE("BufferedOutputStream auto-flush on full buffer", "[libk][io][buffered
         module __bos_autof__;
 
         test_auto_flush() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             bos : k::io::BufferedOutputStream(&baos, 4);
 
             // Write 4 bytes to fill buffer
@@ -222,13 +222,13 @@ TEST_CASE("BufferedOutputStream close flushes", "[libk][io][buffered]") {
         module __bos_close__;
 
         test_close() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             bos : k::io::BufferedOutputStream(&baos, 16);
             bos.write(42);
             bos.write(99);
             bos.close();
             if (baos.size() != 2) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 42) return 2;
             if (arr[1] != (byte) 99) return 3;
             return 0;
@@ -249,7 +249,7 @@ TEST_CASE("Buffered streams round-trip", "[libk][io][buffered]") {
         module __buffered_roundtrip__;
 
         test_roundtrip() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             bos : k::io::BufferedOutputStream(&baos, 4);
 
             i : int = 0;
@@ -259,8 +259,8 @@ TEST_CASE("Buffered streams round-trip", "[libk][io][buffered]") {
             }
             bos.flush();
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             bis : k::io::BufferedInputStream(&bais, 3);
 
             i = 0;

@@ -23,6 +23,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/collections.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stream.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/array_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/filter_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/buffered_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/data_stream.k

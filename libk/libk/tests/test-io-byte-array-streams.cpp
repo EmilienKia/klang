@@ -1,5 +1,5 @@
 /*
- * K Language standard library — I/O ByteArray stream tests
+ * K Language standard library — I/O Array stream tests
  *
  * Copyright 2026 Emilien Kia
  *
@@ -17,9 +17,9 @@
  */
 
 /**
- * Tests for k::io::ByteArrayInputStream and k::io::ByteArrayOutputStream.
+ * Tests for k::io::ArrayInputStream<byte> and k::io::ArrayOutputStream<byte>.
  *
- * Exercises write, read, size, toByteArray, reset, skip, available and
+ * Exercises write, read, size, toArray, reset, skip, available and
  * round-trip (write to BAOS → extract → read from BAIS).
  */
 
@@ -44,15 +44,15 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayOutputStream — default construction
+// ArrayOutputStream — default construction
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayOutputStream default ctor — size is 0", "[libk][io][baos]") {
+TEST_CASE("ArrayOutputStream default ctor — size is 0", "[libk][io][baos]") {
     auto jit = jit_k(R"SRC(
         module __baos_default__;
 
         test_size() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             return baos.size();
         }
     )SRC");
@@ -63,15 +63,15 @@ TEST_CASE("ByteArrayOutputStream default ctor — size is 0", "[libk][io][baos]"
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayOutputStream — write single bytes
+// ArrayOutputStream — write single bytes
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayOutputStream write single bytes", "[libk][io][baos]") {
+TEST_CASE("ArrayOutputStream write single bytes", "[libk][io][baos]") {
     auto jit = jit_k(R"SRC(
         module __baos_write_single__;
 
         test_size() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             baos.write(65);
             baos.write(66);
             baos.write(67);
@@ -85,19 +85,19 @@ TEST_CASE("ByteArrayOutputStream write single bytes", "[libk][io][baos]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayOutputStream — toByteArray
+// ArrayOutputStream — toArray
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayOutputStream toByteArray content", "[libk][io][baos]") {
+TEST_CASE("ArrayOutputStream toArray content", "[libk][io][baos]") {
     auto jit = jit_k(R"SRC(
         module __baos_toarray__;
 
         test_content() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             baos.write(10);
             baos.write(20);
             baos.write(30);
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 10) return 1;
             if (arr[1] != (byte) 20) return 2;
             if (arr[2] != (byte) 30) return 3;
@@ -111,15 +111,15 @@ TEST_CASE("ByteArrayOutputStream toByteArray content", "[libk][io][baos]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayOutputStream — reset
+// ArrayOutputStream — reset
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayOutputStream reset clears size", "[libk][io][baos]") {
+TEST_CASE("ArrayOutputStream reset clears size", "[libk][io][baos]") {
     auto jit = jit_k(R"SRC(
         module __baos_reset__;
 
         test_reset() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             baos.write(1);
             baos.write(2);
             baos.reset();
@@ -133,10 +133,10 @@ TEST_CASE("ByteArrayOutputStream reset clears size", "[libk][io][baos]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayInputStream — read single bytes and EOF
+// ArrayInputStream — read single bytes and EOF
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayInputStream read returns bytes then -1", "[libk][io][bais]") {
+TEST_CASE("ArrayInputStream read returns bytes then -1", "[libk][io][bais]") {
     auto jit = jit_k(R"SRC(
         module __bais_read__;
 
@@ -146,7 +146,7 @@ TEST_CASE("ByteArrayInputStream read returns bytes then -1", "[libk][io][bais]")
             buf[0] = (byte) 10;
             buf[1] = (byte) 20;
             buf[2] = (byte) 30;
-            bais : k::io::ByteArrayInputStream(buf, 3);
+            bais : k::io::ArrayInputStream<byte>(buf, 3);
             v0 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
             v1 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
             v2 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
@@ -165,10 +165,10 @@ TEST_CASE("ByteArrayInputStream read returns bytes then -1", "[libk][io][bais]")
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayInputStream — available
+// ArrayInputStream — available
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayInputStream available", "[libk][io][bais]") {
+TEST_CASE("ArrayInputStream available", "[libk][io][bais]") {
     auto jit = jit_k(R"SRC(
         module __bais_available__;
 
@@ -177,7 +177,7 @@ TEST_CASE("ByteArrayInputStream available", "[libk][io][bais]") {
             buf : byte[]! = new byte[sz];
             buf[0] = (byte) 1; buf[1] = (byte) 2; buf[2] = (byte) 3;
             buf[3] = (byte) 4; buf[4] = (byte) 5;
-            bais : k::io::ByteArrayInputStream(buf, 5);
+            bais : k::io::ArrayInputStream<byte>(buf, 5);
             a0 : int = bais.available();
             bais.read();
             bais.read();
@@ -194,10 +194,10 @@ TEST_CASE("ByteArrayInputStream available", "[libk][io][bais]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayInputStream — skip
+// ArrayInputStream — skip
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayInputStream skip", "[libk][io][bais]") {
+TEST_CASE("ArrayInputStream skip", "[libk][io][bais]") {
     auto jit = jit_k(R"SRC(
         module __bais_skip__;
 
@@ -206,7 +206,7 @@ TEST_CASE("ByteArrayInputStream skip", "[libk][io][bais]") {
             buf : byte[]! = new byte[sz];
             buf[0] = (byte) 10; buf[1] = (byte) 20; buf[2] = (byte) 30;
             buf[3] = (byte) 40; buf[4] = (byte) 50;
-            bais : k::io::ByteArrayInputStream(buf, 5);
+            bais : k::io::ArrayInputStream<byte>(buf, 5);
             skipped : long = bais.skip(3);
             val : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
             if (skipped != 3) return 1;
@@ -221,10 +221,10 @@ TEST_CASE("ByteArrayInputStream skip", "[libk][io][bais]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayInputStream — bulk read
+// ArrayInputStream — bulk read
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayInputStream bulk read", "[libk][io][bais]") {
+TEST_CASE("ArrayInputStream bulk read", "[libk][io][bais]") {
     auto jit = jit_k(R"SRC(
         module __bais_bulk_read__;
 
@@ -233,7 +233,7 @@ TEST_CASE("ByteArrayInputStream bulk read", "[libk][io][bais]") {
             src : byte[]! = new byte[sz];
             src[0] = (byte) 1; src[1] = (byte) 2;
             src[2] = (byte) 3; src[3] = (byte) 4;
-            bais : k::io::ByteArrayInputStream(src, 4);
+            bais : k::io::ArrayInputStream<byte>(src, 4);
 
             dsz : int = 4;
             dst : byte[]! = new byte[dsz];
@@ -256,7 +256,7 @@ TEST_CASE("ByteArrayInputStream bulk read", "[libk][io][bais]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Round-trip: BAOS → toByteArray → BAIS
+// Round-trip: BAOS → toArray → BAIS
 // ═════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Round-trip BAOS to BAIS", "[libk][io][baos][bais]") {
@@ -264,13 +264,13 @@ TEST_CASE("Round-trip BAOS to BAIS", "[libk][io][baos][bais]") {
         module __baos_bais_roundtrip__;
 
         test_roundtrip() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             baos.write(100);
             baos.write(200);
             baos.write(42);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
 
             v0 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
             v1 : int = (int)(unsigned byte) bais.read().getOr((byte) 0);
@@ -291,21 +291,21 @@ TEST_CASE("Round-trip BAOS to BAIS", "[libk][io][baos][bais]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ByteArrayOutputStream — bulk write
+// ArrayOutputStream — bulk write
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayOutputStream bulk write", "[libk][io][baos]") {
+TEST_CASE("ArrayOutputStream bulk write", "[libk][io][baos]") {
     auto jit = jit_k(R"SRC(
         module __baos_bulk_write__;
 
         test_bulk_write() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             sz : int = 3;
             src : byte[]! = new byte[sz];
             src[0] = (byte) 11; src[1] = (byte) 22; src[2] = (byte) 33;
             baos.write(src, 0, 3);
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 11) return 2;
             if (arr[1] != (byte) 22) return 3;
             if (arr[2] != (byte) 33) return 4;
@@ -324,7 +324,7 @@ TEST_CASE("ByteArrayOutputStream bulk write", "[libk][io][baos]") {
 // value.
 //
 // Storing the result of an imported method that returns a template instantiation
-// (here k::io::ByteArrayInputStream::read() -> Optional<byte>) into a local
+// (here k::io::ArrayInputStream<byte>::read() -> Optional<byte>) into a local
 // variable of the same type:
 //
 //     o : Optional<byte> = bais.read();
@@ -342,7 +342,7 @@ TEST_CASE("ByteArrayOutputStream bulk write", "[libk][io][baos]") {
 // and try_instantiate_template_type).
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("ByteArrayInputStream read() rvalue copy-init into Optional<byte>",
+TEST_CASE("ArrayInputStream read() rvalue copy-init into Optional<byte>",
           "[libk][io][bais]") {
     auto jit = jit_k(R"SRC(
         module __bais_opt_copy_init__;
@@ -351,7 +351,7 @@ TEST_CASE("ByteArrayInputStream read() rvalue copy-init into Optional<byte>",
             sz : int = 1;
             buf : byte[]! = new byte[sz];
             buf[0] = (byte) 42;
-            bais : k::io::ByteArrayInputStream(buf, 1);
+            bais : k::io::ArrayInputStream<byte>(buf, 1);
             // Copy-initialise from an imported method's rvalue of the same
             // template instantiation (formerly unsupported).
             o : Optional<byte> = bais.read();
@@ -365,6 +365,3 @@ TEST_CASE("ByteArrayInputStream read() rvalue copy-init into Optional<byte>",
     REQUIRE(fn);
     CHECK(fn() == 0);
 }
-
-
-

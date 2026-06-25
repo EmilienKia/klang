@@ -20,7 +20,7 @@
  * Tests for k::io::FilterInputStream and k::io::FilterOutputStream.
  *
  * Verifies that filter streams correctly delegate all operations to
- * the underlying ByteArray streams.
+ * the underlying Array streams.
  */
 
 #include <catch2/catch_all.hpp>
@@ -55,7 +55,7 @@ TEST_CASE("FilterInputStream delegates read()", "[libk][io][filter]") {
             sz : int = 3;
             buf : byte[]! = new byte[sz];
             buf[0] = (byte) 10; buf[1] = (byte) 20; buf[2] = (byte) 30;
-            bais : k::io::ByteArrayInputStream(buf, 3);
+            bais : k::io::ArrayInputStream<byte>(buf, 3);
             fis : k::io::FilterInputStream<byte>(&bais);
 
             v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
@@ -87,7 +87,7 @@ TEST_CASE("FilterInputStream delegates bulk read", "[libk][io][filter]") {
             sz : int = 3;
             src : byte[]! = new byte[sz];
             src[0] = (byte) 5; src[1] = (byte) 10; src[2] = (byte) 15;
-            bais : k::io::ByteArrayInputStream(src, 3);
+            bais : k::io::ArrayInputStream<byte>(src, 3);
             fis : k::io::FilterInputStream<byte>(&bais);
 
             dsz : int = 3;
@@ -119,7 +119,7 @@ TEST_CASE("FilterInputStream delegates available()", "[libk][io][filter]") {
             buf : byte[]! = new byte[sz];
             buf[0] = (byte)1; buf[1] = (byte)2; buf[2] = (byte)3;
             buf[3] = (byte)4; buf[4] = (byte)5;
-            bais : k::io::ByteArrayInputStream(buf, 5);
+            bais : k::io::ArrayInputStream<byte>(buf, 5);
             fis : k::io::FilterInputStream<byte>(&bais);
 
             a : int = fis.available();
@@ -145,12 +145,12 @@ TEST_CASE("FilterOutputStream delegates write()", "[libk][io][filter]") {
         module __fos_write__;
 
         test_write() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             fos : k::io::FilterOutputStream<byte>(&baos);
             fos.write(65);
             fos.write(66);
             if (baos.size() != 2) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 65) return 2;
             if (arr[1] != (byte) 66) return 3;
             return 0;
@@ -171,14 +171,14 @@ TEST_CASE("FilterOutputStream delegates bulk write", "[libk][io][filter]") {
         module __fos_bulk_write__;
 
         test_bulk_write() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             fos : k::io::FilterOutputStream<byte>(&baos);
             sz : int = 3;
             src : byte[]! = new byte[sz];
             src[0] = (byte) 11; src[1] = (byte) 22; src[2] = (byte) 33;
             fos.write(src, 0, 3);
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 11) return 2;
             if (arr[1] != (byte) 22) return 3;
             if (arr[2] != (byte) 33) return 4;
@@ -204,7 +204,7 @@ TEST_CASE("FilterInputStream delegates skip()", "[libk][io][filter]") {
             buf : byte[]! = new byte[sz];
             buf[0] = (byte) 10; buf[1] = (byte) 20; buf[2] = (byte) 30;
             buf[3] = (byte) 40; buf[4] = (byte) 50;
-            bais : k::io::ByteArrayInputStream(buf, 5);
+            bais : k::io::ArrayInputStream<byte>(buf, 5);
             fis : k::io::FilterInputStream<byte>(&bais);
 
             skipped : unsigned long = fis.skip(2uL);
@@ -237,14 +237,14 @@ TEST_CASE("FilterInputStream delegates close()", "[libk][io][filter]") {
             sz : int = 2;
             buf : byte[]! = new byte[sz];
             buf[0] = (byte) 1; buf[1] = (byte) 2;
-            bais : k::io::ByteArrayInputStream(buf, 2);
+            bais : k::io::ArrayInputStream<byte>(buf, 2);
             fis : k::io::FilterInputStream<byte>(&bais);
 
             v : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             if (v != 1) return 1;
             fis.close();
-            // After close on ByteArrayInputStream, nothing crashes
-            // (BAIS close is a no-op)
+            // After close on ArrayInputStream<byte>, nothing crashes
+            // (AIS close is a no-op)
             return 0;
         }
     )SRC");
@@ -263,12 +263,12 @@ TEST_CASE("FilterOutputStream delegates flush()", "[libk][io][filter]") {
         module __fos_flush__;
 
         test_flush() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             fos : k::io::FilterOutputStream<byte>(&baos);
             fos.write(42);
             fos.flush();
             if (baos.size() != 1) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 42) return 2;
             return 0;
         }
@@ -288,13 +288,13 @@ TEST_CASE("FilterOutputStream delegates close()", "[libk][io][filter]") {
         module __fos_close__;
 
         test_fos_close() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             fos : k::io::FilterOutputStream<byte>(&baos);
             fos.write(99);
             fos.close();
             // Data still in baos after close (BAOS close is no-op)
             if (baos.size() != 1) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 99) return 2;
             return 0;
         }
@@ -313,14 +313,14 @@ TEST_CASE("Filter streams round-trip", "[libk][io][filter]") {
         module __filter_roundtrip__;
 
         test_roundtrip() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             fos : k::io::FilterOutputStream<byte>(&baos);
             fos.write(42);
             fos.write(99);
             fos.flush();
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             fis : k::io::FilterInputStream<byte>(&bais);
 
             v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
@@ -337,4 +337,3 @@ TEST_CASE("Filter streams round-trip", "[libk][io][filter]") {
     REQUIRE(fn);
     CHECK(fn() == 0);
 }
-

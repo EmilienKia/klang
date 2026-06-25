@@ -52,13 +52,13 @@ TEST_CASE("DataStream round-trip byte", "[libk][io][data]") {
         module __ds_byte__;
 
         test_byte() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeByte((byte) 42);
             dos.writeByte((byte) -1);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             v0 : byte = dis.readByte();
@@ -83,13 +83,13 @@ TEST_CASE("DataStream round-trip bool", "[libk][io][data]") {
         module __ds_bool__;
 
         test_bool() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeBool(true);
             dos.writeBool(false);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             v0 : bool = dis.readBool();
@@ -114,13 +114,13 @@ TEST_CASE("DataStream round-trip short", "[libk][io][data]") {
         module __ds_short__;
 
         test_short() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeShort((short) 12345);
             dos.writeShort((short) -1);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             v0 : short = dis.readShort();
@@ -145,14 +145,14 @@ TEST_CASE("DataStream round-trip int", "[libk][io][data]") {
         module __ds_int__;
 
         test_int() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeInt(305419896);
             dos.writeInt(-1);
             dos.writeInt(0);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             v0 : int = dis.readInt();
@@ -179,13 +179,13 @@ TEST_CASE("DataStream round-trip long", "[libk][io][data]") {
         module __ds_long__;
 
         test_long() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeLong(1234567890123);
             dos.writeLong(-1);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             v0 : long = dis.readLong();
@@ -210,12 +210,12 @@ TEST_CASE("DataStream round-trip byte high value", "[libk][io][data]") {
         module __ds_ubyte__;
 
         test_ubyte() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeByte((byte) 200);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             v : byte = dis.readByte();
@@ -238,12 +238,12 @@ TEST_CASE("DataStream round-trip float", "[libk][io][data]") {
         module __ds_float__;
 
         test_float() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeFloat(3.14f);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             v : float = dis.readFloat();
@@ -269,12 +269,12 @@ TEST_CASE("DataStream round-trip double", "[libk][io][data]") {
         module __ds_double__;
 
         test_double() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeDouble(2.718281828);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             v : double = dis.readDouble();
@@ -299,7 +299,7 @@ TEST_CASE("DataOutputStream size() tracks bytes written", "[libk][io][data]") {
         module __ds_size__;
 
         test_size() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeByte((byte) 1);
             dos.writeInt(42);
@@ -323,15 +323,15 @@ TEST_CASE("DataInputStream readFully", "[libk][io][data]") {
         module __ds_readfully__;
 
         test_readfully() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeByte((byte) 10);
             dos.writeByte((byte) 20);
             dos.writeByte((byte) 30);
             dos.writeByte((byte) 40);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             dsz : int = 4;
@@ -359,7 +359,7 @@ TEST_CASE("DataStream mixed primitives round-trip", "[libk][io][data]") {
         module __ds_mixed__;
 
         test_mixed() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             dos : k::io::DataOutputStream(&baos);
             dos.writeBool(true);
             dos.writeByte((byte) 42);
@@ -367,8 +367,8 @@ TEST_CASE("DataStream mixed primitives round-trip", "[libk][io][data]") {
             dos.writeInt(123456);
             dos.writeLong(9876543210);
 
-            arr : byte[]* = baos.toByteArray();
-            bais : k::io::ByteArrayInputStream(arr, baos.size());
+            arr : byte[]* = baos.toArray();
+            bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
             vBool : bool = dis.readBool();

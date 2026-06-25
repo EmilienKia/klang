@@ -41,12 +41,12 @@ TEST_CASE("PrintStream print(bool)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_bool__;
         test_print_bool() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(true);
             ps.print(false);
             if (baos.size() != 9) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 't') return 2;
             if (arr[1] != (byte) 'r') return 3;
             if (arr[2] != (byte) 'u') return 4;
@@ -71,12 +71,12 @@ TEST_CASE("PrintStream print(char)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_char__;
         test_print_char() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print('A');
             ps.print('Z');
             if (baos.size() != 2) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 65) return 2;
             if (arr[1] != (byte) 90) return 3;
             return 0;
@@ -94,14 +94,14 @@ TEST_CASE("PrintStream print(int)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_int__;
         test_print_int() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(42);
             ps.print(-7);
             ps.print(0);
             // Expected: "42-70" = 5 bytes
             if (baos.size() != 5) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '4') return 2;
             if (arr[1] != (byte) '2') return 3;
             if (arr[2] != (byte) '-') return 4;
@@ -122,12 +122,12 @@ TEST_CASE("PrintStream print(long)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_long__;
         test_print_long() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(1234567890123L);
             // Expected: "1234567890123" = 13 bytes
             if (baos.size() != 13) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '1') return 2;
             if (arr[4] != (byte) '5') return 3;
             if (arr[12] != (byte) '3') return 4;
@@ -146,12 +146,12 @@ TEST_CASE("PrintStream print(float)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_float__;
         test_print_float() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(2.5f);
             // %g of 2.5f -> "2.5" = 3 bytes
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '2') return 2;
             if (arr[1] != (byte) '.') return 3;
             if (arr[2] != (byte) '5') return 4;
@@ -170,12 +170,12 @@ TEST_CASE("PrintStream print(double)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_double__;
         test_print_double() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(2.5);
             // %g of 2.5 -> "2.5" = 3 bytes
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '2') return 2;
             if (arr[1] != (byte) '.') return 3;
             if (arr[2] != (byte) '5') return 4;
@@ -194,12 +194,12 @@ TEST_CASE("PrintStream print(const char[])", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_chararray__;
         test_print_str() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print("Hello");
             // "Hello" literal has trailing '\0'; printed as 5 chars
             if (baos.size() != 5) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 'H') return 2;
             if (arr[1] != (byte) 'e') return 3;
             if (arr[2] != (byte) 'l') return 4;
@@ -220,12 +220,12 @@ TEST_CASE("PrintStream print(String.toUtf32())", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_string__;
         test_print_string() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             s : k::String("World");
             ps.print(s.toUtf32());
             if (baos.size() != 5) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 'W') return 2;
             if (arr[1] != (byte) 'o') return 3;
             if (arr[2] != (byte) 'r') return 4;
@@ -246,11 +246,11 @@ TEST_CASE("PrintStream println()", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_empty__;
         test_println_empty() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println();
             if (baos.size() != 1) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 10) return 2;
             return 0;
         }
@@ -267,12 +267,12 @@ TEST_CASE("PrintStream println(int)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_int__;
         test_println_int() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println(42);
             // "42\n" = 3 bytes
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '4') return 2;
             if (arr[1] != (byte) '2') return 3;
             if (arr[2] != (byte) 10) return 4;
@@ -291,12 +291,12 @@ TEST_CASE("PrintStream println(const char[])", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_str__;
         test_println_str() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println("Hi");
             // "Hi\n" = 3 bytes
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 'H') return 2;
             if (arr[1] != (byte) 'i') return 3;
             if (arr[2] != (byte) 10) return 4;
@@ -315,13 +315,13 @@ TEST_CASE("PrintStream println(String.toUtf32())", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_string__;
         test_println_string() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             s : k::String("Ok");
             ps.println(s.toUtf32());
             // "Ok\n" = 3 bytes
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 'O') return 2;
             if (arr[1] != (byte) 'k') return 3;
             if (arr[2] != (byte) 10) return 4;
@@ -340,12 +340,12 @@ TEST_CASE("PrintStream fluent chaining", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_fluent__;
         test_fluent() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(1).print(2).println(3);
             // "123\n" = 4 bytes
             if (baos.size() != 4) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '1') return 2;
             if (arr[1] != (byte) '2') return 3;
             if (arr[2] != (byte) '3') return 4;
@@ -365,7 +365,7 @@ TEST_CASE("PrintStream multi-type output", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_multi__;
         test_multi() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(true);       // "true"  4
             ps.print(' ');        // " "     1
@@ -375,7 +375,7 @@ TEST_CASE("PrintStream multi-type output", "[libk][io][print]") {
             ps.println();         // "\n"    1
             // Total = 12
             if (baos.size() != 12) return baos.size();
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 't') return 100;
             if (arr[1] != (byte) 'r') return 101;
             if (arr[2] != (byte) 'u') return 102;
@@ -403,12 +403,12 @@ TEST_CASE("PrintStream flush delegates", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_flush__;
         test_flush() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(99);
             ps.flush();
             if (baos.size() != 2) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '9') return 2;
             if (arr[1] != (byte) '9') return 3;
             return 0;
@@ -426,12 +426,12 @@ TEST_CASE("PrintStream print(byte)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_byte__;
         test_print_byte() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print((byte) 100);
             // 100 as decimal = "100" = 3 bytes
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '1') return 2;
             if (arr[1] != (byte) '0') return 3;
             if (arr[2] != (byte) '0') return 4;
@@ -450,12 +450,12 @@ TEST_CASE("PrintStream print(short)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_short__;
         test_print_short() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print((short) -1234);
             // "-1234" = 5 bytes
             if (baos.size() != 5) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '-') return 2;
             if (arr[1] != (byte) '1') return 3;
             if (arr[2] != (byte) '2') return 4;
@@ -476,12 +476,12 @@ TEST_CASE("PrintStream print(unsigned short)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_ushort__;
         test_print_ushort() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print((unsigned short) 65535);
             // "65535" = 5 bytes
             if (baos.size() != 5) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '6') return 2;
             if (arr[4] != (byte) '5') return 3;
             return 0;
@@ -499,12 +499,12 @@ TEST_CASE("PrintStream print(unsigned int)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_uint__;
         test_print_uint() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(4000000000u);
             // "4000000000" = 10 bytes
             if (baos.size() != 10) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '4') return 2;
             if (arr[9] != (byte) '0') return 3;
             return 0;
@@ -522,12 +522,12 @@ TEST_CASE("PrintStream print(unsigned long)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_ulong__;
         test_print_ulong() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(9999999999uL);
             // "9999999999" = 10 bytes
             if (baos.size() != 10) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '9') return 2;
             if (arr[9] != (byte) '9') return 3;
             return 0;
@@ -545,12 +545,12 @@ TEST_CASE("PrintStream println(bool)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_bool__;
         test_println_bool() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println(true);
             // "true\n" = 5 bytes
             if (baos.size() != 5) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 't') return 2;
             if (arr[3] != (byte) 'e') return 3;
             if (arr[4] != (byte) 10) return 4;
@@ -569,12 +569,12 @@ TEST_CASE("PrintStream println(char)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_char__;
         test_println_char() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println('A');
             // "A\n" = 2 bytes
             if (baos.size() != 2) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 'A') return 2;
             if (arr[1] != (byte) 10) return 3;
             return 0;
@@ -592,12 +592,12 @@ TEST_CASE("PrintStream println(byte)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_byte__;
         test_println_byte() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println((byte) 42);
             // "42\n" = 3 bytes
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '4') return 2;
             if (arr[1] != (byte) '2') return 3;
             if (arr[2] != (byte) 10) return 4;
@@ -616,12 +616,12 @@ TEST_CASE("PrintStream println(short)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_short__;
         test_println_short() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println((short) -99);
             // "-99\n" = 4 bytes
             if (baos.size() != 4) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '-') return 2;
             if (arr[1] != (byte) '9') return 3;
             if (arr[2] != (byte) '9') return 4;
@@ -641,12 +641,12 @@ TEST_CASE("PrintStream println(long)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_long__;
         test_println_long() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println(999L);
             // "999\n" = 4 bytes
             if (baos.size() != 4) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '9') return 2;
             if (arr[3] != (byte) 10) return 3;
             return 0;
@@ -664,12 +664,12 @@ TEST_CASE("PrintStream println(unsigned short)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_ushort__;
         test_println_ushort() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println((unsigned short) 100);
             // "100\n" = 4 bytes
             if (baos.size() != 4) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '1') return 2;
             if (arr[3] != (byte) 10) return 3;
             return 0;
@@ -687,12 +687,12 @@ TEST_CASE("PrintStream println(unsigned int)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_uint__;
         test_println_uint() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println(500u);
             // "500\n" = 4 bytes
             if (baos.size() != 4) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '5') return 2;
             if (arr[3] != (byte) 10) return 3;
             return 0;
@@ -710,12 +710,12 @@ TEST_CASE("PrintStream println(unsigned long)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_ulong__;
         test_println_ulong() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println(77uL);
             // "77\n" = 3 bytes
             if (baos.size() != 3) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '7') return 2;
             if (arr[2] != (byte) 10) return 3;
             return 0;
@@ -733,12 +733,12 @@ TEST_CASE("PrintStream println(float)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_float__;
         test_println_float() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println(1.5f);
             // "1.5\n" = 4 bytes
             if (baos.size() != 4) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '1') return 2;
             if (arr[1] != (byte) '.') return 3;
             if (arr[2] != (byte) '5') return 4;
@@ -758,12 +758,12 @@ TEST_CASE("PrintStream println(double)", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_double__;
         test_println_double() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println(3.14);
             // "3.14\n" = 5 bytes
             if (baos.size() != 5) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '3') return 2;
             if (arr[1] != (byte) '.') return 3;
             if (arr[4] != (byte) 10) return 4;
@@ -782,7 +782,7 @@ TEST_CASE("PrintStream print empty string", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_empty_str__;
         test_print_empty() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print("");
             // empty string literal is just '\0' → nothing printed
@@ -802,12 +802,12 @@ TEST_CASE("PrintStream println empty string", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_empty_str__;
         test_println_empty_str() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println("");
             // empty string → just newline = 1 byte
             if (baos.size() != 1) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 10) return 2;
             return 0;
         }
@@ -824,13 +824,13 @@ TEST_CASE("PrintStream close delegates", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_close__;
         test_close() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(42);
             ps.close();
             // Data should still be in baos after close
             if (baos.size() != 2) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '4') return 2;
             if (arr[1] != (byte) '2') return 3;
             return 0;
@@ -848,12 +848,12 @@ TEST_CASE("PrintStream print(int) zero", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_int_zero__;
         test_print_zero() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(0);
             // "0" = 1 byte
             if (baos.size() != 1) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '0') return 2;
             return 0;
         }
@@ -870,11 +870,11 @@ TEST_CASE("PrintStream print(bool) false", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_bool_false__;
         test_print_false() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(false);
             if (baos.size() != 5) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 'f') return 2;
             if (arr[4] != (byte) 'e') return 3;
             return 0;
@@ -892,12 +892,12 @@ TEST_CASE("PrintStream print(int) negative", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_int_neg__;
         test_print_neg() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print(-12345);
             // "-12345" = 6 bytes
             if (baos.size() != 6) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '-') return 2;
             if (arr[5] != (byte) '5') return 3;
             return 0;
@@ -915,12 +915,12 @@ TEST_CASE("PrintStream fluent chaining with strings", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_fluent_str__;
         test_fluent_str() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.print("Hello").print(' ').println("World");
             // "Hello World\n" = 12 bytes
             if (baos.size() != 12) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) 'H') return 2;
             if (arr[5] != (byte) ' ') return 3;
             if (arr[6] != (byte) 'W') return 4;
@@ -940,14 +940,14 @@ TEST_CASE("PrintStream multiple println", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_multi_println__;
         test_multi_println() : int {
-            baos : k::io::ByteArrayOutputStream;
+            baos : k::io::ArrayOutputStream<byte>;
             ps : k::io::PrintStream(&baos);
             ps.println(1);
             ps.println(2);
             ps.println(3);
             // "1\n2\n3\n" = 6 bytes
             if (baos.size() != 6) return 1;
-            arr : byte[]* = baos.toByteArray();
+            arr : byte[]* = baos.toArray();
             if (arr[0] != (byte) '1') return 2;
             if (arr[1] != (byte) 10) return 3;
             if (arr[2] != (byte) '2') return 4;
