@@ -995,9 +995,23 @@ void aggregate::on_union_defined(std::shared_ptr<union_type_def> un) {
 }
 
 bool aggregate::is_derived_from(const std::shared_ptr<aggregate>& base_st) const {
+    // Two distinct aggregate instances can denote the SAME concrete type when they
+    // are unified template instantiations (the struct_type registry shares a single
+    // struct_type across modules, but the model-level aggregate nodes may differ —
+    // e.g. an imported class's base instantiation vs. a freshly-synthesised one).
+    // Match on struct_type identity or mangled name in addition to pointer identity.
+    auto same_aggregate = [](const aggregate* a, const std::shared_ptr<aggregate>& b) -> bool {
+        if (!a || !b) return false;
+        if (a == b.get()) return true;
+        auto sta = a->get_struct_type();
+        auto stb = b->get_struct_type();
+        if (sta && stb && sta == stb) return true;
+        if (!a->get_mangled_name().empty() && a->get_mangled_name() == b->get_mangled_name()) return true;
+        return false;
+    };
     for (auto& bs : _bases) {
         if (!bs.base) continue;
-        if (bs.base == base_st) return true;
+        if (same_aggregate(bs.base.get(), base_st)) return true;
         if (bs.base->is_derived_from(base_st)) return true;
     }
     return false;

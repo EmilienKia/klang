@@ -1293,11 +1293,32 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
                         if (all_resolved && !base_args.empty()) {
                             bs.base = instantiate_aggregate(
                                 *tpl_base_agg, base_args, parent_ns, unit, ctx, logger);
-                            // Ensure the instantiated base has a struct_type
+                            // Ensure the instantiated base has a struct_type that is
+                            // UNIFIED through the unit instantiation registry, so it
+                            // shares a single struct_type with any KDI-imported
+                            // instantiation of the same template (e.g. an imported class
+                            // deriving from the same base). Without this, struct_type
+                            // identity comparisons (is_derived_from, pointer upcast)
+                            // fail across the import boundary because two distinct
+                            // struct_types would denote the same concrete instantiation.
                             if (bs.base && !bs.base->get_struct_type()) {
-                                auto st = std::make_shared<struct_type>(
-                                    bs.base->get_short_name(), bs.base->shared_as<aggregate>());
-                                ctx->add_struct(st);
+                                std::string base_origin =
+                                    (base_ti && !base_ti->origin_module_ns_fq.empty())
+                                    ? base_ti->origin_module_ns_fq
+                                    : (parent_ns ? parent_ns->get_fq_name() : std::string{});
+                                const std::string base_key =
+                                    unit::make_instantiation_registry_key(
+                                        base_origin, bs.base->get_short_name());
+                                auto st = unit.find_instantiation_struct_type(base_key);
+                                if (st) {
+                                    st->reassign_aggregate(bs.base->shared_as<aggregate>());
+                                } else {
+                                    st = std::make_shared<struct_type>(
+                                        bs.base->get_short_name(),
+                                        bs.base->shared_as<aggregate>());
+                                    ctx->add_struct(st);
+                                    unit.register_instantiation_struct_type(base_key, st);
+                                }
                                 bs.base->set_struct_type(st);
                             }
                         }
