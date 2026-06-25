@@ -300,6 +300,24 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             }
         }
 
+        // Late resolution for the 'this' keyword inside template-instantiated method
+        // bodies.  symbol_resolver skips template definitions, and the lightweight
+        // body-symbol pass run by template_instantiator cannot resolve 'this' because
+        // the synthesised this-parameter is created only after that pass.  By the time
+        // type resolution reaches the instantiated body the this-parameter exists, so
+        // bind the symbol to the enclosing non-static member function's this-parameter.
+        if (!symbol.is_resolved()) {
+            const auto& nm = symbol.get_name();
+            if (nm.size() == 1 && !nm.has_root_prefix() && nm.front() == "this") {
+                for (auto func = symbol.ancestor<function>(); func; func = func->ancestor<function>()) {
+                    if (func->is_member() && func->get_this_parameter()) {
+                        symbol.set_target(std::const_pointer_cast<parameter>(func->get_this_parameter()));
+                        break;
+                    }
+                }
+            }
+        }
+
         if (!symbol.is_resolved()) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003), symbol.first_lexeme(),
                 "Internal error: symbol '{}' reached type-resolution phase without being resolved; "
