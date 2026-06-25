@@ -37,8 +37,6 @@
 #include "../errors.hpp"
 namespace k::model::gen {
 // value_expression, symbol_expression, and helpers
-
-// value_expression, symbol_expression, and helpers
 // (shared helpers moved to gen_helpers.hpp)
 
 
@@ -542,7 +540,11 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                                     (unsigned)field->index,
                                     "base_" + bs.sanitised_name() + "_ptr"
                             );
-                            if (bs.base.get() == member_owner.get()) {
+                            bool same_owner = (bs.base.get() == member_owner.get());
+                            if (!same_owner && bs.base && member_owner) {
+                                same_owner = (bs.base->get_fq_name() == member_owner->get_fq_name());
+                            }
+                            if (same_owner) {
                                 this_ptr = base_ptr;
                                 walk_struct = bs.base;
                                 return true;
@@ -553,10 +555,101 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                     };
                     found_base_path = walk_bases(walk_struct->shared_as<aggregate>(), this_ptr);
                     if (!found_base_path) {
+                        // Imported/synthesized concrete aggregates can lose explicit base metadata
+                        // while still carrying lowered __base_<name>__ fields in the LLVM layout.
+                        // Try a direct jump to the expected base field before failing.
+                        auto cur_st = walk_struct ? walk_struct->get_struct_type() : nullptr;
+                        if (cur_st && member_owner) {
+                            auto try_base_field = [&](const std::string& field_name) -> bool {
+                                for (auto it = cur_st->fields_begin(); it != cur_st->fields_end(); ++it) {
+                                    if (it->name != field_name) {
+                                        continue;
+                                    }
+                                    this_ptr = _builder->CreateStructGEP(
+                                        _context->get_llvm_type(cur_st),
+                                        this_ptr,
+                                        (unsigned)it->index,
+                                        "base_fallback_ptr"
+                                    );
+                                    walk_struct = member_owner;
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            if (try_base_field("__base_" + member_owner->get_short_name() + "__")) {
+                                continue;
+                            }
+
+                            // Build sanitized namespace prefix from fq name using '_' separators.
+                            std::string owner_fq_sanitized = member_owner->get_fq_name();
+                            if (owner_fq_sanitized.rfind("::", 0) == 0) {
+                                owner_fq_sanitized.erase(0, 2);
+                            }
+                            std::size_t ns_sep_pos = 0;
+                            while ((ns_sep_pos = owner_fq_sanitized.find("::", ns_sep_pos)) != std::string::npos) {
+                                owner_fq_sanitized.replace(ns_sep_pos, 2, "_");
+                                ns_sep_pos += 1;
+                            }
+                            if (try_base_field("__base_" + owner_fq_sanitized + "__")) {
+                                continue;
+                            }
+
+                            // Imported concrete types can expose base slots with a fully-qualified
+                            // sanitized prefix (e.g. __base_k_io_FilterInputStream__byte__).
+                            // Match by owner short-name suffix when exact synthesized names differ.
+                            const std::string owner_suffix = member_owner->get_short_name() + "__";
+                            std::optional<struct_type::field> suffix_match;
+                            for (auto it = cur_st->fields_begin(); it != cur_st->fields_end(); ++it) {
+                                if (it->name.rfind("__base_", 0) != 0) {
+                                    continue;
+                                }
+                                if (!it->name.ends_with(owner_suffix)) {
+                                    continue;
+                                }
+                                if (suffix_match) {
+                                    // Ambiguous fallback: keep deterministic behavior and report error below.
+                                    suffix_match.reset();
+                                    break;
+                                }
+                                suffix_match = *it;
+                            }
+                            if (suffix_match) {
+                                this_ptr = _builder->CreateStructGEP(
+                                    _context->get_llvm_type(cur_st),
+                                    this_ptr,
+                                    (unsigned)suffix_match->index,
+                                    "base_suffix_fallback_ptr"
+                                );
+                                walk_struct = member_owner;
+                                continue;
+                            }
+                        }
+
+                        // Defensive fallback: imported concrete specializations may carry
+                        // owner metadata that does not align with the actual lowered
+                        // layout chain. If the current struct already has the field,
+                        // stop here instead of failing hard.
+                        cur_st = walk_struct ? walk_struct->get_struct_type() : nullptr;
+                        if (cur_st && cur_st->get_member(name)) {
+                            member_owner = walk_struct;
+                            continue;
+                        }
+
+                        std::string lowered_fields;
+                        if (cur_st) {
+                            bool first = true;
+                            for (auto it = cur_st->fields_begin(); it != cur_st->fields_end(); ++it) {
+                                if (!first) lowered_fields += ", ";
+                                lowered_fields += it->name;
+                                first = false;
+                            }
+                        }
                         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01E), symbol.first_lexeme(),
                             "Internal error: could not reach owning struct '{}' for member '{}' via __parent__ or __base__ chain; "
-                            "the struct hierarchy is inconsistent",
-                            {member_owner ? member_owner->get_short_name() : "?", name});
+                            "the struct hierarchy is inconsistent (current struct='{}', lowered fields=[{}])",
+                            {member_owner ? member_owner->get_short_name() : "?", name,
+                             walk_struct ? walk_struct->get_short_name() : "?", lowered_fields});
                     }
                 }
             }
@@ -600,6 +693,24 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         // Handle type of symbol
         auto var_type = var_def->get_type();
         llvm::Type* type = _context->get_llvm_type(var_type);
+        if (!type) {
+            auto sym_type = symbol.get_type();
+            if (sym_type && (type::is_reference(sym_type) || type::is_drain(sym_type))) {
+                sym_type = sym_type->get_subtype();
+            }
+            if (sym_type) {
+                type = _context->get_llvm_type(sym_type);
+                if (type) {
+                    var_type = sym_type;
+                }
+            }
+        }
+        if (!type && var_type &&
+            (type::is_pointer(var_type) || type::is_link(var_type) || type::is_view(var_type) || type::is_owner(var_type))) {
+            // Pointer-like values keep an ABI-level opaque pointer representation
+            // even when the pointee model type is unresolved.
+            type = llvm::PointerType::get(**_context, 0);
+        }
 
         if(ptr && type) {
             if (type::is_reference(var_type) || type::is_drain(var_type)) {
@@ -611,6 +722,10 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                 // the actual function pointer (e.g. indirect call) must load from this address.
                 _value = ptr;
             }
+        } else if (ptr && !type) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F020), symbol.first_lexeme(),
+                "Internal error: cannot map variable '{}' type '{}' to LLVM while generating symbol access",
+                {var_def->get_fq_name(), var_type ? var_type->to_string() : "<null>"});
         }
 
     } else if (symbol.is_function()) {
