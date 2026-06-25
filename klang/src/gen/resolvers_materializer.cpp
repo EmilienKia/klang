@@ -44,8 +44,8 @@ void model_materializer::visit_unit(unit& /*u*/) {
 }
 
 void model_materializer::visit_namespace(ns& n) {
-    for (auto& child : n.get_children()) {
-        child->accept(*this);
+    for (size_t i = 0; i < n.get_children().size(); ++i) {
+        n.get_children()[i]->accept(*this);
     }
 }
 

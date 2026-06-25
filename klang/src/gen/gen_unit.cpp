@@ -792,8 +792,8 @@ void symbol_resolver::visit_namespace(ns& ns)
         }
     }
 
-    for(auto& child : ns.get_children()) {
-        child->accept(*this);
+    for (size_t i = 0; i < ns.get_children().size(); ++i) {
+        ns.get_children()[i]->accept(*this);
     }
 
 }
@@ -810,7 +810,8 @@ void signature_resolver::resolve_signatures(ns& ns) {
 void signature_resolver::visit_namespace(ns& ns) {
     // Only visit aggregate children — free functions don't need the
     // signature pre-pass because they don't cause cross-type forward references.
-    for (auto& child : ns.get_children()) {
+    for (size_t i = 0; i < ns.get_children().size(); ++i) {
+        auto& child = ns.get_children()[i];
         if (std::dynamic_pointer_cast<aggregate>(child)) {
             child->accept(*this);
         }
