@@ -1057,6 +1057,13 @@ llvm::Value* emit_virtual_dispatch_call(
 //     __vptr__ field as the first member via klass::inject_vptr_field.
 void symbol_resolver::visit_klass(klass& klass) {
     trace("[symbol_resolver::visit_klass] '{}'", {klass.get_short_name()});
+    // Guard: if this klass was already fully processed (e.g. via accept() from a
+    // derived-class base-resolution path), skip both the aggregate processing AND
+    // the vtable/vptr setup below to prevent duplicate field injection.
+    if (_visited_aggregates.count(&klass)) {
+        trace("[symbol_resolver::visit_klass] '{}' already processed, skipping", {klass.get_short_name()});
+        return;
+    }
     visit_aggregate(klass);
 
     // Build vtable layout

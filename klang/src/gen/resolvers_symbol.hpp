@@ -38,6 +38,14 @@ protected:
     /** Stack of functions currently being visited (for visibility access-site context). */
     std::vector<std::shared_ptr<function>> _function_stack;
 
+    /**
+     * Set of aggregates that have been fully processed by visit_aggregate (and
+     * visit_klass for classes).  Used to prevent double-visitation when a base
+     * class is first visited via accept() from a derived-class base-resolution
+     * path, and then visited a second time by the namespace iterator.
+     */
+    std::unordered_set<aggregate*> _visited_aggregates;
+
 public:
     symbol_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
     k::log::logger_relay(logger),

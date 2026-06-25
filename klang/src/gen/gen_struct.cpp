@@ -243,6 +243,16 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
         trace("[symbol_resolver::visit_aggregate] skipping template '{}'", {st.get_short_name()});
         return;
     }
+    // Guard: prevent double-processing when an aggregate is first visited via
+    // accept() from a derived-class base-resolution path (gen_struct.cpp line
+    // ~384) and then again by the namespace iterator.  Double-processing injects
+    // duplicate fields (__vptr__, __base_X__) and overwrites the struct_type
+    // pointer, producing an unresolved struct_type that leads to LLVM struct-
+    // layout cycles.
+    if (_visited_aggregates.count(&st)) {
+        trace("[symbol_resolver::visit_aggregate] '{}' already processed, skipping", {st.get_short_name()});
+        return;
+    }
     trace("[symbol_resolver::visit_aggregate] '{}'", {st.get_short_name()});
     lex::opt_any_lexeme st_lexeme;
     if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
@@ -251,9 +261,20 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
 
     // Pre declare type
     // TODO Mangle struct name to avoid collisions
-    std::shared_ptr<struct_type> st_type{new struct_type(st.get_short_name()/*st.get_mangled_name()*/, st.shared_as<aggregate>())};
-    _context->add_struct(st_type);
-    st.set_struct_type(st_type);
+    // Guard: do NOT create/overwrite the struct_type if the aggregate already has
+    // one.  A template-instantiated base may have received its struct_type from the
+    // derived-class base-resolution path (gen_struct.cpp line ~384) before this
+    // visit runs.  Creating a fresh struct_type here would call add_struct() (a
+    // no-op when the name is already registered) but still overwrite the
+    // aggregate's pointer, leaving the aggregate referencing an *unregistered*
+    // struct_type whose LLVM body is never materialized — producing LLVM struct
+    // layout cycles at code-gen time.
+    std::shared_ptr<struct_type> st_type = st.get_struct_type();
+    if (!st_type) {
+        st_type = std::make_shared<struct_type>(st.get_short_name()/*st.get_mangled_name()*/, st.shared_as<aggregate>());
+        _context->add_struct(st_type);
+        st.set_struct_type(st_type);
+    }
 
     // Visit nested aggregate children first (they need their own types declared)
     for(auto& child : st.get_children()) {
@@ -789,6 +810,10 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             }
         }
     }
+
+    // Mark this aggregate as fully processed so that double-visitation is
+    // detected and skipped (see guard at the top of this function).
+    _visited_aggregates.insert(&st);
 }
 
 // signature_resolver::visit_aggregate
