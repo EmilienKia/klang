@@ -336,14 +336,14 @@ public:
         if (_fp != null) {
             __k_io_file_fwrite_byte(_fp, (int) b);
         }
-        return (OutputStream<byte>&) this;
+        return this;
     }
 
     write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
         if (_fp != null && len > 0) {
             __k_io_file_fwrite(_fp, &buf[off], (int) len);
         }
-        return (OutputStream<byte>&) this;
+        return this;
     }
 
     write(buf: const byte[]) : OutputStream<byte>& {
@@ -354,7 +354,7 @@ public:
         if (_fp != null) {
             __k_io_file_fflush(_fp);
         }
-        return (OutputStream<byte>&) this;
+        return this;
     }
 
     close() : OutputStream<byte>& {
@@ -363,7 +363,7 @@ public:
             __k_io_file_fclose(_fp);
             _fp = null;
         }
-        return (OutputStream<byte>&) this;
+        return this;
     }
 
     // ── Additional ───────────────────────────────────────────────────────

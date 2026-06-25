@@ -98,28 +98,28 @@ public:
 
     write(b: T) : OutputStream<T>& {
         _out->write(b);
-        return (OutputStream<T>&) this;
+        return this;
     }
 
     write(buf: const T[], off: unsigned int, len: unsigned int) : OutputStream<T>& {
         _out->write(buf, off, len);
-        return (OutputStream<T>&) this;
+        return this;
     }
 
     write(buf: const T[]) : OutputStream<T>& {
         _out->write(buf);
-        return (OutputStream<T>&) this;
+        return this;
     }
 
     flush() : OutputStream<T>& {
         _out->flush();
-        return (OutputStream<T>&) this;
+        return this;
     }
 
     close() : OutputStream<T>& {
         flush();
         _out->close();
-        return (OutputStream<T>&) this;
+        return this;
     }
 }
 

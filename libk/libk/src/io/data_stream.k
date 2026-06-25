@@ -276,13 +276,13 @@ public:
     writeByte(v: byte) : DataOutput& {
         _out->write(v);
         _written = _written + 1;
-        return (DataOutput&) this;
+        return this;
     }
 
     writeChar(v: char) : DataOutput& {
         _out->write((byte) v);
         _written = _written + 1;
-        return (DataOutput&) this;
+        return this;
     }
 
     writeShort(v: short) : DataOutput& {
@@ -290,7 +290,7 @@ public:
         __k_io_short_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
         _written = _written + 2;
-        return (DataOutput&) this;
+        return this;
     }
 
     writeUnsignedShort(v: unsigned short) : DataOutput& {
@@ -298,7 +298,7 @@ public:
         __k_io_short_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
         _written = _written + 2;
-        return (DataOutput&) this;
+        return this;
     }
 
     writeInt(v: int) : DataOutput& {
@@ -306,7 +306,7 @@ public:
         __k_io_int_to_native_bytes(v, &buf[0]);
         _out->write(buf);
         _written = _written + 4;
-        return (DataOutput&) this;
+        return this;
     }
 
     writeUnsignedInt(v: unsigned int) : DataOutput& {
@@ -314,7 +314,7 @@ public:
         __k_io_int_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
         _written = _written + 4;
-        return (DataOutput&) this;
+        return this;
     }
 
     writeLong(v: long) : DataOutput& {
@@ -322,22 +322,22 @@ public:
         __k_io_long_to_native_bytes(v, &buf[0]);
         _out->write(buf);
         _written = _written + 8;
-        return (DataOutput&) this;
+        return this;
     }
 
     writeUnsignedLong(v: unsigned long) : DataOutput& {
         writeLong((long) v);
-        return (DataOutput&) this;
+        return this;
     }
 
     writeFloat(v: float) : DataOutput& {
         writeInt(__k_io_float_to_bits(v));
-        return (DataOutput&) this;
+        return this;
     }
 
     writeDouble(v: double) : DataOutput& {
         writeLong(__k_io_double_to_bits(v));
-        return (DataOutput&) this;
+        return this;
     }
 
     writeBool(v: bool) : DataOutput& {
@@ -347,7 +347,7 @@ public:
             _out->write((byte) 0);
         }
         _written = _written + 1;
-        return (DataOutput&) this;
+        return this;
     }
 
     // ...existing code...

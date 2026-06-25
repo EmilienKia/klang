@@ -124,11 +124,6 @@ public interface OutputStream {
     close() : OutputStream<T>&;
 }
 
-private self_output_stream(output: OutputStream<byte>&) : OutputStream<byte>& {
-    return output;
-}
-
-
 /**
  * Read bytes from an in-memory array.
  *
@@ -244,12 +239,12 @@ public:
         _ensureCap(1);
         _buf[_count] = b;
         _count = _count + 1;
-        return self_output_stream(this);
+        return this;
     }
 
     override write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
         if (len == 0) {
-            return self_output_stream(this);
+            return this;
         }
         _ensureCap((int) len);
         i : unsigned int = 0;
@@ -258,7 +253,7 @@ public:
             i = i + 1;
         }
         _count = _count + (int) len;
-        return self_output_stream(this);
+        return this;
     }
 
     override write(buf: const byte[]) : OutputStream<byte>& {
@@ -267,12 +262,12 @@ public:
 
     override flush() : OutputStream<byte>& {
         // No-op for in-memory stream.
-        return self_output_stream(this);
+        return this;
     }
 
     override close() : OutputStream<byte>& {
         // No-op for in-memory stream.
-        return self_output_stream(this);
+        return this;
     }
 
     // ── Additional methods ───────────────────────────────────────────────

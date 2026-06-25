@@ -253,41 +253,12 @@ public:
 
     flush() : OutputStream<byte>& {
         _out->flush();
-        return (OutputStream<byte>&) this;
+        return this;
     }
 
     close() : OutputStream<byte>& {
         flush();
         _out->close();
-        return (OutputStream<byte>&) this;
-    }
-}
-
-} // namespace io
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-_out->close();
         return this;
     }
 }

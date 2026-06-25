@@ -189,16 +189,16 @@ public:
         }
         _bbuf[_bcount] = b;
         _bcount = _bcount + 1;
-        return (OutputStream<byte>&) this;
+        return this;
     }
 
     write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
-        if (len == 0) return (OutputStream<byte>&) this;
+        if (len == 0) return this;
         // If data is larger than buffer, flush and write directly
         if (len >= (unsigned int) _bsize) {
             _flushBuffer();
             _out->write(buf, off, len);
-            return (OutputStream<byte>&) this;
+            return this;
         }
         // If data would overflow buffer, flush first
         if (_bcount + (int) len > _bsize) {
@@ -211,7 +211,7 @@ public:
             i = i + 1;
         }
         _bcount = _bcount + (int) len;
-        return (OutputStream<byte>&) this;
+        return this;
     }
 
     write(buf: const byte[]) : OutputStream<byte>& {
@@ -221,13 +221,13 @@ public:
     flush() : OutputStream<byte>& {
         _flushBuffer();
         _out->flush();
-        return (OutputStream<byte>&) this;
+        return this;
     }
 
     close() : OutputStream<byte>& {
         flush();
         _out->close();
-        return (OutputStream<byte>&) this;
+        return this;
     }
 
 private:
