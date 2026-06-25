@@ -127,6 +127,39 @@ std::shared_ptr<sized_array_type> type::get_array(unsigned long size)
     return get_array()->with_size(size);
 }
 
+std::shared_ptr<type> type::make_pinned_wrapper(
+    const std::shared_ptr<type>& kind_of,
+    const std::shared_ptr<type>& inner)
+{
+    if (!kind_of || !inner) {
+        return nullptr;
+    }
+
+    std::shared_ptr<type> wrapper;
+    if (is_reference(kind_of)) {
+        wrapper = std::shared_ptr<reference_type>(new reference_type(inner));
+    } else if (is_pointer(kind_of)) {
+        wrapper = std::shared_ptr<pointer_type>(new pointer_type(inner));
+    } else if (is_link(kind_of)) {
+        wrapper = std::shared_ptr<link_type>(new link_type(inner));
+    } else if (is_view(kind_of)) {
+        wrapper = std::shared_ptr<view_type>(new view_type(inner));
+    } else if (is_owner(kind_of)) {
+        wrapper = std::shared_ptr<owner_type>(new owner_type(inner));
+    } else if (is_drain(kind_of)) {
+        wrapper = std::shared_ptr<drain_type>(new drain_type(inner));
+    } else if (is_const(kind_of)) {
+        wrapper = std::shared_ptr<const_type>(new const_type(inner));
+    } else if (is_array(kind_of) && !is_sized_array(kind_of)) {
+        wrapper = std::shared_ptr<array_type>(new array_type(inner));
+    } else {
+        return nullptr;
+    }
+
+    wrapper->_pinned_subtype = inner;
+    return wrapper;
+}
+
 llvm::Type* type::get_llvm_type() const {
     return _llvm_type;
 };
@@ -901,6 +934,18 @@ std::shared_ptr<type> substitute_type(
             if (it != subst.end()) return it->second;
         }
 
+        // Not a template parameter itself, but it may be a template reference whose
+        // own arguments contain template parameters (e.g. "InputStream<T>").  In that
+        // case rebuild the unresolved_type with the arguments substituted so that the
+        // later template-instantiation passes resolve it to the concrete type
+        // (e.g. "InputStream<byte>").  Without this, "InputStream<T>*" member/param
+        // types keep a dangling 'T' and never resolve.
+        if (ut->has_template_args()) {
+            if (auto substituted = ut->clone_with_substituted_model_args(subst)) {
+                return substituted;
+            }
+        }
+
         return t; // not a template param, keep as-is
     }
 
@@ -910,6 +955,23 @@ std::shared_ptr<type> substitute_type(
 
     auto new_inner = substitute_type(inner, subst);
     if (new_inner == inner) return t; // unchanged
+
+    // When the substituted inner type is a freshly cloned, otherwise-unowned node
+    // (an unresolved template reference rebuilt by clone_with_substituted_model_args,
+    // or a nested pinned wrapper), the standard cached wrappers (get_reference/…) would
+    // only weak-reference it, leaving the subtype dangling once this function returns.
+    // Build a pinned wrapper that strongly owns such an inner instead.
+    bool inner_needs_pinning = new_inner->is_pinned();
+    if (!inner_needs_pinning) {
+        if (auto ut = std::dynamic_pointer_cast<unresolved_type>(new_inner)) {
+            inner_needs_pinning = ut->has_template_args();
+        }
+    }
+    if (inner_needs_pinning) {
+        if (auto pinned = type::make_pinned_wrapper(t, new_inner)) {
+            return pinned;
+        }
+    }
 
     // Rebuild the wrapper on the substituted inner type
     if (type::is_reference(t))   return new_inner->get_reference();

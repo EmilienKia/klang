@@ -93,6 +93,17 @@ protected:
     std::shared_ptr<const_type> const_;
     std::shared_ptr<array_type> array;
 
+    /**
+     * Strong owning reference to the wrapped subtype, used only for wrappers
+     * built by make_pinned_wrapper() during template-argument substitution.
+     * Normal wrappers leave this empty and rely on the subtype keeping the
+     * wrapper alive through the cache members above. A pinned wrapper instead
+     * keeps its (freshly cloned, otherwise unowned) subtype alive while
+     * deliberately NOT being cached on that subtype, so no reference cycle is
+     * created. See substitute_type() in type.cpp.
+     */
+    std::shared_ptr<type> _pinned_subtype;
+
     mutable llvm::Type* _llvm_type;
 
     type(llvm::Type* llvm_type = nullptr) : _llvm_type(llvm_type) {}
@@ -162,6 +173,21 @@ public:
     std::shared_ptr<const_type> get_const();
     std::shared_ptr<array_type> get_array();
     std::shared_ptr<sized_array_type> get_array(unsigned long size);
+
+    /** True if this wrapper strongly pins its subtype (built by make_pinned_wrapper). */
+    bool is_pinned() const { return (bool)_pinned_subtype; }
+
+    /**
+     * Build a fresh indirection wrapper of the same kind as @p kind_of around
+     * @p inner, strongly pinning @p inner so it stays alive even when it has no
+     * other owner (e.g. a freshly cloned unresolved_type produced during
+     * template-argument substitution). Unlike get_reference()/get_pointer()/…,
+     * the resulting wrapper is NOT cached on @p inner, so no reference cycle is
+     * formed. Returns nullptr if @p kind_of is not a supported wrapper kind.
+     */
+    static std::shared_ptr<type> make_pinned_wrapper(
+        const std::shared_ptr<type>& kind_of,
+        const std::shared_ptr<type>& inner);
 
     virtual llvm::Type* get_llvm_type() const;
 
