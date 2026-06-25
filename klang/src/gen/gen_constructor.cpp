@@ -39,6 +39,29 @@
 #include <unordered_set>
 #include "../errors.hpp"
 namespace k::model::gen {
+
+namespace {
+/**
+ * Normalize a base-class raw_name to the simple name used in a constructor
+ * member-initializer. A base may be declared with namespace qualification
+ * and/or template arguments (e.g. "k::io::FilterInputStream<byte>"), while the
+ * mem-initializer target is always written as a bare identifier
+ * (e.g. "FilterInputStream"). This strips any template-argument list (from the
+ * first '<') and any namespace qualification (keeping the last "::" component)
+ * so the two can be matched.
+ */
+std::string base_init_simple_name(const std::string& raw) {
+    std::string r = raw;
+    if (auto lt = r.find('<'); lt != std::string::npos) {
+        r = r.substr(0, lt);
+    }
+    if (auto cc = r.rfind("::"); cc != std::string::npos) {
+        r = r.substr(cc + 2);
+    }
+    return r;
+}
+} // anonymous namespace
+
 /**
  * Visit a constructor during symbol resolution: resolve parameter types,
  * member-initializer targets, and body symbols.
@@ -77,17 +100,17 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
         // Build set of base names (direct + transitively-declared virtual bases)
         std::unordered_map<std::string, std::shared_ptr<aggregate>> base_by_name;
         for (auto& bs : st->get_bases()) {
-            if (bs.base) base_by_name[bs.raw_name] = bs.base;
+            if (bs.base) base_by_name[base_init_simple_name(bs.raw_name)] = bs.base;
         }
         // Also include transitively-collected virtual bases (e.g., A in D : B,C where B,C : virtual A)
         for (auto& vbase : st->get_all_virtual_base_structs()) {
-            base_by_name.emplace(vbase->get_short_name(), vbase);
+            base_by_name.emplace(base_init_simple_name(vbase->get_short_name()), vbase);
         }
 
         // Step 2: Resolve each member-initializer target (field or base class)
         // Mark each explicit mem-init as base-init or member-init
         for (auto& mi : const_cast<std::vector<constructor::member_init_spec>&>(ctor.member_inits())) {
-            auto it = base_by_name.find(mi.member_name);
+            auto it = base_by_name.find(base_init_simple_name(mi.member_name));
             if (it != base_by_name.end()) {
                 mi.is_base_init = true;
                 mi.base_struct = it->second;
@@ -134,7 +157,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
             std::unordered_map<std::string, const constructor::member_init_spec*> base_init_by_name;
             for (auto& mi : ctor.member_inits()) {
                 if (mi.is_base_init) {
-                    base_init_by_name[mi.member_name] = &mi;
+                    base_init_by_name[base_init_simple_name(mi.member_name)] = &mi;
                 }
             }
 
@@ -149,7 +172,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
                     if (!vbase_var) continue;
 
                     std::vector<std::shared_ptr<expression>> args;
-                    auto it = base_init_by_name.find(bs.raw_name);
+                    auto it = base_init_by_name.find(base_init_simple_name(bs.raw_name));
                     if (it != base_init_by_name.end()) {
                         for (auto& arg : it->second->args) args.push_back(arg->clone());
                     }
@@ -169,7 +192,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
                     if (!subobj_var) continue;
 
                     std::vector<std::shared_ptr<expression>> args;
-                    auto it = base_init_by_name.find(bs.raw_name);
+                    auto it = base_init_by_name.find(base_init_simple_name(bs.raw_name));
                     if (it != base_init_by_name.end()) {
                         for (auto& arg : it->second->args) args.push_back(arg->clone());
                     }
@@ -196,7 +219,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
                 std::unordered_map<std::string, const constructor::member_init_spec*> vbase_init_by_name;
                 for (auto& mi : ctor.member_inits()) {
                     if (mi.is_base_init) {
-                        vbase_init_by_name[mi.member_name] = &mi;
+                        vbase_init_by_name[base_init_simple_name(mi.member_name)] = &mi;
                     }
                 }
 
@@ -213,7 +236,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
                     if (!vbase_var) continue;
 
                     std::vector<std::shared_ptr<expression>> args;
-                    auto it = vbase_init_by_name.find(vbase->get_short_name());
+                    auto it = vbase_init_by_name.find(base_init_simple_name(vbase->get_short_name()));
                     if (it != vbase_init_by_name.end()) {
                         for (auto& arg : it->second->args) {
                             args.push_back(arg->clone());
