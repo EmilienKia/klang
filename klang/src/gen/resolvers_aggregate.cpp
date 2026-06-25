@@ -644,12 +644,31 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                 if (std::dynamic_pointer_cast<destructor>(func)) continue;
                 if (func->get_visibility() == PRIVATE) continue;
 
-                // Check if this method overrides an existing vtable slot
+                // Check if this method overrides an existing vtable slot.
+                // Match by name AND full parameter-type signature: matching by
+                // parameter COUNT alone conflates overloads with the same arity
+                // but different parameter types (e.g. OutputStream's
+                // `write(b: T)` and `write(buf: const T[])`, both single-arg),
+                // which would leave one base slot bound to the imported
+                // (anonymous) method and clobber the other.  Use the canonical
+                // type spelling (to_string) so two instantiations of the same
+                // template compare equal across the import boundary.
+                auto same_param_sig = [](const function& f, const function& g) -> bool {
+                    if (f.get_short_name() != g.get_short_name()) return false;
+                    if (f.parameters().size() != g.parameters().size()) return false;
+                    for (size_t i = 0; i < f.parameters().size(); ++i) {
+                        auto tf = f.parameters()[i] ? f.parameters()[i]->get_type() : nullptr;
+                        auto tg = g.parameters()[i] ? g.parameters()[i]->get_type() : nullptr;
+                        if (type::are_equal(tf, tg)) continue;
+                        if (tf && tg && tf->to_string() == tg->to_string()) continue;
+                        return false;
+                    }
+                    return true;
+                };
                 bool found_override = false;
                 for (auto& entry : vt->entries) {
                     if (entry.introducing_func
-                        && func->get_short_name() == entry.introducing_func->get_short_name()
-                        && func->parameters().size() == entry.introducing_func->parameters().size()) {
+                        && same_param_sig(*func, *entry.introducing_func)) {
                         func->set_virtual(true);
                         func->set_vtable_slot((int)entry.slot_index);
                         func->set_overrides(entry.func);

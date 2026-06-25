@@ -128,15 +128,29 @@ bool have_same_virtual_signature(const function& a, const function& b) {
     if (a.get_short_name() != b.get_short_name()) return false;
     if (a.is_const_member() != b.is_const_member()) return false;
     if (a.get_parameter_size() != b.get_parameter_size()) return false;
+    // Compare two types for virtual-signature purposes. type::are_equal uses
+    // nominal struct_type equality (same underlying aggregate pointer), which
+    // breaks across module boundaries: an imported template instantiation (e.g.
+    // OutputStream__byte materialised by the KDI importer) and a locally
+    // synthesised instantiation of the same template are distinct aggregate
+    // instances. Fall back to the canonical type spelling (to_string), which is
+    // name-based and identical for two instantiations of the same template, so a
+    // derived override is matched to its imported base slot.
+    auto type_match = [](const std::shared_ptr<type>& x, const std::shared_ptr<type>& y) -> bool {
+        if (type::are_equal(x, y)) return true;
+        return x && y && x->to_string() == y->to_string();
+    };
     for (size_t i = 0; i < a.get_parameter_size(); ++i) {
         auto ta = std::const_pointer_cast<type>(a.get_parameter(i)->get_type());
         auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
-        if (!type::are_equal(ta, tb)) return false;
+        if (!type_match(ta, tb)) return false;
     }
     auto ra = std::const_pointer_cast<type>(a.get_return_type());
     auto rb = std::const_pointer_cast<type>(b.get_return_type());
     if (bool(ra) != bool(rb)) return false;
-    if (ra && rb && !type::are_equal(ra, rb)) return false;
+    if (ra && rb && !type_match(ra, rb)) {
+        return false;
+    }
     return true;
 }
 
@@ -1638,12 +1652,18 @@ void implementation_generator::visit_klass(klass& klass) {
             sec_init.push_back(rtti_slot);
 
             for (auto& base_entry : base_vtable->entries) {
-                // Find the matching override in the primary vtable
+                // Find the matching override in the primary vtable.
+                // Match by full virtual signature (name + parameter types),
+                // not by parameter COUNT: same-arity overloads such as
+                // OutputStream's `write(b: T)` and `write(buf: const T[])`
+                // would otherwise both bind to the first single-arg slot,
+                // leaving the other base slot pointing at the imported
+                // (anonymous) method.
                 llvm::Function* llvm_func = nullptr;
                 for (auto& primary_entry : vt->entries) {
                     if (primary_entry.introducing_func && base_entry.introducing_func
-                        && primary_entry.introducing_func->get_short_name() == base_entry.introducing_func->get_short_name()
-                        && primary_entry.introducing_func->get_parameter_size() == base_entry.introducing_func->get_parameter_size()) {
+                        && have_same_virtual_signature(*primary_entry.introducing_func,
+                                                       *base_entry.introducing_func)) {
                         llvm_func = _context->lookup_llvm_function(primary_entry.func);
                         break;
                     }
