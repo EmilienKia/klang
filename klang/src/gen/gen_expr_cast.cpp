@@ -82,9 +82,25 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                 target_type = resolved2;
                 expr.set_cast_type(target_type);
             } else {
-                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_OPERATOR_NOT_FOUND), expr.first_lexeme(),
-                    "Cannot resolve target type of explicit cast: '{}' is unknown in this scope",
-                    {target_type ? target_type->to_string() : "?"});
+                // Step 3: try resolve_type_chain which handles template types (e.g. OutputStream<byte>&)
+                // and struct_type nodes whose LLVM types are not yet materialized.
+                const element* scope_elem = !_function_stack.empty()
+                    ? static_cast<const element*>(_function_stack.back().get())
+                    : static_cast<const element*>(_unit.get_root_namespace().get());
+                bool cast_target_resolved = false;
+                if (scope_elem) {
+                    auto resolved3 = resolve_type_chain(target_type, scope_elem);
+                    if (resolved3 && !type::contains_unresolved(resolved3)) {
+                        target_type = resolved3;
+                        expr.set_cast_type(target_type);
+                        cast_target_resolved = true;
+                    }
+                }
+                if (!cast_target_resolved) {
+                    throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_OPERATOR_NOT_FOUND), expr.first_lexeme(),
+                        "Cannot resolve target type of explicit cast: '{}' is unknown in this scope",
+                        {target_type ? target_type->to_string() : "?"});
+                }
             }
         }
     }
