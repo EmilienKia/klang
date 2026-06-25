@@ -69,6 +69,137 @@ void attach_trailing_bwd_docs(lex::lexer& lexer, size_t start_index, ast::ast_no
     }
 }
 
+std::string encode_qualified_identifier(const ast::qualified_identifier& qname) {
+    std::string result;
+    if (qname.has_root_prefix()) {
+        result += "::";
+    }
+    for (size_t i = 0; i < qname.names.size(); ++i) {
+        if (i > 0) {
+            result += "::";
+        }
+        result += std::string{qname.names[i].content};
+    }
+    return result;
+}
+
+std::string encode_type_specifier(const std::shared_ptr<ast::type_specifier>& ts);
+
+std::string encode_template_arg(const std::shared_ptr<ast::template_arg>& arg) {
+    if (!arg) {
+        return {};
+    }
+    if (arg->is_type()) {
+        return encode_type_specifier(arg->type_arg);
+    }
+    if (auto lit = std::dynamic_pointer_cast<ast::literal_expr>(arg->value_arg)) {
+        if (std::holds_alternative<lex::integer>(lit->literal)) {
+            return std::string{lit->literal.get<lex::integer>().content};
+        }
+        if (std::holds_alternative<lex::float_num>(lit->literal)) {
+            return std::string{lit->literal.get<lex::float_num>().content};
+        }
+        if (std::holds_alternative<lex::character>(lit->literal)) {
+            return std::string{lit->literal.get<lex::character>().content};
+        }
+        if (std::holds_alternative<lex::string>(lit->literal)) {
+            return std::string{lit->literal.get<lex::string>().content};
+        }
+        if (std::holds_alternative<lex::boolean>(lit->literal)) {
+            return std::string{lit->literal.get<lex::boolean>().content};
+        }
+        if (std::holds_alternative<lex::null>(lit->literal)) {
+            return std::string{lit->literal.get<lex::null>().content};
+        }
+    }
+    if (auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(arg->value_arg)) {
+        std::string result = encode_qualified_identifier(ident->qident);
+        if (ident->has_template_args()) {
+            result += "<";
+            for (size_t i = 0; i < ident->template_args.size(); ++i) {
+                if (i > 0) {
+                    result += ", ";
+                }
+                result += encode_template_arg(ident->template_args[i]);
+            }
+            result += ">";
+        }
+        return result;
+    }
+    return {};
+}
+
+std::string encode_type_specifier(const std::shared_ptr<ast::type_specifier>& ts) {
+    if (!ts) {
+        return {};
+    }
+    if (auto identified = std::dynamic_pointer_cast<ast::identified_type_specifier>(ts)) {
+        std::string result = encode_qualified_identifier(identified->name);
+        if (identified->has_explicit_template_args || !identified->template_args.empty()) {
+            result += "<";
+            for (size_t i = 0; i < identified->template_args.size(); ++i) {
+                if (i > 0) {
+                    result += ", ";
+                }
+                result += encode_template_arg(identified->template_args[i]);
+            }
+            result += ">";
+        }
+        return result;
+    }
+    if (auto keyword_ts = std::dynamic_pointer_cast<ast::keyword_type_specifier>(ts)) {
+        std::string result;
+        if (keyword_ts->is_unsigned) {
+            result += "unsigned ";
+        }
+        result += keyword_ts->keyword.content;
+        if (keyword_ts->is_long_long) {
+            result += " long";
+        }
+        return result;
+    }
+    if (auto ptr = std::dynamic_pointer_cast<ast::pointer_type_specifier>(ts)) {
+        std::string result = encode_type_specifier(ptr->subtype);
+        result += ptr->pointer_type.content;
+        return result;
+    }
+    if (auto const_ts = std::dynamic_pointer_cast<ast::const_type_specifier>(ts)) {
+        return "const " + encode_type_specifier(const_ts->subtype);
+    }
+    if (auto arr = std::dynamic_pointer_cast<ast::array_type_specifier>(ts)) {
+        std::string result = encode_type_specifier(arr->subtype);
+        result += "[";
+        if (arr->lex_int) {
+            result += arr->lex_int->content;
+        }
+        result += "]";
+        return result;
+    }
+    if (auto frt = std::dynamic_pointer_cast<ast::function_ref_type_specifier>(ts)) {
+        std::string result;
+        if (frt->owner.has_value()) {
+            result += encode_qualified_identifier(*frt->owner);
+            result += "::";
+        }
+        result += frt->ref_op.content;
+        result += "(";
+        for (size_t i = 0; i < frt->param_types.size(); ++i) {
+            if (i > 0) {
+                result += ", ";
+            }
+            result += encode_type_specifier(frt->param_types[i]);
+        }
+        result += ")";
+        return result;
+    }
+    if (auto owner = std::dynamic_pointer_cast<ast::owner_type_specifier>(ts)) {
+        std::string result = encode_type_specifier(owner->subtype);
+        result += owner->owner_op.content;
+        return result;
+    }
+    return {};
+}
+
 } // anonymous namespace
 
 std::optional<k::name> lookup_module_name(k::source& src, k::log::logger& logger) {
@@ -907,14 +1038,11 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
     // Optional base-class clause: ':' [vis] Name [',' [vis] Name]*
     std::vector<ast::aggregate_decl::base_clause_entry> bases;
     {
-        // ...existing code...
         lex::lex_holder base_holder(_lexer);
         auto maybe_colon = _lexer.get();
         if (maybe_colon == lex::operator_::COLON) {
-            // Parse list of base class specs
             while (true) {
                 std::optional<lex::keyword> vis_kw;
-                // Optional visibility specifier
                 lex::lex_holder vis_holder(_lexer);
                 auto maybe_vis = _lexer.get();
                 if (maybe_vis == lex::keyword::PUBLIC || maybe_vis == lex::keyword::PROTECTED || maybe_vis == lex::keyword::PRIVATE) {
@@ -922,113 +1050,27 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
                 } else {
                     vis_holder.rollback();
                 }
-                // Expect base class name — may be a qualified name: id ('::' id)*
-                auto lbase_name = _lexer.get();
-                if (!lex::is<lex::identifier>(lbase_name)) {
+
+                auto base_type = parse_type_spec();
+                if (!base_type) {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EXPECTED_BASE_CLASS_NAME), _lexer.pick_current(), "Expected base class name in inheritance clause");
                 }
-                auto first_id = lex::as<lex::identifier>(lbase_name);
-                std::string qualified = std::string{first_id.content};
-                // Consume optional '::' id pairs
-                while (true) {
-                    lex::lex_holder dcolon_holder(_lexer);
-                    auto maybe_dcolon = _lexer.get();
-                    if (maybe_dcolon == lex::punctuator::DOUBLE_COLON) {
-                        auto lnext = _lexer.get();
-                        if (lex::is<lex::identifier>(lnext)) {
-                            qualified += "::" + std::string{lex::as<lex::identifier>(lnext).content};
-                        } else {
-                            dcolon_holder.rollback();
-                            break;
-                        }
-                    } else {
-                        dcolon_holder.rollback();
-                        break;
-                    }
+
+                auto base_ident = std::dynamic_pointer_cast<ast::identified_type_specifier>(base_type);
+                if (!base_ident) {
+                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EXPECTED_BASE_CLASS_NAME), _lexer.pick_current(), "Expected base class name in inheritance clause");
                 }
-                // Try to parse optional template arguments: '<' type (',' type)* '>'
-                // If successful, encode them into the qualified name as "Name<Arg1,Arg2,...>"
-                {
-                    lex::lex_holder tpl_holder(_lexer);
-                    auto maybe_lt = _lexer.get();
-                    if (maybe_lt == lex::operator_::CHEVRON_OPEN) {
-                        // Tentatively parse template args
-                        std::vector<std::string> tpl_arg_names;
-                        bool tpl_ok = true;
-                        try {
-                            // Check for empty arg list <>
-                            {
-                                lex::lex_holder empty_holder(_lexer);
-                                auto maybe_gt = _lexer.get();
-                                if (maybe_gt == lex::operator_::CHEVRON_CLOSE) {
-                                    // Empty template args: Name<>
-                                    qualified += "<>";
-                                    tpl_ok = true;
-                                    goto tpl_done;
-                                }
-                                empty_holder.rollback();
-                            }
-                            // Parse first arg as identifier (type name)
-                            {
-                                auto targ = _lexer.get();
-                                if (lex::is<lex::identifier>(targ)) {
-                                    tpl_arg_names.push_back(std::string{lex::as<lex::identifier>(targ).content});
-                                } else {
-                                    tpl_ok = false;
-                                }
-                            }
-                            // Parse remaining args
-                            while (tpl_ok) {
-                                lex::lex_holder sep_holder(_lexer);
-                                auto maybe_sep = _lexer.get();
-                                if (maybe_sep == lex::punctuator::COMMA) {
-                                    auto targ = _lexer.get();
-                                    if (lex::is<lex::identifier>(targ)) {
-                                        tpl_arg_names.push_back(std::string{lex::as<lex::identifier>(targ).content});
-                                    } else {
-                                        tpl_ok = false;
-                                    }
-                                } else {
-                                    sep_holder.rollback();
-                                    break;
-                                }
-                            }
-                            // Expect '>'
-                            if (tpl_ok) {
-                                auto maybe_gt = _lexer.get();
-                                if (maybe_gt != lex::operator_::CHEVRON_CLOSE) {
-                                    tpl_ok = false;
-                                }
-                            }
-                        } catch (...) {
-                            tpl_ok = false;
-                        }
-                        if (tpl_ok) {
-                            qualified += "<";
-                            for (size_t ti = 0; ti < tpl_arg_names.size(); ++ti) {
-                                if (ti > 0) qualified += ",";
-                                qualified += tpl_arg_names[ti];
-                            }
-                            qualified += ">";
-                        } else {
-                            tpl_holder.rollback();
-                        }
-                    } else {
-                        tpl_holder.rollback();
-                    }
-                    tpl_done:;
-                }
-                ast::aggregate_decl::base_clause_entry entry{vis_kw, first_id, qualified};
+
+                ast::aggregate_decl::base_clause_entry entry{vis_kw, base_ident->name.names.front(), encode_type_specifier(base_type)};
                 bases.push_back(std::move(entry));
-                // Check for ',' to continue
+
                 lex::lex_holder comma_holder(_lexer);
                 auto maybe_comma = _lexer.get();
                 if (maybe_comma == lex::punctuator::COMMA) {
-                    // continue to next base
-                } else {
-                    comma_holder.rollback();
-                    break;
+                    continue;
                 }
+                comma_holder.rollback();
+                break;
             }
         } else {
             base_holder.rollback();
