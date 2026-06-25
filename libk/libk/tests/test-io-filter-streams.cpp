@@ -56,7 +56,7 @@ TEST_CASE("FilterInputStream delegates read()", "[libk][io][filter]") {
             buf : byte[]! = new byte[sz];
             buf[0] = (byte) 10; buf[1] = (byte) 20; buf[2] = (byte) 30;
             bais : k::io::ByteArrayInputStream(buf, 3);
-            fis : k::io::FilterInputStream(&bais);
+            fis : k::io::FilterInputStream<byte>(&bais);
 
             v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             v1 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
@@ -88,7 +88,7 @@ TEST_CASE("FilterInputStream delegates bulk read", "[libk][io][filter]") {
             src : byte[]! = new byte[sz];
             src[0] = (byte) 5; src[1] = (byte) 10; src[2] = (byte) 15;
             bais : k::io::ByteArrayInputStream(src, 3);
-            fis : k::io::FilterInputStream(&bais);
+            fis : k::io::FilterInputStream<byte>(&bais);
 
             dsz : int = 3;
             dst : byte[]! = new byte[dsz];
@@ -120,7 +120,7 @@ TEST_CASE("FilterInputStream delegates available()", "[libk][io][filter]") {
             buf[0] = (byte)1; buf[1] = (byte)2; buf[2] = (byte)3;
             buf[3] = (byte)4; buf[4] = (byte)5;
             bais : k::io::ByteArrayInputStream(buf, 5);
-            fis : k::io::FilterInputStream(&bais);
+            fis : k::io::FilterInputStream<byte>(&bais);
 
             a : int = fis.available();
             if (a != 5) return 1;
@@ -146,7 +146,7 @@ TEST_CASE("FilterOutputStream delegates write()", "[libk][io][filter]") {
 
         test_write() : int {
             baos : k::io::ByteArrayOutputStream;
-            fos : k::io::FilterOutputStream(&baos);
+            fos : k::io::FilterOutputStream<byte>(&baos);
             fos.write(65);
             fos.write(66);
             if (baos.size() != 2) return 1;
@@ -172,7 +172,7 @@ TEST_CASE("FilterOutputStream delegates bulk write", "[libk][io][filter]") {
 
         test_bulk_write() : int {
             baos : k::io::ByteArrayOutputStream;
-            fos : k::io::FilterOutputStream(&baos);
+            fos : k::io::FilterOutputStream<byte>(&baos);
             sz : int = 3;
             src : byte[]! = new byte[sz];
             src[0] = (byte) 11; src[1] = (byte) 22; src[2] = (byte) 33;
@@ -205,7 +205,7 @@ TEST_CASE("FilterInputStream delegates skip()", "[libk][io][filter]") {
             buf[0] = (byte) 10; buf[1] = (byte) 20; buf[2] = (byte) 30;
             buf[3] = (byte) 40; buf[4] = (byte) 50;
             bais : k::io::ByteArrayInputStream(buf, 5);
-            fis : k::io::FilterInputStream(&bais);
+            fis : k::io::FilterInputStream<byte>(&bais);
 
             skipped : unsigned long = fis.skip(2uL);
             if (skipped != 2uL) return 1;
@@ -238,7 +238,7 @@ TEST_CASE("FilterInputStream delegates close()", "[libk][io][filter]") {
             buf : byte[]! = new byte[sz];
             buf[0] = (byte) 1; buf[1] = (byte) 2;
             bais : k::io::ByteArrayInputStream(buf, 2);
-            fis : k::io::FilterInputStream(&bais);
+            fis : k::io::FilterInputStream<byte>(&bais);
 
             v : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             if (v != 1) return 1;
@@ -264,7 +264,7 @@ TEST_CASE("FilterOutputStream delegates flush()", "[libk][io][filter]") {
 
         test_flush() : int {
             baos : k::io::ByteArrayOutputStream;
-            fos : k::io::FilterOutputStream(&baos);
+            fos : k::io::FilterOutputStream<byte>(&baos);
             fos.write(42);
             fos.flush();
             if (baos.size() != 1) return 1;
@@ -289,7 +289,7 @@ TEST_CASE("FilterOutputStream delegates close()", "[libk][io][filter]") {
 
         test_fos_close() : int {
             baos : k::io::ByteArrayOutputStream;
-            fos : k::io::FilterOutputStream(&baos);
+            fos : k::io::FilterOutputStream<byte>(&baos);
             fos.write(99);
             fos.close();
             // Data still in baos after close (BAOS close is no-op)
@@ -314,14 +314,14 @@ TEST_CASE("Filter streams round-trip", "[libk][io][filter]") {
 
         test_roundtrip() : int {
             baos : k::io::ByteArrayOutputStream;
-            fos : k::io::FilterOutputStream(&baos);
+            fos : k::io::FilterOutputStream<byte>(&baos);
             fos.write(42);
             fos.write(99);
             fos.flush();
 
             arr : byte[]* = baos.toByteArray();
             bais : k::io::ByteArrayInputStream(arr, baos.size());
-            fis : k::io::FilterInputStream(&bais);
+            fis : k::io::FilterInputStream<byte>(&bais);
 
             v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             v1 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);

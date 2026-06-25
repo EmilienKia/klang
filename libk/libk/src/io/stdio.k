@@ -42,7 +42,7 @@ private _stderrPrint : PrintStream(&_stderrStream);
 /**
  * Read bytes from the process standard input stream.
  */
-public stdin  : InputStream& = _stdinStream;
+public stdin  : InputStream<byte>& = _stdinStream;
 /**
  * Write formatted text to the process standard output stream.
  */

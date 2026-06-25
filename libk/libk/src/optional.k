@@ -76,7 +76,7 @@ struct Optional {
      * - If other holds a value, this holds a copy of that value.
      * - If other is empty, this is also empty.
      */
-    Optional(other : Optional<T>&) {
+    Optional(other : const Optional<T>&) {
         if (other.hasValue()) {
             _slot.construct(other.get());
             _hasValue = true;
@@ -154,7 +154,6 @@ struct Optional {
         return Optional<T>();
     }
 }
-
 
 
 

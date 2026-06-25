@@ -147,7 +147,7 @@ public interface DataOutput {
  * `DataInputStream` combines `InputStream` delegation with typed primitive
  * reading helpers.
  */
-public class DataInputStream : public FilterInputStream, public DataInput {
+public class DataInputStream : public FilterInputStream<byte>, public DataInput {
 
 public:
     /**
@@ -155,16 +155,24 @@ public:
      *
      * @param input Wrapped input stream.
      */
-    DataInputStream(input: InputStream+) : FilterInputStream(input) {}
+    DataInputStream(input: InputStream<byte>+) : FilterInputStream(input) {}
 
     // ── DataInput implementation ─────────────────────────────────────────
 
     readByte() : byte {
-        return Optional<byte>(_in->read()).getOr((byte) 0);
+        buf : byte[1];
+        if (_in->read(buf, 0, 1) <= 0) {
+            return (byte) 0;
+        }
+        return buf[0];
     }
 
     readChar() : char {
-        return (char) Optional<byte>(_in->read()).getOr((byte) 0);
+        buf : byte[1];
+        if (_in->read(buf, 0, 1) <= 0) {
+            return (char) 0;
+        }
+        return (char) buf[0];
     }
 
     readShort() : short {
@@ -213,7 +221,11 @@ public:
     }
 
     readBool() : bool {
-        return Optional<byte>(_in->read()).getOr((byte) 0) != (byte) 0;
+        buf : byte[1];
+        if (_in->read(buf, 0, 1) <= 0) {
+            return false;
+        }
+        return buf[0] != (byte) 0;
     }
 
     readFully(buf: byte[], off: unsigned int, len: unsigned int) {
@@ -239,7 +251,7 @@ public:
  * `DataOutputStream` combines `OutputStream` delegation with typed primitive
  * writing helpers.
  */
-public class DataOutputStream : public FilterOutputStream, public DataOutput {
+public class DataOutputStream : public FilterOutputStream<byte>, public DataOutput {
     _written  : int;
 
 public:
@@ -248,7 +260,7 @@ public:
      *
      * @param output Wrapped output stream.
      */
-    DataOutputStream(output: OutputStream+) : FilterOutputStream(output), _written(0) {}
+    DataOutputStream(output: OutputStream<byte>+) : FilterOutputStream(output), _written(0) {}
 
     /**
      * Return the total number of bytes written through this stream.
@@ -262,15 +274,15 @@ public:
     // ── DataOutput implementation ────────────────────────────────────────
 
     writeByte(v: byte) : DataOutput& {
-        _out->write((int) v);
+        _out->write(v);
         _written = _written + 1;
-        return this;
+        return (DataOutput&) this;
     }
 
     writeChar(v: char) : DataOutput& {
-        _out->write((int) v);
+        _out->write((byte) v);
         _written = _written + 1;
-        return this;
+        return (DataOutput&) this;
     }
 
     writeShort(v: short) : DataOutput& {
@@ -278,7 +290,7 @@ public:
         __k_io_short_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
         _written = _written + 2;
-        return this;
+        return (DataOutput&) this;
     }
 
     writeUnsignedShort(v: unsigned short) : DataOutput& {
@@ -286,7 +298,7 @@ public:
         __k_io_short_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
         _written = _written + 2;
-        return this;
+        return (DataOutput&) this;
     }
 
     writeInt(v: int) : DataOutput& {
@@ -294,7 +306,7 @@ public:
         __k_io_int_to_native_bytes(v, &buf[0]);
         _out->write(buf);
         _written = _written + 4;
-        return this;
+        return (DataOutput&) this;
     }
 
     writeUnsignedInt(v: unsigned int) : DataOutput& {
@@ -302,7 +314,7 @@ public:
         __k_io_int_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
         _written = _written + 4;
-        return this;
+        return (DataOutput&) this;
     }
 
     writeLong(v: long) : DataOutput& {
@@ -310,45 +322,38 @@ public:
         __k_io_long_to_native_bytes(v, &buf[0]);
         _out->write(buf);
         _written = _written + 8;
-        return this;
+        return (DataOutput&) this;
     }
 
     writeUnsignedLong(v: unsigned long) : DataOutput& {
         writeLong((long) v);
-        return this;
+        return (DataOutput&) this;
     }
 
     writeFloat(v: float) : DataOutput& {
         writeInt(__k_io_float_to_bits(v));
-        return this;
+        return (DataOutput&) this;
     }
 
     writeDouble(v: double) : DataOutput& {
         writeLong(__k_io_double_to_bits(v));
-        return this;
+        return (DataOutput&) this;
     }
 
     writeBool(v: bool) : DataOutput& {
         if (v) {
-            _out->write(1);
+            _out->write((byte) 1);
         } else {
-            _out->write(0);
+            _out->write((byte) 0);
         }
         _written = _written + 1;
-        return this;
+        return (DataOutput&) this;
     }
 
     // ...existing code...
 }
 
 } // namespace io
-
-
-
-
-
-
-
 
 
 

@@ -26,9 +26,10 @@ namespace io {
  * `FilterInputStream` is intended as a base class for input decorators such as
  * buffered or typed readers.
  */
-public class FilterInputStream : public InputStream {
+template<typename T>
+public class FilterInputStream : public InputStream<T> {
 protected:
-    _in : InputStream*;
+    _in : InputStream<T>*;
 
 public:
     /**
@@ -37,22 +38,22 @@ public:
      *
      * @param input Wrapped input stream.
      */
-    FilterInputStream(input: InputStream*) : _in(input) {}
+    FilterInputStream(input: InputStream<T>*) : _in(input) {}
 
     /** Default constructor (null inner stream — for compiler-generated subclass constructors). */
     FilterInputStream() : _in(null) {}
 
     // ── InputStream implementation (all delegated) ───────────────────────
 
-    read() : Optional<byte> {
+    read() : Optional<T> {
         return _in->read();
     }
 
-    read(buf: byte[], off: unsigned int, len: unsigned int) : int {
+    read(buf: T[], off: unsigned int, len: unsigned int) : int {
         return _in->read(buf, off, len);
     }
 
-    read(buf: byte[]) : int {
+    read(buf: T[]) : int {
         return _in->read(buf);
     }
 
@@ -76,9 +77,10 @@ public:
  * `FilterOutputStream` is intended as a base class for output decorators such
  * as buffered, data, or printing streams.
  */
-public class FilterOutputStream : public OutputStream {
+template<typename T>
+public class FilterOutputStream : public OutputStream<T> {
 protected:
-    _out : OutputStream*;
+    _out : OutputStream<T>*;
 
 public:
     /**
@@ -87,44 +89,41 @@ public:
      *
      * @param output Wrapped output stream.
      */
-    FilterOutputStream(output: OutputStream*) : _out(output) {}
+    FilterOutputStream(output: OutputStream<T>*) : _out(output) {}
 
     /** Default constructor (null inner stream — for compiler-generated subclass constructors). */
     FilterOutputStream() : _out(null) {}
 
     // ── OutputStream implementation (all delegated) ──────────────────────
 
-    write(b: int) : OutputStream& {
+    write(b: T) : OutputStream<T>& {
         _out->write(b);
-        return this;
+        return (OutputStream<T>&) this;
     }
 
-    write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream& {
+    write(buf: const T[], off: unsigned int, len: unsigned int) : OutputStream<T>& {
         _out->write(buf, off, len);
-        return this;
+        return (OutputStream<T>&) this;
     }
 
-    write(buf: const byte[]) : OutputStream& {
+    write(buf: const T[]) : OutputStream<T>& {
         _out->write(buf);
-        return this;
+        return (OutputStream<T>&) this;
     }
 
-    flush() : OutputStream& {
+    flush() : OutputStream<T>& {
         _out->flush();
-        return this;
+        return (OutputStream<T>&) this;
     }
 
-    close() : OutputStream& {
+    close() : OutputStream<T>& {
         flush();
         _out->close();
-        return this;
+        return (OutputStream<T>&) this;
     }
 }
 
 } // namespace io
-
-
-
 
 
 

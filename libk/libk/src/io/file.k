@@ -187,7 +187,7 @@ public:
 /**
  * Read bytes from a file-backed input stream.
  */
-public class FileInputStream : public InputStream {
+public class FileInputStream : public InputStream<byte> {
     _fp : CFile*;
 
 public:
@@ -230,7 +230,9 @@ public:
             return Optional<byte>();
         }
         val : byte = (byte) raw;
-        return Optional<byte>(val);
+        result : Optional<byte>;
+        result.set(val);
+        return result;
     }
 
     read(buf: byte[], off: unsigned int, len: unsigned int) : int {
@@ -280,7 +282,7 @@ public:
 /**
  * Write bytes to a file-backed output stream.
  */
-public class FileOutputStream : public OutputStream {
+public class FileOutputStream : public OutputStream<byte> {
     _fp : CFile*;
 
 public:
@@ -330,38 +332,38 @@ public:
 
     // ── OutputStream implementation ──────────────────────────────────────
 
-    write(b: int) : OutputStream& {
+    write(b: byte) : OutputStream<byte>& {
         if (_fp != null) {
-            __k_io_file_fwrite_byte(_fp, b);
+            __k_io_file_fwrite_byte(_fp, (int) b);
         }
-        return this;
+        return (OutputStream<byte>&) this;
     }
 
-    write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream& {
+    write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
         if (_fp != null && len > 0) {
             __k_io_file_fwrite(_fp, &buf[off], (int) len);
         }
-        return this;
+        return (OutputStream<byte>&) this;
     }
 
-    write(buf: const byte[]) : OutputStream& {
+    write(buf: const byte[]) : OutputStream<byte>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
-    flush() : OutputStream& {
+    flush() : OutputStream<byte>& {
         if (_fp != null) {
             __k_io_file_fflush(_fp);
         }
-        return this;
+        return (OutputStream<byte>&) this;
     }
 
-    close() : OutputStream& {
+    close() : OutputStream<byte>& {
         if (_fp != null) {
             __k_io_file_fflush(_fp);
             __k_io_file_fclose(_fp);
             _fp = null;
         }
-        return this;
+        return (OutputStream<byte>&) this;
     }
 
     // ── Additional ───────────────────────────────────────────────────────
@@ -378,9 +380,6 @@ public:
 }
 
 } // namespace io
-
-
-
 
 
 

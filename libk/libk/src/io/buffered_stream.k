@@ -26,7 +26,7 @@ namespace io {
  * `BufferedInputStream` reduces backend read calls by maintaining an internal
  * byte buffer.
  */
-public class BufferedInputStream : public FilterInputStream {
+public class BufferedInputStream : public FilterInputStream<byte> {
     _bbuf   : byte[]!;
     _bpos   : int;
     _bcount : int;
@@ -38,7 +38,7 @@ public:
      *
      * @param input Wrapped input stream.
      */
-    BufferedInputStream(input: InputStream*) : FilterInputStream(input), _bbuf(null), _bpos(0), _bcount(0), _bsize(8192) {
+    BufferedInputStream(input: InputStream<byte>*) : FilterInputStream(input), _bbuf(null), _bpos(0), _bcount(0), _bsize(8192) {
         _bbuf = new byte[8192];
     }
 
@@ -48,7 +48,7 @@ public:
      * @param input Wrapped input stream.
      * @param size Internal buffer size in bytes.
      */
-    BufferedInputStream(input: InputStream*, size: int) : FilterInputStream(input), _bbuf(null), _bpos(0), _bcount(0), _bsize(size) {
+    BufferedInputStream(input: InputStream<byte>*, size: int) : FilterInputStream(input), _bbuf(null), _bpos(0), _bcount(0), _bsize(size) {
         _bbuf = new byte[size];
     }
 
@@ -63,7 +63,9 @@ public:
         }
         val : byte = _bbuf[_bpos];
         _bpos = _bpos + 1;
-        return Optional<byte>(val);
+        result : Optional<byte>;
+        result.set(val);
+        return result;
     }
 
     read(buf: byte[], off: unsigned int, len: unsigned int) : int {
@@ -154,7 +156,7 @@ private:
  * `BufferedOutputStream` accumulates bytes in memory and flushes them in
  * larger chunks to reduce backend write calls.
  */
-public class BufferedOutputStream : public FilterOutputStream {
+public class BufferedOutputStream : public FilterOutputStream<byte> {
     _bbuf   : byte[]!;
     _bcount : int;
     _bsize  : int;
@@ -165,7 +167,7 @@ public:
      *
      * @param output Wrapped output stream.
      */
-    BufferedOutputStream(output: OutputStream*) : FilterOutputStream(output), _bbuf(null), _bcount(0), _bsize(8192) {
+    BufferedOutputStream(output: OutputStream<byte>*) : FilterOutputStream(output), _bbuf(null), _bcount(0), _bsize(8192) {
         _bbuf = new byte[8192];
     }
 
@@ -175,28 +177,28 @@ public:
      * @param output Wrapped output stream.
      * @param size Internal buffer size in bytes.
      */
-    BufferedOutputStream(output: OutputStream*, size: int) : FilterOutputStream(output), _bbuf(null), _bcount(0), _bsize(size) {
+    BufferedOutputStream(output: OutputStream<byte>*, size: int) : FilterOutputStream(output), _bbuf(null), _bcount(0), _bsize(size) {
         _bbuf = new byte[size];
     }
 
     // ── OutputStream overrides ───────────────────────────────────────────
 
-    write(b: int) : OutputStream& {
+    write(b: byte) : OutputStream<byte>& {
         if (_bcount >= _bsize) {
             _flushBuffer();
         }
-        _bbuf[_bcount] = (byte) b;
+        _bbuf[_bcount] = b;
         _bcount = _bcount + 1;
-        return this;
+        return (OutputStream<byte>&) this;
     }
 
-    write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream& {
-        if (len == 0) return this;
+    write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
+        if (len == 0) return (OutputStream<byte>&) this;
         // If data is larger than buffer, flush and write directly
         if (len >= (unsigned int) _bsize) {
             _flushBuffer();
             _out->write(buf, off, len);
-            return this;
+            return (OutputStream<byte>&) this;
         }
         // If data would overflow buffer, flush first
         if (_bcount + (int) len > _bsize) {
@@ -209,23 +211,23 @@ public:
             i = i + 1;
         }
         _bcount = _bcount + (int) len;
-        return this;
+        return (OutputStream<byte>&) this;
     }
 
-    write(buf: const byte[]) : OutputStream& {
+    write(buf: const byte[]) : OutputStream<byte>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
-    flush() : OutputStream& {
+    flush() : OutputStream<byte>& {
         _flushBuffer();
         _out->flush();
-        return this;
+        return (OutputStream<byte>&) this;
     }
 
-    close() : OutputStream& {
+    close() : OutputStream<byte>& {
         flush();
         _out->close();
-        return this;
+        return (OutputStream<byte>&) this;
     }
 
 private:
@@ -239,10 +241,6 @@ private:
 }
 
 } // namespace io
-
-
-
-
 
 
 

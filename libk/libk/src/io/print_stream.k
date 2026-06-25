@@ -35,7 +35,7 @@ namespace io {
  * `PrintStream` provides overloaded `print` and `println` helpers for primitive
  * and string-like values and supports fluent chaining.
  */
-public class PrintStream : public FilterOutputStream {
+public class PrintStream : public FilterOutputStream<byte> {
 
 public:
     /**
@@ -44,7 +44,7 @@ public:
      *
      * @param output Wrapped output stream.
      */
-    PrintStream(output: OutputStream*) : FilterOutputStream(output) {}
+    PrintStream(output: OutputStream<byte>*) : FilterOutputStream(output) {}
 
     // ── print methods (one per primitive type) ───────────────────────────
 
@@ -62,7 +62,7 @@ public:
 
     /** Print a single character. */
     print(v: char) : PrintStream& {
-        _out->write((int) v);
+        _out->write((byte) v);
         return this;
     }
 
@@ -161,84 +161,84 @@ public:
 
     /** Print a newline. */
     println() : PrintStream& {
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print a boolean followed by a newline. */
     println(v: bool) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print a character followed by a newline. */
     println(v: char) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print a byte followed by a newline. */
     println(v: byte) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print a short followed by a newline. */
     println(v: short) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print an int followed by a newline. */
     println(v: int) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print a long followed by a newline. */
     println(v: long) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print an unsigned short followed by a newline. */
     println(v: unsigned short) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print an unsigned int followed by a newline. */
     println(v: unsigned int) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print an unsigned long followed by a newline. */
     println(v: unsigned long) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print a float followed by a newline. */
     println(v: float) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
     /** Print a double followed by a newline. */
     println(v: double) : PrintStream& {
         print(v);
-        _out->write(10);
+        _out->write((byte) 10);
         return this;
     }
 
@@ -251,15 +251,15 @@ public:
 
     // ── flush / close ────────────────────────────────────────────────────
 
-    flush() : OutputStream& {
+    flush() : OutputStream<byte>& {
         _out->flush();
-        return this;
+        return (OutputStream<byte>&) this;
     }
 
-    close() : OutputStream& {
+    close() : OutputStream<byte>& {
         flush();
         _out->close();
-        return this;
+        return (OutputStream<byte>&) this;
     }
 }
 
@@ -293,9 +293,6 @@ _out->close();
 }
 
 } // namespace io
-
-
-
 
 
 

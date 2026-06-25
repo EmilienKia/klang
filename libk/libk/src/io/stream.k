@@ -27,6 +27,7 @@ namespace io {
  * successfully read, or empty at end of stream. Bulk reads fill
  * caller-provided buffers and report the number of bytes actually read.
  */
+template<typename T>
 public interface InputStream {
     /**
      * Read a single byte.
@@ -34,7 +35,7 @@ public interface InputStream {
      * @return An `Optional<byte>` containing the next byte if one is available,
      *         or an empty Optional at end of stream.
      */
-    read() : Optional<byte>;
+    read() : Optional<T>;
 
     /**
      * Read up to `len` bytes into `buf` starting at `off`.
@@ -44,7 +45,7 @@ public interface InputStream {
      * @param len Maximum number of bytes to read.
      * @return Number of bytes read, or `-1` if end of stream is reached first.
      */
-    read(buf: byte[], off: unsigned int, len: unsigned int) : int;
+    read(buf: T[], off: unsigned int, len: unsigned int) : int;
 
     /**
      * Read up to `buf.size` bytes into `buf`.
@@ -52,7 +53,7 @@ public interface InputStream {
      * @param buf Destination byte buffer.
      * @return Number of bytes read, or `-1` if end of stream is reached first.
      */
-    read(buf: byte[]) : int;
+    read(buf: T[]) : int;
 
     /**
      * Skip and discard up to `n` bytes.
@@ -82,6 +83,7 @@ public interface InputStream {
  * Single-byte writes use the low 8 bits of the provided integer value. Bulk
  * writes consume caller-provided buffers.
  */
+template<typename T>
 public interface OutputStream {
     /**
      * Write a single byte.
@@ -89,7 +91,7 @@ public interface OutputStream {
      * @param b Source value; low 8 bits are written.
      * @return This stream.
      */
-    write(b: int) : OutputStream&;
+    write(b: T) : OutputStream<T>&;
 
     /**
      * Write `len` bytes from `buf` starting at `off`.
@@ -99,7 +101,7 @@ public interface OutputStream {
      * @param len Number of bytes to write.
      * @return This stream.
      */
-    write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream&;
+    write(buf: const T[], off: unsigned int, len: unsigned int) : OutputStream<T>&;
 
     /**
      * Write all bytes from `buf`.
@@ -107,19 +109,23 @@ public interface OutputStream {
      * @param buf Source byte buffer.
      * @return This stream.
      */
-    write(buf: const byte[]) : OutputStream&;
+    write(buf: const T[]) : OutputStream<T>&;
 
     /**
      * Flush any buffered output to the underlying destination.
      * Returns this stream for fluent chaining.
      */
-    flush() : OutputStream&;
+    flush() : OutputStream<T>&;
 
     /**
      * Flush and close the stream, releasing any associated resources.
      * Returns this stream for fluent chaining.
      */
-    close() : OutputStream&;
+    close() : OutputStream<T>&;
+}
+
+private self_output_stream(output: OutputStream<byte>&) : OutputStream<byte>& {
+    return output;
 }
 
 
@@ -129,7 +135,7 @@ public interface OutputStream {
  * The stream stores an internal copy of the source bytes and advances a read
  * cursor as data is consumed.
  */
-public class ByteArrayInputStream : public InputStream {
+public class ByteArrayInputStream : public InputStream<byte> {
     _buf   : byte[]!;
     _pos   : int;
     _count : int;
@@ -155,9 +161,12 @@ public:
         _count = size;
     }
 
+    /** Copy constructor — preserves the buffer reference and cursor state. */
+    ByteArrayInputStream(other : const ByteArrayInputStream&) : _buf(other._buf), _pos(other._pos), _count(other._count) {}
+
     // ── InputStream implementation ───────────────────────────────────────
 
-    read() : Optional<byte> {
+    override read() : Optional<byte> {
         if (_pos >= _count) {
             return Optional<byte>();
         }
@@ -166,7 +175,7 @@ public:
         return Optional<byte>(val);
     }
 
-    read(buf: byte[], off: unsigned int, len: unsigned int) : int {
+    override read(buf: byte[], off: unsigned int, len: unsigned int) : int {
         if (_pos >= _count) return -1;
         avail : unsigned int = (unsigned int)(_count - _pos);
         actual : unsigned int = len;
@@ -181,11 +190,11 @@ public:
         return (int) actual;
     }
 
-    read(buf: byte[]) : int {
+    override read(buf: byte[]) : int {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    skip(n: unsigned long) : unsigned long {
+    override skip(n: unsigned long) : unsigned long {
         avail : unsigned long = (unsigned long)(_count - _pos);
         actual : unsigned long = n;
         if (actual > avail) actual = avail;
@@ -193,11 +202,11 @@ public:
         return actual;
     }
 
-    available() : int {
+    override available() : int {
         return _count - _pos;
     }
 
-    close() {
+    override close() {
         // Nothing to release for an in-memory stream.
     }
 }
@@ -209,7 +218,7 @@ public:
  * The stream accumulates written bytes and exposes helpers to query size,
  * reset content, and retrieve a copy of the accumulated data.
  */
-public class ByteArrayOutputStream : public OutputStream {
+public class ByteArrayOutputStream : public OutputStream<byte> {
     _buf   : byte[]!;
     _count : int;
     _cap   : int;
@@ -226,17 +235,22 @@ public:
         }
     }
 
+    /** Copy constructor — preserves the backing buffer reference and size state. */
+    ByteArrayOutputStream(other : const ByteArrayOutputStream&) : _buf(other._buf), _count(other._count), _cap(other._cap) {}
+
     // ── OutputStream implementation ──────────────────────────────────────
 
-    write(b: int) : OutputStream& {
+    override write(b: byte) : OutputStream<byte>& {
         _ensureCap(1);
-        _buf[_count] = (byte) b;
+        _buf[_count] = b;
         _count = _count + 1;
-        return this;
+        return self_output_stream(this);
     }
 
-    write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream& {
-        if (len == 0) return this;
+    override write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
+        if (len == 0) {
+            return self_output_stream(this);
+        }
         _ensureCap((int) len);
         i : unsigned int = 0;
         while (i < len) {
@@ -244,21 +258,21 @@ public:
             i = i + 1;
         }
         _count = _count + (int) len;
-        return this;
+        return self_output_stream(this);
     }
 
-    write(buf: const byte[]) : OutputStream& {
+    override write(buf: const byte[]) : OutputStream<byte>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
-    flush() : OutputStream& {
+    override flush() : OutputStream<byte>& {
         // No-op for in-memory stream.
-        return this;
+        return self_output_stream(this);
     }
 
-    close() : OutputStream& {
+    override close() : OutputStream<byte>& {
         // No-op for in-memory stream.
-        return this;
+        return self_output_stream(this);
     }
 
     // ── Additional methods ───────────────────────────────────────────────
@@ -290,7 +304,7 @@ public:
     /**
      * Write the entire content of this stream to another output stream.
      */
-    writeTo(out: OutputStream&) {
+    writeTo(out: OutputStream<byte>&) {
         if (_count > 0) {
             out.write(_buf, 0, (unsigned int) _count);
         }
@@ -319,16 +333,5 @@ private:
 }
 
 } // namespace io
-
-
-
-
-
-
-
-
-
-
-
 
 
