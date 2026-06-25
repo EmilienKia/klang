@@ -917,8 +917,26 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
             // Already a struct_type but may not have its LLVM type yet (e.g. forward reference).
             resolve_dep_struct(dep_st_type, type, var_name);
         }
+        llvm::Type* member_llvm_type = get_llvm_type(effective_type);
+        if (!member_llvm_type) {
+            // All K addressers (pointer/reference/owner/link/view/drain) map to an
+            // opaque pointer at the LLVM ABI level.  If the wrapper's subtype could
+            // not be fully resolved here (e.g. a template-instantiated member whose
+            // concrete pointee struct_type was not linked into the wrapper), still
+            // emit an opaque pointer so the LLVM struct layout stays valid instead
+            // of pushing a null element (which crashes LLVM's StructLayout).
+            if (type::is_pointer(effective_type) || type::is_reference(effective_type)
+                || type::is_owner(effective_type) || type::is_link(effective_type)
+                || type::is_view(effective_type) || type::is_drain(effective_type)) {
+                member_llvm_type = llvm::PointerType::get(llvm_context(), 0);
+            } else {
+                // Non-addresser member type is still unresolved — defer the whole
+                // struct to a later resolution pass rather than emit a broken body.
+                return;
+            }
+        }
         fields.emplace_back(fields.size(), var_name, effective_type);
-        types.push_back(get_llvm_type(effective_type));
+        types.push_back(member_llvm_type);
     }
 
     if (llvm_struct->isOpaque()) {
