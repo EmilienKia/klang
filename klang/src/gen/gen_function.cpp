@@ -279,15 +279,22 @@ void type_reference_resolver::visit_parameter(parameter& param) {
             if (auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
                 unres && !unres->type_id().empty())
             {
-                // Try template instantiation first (e.g. Opt<int>&)
+                // Try template instantiation first (e.g. Opt<int>&).
+                // A struct_type returned by resolve_inner_type may not yet have an LLVM type
+                // (that is materialized later by context::resolve_types()), but it is
+                // semantically complete — accept it as long as it is a struct_type or fully resolved.
                 const element* scope_elem = &param;
                 auto resolved_inner = resolve_inner_type(inner, scope_elem);
-                if (resolved_inner && type::is_resolved(resolved_inner)) {
+                if (resolved_inner && (type::is_resolved(resolved_inner)
+                        || std::dynamic_pointer_cast<struct_type>(resolved_inner))) {
                     res_type = resolved_inner;
                 } else if (auto imp_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context)) {
                     res_type = imp_agg->get_struct_type();
                 }
-                if (res_type && type::is_resolved(res_type)) {
+                // Re-apply the wrapper layers.  Accept res_type even when its LLVM type is
+                // not yet materialized (indicated by !type::is_resolved but no unresolved_type
+                // nodes remaining, i.e. !type::contains_unresolved).
+                if (res_type && (type::is_resolved(res_type) || !type::contains_unresolved(res_type))) {
                     for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
                         switch (*it) {
                             case WrapKind::Ref:   res_type = res_type->get_reference(); break;
@@ -302,7 +309,9 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                 }
             }
         }
-        if (!type::is_resolved(res_type)) {
+        // Accept the resolved type even if its LLVM type is not yet materialized
+        // (struct_type without LLVM type), as long as no unresolved_type nodes remain.
+        if (!res_type || type::contains_unresolved(res_type)) {
             throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED), param_lexeme,
                 "Cannot resolve type for parameter '{}': the type name is unknown",
                 {param.get_short_name()});
@@ -692,7 +701,9 @@ void type_reference_resolver::visit_function(function& fn) {
                     // function's stored substitution map (set when this is a concrete
                     // template instantiation, e.g. expected__int_int).
                     auto tpl_resolved = try_instantiate_template_type(unres, fn);
-                    if (tpl_resolved && type::is_resolved(tpl_resolved)) {
+                    // Accept even if the struct_type's LLVM type is not yet materialized.
+                    if (tpl_resolved && (type::is_resolved(tpl_resolved)
+                            || std::dynamic_pointer_cast<struct_type>(tpl_resolved))) {
                         fn.set_return_type(tpl_resolved);
                     }
                 }
@@ -702,9 +713,11 @@ void type_reference_resolver::visit_function(function& fn) {
             if (resolved && type::is_resolved(resolved)) {
                 fn.set_return_type(resolved);
             } else {
-                // Try full chain resolution for wrapper types around unresolved templates
+                // Try full chain resolution for wrapper types around unresolved templates.
+                // Accept the result even if its LLVM type is not yet materialized (struct_type
+                // without LLVM type), as long as no unresolved_type nodes remain.
                 auto resolved2 = resolve_type_chain(fn.get_return_type(), &fn);
-                if (resolved2 && type::is_resolved(resolved2)) {
+                if (resolved2 && !type::contains_unresolved(resolved2)) {
                     fn.set_return_type(resolved2);
                 }
             }

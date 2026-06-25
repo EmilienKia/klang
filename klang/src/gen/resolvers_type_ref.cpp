@@ -962,6 +962,19 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                     break;
                 }
             }
+            // Imported template definitions with bodies are re-homed (flattened)
+            // directly into the consumer's root namespace under their SHORT name by
+            // the kdi_importer `module <ns>;` re-parse trick (intermediate namespaces
+            // such as `io` are dropped). So when the remainder still carries namespace
+            // components (e.g. [io, FilterInputStream]), also try the bare short name.
+            if (rest.size() > 1 && root_ns) {
+                if (auto st = resolve_struct_from(*root_ns, k::name(false, rest.back()))) {
+                    if (st->is_template()) {
+                        tpl_agg = st;
+                        break;
+                    }
+                }
+            }
         }
     }
     // 1b. If no template aggregate found, look for template unions
@@ -1017,9 +1030,21 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     // 3. Convert AST template args to model template_arguments
     std::vector<template_argument> model_args;
     model_args.reserve(ti->params.size());
+    // Pre-resolved model-level template arguments, set by substitute_type() during
+    // template instantiation when the AST arg name (e.g. "T") is no longer in scope
+    // in the concrete entity. Indexed parallel to ast_args; a null slot means "use
+    // the normal AST resolution path below".
+    const auto& model_targs = unres->get_model_template_args();
     for (size_t i = 0; i < ast_args.size(); ++i) {
         const auto& ast_arg = ast_args[i];
         if (ast_arg->is_type()) {
+            // Prefer a pre-resolved model-level template argument when present.
+            if (i < model_targs.size() && model_targs[i]
+                && (type::is_resolved(model_targs[i])
+                    || std::dynamic_pointer_cast<struct_type>(model_targs[i]))) {
+                model_args.push_back(template_argument::make_type(model_targs[i]));
+                continue;
+            }
             // Resolve the type argument through the context (normal path)
             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
             if (!arg_type || !type::is_resolved(arg_type)) {
@@ -1250,9 +1275,15 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     //     definitions are skipped and the concrete ctors are created after that pass.
     template_instantiator::inject_constructor_member_inits(concrete_agg);
 
-    // 5. If the concrete aggregate already has a struct_type, it was fully
-    //    processed by a previous (possibly recursive) call — return it.
+    // 5. If the concrete aggregate already has a struct_type, it was created by a
+    //    previous call (e.g. the template_instantiator materialised it as a base
+    //    class of another instantiation, which only builds the struct_type — not
+    //    the method signatures/bodies). Ensure its signatures and bodies are still
+    //    resolved (idempotent via the _resolved_instantiations guard) before
+    //    returning, so callers that invoke its methods see resolved return/param
+    //    types.
     if (concrete_agg->get_struct_type()) {
+        resolve_instantiated_aggregate(*concrete_agg);
         return concrete_agg->get_struct_type();
     }
 
@@ -1694,6 +1725,9 @@ std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
 }
 
 void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
+    // Idempotency / recursion guard: each instantiated aggregate is resolved once.
+    if (!_resolved_instantiations.insert(&agg).second) return;
+
     // Step 0: Resolve member variable types that contain unresolved template types.
     //         After template instantiation, member fields like `next : Node<T>*` may
     //         still carry unresolved inner types that need template instantiation.
@@ -3272,7 +3306,16 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
  * @return The expression if compatible, a cast expression, or nullptr if impossible.
  */
 std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type) {
-    if(!expr || !type::is_resolved(type) || !type::is_resolved(expr->get_type())) {
+    // Accept types that are either fully resolved (LLVM type present) or
+    // semantically complete (no unresolved_type nodes remain).  struct_type
+    // objects created during template instantiation may not have an LLVM type
+    // yet — that is materialized later by context::resolve_types().
+    auto type_is_usable = [](const std::shared_ptr<k::model::type>& t) {
+        if (!t) return false;
+        if (k::model::type::is_resolved(t)) return true;
+        return !k::model::type::contains_unresolved(t);
+    };
+    if(!expr || !type_is_usable(type) || !type_is_usable(expr->get_type())) {
         // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.
         return nullptr;
     }

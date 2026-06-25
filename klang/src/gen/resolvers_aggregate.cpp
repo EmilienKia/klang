@@ -164,6 +164,21 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     break;
                 }
             }
+            // Imported template definitions with bodies are re-homed (flattened)
+            // directly into the consumer's root namespace under their SHORT name by
+            // the kdi_importer `module <ns>;` re-parse trick (intermediate namespaces
+            // such as `io` are dropped). So when the remainder still carries namespace
+            // components (e.g. [io, FilterInputStream]), also try the bare short name.
+            if (rest.size() > 1) {
+                if (auto root_ns = _unit.get_root_namespace()) {
+                    if (auto st = resolve_struct_from(*root_ns, k::name(false, rest.back()))) {
+                        if (st->is_template()) {
+                            tpl_agg = st;
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
     // 1b. If no template aggregate found, look for template unions
@@ -222,9 +237,19 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     // 3. Convert AST template args to model template_arguments
     std::vector<template_argument> model_args;
     model_args.reserve(ti->params.size());
+    // Pre-resolved model-level template arguments, set by substitute_type() during
+    // template instantiation when the AST arg name (e.g. "T") is no longer in scope.
+    const auto& model_targs = unres->get_model_template_args();
     for (size_t i = 0; i < ast_args.size(); ++i) {
         const auto& ast_arg = ast_args[i];
         if (ast_arg->is_type()) {
+            // Prefer a pre-resolved model-level template argument when present.
+            if (i < model_targs.size() && model_targs[i]
+                && (type::is_resolved(model_targs[i])
+                    || std::dynamic_pointer_cast<struct_type>(model_targs[i]))) {
+                model_args.push_back(template_argument::make_type(model_targs[i]));
+                continue;
+            }
             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
             if (!arg_type || !type::is_resolved(arg_type)) {
                 if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
@@ -1174,6 +1199,29 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
             mv->accept(*this);
         } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
             gv->accept(*this);
+        }
+    }
+
+    // For template instantiations, the symbol_resolver/signature_resolver passes
+    // ran before this aggregate existed, so their constructor and function
+    // signatures (parameter and return types referencing template arguments,
+    // e.g. Iface<T>* → Iface<int>*) were never resolved. Resolve them here,
+    // reusing visit_function which consumes the instantiation's model template
+    // arguments. Bodies are handled later by type_reference_resolver.
+    if (st.has_tpl_args()) {
+        for (auto& child : st.get_children()) {
+            if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+                if (!fn->is_compiler_generated())
+                    visit_function(*fn);
+            }
+        }
+        for (auto& ctor : st.constructors()) {
+            if (ctor && !ctor->is_compiler_generated())
+                visit_function(*ctor);
+        }
+        if (auto dtor = st.get_destructor()) {
+            if (!dtor->is_compiler_generated())
+                visit_function(*dtor);
         }
     }
 }

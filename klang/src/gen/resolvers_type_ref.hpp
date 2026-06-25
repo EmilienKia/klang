@@ -84,6 +84,13 @@ protected:
      */
     std::unordered_map<const variable_definition*, tpl_info::generic_usage_descriptor> _generic_usage_by_site;
 
+    /**
+     * Guard set of instantiated aggregates already processed by
+     * resolve_instantiated_aggregate(), to keep that pass idempotent and to
+     * break recursion on self-referential instantiations.
+     */
+    std::unordered_set<aggregate*> _resolved_instantiations;
+
 public:
 
     type_reference_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
