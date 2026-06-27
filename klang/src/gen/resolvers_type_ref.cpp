@@ -3185,7 +3185,13 @@ type_reference_resolver::get_best_matching_function(
             }
         }
 
-        if (!func->is_member() || func->is_static()) {
+        // Plain free/static call form. Skipped for a pure member-of-object call
+        // (this_expr set with no direct_args): there, a free function must consume
+        // the receiver object via the unified-call path below — it cannot match as
+        // a plain call that ignores the object (which would let an unrelated free
+        // function of the same name spuriously compete, e.g. against an imported
+        // template struct's member of identical name/arity).
+        if ((!func->is_member() || func->is_static()) && (!this_expr || direct_args)) {
             const auto& b_args = direct_args ? *direct_args : args;
             if (b_args.size() <= params.size() || func_has_varargs) {
                 auto [w, adapted] = score_with_defaults(b_args, params, nullptr, 0);

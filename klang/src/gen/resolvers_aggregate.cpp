@@ -984,6 +984,10 @@ resolve_one_type(const std::shared_ptr<type>& t,
     // (e.g. Box<int>), try template instantiation before calling resolve_type,
     // which would emit a spurious "cannot resolve type" for the base name.
     if (auto unres = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        // Template parameter placeholders (a bare 'T'/'E'/'R' inside a template
+        // definition) must remain unresolved until instantiation — never bind
+        // them to an ambient same-named symbol in the consumer scope.
+        if (unres->is_template_param_placeholder()) return t;
         if (unres->has_template_args()) {
             auto tpl_resolved = resolver.try_instantiate_template_type(unres, context_elem);
             if (tpl_resolved && type::is_resolved(tpl_resolved)) return tpl_resolved;
@@ -1028,6 +1032,9 @@ resolve_one_type(const std::shared_ptr<type>& t,
         }
 
         if (auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(inner)) {
+            // A wrapped template parameter placeholder (e.g. member of type 'E&'
+            // inside a template definition) must stay unresolved until instantiation.
+            if (!unres_inner->is_template_param_placeholder()) {
             std::shared_ptr<type> resolved_inner;
             if (unres_inner->has_template_args()) {
                 resolved_inner = resolver.try_instantiate_template_type(unres_inner, context_elem);
@@ -1055,6 +1062,7 @@ resolve_one_type(const std::shared_ptr<type>& t,
                 }
                 if (rebuilt && type::is_resolved(rebuilt)) return rebuilt;
             }
+            } // end !is_template_param_placeholder
         }
     }
 
@@ -1486,7 +1494,7 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
                     inner = inner->get_subtype();
                 }
                 auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
-                if (unres && !unres->type_id().empty()) {
+                if (unres && !unres->type_id().empty() && !unres->is_template_param_placeholder()) {
                     // Resolve the inner aggregate type
                     std::shared_ptr<type> inner_resolved;
                     // If the inner type has template args, try template instantiation first
@@ -1570,6 +1578,12 @@ void aggregate_type_resolver::visit_function(function& fn) {
         } else {
         // Try template instantiation for return types with template args (e.g. Box<int>)
         auto unres_ret = std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type());
+        // Template parameter placeholders (e.g. a bare 'T'/'E' return type inside a
+        // template definition) must remain unresolved until instantiation — never bind
+        // them to an ambient same-named symbol in the consumer scope.
+        if (unres_ret && unres_ret->is_template_param_placeholder()) {
+            // leave as-is
+        } else {
         std::shared_ptr<type> resolved;
         if (unres_ret && unres_ret->has_template_args()) {
             resolved = try_instantiate_template_type(unres_ret, fn);
@@ -1585,6 +1599,7 @@ void aggregate_type_resolver::visit_function(function& fn) {
             auto resolved2 = _context->resolve_type(fn.get_return_type());
             if (type::is_resolved(resolved2)) fn.set_return_type(resolved2);
         }
+        } // end else (placeholder return type)
         } // end else (not unresolved_function_ref_type)
     }
 
@@ -1645,9 +1660,13 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
             } else {
                 // Try resolve_type_by_name for aggregate/enum types
                 if (auto unres = std::dynamic_pointer_cast<unresolved_type>(alt.resolved_type)) {
-                    auto by_name = resolve_type_by_name(unres->type_id(), un);
-                    if (by_name && type::is_resolved(by_name)) {
-                        alt.resolved_type = by_name;
+                    // Template parameter placeholders must remain unresolved until
+                    // instantiation — never bind them to an ambient same-named symbol.
+                    if (!unres->is_template_param_placeholder()) {
+                        auto by_name = resolve_type_by_name(unres->type_id(), un);
+                        if (by_name && type::is_resolved(by_name)) {
+                            alt.resolved_type = by_name;
+                        }
                     }
                 }
             }
