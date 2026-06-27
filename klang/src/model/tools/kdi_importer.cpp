@@ -29,6 +29,7 @@
 
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 #include "../../errors.hpp"
 
 namespace k::model {
@@ -456,33 +457,73 @@ void kdi_importer::import_all() {
 /// abort before reaching subsequent struct type definitions in the combined
 /// blob.  Vtable struct types are not needed during import anyway — imported
 /// virtual dispatch uses byte-offset GEP, not struct GEP on the vtable type.
+/// Helper: extract the LLVM type name from a def string like "%Foo = type { ... }".
+/// Returns the name (without leading '%'), or empty string on failure.
+static std::string extract_llvm_type_name(const std::string& llvm_def) {
+    if (llvm_def.empty() || llvm_def[0] != '%') return {};
+    auto eq = llvm_def.find(" = ");
+    if (eq == std::string::npos) return {};
+    return llvm_def.substr(1, eq - 1); // strip leading '%'
+}
+
+/// Collect all LLVM struct type definition strings from @p ns (recursively)
+/// into @p out, deduplicating by type name so that shared inner types (e.g.
+/// the private %_union shared across all Expected<T,E> specialisations) appear
+/// at most once in the combined IR blob.
+///
+/// Nested-union defs are emitted BEFORE the containing aggregate's def so that
+/// LLVM resolves the inner type without creating an opaque forward-reference for
+/// the outer struct (avoids "unsized field" crashes).
+///
+/// @param ns        KDI namespace to walk.
+/// @param out       Accumulated combined IR string.
+/// @param seen      Set of already-emitted type names (prevents duplicates).
 static void collect_llvm_defs_from_namespace(const kdi::kdi_namespace& ns,
-                                              std::string& out)
+                                              std::string& out,
+                                              std::unordered_set<std::string>& seen)
 {
     for (const auto& agg : ns.aggregates) {
-        // Aggregate's own struct type def (e.g. '%Base = type { ptr, i32 }')
-        if (!agg.llvm_def.empty()) {
-            out += agg.llvm_def;
-            out += '\n';
-        }
-        // Nested aggregates (public/protected inner types)
-        for (const auto& nested : agg.nested) {
-            if (!nested.llvm_def.empty()) {
-                out += nested.llvm_def;
-                out += '\n';
-            }
-        }
-        // Nested unions (public/protected inner unions)
+        // 1. Nested unions first (dependencies before the aggregate that references them).
         for (const auto& nested_un : agg.nested_unions) {
             if (!nested_un.llvm_def.empty()) {
-                out += nested_un.llvm_def;
+                auto tname = extract_llvm_type_name(nested_un.llvm_def);
+                if (tname.empty() || seen.insert(tname).second) {
+                    // Either we couldn't extract a name (emit anyway) or it is new.
+                    out += nested_un.llvm_def;
+                    out += '\n';
+                }
+            }
+        }
+        // 2. Nested aggregates (public/protected inner types).
+        for (const auto& nested : agg.nested) {
+            if (!nested.llvm_def.empty()) {
+                auto tname = extract_llvm_type_name(nested.llvm_def);
+                if (tname.empty() || seen.insert(tname).second) {
+                    out += nested.llvm_def;
+                    out += '\n';
+                }
+            }
+        }
+        // 3. The aggregate's own struct type def (e.g. '%Base = type { ptr, i32 }').
+        if (!agg.llvm_def.empty()) {
+            auto tname = extract_llvm_type_name(agg.llvm_def);
+            if (tname.empty() || seen.insert(tname).second) {
+                out += agg.llvm_def;
                 out += '\n';
             }
         }
     }
     for (const auto& child_ns : ns.namespaces) {
-        collect_llvm_defs_from_namespace(child_ns, out);
+        collect_llvm_defs_from_namespace(child_ns, out, seen);
     }
+}
+
+/// Wrapper that creates the deduplication set and calls the inner overload.
+static void collect_llvm_defs_from_namespace(const kdi::kdi_namespace& ns,
+                                              std::string& out)
+{
+    std::unordered_set<std::string> seen;
+    collect_llvm_defs_from_namespace(ns, out, seen);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -495,16 +536,23 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
     //
     // Include both direct imports AND transitive deps so that base-class types
     // from indirect imports are available during resolution.
+    //
+    // A single shared `seen` set across all KDIs ensures that types used by
+    // multiple specialisations (e.g. the %_union inner type shared by all
+    // Expected<T,E> instantiations) are emitted exactly once in the combined
+    // blob.  Duplicates cause LLVM IR parse errors which silently drop ALL
+    // type bodies, leaving every aggregate as an opaque (unsized) placeholder.
     std::string combined_ir;
     combined_ir.reserve(4096);
+    std::unordered_set<std::string> seen_type_names;
     // Transitive deps first (bases before derived)
     for (const auto& tdep : _transitive_kdis) {
         if (!tdep) continue;
-        collect_llvm_defs_from_namespace(tdep->unit.root_ns, combined_ir);
+        collect_llvm_defs_from_namespace(tdep->unit.root_ns, combined_ir, seen_type_names);
     }
     for (const auto& imp : _unit.get_imports()) {
         if (!imp.kdi) continue;
-        collect_llvm_defs_from_namespace(imp.kdi->unit.root_ns, combined_ir);
+        collect_llvm_defs_from_namespace(imp.kdi->unit.root_ns, combined_ir, seen_type_names);
     }
     if (!combined_ir.empty()) {
         ctx->intern_all_llvm_struct_defs(combined_ir);
@@ -621,7 +669,14 @@ void kdi_importer::materialise_aggregate(const kdi::kdi_aggregate& agg,
     }
 
     // Materialise nested unions (public/protected nested unions).
+    // Entries with empty alternatives are "layout-only" private unions whose llvm_def
+    // was already interned via collect_llvm_defs_from_namespace (Step B1).
+    // Do NOT create model nodes for them — the LLVM type is already defined.
     for (const auto& nested_un : agg.nested_unions) {
+        if (nested_un.alternatives.empty()) {
+            // Layout-only entry: LLVM type is already interned; skip model node creation.
+            continue;
+        }
         materialise_union(nested_un, ctx);
     }
 }

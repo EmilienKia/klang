@@ -1563,6 +1563,20 @@ void implementation_generator::visit_aggregate(aggregate& st) {
         trace("[implementation_generator::visit_aggregate] skipping template '{}'", {st.get_short_name()});
         return;
     }
+    // WORKAROUND (Bug #1): Imported template specialisations whose LLVM struct
+    // type is opaque (e.g. Expected<T,int> — the inner Storage union llvm_def is
+    // missing from the KDI, leaving %_union as an undefined opaque type) would
+    // crash when visiting their constructors or methods (CreateAlloca/CreateStore
+    // on an unsized type).  Since their real implementations are already compiled
+    // as COMDAT (linkonce_odr) functions in the shared library, we can safely skip
+    // IR generation here — the JIT will resolve symbols via the shared library.
+    // Root cause to fix: kdi_exporter must emit the nested union llvm_def so the
+    // importer can fully reconstruct the LLVM type (see Bug #1 in IN-PROGRESS).
+    auto* llvm_ty = st.get_struct_type() ? st.get_struct_type()->get_llvm_type() : nullptr;
+    if (llvm_ty && !llvm_ty->isSized()) {
+        trace("[implementation_generator::visit_aggregate] skipping '{}' (opaque LLVM type — Bug #1)", {st.get_short_name()});
+        return;
+    }
     trace("[implementation_generator::visit_aggregate] '{}'", {st.get_short_name()});
     _struct_stack.push(st.shared_as<aggregate>());
 

@@ -1452,14 +1452,22 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
 
     debug("[implementation_generator::emit_constructor_pre_block] constructor for '{}'", {function.get_fq_name()});
 
-    // For constructor, start by initializing all members
+    // For constructor, start by initializing all members via memset-like zero init.
+    //
     auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
     auto this_param = this_param_it->second;
     auto st = ctor->get_owner();
     auto type = st->get_struct_type()->get_llvm_type();
-    auto zero_init = llvm::ConstantAggregateZero::get(type);
     auto this_ptr = _builder->CreateLoad(st->get_struct_type()->get_reference()->get_llvm_type(), this_param);
-    _builder->CreateStore(zero_init, this_ptr);
+    // WORKAROUND (Bug #1): KDI-exported Expected<T,E> specialisations have their
+    // inner Storage union's LLVM type left opaque (missing llvm_def in KDI).
+    // Guard the zero-init: if the struct type is opaque (not sized), skip the
+    // memset-like init — the real constructor body in libk.so initialises it.
+    // Root cause to fix: kdi_exporter must emit the nested union llvm_def string.
+    if (type->isSized()) {
+        auto zero_init = llvm::ConstantAggregateZero::get(type);
+        _builder->CreateStore(zero_init, this_ptr);
+    }
 
     // NOTE: vptr initialization (emit_vptr_store) is deferred to AFTER the block
     // (i.e., after base constructors run) so that the most-derived class's vtable

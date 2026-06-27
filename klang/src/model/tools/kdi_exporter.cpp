@@ -1032,7 +1032,39 @@ void kdi_builder::visit_enumeration(enumeration& en) {
 }
 
 void kdi_builder::visit_union(union_type_def& un) {
-    if (!is_exported(un.get_visibility())) return;
+    if (!is_exported(un.get_visibility())) {
+        // Private unions nested inside an exported aggregate still need their LLVM type
+        // definition to be resolvable by consumers. Without it, the parent aggregate's
+        // llvm_def (which references e.g. %_union) stays opaque in the consumer module,
+        // causing a crash when LLVM tries to compute the aggregate's size.
+        // Emit a minimal KDI union entry with *only* the llvm_def (no alternatives)
+        // so that collect_llvm_defs_from_namespace includes it in the combined IR blob
+        // parsed by intern_all_llvm_struct_defs. The importer will not create a model
+        // node for this entry (detected by alternatives.empty()).
+        if (!_agg_stack.empty() && un.get_struct_type()) {
+            if (auto* llvm_st = un.get_struct_type()->get_llvm_type()) {
+                std::string llvm_str;
+                llvm::raw_string_ostream os(llvm_str);
+                llvm_st->print(os);
+                os.flush();
+                if (!llvm_str.empty()) {
+                    kdi::kdi_union ku;
+                    ku.name        = un.get_short_name();
+                    ku.fq_name     = [&]() {
+                        const std::string& fq = un.get_fq_name();
+                        return (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':')
+                               ? fq.substr(2) : fq;
+                    }();
+                    ku.mangled_name = un.get_mangled_name();
+                    ku.visibility   = kdi::kdi_visibility::public_; // visibility unused for layout-only
+                    ku.llvm_def     = std::move(llvm_str);
+                    // alternatives intentionally empty — signals "layout-only, no model node"
+                    _agg_stack.back()->nested_unions.push_back(std::move(ku));
+                }
+            }
+        }
+        return;
+    }
 
     // Template definition: export as kdi_template_def, not as a regular union
     if (un.is_template()) {
