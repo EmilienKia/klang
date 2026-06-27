@@ -172,6 +172,36 @@ TEST_CASE("Lifecycle Cat1: Constructor with member-init list + dtor", "[gen][lif
     CHECK(get_val() == 42);
 }
 
+TEST_CASE("Lifecycle Cat1: Virtual call in constructor body uses the class vptr", "[gen][lifecycle][cat1][vptr]") {
+    auto jit = gen_jit(R"SRC(
+        module __lc1_ctor_vptr__;
+
+        class Base {
+            value : int;
+            public:
+            Base() : value(0) {}
+            touch() { value = 1; }
+            get() : int { return value; }
+        }
+
+        class Derived : public Base {
+            public:
+            Derived() { touch(); }
+            override touch() { value = 42; }
+        }
+
+        test() : int {
+            d : Derived;
+            return d.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 42);
+}
+
 // =============================================================================
 // Category 2: Dynamic allocation — new/delete, owner
 // =============================================================================

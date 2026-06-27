@@ -96,6 +96,7 @@
 - member reordering optimization
 - boolean member bitfield optimization
 - comparison operator (spaceship operator <=>)
+- lambda expressions and closures, variable capture, and functional interfaces
 
 ### K compiler and language specifics for compiler capabilities
 - Add support for producing inline documentation (e.g. via `///` comments) and generating API reference docs from it
@@ -105,16 +106,14 @@
 - Add support for cross-compilation to different target architectures and platforms
 
 ### K language limitations (compiler bugs / missing features)
-- [ ] Calling a member method on `this` from within a constructor body crashes at
-      runtime: methods are virtual by default and dispatch through the vtable, but the
-      vtable pointer is only initialised *after* the constructor body runs
-      (`gen_function.cpp`, `emit_constructor_post_block`; see the note at the
-      `// NOTE: vptr initialization ... is deferred to AFTER the block` line). The vptr
-      should be stored after base-constructor calls but before the user body, like C++.
-      Workaround: inline the logic instead of calling helper methods from constructors
-      (done in `k::StringBuilder`'s constructors). Minimal repro:
-      `class T { _n:unsigned int; public: T():_n(0){ doit(); } doit(){ _n=5u; } }` — the
-      `doit()` call from the ctor segfaults.
+- [x] Calling a member method on `this` from within a constructor body — **FIXED**.
+      The constructor now stores the class vptr before user-body execution
+      (`gen/gen_function.cpp`, `emit_constructor_pre_block`) and still re-applies
+      post-block vptr/vbptr fixups after base-constructor execution
+      (`emit_constructor_post_block`). This matches C++ constructor dispatch timing
+      and prevents constructor-body virtual-call crashes.
+      Regression test: `test-gen-lifecycle.cpp`
+      (`[gen][lifecycle][cat1][vptr]`).
 - [ ] Implicit user-defined cast-operator conversions are not applied: a class with
       `operator() : T` is not implicitly converted in an initialisation/argument context
       (e.g. `x : int = wrapper;` yields garbage). Only explicit casts work, and only for

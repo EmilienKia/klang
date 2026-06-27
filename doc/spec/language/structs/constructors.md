@@ -9,6 +9,7 @@ A *constructor* is a special member function that initialises a struct instance.
 ## Contents
 1. [Instance constructors](#1-instance-constructors)
 2. [Member initializer list](#2-member-initializer-list)
+2b. [Class vptr initialization timing](#2b-class-vptr-initialization-timing)
 3. [Compiler-generated default constructor](#3-compiler-generated-default-constructor)
 4. [Constructor invocation syntax](#4-constructor-invocation-syntax)
 5. [Constructor overloading](#5-constructor-overloading)
@@ -54,6 +55,31 @@ struct Point {
 ```
 Member initializers use the syntax `fieldName(expression)`.  
 Fields not listed are default-initialized (zero or their declared default value).
+
+## 2b. Class vptr initialization timing
+
+For `class` constructors, the compiler initializes the virtual-pointer (`vptr`) for
+the current class before executing the user constructor body, and then performs a
+post-body vptr/vbptr fixup after base-constructor execution.
+
+This ordering guarantees that virtual calls made inside the constructor body are
+safe and dispatch with the expected class semantics.
+
+```k
+class Base {
+    value : int;
+    Base() : value(0) {}
+    touch() { value = 1; }
+}
+
+class Derived : public Base {
+    Derived() { touch(); }      // safe: vptr already initialized for Derived body
+    override touch() { value = 42; }
+}
+```
+
+`struct` constructors are not affected by this rule because `struct` has no
+automatic virtual dispatch and no vptr.
 ---
 ## 3. Compiler-generated default constructor
 If a struct has no explicitly defined instance constructors and no explicitly deleted default constructor (`-> delete`), the compiler generates a default (no-argument) constructor.  

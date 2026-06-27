@@ -39,7 +39,6 @@
 #include <algorithm>
 #include <cctype>
 #include <queue>
-#include <unordered_map>
 #include <unordered_set>
 #include "../errors.hpp"
 
@@ -1462,9 +1461,13 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
     auto zero_init = llvm::ConstantAggregateZero::get(type);
     _builder->CreateStore(zero_init, this_ptr);
 
-    // NOTE: vptr initialization (emit_vptr_store) is deferred to AFTER the block
-    // (i.e., after base constructors run) so that the most-derived class's vtable
-    // pointer wins. See emit_constructor_post_block.
+    // NOTE: vptr initialization happens twice:
+    //   1. Here, before the user body, so virtual calls inside the constructor
+    //      body dispatch through this class's vtable.
+    //   2. In emit_constructor_post_block(), after base constructors run, to
+    //      restore the most-derived vptr on base sub-objects that bases may
+    //      have overwritten with their own vtables.
+    // This matches C++ constructor dispatch semantics for the complete object.
 
     // For non-static inner struct constructors: store the __parent__ parameter
     // (first explicit parameter, type Outer&) into the __parent__ field (LLVM struct field index 0).
@@ -1524,6 +1527,14 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
         optimize_function_dead_inst_elimination(*func);
         llvm::verifyFunction(*func);
         return true; // fully handled
+    }
+
+    // Install this class's primary vptr before any user code in the constructor body.
+    // This is required for virtual dispatch from constructor-local calls on `this`.
+    if (auto kl = std::dynamic_pointer_cast<klass>(st)) {
+        if (kl->has_vtable()) {
+            emit_vptr_store(*_builder, *kl, this_ptr, _context);
+        }
     }
 
     // ── Standalone virtual base initialization (BEFORE block) ─────────────

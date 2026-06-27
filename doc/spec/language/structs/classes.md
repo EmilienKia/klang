@@ -238,6 +238,18 @@ class Base {
 }
 ```
 
+### 7.1 Constructor-time vptr initialization
+
+Although constructors are not virtual calls themselves, class construction sets up
+virtual dispatch state before the user constructor body runs.
+
+- The compiler stores the current class vptr before executing the constructor body.
+- After base-constructor execution, a post-body fixup re-applies the most-derived
+  vptr/vbptr state on embedded base sub-objects.
+
+This ensures constructor-body calls like `this.method()` are safe and follow class
+virtual-dispatch rules.
+
 ---
 
 ## 8. Class vs struct — the virtuality contract

@@ -955,6 +955,15 @@ static StructName() { /* called at program startup */ }
 - Does NOT suppress the default instance constructor.
 - Does NOT participate in resolution for temporary construction.
 
+### 15.6 Class Constructor Virtual-Dispatch Setup
+
+- For `class`, the compiler initializes the class vptr before the user constructor
+  body executes.
+- A post-body fixup then restores the most-derived vptr/vbptr state after base
+  constructor execution.
+- This makes constructor-body virtual calls safe.
+- `struct` has no vptr and is not affected.
+
 ---
 
 ## 16. Destructors
