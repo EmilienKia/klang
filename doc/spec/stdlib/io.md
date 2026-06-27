@@ -9,26 +9,29 @@
 ## Overview
 
 The `k::io` namespace provides Java-inspired stream abstractions for
-byte-oriented I/O.  All types are part of the base standard library module `k`
-and are auto-imported — no explicit `import` statement is needed.
+element-oriented I/O.  The `InputStream<T>` / `OutputStream<T>` interfaces and
+the array and filter streams are templated over the element type `T`; the
+file, buffered, data and print streams are specialised for `byte`.  All types
+are part of the base standard library module `k` and are auto-imported — no
+explicit `import` statement is needed.
 
 The hierarchy:
 
 ```
-InputStream (interface)
-├── ByteArrayInputStream
-├── FileInputStream
-└── FilterInputStream
-    ├── BufferedInputStream
-    └── DataInputStream (also implements DataInput)
+InputStream<T> (interface)
+├── ArrayInputStream<T>
+├── FileInputStream          (InputStream<byte>)
+└── FilterInputStream<T>
+    ├── BufferedInputStream   (FilterInputStream<byte>)
+    └── DataInputStream       (FilterInputStream<byte>, also implements DataInput)
 
-OutputStream (interface)
-├── ByteArrayOutputStream
-├── FileOutputStream
-└── FilterOutputStream
-    ├── BufferedOutputStream
-    ├── DataOutputStream (also implements DataOutput)
-    └── PrintStream
+OutputStream<T> (interface)
+├── ArrayOutputStream<T>
+├── FileOutputStream         (OutputStream<byte>)
+└── FilterOutputStream<T>
+    ├── BufferedOutputStream  (FilterOutputStream<byte>)
+    ├── DataOutputStream      (FilterOutputStream<byte>, also implements DataOutput)
+    └── PrintStream           (FilterOutputStream<byte>)
 
 DataInput  (interface)
 DataOutput (interface)
@@ -40,51 +43,53 @@ DataOutput (interface)
 
 ### InputStream
 
-Abstract interface for reading bytes.
+Abstract interface for reading a sequence of `T` values.
 
 ```k
+template<typename T>
 interface InputStream {
-    read() : int;
-    read(buf: byte[], off: int, len: int) : int;
-    read(buf: byte[]) : int;
-    skip(n: long) : long;
-    available() : int;
+    read() : Optional<T>;
+    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int>;
+    read(buf: T[]) : Expected<unsigned int, int>;
+    skip(n: unsigned long) : unsigned long;
+    available() : Expected<unsigned int, int>;
     close();
 }
 ```
 
 | Method | Description |
 |--------|-------------|
-| `read() : int` | Read a single byte (0–255), or `-1` on end of stream. |
-| `read(buf, off, len) : int` | Read up to `len` bytes into `buf` starting at `off`. Returns bytes read or `-1` on EOF. |
-| `read(buf) : int` | Read up to `buf.size` bytes into `buf`. Returns bytes read or `-1` on EOF. |
-| `skip(n) : long` | Skip up to `n` bytes. Returns actual bytes skipped. |
-| `available() : int` | Return bytes that can be read without blocking. |
+| `read() : Optional<T>` | Read a single value; empty `Optional` at end of stream. |
+| `read(buf, off, len) : Expected<unsigned int, int>` | Read up to `len` values into `buf` starting at `off`. Returns the number of values read (`0` = end of stream while still open), or an error code when the stream is closed/broken. |
+| `read(buf) : Expected<unsigned int, int>` | Read up to `buf.size` values into `buf`. |
+| `skip(n) : unsigned long` | Skip up to `n` values. Returns the actual number skipped. |
+| `available() : Expected<unsigned int, int>` | Number of values readable without blocking, or an error code. |
 | `close()` | Close the stream and release resources. |
 
 ---
 
 ### OutputStream
 
-Abstract interface for writing bytes.
+Abstract interface for writing a sequence of `T` values.
 
 ```k
+template<typename T>
 interface OutputStream {
-    write(b: int) : OutputStream&;
-    write(buf: const byte[], off: int, len: int) : OutputStream&;
-    write(buf: const byte[]) : OutputStream&;
-    flush() : OutputStream&;
-    close() : OutputStream&;
+    write(b: T) : OutputStream<T>&;
+    write(buf: const T[], off: unsigned int, len: unsigned int) : OutputStream<T>&;
+    write(buf: const T[]) : OutputStream<T>&;
+    flush() : OutputStream<T>&;
+    close() : OutputStream<T>&;
 }
 ```
 
-All mutating methods return `OutputStream&` for fluent chaining.
+All mutating methods return `OutputStream<T>&` for fluent chaining.
 
 | Method | Description |
 |--------|-------------|
-| `write(b)` | Write the low 8 bits of `b`. |
-| `write(buf, off, len)` | Write `len` bytes from `buf` starting at `off`. |
-| `write(buf)` | Write all `buf.size` bytes from `buf`. |
+| `write(b)` | Write a single value `b`. |
+| `write(buf, off, len)` | Write `len` values from `buf` starting at `off`. |
+| `write(buf)` | Write all `buf.size` values. |
 | `flush()` | Flush any buffered output. |
 | `close()` | Flush and close the stream. |
 
@@ -141,53 +146,56 @@ interface DataOutput {
 
 ## Classes
 
-### ByteArrayInputStream
+### ArrayInputStream
 
-Reads bytes from an in-memory byte array.
+Reads `T` values from an in-memory array.
 
 ```k
-class ByteArrayInputStream : public InputStream {
-    ByteArrayInputStream(buf: byte[]!, size: int);
+template<typename T>
+class ArrayInputStream : public InputStream<T> {
+    ArrayInputStream();
+    ArrayInputStream(buf: T[]*, size: int);
 }
 ```
 
-The constructor takes ownership of the byte array `buf`.
-`size` is the number of valid bytes. Reading returns `-1` when all bytes
-are consumed.
+The constructor copies the first `size` entries of `buf` into independent
+internal storage.  `read()` returns an empty `Optional<T>` once all values
+have been consumed.
 
 ---
 
-### ByteArrayOutputStream
+### ArrayOutputStream
 
-Writes bytes to a growable in-memory byte array.
+Writes `T` values to a growable in-memory array.
 
 ```k
-class ByteArrayOutputStream : public OutputStream {
-    ByteArrayOutputStream();
-    ByteArrayOutputStream(capacity: int);
+template<typename T>
+class ArrayOutputStream : public OutputStream<T> {
+    ArrayOutputStream();
+    ArrayOutputStream(capacity: int);
 
     size() : int;
-    toByteArray() : byte[]!;
+    toArray() : T[]!;
     reset();
-    writeTo(out: OutputStream&);
+    writeTo(out: OutputStream<T>&);
 }
 ```
 
 | Method | Description |
 |--------|-------------|
-| `size() : int` | Return the number of bytes written. |
-| `toByteArray() : byte[]!` | Return a copy of the written data. |
-| `reset()` | Reset the byte count to zero (buffer retained). |
+| `size() : int` | Return the number of values written. |
+| `toArray() : T[]!` | Return a copy of the written data (caller takes ownership). |
+| `reset()` | Reset the value count to zero (buffer retained). |
 | `writeTo(out)` | Write entire content to another output stream. |
 
 ---
 
 ### FileInputStream
 
-Reads bytes from a file via a C `FILE*` handle.  Implements `InputStream`.
+Reads bytes from a file via a C `FILE*` handle.  Implements `InputStream<byte>`.
 
 ```k
-class FileInputStream : public InputStream {
+class FileInputStream : public InputStream<byte> {
     FileInputStream(path: const char[]);
     FileInputStream(fp: CFile*);
 
@@ -207,10 +215,10 @@ class FileInputStream : public InputStream {
 
 ### FileOutputStream
 
-Writes bytes to a file via a C `FILE*` handle.  Implements `OutputStream`.
+Writes bytes to a file via a C `FILE*` handle.  Implements `OutputStream<byte>`.
 
 ```k
-class FileOutputStream : public OutputStream {
+class FileOutputStream : public OutputStream<byte> {
     FileOutputStream(path: const char[]);
     FileOutputStream(path: const char[], append: bool);
     FileOutputStream(fp: CFile*);
@@ -232,14 +240,15 @@ class FileOutputStream : public OutputStream {
 
 ### FilterInputStream
 
-Wraps an `InputStream` and delegates all calls.  Subclasses override
+Wraps an `InputStream<T>` and delegates all calls.  Subclasses override
 specific methods to add behaviour (buffering, data decoding, etc.).
 
 The wrapped stream is held by pointer — the caller retains ownership.
 
 ```k
-class FilterInputStream : public InputStream {
-    FilterInputStream(input: InputStream*);
+template<typename T>
+class FilterInputStream : public InputStream<T> {
+    FilterInputStream(input: InputStream<T>*);
 }
 ```
 
@@ -247,12 +256,13 @@ class FilterInputStream : public InputStream {
 
 ### FilterOutputStream
 
-Wraps an `OutputStream` and delegates all calls.  `close()` calls
+Wraps an `OutputStream<T>` and delegates all calls.  `close()` calls
 `flush()` before closing the underlying stream.
 
 ```k
-class FilterOutputStream : public OutputStream {
-    FilterOutputStream(output: OutputStream*);
+template<typename T>
+class FilterOutputStream : public OutputStream<T> {
+    FilterOutputStream(output: OutputStream<T>*);
 }
 ```
 
@@ -264,9 +274,9 @@ Adds an internal buffer to reduce the number of read calls to the
 underlying stream.  Default buffer size is 8192 bytes.
 
 ```k
-class BufferedInputStream : public FilterInputStream {
-    BufferedInputStream(input: InputStream*);
-    BufferedInputStream(input: InputStream*, size: int);
+class BufferedInputStream : public FilterInputStream<byte> {
+    BufferedInputStream(input: InputStream<byte>*);
+    BufferedInputStream(input: InputStream<byte>*, size: int);
 }
 ```
 
@@ -279,9 +289,9 @@ underlying stream.  Default buffer size is 8192 bytes.
 `flush()` and `close()` force remaining buffered data through.
 
 ```k
-class BufferedOutputStream : public FilterOutputStream {
-    BufferedOutputStream(output: OutputStream*);
-    BufferedOutputStream(output: OutputStream*, size: int);
+class BufferedOutputStream : public FilterOutputStream<byte> {
+    BufferedOutputStream(output: OutputStream<byte>*);
+    BufferedOutputStream(output: OutputStream<byte>*, size: int);
 }
 ```
 
@@ -290,11 +300,11 @@ class BufferedOutputStream : public FilterOutputStream {
 ### DataInputStream
 
 Reads primitive types from an underlying `InputStream` using the platform
-native byte order.  Extends `FilterInputStream` and implements `DataInput`.
+native byte order.  Extends `FilterInputStream<byte>` and implements `DataInput`.
 
 ```k
-class DataInputStream : public FilterInputStream, public DataInput {
-    DataInputStream(input: InputStream*);
+class DataInputStream : public FilterInputStream<byte>, public DataInput {
+    DataInputStream(input: InputStream<byte>+);
 }
 ```
 
@@ -307,11 +317,11 @@ class DataInputStream : public FilterInputStream, public DataInput {
 ### DataOutputStream
 
 Writes primitive types to an underlying `OutputStream` using the platform
-native byte order.  Extends `FilterOutputStream` and implements `DataOutput`.
+native byte order.  Extends `FilterOutputStream<byte>` and implements `DataOutput`.
 
 ```k
-class DataOutputStream : public FilterOutputStream, public DataOutput {
-    DataOutputStream(output: OutputStream*);
+class DataOutputStream : public FilterOutputStream<byte>, public DataOutput {
+    DataOutputStream(output: OutputStream<byte>+);
 
     size() : int;
 }
@@ -334,12 +344,12 @@ primitive values to their textual representation and writes them to the
 underlying stream.  All `print`/`println` methods return `PrintStream&` for
 fluent chaining.
 
-Extends `FilterOutputStream`.  The wrapped stream is held by pointer
+Extends `FilterOutputStream<byte>`.  The wrapped stream is held by pointer
 (non-owning).
 
 ```k
-class PrintStream : public FilterOutputStream {
-    PrintStream(output: OutputStream*);
+class PrintStream : public FilterOutputStream<byte> {
+    PrintStream(output: OutputStream<byte>*);
 
     // ── print (no trailing newline) ──────────────────────
     print(v: bool)           : PrintStream&;
@@ -391,7 +401,7 @@ They are available as soon as global initialisation completes (before
 
 | Reference | Type | Backed by | Description |
 |-----------|------|-----------|-------------|
-| `k::io::stdin` | `InputStream&` | `FileInputStream` wrapping libc `stdin` | Standard input stream. |
+| `k::io::stdin` | `InputStream<byte>&` | `FileInputStream` wrapping libc `stdin` | Standard input stream. |
 | `k::io::stdout` | `PrintStream&` | `PrintStream` wrapping a `FileOutputStream` on libc `stdout` | Standard output stream. |
 | `k::io::stderr` | `PrintStream&` | `PrintStream` wrapping a `FileOutputStream` on libc `stderr` | Standard error stream. |
 
@@ -414,7 +424,7 @@ main() : int {
     k::io::stderr.println("An error occurred");
 
     // Read a byte from standard input
-    b : int = k::io::stdin.read();
+    b : Optional<byte> = k::io::stdin.read();
     return 0;
 }
 ```
@@ -433,15 +443,15 @@ byte order.  Output methods return `self` for fluent chaining:
 module example;
 
 test() : int {
-    baos : k::io::ByteArrayOutputStream;
+    baos : k::io::ArrayOutputStream<byte>;
     dos : k::io::DataOutputStream(&baos);
     dos.writeInt(42)
        .writeLong(1234567890)
        .writeBool(true)
        .flush();
 
-    arr : byte[]* = baos.toByteArray();
-    bais : k::io::ByteArrayInputStream(arr, baos.size());
+    arr : byte[]* = baos.toArray();
+    bais : k::io::ArrayInputStream<byte>(arr, baos.size());
     dis : k::io::DataInputStream(&bais);
 
     v1 : int = dis.readInt();       // 42
@@ -463,10 +473,10 @@ main() : int {
     k::io::stdout.print("Enter text: ");
     k::io::stdout.flush();
 
-    b : int = k::io::stdin.read();
-    while (b != -1) {
-        k::io::stdout.write(b);
-        k::io::stderr.write(b);
+    b : Optional<byte> = k::io::stdin.read();
+    while (b.hasValue()) {
+        k::io::stdout.write(b.get());
+        k::io::stderr.write(b.get());
         b = k::io::stdin.read();
     }
 
