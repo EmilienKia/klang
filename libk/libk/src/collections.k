@@ -107,6 +107,30 @@ interface Collection {
       * Remove all elements from the collection.
       */
      clear();
+
+    /**
+     * Insert all elements from another collection at the front of this collection.
+     * @param coll The collection to insert.
+     */
+    pushFrontAll(coll : const Collection<T>&);
+
+    /**
+     * Insert all elements from an array at the front of this collection.
+     * @param coll The array to insert.
+     */
+    pushFrontAll(coll : const T[]&);
+
+    /**
+     * Insert all elements from another collection at the back of this collection.
+     * @param coll The collection to insert.
+     */
+    pushBackAll(coll : const Collection<T>&);
+
+    /**
+     * Insert all elements from an array at the back of this collection.
+     * @param coll The array to insert.
+     */
+    pushBackAll(coll : const T[]&);
 }
 
 /**
@@ -241,6 +265,30 @@ class LinkedList : public Collection<T> {
             _head = node;
         }
         _size = _size + 1;
+    }
+
+    pushFrontAll(coll : const Collection<T>&) {
+        for (i : int = coll.getSize() - 1; i >= 0; i = i - 1) {
+            pushFront(coll[i]);
+        }
+    }
+
+    pushFrontAll(coll : const T[]&) {
+        for (i : int = coll.size - 1; i >= 0; i = i - 1) {
+            pushFront(coll[i]);
+        }
+    }
+
+    pushBackAll(coll : const Collection<T>&) {
+        for (i : int = 0; i < coll.getSize(); i = i + 1) {
+            pushBack(coll[i]);
+        }
+    }
+
+    pushBackAll(coll : const T[]&) {
+        for (i : int = 0; i < coll.size; i = i + 1) {
+            pushBack(coll[i]);
+        }
     }
 
     /**
@@ -576,6 +624,30 @@ class DoubleLinkedList : public Collection<T> {
             _head = node;
         }
         _size = _size + 1;
+    }
+
+    pushFrontAll(coll : const Collection<T>&) {
+        for (i : int = coll.getSize() - 1; i >= 0; i = i - 1) {
+            pushFront(coll[i]);
+        }
+    }
+
+    pushFrontAll(coll : const T[]&) {
+        for (i : int = coll.size - 1; i >= 0; i = i - 1) {
+            pushFront(coll[i]);
+        }
+    }
+
+    pushBackAll(coll : const Collection<T>&) {
+        for (i : int = 0; i < coll.getSize(); i = i + 1) {
+            pushBack(coll[i]);
+        }
+    }
+
+    pushBackAll(coll : const T[]&) {
+        for (i : int = 0; i < coll.size; i = i + 1) {
+            pushBack(coll[i]);
+        }
     }
 
     /**
@@ -978,6 +1050,30 @@ class Vector : public Collection<T> {
     /** Insert a copy of value at the front of the vector. O(n). */
     pushFront(value : T&) {
         insert(0, value);
+    }
+
+    pushFrontAll(coll : const Collection<T>&) {
+        for (i : int = coll.getSize() - 1; i >= 0; i = i - 1) {
+            pushFront(coll[i]);
+        }
+    }
+
+    pushFrontAll(coll : const T[]&) {
+        for (i : int = coll.getSize() - 1; i >= 0; i = i - 1) {
+            pushFront(coll[i]);
+        }
+    }
+
+    pushBackAll(coll : const Collection<T>&) {
+        for (i : int = 0; i < coll.getSize(); i = i + 1) {
+            pushBack(coll[i]);
+        }
+    }
+
+    pushBackAll(coll : const T[]&) {
+        for (i : int = 0; i < coll.getSize(); i = i + 1) {
+            pushBack(coll[i]);
+        }
     }
 
     /** Construct an element in-place at the back of the vector. */

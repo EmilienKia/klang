@@ -24,6 +24,11 @@ InputStream<T> (interface)
 └── FilterInputStream<T>
     ├── BufferedInputStream   (FilterInputStream<byte>)
     └── DataInputStream       (FilterInputStream<byte>, also implements DataInput)
+└── TransformInputStream<I,O>
+    ├── OneToOneTransformInputStream<I,O>
+    ├── OneToManyTransformInputStream<I,O>
+    ├── ManyToOneTransformInputStream<I,O>
+    └── ManyToManyTransformInputStream<I,O>
 
 OutputStream<T> (interface)
 ├── ArrayOutputStream<T>
@@ -32,6 +37,11 @@ OutputStream<T> (interface)
     ├── BufferedOutputStream  (FilterOutputStream<byte>)
     ├── DataOutputStream      (FilterOutputStream<byte>, also implements DataOutput)
     └── PrintStream           (FilterOutputStream<byte>)
+└── TransformOutputStream<I,O>
+    ├── OneToOneTransformOutputStream<I,O>
+    ├── OneToManyTransformOutputStream<I,O>
+    ├── ManyToOneTransformOutputStream<I,O>
+    └── ManyToManyTransformOutputStream<I,O>
 
 DataInput  (interface)
 DataOutput (interface)
@@ -92,6 +102,73 @@ All mutating methods return `OutputStream<T>&` for fluent chaining.
 | `write(buf)` | Write all `buf.size` values. |
 | `flush()` | Flush any buffered output. |
 | `close()` | Flush and close the stream. |
+
+---
+
+### TransformInputStream / TransformOutputStream
+
+Decorator bases for stream chains that transform and optionally filter values.
+The input-side variants consume values from an `InputStream<I>` and expose
+`InputStream<O>`, while the output-side variants consume values written as `I`
+and forward transformed values to an `OutputStream<O>`.
+
+```k
+template<typename I, typename O>
+class TransformInputStream : public InputStream<O> {
+    TransformInputStream(input: InputStream<I>*);
+    TransformInputStream();
+}
+
+template<typename I, typename O>
+class TransformOutputStream : public OutputStream<I> {
+    TransformOutputStream(output: OutputStream<O>*);
+    TransformOutputStream();
+}
+
+template<typename I, typename O>
+abstract class OneToOneTransformInputStream : public TransformInputStream<I, O> {
+    transform(in: const I&) : Optional<O>;
+}
+
+template<typename I, typename O>
+abstract class OneToManyTransformInputStream : public TransformInputStream<I, O> {
+    transform(in: const I&) : Vector<O>;
+}
+
+template<typename I, typename O>
+abstract class ManyToOneTransformInputStream : public TransformInputStream<I, O> {
+    transform(in: const Vector<I>&) : Optional<O>;
+}
+
+template<typename I, typename O>
+abstract class ManyToManyTransformInputStream : public TransformInputStream<I, O> {
+    transform(in: const Vector<I>&) : Vector<O>;
+}
+
+template<typename I, typename O>
+abstract class OneToOneTransformOutputStream : public TransformOutputStream<I, O> {
+    transform(in: const I&) : Optional<O>;
+}
+
+template<typename I, typename O>
+abstract class OneToManyTransformOutputStream : public TransformOutputStream<I, O> {
+    transform(in: const I&) : Vector<O>;
+}
+
+template<typename I, typename O>
+abstract class ManyToOneTransformOutputStream : public TransformOutputStream<I, O> {
+    transform(in: const Vector<I>&) : Optional<O>;
+}
+
+template<typename I, typename O>
+abstract class ManyToManyTransformOutputStream : public TransformOutputStream<I, O> {
+    transform(in: const Vector<I>&) : Vector<O>;
+}
+```
+
+The one-to-many and many-to-many variants keep a small intermediate buffer so
+they can preserve output ordering while consuming or producing multiple values
+per transformation step.
 
 ---
 

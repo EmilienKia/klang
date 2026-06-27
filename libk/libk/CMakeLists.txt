@@ -25,6 +25,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/array_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/filter_stream.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/transform_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/buffered_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/data_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/print_stream.k
@@ -200,6 +201,7 @@ add_executable(libk-tests
     tests/test-string-builder-mutation.cpp
     tests/test-io-byte-array-streams.cpp
     tests/test-io-filter-streams.cpp
+    tests/test-io-transform-streams.cpp
     tests/test-io-buffered-streams.cpp
     tests/test-io-data-streams.cpp
     tests/test-io-file.cpp
