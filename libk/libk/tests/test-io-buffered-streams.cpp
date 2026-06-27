@@ -99,7 +99,7 @@ TEST_CASE("BufferedInputStream bulk read smaller than buffer", "[libk][io][buffe
 
             dsz : int = 4;
             dst : byte[]! = new byte[dsz];
-            n : int = bis.read(dst, 0, 4);
+            n : int = (int) bis.read(dst, 0, 4).getResultOr((unsigned int) 0);
             if (n != 4) return 1;
             if (dst[0] != (byte) 1) return 2;
             if (dst[3] != (byte) 4) return 3;
@@ -131,11 +131,11 @@ TEST_CASE("BufferedInputStream available", "[libk][io][buffered]") {
             bais : k::io::ArrayInputStream<byte>(data, 10);
             bis : k::io::BufferedInputStream(&bais, 4);
             // Before first read, available = underlying (10)
-            a0 : int = bis.available();
+            a0 : int = (int) bis.available().getResultOr((unsigned int) 0);
             // Read one byte to trigger fill (fills 4 bytes)
             bis.read();
             // After fill: 3 in buffer + 6 in underlying = 9
-            a1 : int = bis.available();
+            a1 : int = (int) bis.available().getResultOr((unsigned int) 0);
             if (a0 != 10) return 1;
             if (a1 != 9) return 2;
             return 0;

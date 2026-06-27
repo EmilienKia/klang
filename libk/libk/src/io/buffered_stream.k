@@ -68,9 +68,12 @@ public:
         return result;
     }
 
-    read(buf: byte[], off: unsigned int, len: unsigned int) : int {
-        if (len == 0) return 0;
-        totalRead : int = 0;
+    read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+        if (len == 0) {
+            zero : unsigned int = 0;
+            return Expected<unsigned int, int>::expected(zero);
+        }
+        totalRead : unsigned int = 0;
         remaining : unsigned int = len;
         dstOff : unsigned int = off;
 
@@ -79,18 +82,25 @@ public:
             if (_bpos >= _bcount) {
                 // If request is larger than buffer, read directly
                 if (remaining >= (unsigned int) _bsize) {
-                    n : int = _in->read(buf, dstOff, remaining);
-                    if (n <= 0) {
-                        if (totalRead == 0) return -1;
-                        return totalRead;
+                    nResult : Expected<unsigned int, int> = _in->read(buf, dstOff, remaining);
+                    if (nResult.hasError()) {
+                        if (totalRead > 0) {
+                            return Expected<unsigned int, int>::expected(totalRead);
+                        }
+                        return nResult;
+                    }
+                    n : unsigned int = nResult.getResult();
+                    if (n == 0) {
+                        // EOS
+                        return Expected<unsigned int, int>::expected(totalRead);
                     }
                     totalRead = totalRead + n;
-                    return totalRead;
+                    return Expected<unsigned int, int>::expected(totalRead);
                 }
                 _fill();
                 if (_bpos >= _bcount) {
-                    if (totalRead == 0) return -1;
-                    return totalRead;
+                    // EOS after refill
+                    return Expected<unsigned int, int>::expected(totalRead);
                 }
             }
             // Copy from internal buffer
@@ -105,19 +115,23 @@ public:
             _bpos = _bpos + (int) toCopy;
             dstOff = dstOff + toCopy;
             remaining = remaining - toCopy;
-            totalRead = totalRead + (int) toCopy;
+            totalRead = totalRead + toCopy;
         }
-        return totalRead;
+        return Expected<unsigned int, int>::expected(totalRead);
     }
 
-    read(buf: byte[]) : int {
+    read(buf: byte[]) : Expected<unsigned int, int> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    available() : int {
-        buffered : int = _bcount - _bpos;
-        underlying : int = _in->available();
-        return buffered + underlying;
+    available() : Expected<unsigned int, int> {
+        buffered : unsigned int = (unsigned int) (_bcount - _bpos);
+        underlying : Expected<unsigned int, int> = _in->available();
+        if (underlying.hasError()) {
+            return underlying;
+        }
+        total : unsigned int = buffered + underlying.getResult();
+        return Expected<unsigned int, int>::expected(total);
     }
 
     skip(n: unsigned long) : unsigned long {
@@ -142,9 +156,12 @@ private:
     _fill() {
         _bpos = 0;
         _bcount = 0;
-        n : int = _in->read(_bbuf, 0, (unsigned int) _bsize);
-        if (n > 0) {
-            _bcount = n;
+        nResult : Expected<unsigned int, int> = _in->read(_bbuf, 0, (unsigned int) _bsize);
+        if (nResult.hasResult()) {
+            n : unsigned int = nResult.getResult();
+            if (n > 0) {
+                _bcount = (int) n;
+            }
         }
     }
 }

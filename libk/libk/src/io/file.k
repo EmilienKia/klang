@@ -235,13 +235,23 @@ public:
         return result;
     }
 
-    read(buf: byte[], off: unsigned int, len: unsigned int) : int {
-        if (_fp == null) return -1;
-        if (len == 0) return 0;
-        return __k_io_file_fread(_fp, &buf[off], (int) len);
+    read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+        if (_fp == null) {
+            return Expected<unsigned int, int>::error(1);  // 1 = CLOSED
+        }
+        if (len == 0) {
+            zero : unsigned int = 0;
+            return Expected<unsigned int, int>::expected(zero);
+        }
+        n : int = __k_io_file_fread(_fp, &buf[off], (int) len);
+        if (n < 0) {
+            return Expected<unsigned int, int>::error(3);  // 3 = I/O error
+        }
+        actual : unsigned int = (unsigned int) n;
+        return Expected<unsigned int, int>::expected(actual);
     }
 
-    read(buf: byte[]) : int {
+    read(buf: byte[]) : Expected<unsigned int, int> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
@@ -254,8 +264,9 @@ public:
         return skipped;
     }
 
-    available() : int {
-        return 0;
+    available() : Expected<unsigned int, int> {
+        zero : unsigned int = 0;
+        return Expected<unsigned int, int>::expected(zero);
     }
 
     close() {

@@ -391,7 +391,7 @@ TEST_CASE("FileInputStream read into buffer", "[libk][io][file]") {
             // Read into buffer
             fis : k::io::FileInputStream("/tmp/klang_test_fis_bulk");
             buf : byte[5];
-            n : int = fis.read(buf);
+            n : int = (int) fis.read(buf).getResultOr((unsigned int) 0);
             fis.close();
 
             if (n != 5) return 1;
@@ -439,7 +439,7 @@ TEST_CASE("FileOutputStream write buffer then read back", "[libk][io][file]") {
             // Read back
             fis : k::io::FileInputStream("/tmp/klang_test_fos_bulk");
             rbuf : byte[4];
-            n : int = fis.read(rbuf);
+            n : int = (int) fis.read(rbuf).getResultOr((unsigned int) 0);
             fis.close();
 
             if (n != 4) return 2;

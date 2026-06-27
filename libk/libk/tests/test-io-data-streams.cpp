@@ -61,8 +61,8 @@ TEST_CASE("DataStream round-trip byte", "[libk][io][data]") {
             bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
-            v0 : byte = dis.readByte();
-            v1 : byte = dis.readByte();
+            v0 : byte = dis.readByte().getResultOr((byte) 0);
+            v1 : byte = dis.readByte().getResultOr((byte) 0);
             if (v0 != (byte) 42) return 1;
             if (v1 != (byte) -1) return 2;
             return 0;
@@ -123,8 +123,8 @@ TEST_CASE("DataStream round-trip short", "[libk][io][data]") {
             bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
-            v0 : short = dis.readShort();
-            v1 : short = dis.readShort();
+            v0 : short = dis.readShort().getResultOr((short) 0);
+            v1 : short = dis.readShort().getResultOr((short) 0);
             if (v0 != (short) 12345) return 1;
             if (v1 != (short) -1) return 2;
             return 0;
@@ -155,9 +155,9 @@ TEST_CASE("DataStream round-trip int", "[libk][io][data]") {
             bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
-            v0 : int = dis.readInt();
-            v1 : int = dis.readInt();
-            v2 : int = dis.readInt();
+            v0 : int = dis.readInt().getResultOr(0);
+            v1 : int = dis.readInt().getResultOr(0);
+            v2 : int = dis.readInt().getResultOr(0);
             if (v0 != 305419896) return 1;
             if (v1 != -1) return 2;
             if (v2 != 0) return 3;
@@ -188,8 +188,8 @@ TEST_CASE("DataStream round-trip long", "[libk][io][data]") {
             bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
-            v0 : long = dis.readLong();
-            v1 : long = dis.readLong();
+            v0 : long = dis.readLong().getResultOr((long) 0);
+            v1 : long = dis.readLong().getResultOr((long) 0);
             if (v0 != 1234567890123) return 1;
             if (v1 != -1) return 2;
             return 0;
@@ -218,7 +218,7 @@ TEST_CASE("DataStream round-trip byte high value", "[libk][io][data]") {
             bais : k::io::ArrayInputStream<byte>(arr, baos.size());
             dis : k::io::DataInputStream(&bais);
 
-            v : byte = dis.readByte();
+            v : byte = dis.readByte().getResultOr((byte) 0);
             if (v != (byte) 200) return 1;
             return 0;
         }
@@ -372,10 +372,10 @@ TEST_CASE("DataStream mixed primitives round-trip", "[libk][io][data]") {
             dis : k::io::DataInputStream(&bais);
 
             vBool : bool = dis.readBool();
-            vByte : byte = dis.readByte();
-            vShort : short = dis.readShort();
-            vInt : int = dis.readInt();
-            vLong : long = dis.readLong();
+            vByte : byte = dis.readByte().getResultOr((byte) 0);
+            vShort : short = dis.readShort().getResultOr((short) 0);
+            vInt : int = dis.readInt().getResultOr(0);
+            vLong : long = dis.readLong().getResultOr((long) 0);
 
             if (!vBool) return 1;
             if (vByte != (byte) 42) return 2;

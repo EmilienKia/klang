@@ -52,28 +52,28 @@ namespace io {
  */
 public interface DataInput {
     /** Read a single signed byte. */
-    readByte() : byte;
+    readByte() : Expected<byte, int>;
 
     /** Read a single char. */
-    readChar() : char;
+    readChar() : Expected<char, int>;
 
     /** Read a signed 16-bit short (native byte order). */
-    readShort() : short;
+    readShort() : Expected<short, int>;
 
     /** Read an unsigned 16-bit short (native byte order). */
-    readUnsignedShort() : unsigned short;
+    readUnsignedShort() : Expected<unsigned short, int>;
 
     /** Read a signed 32-bit int (native byte order). */
-    readInt() : int;
+    readInt() : Expected<int, int>;
 
     /** Read an unsigned 32-bit int (native byte order). */
-    readUnsignedInt() : unsigned int;
+    readUnsignedInt() : Expected<unsigned int, int>;
 
     /** Read a signed 64-bit long (native byte order). */
-    readLong() : long;
+    readLong() : Expected<long, int>;
 
     /** Read an unsigned 64-bit long (native byte order). */
-    readUnsignedLong() : unsigned long;
+    readUnsignedLong() : Expected<unsigned long, int>;
 
     /** Read a 32-bit IEEE 754 float (native byte order). */
     readFloat() : float;
@@ -86,17 +86,15 @@ public interface DataInput {
 
     /**
      * Read exactly `len` bytes into `buf` starting at `off`.
-     * Blocks until all bytes are read, end of stream is reached, or
-     * an error occurs.
+     * Returns the number of bytes read, or an error when the stream is broken.
      */
-    readFully(buf: byte[], off: unsigned int, len: unsigned int);
+    readFully(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int>;
 
     /**
      * Read exactly `buf.size` bytes into `buf`.
-     * Blocks until all bytes are read, end of stream is reached, or
-     * an error occurs.
+     * Returns the number of bytes read, or an error when the stream is broken.
      */
-    readFully(buf: byte[]);
+    readFully(buf: byte[]) : Expected<unsigned int, int>;
 }
 
 
@@ -159,88 +157,121 @@ public:
 
     // ── DataInput implementation ─────────────────────────────────────────
 
-    readByte() : byte {
+    readByte() : Expected<byte, int> {
         buf : byte[1];
-        if (_in->read(buf, 0, 1) <= 0) {
-            return (byte) 0;
-        }
-        return buf[0];
+        n : Expected<unsigned int, int> = readFully(buf, 0, 1);
+        if (n.hasError()) { return Expected<byte, int>::error(n.getError()); }
+        if (n.getResult() == 0) { return Expected<byte, int>::error(2); }
+        v : byte = buf[0];
+        return Expected<byte, int>::expected(v);
     }
 
-    readChar() : char {
+    readChar() : Expected<char, int> {
         buf : byte[1];
-        if (_in->read(buf, 0, 1) <= 0) {
-            return (char) 0;
-        }
-        return (char) buf[0];
+        n : Expected<unsigned int, int> = readFully(buf, 0, 1);
+        if (n.hasError()) { return Expected<char, int>::error(n.getError()); }
+        if (n.getResult() == 0) { return Expected<char, int>::error(2); }
+        v : char = (char) buf[0];
+        return Expected<char, int>::expected(v);
     }
 
-    readShort() : short {
+    readShort() : Expected<short, int> {
         buf : byte[2];
-        readFully(buf);
-        return (short) __k_io_native_bytes_to_short(&buf[0]);
+        n : Expected<unsigned int, int> = readFully(buf);
+        if (n.hasError()) { return Expected<short, int>::error(n.getError()); }
+        if (n.getResult() == 0) { return Expected<short, int>::error(2); }
+        v : short = (short) __k_io_native_bytes_to_short(&buf[0]);
+        return Expected<short, int>::expected(v);
     }
 
-    readUnsignedShort() : unsigned short {
+    readUnsignedShort() : Expected<unsigned short, int> {
         buf : byte[2];
-        readFully(buf);
-        return (unsigned short) __k_io_native_bytes_to_short(&buf[0]);
+        n : Expected<unsigned int, int> = readFully(buf);
+        if (n.hasError()) { return Expected<unsigned short, int>::error(n.getError()); }
+        if (n.getResult() == 0) { return Expected<unsigned short, int>::error(2); }
+        v : unsigned short = (unsigned short) __k_io_native_bytes_to_short(&buf[0]);
+        return Expected<unsigned short, int>::expected(v);
     }
 
-    readInt() : int {
+    readInt() : Expected<int, int> {
         buf : byte[4];
-        readFully(buf);
-        return __k_io_native_bytes_to_int(&buf[0]);
+        n : Expected<unsigned int, int> = readFully(buf);
+        if (n.hasError()) { return Expected<int, int>::error(n.getError()); }
+        if (n.getResult() == 0) { return Expected<int, int>::error(2); }
+        v : int = __k_io_native_bytes_to_int(&buf[0]);
+        return Expected<int, int>::expected(v);
     }
 
-    readUnsignedInt() : unsigned int {
+    readUnsignedInt() : Expected<unsigned int, int> {
         buf : byte[4];
-        readFully(buf);
-        return (unsigned int) __k_io_native_bytes_to_int(&buf[0]);
+        n : Expected<unsigned int, int> = readFully(buf);
+        if (n.hasError()) { return Expected<unsigned int, int>::error(n.getError()); }
+        if (n.getResult() == 0) { return Expected<unsigned int, int>::error(2); }
+        v : unsigned int = (unsigned int) __k_io_native_bytes_to_int(&buf[0]);
+        return Expected<unsigned int, int>::expected(v);
     }
 
-    readLong() : long {
+    readLong() : Expected<long, int> {
         buf : byte[8];
-        readFully(buf);
-        return __k_io_native_bytes_to_long(&buf[0]);
+        n : Expected<unsigned int, int> = readFully(buf);
+        if (n.hasError()) { return Expected<long, int>::error(n.getError()); }
+        if (n.getResult() == 0) { return Expected<long, int>::error(2); }
+        v : long = __k_io_native_bytes_to_long(&buf[0]);
+        return Expected<long, int>::expected(v);
     }
 
-    readUnsignedLong() : unsigned long {
-        val : long = readLong();
-        return (unsigned long) val;
+    readUnsignedLong() : Expected<unsigned long, int> {
+        buf : byte[8];
+        n : Expected<unsigned int, int> = readFully(buf);
+        if (n.hasError()) { return Expected<unsigned long, int>::error(n.getError()); }
+        if (n.getResult() == 0) { return Expected<unsigned long, int>::error(2); }
+        v : unsigned long = (unsigned long) __k_io_native_bytes_to_long(&buf[0]);
+        return Expected<unsigned long, int>::expected(v);
     }
 
     readFloat() : float {
-        bits : int = readInt();
+        buf : byte[4];
+        n : Expected<unsigned int, int> = readFully(buf);
+        if (n.hasError() || n.getResult() == 0) { return 0.0f; }
+        bits : int = __k_io_native_bytes_to_int(&buf[0]);
         return __k_io_bits_to_float(bits);
     }
 
     readDouble() : double {
-        bits : long = readLong();
+        buf : byte[8];
+        n : Expected<unsigned int, int> = readFully(buf);
+        if (n.hasError() || n.getResult() == 0) { return 0.0; }
+        bits : long = __k_io_native_bytes_to_long(&buf[0]);
         return __k_io_bits_to_double(bits);
     }
 
     readBool() : bool {
         buf : byte[1];
-        if (_in->read(buf, 0, 1) <= 0) {
-            return false;
-        }
+        n : Expected<unsigned int, int> = readFully(buf, 0, 1);
+        if (n.hasError() || n.getResult() == 0) { return false; }
         return buf[0] != (byte) 0;
     }
 
-    readFully(buf: byte[], off: unsigned int, len: unsigned int) {
+    readFully(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
         remaining : unsigned int = len;
         pos : unsigned int = off;
         while (remaining > 0) {
-            n : int = _in->read(buf, pos, remaining);
-            if (n <= 0) return;
-            pos = pos + (unsigned int) n;
-            remaining = remaining - (unsigned int) n;
+            n : Expected<unsigned int, int> = _in->read(buf, pos, remaining);
+            if (n.hasError()) { return n; }
+            got : unsigned int = n.getResult();
+            if (got == 0) {
+                // EOS before all bytes were read
+                done : unsigned int = len - remaining;
+                return Expected<unsigned int, int>::expected(done);
+            }
+            pos = pos + got;
+            remaining = remaining - got;
         }
+        return Expected<unsigned int, int>::expected(len);
     }
 
-    readFully(buf: byte[]) {
-        readFully(buf, 0, (unsigned int) buf.size);
+    readFully(buf: byte[]) : Expected<unsigned int, int> {
+        return readFully(buf, 0, (unsigned int) buf.size);
     }
 }
 

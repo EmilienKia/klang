@@ -92,10 +92,10 @@ TEST_CASE("stdio: read stdin and echo to stdout", "[libk][io][stdio]") {
         module __stdio_echo__;
         main() : int {
             buf : byte[1];
-            n : int = k::io::stdin.read(buf, 0, 1);
+            n : int = (int) k::io::stdin.read(buf, 0, 1).getResultOr((unsigned int) 0);
             while (n > 0) {
                 k::io::stdout.write((int) buf[0]);
-                n = k::io::stdin.read(buf, 0, 1);
+                n = (int) k::io::stdin.read(buf, 0, 1).getResultOr((unsigned int) 0);
             }
             k::io::stdout.flush();
             return 0;
@@ -120,10 +120,10 @@ TEST_CASE("stdio: read stdin, write stdout and stderr", "[libk][io][stdio]") {
         main() : int {
             k::io::stderr.print("start ");
             buf : byte[1];
-            n : int = k::io::stdin.read(buf, 0, 1);
+            n : int = (int) k::io::stdin.read(buf, 0, 1).getResultOr((unsigned int) 0);
             while (n > 0) {
                 k::io::stdout.write((int) buf[0]);
-                n = k::io::stdin.read(buf, 0, 1);
+                n = (int) k::io::stdin.read(buf, 0, 1).getResultOr((unsigned int) 0);
             }
             k::io::stdout.flush();
             k::io::stderr.println("done");

@@ -67,22 +67,29 @@ public:
         return Optional<T>(val);
     }
 
-    read(buf: T[], off: unsigned int, len: unsigned int) : int {
-        if (_pos >= _count) return -1;
+    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+        if (_pos >= _count) {
+            // End-of-stream: return 0 bytes read (not an error — stream is open)
+            zero : unsigned int = 0;
+            return Expected<unsigned int, int>::expected(zero);
+        }
         avail : unsigned int = (unsigned int) (_count - _pos);
         actual : unsigned int = len;
         if (actual > avail) actual = avail;
-        if (actual == 0) return 0;
+        if (actual == 0) {
+            zero : unsigned int = 0;
+            return Expected<unsigned int, int>::expected(zero);
+        }
         i : unsigned int = 0;
         while (i < actual) {
             buf[off + i] = _buf[(unsigned int) _pos + i];
             i = i + 1;
         }
         _pos = _pos + (int) actual;
-        return (int) actual;
+        return Expected<unsigned int, int>::expected(actual);
     }
 
-    read(buf: T[]) : int {
+    read(buf: T[]) : Expected<unsigned int, int> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
@@ -94,8 +101,9 @@ public:
         return actual;
     }
 
-    available() : int {
-        return _count - _pos;
+    available() : Expected<unsigned int, int> {
+        avail : unsigned int = (unsigned int) (_count - _pos);
+        return Expected<unsigned int, int>::expected(avail);
     }
 
     close() {

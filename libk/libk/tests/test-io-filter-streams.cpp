@@ -92,7 +92,7 @@ TEST_CASE("FilterInputStream delegates bulk read", "[libk][io][filter]") {
 
             dsz : int = 3;
             dst : byte[]! = new byte[dsz];
-            n : int = fis.read(dst, 0, 3);
+            n : int = (int) fis.read(dst, 0, 3).getResultOr((unsigned int) 0);
             if (n != 3) return 1;
             if (dst[0] != (byte) 5) return 2;
             if (dst[1] != (byte) 10) return 3;
@@ -122,10 +122,10 @@ TEST_CASE("FilterInputStream delegates available()", "[libk][io][filter]") {
             bais : k::io::ArrayInputStream<byte>(buf, 5);
             fis : k::io::FilterInputStream<byte>(&bais);
 
-            a : int = fis.available();
+            a : int = (int) fis.available().getResultOr((unsigned int) 0);
             if (a != 5) return 1;
             fis.read();
-            a = fis.available();
+            a = (int) fis.available().getResultOr((unsigned int) 0);
             if (a != 4) return 2;
             return 0;
         }

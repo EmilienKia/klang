@@ -178,10 +178,10 @@ TEST_CASE("ArrayInputStream available", "[libk][io][bais]") {
             buf[0] = (byte) 1; buf[1] = (byte) 2; buf[2] = (byte) 3;
             buf[3] = (byte) 4; buf[4] = (byte) 5;
             bais : k::io::ArrayInputStream<byte>(buf, 5);
-            a0 : int = bais.available();
+            a0 : int = (int) bais.available().getResultOr((unsigned int) 0);
             bais.read();
             bais.read();
-            a1 : int = bais.available();
+            a1 : int = (int) bais.available().getResultOr((unsigned int) 0);
             if (a0 != 5) return 1;
             if (a1 != 3) return 2;
             return 0;
@@ -237,15 +237,15 @@ TEST_CASE("ArrayInputStream bulk read", "[libk][io][bais]") {
 
             dsz : int = 4;
             dst : byte[]! = new byte[dsz];
-            n : int = bais.read(dst, 0, 4);
+            n : int = (int) bais.read(dst, 0, 4).getResultOr((unsigned int) 0);
             if (n != 4) return 1;
             if (dst[0] != (byte) 1) return 2;
             if (dst[1] != (byte) 2) return 3;
             if (dst[2] != (byte) 3) return 4;
             if (dst[3] != (byte) 4) return 5;
-            // Next read should return -1 (EOF)
-            n2 : int = bais.read(dst, 0, 4);
-            if (n2 != -1) return 6;
+            // Next read at EOS should return 0 (no bytes read, stream still open)
+            n2 : int = (int) bais.read(dst, 0, 4).getResultOr((unsigned int) 0);
+            if (n2 != 0) return 6;
             return 0;
         }
     )SRC");

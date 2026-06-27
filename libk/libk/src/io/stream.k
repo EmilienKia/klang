@@ -38,37 +38,39 @@ public interface InputStream {
     read() : Optional<T>;
 
     /**
-     * Read up to `len` bytes into `buf` starting at `off`.
+     * Read up to `len` values into `buf` starting at `off`.
      *
-     * @param buf Destination byte buffer.
+     * @param buf Destination buffer.
      * @param off Destination start offset.
-     * @param len Maximum number of bytes to read.
-     * @return Number of bytes read, or `-1` if end of stream is reached first.
+     * @param len Maximum number of values to read.
+     * @return Expected containing the number of values read (0 = EOS while open),
+     *         or an error code when the stream is closed/broken.
      */
-    read(buf: T[], off: unsigned int, len: unsigned int) : int;
+    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int>;
 
     /**
-     * Read up to `buf.size` bytes into `buf`.
+     * Read up to `buf.size` values into `buf`.
      *
-     * @param buf Destination byte buffer.
-     * @return Number of bytes read, or `-1` if end of stream is reached first.
+     * @param buf Destination buffer.
+     * @return Expected containing the number of values read.
      */
-    read(buf: T[]) : int;
+    read(buf: T[]) : Expected<unsigned int, int>;
 
     /**
-     * Skip and discard up to `n` bytes.
+     * Skip and discard up to `n` values.
      *
-     * @param n Requested number of bytes to skip.
-     * @return Actual number of bytes skipped.
+     * @param n Requested number of values to skip.
+     * @return Actual number of values skipped.
      */
     skip(n: unsigned long) : unsigned long;
 
     /**
      * Return a non-blocking availability estimate.
      *
-     * @return Number of bytes that can be read without blocking.
+     * @return Expected containing the number of values readable without blocking,
+     *         or an error code when the stream is closed/broken.
      */
-    available() : int;
+    available() : Expected<unsigned int, int>;
 
     /**
      * Close the stream and release any associated resources.
