@@ -2759,6 +2759,92 @@ TEST_CASE("Exception unwinding: owner param freed on throw in function body",
     REQUIRE(res.exit_code == 1);
 }
 
+TEST_CASE("Exception unwinding: intermediate frame locals cleaned before outer catch",
+          "[gen][exceptions][unwinding][multi-frame]") {
+    auto res = build_and_exec(R"(
+        module __test_unwind_multiframe__;
+
+        order : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Guard {
+            _id : int;
+            Guard(id: int) : _id(id) { }
+            ~Guard() { order = order * 10 + _id; }
+        }
+
+        inner() {
+            throw Err();
+        }
+
+        middle() : int {
+            innerGuard : Guard(1);
+            inner();
+            return 0;
+        }
+
+        outer() : int {
+            outerGuard : Guard(2);
+            try {
+                middle();
+            } catch (e : Exception&) { }
+            return order;
+        }
+
+        main() : int {
+            return outer();
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    // The middle frame local must be destroyed before control reaches the outer catch.
+    REQUIRE(res.exit_code == 1);
+}
+
+TEST_CASE("Exception unwinding: sized array elements destroyed on throw",
+          "[gen][exceptions][unwinding][array]") {
+    auto res = build_and_exec(R"(
+        module __test_unwind_array__;
+
+        dtor_count : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Widget {
+            _v : int;
+            Widget(v: int) : _v(v) { }
+            ~Widget() { dtor_count = dtor_count + 1; }
+        }
+
+        thrower() {
+            throw Err();
+        }
+
+        test_array_unwind() : int {
+            arr : Widget(42)[3];
+            thrower();
+            return 0;
+        }
+
+        main() : int {
+            try {
+                test_array_unwind();
+            } catch (e : Exception&) { }
+            return dtor_count;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    REQUIRE(res.exit_code == 3);
+}
+
 TEST_CASE("Exception unwinding: early return in block with destructible vars",
           "[gen][exceptions][unwinding][early-return]") {
     // When a function returns early from a block containing destructible variables,
