@@ -349,6 +349,24 @@ protected:
      */
     llvm::BasicBlock* current_unwind_dest() const;
 
+    /** Emit cleanup for one scope's local variables in reverse declaration order. */
+    void emit_scope_variable_cleanup(const std::vector<std::shared_ptr<variable_statement>>& scope_vars,
+                                     const std::string& owner_cleanup_name,
+                                     bool use_dtor_flags = false,
+                                     const std::shared_ptr<variable_statement>& extra_skip = nullptr);
+
+    /** Emit cleanup for the innermost @p scope_count active cleanup scopes. */
+    void emit_active_scope_cleanup(size_t scope_count,
+                                   const std::string& owner_cleanup_name,
+                                   bool use_dtor_flags = false,
+                                   const std::shared_ptr<variable_statement>& extra_skip = nullptr);
+
+    /** Emit cleanup for active function parameters owned by the current frame. */
+    void emit_active_parameter_cleanup(const std::string& owner_cleanup_name);
+
+    /** Emit the innermost @p finally_count finally blocks, including catch finalization. */
+    void emit_finally_cleanup(size_t finally_count, const lex::opt_any_lexeme& fallback_lexeme);
+
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);

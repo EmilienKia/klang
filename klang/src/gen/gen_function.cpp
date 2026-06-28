@@ -1383,34 +1383,7 @@ void implementation_generator::visit_function(function &function) {
         func->insert(func->end(), func_ctx.cleanup_code_bb);
         _builder->SetInsertPoint(func_ctx.cleanup_code_bb);
 
-        // Clean up owner-typed parameters
-        if (!_owner_params_stack.empty()) {
-            auto& params = _owner_params_stack.top();
-            for (auto it = params.rbegin(); it != params.rend(); ++it) {
-                auto& param = *it;
-                auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
-                if (!own_type) continue;
-                auto param_it = _context->_parameter_variables.find(param);
-                if (param_it == _context->_parameter_variables.end()) continue;
-                emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                    param_it->second, own_type->get_owned_type(), "func_unwind_param");
-            }
-        }
-        // Clean up struct-typed by-value parameters
-        if (!_struct_params_stack.empty()) {
-            auto& params = _struct_params_stack.top();
-            for (auto it = params.rbegin(); it != params.rend(); ++it) {
-                auto& param = *it;
-                auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
-                if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
-                auto dtor = st_type->get_struct()->get_destructor();
-                auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
-                if (dtor_it == _context->_functions.end()) continue;
-                auto param_it = _context->_parameter_variables.find(param);
-                if (param_it == _context->_parameter_variables.end()) continue;
-                _builder->CreateCall(dtor_it->second, {param_it->second});
-            }
-        }
+        emit_active_parameter_cleanup("func_unwind_param");
 
         // Resume unwinding
         auto* resume_ptr = _builder->CreateLoad(ptr_ty, _exc_ptr_slot, "func_resume_ptr");
@@ -1942,41 +1915,18 @@ void implementation_generator::emit_function_return_epilogue(function& function,
     // Before that, emit cleanup for owner-typed parameters (fall-through exit path).
     // For functions with an explicit return statement, this code is unreachable and will be
     // removed by optimize_function_dead_inst_elimination.
+    if (needs_fallthrough_epilogue && (!_owner_params_stack.empty() || !_struct_params_stack.empty())) {
+        emit_active_parameter_cleanup("exit_param");
+    }
+
     if (!_owner_params_stack.empty()) {
-        auto params = _owner_params_stack.top();
         _owner_params_stack.pop();
-        if (needs_fallthrough_epilogue) {
-            for (auto it = params.rbegin(); it != params.rend(); ++it) {
-                auto& param = *it;
-                auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
-                if (!own_type) continue;
-                auto param_it = _context->_parameter_variables.find(param);
-                if (param_it == _context->_parameter_variables.end()) continue;
-                llvm::AllocaInst* alloca = param_it->second;
-                emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                    alloca, own_type->get_owned_type(), "exit_param");
-            }
-        }
     }
 
     // Step 2: Emit struct parameter destructor calls
     // Clean up struct-typed by-value parameters at fall-through exit
     if (!_struct_params_stack.empty()) {
-        auto params = _struct_params_stack.top();
         _struct_params_stack.pop();
-        if (needs_fallthrough_epilogue) {
-            for (auto it = params.rbegin(); it != params.rend(); ++it) {
-                auto& param = *it;
-                auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
-                if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
-                auto dtor = st_type->get_struct()->get_destructor();
-                auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
-                if (dtor_it == _context->_functions.end()) continue;
-                auto param_it = _context->_parameter_variables.find(param);
-                if (param_it == _context->_parameter_variables.end()) continue;
-                _builder->CreateCall(dtor_it->second, {param_it->second});
-            }
-        }
     }
 
     // Step 3: Emit return instruction (ret void, ret value, or ret through sret pointer)

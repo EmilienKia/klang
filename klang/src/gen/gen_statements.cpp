@@ -206,6 +206,132 @@ void implementation_generator::emit_expression_temporaries_cleanup(const lex::op
     _builder->SetCurrentDebugLocation(previous_debug_loc);
 }
 
+void implementation_generator::emit_scope_variable_cleanup(
+    const std::vector<std::shared_ptr<variable_statement>>& scope_vars,
+    const std::string& owner_cleanup_name,
+    bool use_dtor_flags,
+    const std::shared_ptr<variable_statement>& extra_skip)
+{
+    auto& llvm_ctx = _context->llvm_context();
+
+    for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+        auto& var_stmt = *it;
+
+        if ((_nrvo_candidate && var_stmt == _nrvo_candidate) || (extra_skip && var_stmt == extra_skip)) {
+            continue;
+        }
+
+        auto var_it = _context->_variables.find(var_stmt);
+        if (var_it == _context->_variables.end()) continue;
+        llvm::AllocaInst* alloca = var_it->second;
+
+        auto vt = var_stmt->get_type();
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
+            if (st_type->get_struct()) {
+                auto dtor = st_type->get_struct()->get_destructor();
+                if (!dtor) continue;
+                auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                if (dtor_it == _context->_functions.end()) continue;
+
+                if (use_dtor_flags) {
+                    auto flag_it = _dtor_flags.find(var_stmt);
+                    if (flag_it != _dtor_flags.end()) {
+                        auto* flag_val = _builder->CreateLoad(
+                            llvm::Type::getInt1Ty(llvm_ctx), flag_it->second, "dtor_flag_chk");
+                        auto* func = _builder->GetInsertBlock()->getParent();
+                        auto* do_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "cleanup_dtor", func);
+                        auto* skip_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "cleanup_skip_dtor", func);
+                        _builder->CreateCondBr(flag_val, do_dtor_bb, skip_dtor_bb);
+                        _builder->SetInsertPoint(do_dtor_bb);
+                        _builder->CreateCall(dtor_it->second, {alloca});
+                        _builder->CreateBr(skip_dtor_bb);
+                        _builder->SetInsertPoint(skip_dtor_bb);
+                        continue;
+                    }
+                }
+
+                _builder->CreateCall(dtor_it->second, {alloca});
+            } else {
+                auto udef = find_union_for_struct_type(_unit, st_type);
+                if (udef) emit_union_cleanup(alloca, *udef);
+            }
+        } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
+            emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                alloca, own_type->get_owned_type(), owner_cleanup_name);
+        } else if (auto arr_type = std::dynamic_pointer_cast<sized_array_type>(vt)) {
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions, alloca, arr_type);
+        }
+    }
+}
+
+void implementation_generator::emit_active_scope_cleanup(
+    size_t scope_count,
+    const std::string& owner_cleanup_name,
+    bool use_dtor_flags,
+    const std::shared_ptr<variable_statement>& extra_skip)
+{
+    if (scope_count == 0 || _cleanup_vars_stack.empty()) return;
+
+    std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
+    for (size_t i = 0; i < scope_count && !tmp.empty(); ++i) {
+        emit_scope_variable_cleanup(tmp.top(), owner_cleanup_name, use_dtor_flags, extra_skip);
+        tmp.pop();
+    }
+}
+
+void implementation_generator::emit_active_parameter_cleanup(const std::string& owner_cleanup_name)
+{
+    if (!_owner_params_stack.empty()) {
+        auto& params = _owner_params_stack.top();
+        for (auto it = params.rbegin(); it != params.rend(); ++it) {
+            auto& param = *it;
+            auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
+            if (!own_type) continue;
+            auto param_it = _context->_parameter_variables.find(param);
+            if (param_it == _context->_parameter_variables.end()) continue;
+            emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                param_it->second, own_type->get_owned_type(), owner_cleanup_name);
+        }
+    }
+
+    if (!_struct_params_stack.empty()) {
+        auto& params = _struct_params_stack.top();
+        for (auto it = params.rbegin(); it != params.rend(); ++it) {
+            auto& param = *it;
+            auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
+            if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
+            auto dtor = st_type->get_struct()->get_destructor();
+            auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
+            if (dtor_it == _context->_functions.end()) continue;
+            auto param_it = _context->_parameter_variables.find(param);
+            if (param_it == _context->_parameter_variables.end()) continue;
+            _builder->CreateCall(dtor_it->second, {param_it->second});
+        }
+    }
+}
+
+void implementation_generator::emit_finally_cleanup(size_t finally_count, const lex::opt_any_lexeme& fallback_lexeme)
+{
+    if (finally_count == 0 || _finally_stack.empty()) return;
+
+    auto& mod = _context->module();
+    auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
+        llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
+
+    std::stack<finally_context> tmp_finally = _finally_stack;
+    for (size_t i = 0; i < finally_count && !tmp_finally.empty(); ++i) {
+        auto ctx = tmp_finally.top();
+        tmp_finally.pop();
+        set_debug_location(ctx.origin_lexeme ? ctx.origin_lexeme : fallback_lexeme);
+        if (ctx.in_catch) {
+            _builder->CreateCall(cxa_end_fn);
+        }
+        if (ctx.finally_body) {
+            ctx.finally_body->accept(*this);
+        }
+    }
+}
+
 
 //
 // Block
@@ -306,6 +432,10 @@ void implementation_generator::visit_block(block& blk) {
             if (type::is_owner(vt)) {
                 dtor_vars.push_back(var_stmt);
             }
+
+            if (std::dynamic_pointer_cast<sized_array_type>(vt)) {
+                dtor_vars.push_back(var_stmt);
+            }
         }
     }
 
@@ -397,38 +527,7 @@ void implementation_generator::visit_block(block& blk) {
         func->insert(func->end(), cleanup_block);
         _builder->SetInsertPoint(cleanup_block);
 
-        for (auto it = dtor_vars.rbegin(); it != dtor_vars.rend(); ++it) {
-            auto& var_stmt = *it;
-
-            // NRVO: do NOT destroy the NRVO candidate — it lives in caller's storage
-            if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
-
-            auto vt = var_stmt->get_type();
-
-            auto var_it = _context->_variables.find(var_stmt);
-            if (var_it == _context->_variables.end()) continue;
-            llvm::AllocaInst* alloca = var_it->second;
-
-            if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                if (st_type->get_struct()) {
-                    // Struct destructor
-                    auto dtor = st_type->get_struct()->get_destructor();
-                    if (!dtor) continue;
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it == _context->_functions.end()) continue;
-                    _builder->CreateCall(dtor_it->second, {alloca});
-                } else {
-                    // Union with non-trivial alternatives: switch on discriminant
-                    auto udef = find_union_for_struct_type(_unit, st_type);
-                    if (!udef) continue;
-                    emit_union_cleanup(alloca, *udef);
-                }
-            } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
-                // Owner: emit conditional destroy+free (only if non-null)
-                emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                    alloca, own_type->get_owned_type(), "owner_cleanup");
-            }
-        }
+        emit_scope_variable_cleanup(dtor_vars, "owner_cleanup");
 
         // On normal path, branch to continue
         _builder->CreateBr(continue_block);
@@ -470,53 +569,7 @@ void implementation_generator::visit_block(block& blk) {
         func->insert(func->end(), cleanup_code_bb);
         _builder->SetInsertPoint(cleanup_code_bb);
 
-        for (auto it = dtor_vars.rbegin(); it != dtor_vars.rend(); ++it) {
-            auto& var_stmt = *it;
-
-            // NRVO: do NOT destroy the NRVO candidate
-            if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
-
-            auto vt = var_stmt->get_type();
-
-            auto var_it = _context->_variables.find(var_stmt);
-            if (var_it == _context->_variables.end()) continue;
-            llvm::AllocaInst* alloca = var_it->second;
-
-            if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                if (st_type->get_struct()) {
-                    // Struct with destructor: check construction flag before calling dtor
-                    auto dtor = st_type->get_struct()->get_destructor();
-                    if (!dtor) continue;
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it == _context->_functions.end()) continue;
-
-                    auto flag_it = _dtor_flags.find(var_stmt);
-                    if (flag_it != _dtor_flags.end()) {
-                        // Conditional: only call dtor if flag is set
-                        auto* flag_val = _builder->CreateLoad(
-                            llvm::Type::getInt1Ty(llvm_ctx), flag_it->second, "dtor_flag_chk");
-                        auto* do_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "unwind_dtor", func);
-                        auto* skip_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "unwind_skip_dtor", func);
-                        _builder->CreateCondBr(flag_val, do_dtor_bb, skip_dtor_bb);
-                        _builder->SetInsertPoint(do_dtor_bb);
-                        _builder->CreateCall(dtor_it->second, {alloca});
-                        _builder->CreateBr(skip_dtor_bb);
-                        _builder->SetInsertPoint(skip_dtor_bb);
-                    } else {
-                        // No flag — unconditionally call dtor (variable always constructed)
-                        _builder->CreateCall(dtor_it->second, {alloca});
-                    }
-                } else {
-                    // Union cleanup (uses discriminant check internally)
-                    auto udef = find_union_for_struct_type(_unit, st_type);
-                    if (udef) emit_union_cleanup(alloca, *udef);
-                }
-            } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
-                // Owner: null check handles unconstructed case
-                emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                    alloca, own_type->get_owned_type(), "unwind_owner");
-            }
-        }
+        emit_scope_variable_cleanup(dtor_vars, "unwind_owner", true);
 
         // Chain to continuation
         switch (cleanup_ctx.continuation) {
@@ -766,108 +819,13 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
 
     // Emit finally blocks for enclosing try-catch-finally scopes (innermost to outermost).
     // If we are inside a catch body, also emit __cxa_end_catch() before the finally.
-    if (!_finally_stack.empty()) {
-        auto& mod = _context->module();
-        auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
-            llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
-
-        // Copy the stack to iterate from top (innermost) to bottom (outermost)
-        std::stack<finally_context> tmp = _finally_stack;
-        std::vector<finally_context> finally_contexts;
-        while (!tmp.empty()) {
-            finally_contexts.push_back(tmp.top());
-            tmp.pop();
-        }
-        for (auto& ctx : finally_contexts) {
-            set_debug_location(ctx.origin_lexeme ? ctx.origin_lexeme : return_lexeme);
-            if (ctx.in_catch) {
-                _builder->CreateCall(cxa_end_fn);
-            }
-            if (ctx.finally_body) {
-                ctx.finally_body->accept(*this);
-            }
-        }
-    }
+    emit_finally_cleanup(_finally_stack.size(), return_lexeme);
 
     // Step 2: Emit cleanup for all block-scoped variables (reverse order)
     // Emit destructor calls for all active scopes, from innermost to outermost.
     // We use a copy of the cleanup vars stack to iterate without modifying the live stack.
-    if (!_cleanup_vars_stack.empty() || !_owner_params_stack.empty() || !_struct_params_stack.empty()) {
-        // Collect all scope variable lists from innermost to outermost
-        std::vector<std::vector<std::shared_ptr<variable_statement>>> all_scopes;
-        std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
-        while (!tmp.empty()) {
-            all_scopes.push_back(tmp.top());
-            tmp.pop();
-        }
-        // Each scope: emit destructor calls in reverse declaration order
-        for (auto& scope_vars : all_scopes) {
-            for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
-                auto& var_stmt = *it;
-
-                // NRVO / named return: do NOT destroy the candidate — it lives in caller's storage
-                if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
-                if (named_ret_var && var_stmt == named_ret_var) continue;
-
-                auto vt = var_stmt->get_type();
-
-                auto var_it = _context->_variables.find(var_stmt);
-                if (var_it == _context->_variables.end()) continue;
-                llvm::AllocaInst* alloca = var_it->second;
-
-                // Step 3: For sret functions: store result into sret pointer
-                if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                    if (st_type->get_struct()) {
-                        auto dtor = st_type->get_struct()->get_destructor();
-                        if (!dtor) continue;
-                        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                        if (dtor_it == _context->_functions.end()) continue;
-                        _builder->CreateCall(dtor_it->second, {alloca});
-                    } else {
-                        // Union with non-trivial alternatives
-                        auto udef = find_union_for_struct_type(_unit, st_type);
-                        if (udef) emit_union_cleanup(alloca, *udef);
-                    }
-                } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
-                    emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                        alloca, own_type->get_owned_type(), "ret_owner");
-                } else if (auto arr_type = std::dynamic_pointer_cast<sized_array_type>(vt)) {
-                    // Sized array of owners or structs-with-dtors: cleanup each element
-                    emit_sized_array_elements_cleanup(_builder.get(), get_module(),
-                        _context->_functions, alloca, arr_type);
-                }
-            }
-        }
-        // Also clean up owner-typed parameters (outermost scope, reverse order)
-        if (!_owner_params_stack.empty()) {
-            auto params_copy = _owner_params_stack.top(); // only outermost (function body) scope
-            for (auto it = params_copy.rbegin(); it != params_copy.rend(); ++it) {
-                auto& param = *it;
-                auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
-                if (!own_type) continue;
-                auto param_it = _context->_parameter_variables.find(param);
-                if (param_it == _context->_parameter_variables.end()) continue;
-                llvm::AllocaInst* alloca = param_it->second;
-                emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                    alloca, own_type->get_owned_type(), "ret_param");
-            }
-        }
-        // Also clean up struct-typed by-value parameters (reverse order)
-        if (!_struct_params_stack.empty()) {
-            auto params_copy = _struct_params_stack.top();
-            for (auto it = params_copy.rbegin(); it != params_copy.rend(); ++it) {
-                auto& param = *it;
-                auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
-                if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
-                auto dtor = st_type->get_struct()->get_destructor();
-                auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                if (dtor_it == _context->_functions.end()) continue;
-                auto param_it = _context->_parameter_variables.find(param);
-                if (param_it == _context->_parameter_variables.end()) continue;
-                _builder->CreateCall(dtor_it->second, {param_it->second});
-            }
-        }
-    }
+    emit_active_scope_cleanup(_cleanup_vars_stack.size(), "ret_owner", false, named_ret_var);
+    emit_active_parameter_cleanup("ret_param");
 
     // Step 4: For NRVO candidates: no copy needed (already in sret destination)
     // Step 5: Emit ret instruction
@@ -938,64 +896,13 @@ void implementation_generator::visit_break_statement(break_statement& stmt) {
     size_t loop_depth = _loop_cleanup_depth.top();
     size_t current_depth = _cleanup_vars_stack.size();
 
-    if (current_depth > loop_depth) {
-        // Collect scope variable lists from innermost to the loop boundary
-        std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
-        std::vector<std::vector<std::shared_ptr<variable_statement>>> loop_scopes;
-        size_t count = current_depth - loop_depth;
-        for (size_t i = 0; i < count && !tmp.empty(); ++i) {
-            loop_scopes.push_back(tmp.top());
-            tmp.pop();
-        }
-        // Emit destructor calls in reverse declaration order for each scope
-        for (auto& scope_vars : loop_scopes) {
-            for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
-                auto& var_stmt = *it;
-
-                // NRVO: do NOT destroy the NRVO candidate
-                if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
-
-                auto vt = var_stmt->get_type();
-                auto var_it = _context->_variables.find(var_stmt);
-                if (var_it == _context->_variables.end()) continue;
-                llvm::AllocaInst* alloca = var_it->second;
-
-                if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                    auto dtor = st_type->get_struct()->get_destructor();
-                    if (!dtor) continue;
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it == _context->_functions.end()) continue;
-                    _builder->CreateCall(dtor_it->second, {alloca});
-                } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
-                    emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                        alloca, own_type->get_owned_type(), "break_owner");
-                }
-            }
-        }
-    }
+    emit_active_scope_cleanup(current_depth > loop_depth ? current_depth - loop_depth : 0, "break_owner");
 
     // Emit finally blocks between the break and the loop boundary
     size_t loop_finally_depth = _loop_finally_depth.top();
     size_t current_finally_depth = _finally_stack.size();
-    if (current_finally_depth > loop_finally_depth) {
-        auto& mod = _context->module();
-        auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
-            llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
-
-        std::stack<finally_context> tmp_finally = _finally_stack;
-        size_t count = current_finally_depth - loop_finally_depth;
-        for (size_t i = 0; i < count && !tmp_finally.empty(); ++i) {
-            auto ctx = tmp_finally.top();
-            tmp_finally.pop();
-            set_debug_location(ctx.origin_lexeme ? ctx.origin_lexeme : break_lexeme);
-            if (ctx.in_catch) {
-                _builder->CreateCall(cxa_end_fn);
-            }
-            if (ctx.finally_body) {
-                ctx.finally_body->accept(*this);
-            }
-        }
-    }
+    emit_finally_cleanup(current_finally_depth > loop_finally_depth ? current_finally_depth - loop_finally_depth : 0,
+        break_lexeme);
 
     // Branch to loop exit block
     set_debug_location(break_lexeme);
@@ -1042,64 +949,14 @@ void implementation_generator::visit_continue_statement(continue_statement& stmt
     size_t loop_depth = _loop_cleanup_depth.top();
     size_t current_depth = _cleanup_vars_stack.size();
 
-    if (current_depth > loop_depth) {
-        // Collect scope variable lists from innermost to the loop boundary
-        std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
-        std::vector<std::vector<std::shared_ptr<variable_statement>>> loop_scopes;
-        size_t count = current_depth - loop_depth;
-        for (size_t i = 0; i < count && !tmp.empty(); ++i) {
-            loop_scopes.push_back(tmp.top());
-            tmp.pop();
-        }
-        // Emit destructor calls in reverse declaration order for each scope
-        for (auto& scope_vars : loop_scopes) {
-            for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
-                auto& var_stmt = *it;
-
-                // NRVO: do NOT destroy the NRVO candidate
-                if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
-
-                auto vt = var_stmt->get_type();
-                auto var_it = _context->_variables.find(var_stmt);
-                if (var_it == _context->_variables.end()) continue;
-                llvm::AllocaInst* alloca = var_it->second;
-
-                if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                    auto dtor = st_type->get_struct()->get_destructor();
-                    if (!dtor) continue;
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it == _context->_functions.end()) continue;
-                    _builder->CreateCall(dtor_it->second, {alloca});
-                } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
-                    emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                        alloca, own_type->get_owned_type(), "continue_owner");
-                }
-            }
-        }
-    }
+    emit_active_scope_cleanup(current_depth > loop_depth ? current_depth - loop_depth : 0, "continue_owner");
 
     // Emit finally blocks between the continue and the loop boundary
     size_t loop_finally_depth_cont = _loop_finally_depth.top();
     size_t current_finally_depth_cont = _finally_stack.size();
-    if (current_finally_depth_cont > loop_finally_depth_cont) {
-        auto& mod = _context->module();
-        auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
-            llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
-
-        std::stack<finally_context> tmp_finally = _finally_stack;
-        size_t count = current_finally_depth_cont - loop_finally_depth_cont;
-        for (size_t i = 0; i < count && !tmp_finally.empty(); ++i) {
-            auto ctx = tmp_finally.top();
-            tmp_finally.pop();
-            set_debug_location(ctx.origin_lexeme ? ctx.origin_lexeme : continue_lexeme);
-            if (ctx.in_catch) {
-                _builder->CreateCall(cxa_end_fn);
-            }
-            if (ctx.finally_body) {
-                ctx.finally_body->accept(*this);
-            }
-        }
-    }
+    emit_finally_cleanup(
+        current_finally_depth_cont > loop_finally_depth_cont ? current_finally_depth_cont - loop_finally_depth_cont : 0,
+        continue_lexeme);
 
     // Branch to loop continue block
     set_debug_location(continue_lexeme);
