@@ -84,9 +84,16 @@ At runtime, the compiler:
 2. Copies the value into the exception storage.
 3. Calls `__cxa_throw` to initiate stack unwinding.
 
-Stack unwinding destroys all local objects with destructors (in reverse
-declaration order) in each stack frame between the throw point and the matching
-catch handler.
+Stack unwinding destroys all local objects with destructors, all owner values
+(`T!`), and all sized arrays whose elements require cleanup, in reverse
+declaration order within each scope and in reverse frame order between the
+throw point and the matching catch handler.
+
+For destructible locals, the compiler ensures that only fully constructed
+objects are destroyed during unwinding. Owner values are released only when the
+owned value is non-null; releasing an owner destroys the owned object and then
+deallocates the storage. Sized arrays are cleaned up element-by-element in
+reverse element order.
 
 ### Examples
 
@@ -193,6 +200,19 @@ CatchParameterDecl:
 - All function calls within a try block are compiled as LLVM `invoke`
   instructions (instead of `call`) to enable unwinding through the landing pad.
 
+### Finally blocks
+
+`try` blocks may optionally be followed by a `finally` block.
+
+- A `finally` block executes after the `try` body on normal flow.
+- A `finally` block also executes when control leaves the `try` or `catch`
+  body early via `return`, `break`, `continue`, or a rethrow.
+- A `finally` block runs after the relevant scope cleanup for the exit path
+  that triggered it.
+
+`finally` blocks do not replace exception cleanup; they are executed in addition
+to the normal RAII cleanup performed for locals, owners, and arrays.
+
 ### Examples
 
 ```k
@@ -229,6 +249,28 @@ safeRead() : int {
 Catch clauses are tested in declaration order. More specific types should appear
 before more general base types. The compiler does **not** warn about unreachable
 catch clauses (this may change in future versions).
+
+### Example with `finally`
+
+```k
+class LogError : public Exception {
+    public:
+    LogError() : Exception(12) { }
+}
+
+trace() : int {
+    result : int = 0;
+    try {
+        result = 1;
+        throw LogError();
+    } catch (e: LogError&) {
+        result = result + e.getCode();
+    } finally {
+        result = result + 100;
+    }
+    return result;
+}
+```
 
 ---
 
@@ -399,10 +441,14 @@ When an exception propagates through a stack frame:
 
 - All local variables with destructors are destroyed in reverse declaration
   order.
-- Owner variables (`T!`) are auto-deleted.
+- Owner variables (`T!`) are auto-deleted when non-null: the owned object is
+  destroyed and then the owner storage is released.
+- Sized arrays are cleaned up element-by-element in reverse element order when
+  their element type is destructible.
+- Cleanup is performed both on normal scope exit and on exception unwinding.
 - The cleanup is implemented via LLVM landing pads with cleanup clauses.
-- Nested try-catch blocks within the same function use direct CFG branching
-  (resume to outer handler if inner handlers don't match).
+- Nested `try-catch` blocks within the same function use direct CFG branching
+  and still run the appropriate cleanup before propagating to an outer handler.
 
 ### Example
 
@@ -415,6 +461,8 @@ struct Resource {
 riskyWork() : int {
     a : Resource(1);   // destroyed during unwinding (second)
     b : Resource(2);   // destroyed during unwinding (first — reverse order)
+    owned : Resource! = new Resource(3);  // destroyed, then released on unwind
+    items : Resource(4)[2];                // elements destroyed in reverse order
     mayThrow();        // if this throws, both a and b are properly destroyed
     return 0;
 }
@@ -520,6 +568,9 @@ The compiler automatically manages the cause exception's lifetime:
   (ref-count increments) the currently active exception's ABI storage.
 - When the wrapping exception is destroyed, the retained cause is released.
 - This is transparent to the programmer — no manual memory management is needed.
+
+This lifetime management is independent from stack unwinding cleanup for local
+variables, owners, and arrays in the frames crossed by the exception.
 
 ### Chaining depth
 

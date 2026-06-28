@@ -50,6 +50,9 @@ A `return` statement:
 1. Evaluates the return expression.
 2. Calls destructors of all in-scope local variables in reverse declaration order.
 3. Returns control to the caller.
+
+The same reverse-declaration-order cleanup also applies when the block is left
+because of exception unwinding.
 ### Global variables
 The destructor of a global struct variable is called by the global destructor function, in reverse initialisation order, **after** `main` returns.
 
@@ -59,6 +62,9 @@ When an owner variable goes out of scope (or is explicitly deleted with `delete`
 destructor of the owned object is called before the memory is freed.  The same scope-exit
 rules apply: if multiple owners exist in the same scope, they are destroyed in reverse
 declaration order.
+
+During exception unwinding, owner variables participate in the same reverse-
+declaration-order cleanup as other locals.
 
 ```k
 {
@@ -86,6 +92,22 @@ destructors are called on each element in **reverse order** (last element first)
 items : Item[3]! = new Item[3]{Item(1), Item(2), Item(3)};
 delete items;    // ~Item() called on items[2], then items[1], then items[0]
 ```
+
+During exception unwinding, sized arrays follow the same reverse element-order
+cleanup before their storage is released.
+
+### Destructors during exception unwinding
+
+When an exception crosses a frame, all destructible locals in the affected scopes
+are cleaned up in reverse declaration order.
+
+- Struct locals call their destructor.
+- Owner locals destroy the owned object and then free the storage.
+- Sized arrays destroy their elements in reverse element order.
+- Only fully constructed objects are destroyed.
+
+This unwinding cleanup is the RAII mechanism used by the compiler to preserve
+scope-based lifetime semantics across exceptions.
 ---
 
 ## 3. By-value parameters

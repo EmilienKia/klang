@@ -285,6 +285,9 @@ Passing a non-owner indirection to `delete` is a **compile-time error** (**Error
 2. `free(ptr)` is called to release the memory block.
 3. The owner variable is set to `null`.
 
+The destructor always runs before `free`, and this two-phase cleanup is also the
+mechanism used by exception unwinding when a non-null owner goes out of scope.
+
 ### 3.2 Array delete
 
 When the owner holds a dynamically allocated array (`T[N]!` or `T[]!`):
@@ -296,6 +299,9 @@ When the owner holds a dynamically allocated array (`T[N]!` or `T[]!`):
 3. The owner variable is set to `null`.
 
 The reverse destruction order mirrors the forward construction order used by `new`.
+
+The same reverse element-order cleanup is used during exception unwinding before
+the array storage is released.
 
 ### 3.3 Null safety
 
@@ -357,6 +363,10 @@ This applies equally to single-object owners and array owners:
 }   // implicit: delete items;  (~Item() called on element 1, then element 0, then free)
 ```
 
+This implicit cleanup also happens during exception unwinding: if control leaves a
+scope because of a thrown exception, any live owner is deleted using the same
+destructor-then-free semantics as an explicit `delete`.
+
 This applies to:
 
 - the end of a function or block;
@@ -401,6 +411,10 @@ test() {
     obj : Foo! = make(); // OK: obj takes ownership of Foo(5)
 }
 ```
+
+If the implicit deletion happens because an exception unwinds past the caller's
+scope, the same RAII semantics apply: the returned owner is destroyed before its
+storage is freed, and array owners still destroy their elements in reverse order.
 
 ---
 
