@@ -451,6 +451,48 @@ test() : int {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// 7b. Copy assignment from a value-returning call (prvalue / sret temporary)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Regression test: assigning a struct returned *by value* from a function into an
+// existing variable must copy the struct's contents. A previous bug emitted a
+// scalar `store` of the sret pointer into the destination's first field instead
+// of a struct copy, corrupting the value. This is the minimal form of the bug
+// that broke transform-stream `read()` loops ("current = _in->read();").
+TEST_CASE("Copy assignment from value-returning call", "[operator][gen][assign][implicit]") {
+    auto jit = gen_jit(R"SRC(
+module __op_asgn_sret__;
+struct Box {
+    a: int;
+    b: int;
+}
+makeBox(x: int) : Box {
+    r: Box;
+    r.a = x;
+    r.b = x * 2;
+    return r;
+}
+test() : int {
+    acc: Box;
+    acc.a = 0;
+    acc.b = 0;
+    // Reassign from an sret-returning call, in a loop, to mimic the stream case.
+    i: int = 1;
+    while (i <= 3) {
+        acc = makeBox(i);   // struct copy-assignment from a prvalue temporary
+        i = i + 1;
+    }
+    // After the last iteration acc == makeBox(3) => {3, 6}
+    return acc.a + acc.b;   // 9
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 9);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // 8. Deleted assignment operator
 // ═════════════════════════════════════════════════════════════════════════════
 

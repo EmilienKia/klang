@@ -901,6 +901,27 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     }
     // ───────────────────────────────────────────────────────────────────────
 
+     // ── Struct value copy (no operator= overload) ────────────────────────────
+    // K does not provide user-defined copy-assignment operators, so a plain
+    // struct assignment (e.g. `a = b;` or `current = _in->read();`) falls through
+    // to here.  When the right-hand side is a *pointer* to the source struct
+    // (e.g. an sret alloca returned by a value-returning call, or the address of
+    // a struct variable), a scalar store would incorrectly write the pointer into
+    // the destination's first field.  Emit a byte-wise copy of the whole struct
+    // instead.  (Aggregate rvalues that were already loaded fall through to the
+    // scalar store below, which correctly stores the aggregate value.)
+    if (target_type && type::is_struct(target_type) && right->getType()->isPointerTy()) {
+        auto* struct_llvm = _context->get_llvm_type(type::remove_const(target_type));
+        if (struct_llvm && !struct_llvm->isPointerTy()) {
+            const auto& dl = _context->module().getDataLayout();
+            uint64_t sz = dl.getTypeAllocSize(struct_llvm);
+            _builder->CreateMemCpy(left, llvm::MaybeAlign(), right, llvm::MaybeAlign(),
+                                   _builder->getInt64(sz));
+            _value = left;
+            return;
+        }
+    }
+
     // Step 5: For primitives/pointers: emit store instruction
     _value = right;
     _value = _builder->CreateStore(_value, left);
