@@ -35,7 +35,7 @@ public interface InputStream {
      * @return An `Optional<byte>` containing the next byte if one is available,
      *         or an empty Optional at end of stream.
      */
-    read() : Optional<T>;
+    read() : ::k::Optional<T>;
 
     /**
      * Read up to `len` values into `buf` starting at `off`.

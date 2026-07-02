@@ -58,13 +58,13 @@ public:
 
     // ── InputStream implementation ───────────────────────────────────────
 
-    read() : Optional<T> {
+    read() : ::k::Optional<T> {
         if (_pos >= _count) {
-            return Optional<T>();
+            return ::k::Optional<T>();
         }
         val : T = _buf[_pos];
         _pos = _pos + 1;
-        return Optional<T>(val);
+        return ::k::Optional<T>(val);
     }
 
     read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {

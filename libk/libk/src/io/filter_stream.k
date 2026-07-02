@@ -45,7 +45,7 @@ public:
 
     // ── InputStream implementation (all delegated) ───────────────────────
 
-    read() : Optional<T> {
+    read() : ::k::Optional<T> {
         return _in->read();
     }
 

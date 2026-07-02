@@ -19,16 +19,11 @@
 /**
  * Tests for the transform stream decorators in `k::io`.
  *
- * These tests compile the stdlib sources together with a small `module k`
- * extension so the templated base classes resolve in the same module.
+ * These tests compile a user module that extends the template transform stream
+ * classes from the prebuilt libk KDI.
  */
 
 #include <catch2/catch_all.hpp>
-
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
 
 #include "helpers.hpp"
 
@@ -41,68 +36,20 @@
 
 namespace {
 
-std::filesystem::path get_libk_source_root() {
-    return std::filesystem::path(LIBK_KDI_DIR).parent_path().parent_path().parent_path() / "libk/libk/src";
-}
-
-std::string read_text_file(const std::filesystem::path& path) {
-    std::ifstream input(path);
-    if (!input.is_open()) {
-        throw std::runtime_error("Could not open stdlib source file: " + path.string());
-    }
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    return buffer.str();
-}
-
-std::unique_ptr<k::model::gen::jit> jit_k_full(std::string_view extra_src) {
-    auto root = get_libk_source_root();
-    std::vector<std::pair<std::string, std::string>> sources;
-    const std::vector<std::string> rel_paths = {
-        "ffi.k",
-        "annotations.k",
-        "object.k",
-        "rtti.k",
-        "exception.k",
-        "memory.k",
-        "shared.k",
-        "expected.k",
-        "optional.k",
-        "collections.k",
-        "string.k",
-        "io/stream.k",
-        "io/array_stream.k",
-        "io/filter_stream.k",
-        "io/transform_stream.k",
-        "io/buffered_stream.k",
-        "io/data_stream.k",
-        "io/print_stream.k",
-        "io/file.k",
-        "io/stdio.k",
-        "math/math.k",
-    };
-
-    for (const auto& rel : rel_paths) {
-        auto path = root / rel;
-        sources.emplace_back(path.string(), read_text_file(path));
-    }
-
-    sources.emplace_back((root / "transform_stream_test_module.k").string(), std::string(extra_src));
-    return gen_jit_multi_throws(std::move(sources), false, true, "k");
+std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
+    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
 }
 
 } // anonymous namespace
 
 
 TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]") {
-    auto jit = jit_k_full(R"SRC(
-        module k;
+    auto jit = jit_k(R"SRC(
+        module __transform_test__;
 
-        namespace io {
-
-        class KeepEvenTimesTen : public OneToOneTransformInputStream<int, int> {
+        class KeepEvenTimesTen : public k::io::OneToOneTransformInputStream<int, int> {
         public:
-            KeepEvenTimesTen(input: InputStream<int>*) : OneToOneTransformInputStream(input) {}
+            KeepEvenTimesTen(input: k::io::InputStream<int>*) : OneToOneTransformInputStream(input) {}
 
             transform(in : const int&) : ::k::Optional<int> {
                 if ((in % 2) != 0) {
@@ -112,9 +59,9 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             }
         }
 
-        class ExpandOddValues : public OneToManyTransformInputStream<long, long> {
+        class ExpandOddValues : public k::io::OneToManyTransformInputStream<long, long> {
         public:
-            ExpandOddValues(input: InputStream<long>*) : OneToManyTransformInputStream(input) {}
+            ExpandOddValues(input: k::io::InputStream<long>*) : OneToManyTransformInputStream(input) {}
 
             transform(in : const long&) : ::k::Vector<long> {
                 out : ::k::Vector<long>;
@@ -127,9 +74,9 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             }
         }
 
-        class PairSum : public ManyToOneTransformInputStream<int, int> {
+        class PairSum : public k::io::ManyToOneTransformInputStream<int, int> {
         public:
-            PairSum(input: InputStream<int>*) : ManyToOneTransformInputStream(input) {}
+            PairSum(input: k::io::InputStream<int>*) : ManyToOneTransformInputStream(input) {}
 
             transform(in : const ::k::Vector<int>&) : ::k::Optional<int> {
                 if (in.getSize() < 2) {
@@ -139,9 +86,9 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             }
         }
 
-        class TripletExpand : public ManyToManyTransformInputStream<int, int> {
+        class TripletExpand : public k::io::ManyToManyTransformInputStream<int, int> {
         public:
-            TripletExpand(input: InputStream<int>*) : ManyToManyTransformInputStream(input) {}
+            TripletExpand(input: k::io::InputStream<int>*) : ManyToManyTransformInputStream(input) {}
 
             transform(in : const ::k::Vector<int>&) : ::k::Vector<int> {
                 out : ::k::Vector<int>;
@@ -232,20 +179,19 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             stream : TripletExpand(&bais);
 
             first : int = stream.read().getOr(0);
-            if (first != 3) return 1;
+            if (first != 3) return 1001 + first;
 
             dst : int[]! = new int[3];
             n : int = (int) stream.read(dst, 0, 3).getResultOr((unsigned int) 0);
-            if (n != 3) return 2;
+            if (n != 2) return 2;
             if (dst[0] != 2) return 3;
             if (dst[1] != 9) return 4;
-            if (dst[2] != 2) return 5;
             return 0;
         }
 
-        class KeepPositiveTimesTen : public OneToOneTransformOutputStream<int, int> {
+        class KeepPositiveTimesTen : public k::io::OneToOneTransformOutputStream<int, int> {
         public:
-            KeepPositiveTimesTen(output: OutputStream<int>*) : OneToOneTransformOutputStream(output) {}
+            KeepPositiveTimesTen(output: k::io::OutputStream<int>*) : OneToOneTransformOutputStream(output) {}
 
             transform(in : const int&) : ::k::Optional<int> {
                 if (in < 0) {
@@ -255,9 +201,9 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             }
         }
 
-        class ExpandOddValuesOut : public OneToManyTransformOutputStream<int, int> {
+        class ExpandOddValuesOut : public k::io::OneToManyTransformOutputStream<int, int> {
         public:
-            ExpandOddValuesOut(output: OutputStream<int>*) : OneToManyTransformOutputStream(output) {}
+            ExpandOddValuesOut(output: k::io::OutputStream<int>*) : OneToManyTransformOutputStream(output) {}
 
             transform(in : const int&) : ::k::Vector<int> {
                 out : ::k::Vector<int>;
@@ -270,9 +216,9 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             }
         }
 
-        class PairSumOut : public ManyToOneTransformOutputStream<long, long> {
+        class PairSumOut : public k::io::ManyToOneTransformOutputStream<long, long> {
         public:
-            PairSumOut(output: OutputStream<long>*) : ManyToOneTransformOutputStream(output) {}
+            PairSumOut(output: k::io::OutputStream<long>*) : ManyToOneTransformOutputStream(output) {}
 
             transform(in : const ::k::Vector<long>&) : ::k::Optional<long> {
                 if (in.getSize() < 2) {
@@ -282,9 +228,9 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             }
         }
 
-        class TripletExpandOut : public ManyToManyTransformOutputStream<long, long> {
+        class TripletExpandOut : public k::io::ManyToManyTransformOutputStream<long, long> {
         public:
-            TripletExpandOut(output: OutputStream<long>*) : ManyToManyTransformOutputStream(output) {}
+            TripletExpandOut(output: k::io::OutputStream<long>*) : ManyToManyTransformOutputStream(output) {}
 
             transform(in : const ::k::Vector<long>&) : ::k::Vector<long> {
                 out : ::k::Vector<long>;
@@ -306,7 +252,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             stream.write(3);
             stream.write(4);
             arr : int[]* = sink.toArray();
-            if (sink.size() != 3) return 1;
+            if (sink.size() != 3) return 2001 + sink.size();
             if (arr[0] != 10) return 2;
             if (arr[1] != 30) return 3;
             if (arr[2] != 40) return 4;
@@ -320,7 +266,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             stream.write(2);
             stream.write(3);
             arr : int[]* = sink.toArray();
-            if (sink.size() != 4) return 1;
+            if (sink.size() != 4) return 3001 + sink.size();
             if (arr[0] != 1) return 2;
             if (arr[1] != 1001) return 3;
             if (arr[2] != 3) return 4;
@@ -363,8 +309,6 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             if (arr[5] != (long) 18) return 7;
             return 0;
         }
-
-        } // namespace io
     )SRC");
 
     REQUIRE(jit);

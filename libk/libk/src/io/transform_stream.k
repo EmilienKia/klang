@@ -20,7 +20,6 @@ module k;
 
 namespace io {
 
-using ::k::Optional;
 
 /**
  * Base class for streams that transform values from an input stream of type `I`
@@ -55,7 +54,7 @@ public:
     OneToOneTransformInputStream(input: InputStream<I>*) : TransformInputStream(input) {}
     OneToOneTransformInputStream() : TransformInputStream() {}
 
-    read() : Optional<O> {
+    read() : ::k::Optional<O> {
         current : ::k::Optional<I> = _in->read();
         while (current.hasValue()) {
             result : ::k::Optional<O> = transform(current.get());
@@ -124,7 +123,7 @@ public:
     OneToManyTransformInputStream(input: InputStream<I>*) : TransformInputStream(input) {}
     OneToManyTransformInputStream() : TransformInputStream() {}
 
-    read() : Optional<O> {
+    read() : ::k::Optional<O> {
         if (!buffer.isEmpty()) {
             result : O = buffer[0];
             buffer.removeFront();
@@ -211,7 +210,11 @@ protected:
     abstract transform(in : const I&) : ::k::Vector<O>;
 
     doTransform(in : const I&) {
-        buffer.pushBackAll(transform(in));
+        results : ::k::Vector<O> = transform(in);
+        n : int = results.getSize();
+        for (j : int = 0; j < n; j = j + 1) {
+            buffer.pushBack(results[j]);
+        }
     }
 }
 
@@ -228,7 +231,7 @@ public:
     ManyToOneTransformInputStream(input: InputStream<I>*) : TransformInputStream(input) {}
     ManyToOneTransformInputStream() : TransformInputStream() {}
 
-    read() : Optional<O> {
+    read() : ::k::Optional<O> {
         while (true) {
             current : ::k::Optional<I> = _in->read();
             if (!current.hasValue()) {
@@ -305,7 +308,7 @@ public:
     ManyToManyTransformInputStream(input: InputStream<I>*) : TransformInputStream(input) {}
     ManyToManyTransformInputStream() : TransformInputStream() {}
 
-    read() : Optional<O> {
+    read() : ::k::Optional<O> {
         if (!outputBuffer.isEmpty()) {
             result : O = outputBuffer[0];
             outputBuffer.removeFront();
@@ -397,7 +400,10 @@ protected:
     doTransform(in : const ::k::Vector<I>&) {
         result : ::k::Vector<O> = transform(in);
         if (!result.isEmpty()) {
-            outputBuffer.pushBackAll(result);
+            n : int = result.getSize();
+            for (j : int = 0; j < n; j = j + 1) {
+                outputBuffer.pushBack(result[j]);
+            }
             inputBuffer.clear();
         }
     }
@@ -605,7 +611,10 @@ protected:
     transformAndEmit() {
         result : ::k::Vector<O> = transform(inputBuffer);
         if (!result.isEmpty()) {
-            outputBuffer.pushBackAll(result);
+            n : int = result.getSize();
+            for (j : int = 0; j < n; j = j + 1) {
+                outputBuffer.pushBack(result[j]);
+            }
             inputBuffer.clear();
             flushBufferedOutputs();
         }

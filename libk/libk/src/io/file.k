@@ -221,16 +221,16 @@ public:
 
     // ── InputStream implementation ───────────────────────────────────────
 
-    read() : Optional<byte> {
+    read() : ::k::Optional<byte> {
         if (_fp == null) {
-            return Optional<byte>();
+            return ::k::Optional<byte>();
         }
         raw : int = __k_io_file_fread_byte(_fp);
         if (raw < 0) {
-            return Optional<byte>();
+            return ::k::Optional<byte>();
         }
         val : byte = (byte) raw;
-        result : Optional<byte>;
+        result : ::k::Optional<byte>;
         result.set(val);
         return result;
     }

@@ -54,16 +54,16 @@ public:
 
     // ── InputStream overrides ────────────────────────────────────────────
 
-    read() : Optional<byte> {
+    read() : ::k::Optional<byte> {
         if (_bpos >= _bcount) {
             _fill();
             if (_bpos >= _bcount) {
-                return Optional<byte>();
+                return ::k::Optional<byte>();
             }
         }
         val : byte = _bbuf[_bpos];
         _bpos = _bpos + 1;
-        result : Optional<byte>;
+        result : ::k::Optional<byte>;
         result.set(val);
         return result;
     }
