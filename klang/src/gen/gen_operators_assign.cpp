@@ -28,6 +28,128 @@
 
 namespace k::model::gen {
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Value semantics for aggregates (IN-PROGRESS.md, phases F1/F3/F4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool implementation_generator::is_trivially_copyable(const std::shared_ptr<type>& t) {
+    auto nt = type::remove_const(t);
+    if (!nt) return true;
+
+    // An owner directly owns heap memory — never bytewise copyable.
+    if (std::dynamic_pointer_cast<owner_type>(nt)) return false;
+
+    // A sized array is trivially copyable iff its element type is.
+    if (auto arr = std::dynamic_pointer_cast<sized_array_type>(nt)) {
+        return is_trivially_copyable(arr->get_subtype());
+    }
+
+    auto st_type = std::dynamic_pointer_cast<struct_type>(nt);
+    if (!st_type) return true; // primitives, pointers, references, ...
+
+    auto st = st_type->get_struct();
+    if (!st) return true; // union / unresolved struct type: handled elsewhere
+
+    // A user or intrinsic destructor, or a copy constructor, signals that the
+    // type manages its own resources and must not be copied bytewise.
+    if (st->get_destructor()) return false;
+    if (st->get_copy_constructor()) return false;
+
+    // Recurse into base sub-objects.
+    for (auto& bs : st->get_bases()) {
+        if (bs.base && bs.base->get_struct_type()) {
+            if (!is_trivially_copyable(bs.base->get_struct_type())) return false;
+        }
+    }
+
+    // Recurse into member variables.
+    for (auto& entry : st->variables()) {
+        auto mv = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+        if (!mv) continue;
+        if (!is_trivially_copyable(mv->get_type())) return false;
+    }
+
+    return true;
+}
+
+bool implementation_generator::cancel_temporary_cleanup(llvm::Value* ptr) {
+    for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it) {
+        if (it->alloca == ptr) {
+            // Convert reverse iterator to forward iterator for erase.
+            _expression_temporaries.erase(std::next(it).base());
+            return true;
+        }
+    }
+    return false;
+}
+
+void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::Value* src,
+                                                       const std::shared_ptr<type>& t,
+                                                       bool destroy_dest_first) {
+    auto nt = type::remove_const(t);
+    llvm::Type* struct_llvm = _context->get_llvm_type(nt);
+    if (!struct_llvm || struct_llvm->isPointerTy()) {
+        // Not a real struct payload — fall back to a scalar store.
+        _builder->CreateStore(src, dest);
+        return;
+    }
+    const auto& dl = _context->module().getDataLayout();
+    uint64_t sz = dl.getTypeAllocSize(struct_llvm);
+
+    auto st_type   = std::dynamic_pointer_cast<struct_type>(nt);
+    auto agg       = st_type ? st_type->get_struct() : nullptr;
+    bool trivially = is_trivially_copyable(nt);
+
+    // Is `src` a materialised temporary currently scheduled for destruction?
+    // If so, it is a prvalue whose contents we may steal (move).
+    bool src_is_tracked_temp = false;
+    for (auto& e : _expression_temporaries) {
+        if (e.alloca == src) { src_is_tracked_temp = true; break; }
+    }
+
+    // Destroy the previous contents of the destination first (assignment onto an
+    // existing, already-constructed object owning resources).
+    if (destroy_dest_first && !trivially && agg && agg->get_destructor()) {
+        auto dtor = agg->get_destructor();
+        auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
+        if (dtor_it != _context->_functions.end()) {
+            _builder->CreateCall(dtor_it->second, {dest});
+        }
+    }
+
+    if (trivially) {
+        _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
+                               _builder->getInt64(sz));
+        return;
+    }
+
+    if (src_is_tracked_temp) {
+        // MOVE: transfer the bytes, then cancel the source temporary's destruction
+        // so the destination becomes the sole owner (no double free).
+        _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
+                               _builder->getInt64(sz));
+        cancel_temporary_cleanup(src);
+        return;
+    }
+
+    // Non-trivial lvalue copy: prefer a user-provided copy constructor.
+    if (agg) {
+        if (auto cc = agg->get_copy_constructor()) {
+            auto cc_it = _context->_functions.find(cc->shared_as<k::model::function>());
+            if (cc_it != _context->_functions.end()) {
+                _builder->CreateCall(cc_it->second, {dest, src});
+                return;
+            }
+        }
+    }
+
+    // Fallback: shallow copy. This is unsafe for owning types without a copy
+    // constructor; a dedicated "type-not-copyable" diagnostic (phase F6) will be
+    // raised here once the lvalue-copy contract is enforced.
+    _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
+                           _builder->getInt64(sz));
+}
+
 void type_reference_resolver::visit_assignation_expression(assignation_expression &expr) {
     // TODO Rework conversions and promotions and mutualize with symbol_type_resolver::process_arithmetic(...)
     visit_binary_expression(expr);
@@ -210,8 +332,15 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     auto effective_source_type = source_type;
     if (type::is_reference(source_type)) {
         auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
-        if (type::is_link(inner) || type::is_pointer(inner) || type::is_view(inner) || type::is_owner(inner)) {
-            effective_source_type = inner;
+        // The referenced type may be const-qualified (e.g. a `const T&` parameter
+        // where T is itself a pointer/link/view/owner, as produced by the const
+        // Collection API for `Vector<Object*>`).  Strip the const before the
+        // indirection-kind check: copying a const *pointer value* into a mutable
+        // pointer is legal — only the pointer is read, the pointee's const-ness is
+        // unaffected (like `Object* const` → `Object*` in C++).
+        auto inner_nc = type::remove_const(inner);
+        if (type::is_link(inner_nc) || type::is_pointer(inner_nc) || type::is_view(inner_nc) || type::is_owner(inner_nc)) {
+            effective_source_type = inner_nc;
         }
     }
 
@@ -407,12 +536,18 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
 
         if (type::is_reference(source_type)) {
             auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
-            if (type::is_owner(inner)) {
+            // The referenced owner may be const-qualified (e.g. a `const T&` parameter
+            // where T is an owner, as produced by the const Collection API for
+            // `LinkedList<Object!>`).  Strip the const for the owner-kind check: the
+            // owner is still moved (source consumed / nulled) — the const only guards
+            // the pointee, not the ownership transfer of the reference binding.
+            auto inner_nc = type::remove_const(inner);
+            if (type::is_owner(inner_nc)) {
                 // Move: wrap source in owner_move_expression (load + null source alloca)
-                auto own_src_nc = type::remove_const(inner->get_subtype());
+                auto own_src_nc = type::remove_const(inner_nc->get_subtype());
                 auto own_tgt_nc = type::remove_const(target_type->get_subtype());
                 auto move = owner_move_expression::make_shared(right);
-                move->set_type(inner);
+                move->set_type(inner_nc);
                 std::shared_ptr<expression> new_right = move;
                 if (!type::are_equal(own_src_nc, own_tgt_nc)) {
                     // Check upcast: owner<Derived> → owner<Base>
@@ -901,22 +1036,21 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     }
     // ───────────────────────────────────────────────────────────────────────
 
-     // ── Struct value copy (no operator= overload) ────────────────────────────
+     // ── Struct value copy/move (no operator= overload) ───────────────────────
     // K does not provide user-defined copy-assignment operators, so a plain
     // struct assignment (e.g. `a = b;` or `current = _in->read();`) falls through
     // to here.  When the right-hand side is a *pointer* to the source struct
     // (e.g. an sret alloca returned by a value-returning call, or the address of
-    // a struct variable), a scalar store would incorrectly write the pointer into
-    // the destination's first field.  Emit a byte-wise copy of the whole struct
-    // instead.  (Aggregate rvalues that were already loaded fall through to the
-    // scalar store below, which correctly stores the aggregate value.)
+    // a struct variable), delegate to the value-semantics routine, which:
+    //   - memcpy's trivially-copyable structs (fast path);
+    //   - MOVES a prvalue temporary (memcpy + cancel its destruction) so owning
+    //     aggregates such as Vector<T> are not double-freed;
+    //   - COPIES an lvalue via the copy constructor when available.
+    // The old destination contents are destroyed first for non-trivial types.
     if (target_type && type::is_struct(target_type) && right->getType()->isPointerTy()) {
         auto* struct_llvm = _context->get_llvm_type(type::remove_const(target_type));
         if (struct_llvm && !struct_llvm->isPointerTy()) {
-            const auto& dl = _context->module().getDataLayout();
-            uint64_t sz = dl.getTypeAllocSize(struct_llvm);
-            _builder->CreateMemCpy(left, llvm::MaybeAlign(), right, llvm::MaybeAlign(),
-                                   _builder->getInt64(sz));
+            emit_value_copy_or_move(left, right, target_type, /*destroy_dest_first=*/true);
             _value = left;
             return;
         }

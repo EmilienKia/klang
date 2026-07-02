@@ -912,16 +912,23 @@ void implementation_generator::visit_temporary_construction_expression(temporary
         // No constructor and no arguments: zero-init
         _builder->CreateStore(llvm::ConstantAggregateZero::get(llvm_struct_ty), temp_alloca);
     } else if (!ctor && expr.size() == 1) {
-        // Direct struct copy from a single argument
+        // Direct struct copy/move from a single argument.
         _value = nullptr;
         expr.argument(0)->accept(*this);
         if (_value) {
-            auto arg_type = expr.argument(0)->get_type();
-            llvm::Value* src_val = _value;
-            if (type::is_reference(arg_type) || type::is_struct(arg_type)) {
-                src_val = _builder->CreateLoad(llvm_struct_ty, _value, "tmp_copy_load");
+            if (_value->getType()->isPointerTy()) {
+                // Move the argument into the freshly materialised temporary when it
+                // is a prvalue temporary (transfers ownership + cancels the source's
+                // destruction), or copy it otherwise.  A plain load+store aggregate
+                // copy would shallow-duplicate any owned buffer (e.g. Vector<T>) and,
+                // since both temporaries are registered for destruction, cause a
+                // double free.
+                emit_value_copy_or_move(temp_alloca, _value, st_type,
+                                        /*destroy_dest_first=*/false);
+            } else {
+                // Already a loaded scalar/aggregate value: store directly.
+                _builder->CreateStore(_value, temp_alloca);
             }
-            _builder->CreateStore(src_val, temp_alloca);
         }
     } else if (ctor) {
         // Constructor call: evaluate arguments and call the constructor

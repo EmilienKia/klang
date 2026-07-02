@@ -183,9 +183,12 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
 
             dst : int[]! = new int[3];
             n : int = (int) stream.read(dst, 0, 3).getResultOr((unsigned int) 0);
-            if (n != 2) return 2;
+            // Output sequence for src [1,2,3,4,5,6] is [3,2,9,2]; `first` consumed
+            // the leading 3, so this bulk read returns the remaining three: [2,9,2].
+            if (n != 3) return 2;
             if (dst[0] != 2) return 3;
             if (dst[1] != 9) return 4;
+            if (dst[2] != 2) return 5;
             return 0;
         }
 

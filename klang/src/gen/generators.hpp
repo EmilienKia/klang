@@ -610,6 +610,40 @@ public:
     void emit_expression_temporaries_cleanup(const lex::opt_any_lexeme& anchor_lexeme = std::nullopt);
 
     /**
+     * Value-semantics classification (see IN-PROGRESS.md, phase F1).
+     * Returns true when a value of type `t` can be safely duplicated with a
+     * bytewise memcpy — i.e. it owns no resources: recursively over members and
+     * bases it has no destructor, no copy constructor and no owner-typed member.
+     * Owning aggregates such as `Vector<T>` / `MultiSlot<T>` are NOT trivially
+     * copyable and require move or copy-constructor semantics.
+     */
+    bool is_trivially_copyable(const std::shared_ptr<type>& t);
+
+    /**
+     * Cancel the scheduled destruction of a tracked expression temporary whose
+     * alloca == `ptr` (phase F4).  Used when a prvalue struct temporary is
+     * *moved* into a destination that becomes the sole owner, so the temporary's
+     * destructor must not run.  Returns true if an entry was removed.
+     */
+    bool cancel_temporary_cleanup(llvm::Value* ptr);
+
+    /**
+     * Emit a value copy or move of a struct from `src` (pointer) into `dest`
+     * (pointer), honouring the type's value semantics (phase F3):
+     *   - trivially copyable            -> bytewise memcpy;
+     *   - non-trivial, src is a tracked
+     *     prvalue temporary             -> MOVE: memcpy + cancel the source's
+     *                                      scheduled destruction (F4);
+     *   - non-trivial, src is an lvalue  -> COPY via the copy constructor when
+     *                                      available, else fall back to memcpy.
+     * When `destroy_dest_first` is true (assignment onto an existing object with
+     * a destructor), the old contents of `dest` are destroyed before the copy.
+     */
+    void emit_value_copy_or_move(llvm::Value* dest, llvm::Value* src,
+                                 const std::shared_ptr<type>& t,
+                                 bool destroy_dest_first);
+
+    /**
      * Emit cleanup (destructor / owner free) for a single condition variable.
      * Used for if-let condition variable cleanup at end of then/else blocks.
      */
