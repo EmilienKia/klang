@@ -316,19 +316,57 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                     std::string tpl_base_name = bs.raw_name.substr(0, lt_pos);
                     std::string args_str = bs.raw_name.substr(lt_pos + 1, gt_pos - lt_pos - 1);
 
-                    // Look up the template aggregate by name
-                    std::shared_ptr<aggregate> tpl_agg = scope_lookup::lookup_structure(st.shared_as<element>(), tpl_base_name);
-
-                    // Fallback: search imported modules
-                    if (!tpl_agg) {
-                        k::name qname{false, {tpl_base_name}};
-                        if (auto root_ns_ptr = scope_lookup::root_namespace(st)) {
-                            for (const auto& imp : _unit.get_imports()) {
-                                if (imp.module_name.empty()) continue;
-                                auto imported_name = imp.module_name.with_back(tpl_base_name);
-                                if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, imported_name)) {
-                                    tpl_agg = res;
+                    // Look up the template aggregate by name.
+                    // tpl_base_name may be a simple or qualified name (e.g. "k::io::X").
+                    // Split on "::" to build a k::name for hierarchical lookup.
+                    std::shared_ptr<aggregate> tpl_agg;
+                    {
+                        std::vector<std::string> name_parts;
+                        {
+                            std::size_t pos = 0;
+                            while (true) {
+                                auto sep = tpl_base_name.find("::", pos);
+                                if (sep == std::string::npos) {
+                                    name_parts.push_back(tpl_base_name.substr(pos));
                                     break;
+                                }
+                                name_parts.push_back(tpl_base_name.substr(pos, sep - pos));
+                                pos = sep + 2;
+                            }
+                        }
+                        const std::string& short_name = name_parts.back();
+
+                        if (name_parts.size() == 1) {
+                            // Simple name: standard scope-chain lookup
+                            tpl_agg = scope_lookup::lookup_structure(st.shared_as<element>(), short_name);
+                        }
+                        if (!tpl_agg) {
+                            if (auto root_ns_ptr = scope_lookup::root_namespace(st)) {
+                                // Try full qualified path from root (e.g. k::io::X at k/io/X)
+                                k::name qname{false, name_parts};
+                                if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, qname)) {
+                                    tpl_agg = res;
+                                }
+                                // KDI-materialized templates are homed at the consumer root
+                                // namespace (due to the module-flatten trick in kdi_importer).
+                                // For a qualified name like "k::io::OneToOneTransformInputStream",
+                                // the template may live at root under its short name.
+                                if (!tpl_agg && name_parts.size() > 1) {
+                                    k::name short_qname{false, {short_name}};
+                                    if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, short_qname)) {
+                                        tpl_agg = res;
+                                    }
+                                }
+                                // Fallback: search imported modules with short name prefix
+                                if (!tpl_agg) {
+                                    for (const auto& imp : _unit.get_imports()) {
+                                        if (imp.module_name.empty()) continue;
+                                        auto imported_name = imp.module_name.with_back(short_name);
+                                        if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, imported_name)) {
+                                            tpl_agg = res;
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }

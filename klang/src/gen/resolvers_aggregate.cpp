@@ -655,6 +655,7 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                 // template compare equal across the import boundary.
                 auto same_param_sig = [](const function& f, const function& g) -> bool {
                     if (f.get_short_name() != g.get_short_name()) return false;
+                    if (f.is_const_member() != g.is_const_member()) return false;
                     if (f.parameters().size() != g.parameters().size()) return false;
                     for (size_t i = 0; i < f.parameters().size(); ++i) {
                         auto tf = f.parameters()[i] ? f.parameters()[i]->get_type() : nullptr;

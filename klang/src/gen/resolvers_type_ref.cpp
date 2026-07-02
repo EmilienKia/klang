@@ -920,6 +920,42 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             if (auto st = resolve_struct_from(*root_ns, base_name)) {
                 if (st->is_template()) tpl_agg = st;
             }
+            // For root-prefixed names (e.g. ::k::Optional), apply the same
+            // module-name-stripping logic as resolve_type_from_root.  This is
+            // needed when the unit has no imports (e.g. module k compiling itself)
+            // where the multi-component import-based fallback below never fires.
+            if (!tpl_agg && base_name.has_root_prefix()) {
+                auto name_no_prefix = base_name.without_root_prefix();
+                const auto& unit_name = _unit.get_unit_name();
+                // Strategy 1: strip the module-name prefix if the first component matches
+                if (!unit_name.empty() && !name_no_prefix.empty()
+                    && name_no_prefix.front() == unit_name.back()) {
+                    auto rest = name_no_prefix.without_front();
+                    if (!rest.empty()) {
+                        if (auto st = resolve_struct_from(*root_ns, rest)) {
+                            if (st->is_template()) tpl_agg = st;
+                        }
+                    }
+                }
+                // Strategy 2: try without module-name stripping
+                if (!tpl_agg) {
+                    if (auto st = resolve_struct_from(*root_ns, name_no_prefix)) {
+                        if (st->is_template()) tpl_agg = st;
+                    }
+                }
+                // Strategy 3: strip any import-module prefix
+                if (!tpl_agg) {
+                    for (const auto& imp : _unit.get_imports()) {
+                        if (imp.module_name.empty()) continue;
+                        if (!name_no_prefix.start_with(imp.module_name)) continue;
+                        auto rest = name_no_prefix.without_front(imp.module_name.size());
+                        if (rest.empty()) continue;
+                        if (auto st = resolve_struct_from(*root_ns, rest)) {
+                            if (st->is_template()) { tpl_agg = st; break; }
+                        }
+                    }
+                }
+            }
         }
     }
     if (!tpl_agg && base_name.size() == 1) {
