@@ -1123,13 +1123,22 @@ void type_reference_resolver::validate_owner_variable(var_init_context& ctx) {
             bool is_upcast = src_st && tgt_st &&
                 src_st->get_struct() && tgt_st->get_struct() &&
                 src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+            // Allow sized array owner (T[N]!) to be assigned to unsized array owner (T[]!):
+            // both have the same heap layout { i32 count, [0 x T] }, sized arrays just have
+            // a compile-time-known count that the unsized representation tracks at runtime.
             if (!is_upcast) {
-                throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_OWNER_VAR_INIT_MISMATCH), ctx.var_lexeme,
-                    "Owner variable '{}' of type '{}' cannot be initialised from "
-                    "an owner of incompatible type '{}'",
-                    {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
-                     arg_type ? arg_type->to_string() : "?"});
-                return;
+                auto src_arr = std::dynamic_pointer_cast<sized_array_type>(arg_sub);
+                auto tgt_arr = std::dynamic_pointer_cast<array_type>(var_sub);
+                bool is_sized_to_unsized = src_arr && tgt_arr && !tgt_arr->is_sized()
+                    && type::are_equal(src_arr->get_subtype(), tgt_arr->get_subtype());
+                if (!is_sized_to_unsized) {
+                    throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_OWNER_VAR_INIT_MISMATCH), ctx.var_lexeme,
+                        "Owner variable '{}' of type '{}' cannot be initialised from "
+                        "an owner of incompatible type '{}'",
+                        {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
+                         arg_type ? arg_type->to_string() : "?"});
+                    return;
+                }
             }
         }
     }

@@ -187,6 +187,16 @@ const std::shared_ptr<variable_statement>& for_statement::get_decl_stmt() const 
 void for_statement::set_decl_stmt(const std::shared_ptr<variable_statement> &decl_stmt) {
     _decl_stmt = decl_stmt;
     set_this_as_parent_to(_decl_stmt);
+    // Also register the variable in _vars so that symbol lookup from the test,
+    // step, and body expressions can find it by walking up the parent chain.
+    // This is needed when set_decl_stmt is called directly (e.g. during template
+    // cloning) instead of going through append_variable+on_variable_defined.
+    if (decl_stmt && !decl_stmt->get_short_name().empty()) {
+        const std::string& name = decl_stmt->get_short_name();
+        if (!_vars.contains(name)) {
+            _vars[name] = decl_stmt;
+        }
+    }
 }
 
 const std::shared_ptr<expression>& for_statement::get_test_expr() const {

@@ -893,14 +893,15 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         // Unified-call-syntax: only when the call is NOT a qualified name.
         // For a qualified call "Base::method(d)", d is already handled above.
-        if (!is_qualified_call && !args.empty()) {
+        // Also skip if this_candidate was already set by implicit-this injection: in that case
+        // the method belongs to the enclosing class, not to the first argument's type.
+        if (!is_qualified_call && !args.empty() && !this_candidate) {
             auto first_arg_type = args[0]->get_type();
             if (type::is_reference(first_arg_type)) {
                 if (auto first_struct = std::dynamic_pointer_cast<struct_type>(first_arg_type->get_subtype())) {
                     auto st = first_struct->get_struct();
-                    this_candidate = args[0];
-                    rest_args = std::vector<std::shared_ptr<expression>>(args.begin() + 1, args.end());
                     // Collect member functions from the aggregate and all its bases (recursively)
+                    size_t before_count = all_candidates.size();
                     std::function<void(const std::shared_ptr<aggregate>&)> collect_member_fns;
                     collect_member_fns = [&](const std::shared_ptr<aggregate>& s) {
                         if (!s) return;
@@ -914,6 +915,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                     };
                     collect_member_fns(st);
+                    // Only activate unified-call-syntax if we actually found new member candidates
+                    if (all_candidates.size() > before_count) {
+                        this_candidate = args[0];
+                        rest_args = std::vector<std::shared_ptr<expression>>(args.begin() + 1, args.end());
+                    }
                 }
             }
         }
