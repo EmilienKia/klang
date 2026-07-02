@@ -1003,6 +1003,34 @@ llvm::Constant* build_annotation_instance_constant(
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: find the byte offset of 'target' aggregate within 'containing',
+// traversing the non-virtual base chain recursively.
+// Returns SIZE_MAX if 'target' is not found.
+// ─────────────────────────────────────────────────────────────────────────────
+static size_t compute_subobject_offset_in(const aggregate& containing,
+                                           const aggregate& target,
+                                           const llvm::DataLayout& dl) {
+    auto* llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(
+        containing.get_struct_type()
+            ? containing.get_struct_type()->get_llvm_type()
+            : nullptr);
+    if (!llvm_type) return SIZE_MAX;
+
+    for (auto& bs : containing.get_bases()) {
+        if (!bs.base || bs.is_virtual) continue;
+        std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
+        auto field_opt = containing.get_struct_type()->get_member(subobj_name);
+        if (!field_opt) continue;
+        size_t field_off = dl.getStructLayout(llvm_type)
+                              ->getElementOffset((unsigned)field_opt->index);
+        if (bs.base.get() == &target) return field_off;
+        size_t inner = compute_subobject_offset_in(*bs.base, target, dl);
+        if (inner != SIZE_MAX) return field_off + inner;
+    }
+    return SIZE_MAX;
+}
+
 } // anonymous namespace
 
 
@@ -2436,26 +2464,101 @@ void implementation_generator::fill_primary_vtable(klass& klass) {
 
     llvm::LLVMContext& llvm_ctx = **_context;
     llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    const llvm::DataLayout& dl = _context->module().getDataLayout();
 
-    // Step 1: Build slot array: RTTI pointer at index 0, function pointers at indices 1..N
-    // ── 1. Fill the primary vtable ─────────────────────────────────────────────
+    // Build slot array: RTTI pointer at index 0, function pointers at indices 1..N.
+    //
+    // For each slot, if the function's owner is a BASE class (not klass itself),
+    // the function was compiled with BaseClass* as 'this'.  The primary vtable is
+    // called with DerivedClass* as 'this', which is WRONG when the base is embedded
+    // at a non-zero offset.  Create a forward this-adjustment thunk: add the byte
+    // offset of the base sub-object to get the BaseClass* pointer, then call the
+    // actual function.  This mirrors the reverse-adjustment thunks in secondary
+    // vtables, but in the forward direction (Derived* → Base*).
     {
         std::vector<llvm::Constant*> vtable_init;
-        // Slot 0: RTTI pointer (use the RTTI global stored on the vtable layout)
+        // Slot 0: RTTI
         llvm::Constant* rtti_slot = vt->llvm_rtti_global
             ? llvm::cast<llvm::Constant>(vt->llvm_rtti_global)
             : llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
         vtable_init.push_back(rtti_slot);
+
         for (auto& entry : vt->entries) {
-            // Step 2: For each vtable entry, resolve the LLVM function (or use null for abstract slots)
             llvm::Function* llvm_func = _context->lookup_llvm_function(entry.func);
-            if (llvm_func) {
-                vtable_init.push_back(llvm_func);
-            } else {
-                vtable_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
+            if (!llvm_func) {
+                vtable_init.push_back(llvm::ConstantPointerNull::get(
+                    llvm::cast<llvm::PointerType>(ptr_ty)));
+                continue;
             }
+
+            // Check if a forward this-adjustment thunk is needed.
+            // A thunk is needed when entry.func belongs to a base class (not klass),
+            // and that base class is at a non-zero byte offset within klass.
+            if (entry.func) {
+                auto owner = entry.func->get_owner();
+                if (owner && owner.get() != static_cast<const aggregate*>(&klass)) {
+                    size_t adj = compute_subobject_offset_in(klass, *owner, dl);
+                    if (adj > 0 && adj != SIZE_MAX) {
+                        // Create (or reuse) the forward thunk.
+                        std::string thunk_name = llvm_func->getName().str()
+                            + "_fwdthunk_adj" + std::to_string(adj);
+                        llvm::Function* thunk = _context->module().getFunction(thunk_name);
+                        if (!thunk) {
+                            llvm::FunctionType* fn_ty = llvm_func->getFunctionType();
+                            thunk = llvm::Function::Create(fn_ty,
+                                llvm::Function::InternalLinkage,
+                                thunk_name, _context->module());
+
+                            llvm::BasicBlock* bb = llvm::BasicBlock::Create(
+                                llvm_ctx, "entry", thunk);
+                            llvm::IRBuilder<> tb(bb);
+
+                            bool has_sret = llvm_func->hasParamAttribute(
+                                0, llvm::Attribute::StructRet);
+                            unsigned this_idx = has_sret ? 1 : 0;
+
+                            // Copy sret attribute if present
+                            if (has_sret) {
+                                auto sret_type = llvm_func->getParamAttribute(
+                                    0, llvm::Attribute::StructRet).getValueAsType();
+                                thunk->addParamAttr(0,
+                                    llvm::Attribute::getWithStructRetType(
+                                        llvm_ctx, sret_type));
+                            }
+
+                            llvm::Type* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+                            std::vector<llvm::Value*> fwd_args;
+                            for (unsigned i = 0; i < thunk->arg_size(); ++i) {
+                                llvm::Argument* arg = thunk->getArg(i);
+                                if (i == this_idx) {
+                                    // Add offset: Derived* → Base*
+                                    auto* as_i64 = tb.CreatePtrToInt(
+                                        arg, i64_ty, "this_i64");
+                                    auto* adj_i64 = tb.CreateAdd(as_i64,
+                                        llvm::ConstantInt::get(i64_ty, adj),
+                                        "this_adj_i64");
+                                    fwd_args.push_back(tb.CreateIntToPtr(
+                                        adj_i64, ptr_ty, "this_adj"));
+                                } else {
+                                    fwd_args.push_back(arg);
+                                }
+                            }
+                            if (fn_ty->getReturnType()->isVoidTy()) {
+                                tb.CreateCall(fn_ty, llvm_func, fwd_args);
+                                tb.CreateRetVoid();
+                            } else {
+                                tb.CreateRet(tb.CreateCall(
+                                    fn_ty, llvm_func, fwd_args, "ret"));
+                            }
+                        }
+                        llvm_func = thunk;
+                    }
+                }
+            }
+
+            vtable_init.push_back(llvm_func);
         }
-        // Step 3: Create ConstantStruct and set as initializer on the vtable global
+
         llvm::Constant* new_init = llvm::ConstantStruct::get(vt->llvm_type, vtable_init);
         vt->llvm_global->setInitializer(new_init);
     }
