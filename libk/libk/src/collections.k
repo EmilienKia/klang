@@ -34,28 +34,28 @@ interface Collection {
      *
      * @return Element count.
      */
-    getSize() : int;
+    const getSize() : int;
 
     /**
      * Tell whether the collection is empty.
      *
      * @return `true` when no element is stored.
      */
-    isEmpty() : bool;
+    const isEmpty() : bool;
 
     /**
      * Insert a value at the front of the collection.
      *
      * @param value Value to insert.
      */
-    pushFront(value : T&);
+    pushFront(value : const T&);
 
     /**
      * Insert a value at the back of the collection.
      *
      * @param value Value to insert.
      */
-    pushBack(value : T&);
+    pushBack(value : const T&);
 
     /**
      * Insert a copy of value at the given index.
@@ -65,7 +65,7 @@ interface Collection {
      * @param index Target insertion index.
      * @param value Value to insert.
      */
-    insert(index : int, value : T&);
+    insert(index : int, value : const T&);
 
     /**
      * Return a mutable reference to the front element.
@@ -88,6 +88,22 @@ interface Collection {
      * @return Element reference at `index`.
      */
     get(index : int) : T&;
+
+    /**
+     * Return a const reference to an element at a given index.
+     *
+     * @param index Zero-based element index.
+     * @return Const element reference at `index`.
+     */
+    const get(index : int) : const T&;
+
+    /**
+     * Subscript operator — const access by index.
+     *
+     * @param index Zero-based element index.
+     * @return Const element reference at `index`.
+     */
+    const operator [](index : int) : const T&;
 
     /**
      * Remove the front element.
@@ -194,7 +210,7 @@ class LinkedList : public Collection<T> {
             return _slot.get();
         }
 
-        setValue(value : T&) {
+        setValue(value : const T&) {
             _slot.get() = value;
         }
     }
@@ -238,7 +254,7 @@ class LinkedList : public Collection<T> {
      *
      * @param value Value to insert.
      */
-    pushFront(value : T&) {
+    pushFront(value : const T&) {
         node : LinkedListNode! = new LinkedListNode();
         node.setValue(value);
         node._next = _head;
@@ -254,7 +270,7 @@ class LinkedList : public Collection<T> {
      *
      * @param value Value to insert.
      */
-    pushBack(value : T&) {
+    pushBack(value : const T&) {
         node : LinkedListNode! = new LinkedListNode();
         node.setValue(value);
         if (_tail != null) {
@@ -300,7 +316,7 @@ class LinkedList : public Collection<T> {
      * @param index Target insertion index.
      * @param value Value to insert.
      */
-    insert(index : int, value : T&) {
+    insert(index : int, value : const T&) {
         node : LinkedListNode! = new LinkedListNode();
         node.setValue(value);
         if (index <= 0) {
@@ -424,6 +440,17 @@ class LinkedList : public Collection<T> {
 
     /** Return a mutable reference to the element at the given index. O(n). Undefined if out of bounds. */
     get(index : int) : T& {
+        current : LinkedListNode* = _head;
+        i : int = 0;
+        while (i < index) {
+            current = current->_next;
+            i = i + 1;
+        }
+        return current->getValue();
+    }
+
+    /** Return a const reference to the element at the given index. O(n). Undefined if out of bounds. */
+    const get(index : int) : const T& {
         current : LinkedListNode* = _head;
         i : int = 0;
         while (i < index) {
@@ -565,7 +592,7 @@ class DoubleLinkedList : public Collection<T> {
             return _slot.get();
         }
 
-        setValue(value : T&) {
+        setValue(value : const T&) {
             _slot.get() = value;
         }
     }
@@ -597,7 +624,7 @@ class DoubleLinkedList : public Collection<T> {
     }
 
     /** Insert a copy of value at the front of the list. */
-    pushFront(value : T&) {
+    pushFront(value : const T&) {
         node : DoubleLinkedListNode! = new DoubleLinkedListNode();
         node.setValue(value);
         node._prev = null;
@@ -612,7 +639,7 @@ class DoubleLinkedList : public Collection<T> {
     }
 
     /** Insert a copy of value at the back of the list. */
-    pushBack(value : T&) {
+    pushBack(value : const T&) {
         node : DoubleLinkedListNode! = new DoubleLinkedListNode();
         node.setValue(value);
         node._prev = _tail;
@@ -656,7 +683,7 @@ class DoubleLinkedList : public Collection<T> {
      * If index <= 0, inserts at the front.
      * If index >= size, inserts at the back.
      */
-    insert(index : int, value : T&) {
+    insert(index : int, value : const T&) {
         if (index <= 0) {
             // Insert at front
             node : DoubleLinkedListNode! = new DoubleLinkedListNode();
@@ -869,6 +896,30 @@ class DoubleLinkedList : public Collection<T> {
     }
 
     /**
+     * Return a const reference to the element at the given index.
+     * Searches from the nearest end. Undefined if out of bounds.
+     */
+    const get(index : int) : const T& {
+        if (index <= _size / 2) {
+            current : DoubleLinkedListNode* = _head;
+            i : int = 0;
+            while (i < index) {
+                current = current->_next;
+                i = i + 1;
+            }
+            return current->getValue();
+        } else {
+            current : DoubleLinkedListNode* = _tail;
+            i : int = _size - 1;
+            while (i > index) {
+                current = current->_prev;
+                i = i - 1;
+            }
+            return current->getValue();
+        }
+    }
+
+    /**
      * Subscript operator — mutable access by index.
      * Searches from the nearest end. Undefined if out of bounds.
      */
@@ -1037,7 +1088,7 @@ class Vector : public Collection<T> {
     }
 
     /** Insert a copy of value at the back of the vector. Amortized O(1). */
-    pushBack(value : T&) {
+    pushBack(value : const T&) {
         if (_size == _capacity) {
             grow(_size + 1);
         }
@@ -1048,7 +1099,7 @@ class Vector : public Collection<T> {
     }
 
     /** Insert a copy of value at the front of the vector. O(n). */
-    pushFront(value : T&) {
+    pushFront(value : const T&) {
         insert(0, value);
     }
 
@@ -1059,7 +1110,7 @@ class Vector : public Collection<T> {
     }
 
     pushFrontAll(coll : const T[]&) {
-        for (i : int = coll.getSize() - 1; i >= 0; i = i - 1) {
+        for (i : int = coll.size - 1; i >= 0; i = i - 1) {
             pushFront(coll[i]);
         }
     }
@@ -1071,7 +1122,7 @@ class Vector : public Collection<T> {
     }
 
     pushBackAll(coll : const T[]&) {
-        for (i : int = 0; i < coll.getSize(); i = i + 1) {
+        for (i : int = 0; i < coll.size; i = i + 1) {
             pushBack(coll[i]);
         }
     }
@@ -1092,7 +1143,7 @@ class Vector : public Collection<T> {
      * If index <= 0, inserts at the front.
      * If index >= size, inserts at the back.
      */
-    insert(index : int, value : T&) {
+    insert(index : int, value : const T&) {
         if (index < 0) { index = 0; }
         if (index > _size) { index = _size; }
         if (_size == _capacity) {
