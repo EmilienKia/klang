@@ -1312,6 +1312,7 @@ std::vector<lex::keyword> parser::parse_specifiers()
                 lex::keyword::CONST,
                 lex::keyword::ABSTRACT,
                 lex::keyword::FINAL,
+                lex::keyword::DEFAULT,
                 lex::keyword::OVERRIDE>(lkw)
         ) {
             res.push_back(lex::as<lex::keyword>(lkw));

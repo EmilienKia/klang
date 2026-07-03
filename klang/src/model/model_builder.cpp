@@ -1254,9 +1254,57 @@ namespace k::model {
             function->set_override_specifier(true);
         }
 
+        // Propagate 'default' specifier: interface default method (concrete implementation).
+        // A default method is a concrete, virtual member function declared inside an
+        // interface with the 'default' prefix specifier. Derived classes that do not
+        // override it inherit its implementation through the vtable.
+        bool func_is_default = lex::keyword::has(func.specifiers, lex::keyword::DEFAULT);
+        if (func_is_default) {
+            auto owner_iface = std::dynamic_pointer_cast<model::interface>(current_context_content<model::aggregate>());
+            if (!owner_iface) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_OUTSIDE_INTERFACE), func.name,
+                    "The 'default' specifier is only allowed on interface member functions; "
+                    "function '{}' is not declared inside an interface",
+                    {func_name});
+            }
+            if (std::dynamic_pointer_cast<model::constructor>(function)
+                || std::dynamic_pointer_cast<model::destructor>(function)
+                || func.is_destructor) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_ON_CTOR_DTOR), func.name,
+                    "The 'default' specifier is not allowed on constructor or destructor '{}'",
+                    {func_name});
+            }
+            if (is_static) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_INVALID_SPECIFIER), func.name,
+                    "Function '{}' cannot be both 'default' and 'static': a default method requires virtual dispatch",
+                    {func_name});
+            }
+            if (is_final_func) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_INVALID_SPECIFIER), func.name,
+                    "Function '{}' cannot be both 'default' and 'final'",
+                    {func_name});
+            }
+            if (lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT) || function->is_abstract_func()) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_INVALID_SPECIFIER), func.name,
+                    "Function '{}' cannot be both 'default' and 'abstract': a default method provides a concrete body",
+                    {func_name});
+            }
+            if (func.aliasing_spec != parse::ast::function_decl::aliasing_spec_t::NONE) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_INVALID_SPECIFIER), func.name,
+                    "The 'default' specifier cannot be combined with a '-> default/delete/redirect' aliasing on function '{}'",
+                    {func_name});
+            }
+            if (!func.content) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_REQUIRES_BODY), func.name,
+                    "Default method '{}' must have a body; a default interface method provides a concrete implementation",
+                    {func_name});
+            }
+            function->set_default_method(true);
+        }
+
         // Implicitly mark member functions inside an interface as abstract
-        // (non-static, non-ctor/dtor, non-final functions that have no body)
-        if (!lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT)) {
+        // (non-static, non-ctor/dtor, non-final, non-default functions that have no body)
+        if (!lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT) && !func_is_default) {
             if (auto owner_iface = std::dynamic_pointer_cast<model::interface>(current_context_content<model::aggregate>())) {
                 if (!is_static
                     && !func.is_destructor
@@ -1264,9 +1312,10 @@ namespace k::model {
                     && !std::dynamic_pointer_cast<model::destructor>(function)
                     && !is_final_func) {
                     if (func.content) {
-                        // Interface member functions must not have a body
+                        // Interface member functions must not have a body unless declared 'default'
                         throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_PARAM_IN_BODY), func.name,
-                            "Function '{}' inside interface '{}' must not have a body; interface member functions are implicitly abstract",
+                            "Function '{}' inside interface '{}' must not have a body; interface member functions are "
+                            "implicitly abstract (use the 'default' specifier to provide a default implementation)",
                             {func_name, owner_iface->get_short_name()});
                     }
                     function->set_abstract_func(true);
@@ -1289,6 +1338,13 @@ namespace k::model {
                 vis = model::PRIVATE;
             }
             function->set_visibility(vis);
+        }
+
+        // Post-visibility check: default method cannot be private (private functions are never virtual)
+        if (function->is_default_method() && function->get_visibility() == model::PRIVATE) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_ON_PRIVATE), func.name,
+                "Function '{}' cannot be both 'default' and 'private': a default method must be publicly or protectedly accessible for overriding",
+                {func_name});
         }
 
         // Post-visibility check: abstract cannot be private (private functions are never virtual)

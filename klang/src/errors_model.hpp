@@ -87,6 +87,12 @@ enum class model_diag : unsigned int {
     ERR_OVERRIDE_ON_STRUCT                        = 0x017B,
     ERR_BREAK_NOT_IN_LOOP                         = 0x017C,
     ERR_CONTINUE_NOT_IN_LOOP                      = 0x017D,
+    // Interface default methods ('default' prefix specifier)
+    ERR_DEFAULT_OUTSIDE_INTERFACE                 = 0x018B,
+    ERR_DEFAULT_REQUIRES_BODY                     = 0x018C,
+    ERR_DEFAULT_INVALID_SPECIFIER                 = 0x018D,
+    ERR_DEFAULT_ON_PRIVATE                        = 0x018E,
+    ERR_DEFAULT_ON_CTOR_DTOR                      = 0x018F,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -867,7 +867,7 @@ Classes have an RTTI slot in the vtable (slot 0). Downcast via explicit cast `(D
 { Specifier } 'interface' Identifier [ ':' BaseClause ] '{' { Declaration } '}'
 ```
 
-- All methods are implicitly abstract (no body).
+- All methods are implicitly abstract (no body), unless declared `default` (see §13.1).
 - No fields, constructors, destructors.
 - All methods are implicitly `public`.
 - Can only inherit from other interfaces.
@@ -876,6 +876,39 @@ Classes have an RTTI slot in the vtable (slot 0). Downcast via explicit cast `(D
 - `abstract` accepted but redundant (warning).
 - `final` prevents inheritance.
 - Multiple implementation (a class can implement several interfaces).
+
+### 13.1 Default Methods (`default`)
+
+An interface member function declared with the `default` prefix specifier and a
+body is a **default method**: a concrete, virtual method (mangled and emitted
+normally). A class that implements the interface but does **not** override it
+inherits the default implementation through its vtable slot, and therefore does
+not need to be `abstract`.
+
+```
+interface Greeter {
+    name() : string;                                 // abstract contract
+    default greet() : string {                       // default implementation
+        return "hello, " + this.name();              // may call abstract/default methods
+    }
+}
+class French : public Greeter {
+    name() override : string { return "monde"; }     // greet() is inherited
+}
+```
+
+- Only valid on interface member functions, and a body is required.
+- Incompatible with `static`, `final`, `abstract`, `private`, constructors,
+  destructors and `-> default/delete/redirect`.
+- A default body may call other (abstract or default) methods of the interface;
+  those dispatch dynamically to the concrete implementation.
+- **Template interfaces**: a default method of a `template<...>` interface is not
+  synthesised at the definition site; it is synthesised (with `linkonce_odr`
+  linkage) for each concrete instantiation, exactly like every other template
+  member method.
+- **Cross-module**: for a non-template interface the default method symbol lives
+  in the interface's library; an implementing class in another module references
+  it through the imported vtable slot and links against that library.
 
 ---
 

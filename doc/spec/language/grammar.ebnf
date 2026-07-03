@@ -645,8 +645,12 @@ Initialiser
 
 Specifier
     = 'public' | 'protected' | 'private'
-    | 'static' | 'const' | 'abstract' | 'final' | 'override'
+    | 'static' | 'const' | 'abstract' | 'final' | 'override' | 'default'
     ;
+    (* 'default' as a prefix specifier marks an interface member function as a   *)
+    (* default method: a concrete, virtual method with a body that derived        *)
+    (* classes inherit unless they override it. It is only valid on interface     *)
+    (* member functions and requires a body.                                      *)
 
 (* ---------- Type Specifiers ---------------------------------------------- *)
 

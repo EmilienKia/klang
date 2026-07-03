@@ -825,6 +825,7 @@ void k_source_emitter::emit_function(const function& fn) {
     // Note: do NOT emit 'virtual' — in K, class methods are virtual by default
     // and 'virtual' is not a valid K specifier keyword.
     if (fn.is_abstract_func()) _os << "abstract ";
+    if (fn.is_default_method()) _os << "default ";
 
     _os << fn.get_short_name();
     emit_parameter_list(fn);

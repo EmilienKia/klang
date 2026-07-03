@@ -172,6 +172,14 @@ protected:
     bool _is_override_specifier = false;
 
     /**
+     * True if this function is an interface default method: a concrete member
+     * function declared with the 'default' prefix specifier inside an interface.
+     * Such a method has a body, is virtual (participates in the vtable) and is
+     * NOT abstract. Derived classes that do not override it inherit its slot.
+     */
+    bool _is_default_method = false;
+
+    /**
      * True if this function is an FFI extern function: it has no body, no K mangling,
      * and is resolved at link time from an external library.
      * Set automatically by set_extern_c_symbol().
@@ -396,6 +404,14 @@ public:
     bool is_override_specifier() const { return _is_override_specifier; }
     /** Set whether this function has the 'override' specifier. */
     void set_override_specifier(bool v) { _is_override_specifier = v; }
+
+    /**
+     * True if this function is an interface default method (declared with the
+     * 'default' prefix specifier inside an interface). It is concrete and virtual.
+     */
+    bool is_default_method() const { return _is_default_method; }
+    /** Set whether this function is an interface default method. */
+    void set_default_method(bool v) { _is_default_method = v; }
 
     /**
      * True if this function is an FFI extern function (resolved at link time

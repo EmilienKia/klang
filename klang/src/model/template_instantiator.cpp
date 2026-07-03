@@ -960,6 +960,7 @@ void template_instantiator::clone_method(
     new_func->set_abstract_func(src.is_abstract_func());
     new_func->set_final_func(src.is_final_func());
     new_func->set_override_specifier(src.is_override_specifier());
+    new_func->set_default_method(src.is_default_method());
     new_func->set_aliasing(src.get_aliasing());
     new_func->set_compiler_generated(src.is_compiler_generated());
 

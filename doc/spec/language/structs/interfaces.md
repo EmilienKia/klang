@@ -12,6 +12,7 @@ It defines a set of methods that any implementing class must provide.
 | Fields                               | ✗ Not allowed                                    |
 | Constructors / destructors           | ✗ Not allowed                                    |
 | Method bodies                        | ✗ Not allowed (methods are implicitly abstract)  |
+| Default methods (`default`)          | ✓ Concrete virtual method with a body (see §5b)  |
 | Inherits from                        | Other interfaces only                            |
 | `abstract` specifier                 | ✓ Accepted but redundant (warning)               |
 | Default member visibility            | `public`                                         |
@@ -25,6 +26,7 @@ It defines a set of methods that any implementing class must provide.
 3. [Virtual dispatch through an interface reference](#3-virtual-dispatch-through-an-interface-reference)
 4. [Interface extending another interface](#4-interface-extending-another-interface)
 5. [Multiple interface implementation](#5-multiple-interface-implementation)
+5b. [Default methods (`default`)](#5b-default-methods-default)
 6. [Partial implementation — abstract class](#6-partial-implementation--abstract-class)
 7. [Nested interfaces](#7-nested-interfaces)
 8. [Implicit `abstract` and redundancy warnings](#8-implicit-abstract-and-redundancy-warnings)
@@ -60,7 +62,7 @@ interface Shape {
 ```
 
 **Rules:**
-- All methods in an interface are implicitly abstract — they **must not** have a body `{ … }`.
+- All methods in an interface are implicitly abstract — they **must not** have a body `{ … }`, unless declared `default` (see §5b).
 - All methods are implicitly public.  Explicit visibility sections are allowed, but `private` abstract methods are an error (§10).
 - No fields, constructors, or destructors are allowed.
 
@@ -193,6 +195,74 @@ test_write() : int { b: Buffer; return b.write(); }   // → 2
 
 ---
 
+## 5b. Default methods (`default`)
+
+A member function declared with the **`default`** prefix specifier and a body is
+a *default method*: a **concrete, virtual** method (mangled and emitted like any
+other method). A class that implements the interface but does **not** override
+the method inherits the default implementation through its vtable slot — and
+therefore does not need to be declared `abstract`.
+
+```k
+module greet;
+
+interface Greeter {
+    base() : int;
+    default greeting() : int {          // default implementation
+        return this.base() + 5;         // may call abstract or default methods
+    }
+}
+
+class Hello : public Greeter {
+    Hello() {}
+    base() : int { return 37; }         // greeting() is inherited from Greeter
+}
+
+test() : int { h: Hello; return h.greeting(); }   // → 42
+```
+
+**Rules:**
+- `default` is only valid on interface member functions, and a **body is required**.
+- It is incompatible with `static`, `final`, `abstract`, `private`,
+  constructors, destructors and `-> default/delete/redirect`.
+- A default body may call other (abstract or default) methods of the interface;
+  those calls dispatch dynamically to the most-derived implementation.
+- A class **may** override a default method (with or without the `override`
+  specifier); the override then wins.
+- A sub-interface may provide (or replace) a default for a method declared in a
+  parent interface.
+
+### Template interfaces
+
+For a `template<…>` interface, a default method is **not** synthesised at the
+definition site. It is synthesised — with `linkonce_odr` linkage — for each
+concrete instantiation, exactly like every other template member method. This
+covers the case where the default method's prototype or body depends on a
+template parameter:
+
+```k
+template<typename T>
+interface Box {
+    get() : T;
+    default getOrTwice() : T { return this.get() + this.get(); }
+}
+
+class IntBox : public Box<int> {
+    IntBox() {}
+    get() : int { return 21; }
+}
+
+test() : int { b: IntBox; return b.getOrTwice(); }   // → 42
+```
+
+### Cross-module
+
+For a non-template interface the default method symbol lives in the interface's
+library. An implementing class in another module references it through the
+imported vtable slot and links against that library automatically.
+
+---
+
 ## 6. Partial implementation — abstract class
 
 A class may implement *some* of the interface methods and leave the rest to its subclasses, as long as it is itself declared `abstract`.
@@ -295,7 +365,7 @@ Explicitly combining `abstract` and `static` is an error (`0x20024`).
 | Can be instantiated             | ✓                    | ✓ (if not abstract)      | ✗ Never                  |
 | Fields                          | ✓                    | ✓                        | ✗                        |
 | Constructors / destructors      | ✓                    | ✓                        | ✗                        |
-| Method bodies                   | ✓                    | ✓                        | ✗ (methods are abstract) |
+| Method bodies                   | ✓                    | ✓                        | Only `default` methods   |
 | `abstract` specifier            | ✗ Error              | ✓                        | Redundant (warning)      |
 | May inherit from                | `struct` only        | `class` only             | `interface` only         |
 | May be used as base by          | `struct`             | `class`                  | `class`, `interface`     |
@@ -315,6 +385,11 @@ Explicitly combining `abstract` and `static` is an error (`0x20024`).
 | `0x20026`  | Model builder  | Interface method has a body `{ … }` (implicit or explicit abstract)        |
 | `0x20029`  | Model builder  | `abstract` interface method has `private` visibility                       |
 | `0x2002C`  | Model builder  | Non-abstract interface method (`final` or `static`) has no body            |
+| `0x0018B`  | Model builder  | `default` specifier used outside an interface                              |
+| `0x0018C`  | Model builder  | `default` method has no body                                               |
+| `0x0018D`  | Model builder  | `default` combined with `static`, `final`, `abstract` or an aliasing `->`  |
+| `0x0018E`  | Model builder  | `default` method has `private` visibility                                  |
+| `0x0018F`  | Model builder  | `default` used on a constructor or destructor                              |
 | `0x30039`  | Symbol resolver| Class inherits unimplemented interface methods but is not `abstract`       |
 | `0x40032`  | Type resolver  | Direct instantiation of an interface                                       |
 
@@ -333,6 +408,11 @@ When a module containing an interface is compiled into a library, the interface
 is exported in full in the **KDI** description file.  Interface members are
 always `public` (the only meaningful visibility), so every method signature and
 its vtable slot index are exported.
+
+Default methods (§5b) are exported as **concrete** (non-abstract) vtable slots
+carrying the mangled symbol of their implementation. A consumer that inherits
+the interface without overriding a default method references that symbol through
+the imported vtable slot and links against the interface's library.
 
 **A consumer may:**
 - Implement the interface (`class MyClass : public mylib::IFoo { … }`).
