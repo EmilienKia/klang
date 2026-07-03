@@ -64,14 +64,14 @@ public:
         return ::k::Optional<O>();
     }
 
-    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
         }
         if (actual == 0) {
             zero : unsigned int = 0;
-            return Expected<unsigned int, int>::expected(zero);
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
         }
 
         written : unsigned int = 0;
@@ -83,10 +83,10 @@ public:
             buf[off + written] = next.get();
             written = written + 1;
         }
-        return Expected<unsigned int, int>::expected(written);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
 
-    read(buf: O[]) : Expected<unsigned int, int> {
+    read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
@@ -102,7 +102,7 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, int> {
+    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 
@@ -143,14 +143,14 @@ public:
         return ::k::Optional<O>();
     }
 
-    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
         }
         if (actual == 0) {
             zero : unsigned int = 0;
-            return Expected<unsigned int, int>::expected(zero);
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
         }
 
         written : unsigned int = 0;
@@ -173,10 +173,10 @@ public:
                 written = written + 1;
             }
         }
-        return Expected<unsigned int, int>::expected(written);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
 
-    read(buf: O[]) : Expected<unsigned int, int> {
+    read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
@@ -202,7 +202,7 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, int> {
+    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 
@@ -248,14 +248,14 @@ public:
         return ::k::Optional<O>();
     }
 
-    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
         }
         if (actual == 0) {
             zero : unsigned int = 0;
-            return Expected<unsigned int, int>::expected(zero);
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
         }
 
         written : unsigned int = 0;
@@ -267,10 +267,10 @@ public:
             buf[off + written] = next.get();
             written = written + 1;
         }
-        return Expected<unsigned int, int>::expected(written);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
 
-    read(buf: O[]) : Expected<unsigned int, int> {
+    read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
@@ -286,7 +286,7 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, int> {
+    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 
@@ -329,14 +329,14 @@ public:
         return ::k::Optional<O>();
     }
 
-    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
         }
         if (actual == 0) {
             zero : unsigned int = 0;
-            return Expected<unsigned int, int>::expected(zero);
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
         }
 
         written : unsigned int = 0;
@@ -360,10 +360,10 @@ public:
                 written = written + 1;
             }
         }
-        return Expected<unsigned int, int>::expected(written);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
 
-    read(buf: O[]) : Expected<unsigned int, int> {
+    read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
@@ -390,7 +390,7 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, int> {
+    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 

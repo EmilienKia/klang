@@ -21,6 +21,28 @@ module k;
 namespace io {
 
 /**
+ * Error codes for stream read/available operations.
+ *
+ * Represents possible error conditions returned by InputStream methods
+ * via Expected<T, StreamOutOfData>.
+ */
+public enum StreamOutOfData {
+    /**
+     * Stream reached end-of-data while open.
+     * Returned when a read request cannot be fully satisfied because there
+     * is no more data, but the stream itself is still open.
+     */
+    OutOfData;
+
+    /**
+     * Stream is closed or in a broken state.
+     * Operations on a closed stream will fail with this error.
+     */
+    Closed;
+}
+
+
+/**
  * Define the base contract for byte-oriented input streams.
  *
  * `read()` returns the next byte as an `Optional<byte>`, set when a byte was
@@ -37,24 +59,24 @@ public interface InputStream {
      */
     read() : ::k::Optional<T>;
 
-    /**
-     * Read up to `len` values into `buf` starting at `off`.
-     *
-     * @param buf Destination buffer.
-     * @param off Destination start offset.
-     * @param len Maximum number of values to read.
-     * @return Expected containing the number of values read (0 = EOS while open),
-     *         or an error code when the stream is closed/broken.
-     */
-    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int>;
+     /**
+      * Read up to `len` values into `buf` starting at `off`.
+      *
+      * @param buf Destination buffer.
+      * @param off Destination start offset.
+      * @param len Maximum number of values to read.
+      * @return Expected containing the number of values read (0 = EOS while open),
+      *         or a ::k::io::StreamOutOfData when the stream is closed/broken.
+      */
+     read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData>;
 
-    /**
-     * Read up to `buf.size` values into `buf`.
-     *
-     * @param buf Destination buffer.
-     * @return Expected containing the number of values read.
-     */
-    read(buf: T[]) : Expected<unsigned int, int>;
+     /**
+      * Read up to `buf.size` values into `buf`.
+      *
+      * @param buf Destination buffer.
+      * @return Expected containing the number of values read.
+      */
+     read(buf: T[]) : Expected<unsigned int, ::k::io::StreamOutOfData>;
 
     /**
      * Skip and discard up to `n` values.
@@ -64,13 +86,13 @@ public interface InputStream {
      */
     skip(n: unsigned long) : unsigned long;
 
-    /**
-     * Return a non-blocking availability estimate.
-     *
-     * @return Expected containing the number of values readable without blocking,
-     *         or an error code when the stream is closed/broken.
-     */
-    available() : Expected<unsigned int, int>;
+     /**
+      * Return a non-blocking availability estimate.
+      *
+      * @return Expected containing the number of values readable without blocking,
+      *         or a ::k::io::StreamOutOfData when the stream is closed/broken.
+      */
+     available() : Expected<unsigned int, ::k::io::StreamOutOfData>;
 
     /**
      * Close the stream and release any associated resources.
@@ -128,5 +150,3 @@ public interface OutputStream {
 
 
 } // namespace io
-
-

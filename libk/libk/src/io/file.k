@@ -235,23 +235,27 @@ public:
         return result;
     }
 
-    read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+    read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         if (_fp == null) {
-            return Expected<unsigned int, int>::error(1);  // 1 = CLOSED
+            err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::Closed;
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::error(err);
         }
         if (len == 0) {
             zero : unsigned int = 0;
-            return Expected<unsigned int, int>::expected(zero);
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
         }
-        n : int = __k_io_file_fread(_fp, &buf[off], (int) len);
-        if (n < 0) {
-            return Expected<unsigned int, int>::error(3);  // 3 = I/O error
-        }
+         n : int = __k_io_file_fread(_fp, &buf[off], (int) len);
+         if (n < 0) {
+             // TODO: IO error should be thrown as an exception, not returned via Expected
+             // For now, treat it as closed stream temporarily
+             err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::Closed;
+             return Expected<unsigned int, ::k::io::StreamOutOfData>::error(err);
+         }
         actual : unsigned int = (unsigned int) n;
-        return Expected<unsigned int, int>::expected(actual);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(actual);
     }
 
-    read(buf: byte[]) : Expected<unsigned int, int> {
+    read(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
@@ -264,9 +268,9 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, int> {
+    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         zero : unsigned int = 0;
-        return Expected<unsigned int, int>::expected(zero);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
     }
 
     close() {
@@ -391,6 +395,4 @@ public:
 }
 
 } // namespace io
-
-
 

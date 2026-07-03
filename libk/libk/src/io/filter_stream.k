@@ -49,11 +49,11 @@ public:
         return _in->read();
     }
 
-    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->read(buf, off, len);
     }
 
-    read(buf: T[]) : Expected<unsigned int, int> {
+    read(buf: T[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->read(buf);
     }
 
@@ -61,7 +61,7 @@ public:
         return _in->skip(n);
     }
 
-    available() : Expected<unsigned int, int> {
+    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 

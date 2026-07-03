@@ -68,10 +68,10 @@ public:
         return result;
     }
 
-    read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+    read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         if (len == 0) {
             zero : unsigned int = 0;
-            return Expected<unsigned int, int>::expected(zero);
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
         }
         totalRead : unsigned int = 0;
         remaining : unsigned int = len;
@@ -82,25 +82,25 @@ public:
             if (_bpos >= _bcount) {
                 // If request is larger than buffer, read directly
                 if (remaining >= (unsigned int) _bsize) {
-                    nResult : Expected<unsigned int, int> = _in->read(buf, dstOff, remaining);
+                    nResult : Expected<unsigned int, ::k::io::StreamOutOfData> = _in->read(buf, dstOff, remaining);
                     if (nResult.hasError()) {
                         if (totalRead > 0) {
-                            return Expected<unsigned int, int>::expected(totalRead);
+                            return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(totalRead);
                         }
                         return nResult;
                     }
                     n : unsigned int = nResult.getResult();
                     if (n == 0) {
                         // EOS
-                        return Expected<unsigned int, int>::expected(totalRead);
+                        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(totalRead);
                     }
                     totalRead = totalRead + n;
-                    return Expected<unsigned int, int>::expected(totalRead);
+                    return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(totalRead);
                 }
                 _fill();
                 if (_bpos >= _bcount) {
                     // EOS after refill
-                    return Expected<unsigned int, int>::expected(totalRead);
+                    return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(totalRead);
                 }
             }
             // Copy from internal buffer
@@ -117,21 +117,21 @@ public:
             remaining = remaining - toCopy;
             totalRead = totalRead + toCopy;
         }
-        return Expected<unsigned int, int>::expected(totalRead);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(totalRead);
     }
 
-    read(buf: byte[]) : Expected<unsigned int, int> {
+    read(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    available() : Expected<unsigned int, int> {
+    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         buffered : unsigned int = (unsigned int) (_bcount - _bpos);
-        underlying : Expected<unsigned int, int> = _in->available();
+        underlying : Expected<unsigned int, ::k::io::StreamOutOfData> = _in->available();
         if (underlying.hasError()) {
             return underlying;
         }
         total : unsigned int = buffered + underlying.getResult();
-        return Expected<unsigned int, int>::expected(total);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(total);
     }
 
     skip(n: unsigned long) : unsigned long {
@@ -156,7 +156,7 @@ private:
     _fill() {
         _bpos = 0;
         _bcount = 0;
-        nResult : Expected<unsigned int, int> = _in->read(_bbuf, 0, (unsigned int) _bsize);
+        nResult : Expected<unsigned int, ::k::io::StreamOutOfData> = _in->read(_bbuf, 0, (unsigned int) _bsize);
         if (nResult.hasResult()) {
             n : unsigned int = nResult.getResult();
             if (n > 0) {

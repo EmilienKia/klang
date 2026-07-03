@@ -67,18 +67,18 @@ public:
         return ::k::Optional<T>(val);
     }
 
-    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         if (_pos >= _count) {
             // End-of-stream: return 0 bytes read (not an error — stream is open)
             zero : unsigned int = 0;
-            return Expected<unsigned int, int>::expected(zero);
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
         }
         avail : unsigned int = (unsigned int) (_count - _pos);
         actual : unsigned int = len;
         if (actual > avail) actual = avail;
         if (actual == 0) {
             zero : unsigned int = 0;
-            return Expected<unsigned int, int>::expected(zero);
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
         }
         i : unsigned int = 0;
         while (i < actual) {
@@ -86,10 +86,10 @@ public:
             i = i + 1;
         }
         _pos = _pos + (int) actual;
-        return Expected<unsigned int, int>::expected(actual);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(actual);
     }
 
-    read(buf: T[]) : Expected<unsigned int, int> {
+    read(buf: T[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
@@ -101,9 +101,9 @@ public:
         return actual;
     }
 
-    available() : Expected<unsigned int, int> {
+    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         avail : unsigned int = (unsigned int) (_count - _pos);
-        return Expected<unsigned int, int>::expected(avail);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(avail);
     }
 
     close() {
@@ -232,6 +232,5 @@ private:
 
 
 } // namespace io
-
 
 

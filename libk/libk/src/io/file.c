@@ -95,7 +95,8 @@ int32_t __k_io_file_fread(void* fp, uint8_t* buf, int32_t len) {
     if (!fp || !buf || len <= 0) return -1;
     size_t n = fread(buf, 1, (size_t)len, (FILE*)fp);
     if (n == 0) {
-        return feof((FILE*)fp) ? -1 : -1;
+        if (feof((FILE*)fp)) return 0;
+        return ferror((FILE*)fp) ? -1 : 0;
     }
     return (int32_t)n;
 }
@@ -195,5 +196,4 @@ int __k_io_file_last_separator(const uint32_t* path) {
     }
     return last;
 }
-
 

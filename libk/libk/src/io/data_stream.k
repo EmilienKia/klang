@@ -52,28 +52,28 @@ namespace io {
  */
 public interface DataInput {
     /** Read a single signed byte. */
-    readByte() : Expected<byte, int>;
+    readByte() : Expected<byte, ::k::io::StreamOutOfData>;
 
     /** Read a single char. */
-    readChar() : Expected<char, int>;
+    readChar() : Expected<char, ::k::io::StreamOutOfData>;
 
     /** Read a signed 16-bit short (native byte order). */
-    readShort() : Expected<short, int>;
+    readShort() : Expected<short, ::k::io::StreamOutOfData>;
 
     /** Read an unsigned 16-bit short (native byte order). */
-    readUnsignedShort() : Expected<unsigned short, int>;
+    readUnsignedShort() : Expected<unsigned short, ::k::io::StreamOutOfData>;
 
     /** Read a signed 32-bit int (native byte order). */
-    readInt() : Expected<int, int>;
+    readInt() : Expected<int, ::k::io::StreamOutOfData>;
 
     /** Read an unsigned 32-bit int (native byte order). */
-    readUnsignedInt() : Expected<unsigned int, int>;
+    readUnsignedInt() : Expected<unsigned int, ::k::io::StreamOutOfData>;
 
     /** Read a signed 64-bit long (native byte order). */
-    readLong() : Expected<long, int>;
+    readLong() : Expected<long, ::k::io::StreamOutOfData>;
 
     /** Read an unsigned 64-bit long (native byte order). */
-    readUnsignedLong() : Expected<unsigned long, int>;
+    readUnsignedLong() : Expected<unsigned long, ::k::io::StreamOutOfData>;
 
     /** Read a 32-bit IEEE 754 float (native byte order). */
     readFloat() : float;
@@ -84,17 +84,17 @@ public interface DataInput {
     /** Read a boolean (1 byte, != 0 means true). */
     readBool() : bool;
 
-    /**
-     * Read exactly `len` bytes into `buf` starting at `off`.
-     * Returns the number of bytes read, or an error when the stream is broken.
-     */
-    readFully(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int>;
+     /**
+      * Read exactly `len` bytes into `buf` starting at `off`.
+      * Returns the number of bytes read, or an error when the stream is broken.
+      */
+     readFully(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData>;
 
-    /**
-     * Read exactly `buf.size` bytes into `buf`.
-     * Returns the number of bytes read, or an error when the stream is broken.
-     */
-    readFully(buf: byte[]) : Expected<unsigned int, int>;
+     /**
+      * Read exactly `buf.size` bytes into `buf`.
+      * Returns the number of bytes read, or an error when the stream is broken.
+      */
+     readFully(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData>;
 }
 
 
@@ -157,81 +157,129 @@ public:
 
     // ── DataInput implementation ─────────────────────────────────────────
 
-    readByte() : Expected<byte, int> {
+    readByte() : Expected<byte, ::k::io::StreamOutOfData> {
         buf : byte[1];
-        n : Expected<unsigned int, int> = readFully(buf, 0, 1);
-        if (n.hasError()) { return Expected<byte, int>::error(n.getError()); }
-        if (n.getResult() == 0) { return Expected<byte, int>::error(2); }
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf, 0, 1);
+        if (n.hasError()) {
+            err : ::k::io::StreamOutOfData = n.getError();
+            return Expected<byte, ::k::io::StreamOutOfData>::error(err);
+        }
+        if (n.getResult() == 0) {
+            err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::OutOfData;
+            return Expected<byte, ::k::io::StreamOutOfData>::error(err);
+        }
         v : byte = buf[0];
-        return Expected<byte, int>::expected(v);
+        return Expected<byte, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readChar() : Expected<char, int> {
+    readChar() : Expected<char, ::k::io::StreamOutOfData> {
         buf : byte[1];
-        n : Expected<unsigned int, int> = readFully(buf, 0, 1);
-        if (n.hasError()) { return Expected<char, int>::error(n.getError()); }
-        if (n.getResult() == 0) { return Expected<char, int>::error(2); }
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf, 0, 1);
+        if (n.hasError()) {
+            err : ::k::io::StreamOutOfData = n.getError();
+            return Expected<char, ::k::io::StreamOutOfData>::error(err);
+        }
+        if (n.getResult() == 0) {
+            err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::OutOfData;
+            return Expected<char, ::k::io::StreamOutOfData>::error(err);
+        }
         v : char = (char) buf[0];
-        return Expected<char, int>::expected(v);
+        return Expected<char, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readShort() : Expected<short, int> {
+    readShort() : Expected<short, ::k::io::StreamOutOfData> {
         buf : byte[2];
-        n : Expected<unsigned int, int> = readFully(buf);
-        if (n.hasError()) { return Expected<short, int>::error(n.getError()); }
-        if (n.getResult() == 0) { return Expected<short, int>::error(2); }
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
+        if (n.hasError()) {
+            err : ::k::io::StreamOutOfData = n.getError();
+            return Expected<short, ::k::io::StreamOutOfData>::error(err);
+        }
+        if (n.getResult() == 0) {
+            err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::OutOfData;
+            return Expected<short, ::k::io::StreamOutOfData>::error(err);
+        }
         v : short = (short) __k_io_native_bytes_to_short(&buf[0]);
-        return Expected<short, int>::expected(v);
+        return Expected<short, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readUnsignedShort() : Expected<unsigned short, int> {
+    readUnsignedShort() : Expected<unsigned short, ::k::io::StreamOutOfData> {
         buf : byte[2];
-        n : Expected<unsigned int, int> = readFully(buf);
-        if (n.hasError()) { return Expected<unsigned short, int>::error(n.getError()); }
-        if (n.getResult() == 0) { return Expected<unsigned short, int>::error(2); }
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
+        if (n.hasError()) {
+            err : ::k::io::StreamOutOfData = n.getError();
+            return Expected<unsigned short, ::k::io::StreamOutOfData>::error(err);
+        }
+        if (n.getResult() == 0) {
+            err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::OutOfData;
+            return Expected<unsigned short, ::k::io::StreamOutOfData>::error(err);
+        }
         v : unsigned short = (unsigned short) __k_io_native_bytes_to_short(&buf[0]);
-        return Expected<unsigned short, int>::expected(v);
+        return Expected<unsigned short, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readInt() : Expected<int, int> {
+    readInt() : Expected<int, ::k::io::StreamOutOfData> {
         buf : byte[4];
-        n : Expected<unsigned int, int> = readFully(buf);
-        if (n.hasError()) { return Expected<int, int>::error(n.getError()); }
-        if (n.getResult() == 0) { return Expected<int, int>::error(2); }
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
+        if (n.hasError()) {
+            err : ::k::io::StreamOutOfData = n.getError();
+            return Expected<int, ::k::io::StreamOutOfData>::error(err);
+        }
+        if (n.getResult() == 0) {
+            err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::OutOfData;
+            return Expected<int, ::k::io::StreamOutOfData>::error(err);
+        }
         v : int = __k_io_native_bytes_to_int(&buf[0]);
-        return Expected<int, int>::expected(v);
+        return Expected<int, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readUnsignedInt() : Expected<unsigned int, int> {
+    readUnsignedInt() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         buf : byte[4];
-        n : Expected<unsigned int, int> = readFully(buf);
-        if (n.hasError()) { return Expected<unsigned int, int>::error(n.getError()); }
-        if (n.getResult() == 0) { return Expected<unsigned int, int>::error(2); }
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
+        if (n.hasError()) {
+            err : ::k::io::StreamOutOfData = n.getError();
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::error(err);
+        }
+        if (n.getResult() == 0) {
+            err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::OutOfData;
+            return Expected<unsigned int, ::k::io::StreamOutOfData>::error(err);
+        }
         v : unsigned int = (unsigned int) __k_io_native_bytes_to_int(&buf[0]);
-        return Expected<unsigned int, int>::expected(v);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readLong() : Expected<long, int> {
+    readLong() : Expected<long, ::k::io::StreamOutOfData> {
         buf : byte[8];
-        n : Expected<unsigned int, int> = readFully(buf);
-        if (n.hasError()) { return Expected<long, int>::error(n.getError()); }
-        if (n.getResult() == 0) { return Expected<long, int>::error(2); }
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
+        if (n.hasError()) {
+            err : ::k::io::StreamOutOfData = n.getError();
+            return Expected<long, ::k::io::StreamOutOfData>::error(err);
+        }
+        if (n.getResult() == 0) {
+            err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::OutOfData;
+            return Expected<long, ::k::io::StreamOutOfData>::error(err);
+        }
         v : long = __k_io_native_bytes_to_long(&buf[0]);
-        return Expected<long, int>::expected(v);
+        return Expected<long, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readUnsignedLong() : Expected<unsigned long, int> {
+    readUnsignedLong() : Expected<unsigned long, ::k::io::StreamOutOfData> {
         buf : byte[8];
-        n : Expected<unsigned int, int> = readFully(buf);
-        if (n.hasError()) { return Expected<unsigned long, int>::error(n.getError()); }
-        if (n.getResult() == 0) { return Expected<unsigned long, int>::error(2); }
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
+        if (n.hasError()) {
+            err : ::k::io::StreamOutOfData = n.getError();
+            return Expected<unsigned long, ::k::io::StreamOutOfData>::error(err);
+        }
+        if (n.getResult() == 0) {
+            err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::OutOfData;
+            return Expected<unsigned long, ::k::io::StreamOutOfData>::error(err);
+        }
         v : unsigned long = (unsigned long) __k_io_native_bytes_to_long(&buf[0]);
-        return Expected<unsigned long, int>::expected(v);
+        return Expected<unsigned long, ::k::io::StreamOutOfData>::expected(v);
     }
 
     readFloat() : float {
         buf : byte[4];
-        n : Expected<unsigned int, int> = readFully(buf);
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError() || n.getResult() == 0) { return 0.0f; }
         bits : int = __k_io_native_bytes_to_int(&buf[0]);
         return __k_io_bits_to_float(bits);
@@ -239,7 +287,7 @@ public:
 
     readDouble() : double {
         buf : byte[8];
-        n : Expected<unsigned int, int> = readFully(buf);
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError() || n.getResult() == 0) { return 0.0; }
         bits : long = __k_io_native_bytes_to_long(&buf[0]);
         return __k_io_bits_to_double(bits);
@@ -247,30 +295,30 @@ public:
 
     readBool() : bool {
         buf : byte[1];
-        n : Expected<unsigned int, int> = readFully(buf, 0, 1);
+        n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf, 0, 1);
         if (n.hasError() || n.getResult() == 0) { return false; }
         return buf[0] != (byte) 0;
     }
 
-    readFully(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, int> {
+    readFully(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         remaining : unsigned int = len;
         pos : unsigned int = off;
         while (remaining > 0) {
-            n : Expected<unsigned int, int> = _in->read(buf, pos, remaining);
+            n : Expected<unsigned int, ::k::io::StreamOutOfData> = _in->read(buf, pos, remaining);
             if (n.hasError()) { return n; }
             got : unsigned int = n.getResult();
             if (got == 0) {
                 // EOS before all bytes were read
                 done : unsigned int = len - remaining;
-                return Expected<unsigned int, int>::expected(done);
+                return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(done);
             }
             pos = pos + got;
             remaining = remaining - got;
         }
-        return Expected<unsigned int, int>::expected(len);
+        return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(len);
     }
 
-    readFully(buf: byte[]) : Expected<unsigned int, int> {
+    readFully(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return readFully(buf, 0, (unsigned int) buf.size);
     }
 }
@@ -385,8 +433,6 @@ public:
 }
 
 } // namespace io
-
-
 
 
 
