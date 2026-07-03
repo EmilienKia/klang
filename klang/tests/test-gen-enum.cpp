@@ -1256,3 +1256,95 @@ TEST_CASE("Typed enum — object to enum conversion requires equality", "[gen][e
     )"));
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  Regression: enum member default-initialization must use the enum's underlying
+//  integer width — NOT the raw `long long` (i128) variant value.
+//
+//  A struct member of enum type with no explicit initializer is default-
+//  constructed by the constructor. The default value was built as a
+//  value_expression holding a `long long` (see
+//  type_reference_resolver::visit_constructor_invocation_expression), which
+//  get_llvm_constant_from_value emitted as an i128 constant. Storing that i128
+//  into the enum field (whose underlying type is typically i8) overran the field
+//  and corrupted the surrounding stack, producing a SIGSEGV at runtime.
+//
+//  The fix coerces the constant to the enum's underlying integer width in
+//  context::get_llvm_constant_from_value_expression. This test constructs such a
+//  struct and checks every field keeps its correct default value (no corruption).
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Enum member default init keeps underlying width (no stack corruption)",
+          "[gen][enum][default-init][regression]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Status { Idle; Running = 5; Done; }
+        struct Task {
+            id : unsigned int;
+            status : Status;
+            active : bool;
+        public:
+            Task() { id = 42u; }
+            const getId() : unsigned int { return id; }
+            const getStatus() : int { return (int) status; }
+            const isActive() : bool { return active; }
+        }
+        // id set by the constructor
+        task_id() : int {
+            t : Task;
+            return (int) t.getId();
+        }
+        // status defaults to the default entry (Idle = 0)
+        task_status() : int {
+            t : Task;
+            return t.getStatus();
+        }
+        // active defaults to false (0)
+        task_active() : int {
+            t : Task;
+            if (t.isActive()) return 1;
+            return 0;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("task_id")() == 42);
+    CHECK(jit->lookup_symbol<int(*)()>("task_status")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("task_active")() == 0);
+}
+
+// Same enum member default-init issue but exercised through a template struct
+// instantiated with the enum as an explicit template argument — the original
+// symptom from the k::Expected<R, E> / libk pattern.
+TEST_CASE("Enum template-argument member default init keeps underlying width",
+          "[gen][enum][default-init][template][regression]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Err { OutOfData; Closed; }
+
+        template<typename R, typename E>
+        struct Result {
+            _val : R;
+            _err : E;
+            _hasErr : bool;
+        public:
+            Result() { _hasErr = false; }
+            const value() : R { return _val; }
+            const hasError() : bool { return _hasErr; }
+
+            public static ok(v : R&) : Result<R, E> {
+                r : Result<R, E>;
+                r._val = v;
+                r._hasErr = false;
+                return r;
+            }
+        }
+
+        run() : int {
+            r : Result<unsigned int, Err> = Result<unsigned int, Err>::ok(7u);
+            if (r.hasError()) return -1;
+            return (int) r.value();   // 7
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("run")() == 7);
+}
+

@@ -497,11 +497,39 @@ llvm::Constant* context::get_llvm_constant_from_value(const k::value_type &value
 }
 
 llvm::Constant* context::get_llvm_constant_from_value_expression(const value_expression& value) {
+    llvm::Constant* c;
     if (value.is_literal()) {
-        return get_llvm_constant_from_literal(value.any_literal());
+        c = get_llvm_constant_from_literal(value.any_literal());
     } else {
-        return get_llvm_constant_from_value(value.get_value());
+        c = get_llvm_constant_from_value(value.get_value());
     }
+
+    // The raw variant value may be wider than the expression's declared type.
+    // In particular, an enum default/entry value is stored as a `long long` (see
+    // type_reference_resolver::visit_constructor_invocation_expression) which
+    // get_llvm_constant_from_value emits as an i128 constant. Storing that into
+    // an enum field (whose underlying integer type is typically much narrower,
+    // e.g. i8) overruns the field and corrupts memory. Coerce the integer
+    // constant to the enum's underlying integer width when both are integers of
+    // different bit-width.
+    if (c) {
+        if (auto vt = value.get_type()) {
+            if (auto et = std::dynamic_pointer_cast<enum_type>(
+                    type::remove_const(std::const_pointer_cast<type>(vt)))) {
+                if (auto* target = et->get_llvm_type()) {
+                    if (target->isIntegerTy() && c->getType()->isIntegerTy()
+                            && target != c->getType()) {
+                        if (auto* ci = llvm::dyn_cast<llvm::ConstantInt>(c)) {
+                            c = llvm::ConstantInt::get(
+                                target,
+                                ci->getValue().sextOrTrunc(target->getIntegerBitWidth()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return c;
 }
 
 llvm::Constant* context::get_or_create_string_literal(const std::string& content) {

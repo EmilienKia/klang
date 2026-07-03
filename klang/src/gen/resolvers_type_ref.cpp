@@ -278,6 +278,43 @@ type_reference_resolver::resolve_type_from_root(const k::name& name_without_pref
         return st->get_struct_type();
     }
 
+    // Strategy 2b: local enums/unions — navigate the namespace tree from the root.
+    // resolve_struct_from only handles aggregates, so multi-part enum/union names
+    // (e.g. ::k::io::StreamOutOfData) must be resolved here explicitly. This keeps
+    // the resulting type identity consistent with resolve_type_by_name so that two
+    // instantiations of the same template (e.g. return type vs static-factory call)
+    // share one struct_type.
+    {
+        std::vector<k::name> candidates_names;
+        candidates_names.push_back(name_without_prefix);
+        if (!unit_name.empty() && name_without_prefix.front() == unit_name.back()) {
+            auto rest = name_without_prefix.without_front();
+            if (!rest.empty()) candidates_names.push_back(rest);
+        }
+        for (const auto& cand : candidates_names) {
+            if (cand.size() == 1) {
+                if (auto en = root_ns->get_enum(cand.front())) return en->get_enum_type();
+                if (auto un = root_ns->get_union(cand.front())) return un->get_struct_type();
+                continue;
+            }
+            auto target_ns = root_ns;
+            bool found_path = true;
+            for (size_t i = 0; i + 1 < cand.size(); ++i) {
+                auto child = target_ns->get_child_namespace(cand[i]);
+                if (child) {
+                    target_ns = child;
+                } else {
+                    found_path = false;
+                    break;
+                }
+            }
+            if (found_path) {
+                if (auto en = target_ns->get_enum(cand.back())) return en->get_enum_type();
+                if (auto un = target_ns->get_union(cand.back())) return un->get_struct_type();
+            }
+        }
+    }
+
     // Strategy 3: fallback — search imported modules.
     if (auto agg = _unit.get_or_create_imported_aggregate(name_without_prefix, _context)) {
         return agg->get_struct_type();
@@ -447,6 +484,47 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
             if (auto eh = std::dynamic_pointer_cast<const enum_holder>(current)) {
                 if (auto en = eh->get_enum(type_name.front())) {
                     return en->get_enum_type();
+                }
+            }
+        } else {
+            // Multi-part enum name: navigate through namespaces
+            if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
+                auto target_ns = nspc;
+                bool found_path = true;
+                for (size_t i = 0; i + 1 < type_name.size(); ++i) {
+                    auto child = target_ns->get_child_namespace(type_name[i]);
+                    if (child) {
+                        target_ns = child;
+                    } else {
+                        found_path = false;
+                        break;
+                    }
+                }
+                if (found_path) {
+                    if (auto en = target_ns->get_enum(type_name.back())) {
+                        return en->get_enum_type();
+                    }
+                }
+            }
+            // Multi-part enum name: navigate through aggregates (nested enum)
+            if (auto ah_ptr = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
+                if (auto first_agg = ah_ptr->get_aggregate(type_name.front())) {
+                    std::shared_ptr<const aggregate> nav_agg = first_agg;
+                    bool found_path = true;
+                    for (size_t i = 1; i + 1 < type_name.size(); ++i) {
+                        auto nested = nav_agg->get_aggregate(type_name[i]);
+                        if (nested) {
+                            nav_agg = nested;
+                        } else {
+                            found_path = false;
+                            break;
+                        }
+                    }
+                    if (found_path) {
+                        if (auto en = nav_agg->get_enum(type_name.back())) {
+                            return en->get_enum_type();
+                        }
+                    }
                 }
             }
         }

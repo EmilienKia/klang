@@ -279,3 +279,41 @@ TEST_CASE("Expected copy constructor — chained copies preserve result", "[libk
     REQUIRE(fn);
     CHECK(fn() == 111);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Regression: static factory call with a root-prefixed IMPORTED enum arg
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// A qualified static factory call on a template instantiation whose template
+// argument is a ROOT-PREFIXED imported enum — e.g.
+//     Expected<unsigned int, ::k::io::StreamOutOfData>::expected(x)
+// — used to fail with diagnostic 000E5 ("No viable overload found for
+// 'expected'"). Root cause: aggregate_type_resolver::resolve_type_from_root
+// lacked the imported-enum fallback that type_reference_resolver already had, so
+// try_instantiate_template_type() returned {} for the qualifier type. The
+// qualified static-call candidate collection then fell back to the
+// un-instantiated template method whose R& parameter could not match the
+// argument. This blocked the whole Expected-based k::io stream API (array_stream.k
+// etc. use `Expected<unsigned int, ::k::io::StreamOutOfData>::expected(...)`
+// unqualified via the implicit `import k`). Fixed by adding the
+// get_or_create_imported_enum fallback to
+// aggregate_type_resolver::resolve_type_from_root.
+TEST_CASE("Expected static factory with root-prefixed imported enum arg",
+          "[libk][expected][factory][import-enum]") {
+    auto j = jit_k(R"SRC(
+        module __expected_rootprefixed_enum__;
+        test() : int {
+            n : unsigned int = 5;
+            // Unqualified type name (reached via implicit import k) + root-prefixed
+            // imported enum template argument.
+            e : Expected<unsigned int, ::k::io::StreamOutOfData> =
+                Expected<unsigned int, ::k::io::StreamOutOfData>::expected(n);
+            if (!e.hasResult()) return 0;
+            return (int) e.getResultOr((unsigned int) 0);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 5);
+}

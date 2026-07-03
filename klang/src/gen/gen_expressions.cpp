@@ -80,11 +80,10 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
 }
 
 llvm::Constant* implementation_generator::get_llvm_constant_from_value_expr(const value_expression& expr) const {
-    if(expr.is_literal()) {
-        return _context->get_llvm_constant_from_literal(expr.any_literal());
-    } else {
-        return _context->get_llvm_constant_from_value(expr.get_value());
-    }
+    // Delegate to the context helper, which also coerces integer constants to the
+    // expression's declared type width (e.g. an enum default value stored as a
+    // long long must be narrowed to the enum's underlying integer type).
+    return _context->get_llvm_constant_from_value_expression(expr);
 }
 
 void implementation_generator::visit_value_expression(value_expression &expr) {

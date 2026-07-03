@@ -430,7 +430,78 @@ TEST_CASE("[M] Same-named templates in different namespaces are distinct types",
     CHECK(run() == 41);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [N] Namespace-qualified enum as a template argument
+//
+//  Regression test. A root-prefixed, namespace-qualified ENUM used as an explicit
+//  template argument (e.g. Result<unsigned int, ::test::io::Err>) must:
+//    * trigger template instantiation for a Type<...>::factory(arg) static call
+//      (previously the enum arg failed to resolve — resolve_type_by_name only
+//      handled single-segment enum names — so instantiation was skipped and the
+//      call fell back to the unresolved template definition → diag 000E5);
+//    * resolve to the SAME struct_type identity whether it appears as a class
+//      method's declared return type or inside the static-factory body, so the
+//      return-expression type matches the declared return type (previously the
+//      two resolution paths produced distinct instantiations → diag 000EA).
+//
+//  Mirrors the k::Expected<R, E> / k::io::StreamOutOfData stdlib pattern.
+// ════════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("[N] Namespace-qualified enum as template argument",
+          "[template][qualified-call][enum][instantiation]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        namespace io {
+            enum Err { OutOfData; Closed; }
+        }
+
+        template<typename R, typename E>
+        struct Result {
+            _val : R;
+            _err : E;
+            _hasErr : bool;
+        public:
+            Result() { _hasErr = false; }
+            const value() : R { return _val; }
+            const hasError() : bool { return _hasErr; }
+
+            public static ok(v : R&) : Result<R, E> {
+                r : Result<R, E>;
+                r._val = v;
+                r._hasErr = false;
+                return r;
+            }
+            public static fail(e : E&) : Result<R, E> {
+                r : Result<R, E>;
+                r._err = e;
+                r._hasErr = true;
+                return r;
+            }
+        }
+
+        class Producer {
+        public:
+            // Declared return type and the static-factory result must share the
+            // same instantiation of Result<unsigned int, ::test::io::Err>.
+            produce() : Result<unsigned int, ::test::io::Err> {
+                n : unsigned int = 7;
+                return Result<unsigned int, ::test::io::Err>::ok(n);
+            }
+        }
+
+        run() : int {
+            p : Producer;
+            r : Result<unsigned int, ::test::io::Err> = p.produce();
+            if (r.hasError()) return -1;
+            return (int) r.value();   // 7
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("_KFN4test3runEv");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 7);
+}
 
 
 
