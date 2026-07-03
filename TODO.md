@@ -22,8 +22,24 @@
     - [ ] Member access on `T*` inside generic body (opaque pointer — by design; workaround: access at call site)
     - [ ] Explicit generic type args in generic member method call on non-generic host class (`obj.method<Dog>(arg)`)
     - [ ] `ConcreteType! → byte*` implicit cast at generic setter sites (runtime returns 0 instead of value)
-    - [ ] Nested-node template collection runtime remains unstable under JIT for non-trivial list patterns (allocation/link/destruction path)
-    - [ ] Imported template aggregate methods from KDI/signature-only metadata do not yet materialize executable bodies in consumer modules; this currently blocks re-enabling template stdlib collections end-to-end
+    - [x] **Nested-node template collection runtime under JIT** — **DONE**. `LinkedList<T>` /
+      `DoubleLinkedList<T>` (nested-node templates) now allocate, link, index and destroy
+      correctly under JIT for non-trivial patterns: structs stored by value, owners
+      (`Object!`), enums, insert/remove at both ends, indexed access and `emplace`.
+      Regression suite: `[libk][list]` in `libk/libk/tests/test-list.cpp` (63 cases).
+      Resolved by unifying imported vs locally-synthesised instantiations into a single
+      `struct_type` (commit "Unify imported and locally-synthesised template instantiations")
+      and the value-semantics copy/move wiring for owning aggregates.
+    - [x] **Imported template aggregate methods materialise executable bodies in consumer
+      modules** — **DONE**. Template stdlib collections and streams (`Vector<T>`,
+      `LinkedList<T>`, `Optional<T>`, `Expected<R,E>` and the `k::io` stream classes) now
+      instantiate, materialise their method bodies and run end-to-end when imported into a
+      consumer module. Verified by the full `libk-tests` suite (417 cases, each JIT-importing
+      the compiled `k` module). Resolved by the single-`struct_type` unification above and by
+      adding imported-enum resolution for root-prefixed enum template arguments in
+      `aggregate_type_resolver::resolve_type_from_root`, so a static factory call such as
+      `Expected<unsigned int, ::k::io::StreamOutOfData>::expected(...)` inside an imported
+      stream method resolves instead of falling back to the un-instantiated template.
     - [ ] Origin-aware homing of imported template definitions: re-injected imported templates are flattened into the consumer module's **root** namespace (via the `module <ns>;`-rename trick in `kdi_importer::materialise_template_def`), so two *imported* templates with the same short name from different modules (`a::Box`, `b::Box`) clash at the model/symbol level (the flatten dedups by short name in root). The instantiation `struct_type` registry is already collision-safe (keyed by an origin-qualified name via `unit::make_instantiation_registry_key`; see test `[template][instantiation][ns-collision]`), but the *model-level* symbol clash remains. **Why the naive fix is blocked**: simply homing the re-parsed template under `root::<origin>` (nested-`namespace` wrapping instead of the module-rename trick) breaks **unqualified access** to imported top-level symbols — `import mylib;` currently behaves like `using namespace mylib;`, so imported function templates must be reachable as bare `sum_pair<int>(...)`. Homing them under `::consumer::mylib::sum_pair` makes unqualified lookup fail (proven: it regresses the 4 `[cross-tpl][consumer-inst]` function-template tests in `test-import.cpp`). The real fix is therefore **deeper than homing**: scope lookup (`resolvers_scope_lookup.cpp`) must resolve unqualified imported symbols from their origin namespaces (an `import`-as-`using-namespace` mechanism) so the flatten can be dropped; homonymous imports then naturally require qualification. See skipped test `[import][template][homonym-imports][.]` documenting the target behaviour.
     - [x] **Static-link diamond of a libk template instantiation** (cross-module COMDAT,
       base-erased generic RTTI) — **DONE**. Two libs A and B plus an executable C all
