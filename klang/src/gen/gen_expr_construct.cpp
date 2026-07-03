@@ -481,6 +481,14 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         }
 
         // ── Direct struct copy (no constructor): aggregate load+store ──
+        // Variable initialisation `x : T = expr;` where the resolver selected a direct
+        // aggregate copy (no constructor). NOTE: this path is intentionally a plain
+        // aggregate copy and is NOT routed through emit_value_copy_or_move — the move
+        // (cancel-source) semantics are applied earlier, at the load of a prvalue
+        // temporary (see visit_load_value_expression), so that chained-call elision
+        // patterns such as `r : T = make().transform()` keep their expected object
+        // lifetimes. Owning-aggregate move/copy for the initialisation site remains a
+        // documented follow-up (TODO: value semantics, site 2).
         if (!function && expr.size() == 1) {
             _value = nullptr;
             expr.argument(0)->accept(*this);

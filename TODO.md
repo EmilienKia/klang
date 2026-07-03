@@ -121,6 +121,44 @@
       "casting between non-primitive types is not yet supported" for an imported class.
       Affects the ergonomic read path of `StringBuilder`'s `CharRef` proxy (use
       `charAt(i)` to read; `sb[i] = c` to write).
+- [ ] **Value semantics for owning aggregates — incomplete wiring (deferred from IN-PROGRESS phase F).**
+      The unified copy/move routine `implementation_generator::emit_value_copy_or_move()`
+      (`gen/gen_operators_assign.cpp`, declared in `gen/generators.hpp`) correctly handles
+      value semantics for owning aggregates such as `Vector<T>` / `MultiSlot<T>`:
+      trivially-copyable → `memcpy`; non-trivial prvalue temporary → **MOVE** (`memcpy` +
+      `cancel_temporary_cleanup()` so the source is not double-freed); non-trivial lvalue →
+      **COPY** via the copy constructor when present. It is currently wired at only **2 of
+      the 4** value-semantics sites:
+      - [x] Site 1 — assignment `a = b` (`gen_operators_assign.cpp`,
+            `visit_simple_assignation_expression`)
+      - [x] Root-cause site — temporary construction `S(expr)` /
+            `emit(transform(value))` (`gen_expr_construct.cpp`,
+            `visit_temporary_construction_expression`)
+      - [ ] Site 2 — variable initialisation `x : T = expr`
+            (`gen/gen_variable_definition.cpp`)
+      - [ ] Site 3 — by-value argument passing (`gen/gen_expr_invocation.cpp`)
+      - [ ] Site 4 — return by value (sret / NRVO) (`gen/gen_function.cpp`); keep NRVO
+            elision where the returned object is a named local.
+      Consequence: outside the scenarios exercised by `[libk][io][transform]`, sites 2–4 can
+      still perform a *shallow* `memcpy` of an owning aggregate, aliasing its heap buffer and
+      risking a double free / use-after-free.
+      Regression coverage (added — migrated from the `/tmp` `vbyval.k` / `vsret.k` repros):
+      - `[gen][lifecycle][cat8][value-semantics]` in `klang/tests/test-gen-lifecycle.cpp` —
+        prvalue `struct` (ctor/dtor counters) passed and returned by value is moved, not
+        double-destroyed.
+      - `[libk][vector][value-semantics]` in `libk/libk/tests/test-vector.cpp` — the same two
+        move scenarios strengthened to a real owning `Vector<int>` (heap-buffer integrity, plus
+        an `[run]` e2e variant that would crash on a shallow-copy double free).
+      When wiring the remaining lvalue *copy* paths for sites 2–4, extend these tests with
+      by-value argument / return-by-value of an **lvalue** `Vector<T>` asserting deep-copy
+      independence (mutating one copy must not affect the other).
+- [ ] **`type-not-copyable` diagnostic — not implemented (deferred from IN-PROGRESS phase F6).**
+      In `emit_value_copy_or_move()` the non-trivial *lvalue* copy path falls back to a
+      shallow `memcpy` when the type has no copy constructor (see the `TODO` comment near
+      `gen/gen_operators_assign.cpp:147`). This is unsafe for owning types. Add a dedicated
+      `type-not-copyable` diagnostic in `errors_gen.hpp` (`codegen_diag`) and raise it here
+      instead of the silent memcpy fallback, so copying an owning aggregate that has no copy
+      constructor becomes a compile-time error. Add a `compile_should_fail` regression test.
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts — workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
 - [ ] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases; extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
 - [ ] Inline method call on a template-aggregate value chained from a one-liner is

@@ -453,6 +453,11 @@ New tests should go in the most specific existing file (e.g. arithmetic →
 `test-gen-arithmetic.cpp`) or a new `test-gen-<feature>.cpp` registered in
 `klang/CMakeLists.txt`.
 
+**Promote valuable repros**: any throwaway reproduction used while diagnosing a bug or
+validating a fix that exercises a regression-prone behaviour **not already covered** must be
+migrated into a permanent test here (see the *Promote throwaway repros* rule in §11). If an
+existing test already covers the scenario, discard the scratch file instead of duplicating it.
+
 Run a single test category:
 
 ```bash
@@ -581,6 +586,15 @@ interface Drawable {
   test. If fixed with a breaking change, update the spec and the test.
 - **Missing features**: create a *skipped* test with documentation, add an entry to `TODO.md`
   describing the feature, its motivation, and the link to the related test.
+- **Promote throwaway repros**: temporary/scratch reproduction snippets (e.g. one-off `.k`
+  files under `/tmp`, ad-hoc `klangc` invocations) used while diagnosing a bug or validating a
+  fix must be evaluated before finishing the task. Any repro that exercises a **regression-prone
+  behaviour not already covered** by the official suite must be **migrated into a permanent test**
+  (`klang/tests/test-gen-*.cpp` or `libk/libk/tests/test-*.cpp`), given a descriptive name and
+  tags, and made to pass. When a permanent test already covers the scenario, note the mapping and
+  discard the scratch file rather than duplicating it. Prefer strengthening the migrated test
+  (e.g. exercise a real owning aggregate such as `Vector<T>` rather than a trivial counter struct)
+  so it catches deeper regressions (aliasing, double free) — not just the symptom first observed.
 - **Complex tasks**: create a temporary `IN-PROGRESS.md` at the repository root with a
   step-by-step implementation plan; update it during the work; delete it on completion.
 - **No LLVM context duplication**: `k::model::context` owns the `llvm::LLVMContext` —

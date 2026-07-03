@@ -842,3 +842,118 @@ TEST_CASE("Collection<int> — LinkedList through interface reference", "[libk][
     CHECK(fn() == 1);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  8. Value semantics of an owning aggregate — Vector<int>
+//
+//  These tests guard the value-semantics wiring for owning aggregates (a Vector
+//  owns a heap buffer): a prvalue Vector returned or passed by value must be
+//  MOVED into its single destination (its buffer transferred, the source's
+//  scheduled destruction cancelled), never shallow-copied and then freed twice.
+//  A regression to a shallow byte copy would alias the heap buffer and cause a
+//  double free / use-after-free; here it would manifest as corrupted element
+//  reads (wrong sum) or a crash.  Promoted from the /tmp `vbyval.k` / `vsret.k`
+//  repros and strengthened from a trivial counter struct to a real Vector<int>.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — prvalue returned by value is moved (buffer intact)",
+          "[libk][vector][value-semantics]") {
+    auto j = jit_k(R"SRC(
+        module __vec_ret_move__;
+
+        makeVec(n: int) : Vector<int> {
+            v : Vector<int>;
+            i : int = 0;
+            while (i < n) {
+                v.pushBack(i * 10);
+                i = i + 1;
+            }
+            return v;
+        }
+
+        test() : int {
+            r : Vector<int> = makeVec(5);   // return-by-value: temporary moved into r
+            total : int = 0;
+            i : int = 0;
+            while (i < (int) r.getSize()) {
+                total = total + r[i];        // 0+10+20+30+40 = 100 (buffer survived)
+                i = i + 1;
+            }
+            return total;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 100);
+}
+
+TEST_CASE("Vector<int> — prvalue passed by value is moved (buffer intact)",
+          "[libk][vector][value-semantics]") {
+    auto j = jit_k(R"SRC(
+        module __vec_byval_move__;
+
+        makeVec(n: int) : Vector<int> {
+            v : Vector<int>;
+            i : int = 0;
+            while (i < n) {
+                v.pushBack(i * 10);
+                i = i + 1;
+            }
+            return v;
+        }
+
+        sumByValue(v: Vector<int>) : int {
+            s : int = 0;
+            i : int = 0;
+            while (i < (int) v.getSize()) {
+                s = s + v[i];
+                i = i + 1;
+            }
+            return s;
+        }
+
+        test() : int {
+            // The prvalue produced by makeVec(5) is moved into the by-value
+            // parameter of sumByValue: a single owner, no double free.
+            return sumByValue(makeVec(5));   // 0+10+20+30+40 = 100
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 100);
+}
+
+TEST_CASE("Vector<int> — prvalue returned by value, e2e build and exec",
+          "[libk][vector][value-semantics][run]") {
+    auto result = build_and_exec(R"SRC(
+        module __vec_ret_move_e2e__;
+
+        makeVec(n: int) : Vector<int> {
+            v : Vector<int>;
+            i : int = 0;
+            while (i < n) {
+                v.pushBack(i);
+                i = i + 1;
+            }
+            return v;
+        }
+
+        main() : int {
+            r : Vector<int> = makeVec(10);
+            sum : int = 0;
+            j : int = 0;
+            while (j < r.getSize()) {
+                sum = sum + r[j];
+                j = j + 1;
+            }
+            // 0+1+...+9 = 45; a shallow-copy double free would crash on scope exit.
+            if (sum == 45) return 0;
+            return 1;
+        }
+    )SRC");
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 0);
+}
+

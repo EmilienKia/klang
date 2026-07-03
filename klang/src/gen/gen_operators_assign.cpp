@@ -83,6 +83,13 @@ bool implementation_generator::cancel_temporary_cleanup(llvm::Value* ptr) {
     return false;
 }
 
+bool implementation_generator::is_expression_temporary(llvm::Value* ptr) const {
+    for (auto& e : _expression_temporaries) {
+        if (e.alloca == ptr) return true;
+    }
+    return false;
+}
+
 void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::Value* src,
                                                        const std::shared_ptr<type>& t,
                                                        bool destroy_dest_first) {
@@ -117,18 +124,24 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
         }
     }
 
-    if (trivially) {
-        _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
-                               _builder->getInt64(sz));
-        return;
-    }
-
     if (src_is_tracked_temp) {
         // MOVE: transfer the bytes, then cancel the source temporary's destruction
         // so the destination becomes the sole owner (no double free).
+        //
+        // Checked BEFORE the trivially-copyable fast path: a tracked temporary was
+        // registered precisely because its type has a destructor, so it always needs
+        // its cleanup cancelled here — even when `is_trivially_copyable` cannot see the
+        // destructor (e.g. this particular struct_type instance's weak aggregate link
+        // is not populated, so get_struct() returns null and triviality is misjudged).
         _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
                                _builder->getInt64(sz));
         cancel_temporary_cleanup(src);
+        return;
+    }
+
+    if (trivially) {
+        _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
+                               _builder->getInt64(sz));
         return;
     }
 

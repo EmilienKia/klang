@@ -279,7 +279,24 @@ void implementation_generator::visit_load_value_expression(load_value_expression
         }
     }
     if (load_type) {
-        _value = _builder->CreateLoad(_context->get_llvm_type(load_type), _value);
+        llvm::Value* src_ptr = _value;
+        _value = _builder->CreateLoad(_context->get_llvm_type(load_type), src_ptr);
+        // Value semantics: when a whole struct aggregate is loaded by value directly out
+        // of a materialised prvalue temporary (e.g. `return Res();` or `consume(Res())`,
+        // both lowered to a load of a temporary_construction_expression), the loaded
+        // aggregate now carries the temporary's owned resources. Cancel the temporary's
+        // scheduled destruction so an owning aggregate (e.g. Vector<T>) is MOVED into the
+        // single destination (return slot / by-value parameter) instead of shallow-copied
+        // and then freed twice.
+        //
+        // The move is restricted to a *directly* temporary-constructed sub-expression:
+        // an lvalue (symbol, member access) keeps its own lifetime, and an intermediate
+        // temporary that is the receiver ('this') of a chained call must still be
+        // destroyed after the full expression (it is used by address, not consumed).
+        if (std::dynamic_pointer_cast<temporary_construction_expression>(expr.sub_expr())
+            && type::is_struct(load_type) && is_expression_temporary(src_ptr)) {
+            cancel_temporary_cleanup(src_ptr);
+        }
     }
     // else: leave _value as the alloca ptr (should not happen in correct IR)
 }

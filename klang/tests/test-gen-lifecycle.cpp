@@ -1312,3 +1312,104 @@ TEST_CASE("Lifecycle Cat4: Struct copy from local to local", "[gen][lifecycle][c
     CHECK(get_dtors() == 2);
 }
 
+
+// =============================================================================
+// Category 8: Value semantics of owning aggregates — move on prvalue temporary
+//
+// A prvalue struct temporary passed by value or returned by value must be MOVED
+// into the destination (its scheduled destruction cancelled), not shallow-copied
+// and then destroyed twice.  These tests assert the constructor / destructor
+// balance: a single logical instance must be destroyed exactly once.  Before the
+// site-3 (by-value argument) and site-4 (return by value) value-semantics wiring,
+// the prvalue temporary was destroyed both at the caller and at the callee/return
+// slot, so g_dtors exceeded g_ctors.
+// =============================================================================
+
+TEST_CASE("Lifecycle Cat8: prvalue temporary passed by value is moved, not double-destroyed",
+          "[gen][lifecycle][cat8][value-semantics]") {
+    auto jit = gen_jit(R"SRC(
+        module __lc8_byval_move__;
+
+        g_ctors : int = 0;
+        g_dtors : int = 0;
+
+        struct Res {
+            Res() { g_ctors = g_ctors + 1; }
+            ~Res() { g_dtors = g_dtors + 1; }
+        }
+
+        consume(r: Res) : int { return 0; }
+
+        test() : int {
+            consume(Res());
+            return 0;
+        }
+
+        get_ctors() : int { return g_ctors; }
+        get_dtors() : int { return g_dtors; }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    test();
+
+    auto get_ctors = jit->lookup_symbol<int(*)()>("get_ctors");
+    auto get_dtors = jit->lookup_symbol<int(*)()>("get_dtors");
+    REQUIRE(get_ctors != nullptr);
+    REQUIRE(get_dtors != nullptr);
+
+    // Exactly one construction (the temporary) and one destruction (the callee's
+    // by-value parameter): the temporary is moved in, its own cleanup cancelled.
+    CHECK(get_ctors() == 1);
+    CHECK(get_dtors() == 1);
+}
+
+TEST_CASE("Lifecycle Cat8: prvalue temporary returned by value is moved, not double-destroyed",
+          "[gen][lifecycle][cat8][value-semantics]") {
+    auto jit = gen_jit(R"SRC(
+        module __lc8_ret_move__;
+
+        g_ctors : int = 0;
+        g_dtors : int = 0;
+
+        struct Res {
+            Res() { g_ctors = g_ctors + 1; }
+            ~Res() { g_dtors = g_dtors + 1; }
+        }
+
+        make() : Res {
+            return Res();
+        }
+
+        run() : int {
+            x : Res = make();
+            return 0;
+        }
+
+        test() : int {
+            run();
+            return 0;
+        }
+
+        get_ctors() : int { return g_ctors; }
+        get_dtors() : int { return g_dtors; }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    test();
+
+    auto get_ctors = jit->lookup_symbol<int(*)()>("get_ctors");
+    auto get_dtors = jit->lookup_symbol<int(*)()>("get_dtors");
+    REQUIRE(get_ctors != nullptr);
+    REQUIRE(get_dtors != nullptr);
+
+    // The temporary built in make() is moved into the caller's sret slot (x), so
+    // there is a single construction and a single destruction (x at run() exit).
+    CHECK(get_ctors() == 1);
+    CHECK(get_dtors() == 1);
+}
+
+

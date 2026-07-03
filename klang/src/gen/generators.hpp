@@ -628,6 +628,18 @@ public:
     bool cancel_temporary_cleanup(llvm::Value* ptr);
 
     /**
+     * Return true when `ptr` is currently registered as a tracked expression
+     * temporary (i.e. an entry of `_expression_temporaries` whose alloca == ptr).
+     * A tracked temporary is a materialised prvalue scheduled for destruction at
+     * the full-expression boundary; when such a prvalue is consumed by a value
+     * copy/move site (by-value argument, return by value, initialisation) it must
+     * be MOVED — its cleanup cancelled — rather than shallow-copied and destroyed
+     * twice. This is the reliable move signal (independent of `is_trivially_copyable`,
+     * which can misjudge a struct_type whose weak aggregate link is not populated).
+     */
+    bool is_expression_temporary(llvm::Value* ptr) const;
+
+    /**
      * Emit a value copy or move of a struct from `src` (pointer) into `dest`
      * (pointer), honouring the type's value semantics (phase F3):
      *   - trivially copyable            -> bytewise memcpy;
