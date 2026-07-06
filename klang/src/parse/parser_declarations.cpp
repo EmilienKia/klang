@@ -548,6 +548,12 @@ std::shared_ptr<ast::friend_decl> parser::parse_friend_decl()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_FRIEND_EXPECT_QNAME), _lexer.pick_current(), "Friend declaration expects a qualified identifier after 'friend'");
     }
 
+    // Optionally consume explicit template argument list: e.g. <T> or <int,float>
+    // parse_template_arg_list() is tentative (uses lex_holder internally) — if '<' is
+    // not present or not a valid template arg list, it rolls back and returns {}.
+    bool had_explicit_tpl_args = false;
+    ast::template_arg_list tpl_args = parse_template_arg_list(&had_explicit_tpl_args);
+
     // Expect a semicolon
     if (auto lsemicolon = _lexer.get(); lsemicolon != lex::punctuator::SEMICOLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_FRIEND_MISSING_SEMICOLON), _lexer.pick_current(), "Semicolon is missing at end of friend declaration");
@@ -556,7 +562,9 @@ std::shared_ptr<ast::friend_decl> parser::parse_friend_decl()
     return std::make_shared<ast::friend_decl>(
             lex::as<lex::keyword>(lfriend),
             element_filter,
-            std::move(qname));
+            std::move(qname),
+            std::move(tpl_args),
+            had_explicit_tpl_args);
 }
 
 std::shared_ptr<ast::annotation_def> parser::parse_annotation_def()

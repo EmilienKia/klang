@@ -173,6 +173,36 @@ bool scope_lookup::is_friend_of(
             if (fn_owner && fn_owner.get() == target_agg.get()) {
                 return true;
             }
+            // Template instantiation match: fn_owner may be a concrete instantiation
+            // (e.g. OptionalConstRef__int) while target_agg is the template definition
+            // (OptionalConstRef). Match them when the base template names agree and,
+            // if explicit template args were written, the resolved types also match.
+            if (fn_owner && fn_owner->has_tpl_args() && target_agg->is_template()) {
+                if (fn_owner->get_tpl_base_name() == target_agg->get_short_name()) {
+                    if (!dir.has_explicit_template_args) {
+                        // Unparameterized friend — all instantiations of the template are friends.
+                        return true;
+                    }
+                    // Parameterized friend — compare concrete args element-by-element.
+                    const auto& owner_args = fn_owner->get_tpl_args();
+                    const auto& dir_args   = dir.resolved_tpl_arg_types;
+                    if (owner_args.size() == dir_args.size()) {
+                        bool all_match = true;
+                        for (size_t i = 0; i < owner_args.size(); ++i) {
+                            if (!owner_args[i].is_type() || !dir_args[i]) {
+                                all_match = false;
+                                break;
+                            }
+                            if (owner_args[i].type_arg.get() != dir_args[i].get() &&
+                                owner_args[i].type_arg->to_string() != dir_args[i]->to_string()) {
+                                all_match = false;
+                                break;
+                            }
+                        }
+                        if (all_match) return true;
+                    }
+                }
+            }
         } else if (auto target_fn = std::dynamic_pointer_cast<const function>(target)) {
             if (dir.filter != friend_directive::filter_t::NONE) {
                 continue;

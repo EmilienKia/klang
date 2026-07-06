@@ -983,11 +983,22 @@ namespace k::parse {
             /// The qualified name of the friend entity.
             std::shared_ptr<qualified_identifier> qname;
 
+            /// Optional explicit template argument list: e.g. <T> or <int,float>.
+            /// Empty when has_explicit_template_args is false.
+            template_arg_list template_args;
+
+            /// True when '<' was written (even if template_args is empty, as in '<>').
+            bool has_explicit_template_args = false;
+
             friend_decl(const lex::keyword& friend_kw,
                         const std::optional<lex::keyword>& element_filter,
-                        std::shared_ptr<qualified_identifier> qname)
+                        std::shared_ptr<qualified_identifier> qname,
+                        template_arg_list template_args = {},
+                        bool has_explicit = false)
                 : friend_kw(friend_kw), element_filter(element_filter),
-                  qname(std::move(qname)) {}
+                  qname(std::move(qname)),
+                  template_args(std::move(template_args)),
+                  has_explicit_template_args(has_explicit) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

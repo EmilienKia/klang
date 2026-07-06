@@ -51,12 +51,12 @@ module k;
  *   empty  : Optional<int> = Optional<int>::empty();
  */
 template<typename T>
-struct Optional {
-    private:
+final struct Optional {
+private:
     _slot : UniSlot<T>;
     _hasValue : bool;
 
-    public:
+public:
     /**
      * Default constructor. Creates an empty Optional (no value).
      */
@@ -164,11 +164,13 @@ struct Optional {
  * An OptionalRef<T> can be implicitly widened to an OptionalConstRef<T>.
  */
 template<typename T>
-struct OptionalRef {
-    private:
+final struct OptionalRef {
+private:
     _ptr : T*;
 
-    public:
+    friend OptionalConstRef<T>;
+
+public:
     /**
      * Default constructor. Creates an empty OptionalRef (no reference).
      */
@@ -241,11 +243,11 @@ struct OptionalRef {
  * Can be constructed from an OptionalRef<T> (mutable-to-const widening).
  */
 template<typename T>
-struct OptionalConstRef {
-    private:
+final struct OptionalConstRef {
+protected:
     _ptr : T*;
 
-    public:
+public:
     /**
      * Default constructor. Creates an empty OptionalConstRef (no reference).
      */
@@ -268,13 +270,10 @@ struct OptionalConstRef {
 
     /**
      * Construct from an OptionalRef — mutable reference widens to read-only view.
+     * Direct pointer copy is possible because OptionalConstRef<T> is a friend of OptionalRef<T>.
      */
     OptionalConstRef(other : const OptionalRef<T>&) {
-        if (other.hasValue()) {
-            _ptr = &other.get();
-        } else {
-            _ptr = null;
-        }
+        _ptr = other._ptr;
     }
 
     /**

@@ -339,13 +339,13 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                 auto vis = member_var->get_visibility();
                 if (vis != PUBLIC) {
                     if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
-                        if (vis != PROTECTED || !scope_lookup::is_friend_of(*st_model, _function_stack, _unit)) {
+                        if (!scope_lookup::is_friend_of(*st_model, _function_stack, _unit)) {
                             throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_VISIBILITY_MISMATCH), expr.first_lexeme(),
                                 "{} member variable '{}' of struct '{}' is not accessible here; "
-                                "it can only be accessed from member functions of '{}'{}",
+                                "it can only be accessed from member functions of '{}' or its friends{}",
                                 {vis == PROTECTED ? "protected" : "private",
                                  member_var->get_short_name(), st_model->get_short_name(), st_model->get_short_name(),
-                                 vis == PROTECTED ? " or its subclasses or friends" : ""});
+                                 vis == PROTECTED ? " or its subclasses" : ""});
                         }
                     }
                 }
@@ -792,13 +792,13 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
                 auto vis = mv->get_visibility();
                 if (vis != PUBLIC) {
                     if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
-                        if (vis != PROTECTED || !scope_lookup::is_friend_of(*st_model, _function_stack, _unit)) {
+                        if (!scope_lookup::is_friend_of(*st_model, _function_stack, _unit)) {
                             throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_RETURN_TYPE_MISMATCH), expr.first_lexeme(),
                                 "{} member variable '{}' of struct '{}' is not accessible here via '->'; "
-                                "it can only be accessed from member functions of '{}'{}",
+                                "it can only be accessed from member functions of '{}' or its friends{}",
                                 {vis == PROTECTED ? "protected" : "private",
                                  mv->get_short_name(), st_model->get_short_name(), st_model->get_short_name(),
-                                 vis == PROTECTED ? " or its subclasses or friends" : ""});
+                                 vis == PROTECTED ? " or its subclasses" : ""});
                         }
                     }
                 }
@@ -813,13 +813,13 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
                 auto vis = fn->get_visibility();
                 if (vis != PUBLIC) {
                     if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
-                        if (vis != PROTECTED || !scope_lookup::is_friend_of(*st_model, _function_stack, _unit)) {
+                        if (!scope_lookup::is_friend_of(*st_model, _function_stack, _unit)) {
                             throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CONST_MISMATCH), expr.first_lexeme(),
                                 "{} member function '{}' of struct '{}' is not accessible here via '->'; "
-                                "it can only be called from member functions of '{}'{}",
+                                "it can only be called from member functions of '{}' or its friends{}",
                                 {vis == PROTECTED ? "protected" : "private",
                                  fn->get_short_name(), st_model->get_short_name(), st_model->get_short_name(),
-                                 vis == PROTECTED ? " or its subclasses or friends" : ""});
+                                 vis == PROTECTED ? " or its subclasses" : ""});
                         }
                     }
                 }

@@ -411,12 +411,12 @@ protected:
 
 /**
  * A friend directive grants another named entity (aggregate, function, or
- * variable) access to the protected members of the declaring aggregate.
+ * variable) access to the protected and private members of the declaring aggregate.
  *
- * Syntax: 'friend' ['struct'|'interface'|'class']? qualified_identifier ';'
+ * Syntax: 'friend' ['struct'|'interface'|'class']? qualified_identifier ['<' template-args '>']? ';'
  *
  * Friendship is NOT inherited, and does NOT propagate to nested aggregates.
- * Friends currently gain access to protected members only (not private).
+ * Friends gain access to both protected and private members.
  */
 struct friend_directive {
     /// What kind of element is targeted (NONE = any).
@@ -424,8 +424,22 @@ struct friend_directive {
 
     filter_t filter = filter_t::NONE;
 
-    /// The fully-qualified name of the friend entity.
+    /// The fully-qualified name of the friend entity (without template args).
     k::name target_name;
+
+    /// Raw template argument names as written at the declaration site (e.g. {"T"} for
+    /// 'friend Foo<T>;'). These are stored as strings before instantiation; after
+    /// template instantiation the substituted resolved types are stored in
+    /// resolved_tpl_arg_types.
+    std::vector<std::string> raw_template_arg_names;
+
+    /// Resolved concrete types for each template argument, filled by
+    /// template_instantiator::clone_friend_directives() during aggregate instantiation.
+    /// Empty on the template definition itself; non-empty on concrete instantiations.
+    std::vector<std::shared_ptr<type>> resolved_tpl_arg_types;
+
+    /// True when '<...>' was explicitly written (even if template_args is empty).
+    bool has_explicit_template_args = false;
 
     /// AST node for error reporting (may be null).
     std::shared_ptr<k::parse::ast::ast_node> ast_node;

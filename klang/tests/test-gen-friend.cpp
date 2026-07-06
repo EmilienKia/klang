@@ -37,6 +37,11 @@
  *  - Friend aggregate with static member function.
  *  - Multiple friend declarations on same aggregate.
  *  - Friend of Base accesses inherited protected member via Derived reference.
+ *  - Template friend: private member access via friend Getter<T>.
+ *  - Template friend: friend declaration with struct filter.
+ *  - Template friend: unparameterized friend grants access to all instantiations.
+ *  - Friend declaration: access private (non-template) member.
+ *  - Template friend: non-friend cannot access private member (negative test).
  */
 
 #include <catch2/catch_all.hpp>
@@ -539,5 +544,140 @@ TEST_CASE("Friend of Base accesses inherited protected member via Derived ref", 
     REQUIRE(test() == 42);
 }
 
+
+// ── Template friend: private member access via friend<T> ────────────────────
+
+TEST_CASE("Template friend — access private member via friend Getter<T>", "[gen][friend][template-friend]") {
+    auto jit = gen_jit(R"SRC(
+        module __friend_tpl_private__;
+        template<typename T>
+        struct Box {
+            private:
+            _val : T;
+            friend Getter<T>;
+        public:
+            Box(v : T) { _val = v; }
+        }
+        template<typename T>
+        struct Getter {
+            get(b : Box<T>&) : T { return b._val; }
+        }
+        test() : int {
+            b : Box<int>(42);
+            g : Getter<int>;
+            if (g.get(b) != 42) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Template friend — friend declaration with struct filter", "[gen][friend][template-friend]") {
+    auto jit = gen_jit(R"SRC(
+        module __friend_tpl_filter__;
+        template<typename T>
+        struct Box {
+            private:
+            _val : T;
+            friend struct Getter<T>;
+        public:
+            Box(v : T) { _val = v; }
+        }
+        template<typename T>
+        struct Getter {
+            get(b : Box<T>&) : T { return b._val; }
+        }
+        test() : int {
+            b : Box<int>(7);
+            g : Getter<int>;
+            if (g.get(b) != 7) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Template friend — unparameterized friend grants access to all instantiations", "[gen][friend][template-friend]") {
+    auto jit = gen_jit(R"SRC(
+        module __friend_tpl_unparameterized__;
+        template<typename T>
+        struct Box {
+            private:
+            _val : T;
+            friend Getter;
+        public:
+            Box(v : T) { _val = v; }
+        }
+        template<typename T>
+        struct Getter {
+            get(b : Box<T>&) : T { return b._val; }
+        }
+        test() : int {
+            b : Box<int>(99);
+            g : Getter<int>;
+            if (g.get(b) != 99) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Friend declaration — access private (non-template) member", "[gen][friend][private]") {
+    auto jit = gen_jit(R"SRC(
+        module __friend_private__;
+        struct Secret {
+            private:
+            _x : int;
+            friend Revealer;
+        public:
+            Secret(v : int) { _x = v; }
+        }
+        struct Revealer {
+            peek(s : Secret&) : int { return s._x; }
+        }
+        test() : int {
+            s : Secret(77);
+            r : Revealer;
+            if (r.peek(s) != 77) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Template friend — non-friend cannot access private member", "[gen][friend][template-friend]") {
+    REQUIRE(compile_should_fail(R"SRC(
+        module __friend_tpl_negative__;
+        template<typename T>
+        struct Box {
+            private:
+            _val : T;
+            friend Getter<T>;
+        public:
+            Box(v : T) { _val = v; }
+        }
+        template<typename T>
+        struct Other {
+            steal(b : Box<T>&) : T { return b._val; }
+        }
+        test() : int {
+            b : Box<int>(1);
+            o : Other<int>;
+            return o.steal(b);
+        }
+    )SRC", nullptr));
+}
 
 

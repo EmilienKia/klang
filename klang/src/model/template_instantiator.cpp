@@ -1222,6 +1222,32 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     // Mark as a synthesised instantiation so codegen applies linkonce_odr + COMDAT.
     concrete->mark_instantiation();
 
+    // Copy friend directives from the template definition, substituting template parameters.
+    // For 'friend Foo<T>;' with T=int: the concrete instantiation gets 'friend Foo<int>'.
+    for (const auto& dir : tpl_def.get_friend_directives()) {
+        friend_directive new_dir;
+        new_dir.filter = dir.filter;
+        new_dir.target_name = dir.target_name;
+        new_dir.has_explicit_template_args = dir.has_explicit_template_args;
+        new_dir.ast_node = dir.ast_node;
+        // Substitute template parameters in each raw arg name.
+        new_dir.raw_template_arg_names = dir.raw_template_arg_names;
+        for (const auto& raw_name : dir.raw_template_arg_names) {
+            auto it = subst.find(raw_name);
+            if (it != subst.end() && it->second) {
+                new_dir.resolved_tpl_arg_types.push_back(it->second);
+            } else {
+                // Not a template parameter — try to resolve as a known type from context.
+                std::shared_ptr<type> resolved;
+                if (ctx) {
+                    resolved = ctx->from_string(raw_name);
+                }
+                new_dir.resolved_tpl_arg_types.push_back(resolved);
+            }
+        }
+        concrete->add_friend_directive(std::move(new_dir));
+    }
+
     // Copy bases (with template parameter substitution in raw names)
     for (auto& bs : tpl_def.get_bases()) {
         concrete->add_base(substitute_base_name(bs.raw_name, subst), bs.vis);

@@ -185,6 +185,8 @@ opt2.getOr(def) == 0;        // returns defaultValue
 
 - **Does not own** the referenced object. The referenced object must outlive the `OptionalRef`.
 - Mutations through `get()` directly modify the original variable.
+- `OptionalRef<T>` declares `friend OptionalConstRef<T>;` so that the widening constructor
+  in `OptionalConstRef` can copy `_ptr` directly without going through the public API.
 - `OptionalRef<T>` can be implicitly widened to `OptionalConstRef<T>` via the
   `OptionalConstRef(other : const OptionalRef<T>&)` constructor.
 
@@ -264,6 +266,11 @@ in `OptionalConstRef<T>` is enforced at the API level: all accessors return
 `const T&`, so the caller cannot modify the referenced object through this wrapper.
 The stored pointer is a `T*` internally, but the wrapper provides no method to
 write through it.
+
+The widening constructor `OptionalConstRef(other : const OptionalRef<T>&)` copies
+`other._ptr` directly because `OptionalConstRef<T>` is declared as a `friend` of
+`OptionalRef<T>`. This allows direct access to the private `_ptr` field, making the
+constructor a simple one-statement assignment.
 
 ---
 

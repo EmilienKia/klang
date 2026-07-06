@@ -246,6 +246,29 @@ namespace k::model {
             dir.target_name = decl.qname->to_name();
         }
 
+        // Extract raw template argument names for later substitution at instantiation time.
+        // For 'friend Foo<T, U>;', raw_template_arg_names will be ["T", "U"].
+        // Type parameters (e.g. T) and primitive/user type names are stored as strings.
+        // These are resolved to concrete types by template_instantiator::clone_friend_directives().
+        dir.has_explicit_template_args = decl.has_explicit_template_args;
+        if (decl.has_explicit_template_args) {
+            for (const auto& tpl_arg : decl.template_args) {
+                if (!tpl_arg) continue;
+                if (tpl_arg->is_type()) {
+                    const auto& type_spec = tpl_arg->type_arg;
+                    if (auto its = std::dynamic_pointer_cast<parse::ast::identified_type_specifier>(type_spec)) {
+                        // Simple or qualified name like T, int, MyStruct, k::SomeType
+                        dir.raw_template_arg_names.push_back(its->name.to_name().to_string());
+                    } else if (auto kts = std::dynamic_pointer_cast<parse::ast::keyword_type_specifier>(type_spec)) {
+                        // Primitive keyword like 'int', 'double', etc.
+                        dir.raw_template_arg_names.push_back(std::string{kts->keyword.content});
+                    }
+                    // Other type specifier kinds (pointer, array, etc.) are ignored for now.
+                }
+                // Value args are not handled for friend template args.
+            }
+        }
+
         // Friend declarations are only valid inside aggregate bodies
         if (auto agg_scope = current_context_content<model::aggregate>()) {
             agg_scope->add_friend_directive(std::move(dir));
