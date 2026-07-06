@@ -419,8 +419,15 @@ UsingFilter
     ;
 
 FriendDecl
-    = 'friend' , [ FriendFilter ] , QualifiedIdentifier , ';'
+    = 'friend' , [ FriendFilter ] , QualifiedIdentifier , [ TemplateArgList ] , ';'
     ;
+    (* The optional TemplateArgList constrains which instantiation is accepted as a friend:
+       - 'friend Foo;'       : all types / all instantiations of Foo are friends.
+       - 'friend Foo<T>;'    : only the instantiation of Foo matching the current T.
+       - 'friend Foo<int>;'  : only Foo<int>.
+       Same rules apply to free function friends.
+       Type parameters in the TemplateArgList refer to the enclosing template's params
+       and are substituted when the enclosing aggregate is instantiated. *)
 
 FriendFilter
     = 'struct' | 'interface' | 'class'

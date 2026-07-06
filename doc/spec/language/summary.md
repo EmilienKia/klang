@@ -1048,6 +1048,56 @@ static ~StructName() { /* called after main */ }
 
 ---
 
+## 17bis. Friend Declarations
+
+A `friend` declaration inside an aggregate body grants the named entity access
+to **both protected and private** members of the declaring aggregate.
+
+```k
+struct Secret {
+    private:
+    _x : int;
+    friend Buddy;          // non-template friend
+    friend Getter<T>;      // template friend (same type param)
+    friend Getter<int>;    // template friend (concrete type)
+    friend struct Filtered<T>;   // with type filter
+    friend free_helper;    // free function friend (all instantiations)
+    friend free_helper<T>; // free function friend (matching type param only)
+}
+```
+
+### Syntax
+
+```
+FriendDecl = 'friend' , [ FriendFilter ] , QualifiedIdentifier , [ TemplateArgList ] , ';'
+FriendFilter = 'struct' | 'interface' | 'class'
+```
+
+The optional `TemplateArgList` constrains which instantiation of a template is
+accepted as a friend:
+
+| Declaration form | Meaning |
+|---|---|
+| `friend Foo;` | All types and all instantiations of `Foo` are friends |
+| `friend Foo<T>;` | Only the instantiation of `Foo` whose arg equals the current aggregate's `T` |
+| `friend Foo<int>;` | Only the concrete instantiation `Foo<int>` |
+| `friend free_func;` | All instantiations of the free function template are friends |
+| `friend free_func<T>;` | Only `free_func` instantiated with the same type as `T` |
+
+### Rules
+
+- Friendship is **not inherited**: a subclass of a friend is not automatically a friend.
+- Friendship does **not propagate**: a friend of `X` cannot access members of `X`'s
+  base classes through that friendship (it can access only what belongs to `X`).
+- Friendship applies to both **private and protected** members.
+- A `friend struct Foo<T>;` filter verifies that the named entity is indeed a `struct`.
+- The `TemplateArgList` in a friend declaration inside a template aggregate may
+  reference the enclosing template's type parameters (e.g. `friend Bar<T>;`).
+  When the enclosing aggregate is instantiated, `T` is substituted with the concrete
+  type, so `Box<int>` carries `friend Bar<int>` and `Box<double>` carries `friend Bar<double>`.
+
+---
+
 ## 18. Designated Initializers
 
 > Details: [designated-init.md](structs/designated-init.md)
