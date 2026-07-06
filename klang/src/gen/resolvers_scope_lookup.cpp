@@ -102,6 +102,50 @@ bool scope_lookup::is_struct_member_accessible(
     return false;
 }
 
+// Returns true if 'instantiation_args' (the concrete template args of the
+// calling function or owning aggregate's instantiation) match the expected args
+// recorded in 'dir'.
+//
+// Two sources of truth for the expected args (preferred in order):
+//  1. dir.resolved_tpl_arg_types[i] — concrete type pointer, available when the
+//     declaring aggregate was itself a template instantiation and the instantiator
+//     substituted T→int etc.
+//  2. dir.raw_template_arg_names[i]  — raw string ("int", "MyStruct") — used as
+//     fallback when the declaring aggregate is NOT a template (instantiator never
+//     ran), so resolved_tpl_arg_types was never populated.
+//
+// Comparison: prefer pointer identity, then to_string() equality.
+static bool template_args_match(
+    const std::vector<template_argument>& instantiation_args,
+    const friend_directive& dir)
+{
+    const auto& dir_types = dir.resolved_tpl_arg_types;
+    const auto& dir_raw   = dir.raw_template_arg_names;
+
+    // Expected argument count from whichever source has data.
+    size_t expected = std::max(dir_types.size(), dir_raw.size());
+    if (instantiation_args.size() != expected) return false;
+
+    for (size_t i = 0; i < instantiation_args.size(); ++i) {
+        if (!instantiation_args[i].is_type()) return false;
+        const auto& actual = instantiation_args[i].type_arg;
+
+        if (i < dir_types.size() && dir_types[i]) {
+            // Resolved type available — compare by pointer then by display name.
+            if (actual.get() != dir_types[i].get() &&
+                actual->to_string() != dir_types[i]->to_string()) {
+                return false;
+            }
+        } else if (i < dir_raw.size() && !dir_raw[i].empty()) {
+            // Fall back to raw name string comparison (non-template declaring struct).
+            if (actual->to_string() != dir_raw[i]) return false;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool scope_lookup::is_friend_of(
     const aggregate& owner_agg,
     const std::vector<std::shared_ptr<function>>& function_stack,
@@ -175,40 +219,35 @@ bool scope_lookup::is_friend_of(
             }
             // Template instantiation match: fn_owner may be a concrete instantiation
             // (e.g. OptionalConstRef__int) while target_agg is the template definition
-            // (OptionalConstRef). Match them when the base template names agree and,
-            // if explicit template args were written, the resolved types also match.
+            // (OptionalConstRef). Match when base template names agree and, if explicit
+            // template args were written, those args also match.
             if (fn_owner && fn_owner->has_tpl_args() && target_agg->is_template()) {
                 if (fn_owner->get_tpl_base_name() == target_agg->get_short_name()) {
                     if (!dir.has_explicit_template_args) {
-                        // Unparameterized friend — all instantiations of the template are friends.
+                        // Unparameterized friend — all instantiations are friends.
                         return true;
                     }
-                    // Parameterized friend — compare concrete args element-by-element.
-                    const auto& owner_args = fn_owner->get_tpl_args();
-                    const auto& dir_args   = dir.resolved_tpl_arg_types;
-                    if (owner_args.size() == dir_args.size()) {
-                        bool all_match = true;
-                        for (size_t i = 0; i < owner_args.size(); ++i) {
-                            if (!owner_args[i].is_type() || !dir_args[i]) {
-                                all_match = false;
-                                break;
-                            }
-                            if (owner_args[i].type_arg.get() != dir_args[i].get() &&
-                                owner_args[i].type_arg->to_string() != dir_args[i]->to_string()) {
-                                all_match = false;
-                                break;
-                            }
-                        }
-                        if (all_match) return true;
-                    }
+                    if (template_args_match(fn_owner->get_tpl_args(), dir)) return true;
                 }
             }
         } else if (auto target_fn = std::dynamic_pointer_cast<const function>(target)) {
             if (dir.filter != friend_directive::filter_t::NONE) {
                 continue;
             }
+            // Exact match (non-template or same concrete instance).
             if (current_fn.get() == target_fn.get()) {
                 return true;
+            }
+            // Template instantiation match: current_fn may be a concrete instantiation
+            // (e.g. peek__int) while target_fn is the template definition (peek).
+            if (current_fn->has_tpl_args() && target_fn->is_template()) {
+                if (current_fn->get_tpl_base_name() == target_fn->get_short_name()) {
+                    if (!dir.has_explicit_template_args) {
+                        // Unparameterized friend — all instantiations are friends.
+                        return true;
+                    }
+                    if (template_args_match(current_fn->get_tpl_args(), dir)) return true;
+                }
             }
         }
     }

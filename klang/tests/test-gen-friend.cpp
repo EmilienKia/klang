@@ -42,6 +42,11 @@
  *  - Template friend: unparameterized friend grants access to all instantiations.
  *  - Friend declaration: access private (non-template) member.
  *  - Template friend: non-friend cannot access private member (negative test).
+ *  - Non-template struct, explicit concrete friend arg grants access.
+ *  - Non-template struct, wrong concrete arg rejects access (negative).
+ *  - Free function template with inherited param as friend grants access.
+ *  - Unparameterized free function template friend grants access to all instantiations.
+ *  - Free function template wrong param rejects access (negative).
  */
 
 #include <catch2/catch_all.hpp>
@@ -680,4 +685,130 @@ TEST_CASE("Template friend — non-friend cannot access private member", "[gen][
     )SRC", nullptr));
 }
 
+// ── Gap 1: non-template struct with explicit template friend args ─────────────
+
+TEST_CASE("Template friend — non-template struct, explicit concrete arg grants access", "[gen][friend][template-friend]") {
+    auto jit = gen_jit(R"SRC(
+        module __friend_nontpl_concrete_pos__;
+        struct Secret {
+            private:
+            _x : int;
+            friend Getter<int>;
+        public:
+            Secret(v : int) { _x = v; }
+        }
+        template<typename T>
+        struct Getter {
+            get(s : Secret&) : int { return s._x; }
+        }
+        test() : int {
+            s : Secret(55);
+            g : Getter<int>;
+            if (g.get(s) != 55) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Template friend — non-template struct, wrong concrete arg rejects access", "[gen][friend][template-friend]") {
+    REQUIRE(compile_should_fail(R"SRC(
+        module __friend_nontpl_concrete_neg__;
+        struct Secret {
+            private:
+            _x : int;
+            friend Getter<int>;
+        public:
+            Secret(v : int) { _x = v; }
+        }
+        template<typename T>
+        struct Getter {
+            get(s : Secret&) : int { return s._x; }
+        }
+        test() : int {
+            s : Secret(1);
+            g : Getter<double>;
+            return g.get(s);
+        }
+    )SRC", nullptr));
+}
+
+// ── Gap 2: free function template as friend ──────────────────────────────────
+
+TEST_CASE("Template friend — free function template with inherited param grants access", "[gen][friend][template-friend]") {
+    auto jit = gen_jit(R"SRC(
+        module __friend_freefn_tpl_pos__;
+        template<typename T>
+        struct Box {
+            private:
+            _val : T;
+            friend peek<T>;
+        public:
+            Box(v : T) { _val = v; }
+        }
+        template<typename T>
+        peek(b : Box<T>&) : T { return b._val; }
+        test() : int {
+            b : Box<int>(7);
+            if (peek<int>(b) != 7) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Template friend — unparameterized free function friend grants access to all instantiations", "[gen][friend][template-friend]") {
+    auto jit = gen_jit(R"SRC(
+        module __friend_freefn_unparameterized__;
+        template<typename T>
+        struct Box {
+            private:
+            _val : T;
+            friend peek;
+        public:
+            Box(v : T) { _val = v; }
+        }
+        template<typename T>
+        peek(b : Box<T>&) : T { return b._val; }
+        test() : int {
+            bi : Box<int>(3);
+            if (peek<int>(bi) != 3) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Template friend — free function template wrong param rejects access", "[gen][friend][template-friend]") {
+    // Only peek<int> is declared as friend; peek<long> must be rejected.
+    // Use long (not double) to avoid cast syntax issues in constructor args.
+    REQUIRE(compile_should_fail(R"SRC(
+        module __friend_freefn_tpl_neg__;
+        template<typename T>
+        struct Box {
+            private:
+            _val : T;
+            friend peek<int>;
+        public:
+            Box(v : T) { _val = v; }
+        }
+        template<typename T>
+        peek(b : Box<T>&) : T { return b._val; }
+        test() : int {
+            v : long = 1;
+            b : Box<long>(v);
+            p : long = peek<long>(b);
+            return 0;
+        }
+    )SRC", nullptr));
+}
 
