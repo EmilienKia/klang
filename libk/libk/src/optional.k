@@ -155,6 +155,160 @@ struct Optional {
     }
 }
 
+/**
+ * OptionalRef<T> — a type-safe container for an optional mutable reference.
+ *
+ * Wraps a nullable mutable pointer to T. Does not own the referenced object.
+ * Rebind with set(); read or write through get() / operator*().
+ *
+ * An OptionalRef<T> can be implicitly widened to an OptionalConstRef<T>.
+ */
+template<typename T>
+struct OptionalRef {
+    private:
+    _ptr : T*;
+
+    public:
+    /**
+     * Default constructor. Creates an empty OptionalRef (no reference).
+     */
+    OptionalRef() : _ptr(null) {
+    }
+
+    /**
+     * Constructor from a mutable reference. Stores a pointer to value.
+     */
+    OptionalRef(value : T&) {
+        _ptr = &value;
+    }
+
+    /**
+     * Copy constructor. Both instances refer to the same object.
+     */
+    OptionalRef(other : const OptionalRef<T>&) {
+        _ptr = other._ptr;
+    }
+
+    /**
+     * Return true if this OptionalRef holds a reference.
+     */
+    const hasValue() : bool {
+        return _ptr != null;
+    }
+
+    /**
+     * Return a mutable reference to the referenced object.
+     * Precondition: hasValue() must be true.
+     */
+    const get() : T& {
+        return *_ptr;
+    }
+
+    /**
+     * Dereference operator. Equivalent to get().
+     */
+    const operator*() : T& {
+        return *_ptr;
+    }
+
+    /**
+     * Return the referenced value if present, or defaultValue otherwise.
+     */
+    const getOr(defaultValue : T&) : T& {
+        if (_ptr != null) {
+            return *_ptr;
+        }
+        return defaultValue;
+    }
+
+    /**
+     * Rebind this OptionalRef to a different object.
+     */
+    set(value : T&) {
+        _ptr = &value;
+    }
+}
+
+/**
+ * OptionalConstRef<T> — a type-safe container for an optional read-only reference.
+ *
+ * Wraps a nullable pointer to T, exposing only immutable (const) access.
+ * Does not own the referenced object. Rebinding is not supported by design.
+ *
+ * Note: K has no mutable-pointer-to-const type; immutability is enforced
+ * through the accessor API (get / operator* / getOr all return const T&).
+ *
+ * Can be constructed from an OptionalRef<T> (mutable-to-const widening).
+ */
+template<typename T>
+struct OptionalConstRef {
+    private:
+    _ptr : T*;
+
+    public:
+    /**
+     * Default constructor. Creates an empty OptionalConstRef (no reference).
+     */
+    OptionalConstRef() : _ptr(null) {
+    }
+
+    /**
+     * Constructor from a reference. Stores a pointer to value.
+     */
+    OptionalConstRef(value : T&) {
+        _ptr = &value;
+    }
+
+    /**
+     * Copy constructor.
+     */
+    OptionalConstRef(other : const OptionalConstRef<T>&) {
+        _ptr = other._ptr;
+    }
+
+    /**
+     * Construct from an OptionalRef — mutable reference widens to read-only view.
+     */
+    OptionalConstRef(other : const OptionalRef<T>&) {
+        if (other.hasValue()) {
+            _ptr = &other.get();
+        } else {
+            _ptr = null;
+        }
+    }
+
+    /**
+     * Return true if this OptionalConstRef holds a reference.
+     */
+    const hasValue() : bool {
+        return _ptr != null;
+    }
+
+    /**
+     * Return an immutable reference to the referenced object.
+     * Precondition: hasValue() must be true.
+     */
+    const get() : const T& {
+        return *_ptr;
+    }
+
+    /**
+     * Dereference operator. Equivalent to get().
+     */
+    const operator*() : const T& {
+        return *_ptr;
+    }
+
+    /**
+     * Return the referenced value if present, or defaultValue otherwise.
+     */
+    const getOr(defaultValue : const T&) : const T& {
+        if (_ptr != null) {
+            return *_ptr;
+        }
+        return defaultValue;
+    }
+}
 
 
 

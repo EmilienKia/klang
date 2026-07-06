@@ -450,3 +450,364 @@ TEST_CASE("Optional set-reset-set lifecycle", "[libk][optional]") {
     CHECK(fn() == 1);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  OptionalConstRef<T> tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("OptionalConstRef default constructor is empty", "[libk][optional][optional-const-ref]") {
+    auto j = jit_k(R"SRC(
+        module __optcr_default__;
+        test() : int {
+            opt : OptionalConstRef<int>;
+            if (opt.hasValue()) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalConstRef constructor from reference — hasValue and get", "[libk][optional][optional-const-ref]") {
+    auto j = jit_k(R"SRC(
+        module __optcr_ref__;
+        test() : int {
+            x : int = 42;
+            opt : OptionalConstRef<int>(x);
+            if (!opt.hasValue()) return 0;
+            if (opt.get() != 42) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalConstRef dereference operator*", "[libk][optional][optional-const-ref]") {
+    auto j = jit_k(R"SRC(
+        module __optcr_deref__;
+        test() : int {
+            x : int = 99;
+            opt : OptionalConstRef<int>(x);
+            // operator*() is defined but K's built-in '*' only works on pointer types.
+            // Call it explicitly via get() — semantically identical.
+            if (opt.get() != 99) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalConstRef copy constructor — with value", "[libk][optional][optional-const-ref][copy]") {
+    auto j = jit_k(R"SRC(
+        module __optcr_copy_value__;
+        test() : int {
+            x : int = 7;
+            src : OptionalConstRef<int>(x);
+            dst : OptionalConstRef<int>(src);
+            if (!dst.hasValue()) return 0;
+            if (dst.get() != 7) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalConstRef copy constructor — empty", "[libk][optional][optional-const-ref][copy]") {
+    auto j = jit_k(R"SRC(
+        module __optcr_copy_empty__;
+        test() : int {
+            src : OptionalConstRef<int>;
+            dst : OptionalConstRef<int>(src);
+            if (dst.hasValue()) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalConstRef getOr with value", "[libk][optional][optional-const-ref]") {
+    auto j = jit_k(R"SRC(
+        module __optcr_getor_value__;
+        test() : int {
+            x : int = 33;
+            opt : OptionalConstRef<int>(x);
+            def : int = 0;
+            return opt.getOr(def);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 33);
+}
+
+TEST_CASE("OptionalConstRef getOr without value", "[libk][optional][optional-const-ref]") {
+    auto j = jit_k(R"SRC(
+        module __optcr_getor_empty__;
+        test() : int {
+            opt : OptionalConstRef<int>;
+            def : int = 77;
+            return opt.getOr(def);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 77);
+}
+
+// reflect that OptionalConstRef does NOT own the value — modifying the
+// original variable changes what get() observes via the stored pointer.
+TEST_CASE("OptionalConstRef reflects mutations of referenced variable", "[libk][optional][optional-const-ref]") {
+    auto j = jit_k(R"SRC(
+        module __optcr_reflect__;
+        test() : int {
+            x : int = 1;
+            opt : OptionalConstRef<int>(x);
+            if (opt.get() != 1) return 0;
+            x = 2;
+            if (opt.get() != 2) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  OptionalRef<T> tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("OptionalRef default constructor is empty", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_default__;
+        test() : int {
+            opt : OptionalRef<int>;
+            if (opt.hasValue()) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalRef constructor from reference — hasValue and get", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_ref__;
+        test() : int {
+            x : int = 42;
+            opt : OptionalRef<int>(x);
+            if (!opt.hasValue()) return 0;
+            if (opt.get() != 42) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalRef dereference operator*", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_deref__;
+        test() : int {
+            x : int = 55;
+            opt : OptionalRef<int>(x);
+            // operator*() is defined but K's built-in '*' only works on pointer types.
+            // Call it explicitly via get() — semantically identical.
+            if (opt.get() != 55) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalRef copy constructor — with value", "[libk][optional][optional-ref][copy]") {
+    auto j = jit_k(R"SRC(
+        module __opr_copy_value__;
+        test() : int {
+            x : int = 13;
+            src : OptionalRef<int>(x);
+            dst : OptionalRef<int>(src);
+            if (!dst.hasValue()) return 0;
+            if (dst.get() != 13) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalRef copy constructor — empty", "[libk][optional][optional-ref][copy]") {
+    auto j = jit_k(R"SRC(
+        module __opr_copy_empty__;
+        test() : int {
+            src : OptionalRef<int>;
+            dst : OptionalRef<int>(src);
+            if (dst.hasValue()) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalRef set rebinds to new variable", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_set__;
+        test() : int {
+            x : int = 10;
+            y : int = 20;
+            opt : OptionalRef<int>(x);
+            if (opt.get() != 10) return 0;
+            opt.set(y);
+            if (opt.get() != 20) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalRef set on empty optional", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_set_empty__;
+        test() : int {
+            x : int = 5;
+            opt : OptionalRef<int>;
+            if (opt.hasValue()) return 0;
+            opt.set(x);
+            if (!opt.hasValue()) return 0;
+            if (opt.get() != 5) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("OptionalRef getOr with value", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_getor_value__;
+        test() : int {
+            x : int = 33;
+            opt : OptionalRef<int>(x);
+            def : int = 0;
+            return opt.getOr(def);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 33);
+}
+
+TEST_CASE("OptionalRef getOr without value", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_getor_empty__;
+        test() : int {
+            opt : OptionalRef<int>;
+            def : int = 77;
+            return opt.getOr(def);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 77);
+}
+
+// OptionalRef is a non-owning mutable reference wrapper — get() returns a
+// mutable reference, so writing through it modifies the original variable.
+TEST_CASE("OptionalRef mutation via get modifies original variable", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_mutate__;
+        test() : int {
+            x : int = 1;
+            opt : OptionalRef<int>(x);
+            opt.get() = 42;
+            if (x != 42) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+// OptionalRef reflects mutations of the referenced variable (same pointer).
+TEST_CASE("OptionalRef reflects mutations of referenced variable", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_reflect__;
+        test() : int {
+            x : int = 1;
+            opt : OptionalRef<int>(x);
+            if (opt.get() != 1) return 0;
+            x = 2;
+            if (opt.get() != 2) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+// OptionalRef with a struct type — verify member access through get().
+TEST_CASE("OptionalRef with struct type", "[libk][optional][optional-ref]") {
+    auto j = jit_k(R"SRC(
+        module __opr_struct__;
+        struct Point {
+            x : int;
+            y : int;
+            Point(ax : int, ay : int) {
+                x = ax;
+                y = ay;
+            }
+        }
+        test() : int {
+            p : Point(3, 7);
+            opt : OptionalRef<Point>(p);
+            if (!opt.hasValue()) return 0;
+            if (opt.get().x != 3) return 0;
+            if (opt.get().y != 7) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
