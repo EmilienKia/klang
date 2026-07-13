@@ -1765,6 +1765,22 @@ void implementation_generator::emit_constructor_post_block(function& function) {
                 "direct_vbptr_" + vbase->get_short_name() + "_addr");
             _builder->CreateStore(vbase_ptr, vbptr_addr);
         }
+
+        // Finally, descend into 'st's OWN shared virtual-base sub-objects (the LIVE
+        // copies embedded in this most-derived collector) and repoint their
+        // __vbptr_X__ too: a vbptr for this vbase may live inside ANOTHER virtual
+        // base sub-object (e.g. Collection's __vbptr_Sequence__ inside Vector's
+        // __vbase_Collection__). The direct-base walk above only reaches the dead
+        // embedded copies inside non-virtual intermediates, never these live ones.
+        for (auto& other_vbase : vbases) {
+            std::string ov_field_name = "__vbase_" + other_vbase->get_short_name() + "__";
+            auto ov_field = st->get_struct_type()->get_member(ov_field_name);
+            if (!ov_field) continue;
+            llvm::Value* ov_ptr = _builder->CreateStructGEP(
+                st_llvm_type, this_ptr, (unsigned)ov_field->index,
+                "vbase_" + other_vbase->get_short_name() + "_live_ptr");
+            set_vbptrs(*other_vbase, ov_ptr);
+        }
     }
 }
 

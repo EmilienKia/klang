@@ -563,22 +563,33 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 expr.sub_expr()->accept(*this);
                 if (!_value) return;
 
-                // Find the base subobject field index in the derived struct
-                // The base subobject is stored as "__base_<name>__" or "__vbase_<name>__" member
+                // Direct base: a NON-virtual base is embedded as "__base_<name>__";
+                // a VIRTUAL base must be reached by loading "__vbptr_<name>__" (which
+                // points at the LIVE shared sub-object), never by GEP into an embedded
+                // "__vbase_<name>__" copy — that copy is a dead duplicate once this
+                // class is itself a sub-object of a more-derived collector. The
+                // most-derived collector's own __vbase is applied only as a fallback
+                // after the transitive DFS below.
                 std::string subobj_name;
                 for (auto& bs : src_st->get_bases()) {
                     if (bs.base && bs.base.get() == tgt_st.get()) {
-                        subobj_name = bs.is_virtual
-                            ? "__vbase_" + bs.sanitised_name() + "__"
-                            : "__base_" + bs.sanitised_name() + "__";
+                        if (bs.is_virtual) {
+                            std::string vbptr_name = "__vbptr_" + bs.base->get_short_name() + "__";
+                            if (auto vbptr_field = src_st_type->get_member(vbptr_name)) {
+                                auto src_llvm_type = _context->get_llvm_type(src_st_type);
+                                llvm::Type* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+                                llvm::Value* vbptr_addr = _builder->CreateStructGEP(
+                                    src_llvm_type, _value, (unsigned)vbptr_field->index,
+                                    "vbptr_" + tgt_st->get_short_name() + "_addr");
+                                _value = _builder->CreateLoad(ptr_ty, vbptr_addr,
+                                    "vbase_" + tgt_st->get_short_name() + "_ptr");
+                                return;
+                            }
+                            subobj_name = "__vbase_" + bs.sanitised_name() + "__";
+                        } else {
+                            subobj_name = "__base_" + bs.sanitised_name() + "__";
+                        }
                         break;
-                    }
-                }
-                // Also check for __vbase_ in the most-derived class (transitively virtual)
-                if (subobj_name.empty()) {
-                    std::string vbase_name = "__vbase_" + tgt_st->get_short_name() + "__";
-                    if (src_st_type->get_member(vbase_name)) {
-                        subobj_name = vbase_name;
                     }
                 }
                 if (!subobj_name.empty()) {
@@ -634,7 +645,24 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                                 return true;
                             }
 
-                            // Check if tgt_st is a direct __vbase_ of this intermediate
+                            // Prefer the vbptr (points at the LIVE shared copy); then
+                            // recurse deeper (a deeper base may hold the vbptr); only
+                            // then fall back to this intermediate's own embedded __vbase.
+                            std::string vbptr_name2 = "__vbptr_" + tgt_st->get_short_name() + "__";
+                            if (auto vbptr_field2 = base_st_type->get_member(vbptr_name2)) {
+                                llvm::Type* inter_llvm_type = base_st_type->get_llvm_type();
+                                if (inter_llvm_type) {
+                                    llvm::Value* vbptr_addr = _builder->CreateStructGEP(
+                                        inter_llvm_type, base_ptr, (unsigned)vbptr_field2->index,
+                                        "trans_vbptr_" + tgt_st->get_short_name() + "_addr");
+                                    _value = _builder->CreateLoad(ptr_ty, vbptr_addr,
+                                        "trans_vbase_" + tgt_st->get_short_name() + "_ptr");
+                                    return true;
+                                }
+                            }
+                            if (dfs_gep(bs.base.get(), base_st_type.get(), base_ptr)) {
+                                return true;
+                            }
                             std::string vbase_name2 = "__vbase_" + tgt_st->get_short_name() + "__";
                             if (auto vbase_field2 = base_st_type->get_member(vbase_name2)) {
                                 llvm::Type* inter_llvm_type = base_st_type->get_llvm_type();
@@ -644,17 +672,13 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                                     "trans_vbase_" + tgt_st->get_short_name() + "_ptr");
                                 return true;
                             }
-
-                            if (dfs_gep(bs.base.get(), base_st_type.get(), base_ptr)) {
-                                return true;
-                            }
                         }
                         return false;
                     };
                     if (dfs_gep(src_st.get(), src_st_type.get(), _value)) return;
                 }
 
-                // Virtual base via vbptr
+                // Virtual base via vbptr (this class directly holds __vbptr_tgt).
                 {
                     std::string vbptr_name = "__vbptr_" + tgt_st->get_short_name() + "__";
                     auto src_llvm_type = _context->get_llvm_type(src_st_type);
@@ -664,6 +688,18 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                             src_llvm_type, _value, (unsigned)vbptr_field->index,
                             "vbptr_" + tgt_st->get_short_name() + "_addr");
                         _value = _builder->CreateLoad(ptr_ty, vbptr_addr,
+                            "vbase_" + tgt_st->get_short_name() + "_ptr");
+                        return;
+                    }
+                }
+                // Fallback: this class itself is the collector holding the shared
+                // __vbase_tgt storage (most-derived, no vbptr path) — GEP into it.
+                {
+                    std::string vbase_name = "__vbase_" + tgt_st->get_short_name() + "__";
+                    auto src_llvm_type = _context->get_llvm_type(src_st_type);
+                    if (auto vbase_field = src_st_type->get_member(vbase_name)) {
+                        _value = _builder->CreateStructGEP(
+                            src_llvm_type, _value, (unsigned)vbase_field->index,
                             "vbase_" + tgt_st->get_short_name() + "_ptr");
                         return;
                     }
@@ -765,20 +801,29 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     _context->get_llvm_type(effective_source), _value, "indir_upcast_load");
             }
 
-            // Same GEP strategy as ref<Derived>→ref<Base>
+            // Same GEP strategy as ref<Derived>→ref<Base>: vbptr for a direct virtual
+            // base; the top-level __vbase shortcut is applied only as a fallback after
+            // the DFS so intermediate collectors do not use a dead embedded copy.
             std::string subobj_name;
             for (auto& bs : src_st->get_bases()) {
                 if (bs.base && bs.base.get() == tgt_st.get()) {
-                    subobj_name = bs.is_virtual
-                        ? "__vbase_" + bs.sanitised_name() + "__"
-                        : "__base_" + bs.sanitised_name() + "__";
+                    if (bs.is_virtual) {
+                        std::string vbptr_name = "__vbptr_" + bs.base->get_short_name() + "__";
+                        if (auto vbptr_field = src_st_type->get_member(vbptr_name)) {
+                            auto src_llvm_type = _context->get_llvm_type(src_st_type);
+                            llvm::Type* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+                            llvm::Value* vbptr_addr = _builder->CreateStructGEP(
+                                src_llvm_type, _value, (unsigned)vbptr_field->index,
+                                "vbptr_" + tgt_st->get_short_name() + "_addr");
+                            _value = _builder->CreateLoad(ptr_ty, vbptr_addr,
+                                "vbase_" + tgt_st->get_short_name() + "_ptr");
+                            return;
+                        }
+                        subobj_name = "__vbase_" + bs.sanitised_name() + "__";
+                    } else {
+                        subobj_name = "__base_" + bs.sanitised_name() + "__";
+                    }
                     break;
-                }
-            }
-            if (subobj_name.empty()) {
-                std::string vbase_name = "__vbase_" + tgt_st->get_short_name() + "__";
-                if (src_st_type->get_member(vbase_name)) {
-                    subobj_name = vbase_name;
                 }
             }
             if (!subobj_name.empty()) {
@@ -825,6 +870,21 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                         _value = base_ptr;
                         return true;
                     }
+                    // Prefer vbptr, then recurse deeper, then fall back to this
+                    // intermediate's own embedded __vbase.
+                    std::string vbptr_name2 = "__vbptr_" + tgt_st->get_short_name() + "__";
+                    if (auto vbptr_field2 = base_st_type->get_member(vbptr_name2)) {
+                        llvm::Type* inter_llvm_type = base_st_type->get_llvm_type();
+                        if (inter_llvm_type) {
+                            llvm::Value* vbptr_addr = _builder->CreateStructGEP(
+                                inter_llvm_type, base_ptr, (unsigned)vbptr_field2->index,
+                                "trans_vbptr_" + tgt_st->get_short_name() + "_addr");
+                            _value = _builder->CreateLoad(dfs_ptr_ty, vbptr_addr,
+                                "trans_vbase_" + tgt_st->get_short_name() + "_ptr");
+                            return true;
+                        }
+                    }
+                    if (dfs_gep(bs.base.get(), base_st_type.get(), base_ptr)) return true;
                     std::string vbase_name2 = "__vbase_" + tgt_st->get_short_name() + "__";
                     if (auto vbase_field2 = base_st_type->get_member(vbase_name2)) {
                         llvm::Type* inter_llvm_type = base_st_type->get_llvm_type();
@@ -834,13 +894,12 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                             "trans_vbase_" + tgt_st->get_short_name() + "_ptr");
                         return true;
                     }
-                    if (dfs_gep(bs.base.get(), base_st_type.get(), base_ptr)) return true;
                 }
                 return false;
             };
             if (dfs_gep(src_st.get(), src_st_type.get(), _value)) return;
 
-            // Virtual base via vbptr
+            // Virtual base via vbptr (this class directly holds __vbptr_tgt).
             {
                 std::string vbptr_name = "__vbptr_" + tgt_st->get_short_name() + "__";
                 auto src_llvm_type = _context->get_llvm_type(src_st_type);
@@ -850,6 +909,17 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                         src_llvm_type, _value, (unsigned)vbptr_field->index,
                         "vbptr_" + tgt_st->get_short_name() + "_addr");
                     _value = _builder->CreateLoad(ptr_ty, vbptr_addr,
+                        "vbase_" + tgt_st->get_short_name() + "_ptr");
+                    return;
+                }
+            }
+            // Fallback: most-derived collector holding the shared __vbase_tgt storage.
+            {
+                std::string vbase_name = "__vbase_" + tgt_st->get_short_name() + "__";
+                auto src_llvm_type = _context->get_llvm_type(src_st_type);
+                if (auto vbase_field = src_st_type->get_member(vbase_name)) {
+                    _value = _builder->CreateStructGEP(
+                        src_llvm_type, _value, (unsigned)vbase_field->index,
                         "vbase_" + tgt_st->get_short_name() + "_ptr");
                     return;
                 }
