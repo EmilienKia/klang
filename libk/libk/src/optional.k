@@ -187,6 +187,13 @@ public:
     /**
      * Copy constructor. Both instances refer to the same object.
      */
+    OptionalRef(other : OptionalRef<T>&) {
+        _ptr = other._ptr;
+    }
+
+    /**
+     * Copy constructor (const source). Both instances refer to the same object.
+     */
     OptionalRef(other : const OptionalRef<T>&) {
         _ptr = other._ptr;
     }
@@ -299,6 +306,15 @@ public:
     }
 
     /**
+     * Rebind this OptionalConstRef to point at value.
+     * Takes a mutable reference because K has no pointer-to-const type;
+     * const access is enforced through the get/operator* accessors.
+     */
+    set(value : T&) {
+        _ptr = &value;
+    }
+
+    /**
      * Return the referenced value if present, or defaultValue otherwise.
      */
     const getOr(defaultValue : const T&) : const T& {
@@ -308,7 +324,6 @@ public:
         return defaultValue;
     }
 }
-
 
 
 
