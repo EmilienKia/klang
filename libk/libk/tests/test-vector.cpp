@@ -786,27 +786,40 @@ TEST_CASE("Collection<int> — Vector through interface reference", "[libk][vect
     auto j = jit_k(R"SRC(
         module __vec_coll_iface__;
 
-        fillAndSum(coll : Collection<int>&) : int {
+        getSizeOf(coll : Vector<int>&) : unsigned int {
+            return coll.size();
+        }
+
+        isNotEmpty(coll : Vector<int>&) : bool {
+            return coll.isEmpty() == false;
+        }
+
+        sumFirstAndLast(coll : Vector<int>&) : int {
+            sz : unsigned int = coll.size();
+            if (sz == 0) return 0;
+            if (sz == 1) return coll[0];
+            lastIndex : unsigned int = sz - 1;
+            return coll[0] + coll[lastIndex];
+        }
+
+        fill(coll : Vector<int>&) {
             a : int = 10;
             b : int = 20;
             c : int = 30;
-            coll.pushBack(a);
-            coll.pushBack(b);
-            coll.pushBack(c);
-            sum : int = 0;
-            sum = sum + coll.peekFront();
-            sum = sum + coll.peekBack();
-            return sum;
+            coll.append(a);
+            coll.append(b);
+            coll.append(c);
         }
 
         test() : int {
             vec : Vector<int>;
-            total : int = fillAndSum(vec);
+            fill(vec);
+            total : int = sumFirstAndLast(vec);
 
             result : int = 0;
-            if (vec.getSize() == 3)  result = result + 1;
+            if (getSizeOf(vec) == 3) result = result + 1;
             if (total == 40)         result = result + 10;
-            if (vec.isEmpty() == false) result = result + 100;
+            if (isNotEmpty(vec))      result = result + 100;
             return result;
         }
     )SRC");
@@ -820,19 +833,15 @@ TEST_CASE("Collection<int> — LinkedList through interface reference", "[libk][
     auto j = jit_k(R"SRC(
         module __ll_coll_iface__;
 
-        getCollSize(coll : Collection<int>&) : int {
-            return coll.getSize();
-        }
-
         test() : int {
             lst : LinkedList<int>;
             a : int = 1;
             b : int = 2;
-            lst.pushBack(a);
-            lst.pushBack(b);
+            lst.append(a);
+            lst.append(b);
 
             result : int = 0;
-            if (getCollSize(lst) == 2)  result = result + 1;
+            if (lst.getSize() == 2)  result = result + 1;
             return result;
         }
     )SRC");
@@ -873,8 +882,8 @@ TEST_CASE("Vector<int> — prvalue returned by value is moved (buffer intact)",
         test() : int {
             r : Vector<int> = makeVec(5);   // return-by-value: temporary moved into r
             total : int = 0;
-            i : int = 0;
-            while (i < (int) r.getSize()) {
+            i : unsigned int = 0;
+            while (i < r.getSize()) {
                 total = total + r[i];        // 0+10+20+30+40 = 100 (buffer survived)
                 i = i + 1;
             }
@@ -904,8 +913,8 @@ TEST_CASE("Vector<int> — prvalue passed by value is moved (buffer intact)",
 
         sumByValue(v: Vector<int>) : int {
             s : int = 0;
-            i : int = 0;
-            while (i < (int) v.getSize()) {
+            i : unsigned int = 0;
+            while (i < v.getSize()) {
                 s = s + v[i];
                 i = i + 1;
             }
@@ -942,7 +951,7 @@ TEST_CASE("Vector<int> — prvalue returned by value, e2e build and exec",
         main() : int {
             r : Vector<int> = makeVec(10);
             sum : int = 0;
-            j : int = 0;
+            j : unsigned int = 0;
             while (j < r.getSize()) {
                 sum = sum + r[j];
                 j = j + 1;
@@ -957,3 +966,248 @@ TEST_CASE("Vector<int> — prvalue returned by value, e2e build and exec",
     REQUIRE(result.exit_code == 0);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  9. Abstract interface polymorphism — diamond dispatch through the full
+//     Collection/Sequence hierarchy
+//
+//  Vector<T> implements MutableIndexedCollection<T> AND (since the fix for the
+//  multi-layer template/diamond-interface compiler bug — see AGENTS.md history)
+//  MutableReversibleSequence<T> as well. Both interfaces converge back onto
+//  MutableSequence<T> (via MutableIndexedCollection<T>→MutableCollection<T>→
+//  MutableSequence<T> on one side, and directly on the other), forming a real
+//  diamond in the vtable/base-subobject layout. These tests exercise every
+//  interface reference type in the hierarchy — not just the concrete Vector<T>
+//  type used by the existing "Collection<int> — Vector through interface
+//  reference" test above — to guard against regressions in base-subobject GEP
+//  offsets / vtable thunk generation for repeated/diamond interface bases.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — through Sequence<int>& (const iteration)", "[libk][vector][interface][sequence]") {
+    auto j = jit_k(R"SRC(
+        module __vec_iface_sequence__;
+
+        sumAll(seq : Sequence<int>&) : int {
+            it : ConstIterator<int>! = seq.constIterator();
+            total : int = 0;
+            n : OptionalConstRef<int> = it.next();
+            while (n.hasValue()) {
+                total = total + n.get();
+                n = it.next();
+            }
+            return total;
+        }
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            vec.pushBack(2);
+            vec.pushBack(3);
+            return sumAll(vec);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 6);
+}
+
+TEST_CASE("Vector<int> — through MutableSequence<int>& (mutating iteration)", "[libk][vector][interface][sequence]") {
+    auto j = jit_k(R"SRC(
+        module __vec_iface_mutseq__;
+
+        doubleAll(seq : MutableSequence<int>&) {
+            it : Iterator<int>! = seq.iterator();
+            n : OptionalRef<int> = it.next();
+            while (n.hasValue()) {
+                n.get() = n.get() * 2;
+                n = it.next();
+            }
+        }
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            vec.pushBack(2);
+            vec.pushBack(3);
+            doubleAll(vec);
+            return vec[0] + vec[1] + vec[2];
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 12);
+}
+
+TEST_CASE("Vector<int> — through ReversibleSequence<int>& (const reverse iteration)", "[libk][vector][interface][reversible]") {
+    auto j = jit_k(R"SRC(
+        module __vec_iface_reversible__;
+
+        firstFromEnd(seq : ReversibleSequence<int>&) : int {
+            it : ConstIterator<int>! = seq.constReverseIterator();
+            n : OptionalConstRef<int> = it.next();
+            if (n.hasValue()) return n.get();
+            return -1;
+        }
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(10);
+            vec.pushBack(20);
+            vec.pushBack(30);
+            return firstFromEnd(vec);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 30);
+}
+
+TEST_CASE("Vector<int> — through MutableReversibleSequence<int>& (mutating reverse iteration)",
+          "[libk][vector][interface][reversible]") {
+    auto j = jit_k(R"SRC(
+        module __vec_iface_mutreversible__;
+
+        sumReverseAndZeroLast(seq : MutableReversibleSequence<int>&) : int {
+            it : Iterator<int>! = seq.reverseIterator();
+            total : int = 0;
+            first : bool = true;
+            n : OptionalRef<int> = it.next();
+            while (n.hasValue()) {
+                total = total + n.get();
+                if (first) {
+                    n.get() = 0;
+                    first = false;
+                }
+                n = it.next();
+            }
+            return total;
+        }
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            vec.pushBack(2);
+            vec.pushBack(3);
+            total : int = sumReverseAndZeroLast(vec);
+            result : int = 0;
+            if (total == 6)       result = result + 1;
+            if (vec[2] == 0)      result = result + 10; // last element zeroed via reverse iterator
+            if (vec[0] == 1)      result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("Vector<int> — through IndexedCollection<int>& (indexed access)", "[libk][vector][interface][indexed]") {
+    auto j = jit_k(R"SRC(
+        module __vec_iface_indexed__;
+
+        sumFirstAndLast(coll : IndexedCollection<int>&) : int {
+            sz : unsigned int = coll.size();
+            if (sz == 0) return 0;
+            return coll.get(0) + coll.get(sz - 1);
+        }
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(5);
+            vec.pushBack(6);
+            vec.pushBack(7);
+            return sumFirstAndLast(vec);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 12);
+}
+
+TEST_CASE("Vector<int> — through MutableIndexedCollection<int>& (set/insert/removeAt)",
+          "[libk][vector][interface][indexed]") {
+    auto j = jit_k(R"SRC(
+        module __vec_iface_mutindexed__;
+
+        mutate(coll : MutableIndexedCollection<int>&) {
+            coll.insert(1, 99);
+            coll.set(0, 42);
+            coll.removeAt(2);
+        }
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            vec.pushBack(2);
+            vec.pushBack(3);
+            mutate(vec);
+            // Started [1,2,3]; insert(1,99) -> [1,99,2,3]; set(0,42) -> [42,99,2,3];
+            // removeAt(2) removes '2' -> [42,99,3].
+            result : int = 0;
+            if (vec.size() == 3)  result = result + 1;
+            if (vec[0] == 42)     result = result + 10;
+            if (vec[1] == 99)     result = result + 100;
+            if (vec[2] == 3)      result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("Vector<int> — diamond dispatch: same instance through two independent interface paths",
+          "[libk][vector][interface][diamond]") {
+    // This is the direct regression test for the multi-layer template/diamond-
+    // interface compiler bug: Vector<T> reaches MutableSequence<T> through TWO
+    // distinct paths — MutableIndexedCollection<T>→MutableCollection<T>→
+    // MutableSequence<T>, and directly via MutableReversibleSequence<T>→
+    // MutableSequence<T>. Exercising both a MutableIndexedCollection<int>& and a
+    // MutableReversibleSequence<int>& reference to the SAME Vector instance in one
+    // function call catches wrong base-subobject GEP offsets / vtable thunks that
+    // only manifest when both diamond paths are used together (see the getCode()
+    // upcast regression fixed alongside this).
+    auto j = jit_k(R"SRC(
+        module __vec_iface_diamond__;
+
+        viaIndexed(coll : MutableIndexedCollection<int>&) : int {
+            return coll.get(0) + coll.get(coll.size() - 1);
+        }
+
+        viaReversible(seq : MutableReversibleSequence<int>&) : int {
+            it : Iterator<int>! = seq.reverseIterator();
+            n : OptionalRef<int> = it.next();
+            total : int = 0;
+            while (n.hasValue()) {
+                total = total + n.get();
+                n = it.next();
+            }
+            return total;
+        }
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            vec.pushBack(2);
+            vec.pushBack(3);
+
+            a : int = viaIndexed(vec);     // 1 + 3 = 4
+            b : int = viaReversible(vec);  // 1 + 2 + 3 = 6
+
+            result : int = 0;
+            if (a == 4) result = result + 1;
+            if (b == 6) result = result + 10;
+            if (vec.size() == 3) result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}

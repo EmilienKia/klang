@@ -1225,6 +1225,49 @@ TEST_CASE("[X05] Same template instantiated with struct and class", "[template][
     CHECK(fn_class() == 7);
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+//  [X06] User type named 'I'/'O' must not collide with stdlib template
+//  parameter names of the same name.
+// ────────────────────────────────────────────────────────────────────────────
+//
+// Regression test for a bug where the K standard library (auto-imported as
+// `import k;`) declares I/O-transform stream templates using the literal
+// names 'I' and 'O' as their own type-parameter names (e.g.
+// `template<typename I, typename O> class TransformInputStream { ... }` in
+// libk's `io/transform_stream.k`). While scanning these (still uninstantiated)
+// template bodies, the compiler used to resolve bare template-parameter
+// identifiers like 'I' through a global/namespace name lookup instead of
+// recognising them as placeholders. If the CONSUMING program happened to
+// declare its own type literally named `I` (as this test does), that lookup
+// would spuriously match the user's type, cascading into bogus template
+// instantiations (e.g. `Vector<I>`, `InputStream<I>`) and ultimately an
+// unrelated "cannot resolve type" error deep inside the stdlib's own
+// `Vector<T>::constIterator()`. See resolvers_aggregate.cpp /
+// resolvers_type_ref.cpp `is_enclosing_template_param_name()`.
+TEST_CASE("[X06] User type named 'I' does not collide with stdlib template param names", "[template][name-collision][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module __tpl_x06__;
+
+        interface I {
+            bar() : int;
+        }
+
+        class Impl : public I {
+            override bar() : int { return 42; }
+        }
+
+        test() : int {
+            i : Impl;
+            return i.bar();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_x06__4testEv");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 42);
+}
+
 
 
 

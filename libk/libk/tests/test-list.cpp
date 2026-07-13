@@ -1141,3 +1141,222 @@ TEST_CASE("DoubleLinkedList<TypedEnum> — typed enum (short)", "[libk][list][dl
     CHECK(fn() == 11111);
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Abstract interface polymorphism — LinkedList<T> / DoubleLinkedList<T> through
+//  the Collection/Sequence hierarchy
+//
+//  DoubleLinkedList<T> implements MutableIndexedCollection<T> AND (since the fix
+//  for the multi-layer template/diamond-interface compiler bug — see AGENTS.md
+//  history) MutableReversibleSequence<T> as well, forming the same diamond as
+//  Vector<T> (see test-vector.cpp §9). LinkedList<T> is singly-linked and does
+//  NOT implement ReversibleSequence<T> — only the non-reversible interfaces are
+//  exercised for it below.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LinkedList<int> — through MutableSequence<int>& (mutating iteration)",
+          "[libk][list][interface][sequence]") {
+    auto j = jit_k(R"SRC(
+        module __ll_iface_mutseq__;
+
+        doubleAll(seq : MutableSequence<int>&) {
+            it : Iterator<int>! = seq.iterator();
+            n : OptionalRef<int> = it.next();
+            while (n.hasValue()) {
+                n.get() = n.get() * 2;
+                n = it.next();
+            }
+        }
+
+        test() : int {
+            lst : LinkedList<int>;
+            lst.pushBack(1);
+            lst.pushBack(2);
+            lst.pushBack(3);
+            doubleAll(lst);
+            return lst[0] + lst[1] + lst[2];
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 12);
+}
+
+TEST_CASE("LinkedList<int> — through MutableIndexedCollection<int>& (set/insert/removeAt)",
+          "[libk][list][interface][indexed]") {
+    auto j = jit_k(R"SRC(
+        module __ll_iface_mutindexed__;
+
+        mutate(coll : MutableIndexedCollection<int>&) {
+            coll.insert(1, 99);
+            coll.set(0, 42);
+            coll.removeAt(2);
+        }
+
+        test() : int {
+            lst : LinkedList<int>;
+            lst.pushBack(1);
+            lst.pushBack(2);
+            lst.pushBack(3);
+            mutate(lst);
+            // Started [1,2,3]; insert(1,99) -> [1,99,2,3]; set(0,42) -> [42,99,2,3];
+            // removeAt(2) removes '2' -> [42,99,3].
+            result : int = 0;
+            if (lst.size() == 3)  result = result + 1;
+            if (lst[0] == 42)     result = result + 10;
+            if (lst[1] == 99)     result = result + 100;
+            if (lst[2] == 3)      result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("DoubleLinkedList<int> — through Sequence<int>& (const iteration)",
+          "[libk][list][dlist][interface][sequence]") {
+    auto j = jit_k(R"SRC(
+        module __dll_iface_sequence__;
+
+        sumAll(seq : Sequence<int>&) : int {
+            it : ConstIterator<int>! = seq.constIterator();
+            total : int = 0;
+            n : OptionalConstRef<int> = it.next();
+            while (n.hasValue()) {
+                total = total + n.get();
+                n = it.next();
+            }
+            return total;
+        }
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            lst.pushBack(1);
+            lst.pushBack(2);
+            lst.pushBack(3);
+            return sumAll(lst);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 6);
+}
+
+TEST_CASE("DoubleLinkedList<int> — through ReversibleSequence<int>& (const reverse iteration)",
+          "[libk][list][dlist][interface][reversible]") {
+    auto j = jit_k(R"SRC(
+        module __dll_iface_reversible__;
+
+        firstFromEnd(seq : ReversibleSequence<int>&) : int {
+            it : ConstIterator<int>! = seq.constReverseIterator();
+            n : OptionalConstRef<int> = it.next();
+            if (n.hasValue()) return n.get();
+            return -1;
+        }
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            lst.pushBack(10);
+            lst.pushBack(20);
+            lst.pushBack(30);
+            return firstFromEnd(lst);
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 30);
+}
+
+TEST_CASE("DoubleLinkedList<int> — through MutableReversibleSequence<int>& (mutating reverse iteration)",
+          "[libk][list][dlist][interface][reversible]") {
+    auto j = jit_k(R"SRC(
+        module __dll_iface_mutreversible__;
+
+        sumReverseAndZeroLast(seq : MutableReversibleSequence<int>&) : int {
+            it : Iterator<int>! = seq.reverseIterator();
+            total : int = 0;
+            first : bool = true;
+            n : OptionalRef<int> = it.next();
+            while (n.hasValue()) {
+                total = total + n.get();
+                if (first) {
+                    n.get() = 0;
+                    first = false;
+                }
+                n = it.next();
+            }
+            return total;
+        }
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            lst.pushBack(1);
+            lst.pushBack(2);
+            lst.pushBack(3);
+            total : int = sumReverseAndZeroLast(lst);
+            result : int = 0;
+            if (total == 6)       result = result + 1;
+            if (lst[2] == 0)      result = result + 10; // last element zeroed via reverse iterator
+            if (lst[0] == 1)      result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("DoubleLinkedList<int> — diamond dispatch: same instance through two independent interface paths",
+          "[libk][list][dlist][interface][diamond]") {
+    // Direct regression test for the multi-layer template/diamond-interface
+    // compiler bug (see test-vector.cpp §9 for the Vector<T> counterpart and
+    // full rationale): DoubleLinkedList<T> reaches MutableSequence<T> through
+    // two distinct paths (MutableIndexedCollection<T>→MutableCollection<T>→
+    // MutableSequence<T>, and directly via MutableReversibleSequence<T>→
+    // MutableSequence<T>). Exercising both in one call catches wrong
+    // base-subobject GEP offsets / vtable thunks specific to this class.
+    auto j = jit_k(R"SRC(
+        module __dll_iface_diamond__;
+
+        viaIndexed(coll : MutableIndexedCollection<int>&) : int {
+            return coll.get(0) + coll.get(coll.size() - 1);
+        }
+
+        viaReversible(seq : MutableReversibleSequence<int>&) : int {
+            it : Iterator<int>! = seq.reverseIterator();
+            n : OptionalRef<int> = it.next();
+            total : int = 0;
+            while (n.hasValue()) {
+                total = total + n.get();
+                n = it.next();
+            }
+            return total;
+        }
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            lst.pushBack(1);
+            lst.pushBack(2);
+            lst.pushBack(3);
+
+            a : int = viaIndexed(lst);     // 1 + 3 = 4
+            b : int = viaReversible(lst);  // 1 + 2 + 3 = 6
+
+            result : int = 0;
+            if (a == 4) result = result + 1;
+            if (b == 6) result = result + 10;
+            if (lst.size() == 3) result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}

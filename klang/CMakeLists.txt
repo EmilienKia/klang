@@ -171,7 +171,7 @@ klang_gen_test(klang-tests-model 60
 # ---------------------------------------------------------------------------
 # Group 3 — Codegen core: functions, statements, control flow, init order
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-core 90
+klang_gen_test(klang-tests-gen-core 120
         tests/test-gen.cpp
         tests/test-gen-statements.cpp
         tests/test-gen-resolution.cpp

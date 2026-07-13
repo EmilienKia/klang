@@ -503,6 +503,74 @@ TEST_CASE("[N] Namespace-qualified enum as template argument",
     CHECK(run() == 7);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [O] Multi-level template interface hierarchy — vtable built recursively
+//
+//  Regression test for a bug where template instantiation of interfaces used
+//  as bases of OTHER template interfaces (e.g. `Mid<T> : Base<T>`, then
+//  `Impl<T> : Mid<T>`) never built a vtable for the intermediate level: the
+//  ad-hoc vtable builder invoked when a template instantiation bypasses
+//  symbol_resolver/model_materializer only inherited from the *immediate*
+//  primary base and treated it as if it had no vtable of its own, instead of
+//  recursing to ensure each base's own vtable was fully built first.
+//
+//  This left `Mid<T>`'s inherited `Base<T>` slot unresolved (pointing to an
+//  anonymous, body-less abstract placeholder function), causing a link/JIT
+//  failure ("undefined reference" / "Symbols not found") whenever a concrete
+//  class 3+ levels below overrode a method introduced 2+ levels up the
+//  template interface chain and that method was dispatched through a
+//  reference to the topmost interface.
+//
+//  Mirrors the real-world `Vector<T> : MutableIndexedCollection<T> :
+//  IndexedCollection<T>, MutableCollection<T> : ... : Appendable<T>` chain
+//  in libk's collections.
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[O] Multi-level template interface hierarchy builds vtable recursively",
+          "[template][instantiation][vtable][interface]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        template<typename T>
+        interface Base {
+            getBase() : T;
+        }
+
+        template<typename T>
+        interface Mid : public Base<T> {
+            getMid() : T;
+        }
+
+        template<typename T>
+        class Impl : public Mid<T> {
+            v : T;
+        public:
+            Impl(x : T) : v(x) {}
+            getBase() : T { return v; }
+            getMid() : T { return v + v; }
+        }
+
+        test_base(x : int) : int {
+            impl : Impl<int>(x);
+            b : Base<int>& = impl;
+            return b.getBase();
+        }
+
+        test_mid(x : int) : int {
+            impl : Impl<int>(x);
+            m : Mid<int>& = impl;
+            return m.getMid();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_base = jit->lookup_symbol<int(*)(int)>("_KFN4test9test_baseEi");
+    auto test_mid = jit->lookup_symbol<int(*)(int)>("_KFN4test8test_midEi");
+    REQUIRE(test_base != nullptr);
+    REQUIRE(test_mid != nullptr);
+    CHECK(test_base(7) == 7);
+    CHECK(test_mid(7) == 14);
+}
+
 
 
 

@@ -514,3 +514,48 @@ TEST_CASE("[DBG-V2] Child : Base(abstract) : Ping, Pong — secondary specs cove
     CHECK(has_pong_global);
 }
 
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [P] Secondary interface base of an intermediate interface dispatches correctly
+//  Regression: interface C : A, B  (B is C's secondary base). A concrete class
+//  Impl : C overrides all methods. Upcasting Impl to B& and calling B's method
+//  must dispatch to Impl's override. Previously the B secondary vtable slot was
+//  left null (no override link back to B's slot), causing a runtime segfault.
+// ════════════════════════════════════════════════════════════════════════════
+TEST_CASE("[P] Secondary interface base of intermediate interface dispatches at runtime",
+          "[phase2][materializer][runtime][multi-interface]") {
+    auto jit = gen_jit(R"SRC(
+        module __phase2_p__;
+        interface A {
+            doA() : int;
+        }
+        interface B {
+            doB() : int;
+        }
+        interface C : public A, public B {
+            doC() : int;
+        }
+        class Impl : public C {
+            override doA() : int { return 1; }
+            override doB() : int { return 2; }
+            override doC() : int { return 3; }
+        }
+        call_a(a: A&) : int { return a.doA(); }
+        call_b(b: B&) : int { return b.doB(); }
+        call_c(c: C&) : int { return c.doC(); }
+        test_a() : int { i : Impl; return call_a(i); }
+        test_b() : int { i : Impl; return call_b(i); }
+        test_c() : int { i : Impl; return call_c(i); }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto fn_a = jit->lookup_symbol<int(*)()>("test_a");
+    auto fn_b = jit->lookup_symbol<int(*)()>("test_b");
+    auto fn_c = jit->lookup_symbol<int(*)()>("test_c");
+    REQUIRE(fn_a != nullptr);
+    REQUIRE(fn_b != nullptr);
+    REQUIRE(fn_c != nullptr);
+    CHECK(fn_a() == 1);  // dispatch via A (primary of C)
+    CHECK(fn_b() == 2);  // dispatch via B (secondary of C) — was segfaulting
+    CHECK(fn_c() == 3);  // dispatch via C
+}
