@@ -884,7 +884,30 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
 
         model::visibility base_vis = (kbase.visibility == kdi::kdi_visibility::protected_)
                                      ? model::PROTECTED : model::PUBLIC;
-        agg->add_base(base_fq, base_vis);
+
+        // base_spec::raw_name must produce (via sanitised_name(), i.e. "::" -> "_")
+        // the EXACT literal used for the struct's "__base_X__" field name, because
+        // that is what client-side codegen (e.g. gen_expr_cast.cpp's static-upcast
+        // GEP walk, template_instantiator.cpp's base-subobject injection, ...) looks
+        // up by name via bs.sanitised_name() — it never re-derives a fully-qualified
+        // name. kdi_exporter.cpp exports that literal AS-USED-LOCALLY (not FQ) in the
+        // matching kdi_layout_base_subobject entry, so for non-virtual bases we can
+        // recover it precisely via kdi_base::base_field_index, which records the LLVM
+        // field index of the "__base_X__" subobject. Falling back to the (sanitised)
+        // fully-qualified name preserves prior behaviour when no match is found
+        // (e.g. virtual bases, where no such per-class field index is recorded).
+        std::string raw_name_for_base_spec = base_fq;
+        if (!kbase.is_virtual && kbase.base_field_index >= 0) {
+            for (const auto& lf : kdi_agg->layout) {
+                if (auto* bso = std::get_if<kdi::kdi_layout_base_subobject>(&lf)) {
+                    if (bso->llvm_field_index == kbase.base_field_index) {
+                        raw_name_for_base_spec = bso->base_fq_name;
+                        break;
+                    }
+                }
+            }
+        }
+        agg->add_base(raw_name_for_base_spec, base_vis);
 
         // Recursively materialise the base aggregate (and its LLVM type)
         std::vector<std::string> bparts;

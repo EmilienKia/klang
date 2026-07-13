@@ -152,6 +152,18 @@ protected:
         const element& context_elem);
 
     /**
+     * If @p ret_type is (or wraps, through a single owner/pointer/reference/link/
+     * view/drain indirection, plus optional const) an unresolved template type
+     * carrying template arguments, instantiate that inner type and rebuild the
+     * wrapper. Returns the rebuilt concrete type, or nullptr if nothing to do.
+     * Handles e.g. Sequence<T>::constIterator() : ConstIterator<T>! whose
+     * substituted return type is owner<unresolved ConstIterator<int>>.
+     */
+    std::shared_ptr<type> instantiate_wrapped_return_type(
+        const std::shared_ptr<type>& ret_type,
+        const element& context_elem);
+
+    /**
      * Recursively resolve a type chain, triggering template instantiation
      * for any inner unresolved_type that carries template arguments.
      *

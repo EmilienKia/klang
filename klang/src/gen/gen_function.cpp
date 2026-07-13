@@ -934,6 +934,86 @@ void declaration_generator::visit_function(function &function) {
  *   9. For destructors: emit cleanup (member/base destructor calls).
  *   10. Emit function epilogue (return, cleanup, dead instruction elimination).
  */
+llvm::Function* implementation_generator::ensure_function_declared(k::model::function& function) {
+    auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
+    if (func_it != _context->_functions.end()) return func_it->second;
+
+    // Late materialization path: template-instantiated functions (and their
+    // transitively-instantiated base constructors) can appear after the main
+    // declaration walk. Build their LLVM declaration on-demand.
+    std::vector<llvm::Type*> late_param_types;
+    if (function.is_member() && !function.is_static()) {
+        if (!function.get_this_parameter()) {
+            if (auto owner = function.get_owner(); owner && owner->get_struct_type()) {
+                function.create_this_parameter();
+            }
+        }
+        auto this_param = function.get_this_parameter();
+        if (!this_param || !this_param->get_type()) {
+            lex::opt_any_lexeme fn_lexeme;
+            if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
+                "Internal error: LLVM function declaration not found for '{}' (missing this-parameter type)",
+                {function.get_fq_name()});
+        }
+        auto* this_ty = _context->get_llvm_type(this_param->get_type());
+        if (!this_ty) {
+            lex::opt_any_lexeme fn_lexeme;
+            if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
+                "Internal error: LLVM function declaration not found for '{}' (unresolved this-parameter LLVM type)",
+                {function.get_fq_name()});
+        }
+        late_param_types.push_back(this_ty);
+    }
+    for (const auto& param : function.parameters()) {
+        auto* ptype = _context->get_llvm_type(param->get_type());
+        if (!ptype) {
+            lex::opt_any_lexeme fn_lexeme;
+            if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
+                "Internal error: LLVM function declaration not found for '{}' (unresolved parameter type)",
+                {function.get_fq_name()});
+        }
+        late_param_types.push_back(ptype);
+    }
+
+    llvm::Type* late_ret_type = nullptr;
+    bool late_use_sret = false;
+    if (const auto& ret = function.get_return_type()) {
+        if (needs_sret_return(ret)) {
+            late_param_types.insert(late_param_types.begin(), llvm::PointerType::get(**_context, 0));
+            late_ret_type = llvm::Type::getVoidTy(**_context);
+            late_use_sret = true;
+        } else {
+            late_ret_type = _context->get_llvm_type(ret);
+        }
+    } else {
+        late_ret_type = llvm::Type::getVoidTy(**_context);
+    }
+    if (!late_ret_type) {
+        lex::opt_any_lexeme fn_lexeme;
+        if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
+            "Internal error: LLVM function declaration not found for '{}' (unresolved return type)",
+            {function.get_fq_name()});
+    }
+
+    llvm::FunctionType* late_ft = llvm::FunctionType::get(late_ret_type, late_param_types, false);
+    llvm::Function* late_fn = _context->_module->getFunction(function.get_mangled_name());
+    if (!late_fn) {
+        late_fn = llvm::Function::Create(
+            late_ft, llvm::Function::ExternalLinkage,
+            function.get_mangled_name(), *_context->_module);
+    }
+    if (late_use_sret) {
+        late_fn->addParamAttr(0, llvm::Attribute::get(**_context, llvm::Attribute::StructRet,
+            _context->get_llvm_type(function.get_return_type())));
+    }
+    _context->_functions.insert({function.shared_as<k::model::function>(), late_fn});
+    return late_fn;
+}
+
 void implementation_generator::visit_function(function &function) {
     // Skip template definitions — they are not instantiated yet.
     if (function.is_template()) {
@@ -970,93 +1050,9 @@ void implementation_generator::visit_function(function &function) {
         }
     }
 
-    // Step 1: Resolve the LLVM Function from the context
-    auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
-    if (func_it==_context->_functions.end()) {
-        // Late materialization path: template-instantiated functions can appear
-        // after the main declaration walk. Build their LLVM declaration on-demand.
-        std::vector<llvm::Type*> late_param_types;
-        if (function.is_member() && !function.is_static()) {
-            if (!function.get_this_parameter()) {
-                if (auto owner = function.get_owner(); owner && owner->get_struct_type()) {
-                    function.create_this_parameter();
-                }
-            }
-            auto this_param = function.get_this_parameter();
-            if (!this_param || !this_param->get_type()) {
-                lex::opt_any_lexeme fn_lexeme;
-                if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
-                    "Internal error: LLVM function declaration not found for '{}' (missing this-parameter type)",
-                    {function.get_fq_name()});
-            }
-            auto* this_ty = _context->get_llvm_type(this_param->get_type());
-            if (!this_ty) {
-                lex::opt_any_lexeme fn_lexeme;
-                if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
-                    "Internal error: LLVM function declaration not found for '{}' (unresolved this-parameter LLVM type)",
-                    {function.get_fq_name()});
-            }
-            late_param_types.push_back(this_ty);
-        }
-        for (const auto& param : function.parameters()) {
-            auto* ptype = _context->get_llvm_type(param->get_type());
-            if (!ptype) {
-                lex::opt_any_lexeme fn_lexeme;
-                if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
-                    "Internal error: LLVM function declaration not found for '{}' (unresolved parameter type)",
-                    {function.get_fq_name()});
-            }
-            late_param_types.push_back(ptype);
-        }
-
-        llvm::Type* late_ret_type = nullptr;
-        bool late_use_sret = false;
-        if (const auto& ret = function.get_return_type()) {
-            if (needs_sret_return(ret)) {
-                late_param_types.insert(late_param_types.begin(), llvm::PointerType::get(**_context, 0));
-                late_ret_type = llvm::Type::getVoidTy(**_context);
-                late_use_sret = true;
-            } else {
-                late_ret_type = _context->get_llvm_type(ret);
-            }
-        } else {
-            late_ret_type = llvm::Type::getVoidTy(**_context);
-        }
-        if (!late_ret_type) {
-            lex::opt_any_lexeme fn_lexeme;
-            if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
-                "Internal error: LLVM function declaration not found for '{}' (unresolved return type)",
-                {function.get_fq_name()});
-        }
-
-        llvm::FunctionType* late_ft = llvm::FunctionType::get(late_ret_type, late_param_types, false);
-        llvm::Function* late_fn = _context->_module->getFunction(function.get_mangled_name());
-        if (!late_fn) {
-            late_fn = llvm::Function::Create(
-                late_ft, llvm::Function::ExternalLinkage,
-                function.get_mangled_name(), *_context->_module);
-        }
-        if (late_use_sret) {
-            late_fn->addParamAttr(0, llvm::Attribute::get(**_context, llvm::Attribute::StructRet,
-                _context->get_llvm_type(function.get_return_type())));
-        }
-        _context->_functions.insert({function.shared_as<k::model::function>(), late_fn});
-        func_it = _context->_functions.find(function.shared_as<k::model::function>());
-        if (func_it == _context->_functions.end()) {
-            lex::opt_any_lexeme fn_lexeme;
-            if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
-                "Internal error: LLVM function declaration not found for '{}'; "
-                "the declaration pass must be run before the implementation pass",
-                {function.get_fq_name()});
-        }
-    }
-
-    llvm::Function* func = func_it->second;
+    // Step 1: Resolve the LLVM Function from the context, materialising a late
+    // declaration on-demand for template instantiations reachable only now.
+    llvm::Function* func = ensure_function_declared(function);
 
     begin_function_debug_scope(function, func);
     auto debug_scope_guard = llvm::make_scope_exit([&]() {

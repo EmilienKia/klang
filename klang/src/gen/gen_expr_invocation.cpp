@@ -87,15 +87,25 @@ void annotate_dispatch_info(function_invocation_expression& expr,
     }
 
     // ── Determine the static receiver type ───────────────────────────────────
+    // Reference (&), drain (#) and owner (!) receivers all give dot-notation
+    // access to an object carrying a vptr, so all three are valid vtable-dispatch
+    // receivers. Pointer (*) and link (+) receivers use arrow notation and go
+    // through member_of_pointer_expression instead (handled elsewhere).
     auto this_type = member_callee->sub_expr()->get_type();
-    if (!type::is_reference(this_type) && !type::is_drain(this_type)) {
+    if (!type::is_reference(this_type) && !type::is_drain(this_type) && !type::is_owner(this_type)) {
         virtual_dispatch_info di;
         di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
         expr.set_dispatch_info(std::move(di));
         return;
     }
 
+    // Unwrap the outer ref/drain/owner qualifier, then — since an lvalue access
+    // to an owner-typed variable is itself wrapped in an implicit reference
+    // (ref<owner<struct>>) — also unwrap a nested owner_type if present.
     auto bare_subtype = type::remove_const(this_type->get_subtype());
+    if (auto owner_subtype = std::dynamic_pointer_cast<owner_type>(bare_subtype)) {
+        bare_subtype = type::remove_const(owner_subtype->get_subtype());
+    }
     auto st_type = std::dynamic_pointer_cast<struct_type>(bare_subtype);
     if (!st_type) {
         virtual_dispatch_info di;
@@ -142,6 +152,51 @@ void annotate_dispatch_info(function_invocation_expression& expr,
 }
 
 } // anonymous namespace
+
+std::shared_ptr<type> type_reference_resolver::instantiate_wrapped_return_type(
+    const std::shared_ptr<type>& ret_type,
+    const element& context_elem)
+{
+    if (!ret_type || type::is_resolved(ret_type)) return nullptr;
+
+    const bool outer_const = type::is_const(ret_type);
+    auto bare = type::remove_const(ret_type);
+
+    enum wrap_kind { W_NONE, W_OWNER, W_PTR, W_REF, W_LINK, W_VIEW, W_DRAIN };
+    wrap_kind wrap = W_NONE;
+    std::shared_ptr<type> inner = bare;
+    if (type::is_owner(bare))          { wrap = W_OWNER; inner = bare->get_subtype(); }
+    else if (type::is_pointer(bare))   { wrap = W_PTR;   inner = bare->get_subtype(); }
+    else if (type::is_reference(bare)) { wrap = W_REF;   inner = bare->get_subtype(); }
+    else if (type::is_link(bare))      { wrap = W_LINK;  inner = bare->get_subtype(); }
+    else if (type::is_view(bare))      { wrap = W_VIEW;  inner = bare->get_subtype(); }
+    else if (type::is_drain(bare))     { wrap = W_DRAIN; inner = bare->get_subtype(); }
+
+    if (!inner) return nullptr;
+    const bool inner_const = type::is_const(inner);
+    auto inner_bare = type::remove_const(inner);
+
+    auto unres = std::dynamic_pointer_cast<unresolved_type>(inner_bare);
+    if (!unres || !unres->has_template_args()) return nullptr;
+
+    auto inst = try_instantiate_template_type(unres, context_elem);
+    if (!inst) return nullptr;
+    if (!std::dynamic_pointer_cast<struct_type>(inst) && !type::is_resolved(inst)) return nullptr;
+
+    std::shared_ptr<type> rebuilt = inner_const ? inst->get_const() : inst;
+    switch (wrap) {
+        case W_OWNER: rebuilt = rebuilt->get_owner();     break;
+        case W_PTR:   rebuilt = rebuilt->get_pointer();   break;
+        case W_REF:   rebuilt = rebuilt->get_reference(); break;
+        case W_LINK:  rebuilt = rebuilt->get_link();      break;
+        case W_VIEW:  rebuilt = rebuilt->get_view();      break;
+        case W_DRAIN: rebuilt = rebuilt->get_drain();     break;
+        case W_NONE:  break;
+    }
+    if (outer_const) rebuilt = rebuilt->get_const();
+    return rebuilt;
+}
+
 
 /**
  * Resolve a function invocation expression: overload resolution, argument adaptation,
@@ -400,6 +455,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             callee->set_target(best.func);
             auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_expr);
             expr.set_type(resolved_return_type ? resolved_return_type : best.func->get_return_type());
+            if (auto rt = expr.get_type()) {
+                if (auto rebuilt = instantiate_wrapped_return_type(rt, *best.func)) expr.set_type(rebuilt);
+            }
             expr.assign_arguments(best.adapted_args);
             // Bypass virtual dispatch — this is an explicit base-class call
             expr.set_non_virtual_qualified_call(true);
@@ -674,6 +732,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         callee->set_target(best.func);
         auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_expr);
         expr.set_type(resolved_return_type ? resolved_return_type : best.func->get_return_type());
+        if (auto rt = expr.get_type()) {
+            if (auto rebuilt = instantiate_wrapped_return_type(rt, *best.func)) expr.set_type(rebuilt);
+        }
 
         // Apply adapted arguments (may include cloned defaults for trailing params)
         expr.assign_arguments(best.adapted_args);
@@ -1372,17 +1433,14 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // If the resolved return type is still an unresolved template type — e.g. a
         // template-qualified static factory call like Optional<byte>::empty() whose
         // declared return type is Optional<T> → Optional<byte> — instantiate it so a
-        // chained member access (.getOr(...)) sees a concrete struct type.
+        // chained member access (.getOr(...)) sees a concrete struct type. The
+        // unresolved template type may also be wrapped in a single indirection
+        // (e.g. Sequence<T>::constIterator() : ConstIterator<T>! → owner<unresolved
+        // ConstIterator<int>>), so unwrap owner/pointer/ref/link/view/drain (and const)
+        // to reach it, instantiate, and rebuild the wrapper.
         if (auto ret_type = expr.get_type()) {
-            auto bare_ret = type::remove_const(ret_type);
-            if (auto unres_ret = std::dynamic_pointer_cast<unresolved_type>(bare_ret)) {
-                if (unres_ret->has_template_args()) {
-                    if (auto inst = try_instantiate_template_type(unres_ret, *best.func)) {
-                        if (std::dynamic_pointer_cast<struct_type>(inst) || type::is_resolved(inst)) {
-                            expr.set_type(type::is_const(ret_type) ? inst->get_const() : inst);
-                        }
-                    }
-                }
+            if (auto rebuilt = instantiate_wrapped_return_type(ret_type, *best.func)) {
+                expr.set_type(rebuilt);
             }
         }
 

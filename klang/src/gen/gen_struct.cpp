@@ -610,6 +610,17 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                 for (auto& bs : st.get_bases()) {
                     if (!bs.base) continue;
                     if (bs.is_virtual) {
+                        // 'st' directly declares this virtual base. For a stateless
+                        // interface virtual base (vptr-only, no data members) 'st' is its
+                        // own collector: embedding the (vptr-only) sub-object here gives a
+                        // standalone instance real storage instead of a transient stack
+                        // alloca, with no member-access ambiguity (interfaces have no data
+                        // members). Class virtual bases keep the single-collector model to
+                        // preserve shared-field semantics, so they are excluded here.
+                        if (bs.base.get() == vbase.get() && vbase->is_interface()) {
+                            has_collector_base = true;
+                            break;
+                        }
                         if (bs.base->_vars.count(vbptr_name)) {
                             has_collector_base = true;
                             break;

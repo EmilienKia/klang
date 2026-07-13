@@ -412,6 +412,10 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         k::model::gen::type_reference_resolver type_ref_resolver(*this, _context, *_model_unit);
         type_ref_resolver.resolve();
 
+        // Rebuild any template-instantiation layouts whose LLVM body was frozen
+        // before late-discovered virtual-base subobject fields were injected.
+        _context->rebuild_instantiation_layouts();
+
         if(dump) {
             k::model::dump::unit_dump unit_dump(std::cout);
             std::cout << "#" << std::endl << "# Type resolution" << std::endl << "#" << std::endl;

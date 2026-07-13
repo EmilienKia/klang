@@ -23,6 +23,7 @@
 
 #include "expressions.hpp"
 #include "model.hpp"
+#include "template_instantiator.hpp"
 #include "../errors.hpp"
 #include "../common/unicode.hpp"
 #include "llvm/IR/Constants.h"
@@ -996,6 +997,72 @@ void context::resolve_types() {
             if (inside_template) continue;
         }
         resolve_struct_type(st_type, in_progress);
+    }
+}
+
+void context::rebuild_instantiation_layouts() {
+    // Collect class/interface template-instantiation struct types and detect
+    // whether any is stale: its owning aggregate carries a base-subobject field
+    // (__base_X__/__vbptr_X__/__vbase_X__) that is absent from the struct_type's
+    // materialised field list (its LLVM body was frozen before that field was
+    // injected). See the header doc for the ordering scenario that causes this.
+    std::vector<std::shared_ptr<struct_type>> instances;
+    bool any_stale = false;
+    for (auto& [name, st] : _struct_types) {
+        auto agg = st->get_struct();
+        if (!agg || !agg->is_instantiation()) continue;
+        if (!(agg->is_class() || agg->is_interface())) continue;
+        instances.push_back(st);
+        // Stale if the aggregate declares a virtual base whose __vbptr_X__ field is
+        // absent from the materialised struct_type, or a non-virtual class/interface
+        // base whose __base_X__ field is absent — i.e. the body was frozen before
+        // the base sub-object field was injected.
+        // Stale if the aggregate declares a virtual base whose __vbptr_X__ field is
+        // absent from the materialised struct_type, or is the collector for a
+        // transitively-virtual base whose __vbase_X__ storage is absent — i.e. the
+        // body was frozen before the base sub-object field was injected.
+        for (auto& bs : agg->get_bases()) {
+            if (bs.base && bs.is_virtual
+                && !st->get_member("__vbptr_" + bs.sanitised_name() + "__")) {
+                any_stale = true;
+            }
+        }
+        for (auto& vbase : agg->get_all_virtual_base_structs()) {
+            const std::string vbase_name = "__vbase_" + vbase->get_short_name() + "__";
+            // Only a mismatch matters: the aggregate has the field but the frozen
+            // struct_type does not (collector storage injected after materialisation).
+            if (agg->variables().count(vbase_name) && !st->get_member(vbase_name)) {
+                any_stale = true;
+            }
+        }
+    }
+    if (!any_stale) return;
+
+    // Phase 1: repair the model — (re)inject any missing virtual-base layout
+    // fields (__vbptr_X__ / collector __vbase_X__) into each instantiation's
+    // aggregate. These may be missing because the base's virtualness was only
+    // discovered after the instance was first laid out. Injecting the vbptrs for
+    // every instance first ensures the collector __vbase detection (which inspects
+    // sibling bases' vbptr fields) sees a complete picture.
+    for (auto& st : instances) {
+        template_instantiator::ensure_virtual_base_layout_fields(st->get_struct());
+    }
+    for (auto& st : instances) {
+        template_instantiator::ensure_virtual_base_layout_fields(st->get_struct());
+    }
+
+    // Phase 2: give every instantiation a fresh opaque LLVM struct type and clear
+    // its cached fields, then re-resolve them all together. resolve_struct_type
+    // sees the opaque bodies and rebuilds them from the (now complete) aggregate
+    // children, recursing into dependencies so nested/by-value instance references
+    // are rebuilt in a consistent order.
+    for (auto& st : instances) {
+        auto* fresh = llvm::StructType::create(llvm_context(), st->name());
+        st->set_llvm_type({}, fresh, nullptr);
+    }
+    std::unordered_set<struct_type*> in_progress;
+    for (auto& st : instances) {
+        resolve_struct_type(st, in_progress);
     }
 }
 

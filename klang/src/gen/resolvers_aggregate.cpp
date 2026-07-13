@@ -43,6 +43,164 @@ resolve_one_type(const std::shared_ptr<type>& t,
                  const element& context_elem,
                  std::shared_ptr<context> ctx);
 
+// ensure_klass_vtable_built
+// -------------------------
+// See declaration in resolvers_common.hpp. Builds a vtable on demand for
+// template instantiations that bypass symbol_resolver's normal pass, handling
+// arbitrary-depth base hierarchies (recursing into each base first) and
+// linking overrides for methods that override a secondary (non-primary)
+// base's slot, transitively.
+void ensure_klass_vtable_built(klass& kl) {
+    if (kl.has_vtable()) return;
+
+    // 1. Recursively ensure all local-klass bases have their own vtable built
+    //    first, so multi-level template interface hierarchies are fully resolved
+    //    bottom-up before we process `kl` itself. Virtual bases are included here:
+    //    a virtual base still owns a vtable and its methods still need slots for
+    //    dispatch (only its placement in the layout / primary chain differs).
+    for (auto& bs : kl.get_bases()) {
+        if (!bs.base) continue;
+        if (auto base_kl = std::dynamic_pointer_cast<klass>(bs.base)) {
+            ensure_klass_vtable_built(*base_kl);
+        }
+    }
+
+    auto vt = std::make_shared<vtable_layout>();
+    size_t next_slot = 0;
+
+    // 2. Determine the primary base (first non-virtual base with a vtable)
+    //    and inherit its full (now complete) entry list.
+    std::shared_ptr<klass> primary_base;
+    for (auto& bs : kl.get_bases()) {
+        if (bs.is_virtual || !bs.base) continue;
+        if (auto base_kl = std::dynamic_pointer_cast<klass>(bs.base)) {
+            if (base_kl->has_vtable()) {
+                primary_base = base_kl;
+                break;
+            }
+        }
+    }
+    if (primary_base) {
+        for (auto& entry : primary_base->get_vtable()->entries) {
+            vtable_entry inherited;
+            inherited.slot_index = entry.slot_index;
+            inherited.introducing_func = entry.introducing_func;
+            inherited.func = entry.func;
+            vt->entries.push_back(inherited);
+            next_slot = std::max(next_slot, entry.slot_index + 1);
+        }
+    }
+
+    // Signature comparator (name + const-qualification + parameter/return types,
+    // falling back to canonical spelling so cross-module template instantiations
+    // compare equal — mirrors have_same_virtual_signature() in gen_class.cpp).
+    auto same_sig = [](const function& a, const function& b) -> bool {
+        if (a.get_short_name() != b.get_short_name()) return false;
+        if (a.is_const_member() != b.is_const_member()) return false;
+        if (a.get_parameter_size() != b.get_parameter_size()) return false;
+        auto type_match = [](const std::shared_ptr<type>& x, const std::shared_ptr<type>& y) -> bool {
+            if (type::are_equal(x, y)) return true;
+            return x && y && x->to_string() == y->to_string();
+        };
+        for (size_t i = 0; i < a.get_parameter_size(); ++i) {
+            auto ta = std::const_pointer_cast<type>(a.get_parameter(i)->get_type());
+            auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
+            if (!type_match(ta, tb)) return false;
+        }
+        // Note: return type is deliberately NOT compared here. Self-referencing
+        // return types (e.g. `OutputStream<T>&` returned from a method of
+        // `OutputStream<T>` itself, or of a class deriving from it) may still be
+        // unresolved (`<<unresolved:...>>`) at the point this function runs, since
+        // ensure_klass_vtable_built() executes before type_reference_resolver has
+        // finished resolving member return types. K does not support overloading
+        // by return type alone, so name + parameter-type matching is sufficient
+        // and avoids spurious mismatches here.
+        return true;
+    };
+
+    // 3. Collect ALL bases transitively (BFS), for secondary-override detection.
+    std::vector<std::shared_ptr<aggregate>> all_bases;
+    {
+        std::unordered_set<const aggregate*> seen;
+        std::queue<std::shared_ptr<aggregate>> q;
+        for (auto& bs : kl.get_bases()) {
+            if (bs.base && !seen.count(bs.base.get())) {
+                seen.insert(bs.base.get());
+                q.push(bs.base);
+                all_bases.push_back(bs.base);
+            }
+        }
+        while (!q.empty()) {
+            auto cur = q.front(); q.pop();
+            for (auto& bs : cur->get_bases()) {
+                if (bs.base && !seen.count(bs.base.get())) {
+                    seen.insert(bs.base.get());
+                    q.push(bs.base);
+                    all_bases.push_back(bs.base);
+                }
+            }
+        }
+    }
+
+    // 4. Process own functions: match against inherited primary-base slots,
+    //    otherwise introduce a new slot and link a secondary-base override
+    //    (transitively, at any depth) if applicable.
+    for (auto& child : kl.get_children()) {
+        auto func = std::dynamic_pointer_cast<function>(child);
+        if (!func) continue;
+        if (func->is_static()) continue;
+        if (std::dynamic_pointer_cast<constructor>(func)) continue;
+        if (std::dynamic_pointer_cast<destructor>(func)) continue;
+        if (func->get_visibility() == PRIVATE) continue;
+
+        bool found_override = false;
+        for (auto& entry : vt->entries) {
+            if (entry.introducing_func && same_sig(*func, *entry.introducing_func)) {
+                func->set_virtual(true);
+                func->set_vtable_slot((int)entry.slot_index);
+                func->set_overrides(entry.func);
+                entry.func = func;
+                found_override = true;
+                break;
+            }
+        }
+
+        if (!found_override) {
+            func->set_virtual(true);
+            func->set_vtable_slot((int)next_slot);
+            vtable_entry new_entry;
+            new_entry.slot_index = next_slot++;
+            new_entry.introducing_func = func;
+            new_entry.func = func;
+            vt->entries.push_back(new_entry);
+
+            std::shared_ptr<function> secondary_override;
+            for (auto& base : all_bases) {
+                if (primary_base && base.get() == primary_base.get()) continue;
+                auto pk = std::dynamic_pointer_cast<klass>(base);
+                if (!pk || !pk->has_vtable()) continue;
+                for (auto& sec_entry : pk->get_vtable()->entries) {
+                    if (sec_entry.introducing_func && same_sig(*func, *sec_entry.introducing_func)) {
+                        secondary_override = sec_entry.func ? sec_entry.func : sec_entry.introducing_func;
+                        break;
+                    }
+                }
+                if (secondary_override) break;
+            }
+            if (secondary_override && !func->get_overrides()) {
+                func->set_overrides(secondary_override);
+            }
+        }
+    }
+
+    if (!vt->entries.empty()) {
+        kl.set_vtable(vt);
+        if (kl.get_vptrs().empty()) {
+            kl.inject_vptr_field("__vptr__");
+        }
+    }
+}
+
 std::shared_ptr<aggregate>
 aggregate_type_resolver::resolve_struct_from(const element& elem, const k::name& qualified_name) {
     if (qualified_name.empty()) return {};
@@ -310,9 +468,20 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
             if (!arg_type || !type::is_resolved(arg_type)) {
                 if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
-                    auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
-                    if (resolved && type::is_resolved(resolved)) {
-                        arg_type = resolved;
+                    // A bare template-parameter placeholder (e.g. 'I'/'O'/'T' used
+                    // inside the defining template's own body, such as
+                    // `buffer : Vector<I>;` in `ManyToOneTransformInputStream<I,O>`)
+                    // must NOT be resolved via a global/namespace name lookup — an
+                    // unrelated user type that happens to share the same short name
+                    // (e.g. `interface I { ... }`) would be spuriously matched.
+                    // Only the substitution-map recovery paths below (enclosing
+                    // concrete function/aggregate) may legitimately resolve it.
+                    if (!unres_arg->is_template_param_placeholder()
+                        && !is_enclosing_template_param_name(context_elem, unres_arg->type_id().to_string())) {
+                        auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
+                        if (resolved && type::is_resolved(resolved)) {
+                            arg_type = resolved;
+                        }
                     }
                     // If still unresolved, the arg may be a template parameter name
                     // (e.g. "T") that is no longer in scope because we are resolving a
@@ -533,13 +702,29 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     //     like 'x' (meaning 'this.x') are still unresolved in the cloned body.
     template_instantiator::resolve_body_symbols(concrete);
 
+    // 4bb. Inject base sub-object fields (__base_X__) for resolved bases, and
+    //      recursively for every base's own bases (see
+    //      template_instantiator::inject_base_subobject_fields for why the
+    //      recursion matters). Must run BEFORE inject_constructor_member_inits
+    //      below, which looks up these fields to inject base-constructor-call
+    //      statements — without them present yet, that injection silently
+    //      no-ops, leaving base constructors uncalled (e.g. base vtable
+    //      pointers never initialized).
+    template_instantiator::inject_base_subobject_fields(concrete);
+
+    // Inject collector __vbase_X__ storage (and any missing vbptrs) for virtual
+    // interface bases now that all base struct types are available.
+    template_instantiator::ensure_virtual_base_layout_fields(concrete);
+
     // 4c. Inject member-initializer expressions into concrete constructor blocks.
     //     symbol_resolver::visit_constructor normally does this, but template
     //     definitions are skipped and the concrete ctors are created after that pass.
     template_instantiator::inject_constructor_member_inits(concrete);
 
     // 5. Return existing struct_type or create a new one
-    if (concrete->get_struct_type()) return concrete->get_struct_type();
+    if (concrete->get_struct_type()) {
+        return concrete->get_struct_type();
+    }
 
     // Unify with any KDI-imported instantiation of the same template via the registry
     // on unit. The key is qualified by the template's originating namespace (its
@@ -608,154 +793,18 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         }
     }
 
-    // 5e. Inject base sub-object fields (__base_X__) for resolved bases.
-    //     symbol_resolver::visit_aggregate normally does this (gen_struct.cpp:508-528)
-    //     but template instantiations bypass that pass entirely.
-    if (concrete->has_bases()) {
-        auto& bases_mutable = concrete->get_bases_mutable();
-        for (auto it = bases_mutable.rbegin(); it != bases_mutable.rend(); ++it) {
-            auto& bs = *it;
-            if (!bs.base || !bs.base->get_struct_type()) continue;
-            if (bs.is_virtual) {
-                std::string vbptr_name = "__vbptr_" + bs.sanitised_name() + "__";
-                if (!concrete->_vars.count(vbptr_name)) {
-                    auto vbptr_field = member_variable_definition::make_shared(concrete->shared_as<aggregate>(), vbptr_name);
-                    concrete->_vars.insert({vbptr_name, vbptr_field});
-                    concrete->_children.insert(concrete->_children.begin(), vbptr_field);
-                }
-            } else {
-                std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
-                if (!concrete->_vars.count(subobj_name)) {
-                    auto subobj_field = member_variable_definition::make_shared(concrete->shared_as<aggregate>(), subobj_name);
-                    subobj_field->set_type(bs.base->get_struct_type());
-                    concrete->_vars.insert({subobj_name, subobj_field});
-                    concrete->_children.insert(concrete->_children.begin(), subobj_field);
-                }
-            }
-        }
-    }
+    // 5e. (base sub-object field injection moved earlier — see 4bb above,
+    //     which must run before inject_constructor_member_inits.)
 
     // 5f. Build vtable for class/interface instantiations (symbol_resolver didn't
-    //     visit them because they didn't exist yet during Pass A).
+    //     visit them because they didn't exist yet during Pass A). See
+    //     ensure_klass_vtable_built() in resolvers_common.hpp for the recursive,
+    //     multi-level-hierarchy-aware implementation (fixes a bug where a
+    //     template interface hierarchy like MutableIndexedCollection<T> :
+    //     IndexedCollection<T>, MutableCollection<T> only got a "flattened"
+    //     own-methods-only vtable instead of the full inherited slot list).
     if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete)) {
-        if (!kl->has_vtable()) {
-            auto vt = std::make_shared<vtable_layout>();
-            size_t next_slot = 0;
-
-            // Inherit vtable entries from primary base (first base with a vtable).
-            // If the base is a klass/interface that doesn't have a vtable yet
-            // (e.g. a template interface instantiated by the template_instantiator
-            // but not yet resolved), build its vtable first.
-            for (auto& bs : kl->get_bases()) {
-                if (!bs.base) continue;
-                if (auto base_kl = std::dynamic_pointer_cast<model::klass>(bs.base)) {
-                    // Build base vtable if missing (recursive for template bases)
-                    if (!base_kl->has_vtable()) {
-                        auto base_vt = std::make_shared<vtable_layout>();
-                        size_t base_next_slot = 0;
-                        // The base interface/class has no parent vtable to inherit,
-                        // so all its non-private, non-static, non-ctor methods become new slots.
-                        for (auto& base_child : base_kl->get_children()) {
-                            auto base_func = std::dynamic_pointer_cast<function>(base_child);
-                            if (!base_func) continue;
-                            if (base_func->is_static()) continue;
-                            if (std::dynamic_pointer_cast<constructor>(base_func)) continue;
-                            if (std::dynamic_pointer_cast<destructor>(base_func)) continue;
-                            if (base_func->get_visibility() == PRIVATE) continue;
-                            base_func->set_virtual(true);
-                            base_func->set_vtable_slot((int)base_next_slot);
-                            vtable_entry base_entry;
-                            base_entry.slot_index = base_next_slot++;
-                            base_entry.introducing_func = base_func;
-                            base_entry.func = base_func;
-                            base_vt->entries.push_back(base_entry);
-                        }
-                        if (!base_vt->entries.empty()) {
-                            base_kl->set_vtable(base_vt);
-                            // Inject vptr field if not already present
-                            if (base_kl->get_vptrs().empty()) {
-                                base_kl->inject_vptr_field("__vptr__");
-                            }
-                        }
-                    }
-                    if (base_kl->has_vtable()) {
-                        for (auto& entry : base_kl->get_vtable()->entries) {
-                            vtable_entry inherited;
-                            inherited.slot_index = entry.slot_index;
-                            inherited.introducing_func = entry.introducing_func;
-                            inherited.func = entry.func;
-                            vt->entries.push_back(inherited);
-                            next_slot = std::max(next_slot, entry.slot_index + 1);
-                        }
-                        break; // Only primary base
-                    }
-                }
-            }
-
-            // Process own functions
-            for (auto& child : kl->get_children()) {
-                auto func = std::dynamic_pointer_cast<function>(child);
-                if (!func) continue;
-                if (func->is_static()) continue;
-                if (std::dynamic_pointer_cast<constructor>(func)) continue;
-                if (std::dynamic_pointer_cast<destructor>(func)) continue;
-                if (func->get_visibility() == PRIVATE) continue;
-
-                // Check if this method overrides an existing vtable slot.
-                // Match by name AND full parameter-type signature: matching by
-                // parameter COUNT alone conflates overloads with the same arity
-                // but different parameter types (e.g. OutputStream's
-                // `write(b: T)` and `write(buf: const T[])`, both single-arg),
-                // which would leave one base slot bound to the imported
-                // (anonymous) method and clobber the other.  Use the canonical
-                // type spelling (to_string) so two instantiations of the same
-                // template compare equal across the import boundary.
-                auto same_param_sig = [](const function& f, const function& g) -> bool {
-                    if (f.get_short_name() != g.get_short_name()) return false;
-                    if (f.is_const_member() != g.is_const_member()) return false;
-                    if (f.parameters().size() != g.parameters().size()) return false;
-                    for (size_t i = 0; i < f.parameters().size(); ++i) {
-                        auto tf = f.parameters()[i] ? f.parameters()[i]->get_type() : nullptr;
-                        auto tg = g.parameters()[i] ? g.parameters()[i]->get_type() : nullptr;
-                        if (type::are_equal(tf, tg)) continue;
-                        if (tf && tg && tf->to_string() == tg->to_string()) continue;
-                        return false;
-                    }
-                    return true;
-                };
-                bool found_override = false;
-                for (auto& entry : vt->entries) {
-                    if (entry.introducing_func
-                        && same_param_sig(*func, *entry.introducing_func)) {
-                        func->set_virtual(true);
-                        func->set_vtable_slot((int)entry.slot_index);
-                        func->set_overrides(entry.func);
-                        entry.func = func;
-                        found_override = true;
-                        break;
-                    }
-                }
-
-                if (!found_override) {
-                    // New virtual slot
-                    func->set_virtual(true);
-                    func->set_vtable_slot((int)next_slot);
-                    vtable_entry new_entry;
-                    new_entry.slot_index = next_slot++;
-                    new_entry.introducing_func = func;
-                    new_entry.func = func;
-                    vt->entries.push_back(new_entry);
-                }
-            }
-
-            if (!vt->entries.empty()) {
-                kl->set_vtable(vt);
-                // Inject __vptr__ as first synthetic member (same as symbol_resolver::visit_klass)
-                if (kl->get_vptrs().empty()) {
-                    kl->inject_vptr_field("__vptr__");
-                }
-            }
-        }
+        ensure_klass_vtable_built(*kl);
     }
 
     // 5g. Transitively resolve member-variable types that still carry an

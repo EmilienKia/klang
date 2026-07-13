@@ -546,41 +546,45 @@ std::vector<kdi::kdi_layout_field> kdi_builder::build_layout(const aggregate& ag
         // ── base subobject (__base_X__) ────────────────────────────────
         if (fname.rfind("__base_", 0) == 0 && fname.size() > 9) {
             flush();
+            // Keep the LOCAL sanitised name (as literally used when the struct
+            // was built, i.e. base_spec::sanitised_name()) rather than resolving
+            // to the base's fully-qualified name. Re-deriving to an FQ form here
+            // caused a naming mismatch on import: base_subobject_field_injection
+            // (template_instantiator.cpp) and every other local consumer of
+            // "__base_X__" fields (casts, vtable offset lookups, etc.) always
+            // build the field name from the LOCAL (possibly unqualified,
+            // as-written) base name — never from get_fq_name(). Exporting an
+            // FQ-derived name meant re-imported/reused struct_types never
+            // matched what local code looked up by name (see the vptr_secondary
+            // case above, which never had this bug).
             std::string bname = fname.substr(7, fname.size() - 9);
-            std::string bfq   = bname;
-            for (auto& bs : agg.get_bases())
-                if (bs.sanitised_name() == bname && bs.base) { bfq = bs.base->get_fq_name(); break; }
             kdi::kdi_layout_base_subobject bso;
             bso.llvm_field_index = fi;
-            bso.base_fq_name     = std::move(bfq);
+            bso.base_fq_name     = std::move(bname);
             result.push_back(std::move(bso));
             continue;
         }
         // ── virtual base pointer (__vbptr_X__) ────────────────────────
         if (fname.rfind("__vbptr_", 0) == 0 && fname.size() > 10) {
             flush();
+            // See the __base_X__ case above: keep the local sanitised name,
+            // not an FQ-resolved one, so import-time field-name reconstruction
+            // matches what local codegen looks up by name.
             std::string vbname = fname.substr(8, fname.size() - 10);
-            std::string vbfq   = vbname;
-            for (auto& bs : agg.get_all_bases())
-                if (bs.is_virtual && bs.base && bs.base->get_short_name() == vbname)
-                    { vbfq = bs.base->get_fq_name(); break; }
             kdi::kdi_layout_vbptr vb;
             vb.llvm_field_index = fi;
-            vb.vbase_fq_name    = std::move(vbfq);
+            vb.vbase_fq_name    = std::move(vbname);
             result.push_back(std::move(vb));
             continue;
         }
         // ── virtual base subobject (__vbase_X__) ──────────────────────
         if (fname.rfind("__vbase_", 0) == 0 && fname.size() > 10) {
             flush();
+            // See the __base_X__ case above: keep the local sanitised name.
             std::string vbname = fname.substr(8, fname.size() - 10);
-            std::string vbfq   = vbname;
-            for (auto& bs : agg.get_all_bases())
-                if (bs.is_virtual && bs.base && bs.base->get_short_name() == vbname)
-                    { vbfq = bs.base->get_fq_name(); break; }
             kdi::kdi_layout_vbase_subobject vbs;
             vbs.llvm_field_index = fi;
-            vbs.vbase_fq_name    = std::move(vbfq);
+            vbs.vbase_fq_name    = std::move(vbname);
             result.push_back(std::move(vbs));
             continue;
         }

@@ -408,5 +408,33 @@ resolve_using_target(const k::name& target_name, const unit& unit) {
     return current;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// is_enclosing_template_param_name — free helper (declared in resolvers_common.hpp)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool
+is_enclosing_template_param_name(const element& context_elem, const std::string& arg_name) {
+    for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
+        if (auto agg = std::dynamic_pointer_cast<const aggregate>(current)) {
+            if (agg->is_template()) {
+                if (auto* ti = agg->get_tpl_info()) {
+                    for (auto& param : ti->params) {
+                        if (param.name == arg_name) return true;
+                    }
+                }
+            }
+        } else if (auto un = std::dynamic_pointer_cast<const union_type_def>(current)) {
+            if (un->is_template()) {
+                if (auto* ti = un->get_tpl_info()) {
+                    for (auto& param : ti->params) {
+                        if (param.name == arg_name) return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
 } // namespace k::model::gen
 

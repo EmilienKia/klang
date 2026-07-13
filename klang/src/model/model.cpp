@@ -1051,55 +1051,71 @@ std::vector<std::shared_ptr<aggregate>> aggregate::get_all_virtual_base_structs(
     return result;
 }
 
-void klass::compute_virtual_bases(const std::vector<std::shared_ptr<aggregate>>& all_aggregates) {
-    // Step 1: count how many times each aggregate appears in the full base graph
-    // of each class. Aggregates reached more than once are diamond bases.
-    std::function<void(const aggregate*, std::unordered_map<const aggregate*, int>&)> count_class_bases;
-    count_class_bases = [&](const aggregate* cur, std::unordered_map<const aggregate*, int>& counts) {
+namespace {
+    /// True if 'agg' participates in the (virtual/diamond-eligible) inheritance
+    /// graph traversed by diamond detection: only classes do. Interfaces are
+    /// stateless/vtable-only, and diamond convergence within a pure-interface
+    /// hierarchy is already correctly handled by the secondary-vtable mechanism
+    /// (each converging path gets its own independently-patched vtable pointing
+    /// to the same concrete override) — forcing virtual-base sharing for
+    /// interfaces is unnecessary and breaks that mechanism. Structs never
+    /// participate either — K does not support struct inheritance diamonds
+    /// requiring virtual bases.
+    inline bool participates_in_diamond_detection(const aggregate* agg) {
+        return agg && (agg->is_class() || agg->is_interface());
+    }
+
+    /// Count how many times each aggregate appears in the full base graph of 'cur'.
+    void count_diamond_bases(const aggregate* cur, std::unordered_map<const aggregate*, int>& counts) {
         for (auto& bs : cur->get_bases()) {
-            if (!bs.base || !bs.base->is_class()) continue;
+            if (!bs.base || !participates_in_diamond_detection(bs.base.get())) continue;
             counts[bs.base.get()]++;
-            count_class_bases(bs.base.get(), counts);
+            count_diamond_bases(bs.base.get(), counts);
         }
-    };
+    }
 
-    // Collect all diamond-base pairs: (intermediate, diamond_base)
-    // so we can mark intermediate→diamond_base as virtual in the intermediate class.
-    // Maps intermediate aggregate → set of diamond bases it should treat as virtual.
-    std::unordered_map<const aggregate*, std::unordered_set<const aggregate*>> needs_virtual;
-
-    for (auto& agg : all_aggregates) {
-        if (!agg || !agg->is_class()) continue;
+    /// Detect diamond bases reachable from 'agg' and mark the relevant
+    /// base_spec::is_virtual edges (both agg's own direct bases and the
+    /// intermediate bases-of-bases that lead to the diamond convergence point).
+    void compute_virtual_bases_for(aggregate* agg) {
+        if (!participates_in_diamond_detection(agg)) return;
 
         std::unordered_map<const aggregate*, int> base_count;
-        count_class_bases(agg.get(), base_count);
+        count_diamond_bases(agg, base_count);
 
         std::unordered_set<const aggregate*> diamond_bases;
         for (auto& [base_ptr, count] : base_count) {
             if (count > 1) diamond_bases.insert(base_ptr);
         }
+        if (diamond_bases.empty()) return;
 
-        if (diamond_bases.empty()) continue;
-
-        // For every node in the base graph of agg that has a diamond_base as a direct base,
-        // mark that edge as virtual. This includes the direct bases of agg itself (D→B, D→C)
-        // AND the intermediate bases (B→A, C→A).
         std::function<void(aggregate*)> mark_virtual_edges;
         mark_virtual_edges = [&](aggregate* cur) {
             for (auto& bs : cur->get_bases_mutable()) {
-                if (!bs.base || !bs.base->is_class()) continue;
+                if (!bs.base || !participates_in_diamond_detection(bs.base.get())) continue;
                 if (diamond_bases.count(bs.base.get())) {
                     // This edge (cur→bs.base) leads directly to a diamond base: mark virtual.
                     bs.is_virtual = true;
-                    needs_virtual[cur].insert(bs.base.get());
                 } else {
                     // This edge leads to an intermediate. Recurse to mark deeper edges.
                     mark_virtual_edges(bs.base.get());
                 }
             }
         };
-        mark_virtual_edges(agg.get());
+        mark_virtual_edges(agg);
     }
+}
+
+void klass::compute_virtual_bases(const std::vector<std::shared_ptr<aggregate>>& all_aggregates) {
+    // Step 1: count how many times each aggregate appears in the full base graph
+    // of each class/interface. Aggregates reached more than once are diamond bases.
+    for (auto& agg : all_aggregates) {
+        compute_virtual_bases_for(agg.get());
+    }
+}
+
+void klass::compute_virtual_bases_single(aggregate& agg) {
+    compute_virtual_bases_for(&agg);
 }
 
 bool klass::has_abstract_vtable_slots() const {

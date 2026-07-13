@@ -32,6 +32,7 @@ protected:
     friend class gen::declaration_generator;
     friend class gen::aggregate_type_resolver;
     friend class gen::type_reference_resolver;
+    friend class template_instantiator;
 
     /** Declared visibility of this member variable. PUBLIC by default. */
     visibility _visibility = PUBLIC;
@@ -241,6 +242,14 @@ public:
 
     /** True if this is a class (keyword 'class'), false if it is a struct (keyword 'struct'). */
     virtual bool is_class() const { return false; }
+
+    /**
+     * True if this is an interface (keyword 'interface'). Interfaces are stateless
+     * (vtable-only, no data members), so diamond convergence purely within an
+     * interface hierarchy carries no ABI ambiguity: any two paths to the same
+     * interface base always refer to the very same (shared, virtual-like) slot.
+     */
+    virtual bool is_interface() const { return false; }
 
     /** True if this is an annotation type (keyword 'annotation'). */
     virtual bool is_annotation() const { return false; }
@@ -558,6 +567,18 @@ public:
      */
     static void compute_virtual_bases(const std::vector<std::shared_ptr<aggregate>>& all_aggregates);
 
+    /**
+     * Single-aggregate variant of compute_virtual_bases(): detects diamond
+     * patterns reachable from 'agg' only and marks the relevant base_spec
+     * entries as virtual. Used right after an aggregate's own bases have been
+     * resolved (gen_struct.cpp, symbol_resolver::visit_aggregate), so that
+     * diamonds only reachable through template-instantiated bases (whose
+     * concrete aggregate did not exist yet when the early global
+     * compute_virtual_bases() prepass ran) are still correctly detected.
+     * Idempotent: safe to call multiple times / in addition to the global pass.
+     */
+    static void compute_virtual_bases_single(aggregate& agg);
+
     /** Returns the direct enclosing class, or nullptr if not nested in a class. */
     std::shared_ptr<klass> get_enclosing_class() const {
         return std::dynamic_pointer_cast<klass>(get_enclosing_aggregate());
@@ -593,7 +614,7 @@ protected:
 
 public:
     bool is_class() const override { return false; }
-    bool is_interface() const { return true; }
+    bool is_interface() const override { return true; }
 
     void accept(model_visitor& visitor) override;
 };

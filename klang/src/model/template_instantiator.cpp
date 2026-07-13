@@ -21,6 +21,7 @@
 #include "type.hpp"
 #include "statements.hpp"
 #include "expressions.hpp"
+#include "imported.hpp"
 
 #include <sstream>
 #include <queue>
@@ -200,7 +201,34 @@ std::string substitute_base_name(const std::string& raw_name,
         // Check if this arg name is a template parameter to substitute
         auto it = subst.find(arg);
         if (it != subst.end() && it->second) {
-            result += it->second->to_string();
+            // For struct types, use the aggregate's short name (e.g. "Point") rather than
+            // to_string() which returns "struct:Point" — the "struct:" prefix would prevent
+            // the downstream get_aggregate() lookup from finding the type in the namespace.
+            if (auto st = std::dynamic_pointer_cast<struct_type>(it->second)) {
+                if (auto agg = st->get_struct()) {
+                    result += agg->get_short_name();
+                } else {
+                    // Fallback: strip "struct:" prefix
+                    const auto ts = st->to_string();
+                    const std::string prefix = "struct:";
+                    result += (ts.size() > prefix.size() && ts.substr(0, prefix.size()) == prefix)
+                              ? ts.substr(prefix.size()) : ts;
+                }
+            // For enum types, use the enumeration's short name (e.g. "Color") rather than
+            // to_string() which returns "enum Color" — the "enum " prefix prevents lookup.
+            } else if (auto et = std::dynamic_pointer_cast<enum_type>(it->second)) {
+                if (auto e = et->get_enumeration()) {
+                    result += e->get_short_name();
+                } else {
+                    // Fallback: strip "enum " prefix
+                    const auto ts = et->to_string();
+                    const std::string pfx = "enum ";
+                    result += (ts.size() > pfx.size() && ts.substr(0, pfx.size()) == pfx)
+                              ? ts.substr(pfx.size()) : ts;
+                }
+            } else {
+                result += it->second->to_string();
+            }
         } else {
             result += arg;
         }
@@ -369,6 +397,12 @@ void template_instantiator::substitute_expr_types(
             substitute_expr_types(std::const_pointer_cast<expression>(arg), subst);
         }
     } else if (auto ne = std::dynamic_pointer_cast<new_expression>(expr)) {
+        if (ne->allocated_type()) {
+            auto new_alloc_type = substitute_type(ne->allocated_type(), subst);
+            if (new_alloc_type != ne->allocated_type()) {
+                ne->allocated_type(new_alloc_type);
+            }
+        }
         for (auto& arg : ne->arguments()) {
             substitute_expr_types(std::const_pointer_cast<expression>(arg), subst);
         }
@@ -1069,6 +1103,9 @@ void template_instantiator::clone_nested_aggregate(
     // Substitute template type parameters in base names (e.g. "Collection<T>" → "Collection<int>")
     for (auto& bs : src.get_bases()) {
         nested->add_base(substitute_base_name(bs.raw_name, subst), bs.vis);
+        if (bs.is_virtual) {
+            nested->get_bases_mutable().back().is_virtual = true;
+        }
     }
 
     // Clone all children with type substitution
@@ -1248,9 +1285,16 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
         concrete->add_friend_directive(std::move(new_dir));
     }
 
-    // Copy bases (with template parameter substitution in raw names)
+    // Copy bases (with template parameter substitution in raw names). Propagate
+    // the generic template's is_virtual flags so that instantiations are born with
+    // the correct virtual-base edges *before* any layout materialisation — this is
+    // essential for diamonds that only exist within a template hierarchy, whose
+    // intermediates may materialise on-demand before the derived diamond is seen.
     for (auto& bs : tpl_def.get_bases()) {
         concrete->add_base(substitute_base_name(bs.raw_name, subst), bs.vis);
+        if (bs.is_virtual) {
+            concrete->get_bases_mutable().back().is_virtual = true;
+        }
     }
 
     // Resolve template base classes immediately (e.g. "Collection<int>")
@@ -1299,14 +1343,45 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
                         };
                         for (const auto& arg_name : arg_names) {
                             std::shared_ptr<type> arg_type;
+                            // Priority 1: arg_name is itself a template parameter name of the
+                            // *enclosing* instantiation (e.g. "I"/"O" in TransformInputStream<I, O>).
+                            // Must be checked before any name-based type lookup below, otherwise
+                            // a template parameter named "I" can spuriously resolve to an unrelated
+                            // user-defined type also named "I" if substitute_base_name() failed to
+                            // substitute it (see the TransformInputStream<I, O> base name resolution
+                            // regression: a program-level `class I { ... }` or `interface I { ... }`
+                            // would incorrectly become the template argument).
+                            auto subst_it = subst.find(arg_name);
+                            if (subst_it != subst.end() && subst_it->second) {
+                                arg_type = subst_it->second;
+                            }
                             auto prim_it = prim_map.find(arg_name);
-                            if (prim_it != prim_map.end()) {
+                            if (!arg_type && prim_it != prim_map.end()) {
                                 arg_type = ctx->from_type(prim_it->second);
-                            } else {
-                                // Try as user-defined aggregate type
+                            }
+                            if (!arg_type) {
+                                // Try as user-defined struct/class/interface type
                                 auto agg = parent_ns->get_aggregate(arg_name);
                                 if (agg && agg->get_struct_type()) {
                                     arg_type = agg->get_struct_type();
+                                }
+                                // Try as enum type or other named type via context lookup
+                                if (!arg_type) {
+                                    arg_type = ctx->from_string(arg_name);
+                                }
+                                // Final fallback: reverse-map arg_name to the original type
+                                // object via the substitution map. substitute_base_name uses
+                                // type->to_string() for non-struct/non-enum types (e.g.
+                                // "Object*" for pointer_type, "Object!" for owner_type), so
+                                // matching arg_name against each substituted value's
+                                // to_string() recovers the correct type object.
+                                if (!arg_type || !type::is_resolved(arg_type)) {
+                                    for (const auto& [_, sv] : subst) {
+                                        if (sv && sv->to_string() == arg_name) {
+                                            arg_type = sv;
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                             if (arg_type && type::is_resolved(arg_type)) {
@@ -1353,12 +1428,52 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
                 }
             }
         } else {
-            // Simple (non-template) base name: look up directly
+            // Simple (non-template) base name: look up directly.
+            // Non-generic bases (e.g. "Sized") of an imported template are NOT
+            // re-homed/flattened into the consumer's root namespace the way
+            // imported *template* definitions are (see the "re-parse trick" comment
+            // above in try_instantiate_template_type) — so a flat lookup in
+            // parent_ns's direct children misses them. Fall back to resolving the
+            // base via the template's origin module (KDI-backed imported aggregate
+            // registry), which correctly locates non-template imported bases
+            // regardless of namespace nesting.
             if (auto found = parent_ns->get_aggregate(bs.raw_name)) {
                 bs.base = found;
+            } else if (ti && !ti->origin_module_ns_fq.empty()) {
+                std::vector<std::string> parts;
+                std::size_t pos = 0;
+                const std::string& origin = ti->origin_module_ns_fq;
+                while (true) {
+                    auto sep = origin.find("::", pos);
+                    if (sep == std::string::npos) { parts.push_back(origin.substr(pos)); break; }
+                    parts.push_back(origin.substr(pos, sep - pos));
+                    pos = sep + 2;
+                }
+                parts.push_back(bs.raw_name);
+                if (auto imp = unit.get_or_create_imported_aggregate(k::name{false, std::move(parts)}, ctx)) {
+                    bs.base = std::static_pointer_cast<aggregate>(imp);
+                }
             }
         }
     }
+
+    // Diamond detection: all of 'concrete's bases (and their transitively
+    // instantiated bases) are now fully resolved (bs.base assigned), but NONE
+    // of them have had their base sub-object fields (__base_X__/__vbptr_X__)
+    // injected yet — that happens later, in a separate visitor pass (either
+    // symbol_resolver::visit_aggregate in gen_struct.cpp, or explicitly via
+    // inject_base_subobject_fields() below/at the call sites in
+    // resolvers_aggregate.cpp / resolvers_type_ref.cpp). This is exactly the
+    // right point to run diamond detection for template-instantiated
+    // hierarchies: the early global prepass (gen_unit.cpp,
+    // klass::compute_virtual_bases) runs before any template is instantiated
+    // and cannot see these bases (their raw_name contains '<' and is skipped),
+    // so without this call, diamonds that only exist within a template
+    // hierarchy (e.g. Derived<T> : Mid1<T>, Mid2<T> both -> Base<T>, or the
+    // interface diamond MutableIndexedCollection<T> : IndexedCollection<T>,
+    // MutableCollection<T> both -> Collection<T>) would never be marked
+    // virtual, causing "Ambiguous access to member" errors later.
+    klass::compute_virtual_bases_single(*concrete);
 
     // 2. Clone children from the template aggregate
     for (auto& child : tpl_def.get_children()) {
@@ -1470,6 +1585,9 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
 
     for (auto& bs : tpl_def.get_bases()) {
         concrete->add_base(substitute_base_name(bs.raw_name, subst), bs.vis);
+        if (bs.is_virtual) {
+            concrete->get_bases_mutable().back().is_virtual = true;
+        }
     }
 
     for (auto& child : tpl_def.get_children()) {
@@ -1754,7 +1872,16 @@ static void resolve_symbols_in_stmt(const std::shared_ptr<statement>& stmt) {
 void template_instantiator::resolve_body_symbols(
     std::shared_ptr<aggregate> concrete)
 {
+    std::unordered_set<aggregate*> visited;
+    resolve_body_symbols_rec(concrete, visited);
+}
+
+void template_instantiator::resolve_body_symbols_rec(
+    std::shared_ptr<aggregate> concrete,
+    std::unordered_set<aggregate*>& visited)
+{
     if (!concrete) return;
+    if (!visited.insert(concrete.get()).second) return;
 
     // ── Assign fully-qualified names to all children (functions, nested aggregates)
     //    and their local variable statements.  The symbol_resolver normally does this,
@@ -1803,6 +1930,19 @@ void template_instantiator::resolve_body_symbols(
     for (auto& child : concrete->get_children()) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
             resolve_fn_bodies(*nested);
+        }
+    }
+
+    // Recurse into instantiated base classes. A template base reached only
+    // indirectly (as a base-specifier of another template) is never itself the
+    // top-level target of instantiate_aggregate, so without this its cloned
+    // method bodies keep unresolved bare-name references to inherited members
+    // (Bug D). Imported bases carry no cloned bodies and are skipped.
+    for (auto& bs : concrete->get_bases()) {
+        if (!bs.base) continue;
+        if (std::dynamic_pointer_cast<imported_aggregate>(bs.base)) continue;
+        if (bs.base->is_instantiation()) {
+            resolve_body_symbols_rec(bs.base, visited);
         }
     }
 }
@@ -1865,22 +2005,185 @@ static void retarget_param_refs(
     }
 }
 
+// Assign a fully-qualified name and mangled name to `agg` (if not already
+// set) and to all of its function/constructor children. Mirrors the
+// "6c/6d" logic in resolvers_type_ref.cpp / "5c/5d" in resolvers_aggregate.cpp,
+// which normally runs once for the top-level concrete aggregate returned by
+// instantiate_aggregate — but bases instantiated RECURSIVELY while resolving
+// that top-level aggregate's own base list (e.g. Base<int> as a base of
+// Mid<int>, itself a base of Impl<int>) never go through that logic, since
+// only the top-level aggregate is visited by the caller. Without this, such
+// an intermediate base's compiler-generated constructor keeps an empty
+// mangled name, and once something (e.g. a base-constructor-call injected by
+// inject_constructor_member_inits) actually triggers code generation for it,
+// declaration_generator/implementation_generator emit it as an anonymous
+// LLVM function — which the JIT's object linking layer rejects as an
+// "unexpected definition".
+void template_instantiator::ensure_agg_names_assigned(std::shared_ptr<aggregate> agg) {
+    if (!agg) return;
+    if (agg->get_fq_name().empty() && !agg->get_short_name().empty()) {
+        if (auto ancestor = agg->template ancestor<named_element>()) {
+            agg->assign_name(ancestor->get_name().with_back(agg->get_short_name()));
+        }
+    }
+    agg->update_mangled_name();
+    for (auto& child : agg->get_children()) {
+        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            if (fn->get_fq_name().empty()) {
+                if (auto parent_named = fn->template parent<named_element>()) {
+                    fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
+                }
+            }
+            if (fn->get_mangled_name().empty()) {
+                fn->update_mangled_name();
+            }
+        }
+    }
+}
+
+void template_instantiator::inject_base_subobject_fields(std::shared_ptr<aggregate> concrete) {
+    if (!concrete || !concrete->has_bases()) return;
+
+    auto& bases_mutable = concrete->get_bases_mutable();
+    for (auto it = bases_mutable.rbegin(); it != bases_mutable.rend(); ++it) {
+        auto& bs = *it;
+        if (!bs.base || !bs.base->get_struct_type()) continue;
+
+        // Ensure the base itself (and its constructors/methods) carry a
+        // proper FQ/mangled name before anything downstream might trigger
+        // code generation for it (see ensure_agg_names_assigned above).
+        ensure_agg_names_assigned(bs.base);
+
+        if (bs.is_virtual) {
+            // Name the vbptr after the resolved base aggregate's short name so it
+            // matches the collector (__vbase_X__) and constructor vbptr-setup code,
+            // which key off get_short_name(). For a template instantiation the raw
+            // base name ("Coll<int>") and the resolved short name ("Coll__int")
+            // differ, so using the raw sanitised name here would desynchronise them.
+            std::string vbptr_name = "__vbptr_" + bs.base->get_short_name() + "__";
+            if (!concrete->_vars.count(vbptr_name)) {
+                auto vbptr_field = member_variable_definition::make_shared(concrete->shared_as<aggregate>(), vbptr_name);
+                concrete->_vars.insert({vbptr_name, vbptr_field});
+                concrete->_children.insert(concrete->_children.begin(), vbptr_field);
+            }
+        } else {
+            std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
+            if (!concrete->_vars.count(subobj_name)) {
+                auto subobj_field = member_variable_definition::make_shared(concrete->shared_as<aggregate>(), subobj_name);
+                subobj_field->set_type(bs.base->get_struct_type());
+                concrete->_vars.insert({subobj_name, subobj_field});
+                concrete->_children.insert(concrete->_children.begin(), subobj_field);
+            }
+        }
+
+        // Recurse into the base itself, so intermediate levels of a multi-level
+        // template hierarchy (instantiated on-demand while resolving THIS
+        // aggregate's base list) also get their own __base_X__ fields.
+        inject_base_subobject_fields(bs.base);
+    }
+}
+
+bool template_instantiator::ensure_virtual_base_layout_fields(std::shared_ptr<aggregate> concrete) {
+    if (!concrete) return false;
+    bool added = false;
+
+    // Helper: position of the __vptr__ field in _children (so a vbptr is inserted
+    // right after it, never before — __vptr__ must stay at offset 0).
+    auto vptr_insert_pos = [&]() {
+        auto it = concrete->_children.begin();
+        for (; it != concrete->_children.end(); ++it) {
+            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(*it)) {
+                if (mv->get_short_name() == "__vptr__") { ++it; return it; }
+            }
+        }
+        return concrete->_children.begin();
+    };
+
+    // 1. __vbptr_X__ for each direct virtual base that lacks one.
+    for (auto& bs : concrete->get_bases()) {
+        if (!bs.base || !bs.is_virtual || !bs.base->get_struct_type()) continue;
+        std::string vbptr_name = "__vbptr_" + bs.base->get_short_name() + "__";
+        if (concrete->_vars.count(vbptr_name)) continue;
+        auto vbptr_field = member_variable_definition::make_shared(
+            concrete->shared_as<aggregate>(), vbptr_name);
+        concrete->_vars.insert({vbptr_name, vbptr_field});
+        concrete->_children.insert(vptr_insert_pos(), vbptr_field);
+        added = true;
+    }
+
+    // 2. Collector __vbase_X__ for transitively-virtual interface bases where this
+    //    aggregate is the collector (mirrors gen_struct.cpp visit_aggregate).
+    auto vbases = concrete->get_all_virtual_base_structs();
+    for (auto& vbase : vbases) {
+        if (!vbase->get_struct_type()) continue;
+        std::string vbase_name = "__vbase_" + vbase->get_short_name() + "__";
+        std::string vbptr_name = "__vbptr_" + vbase->get_short_name() + "__";
+        if (concrete->_vars.count(vbase_name)) continue;
+
+        std::function<bool(const aggregate&)> has_vbptr_in_vars;
+        has_vbptr_in_vars = [&](const aggregate& base_st) -> bool {
+            if (base_st._vars.count(vbptr_name)) return true;
+            for (auto& b : base_st.get_bases()) {
+                if (!b.base || b.is_virtual) continue;
+                if (has_vbptr_in_vars(*b.base)) return true;
+            }
+            return false;
+        };
+
+        bool is_collector = false;
+        for (auto& bs : concrete->get_bases()) {
+            if (!bs.base) continue;
+            if (bs.is_virtual) {
+                if (bs.base.get() == vbase.get() && vbase->is_interface()) { is_collector = true; break; }
+                if (bs.base->_vars.count(vbptr_name)) { is_collector = true; break; }
+            } else if (has_vbptr_in_vars(*bs.base)) {
+                is_collector = true; break;
+            }
+        }
+        if (!is_collector) continue;
+
+        auto vbase_field = member_variable_definition::make_shared(
+            concrete->shared_as<aggregate>(), vbase_name);
+        vbase_field->set_type(vbase->get_struct_type());
+        concrete->_vars.insert({vbase_name, vbase_field});
+        concrete->_children.push_back(vbase_field);
+        added = true;
+    }
+
+    return added;
+}
+
+
 void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggregate> concrete) {
     if (!concrete) return;
 
-    auto inject_for_aggregate = [](std::shared_ptr<aggregate> agg) {
+    // Normalize a base-class raw_name to the simple name used in a constructor
+    // member-initializer (see the identical helper in gen/gen_constructor.cpp — kept
+    // local here since that one lives in an anonymous namespace under k::model::gen).
+    auto base_init_simple_name = [](const std::string& raw) -> std::string {
+        std::string r = raw;
+        if (auto lt = r.find('<'); lt != std::string::npos) {
+            r = r.substr(0, lt);
+        }
+        if (auto cc = r.rfind("::"); cc != std::string::npos) {
+            r = r.substr(cc + 2);
+        }
+        return r;
+    };
+
+    auto inject_for_aggregate = [&base_init_simple_name](std::shared_ptr<aggregate> agg) {
         for (auto& ctor : agg->constructors()) {
-            if (!ctor || ctor->is_compiler_generated()) continue;
-            if (ctor->member_inits().empty()) continue;
+            // Note: compiler-generated constructors (default or copy) still need base
+            // constructor calls injected below — symbol_resolver::visit_constructor
+            // does the same for non-template classes regardless of is_compiler_generated().
+            // Only deleted constructors (no meaningful body) and the compiler-generated
+            // COPY constructor (handled entirely at IR level, see
+            // type_reference_resolver::visit_constructor) must be skipped.
+            if (!ctor || ctor->is_deleted()) continue;
+            if (ctor->is_copy_constructor() && ctor->is_compiler_generated()) continue;
 
             auto blck = ctor->get_block();
             if (!blck) continue;
-
-            // Build a lookup map from member name to mem_init_spec
-            std::unordered_map<std::string, const constructor::member_init_spec*> init_by_name;
-            for (auto& mi : ctor->member_inits()) {
-                if (!mi.is_base_init) init_by_name[mi.member_name] = &mi;
-            }
 
             // Build a map from old parameter names to new concrete parameters for re-targeting.
             std::unordered_map<std::string, std::shared_ptr<parameter>> param_by_name;
@@ -1889,9 +2192,97 @@ void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggr
                 param_by_name[p->get_short_name()] = p;
             }
 
-            // Insert member-init statements at the front of the block, in member
-            // declaration order (same logic as symbol_resolver::visit_constructor step 2).
+            // ── Step 0: inject base constructor calls (in base declaration order) ──
+            // Mirrors symbol_resolver::visit_constructor's Step 1/1b. Needed because
+            // template-instantiated aggregates (whether synthesised during the
+            // aggregate_type_resolver pass or on-demand during type_reference_resolver)
+            // are created AFTER symbol_resolver::visit_constructor has already run on the
+            // original (generic, unresolved) template — so base ctor-call statements were
+            // never injected for these fresh, concrete constructor bodies. Without this,
+            // type_reference_resolver::visit_constructor's later fallback member-init pass
+            // miscounts the expected statement offset (it assumes base/vbase ctor calls
+            // were already injected), causing an out-of-range std::vector::insert.
             size_t insert_idx = 0;
+            if (agg->has_bases()) {
+                std::unordered_map<std::string, const constructor::member_init_spec*> base_init_by_name;
+                for (auto& mi : ctor->member_inits()) {
+                    if (mi.is_base_init) base_init_by_name[base_init_simple_name(mi.member_name)] = &mi;
+                }
+                for (auto& bs : agg->get_bases()) {
+                    if (!bs.base) continue;
+                    std::string subobj_name = bs.is_virtual
+                        ? ("__vbase_" + bs.sanitised_name() + "__")
+                        : ("__base_" + bs.sanitised_name() + "__");
+                    auto subobj_var_it = agg->variables().find(subobj_name);
+                    if (subobj_var_it == agg->variables().end()) continue;
+                    auto subobj_var = std::dynamic_pointer_cast<member_variable_definition>(subobj_var_it->second);
+                    if (!subobj_var) continue;
+
+                    std::vector<std::shared_ptr<expression>> args;
+                    auto it = base_init_by_name.find(base_init_simple_name(bs.raw_name));
+                    if (it != base_init_by_name.end()) {
+                        for (auto& arg : it->second->args) {
+                            auto cloned = arg->clone();
+                            retarget_param_refs(cloned, param_by_name);
+                            args.push_back(cloned);
+                        }
+                    }
+                    auto init_expr = constructor_invocation_expression::make_shared(subobj_var, args);
+                    auto stmt = std::make_shared<expression_statement>(blck);
+                    stmt->set_expression(init_expr);
+                    auto pos = blck->begin();
+                    std::advance(pos, insert_idx);
+                    blck->insert_statement(pos, stmt);
+                    ++insert_idx;
+                }
+
+                // Step 0b: inject transitively-collected virtual base constructor calls
+                // (e.g. D : B, C where B, C each declare virtual base A — A is not in D's
+                // direct base list but D must still construct it once).
+                for (auto& vbase : agg->get_all_virtual_base_structs()) {
+                    std::string vbase_name = "__vbase_" + vbase->get_short_name() + "__";
+                    // Skip if already injected as a direct virtual base above.
+                    bool already_direct = false;
+                    for (auto& bs : agg->get_bases()) {
+                        if (bs.base && bs.is_virtual && bs.raw_name == vbase->get_short_name()) {
+                            already_direct = true; break;
+                        }
+                    }
+                    if (already_direct) continue;
+                    auto vbase_var_it = agg->variables().find(vbase_name);
+                    if (vbase_var_it == agg->variables().end()) continue;
+                    auto vbase_var = std::dynamic_pointer_cast<member_variable_definition>(vbase_var_it->second);
+                    if (!vbase_var) continue;
+
+                    std::vector<std::shared_ptr<expression>> args;
+                    auto it = base_init_by_name.find(base_init_simple_name(vbase->get_short_name()));
+                    if (it != base_init_by_name.end()) {
+                        for (auto& arg : it->second->args) {
+                            auto cloned = arg->clone();
+                            retarget_param_refs(cloned, param_by_name);
+                            args.push_back(cloned);
+                        }
+                    }
+                    auto init_expr = constructor_invocation_expression::make_shared(vbase_var, args);
+                    auto stmt = std::make_shared<expression_statement>(blck);
+                    stmt->set_expression(init_expr);
+                    auto pos = blck->begin();
+                    std::advance(pos, insert_idx);
+                    blck->insert_statement(pos, stmt);
+                    ++insert_idx;
+                }
+            }
+
+            if (ctor->member_inits().empty()) continue;
+
+            // Build a lookup map from member name to mem_init_spec
+            std::unordered_map<std::string, const constructor::member_init_spec*> init_by_name;
+            for (auto& mi : ctor->member_inits()) {
+                if (!mi.is_base_init) init_by_name[mi.member_name] = &mi;
+            }
+
+            // Insert member-init statements after the base ctor calls injected above, in
+            // member declaration order (same logic as symbol_resolver::visit_constructor step 2).
             for (auto& var_entry : agg->variables()) {
                 if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
                     // Skip synthetic fields

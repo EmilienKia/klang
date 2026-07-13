@@ -1165,9 +1165,18 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                 // Try resolving it further through the resolver
                 if (arg_type) {
                     if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
-                        auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
-                        if (resolved && type::is_resolved(resolved)) {
-                            arg_type = resolved;
+                        // A bare template-parameter placeholder (e.g. 'I'/'O'/'T' used
+                        // inside the defining template's own body) must NOT be resolved
+                        // via a global/namespace name lookup — an unrelated user type
+                        // that happens to share the same short name (e.g. `interface I`)
+                        // would be spuriously matched. Only the substitution-map
+                        // recovery paths below may legitimately resolve it.
+                        if (!unres_arg->is_template_param_placeholder()
+                            && !is_enclosing_template_param_name(context_elem, unres_arg->type_id().to_string())) {
+                            auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
+                            if (resolved && type::is_resolved(resolved)) {
+                                arg_type = resolved;
+                            }
                         }
                         // If still not resolved, check if we are inside a concrete template
                         // function instantiation that carries the substitution map.  This
@@ -1384,6 +1393,17 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     //     like 'x' (meaning 'this.x') are still unresolved in the cloned body.
     template_instantiator::resolve_body_symbols(concrete_agg);
 
+    // 4bb. Inject base sub-object fields (__base_X__) for resolved bases, and
+    //      recursively for every base's own bases (see
+    //      template_instantiator::inject_base_subobject_fields for why the
+    //      recursion matters). Must run BEFORE inject_constructor_member_inits
+    //      below, which looks up these fields to inject base-constructor-call
+    //      statements — without them present yet, that injection silently
+    //      no-ops, leaving base constructors uncalled (e.g. base vtable
+    //      pointers never initialized).
+    template_instantiator::inject_base_subobject_fields(concrete_agg);
+    template_instantiator::ensure_virtual_base_layout_fields(concrete_agg);
+
     // 4c. Inject member-initializer expressions into concrete constructor blocks.
     //     symbol_resolver::visit_constructor normally does this, but template
     //     definitions are skipped and the concrete ctors are created after that pass.
@@ -1520,149 +1540,16 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
         }
     }
 
-    // 6d2. Inject base sub-object fields (__base_X__) for resolved bases.
-    //      symbol_resolver::visit_aggregate normally does this but template
-    //      instantiations bypass that pass.
-    if (concrete_agg->has_bases()) {
-        auto& bases_mutable = concrete_agg->get_bases_mutable();
-        for (auto it = bases_mutable.rbegin(); it != bases_mutable.rend(); ++it) {
-            auto& bs = *it;
-            if (!bs.base || !bs.base->get_struct_type()) continue;
-            if (bs.is_virtual) {
-                std::string vbptr_name = "__vbptr_" + bs.sanitised_name() + "__";
-                if (!concrete_agg->_vars.count(vbptr_name)) {
-                    auto vbptr_field = member_variable_definition::make_shared(concrete_agg->shared_as<aggregate>(), vbptr_name);
-                    concrete_agg->_vars.insert({vbptr_name, vbptr_field});
-                    concrete_agg->_children.insert(concrete_agg->_children.begin(), vbptr_field);
-                }
-            } else {
-                std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
-                if (!concrete_agg->_vars.count(subobj_name)) {
-                    auto subobj_field = member_variable_definition::make_shared(concrete_agg->shared_as<aggregate>(), subobj_name);
-                    subobj_field->set_type(bs.base->get_struct_type());
-                    concrete_agg->_vars.insert({subobj_name, subobj_field});
-                    concrete_agg->_children.insert(concrete_agg->_children.begin(), subobj_field);
-                }
-            }
-        }
-    }
+    // 6d2. (base sub-object field injection moved earlier — see 4bb above,
+    //      which must run before inject_constructor_member_inits.)
 
     // 6e. Build vtable for class/interface instantiations.
     //     Template instantiations created here bypass symbol_resolver and
-    //     model_materializer, so their vtable must be built now.
+    //     model_materializer, so their vtable must be built now. See
+    //     ensure_klass_vtable_built() in resolvers_common.hpp for the recursive,
+    //     multi-level-hierarchy-aware implementation.
     if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete_agg)) {
-        if (!kl->has_vtable()) {
-            auto vt = std::make_shared<vtable_layout>();
-            size_t next_slot = 0;
-
-            // Inherit vtable entries from primary base (first base with a vtable).
-            // Build base vtable first if it doesn't have one yet.
-            for (auto& bs : kl->get_bases()) {
-                if (!bs.base) continue;
-                if (auto base_kl = std::dynamic_pointer_cast<model::klass>(bs.base)) {
-                    if (!base_kl->has_vtable()) {
-                        // Build base interface/class vtable
-                        auto base_vt = std::make_shared<vtable_layout>();
-                        size_t base_next_slot = 0;
-                        for (auto& base_child : base_kl->get_children()) {
-                            auto base_func = std::dynamic_pointer_cast<function>(base_child);
-                            if (!base_func) continue;
-                            if (base_func->is_static()) continue;
-                            if (std::dynamic_pointer_cast<constructor>(base_func)) continue;
-                            if (std::dynamic_pointer_cast<destructor>(base_func)) continue;
-                            if (base_func->get_visibility() == PRIVATE) continue;
-                            base_func->set_virtual(true);
-                            base_func->set_vtable_slot((int)base_next_slot);
-                            vtable_entry base_entry;
-                            base_entry.slot_index = base_next_slot++;
-                            base_entry.introducing_func = base_func;
-                            base_entry.func = base_func;
-                            base_vt->entries.push_back(base_entry);
-                        }
-                        if (!base_vt->entries.empty()) {
-                            base_kl->set_vtable(base_vt);
-                            if (base_kl->get_vptrs().empty()) {
-                                base_kl->inject_vptr_field("__vptr__");
-                            }
-                        }
-                    }
-                    if (base_kl->has_vtable()) {
-                        for (auto& entry : base_kl->get_vtable()->entries) {
-                            vtable_entry inherited;
-                            inherited.slot_index = entry.slot_index;
-                            inherited.introducing_func = entry.introducing_func;
-                            inherited.func = entry.func;
-                            vt->entries.push_back(inherited);
-                            next_slot = std::max(next_slot, entry.slot_index + 1);
-                        }
-                        break; // Only primary base
-                    }
-                }
-            }
-
-            // Process own functions
-            //
-            // Match overrides by name AND full parameter-type signature.
-            // Matching by parameter COUNT alone conflates overloads with the
-            // same arity but different parameter types (e.g. OutputStream's
-            // `write(b: T)` and `write(buf: const T[])`, both single-arg),
-            // which would bind one base slot to the imported (anonymous)
-            // method and clobber the other.  Use the canonical type spelling
-            // (to_string) so two instantiations of the same template compare
-            // equal across the import boundary.
-            auto same_param_sig = [](const function& f, const function& g) -> bool {
-                if (f.get_short_name() != g.get_short_name()) return false;
-                if (f.parameters().size() != g.parameters().size()) return false;
-                for (size_t i = 0; i < f.parameters().size(); ++i) {
-                    auto tf = f.parameters()[i] ? f.parameters()[i]->get_type() : nullptr;
-                    auto tg = g.parameters()[i] ? g.parameters()[i]->get_type() : nullptr;
-                    if (type::are_equal(tf, tg)) continue;
-                    if (tf && tg && tf->to_string() == tg->to_string()) continue;
-                    return false;
-                }
-                return true;
-            };
-            for (auto& child : kl->get_children()) {
-                auto func = std::dynamic_pointer_cast<function>(child);
-                if (!func) continue;
-                if (func->is_static()) continue;
-                if (std::dynamic_pointer_cast<constructor>(func)) continue;
-                if (std::dynamic_pointer_cast<destructor>(func)) continue;
-                if (func->get_visibility() == PRIVATE) continue;
-
-                // Check if this method overrides an existing vtable slot
-                bool found_override = false;
-                for (auto& entry : vt->entries) {
-                    if (entry.introducing_func
-                        && same_param_sig(*func, *entry.introducing_func)) {
-                        func->set_virtual(true);
-                        func->set_vtable_slot((int)entry.slot_index);
-                        func->set_overrides(entry.func);
-                        entry.func = func;
-                        found_override = true;
-                        break;
-                    }
-                }
-
-                if (!found_override) {
-                    // New virtual slot
-                    func->set_virtual(true);
-                    func->set_vtable_slot((int)next_slot);
-                    vtable_entry new_entry;
-                    new_entry.slot_index = next_slot++;
-                    new_entry.introducing_func = func;
-                    new_entry.func = func;
-                    vt->entries.push_back(new_entry);
-                }
-            }
-
-            if (!vt->entries.empty()) {
-                kl->set_vtable(vt);
-                if (kl->get_vptrs().empty()) {
-                    kl->inject_vptr_field("__vptr__");
-                }
-            }
-        }
+        ensure_klass_vtable_built(*kl);
     }
 
     // 7. Transitively resolve member variable types containing unresolved
@@ -1861,6 +1748,21 @@ std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
 void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     // Idempotency / recursion guard: each instantiated aggregate is resolved once.
     if (!_resolved_instantiations.insert(&agg).second) return;
+
+    // Resolve instantiated base classes first, so this aggregate's own method
+    // resolution and its base-constructor calls see fully-resolved base signatures
+    // (return/param types, constructors). Without this, a transitively-instantiated
+    // base that is never itself the direct instantiation target — e.g.
+    // ConstIterator<int> as the base of a late Iterator<int> — keeps unresolved
+    // signatures and its constructor never gets declared (error 0F031 at codegen).
+    // Imported bases carry no cloned bodies and need no resolution here.
+    for (auto& bs : agg.get_bases()) {
+        if (!bs.base) continue;
+        if (std::dynamic_pointer_cast<imported_aggregate>(bs.base)) continue;
+        if (bs.base->is_instantiation()) {
+            resolve_instantiated_aggregate(*bs.base);
+        }
+    }
 
     // Step 0: Resolve member variable types that contain unresolved template types.
     //         After template instantiation, member fields like `next : Node<T>*` may

@@ -162,6 +162,34 @@ void model_materializer::compute_secondary_vtable_specs(klass& kl) {
         return false;
     };
 
+    // Helper: do two non-static member functions share the same virtual signature?
+    // Used as a fallback when the explicit overrides chain does not link a derived
+    // method to a base slot — this happens when the base slot is introduced by a
+    // secondary base of an intermediate base (e.g. `interface C : A, B` where B is
+    // C's secondary base): a class deriving from C creates a fresh vtable slot for
+    // its B-method override without an overrides link back to B's slot, because the
+    // primary-vtable inheritance only propagates the primary base's slots.
+    auto same_virtual_sig = [&](const function& a, const function& b) -> bool {
+        if (a.get_short_name() != b.get_short_name()) return false;
+        if (a.is_const_member() != b.is_const_member()) return false;
+        if (a.get_parameter_size() != b.get_parameter_size()) return false;
+        auto type_match = [](const std::shared_ptr<type>& x,
+                             const std::shared_ptr<type>& y) -> bool {
+            if (type::are_equal(x, y)) return true;
+            return x && y && x->to_string() == y->to_string();
+        };
+        for (size_t i = 0; i < a.get_parameter_size(); ++i) {
+            auto ta = std::const_pointer_cast<type>(a.get_parameter(i)->get_type());
+            auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
+            if (!type_match(ta, tb)) return false;
+        }
+        auto ra = std::const_pointer_cast<type>(a.get_return_type());
+        auto rb = std::const_pointer_cast<type>(b.get_return_type());
+        if (bool(ra) != bool(rb)) return false;
+        if (ra && rb && !type_match(ra, rb)) return false;
+        return true;
+    };
+
     // Helper: build a secondary_vtable_spec for base_klass at byte_offset in kl
     auto build_spec = [&](std::shared_ptr<klass> base_klass, size_t byte_offset) {
         auto base_vt = base_klass->get_vtable();
@@ -182,6 +210,32 @@ void model_materializer::compute_secondary_vtable_specs(klass& kl) {
                         || (base_entry.func && overrides_base_func(*de.func, *base_entry.func)))) {
                     derived_entry = &de;
                     break;
+                }
+            }
+
+            // Fallback: match by virtual signature when the overrides chain is
+            // missing AND the base slot is abstract (a genuine interface method
+            // with no concrete implementation). This covers the case where the
+            // base slot is introduced by a secondary base of an intermediate base
+            // (e.g. `interface C : A, B` with B as C's secondary base): a class
+            // deriving from C creates a fresh vtable slot for its B-method override
+            // without an overrides link back to B's slot. We must NOT apply this
+            // fallback when the base slot already has a concrete implementation
+            // (e.g. `class D : B, C` where both B and C define value()), because
+            // there a same-signature method from a *different* base would be
+            // wrongly selected instead of the base's own concrete method.
+            if (!derived_entry && base_entry.func && base_entry.func->is_abstract_func()) {
+                const function* intro = base_entry.introducing_func
+                    ? base_entry.introducing_func.get()
+                    : base_entry.func.get();
+                if (intro) {
+                    for (auto& de : vt->entries) {
+                        if (de.func && !de.func->is_abstract_func()
+                            && same_virtual_sig(*de.func, *intro)) {
+                            derived_entry = &de;
+                            break;
+                        }
+                    }
                 }
             }
 

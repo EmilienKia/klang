@@ -27,6 +27,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 namespace k::model {
 
@@ -175,6 +176,8 @@ public:
      * and block contents are fully set up (i.e. after instantiate_aggregate).
      */
     static void resolve_body_symbols(std::shared_ptr<aggregate> concrete);
+    static void resolve_body_symbols_rec(std::shared_ptr<aggregate> concrete,
+                                         std::unordered_set<aggregate*>& visited);
 
     /**
      * Inject member-initializer expressions into concrete constructors' blocks.
@@ -188,6 +191,40 @@ public:
      * Must be called after instantiate_aggregate and resolve_body_symbols.
      */
     static void inject_constructor_member_inits(std::shared_ptr<aggregate> concrete);
+
+    /**
+     * Inject base sub-object fields (__base_X__ / __vbptr_X__) for the given
+     * aggregate's resolved bases, and recursively for every base's own bases.
+     *
+     * symbol_resolver::visit_aggregate normally creates these synthetic fields
+     * for every aggregate (see gen_struct.cpp), but template instantiations
+     * bypass that pass entirely — including bases that were THEMSELVES
+     * instantiated recursively while resolving the outer aggregate's base list
+     * (e.g. Collection<int> instantiated as a base of IndexedCollection<int>,
+     * itself a base of MutableIndexedCollection<int>). Since only the
+     * top-level concrete aggregate returned by instantiate_aggregate is
+     * normally processed by callers (aggregate_type_resolver /
+     * type_reference_resolver), intermediate bases in a multi-level template
+     * interface/class hierarchy would otherwise never get their own
+     * __base_X__ fields — breaking base-constructor-call injection
+     * (inject_constructor_member_inits) for those intermediate levels.
+     *
+     * Idempotent: safe to call multiple times on the same aggregate/hierarchy
+     * (e.g. once per diamond path) since each field is only created if absent.
+     */
+    static void inject_base_subobject_fields(std::shared_ptr<aggregate> concrete);
+
+    /**
+     * Ensure an instantiation's virtual-base layout fields are present, repairing
+     * cases where a __vbptr_X__ (for a direct virtual base) or the collector's
+     * __vbase_X__ (for a transitively-virtual interface base) was never injected
+     * because the base's virtualness was only discovered after this instance was
+     * first laid out (on-demand template materialisation ordering). Inserts the
+     * vbptr right after the __vptr__ slot (never before it) and appends collector
+     * __vbase fields last, matching the canonical layout order. Idempotent.
+     * Returns true if any field was added.
+     */
+    static bool ensure_virtual_base_layout_fields(std::shared_ptr<aggregate> concrete);
 
     /**
      * Public wrappers for member template instantiation from gen code.
@@ -215,6 +252,14 @@ public:
     }
 
 private:
+    /**
+     * Assign a fully-qualified name and mangled name to `agg` (if not already
+     * set) and to all of its function/constructor children. See the detailed
+     * comment at the definition site (template_instantiator.cpp) for why this
+     * is needed for bases instantiated recursively during instantiate_aggregate.
+     */
+    static void ensure_agg_names_assigned(std::shared_ptr<aggregate> agg);
+
     /**
      * Build the type substitution map from template params and concrete args.
      */

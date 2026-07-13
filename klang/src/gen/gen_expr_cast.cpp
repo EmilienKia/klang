@@ -596,23 +596,38 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
                 // ── Transitive upcast: tgt_st is a transitive (non-direct) base of src_st.
                 if (subobj_name.empty()) {
+                    llvm::Type* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
                     std::function<bool(aggregate*, struct_type*, llvm::Value*)> dfs_gep;
                     dfs_gep = [&](aggregate* cur_agg, struct_type* cur_st_type, llvm::Value* cur_ptr) -> bool {
                         for (auto& bs : cur_agg->get_bases()) {
-                            if (!bs.base || bs.is_virtual) continue;
-                            std::string field_name = "__base_" + bs.sanitised_name() + "__";
-                            auto field = cur_st_type->get_member(field_name);
-                            if (!field) continue;
+                            if (!bs.base) continue;
 
                             auto base_agg = bs.base;
                             auto base_st_type = base_agg->get_struct_type();
                             if (!base_st_type) continue;
-
                             llvm::Type* cur_llvm_type = cur_st_type->get_llvm_type();
                             if (!cur_llvm_type) continue;
-                            llvm::Value* base_ptr = _builder->CreateStructGEP(
-                                cur_llvm_type, cur_ptr, (unsigned)field->index,
-                                "trans_base_" + bs.sanitised_name() + "_ptr");
+
+                            llvm::Value* base_ptr = nullptr;
+                            if (bs.is_virtual) {
+                                // Virtual base edge: load the __vbptr_X__ field of cur to
+                                // obtain the (possibly shared) sub-object address.
+                                std::string vbptr_name = "__vbptr_" + bs.base->get_short_name() + "__";
+                                auto vbptr_field = cur_st_type->get_member(vbptr_name);
+                                if (!vbptr_field) continue;
+                                llvm::Value* vbptr_addr = _builder->CreateStructGEP(
+                                    cur_llvm_type, cur_ptr, (unsigned)vbptr_field->index,
+                                    "trans_vbptr_" + bs.sanitised_name() + "_addr");
+                                base_ptr = _builder->CreateLoad(ptr_ty, vbptr_addr,
+                                    "trans_vbase_" + bs.sanitised_name() + "_ptr");
+                            } else {
+                                std::string field_name = "__base_" + bs.sanitised_name() + "__";
+                                auto field = cur_st_type->get_member(field_name);
+                                if (!field) continue;
+                                base_ptr = _builder->CreateStructGEP(
+                                    cur_llvm_type, cur_ptr, (unsigned)field->index,
+                                    "trans_base_" + bs.sanitised_name() + "_ptr");
+                            }
 
                             if (bs.base.get() == tgt_st.get()) {
                                 _value = base_ptr;
@@ -776,22 +791,36 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 }
             }
             // Transitive upcast via DFS
+            llvm::Type* dfs_ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
             std::function<bool(aggregate*, struct_type*, llvm::Value*)> dfs_gep;
             dfs_gep = [&](aggregate* cur_agg, struct_type* cur_st_type, llvm::Value* cur_ptr) -> bool {
                 for (auto& bs : cur_agg->get_bases()) {
-                    if (!bs.base || bs.is_virtual) continue;
-                    std::string field_name = "__base_" + bs.sanitised_name() + "__";
-                    auto field = cur_st_type->get_member(field_name);
-                    if (!field) continue;
+                    if (!bs.base) continue;
                     // Use aggregate directly (works for both structure and klass/interface)
                     auto base_agg = bs.base;
                     auto base_st_type = base_agg->get_struct_type();
                     if (!base_st_type) continue;
                     llvm::Type* cur_llvm_type = cur_st_type->get_llvm_type();
                     if (!cur_llvm_type) continue;
-                    llvm::Value* base_ptr = _builder->CreateStructGEP(
-                        cur_llvm_type, cur_ptr, (unsigned)field->index,
-                        "trans_base_" + bs.sanitised_name() + "_ptr");
+
+                    llvm::Value* base_ptr = nullptr;
+                    if (bs.is_virtual) {
+                        std::string vbptr_name = "__vbptr_" + bs.base->get_short_name() + "__";
+                        auto vbptr_field = cur_st_type->get_member(vbptr_name);
+                        if (!vbptr_field) continue;
+                        llvm::Value* vbptr_addr = _builder->CreateStructGEP(
+                            cur_llvm_type, cur_ptr, (unsigned)vbptr_field->index,
+                            "trans_vbptr_" + bs.sanitised_name() + "_addr");
+                        base_ptr = _builder->CreateLoad(dfs_ptr_ty, vbptr_addr,
+                            "trans_vbase_" + bs.sanitised_name() + "_ptr");
+                    } else {
+                        std::string field_name = "__base_" + bs.sanitised_name() + "__";
+                        auto field = cur_st_type->get_member(field_name);
+                        if (!field) continue;
+                        base_ptr = _builder->CreateStructGEP(
+                            cur_llvm_type, cur_ptr, (unsigned)field->index,
+                            "trans_base_" + bs.sanitised_name() + "_ptr");
+                    }
                     if (bs.base.get() == tgt_st.get()) {
                         _value = base_ptr;
                         return true;

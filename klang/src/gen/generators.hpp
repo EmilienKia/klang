@@ -702,6 +702,16 @@ protected:
     llvm::Function* get_or_declare_fatal_memory_function();
 
     /**
+     * Return the LLVM Function for @p function, materialising its declaration
+     * on-demand if the main declaration walk did not create one. This covers
+     * template instantiations (and their transitively-instantiated bases) that
+     * become reachable only during the implementation pass — e.g. a late
+     * Iterator<int> whose implicit constructor calls its base ConstIterator<int>
+     * constructor. Returns nullptr only if the signature cannot be built.
+     */
+    llvm::Function* ensure_function_declared(k::model::function& function);
+
+    /**
      * Emit a null-check on an allocation result (malloc/realloc).
      * If the pointer is null, calls __k_fatal_memory_allocation which throws MemoryException.
      * Uses invoke (not call) if inside a try-catch scope, so the exception can be caught.

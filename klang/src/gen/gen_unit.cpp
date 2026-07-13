@@ -210,6 +210,78 @@ void symbol_resolver::visit_unit(unit& unit)
         };
         collect(_unit.get_root_namespace()->get_children());
         klass::compute_virtual_bases(all_structs);
+
+        // ── Generic-level template diamond detection ─────────────────────────
+        // compute_virtual_bases() above only sees resolved (non-'<') base edges,
+        // so diamonds that exist purely within a template hierarchy — e.g.
+        // Vector<T> : IndexedCollection<T>, MutableCollection<T> both deriving
+        // Collection<T> — are invisible to it. Detect them here by walking base
+        // raw_names among the generic template definitions and mark the matching
+        // generic base_spec edges virtual, so every future instantiation is born
+        // (via clone in template_instantiator) with the correct is_virtual flags
+        // BEFORE any on-demand layout materialisation. Only class/interface
+        // templates participate (structs never use virtual bases).
+        {
+            auto simple_name = [](const std::string& raw) -> std::string {
+                std::string r = raw;
+                if (auto lt = r.find('<'); lt != std::string::npos) r = r.substr(0, lt);
+                while (!r.empty() && r.back() == ' ') r.pop_back();
+                if (auto cc = r.rfind("::"); cc != std::string::npos) r = r.substr(cc + 2);
+                return r;
+            };
+            std::unordered_map<std::string, aggregate*> tpl_by_name;
+            for (auto& agg : all_structs) {
+                if (!agg->is_template()) continue;
+                if (!(agg->is_class() || agg->is_interface())) continue;
+                tpl_by_name[agg->get_short_name()] = agg.get();
+            }
+            auto lookup = [&](const std::string& raw) -> aggregate* {
+                auto it = tpl_by_name.find(simple_name(raw));
+                return it != tpl_by_name.end() ? it->second : nullptr;
+            };
+            std::function<void(aggregate*, std::unordered_map<aggregate*,int>&,
+                               std::unordered_set<aggregate*>&)> count_bases;
+            count_bases = [&](aggregate* cur, std::unordered_map<aggregate*,int>& counts,
+                              std::unordered_set<aggregate*>& on_path) {
+                if (on_path.count(cur)) return; // guard against inheritance cycles
+                on_path.insert(cur);
+                for (auto& bs : cur->get_bases()) {
+                    aggregate* base = lookup(bs.raw_name);
+                    if (!base) continue;
+                    counts[base]++;
+                    count_bases(base, counts, on_path);
+                }
+                on_path.erase(cur);
+            };
+            std::function<void(aggregate*, const std::unordered_set<aggregate*>&,
+                               std::unordered_set<aggregate*>&)> mark_edges;
+            mark_edges = [&](aggregate* cur, const std::unordered_set<aggregate*>& diamonds,
+                             std::unordered_set<aggregate*>& visited) {
+                if (visited.count(cur)) return;
+                visited.insert(cur);
+                for (auto& bs : cur->get_bases_mutable()) {
+                    aggregate* base = lookup(bs.raw_name);
+                    if (!base) continue;
+                    if (diamonds.count(base)) {
+                        bs.is_virtual = true;
+                    } else {
+                        mark_edges(base, diamonds, visited);
+                    }
+                }
+            };
+            for (auto& agg : all_structs) {
+                if (!agg->is_template()) continue;
+                if (!(agg->is_class() || agg->is_interface())) continue;
+                std::unordered_map<aggregate*,int> counts;
+                std::unordered_set<aggregate*> on_path;
+                count_bases(agg.get(), counts, on_path);
+                std::unordered_set<aggregate*> diamonds;
+                for (auto& [b, c] : counts) if (c > 1) diamonds.insert(b);
+                if (diamonds.empty()) continue;
+                std::unordered_set<aggregate*> visited;
+                mark_edges(agg.get(), diamonds, visited);
+            }
+        }
     }
 
     // Step 2: Visit the root namespace (recursively resolves all symbols)

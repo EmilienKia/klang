@@ -176,6 +176,19 @@ public:
 
     void resolve_types();
 
+    /**
+     * Rebuild LLVM struct bodies for template instantiations that gained
+     * virtual-base subobject fields (__vbptr_X__/__vbase_X__) after their body
+     * was first materialised. This happens when an intermediate template
+     * instantiation is laid out before the derived diamond that makes one of its
+     * bases virtual has been instantiated. Because LLVM struct bodies cannot be
+     * re-set in place, each instantiation struct type is given a fresh opaque
+     * LLVM type and re-resolved together so cross-references stay coherent.
+     * Must run after all instantiation + base-subobject injection (i.e. after the
+     * type_reference_resolver pass) and before code generation.
+     */
+    void rebuild_instantiation_layouts();
+
     std::shared_ptr<type> resolve_type(const std::shared_ptr<type>& type);
 
     /**

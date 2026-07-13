@@ -299,8 +299,46 @@ build_vtable_layout(aggregate& st,
         }
 
         if (!found_override) {
-            // If user wrote 'override' but nothing was overridden, it's an error
-            if (func->is_override_specifier()) {
+            // Check whether this function overrides a method introduced by a
+            // secondary (non-primary) base, transitively. This must run BEFORE the
+            // 'override'-specifier error check, because a class deriving from an
+            // interface C (itself deriving from A, B) reaches B's methods only
+            // through C's *secondary* base chain — those slots are not part of the
+            // inherited primary vtable, so `found_override` is false even though
+            // the method legitimately overrides B's abstract slot.
+            std::shared_ptr<function> secondary_override;
+            {
+                auto all_bases = collect_virtual_bases_bfs(st);
+                for (auto& base : all_bases) {
+                    if (secondary_override) break;
+                    if (auto pk = std::dynamic_pointer_cast<klass>(base)) {
+                        if (pk.get() == (primary_base ? primary_base.get() : nullptr)) continue;
+                        if (!pk->has_vtable()) continue;
+                        for (auto& sec_entry : pk->get_vtable()->entries) {
+                            if (sec_entry.introducing_func
+                                && have_same_virtual_signature(*func, *sec_entry.introducing_func)) {
+                                secondary_override = sec_entry.func ? sec_entry.func
+                                                                    : sec_entry.introducing_func;
+                                break;
+                            }
+                        }
+                    } else if (auto imp = std::dynamic_pointer_cast<imported_aggregate>(base)) {
+                        if (imp.get() == (primary_base_imp ? primary_base_imp.get() : nullptr)) continue;
+                        if (!imp->has_vtable()) continue;
+                        for (auto& child2 : imp->get_children()) {
+                            auto im = std::dynamic_pointer_cast<imported_method>(child2);
+                            if (im && have_same_virtual_signature(*func, *im)) {
+                                secondary_override = im;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If user wrote 'override' but nothing was overridden (neither a primary
+            // slot nor a secondary-base slot), it's an error.
+            if (func->is_override_specifier() && !secondary_override) {
                 error_override_not_overriding.push_back(func);
             }
             if (func->is_final_func() && !func->is_abstract_func()) {
@@ -315,36 +353,8 @@ build_vtable_layout(aggregate& st,
                 new_entry.func = func;
                 vt->entries.push_back(new_entry);
 
-                // Check if this function overrides a method from a secondary (non-primary) base.
-                // Handle both local klass bases and imported aggregate bases.
-                for (auto& bs : st.get_bases()) {
-                    if (bs.is_virtual) continue;
-                    if (auto pk = std::dynamic_pointer_cast<klass>(bs.base)) {
-                        if (pk.get() == (primary_base ? primary_base.get() : nullptr)) continue;
-                        if (!pk->has_vtable()) continue;
-                        for (auto& sec_entry : pk->get_vtable()->entries) {
-                            if (sec_entry.introducing_func
-                                && have_same_virtual_signature(*func, *sec_entry.introducing_func)) {
-                                if (!func->get_overrides()) {
-                                    func->set_overrides(sec_entry.func ? sec_entry.func
-                                                                       : sec_entry.introducing_func);
-                                }
-                                break;
-                            }
-                        }
-                    } else if (auto imp = std::dynamic_pointer_cast<imported_aggregate>(bs.base)) {
-                        if (imp.get() == (primary_base_imp ? primary_base_imp.get() : nullptr)) continue;
-                        if (!imp->has_vtable()) continue;
-                        for (auto& child2 : imp->get_children()) {
-                            auto im = std::dynamic_pointer_cast<imported_method>(child2);
-                            if (im && have_same_virtual_signature(*func, *im)) {
-                                if (!func->get_overrides()) {
-                                    func->set_overrides(im);
-                                }
-                                break;
-                            }
-                        }
-                    }
+                if (secondary_override && !func->get_overrides()) {
+                    func->set_overrides(secondary_override);
                 }
             }
         }
@@ -1010,7 +1020,8 @@ llvm::Constant* build_annotation_instance_constant(
 // ─────────────────────────────────────────────────────────────────────────────
 static size_t compute_subobject_offset_in(const aggregate& containing,
                                            const aggregate& target,
-                                           const llvm::DataLayout& dl) {
+                                           const llvm::DataLayout& dl,
+                                           bool traverse_vbases = true) {
     auto* llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(
         containing.get_struct_type()
             ? containing.get_struct_type()->get_llvm_type()
@@ -1025,8 +1036,30 @@ static size_t compute_subobject_offset_in(const aggregate& containing,
         size_t field_off = dl.getStructLayout(llvm_type)
                               ->getElementOffset((unsigned)field_opt->index);
         if (bs.base.get() == &target) return field_off;
-        size_t inner = compute_subobject_offset_in(*bs.base, target, dl);
+        // Do NOT traverse virtual bases through an intermediate non-virtual base:
+        // an intermediate's __vbase_X__ storage is a dead duplicate (all vbptrs are
+        // repointed to the most-derived collector's shared copy at run time). Only
+        // the top-level collector's virtual-base storage is the live one.
+        size_t inner = compute_subobject_offset_in(*bs.base, target, dl, false);
         if (inner != SIZE_MAX) return field_off + inner;
+    }
+
+    // Traverse shared virtual bases through the collector's __vbase_X__ storage
+    // (only at the most-derived/collector level — see note above). Needed so a
+    // sub-object reached only via a virtual base (e.g. Sized inside a shared Coll
+    // vbase) gets its correct cumulative byte offset for this-adjustment thunks.
+    if (traverse_vbases) {
+        for (auto& vbase : containing.get_all_virtual_base_structs()) {
+            if (!vbase) continue;
+            std::string vbase_name = "__vbase_" + vbase->get_short_name() + "__";
+            auto field_opt = containing.get_struct_type()->get_member(vbase_name);
+            if (!field_opt) continue;
+            size_t field_off = dl.getStructLayout(llvm_type)
+                                  ->getElementOffset((unsigned)field_opt->index);
+            if (vbase.get() == &target) return field_off;
+            size_t inner = compute_subobject_offset_in(*vbase, target, dl, false);
+            if (inner != SIZE_MAX) return field_off + inner;
+        }
     }
     return SIZE_MAX;
 }
@@ -1422,6 +1455,12 @@ void declaration_generator::visit_klass(klass& klass) {
             sec_vt_layout->llvm_global = sec_gv;
             sec_vt_layout->llvm_type = base_vt->llvm_type;
             klass.add_secondary_vtable(vbase_klass, sec_vt_layout);
+
+            // Also create secondary vtable globals for the virtual base's own
+            // (non-virtual) sub-objects (e.g. Sized reached via a shared Coll
+            // vbase), so their vptrs can be pointed at a correctly this-adjusted
+            // secondary vtable rather than falling back to klass's primary vtable.
+            collect_all_bases(*vbase_klass);
         }
     }
 
@@ -1652,23 +1691,13 @@ void implementation_generator::visit_klass(klass& klass) {
             if (!base_vtable) continue;
 
             // Compute byte offset of the base sub-object within klass.
-            // Walk klass.get_bases() to find the matching base_spec, then use
-            // the DataLayout to get the byte offset of __base_X__ in the struct.
-            size_t base_byte_offset = 0;
-            if (auto klass_llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(
-                    klass.get_struct_type() ? klass.get_struct_type()->get_llvm_type() : nullptr)) {
-                for (auto& bs : klass.get_bases()) {
-                    if (bs.base.get() == base_agg.get()) {
-                        std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
-                        auto field = klass.get_struct_type()->get_member(subobj_name);
-                        if (field) {
-                            base_byte_offset = dl.getStructLayout(klass_llvm_type)
-                                ->getElementOffset((unsigned)field->index);
-                        }
-                        break;
-                    }
-                }
-            }
+            // Use the recursive helper so TRANSITIVE bases (e.g. Base<int> as a
+            // base of Mid<int>, itself a base of klass) get the correct
+            // cumulative offset, not just direct bases of klass — otherwise
+            // the offset silently defaults to 0 and no this-adjustment thunk
+            // is generated for indirectly-inherited overridden methods.
+            size_t offset_found = compute_subobject_offset_in(klass, *base_kl, dl);
+            size_t base_byte_offset = (offset_found != SIZE_MAX) ? offset_found : 0;
 
             // Build secondary vtable: for each slot in the base's vtable,
             // find the overriding function in the primary vtable.
@@ -2733,9 +2762,20 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                                        size_t cumulative_offset) {
             if (!cur_agg) return;
             for (auto& bs : cur_agg->get_bases()) {
-                if (!bs.base || bs.is_virtual) continue;
+                if (!bs.base) continue;
                 auto base_imp = std::dynamic_pointer_cast<imported_aggregate>(bs.base);
-                if (!base_imp || !base_imp->has_vtable()) continue;
+                if (!base_imp || !base_imp->has_vtable()) {
+                    // Local intermediate or virtual base (e.g. a template-instantiated
+                    // Collection<int> reached as a shared vbase): not itself an imported
+                    // aggregate, but may contain imported interface bases (e.g. Sized)
+                    // below it. Recurse so those get their secondary vtables filled.
+                    auto local_llvm = llvm::dyn_cast_or_null<llvm::StructType>(
+                        bs.base->get_struct_type() ? bs.base->get_struct_type()->get_llvm_type() : nullptr);
+                    if (local_llvm) {
+                        fill_imported_secondary(local_llvm, bs.base.get(), 0);
+                    }
+                    continue;
+                }
 
                 const auto* kdi_agg = base_imp->get_kdi_aggregate();
                 if (!kdi_agg || !kdi_agg->vtable.has_value()) continue;
@@ -2763,16 +2803,12 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                     continue;
                 }
 
-                // Compute byte offset of this base sub-object within klass (cumulative)
-                std::string subobj_field_name = "__base_" + bs.sanitised_name() + "__";
-                size_t base_byte_offset = cumulative_offset;
-                if (cur_llvm_type && cur_agg->get_struct_type()) {
-                    auto subobj_field = cur_agg->get_struct_type()->get_member(subobj_field_name);
-                    if (subobj_field) {
-                        base_byte_offset += dl.getStructLayout(cur_llvm_type)
-                                             ->getElementOffset((unsigned)subobj_field->index);
-                    }
-                }
+                // Compute byte offset of this base sub-object within klass. Use the
+                // (vbase-aware, transitive) helper so imported interfaces reached via a
+                // shared virtual base or local template intermediate get the correct
+                // absolute offset for this-adjustment thunks.
+                size_t off_found = compute_subobject_offset_in(klass, *base_imp, dl);
+                size_t base_byte_offset = (off_found != SIZE_MAX) ? off_found : cumulative_offset;
 
                 // Get the vtable LLVM type from the global variable
                 llvm::StructType* base_vt_type =
