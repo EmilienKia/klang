@@ -23,6 +23,7 @@
 
 #include "expressions.hpp"
 #include "model.hpp"
+#include "imported.hpp"
 #include "template_instantiator.hpp"
 #include "../errors.hpp"
 #include "../common/unicode.hpp"
@@ -1051,17 +1052,29 @@ void context::rebuild_instantiation_layouts() {
         template_instantiator::ensure_virtual_base_layout_fields(st->get_struct());
     }
 
-    // Phase 2: give every instantiation a fresh opaque LLVM struct type and clear
-    // its cached fields, then re-resolve them all together. resolve_struct_type
-    // sees the opaque bodies and rebuilds them from the (now complete) aggregate
-    // children, recursing into dependencies so nested/by-value instance references
-    // are rebuilt in a consistent order.
-    for (auto& st : instances) {
+    // Phase 2: give a fresh opaque LLVM struct type to EVERY local (non-imported)
+    // materialised struct type — not just the instantiations. A non-instance user
+    // class can embed an instantiation BY VALUE (e.g. a user transform-stream class
+    // embedding OneToManyTransformInputStream<..>); if only the instantiation were
+    // rebuilt, the embedder would keep referencing the instantiation's stale LLVM
+    // type and its layout would silently mismatch. Re-resolving them all together
+    // keeps every by-value reference coherent. Imported types keep their KDI body;
+    // template-internal (still-opaque) types are left untouched.
+    std::vector<std::shared_ptr<struct_type>> to_rebuild;
+    for (auto& [name, st] : _struct_types) {
+        auto agg = st->get_struct();
+        if (!agg) continue;
+        if (std::dynamic_pointer_cast<imported_aggregate>(agg)) continue;
+        auto* cur = llvm::dyn_cast_or_null<llvm::StructType>(st->get_llvm_type());
+        if (!cur || cur->isOpaque()) continue; // not materialised (e.g. inside a template)
+        to_rebuild.push_back(st);
+    }
+    for (auto& st : to_rebuild) {
         auto* fresh = llvm::StructType::create(llvm_context(), st->name());
         st->set_llvm_type({}, fresh, nullptr);
     }
     std::unordered_set<struct_type*> in_progress;
-    for (auto& st : instances) {
+    for (auto& st : to_rebuild) {
         resolve_struct_type(st, in_progress);
     }
 }
