@@ -52,6 +52,26 @@ enum class compiler_diag : unsigned int {
     ERR_KDI_NOT_FOUND                             = 0x0006,
     ERR_KDI_PARSE_FAILED                          = 0x0007,
     WARN_UNUSED_IMPORT                            = 0x0008,
+    // ── klangc CLI driver diagnostics (about the module being compiled) ────
+    WARN_KDI_HEADER_READ_FAILED                   = 0x01E1,
+    ERR_JIT_NO_MAIN                               = 0x01E2,
+    ERR_JIT_INSTANTIATION_FAILED                  = 0x01E3,
+    ERR_JIT_MAIN_SYMBOL_NOT_FOUND                 = 0x01E4,
+    WARN_MAIN_IGNORED_DYN_LIB                     = 0x01E5,
+    WARN_MAIN_IGNORED_STATIC_LIB                  = 0x01E6,
+    WARN_MAIN_IGNORED_BOTH_LIBS                   = 0x01E7,
+    WARN_OUTPUT_OPTION_IGNORED                    = 0x01E8,
+    ERR_OBJECT_FILES_INCOMPATIBLE_MODE            = 0x01E9,
+    // ── Linker / library / KDI driver diagnostics ───────────────────────────
+    ERR_NO_MAIN_FOR_EXECUTABLE                    = 0x01EA,
+    ERR_TOOL_NOT_FOUND_LINK_EXECUTABLE            = 0x01EB,
+    ERR_TOOL_NOT_FOUND_LINK_SHARED_LIB            = 0x01EC,
+    ERR_TOOL_NOT_FOUND_CREATE_STATIC_LIB          = 0x01ED,
+    ERR_GEN_KDI_NO_UNIT                           = 0x01EE,
+    ERR_GEN_KDI_WRITE_FAILED                      = 0x01EF,
+    ERR_GEN_KDI_JSON_WRITE_FAILED                 = 0x01F0,
+    ERR_GDWARF_OPTIONS_MUTUALLY_EXCLUSIVE          = 0x01F1,
+    WARN_UNKNOWN_LOG_LEVEL                        = 0x01F2,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

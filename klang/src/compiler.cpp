@@ -597,7 +597,9 @@ bool compiler::verify_gen_code() {
     llvm::raw_string_ostream err_stream(errors);
     bool has_errors = llvm::verifyModule(_context->module(), &err_stream);
     if (has_errors) {
-        std::cerr << "LLVM module verification errors:\n" << errors << std::endl;
+        error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F055),
+              "Internal compiler error: generated LLVM module failed verification:\n{}",
+              {errors});
     }
     return !has_errors;
 }
@@ -634,7 +636,8 @@ std::unique_ptr<k::model::gen::jit> compiler::to_jit(bool init_runtime) {
 
     auto jit = model::gen::jit::create(shared_from_this());
     if (!jit) {
-        std::cerr << "Error instantiating jit engine." << std::endl;
+        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_JIT_INSTANTIATION_FAILED),
+              "Failed to instantiate the JIT execution engine");
         return nullptr;
     }
     std::unique_ptr<llvm::Module> module = std::move(_context->_module);

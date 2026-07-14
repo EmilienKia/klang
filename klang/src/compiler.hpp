@@ -337,6 +337,15 @@ public:
 
     void print_logs();
 
+    /**
+     * Access the compiler's diagnostic logger.
+     * Allows CLI-level code (klangc's main()) to report diagnostics about the
+     * compiled module (e.g. missing main() for --jit-exec, main() ignored when
+     * producing a library, …) through the same diagnostic infrastructure used
+     * internally, instead of writing directly to std::cout/cerr.
+     */
+    log::logger& diagnostics() { return *this; }
+
 protected:
     void find_elements_from(const name& name, const std::shared_ptr<model::element>& element, std::vector<std::shared_ptr<model::element>>& res) const;
 

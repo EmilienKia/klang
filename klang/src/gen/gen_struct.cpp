@@ -544,14 +544,16 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             if (st.is_nested() || base_st->is_nested()) {
                 auto outer = st.get_enclosing_structure();
                 if (outer && (base_st.get() == outer.get() || outer->is_derived_from(base_st))) {
-                    std::clog << "Warning: inner struct '" << st.get_short_name()
-                              << "' inherits from enclosing struct '" << base_st->get_short_name() << "'" << std::endl;
+                    warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_NESTED_INHERITS_ENCLOSING), st_lexeme,
+                        "inner struct '{}' inherits from enclosing struct '{}'",
+                        {st.get_short_name(), base_st->get_short_name()});
                 }
                 if (base_st->is_nested()) {
                     auto base_outer = base_st->get_enclosing_structure();
                     if (base_outer && (base_outer.get() == &st || st.is_derived_from(base_outer))) {
-                        std::clog << "Warning: struct '" << st.get_short_name()
-                                  << "' inherits from inner struct '" << base_st->get_short_name() << "'" << std::endl;
+                        warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_NESTED_INHERITS_INNER), st_lexeme,
+                            "struct '{}' inherits from inner struct '{}'",
+                            {st.get_short_name(), base_st->get_short_name()});
                     }
                 }
             }
@@ -719,9 +721,10 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
         }
     }
     if (needs_copy_ctor && !st.get_copy_constructor()) {
-        std::clog << "Warning: struct '" << st.get_short_name()
-                  << "' has bases or struct members but no copy constructor; "
-                     "a default copy constructor will be generated." << std::endl;
+        warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_IMPLICIT_COPY_CTOR_GENERATED), st_lexeme,
+            "struct '{}' has bases or struct members but no copy constructor; "
+            "a default copy constructor will be generated",
+            {st.get_short_name()});
         auto copy_ctor = constructor::make_shared(st.shared_as<aggregate>());
         copy_ctor->set_compiler_generated(true);
         copy_ctor->set_copy_constructor(true);

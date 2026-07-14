@@ -1154,6 +1154,9 @@ void symbol_resolver::visit_klass(klass& klass) {
     }
     visit_aggregate(klass);
 
+    lex::opt_any_lexeme klass_lexeme;
+    if (auto ast_ad = klass.get_ast_aggregate_decl()) klass_lexeme = lex::any_lexeme{ast_ad->name};
+
     // Build vtable layout
     std::vector<std::shared_ptr<function>> warning_override_final;
     std::vector<std::shared_ptr<function>> error_private_overrides;
@@ -1167,11 +1170,13 @@ void symbol_resolver::visit_klass(klass& klass) {
 
     for (auto& f : warning_override_final) {
         // Warning: attempting to override a 'final' virtual function → new branch
-        logger_relay::report(k::log::diagnostic::make_warning(
+        auto diag = k::log::diagnostic::make_warning(
             static_cast<unsigned int>(k::diag::structure_diag::WARN_OVERRIDE_FINAL),
             "function '{}' in class '{}' attempts to override a 'final' virtual function; "
             "it will be treated as a new (non-overriding) virtual function",
-            {f->get_short_name(), klass.get_short_name()}));
+            {f->get_short_name(), klass.get_short_name()});
+        if (klass_lexeme) diag.at(*klass_lexeme);
+        logger_relay::report(diag);
         if (!f->is_final_func()) {
             size_t next_slot = 0;
             for (auto& e : vt->entries) next_slot = std::max(next_slot, e.slot_index + 1);
@@ -1190,6 +1195,7 @@ void symbol_resolver::visit_klass(klass& klass) {
             static_cast<unsigned int>(k::diag::structure_diag::ERR_PRIVATE_OVERRIDE),
             "private function '{}' in class '{}' cannot override a virtual function",
             {f->get_short_name(), klass.get_short_name()});
+        if (klass_lexeme) diag.at(*klass_lexeme);
         throw resolution_error(std::move(diag));
     }
 
@@ -1201,17 +1207,20 @@ void symbol_resolver::visit_klass(klass& klass) {
             "function '{}' in class '{}' is declared 'override' but does not override "
             "any inherited virtual function",
             {f->get_short_name(), klass.get_short_name()});
+        if (klass_lexeme) diag.at(*klass_lexeme);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
 
     // Warning: function overrides a virtual slot but user did not write 'override'
     for (auto& f : warning_missing_override) {
-        logger_relay::report(k::log::diagnostic::make_warning(
+        auto diag = k::log::diagnostic::make_warning(
             static_cast<unsigned int>(k::diag::structure_diag::WARN_MISSING_OVERRIDE),
             "function '{}' in class '{}' overrides a virtual function but is not "
             "declared 'override'; add the 'override' specifier",
-            {f->get_short_name(), klass.get_short_name()}));
+            {f->get_short_name(), klass.get_short_name()});
+        if (klass_lexeme) diag.at(*klass_lexeme);
+        logger_relay::report(diag);
     }
 
     for (auto& f : warning_redundant_inherited_redecl) {
@@ -1220,13 +1229,15 @@ void symbol_resolver::visit_klass(klass& klass) {
             overridden && overridden->get_owner()
                 ? overridden->get_owner()->get_short_name()
                 : std::string{"<base>"};
-        logger_relay::report(k::log::diagnostic::make_warning(
+        auto diag = k::log::diagnostic::make_warning(
             static_cast<unsigned int>(k::diag::structure_diag::WARN_REDUNDANT_INHERITED_REDECL),
             "function '{}' in interface '{}' redeclares inherited function '{}' from '{}' without changing its contract; "
             "this redeclaration is redundant",
             {f->get_short_name(), klass.get_short_name(),
              overridden ? overridden->get_short_name() : f->get_short_name(),
-             inherited_from}));
+             inherited_from});
+        if (klass_lexeme) diag.at(*klass_lexeme);
+        logger_relay::report(diag);
     }
 
     for (auto& f : warning_hides_inherited_default) {
@@ -1235,11 +1246,13 @@ void symbol_resolver::visit_klass(klass& klass) {
             overridden && overridden->get_owner()
                 ? overridden->get_owner()->get_short_name()
                 : std::string{"<base>"};
-        logger_relay::report(k::log::diagnostic::make_warning(
+        auto diag = k::log::diagnostic::make_warning(
             static_cast<unsigned int>(k::diag::structure_diag::WARN_HIDES_INHERITED_DEFAULT_METHOD),
             "function '{}' in interface '{}' redeclares inherited default method from '{}' without a body; "
             "this hides the inherited default implementation",
-            {f->get_short_name(), klass.get_short_name(), inherited_from}));
+            {f->get_short_name(), klass.get_short_name(), inherited_from});
+        if (klass_lexeme) diag.at(*klass_lexeme);
+        logger_relay::report(diag);
     }
 
     // ── Abstract consistency checks ────────────────────────────────────────
@@ -1252,6 +1265,7 @@ void symbol_resolver::visit_klass(klass& klass) {
                 "class '{}' has abstract method '{}' but is not declared 'abstract'; "
                 "add the 'abstract' specifier to the class declaration",
                 {klass.get_short_name(), func->get_short_name()});
+            if (klass_lexeme) diag.at(*klass_lexeme);
             logger_relay::report(diag);
             throw resolution_error(std::move(diag));
         }
@@ -1266,10 +1280,12 @@ void symbol_resolver::visit_klass(klass& klass) {
                 {klass.get_short_name(), entry.func->get_short_name(),
                  entry.introducing_func->get_owner() ? entry.introducing_func->get_owner()->get_short_name() : "?",
                  entry.func->get_short_name()});
+            if (klass_lexeme) diag.at(*klass_lexeme);
             logger_relay::report(diag);
             throw resolution_error(std::move(diag));
         }
     }
+
 
     if (!vt->entries.empty()) {
         klass.set_vtable(vt);

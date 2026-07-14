@@ -32,6 +32,7 @@
 
 #include "compiler.hpp"
 #include "config.h"
+#include "errors.hpp"
 
 #include "common/logger.hpp"
 #include "common/path_lookup_file_resolver.hpp"
@@ -261,7 +262,9 @@ int main(int argc, const char** argv) {
     std::vector<std::pair<std::string, std::string>> sources;
     sources.reserve(k_input_files.size() + (want_stdin ? 1 : 0));
     for (const auto& path : k_input_files) {
-        std::cout << "Reading : " << path << std::endl;
+        // Note: no console trace here — the compiler's own Phase 0 debug log
+        // ("[compiler::parse_sources] loaded source ...") already reports this
+        // through the diagnostic infrastructure once the compiler is created.
         sources.emplace_back(path, read_text_file_content(path));
     }
 
@@ -292,7 +295,9 @@ int main(int argc, const char** argv) {
             dbg_opts.enabled = vm.count("debug") > 0 || vm.count("gline-tables-only") > 0;
             dbg_opts.line_tables_only = vm.count("gline-tables-only") > 0;
             if (vm.count("gdwarf-4") > 0 && vm.count("gdwarf-5") > 0) {
-                std::cerr << "Error: --gdwarf-4 and --gdwarf-5 are mutually exclusive." << std::endl;
+                compiler->diagnostics().error(
+                    static_cast<unsigned int>(k::diag::compiler_diag::ERR_GDWARF_OPTIONS_MUTUALLY_EXCLUSIVE),
+                    "--gdwarf-4 and --gdwarf-5 are mutually exclusive");
                 return -1;
             }
             if (vm.count("gdwarf-4") > 0) dwarf_version = 4;
@@ -318,9 +323,10 @@ int main(int argc, const char** argv) {
                         auto kf = kdi::kdi_read_cbor_file(spec);
                         resolver->add_explicit_path(kf.header.module_name, spec);
                     } catch (const std::exception& e) {
-                        std::cerr << "Warning: -i '" << spec
-                                  << "': cannot read KDI header: " << e.what()
-                                  << " — ignored." << std::endl;
+                        compiler->diagnostics().warn(
+                            static_cast<unsigned int>(k::diag::compiler_diag::WARN_KDI_HEADER_READ_FAILED),
+                            "-i '{}': cannot read KDI header: {} — ignored",
+                            {spec, e.what()});
                     }
                 }
             }
@@ -422,8 +428,9 @@ int main(int argc, const char** argv) {
             if (it != level_map.end()) {
                 compiler->set_log_level(it->second);
             } else {
-                std::cerr << "Warning: unknown log level '" << log_level_str
-                          << "', falling back to 'info'." << std::endl;
+                compiler->diagnostics().warn(
+                    static_cast<unsigned int>(k::diag::compiler_diag::WARN_UNKNOWN_LOG_LEVEL),
+                    "Unknown log level '{}', falling back to 'info'", {log_level_str});
             }
             if (vm.count("log-file") > 0) {
                 compiler->set_log_file(log_file);
@@ -441,11 +448,15 @@ int main(int argc, const char** argv) {
         if (want_jit_exec) {
             // ── JIT execution mode ──────────────────────────────────────────
             if (!object_input_files.empty()) {
-                std::cerr << "Error: .o files cannot be used with --jit-exec." << std::endl;
+                compiler->diagnostics().error(
+                    static_cast<unsigned int>(k::diag::compiler_diag::ERR_OBJECT_FILES_INCOMPATIBLE_MODE),
+                    ".o files cannot be used with --jit-exec");
                 return -1;
             }
             if (!has_main) {
-                std::cerr << "Cannot JIT-execute: no main() entry point in the compiled module." << std::endl;
+                compiler->diagnostics().error(
+                    static_cast<unsigned int>(k::diag::compiler_diag::ERR_JIT_NO_MAIN),
+                    "Cannot JIT-execute: no main() entry point in the compiled module");
                 return -1;
             }
 
@@ -462,12 +473,14 @@ int main(int argc, const char** argv) {
 
             auto jit = compiler->to_jit();
             if (!jit) {
-                std::cerr << "JIT instantiation error." << std::endl;
+                // compiler::to_jit() already reported the diagnostic (ERR_JIT_INSTANTIATION_FAILED).
                 return -1;
             }
             auto main_fn = jit->lookup_main_entry_symbol<int(*)(int, char**)>();
             if (!main_fn) {
-                std::cerr << "Cannot resolve main() symbol in JIT." << std::endl;
+                compiler->diagnostics().error(
+                    static_cast<unsigned int>(k::diag::compiler_diag::ERR_JIT_MAIN_SYMBOL_NOT_FOUND),
+                    "Cannot resolve main() symbol in JIT");
                 return -1;
             }
             // Forward the original argc/argv so the K program can inspect them
@@ -477,7 +490,9 @@ int main(int argc, const char** argv) {
         } else if (want_compile) {
             // -c : just emit a native object file, no linking
             if (!object_input_files.empty()) {
-                std::cerr << "Error: .o files cannot be used with -c (compile-only mode)." << std::endl;
+                compiler->diagnostics().error(
+                    static_cast<unsigned int>(k::diag::compiler_diag::ERR_OBJECT_FILES_INCOMPATIBLE_MODE),
+                    ".o files cannot be used with -c (compile-only mode)");
                 return -1;
             }
             if (output_file.empty()) {
@@ -493,24 +508,36 @@ int main(int argc, const char** argv) {
             // Both --dyn-lib and --static-lib : single compilation pass, two outputs.
             // -o is silently ignored here (names are derived automatically).
             if (!output_file.empty()) {
-                std::cerr << "Warning: -o is ignored when both --dyn-lib and --static-lib are specified." << std::endl;
+                compiler->diagnostics().warn(
+                    static_cast<unsigned int>(k::diag::compiler_diag::WARN_OUTPUT_OPTION_IGNORED),
+                    "-o is ignored when both --dyn-lib and --static-lib are specified");
             }
             if (has_main) {
-                std::cerr << "Warning: module defines a 'main' function but a library output was requested (--dyn-lib --static-lib); 'main' will be included in the library but not used as an entry point." << std::endl;
+                compiler->diagnostics().warn(
+                    static_cast<unsigned int>(k::diag::compiler_diag::WARN_MAIN_IGNORED_BOTH_LIBS),
+                    "module defines a 'main' function but a library output was requested "
+                    "(--dyn-lib --static-lib); 'main' will be included in the library but "
+                    "not used as an entry point");
             }
             return compiler->gen_libraries("", "") ? 0 : -1;
 
         } else if (want_dyn_lib) {
             // --dyn-lib only
             if (has_main) {
-                std::cerr << "Warning: module defines a 'main' function but a shared library output was requested (--dyn-lib); 'main' will be included in the library but not used as an entry point." << std::endl;
+                compiler->diagnostics().warn(
+                    static_cast<unsigned int>(k::diag::compiler_diag::WARN_MAIN_IGNORED_DYN_LIB),
+                    "module defines a 'main' function but a shared library output was requested "
+                    "(--dyn-lib); 'main' will be included in the library but not used as an entry point");
             }
             return compiler->gen_shared_library(output_file) ? 0 : -1;
 
         } else if (want_static_lib) {
             // --static-lib only
             if (has_main) {
-                std::cerr << "Warning: module defines a 'main' function but a static library output was requested (--static-lib); 'main' will be included in the archive but not used as an entry point." << std::endl;
+                compiler->diagnostics().warn(
+                    static_cast<unsigned int>(k::diag::compiler_diag::WARN_MAIN_IGNORED_STATIC_LIB),
+                    "module defines a 'main' function but a static library output was requested "
+                    "(--static-lib); 'main' will be included in the archive but not used as an entry point");
             }
             return compiler->gen_static_library(output_file) ? 0 : -1;
 

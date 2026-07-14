@@ -128,7 +128,9 @@ TEST_CASE("jit-exec: no main produces error", "[jit-exec][live]") {
     INFO("klangc stdout: " << res.out);
     INFO("klangc stderr: " << res.err);
     CHECK(res.exit_code != 0);
-    CHECK(res.err.find("main()") != std::string::npos);
+    // Compiler diagnostics (including CLI-driver errors) are reported through
+    // the standard diagnostic infrastructure, which writes to stdout.
+    CHECK(res.out.find("main()") != std::string::npos);
 }
 
 // ---------------------------------------------------------------------------

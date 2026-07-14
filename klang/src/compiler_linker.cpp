@@ -65,7 +65,8 @@ namespace k {
 
 bool compiler::gen_executable(const std::string& output_file) {
     if (!has_main_method()) {
-        std::cerr << "Cannot generate executable : no main function." << std::endl;
+        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_NO_MAIN_FOR_EXECUTABLE),
+              "Cannot generate executable: no main function");
         return false;
     }
 
@@ -76,10 +77,10 @@ bool compiler::gen_executable(const std::string& output_file) {
 
     auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
 
-    std::cout << "Generating object: " << object_path << std::endl;
+    trace("[compiler::gen_executable] generating object '{}'", {object_path.string()});
     gen_object_file(object_path);
 
-    std::cout << "Generating executable: " << output_path << std::endl;
+    trace("[compiler::gen_executable] generating executable '{}'", {output_path.string()});
     tools::exec_result exec_res;
     try {
         std::vector<std::string> clang_args = {"-pie", "-o", output_path.string(), object_path.string()};
@@ -95,7 +96,8 @@ bool compiler::gen_executable(const std::string& output_file) {
         // is linked automatically — K exceptions use the Itanium C++ ABI.
         exec_res = tools::lookup_run_process("clang++", clang_args);
     } catch (const tools::tool_not_found& e) {
-        std::cerr << "Error: " << e.what() << " (needed to link executable)" << std::endl;
+        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_TOOL_NOT_FOUND_LINK_EXECUTABLE),
+              "{} (needed to link executable)", {e.what()});
         std::filesystem::remove(object_path);
         return false;
     }
@@ -196,7 +198,8 @@ bool compiler::gen_kdi(const std::string& lib_path) {
     if (_ir_output_options.no_emit_kdi) return true;
 
     if (!_model_unit) {
-        std::cerr << "gen_kdi: no compiled unit available." << std::endl;
+        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_GEN_KDI_NO_UNIT),
+              "gen_kdi: no compiled unit available");
         return false;
     }
 
@@ -209,18 +212,20 @@ bool compiler::gen_kdi(const std::string& lib_path) {
     kdi::kdi_file kdi_file = k::model::build_kdi(*_context, *_model_unit, lib_path, ver);
 
     if (!kdi::kdi_write_cbor_file(kdi_file, kdi_path.string())) {
-        std::cerr << "gen_kdi: failed to write '" << kdi_path << "'" << std::endl;
+        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_GEN_KDI_WRITE_FAILED),
+              "gen_kdi: failed to write '{}'", {kdi_path.string()});
         return false;
     }
-    std::cout << "Generated KDI: " << kdi_path << std::endl;
+    trace("[compiler::gen_kdi] generated KDI '{}'", {kdi_path.string()});
 
     // Optionally also write the JSON equivalent (.kdi.json)
     if (_ir_output_options.emit_kdi_json) {
         std::string json_path = kdi_path.string() + ".json";
         if (!kdi::kdi_write_json_file(kdi_file, json_path)) {
-            std::cerr << "gen_kdi: failed to write JSON '" << json_path << "'" << std::endl;
+            error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_GEN_KDI_JSON_WRITE_FAILED),
+                  "gen_kdi: failed to write JSON '{}'", {json_path});
         } else {
-            std::cout << "Generated KDI JSON: " << json_path << std::endl;
+            trace("[compiler::gen_kdi] generated KDI JSON '{}'", {json_path});
         }
     }
     return true;
@@ -234,10 +239,10 @@ bool compiler::gen_shared_library(const std::string& output_file) {
 
     auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
 
-    std::cout << "Generating object: " << object_path << std::endl;
+    trace("[compiler::gen_shared_library] generating object '{}'", {object_path.string()});
     gen_object_file(object_path);
 
-    std::cout << "Generating shared library: " << output_path << std::endl;
+    trace("[compiler::gen_shared_library] generating shared library '{}'", {output_path.string()});
     tools::exec_result exec_res;
     try {
         std::vector<std::string> clang_args = {"-shared", "-fPIC", "-o", output_path.string(), object_path.string()};
@@ -250,7 +255,8 @@ bool compiler::gen_shared_library(const std::string& output_file) {
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
         exec_res = tools::lookup_run_process("clang++", clang_args);
     } catch (const tools::tool_not_found& e) {
-        std::cerr << "Error: " << e.what() << " (needed to link shared library)" << std::endl;
+        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_TOOL_NOT_FOUND_LINK_SHARED_LIB),
+              "{} (needed to link shared library)", {e.what()});
         std::filesystem::remove(object_path);
         return false;
     }
@@ -271,10 +277,10 @@ bool compiler::gen_static_library(const std::string& output_file) {
 
     auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
 
-    std::cout << "Generating object: " << object_path << std::endl;
+    trace("[compiler::gen_static_library] generating object '{}'", {object_path.string()});
     gen_object_file(object_path);
 
-    std::cout << "Generating static library: " << output_path << std::endl;
+    trace("[compiler::gen_static_library] generating static library '{}'", {output_path.string()});
     // ar rcs: create archive, add index, be silent on missing files
     tools::exec_result exec_res;
     try {
@@ -283,7 +289,8 @@ bool compiler::gen_static_library(const std::string& output_file) {
         ar_args.insert(ar_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         exec_res = tools::lookup_run_process("ar", ar_args);
     } catch (const tools::tool_not_found& e) {
-        std::cerr << "Error: " << e.what() << " (needed to create static library)" << std::endl;
+        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_TOOL_NOT_FOUND_CREATE_STATIC_LIB),
+              "{} (needed to create static library)", {e.what()});
         std::filesystem::remove(object_path);
         return false;
     }
@@ -306,7 +313,7 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
 
     // Generate the object file once
     auto object_path = std::filesystem::temp_directory_path() / ("lib" + base + ".o");
-    std::cout << "Generating object: " << object_path << std::endl;
+    trace("[compiler::gen_libraries] generating object '{}'", {object_path.string()});
     if (!gen_object_file(object_path)) {
         return false;
     }
@@ -314,7 +321,7 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
     bool ok = true;
 
     // Shared library
-    std::cout << "Generating shared library: " << so_path << std::endl;
+    trace("[compiler::gen_libraries] generating shared library '{}'", {so_path.string()});
     tools::exec_result so_res;
     try {
         std::vector<std::string> clang_args = {"-shared", "-fPIC", "-o", so_path.string(), object_path.string()};
@@ -327,7 +334,8 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
         so_res = tools::lookup_run_process("clang++", clang_args);
     } catch (const tools::tool_not_found& e) {
-        std::cerr << "Error: " << e.what() << " (needed to link shared library)" << std::endl;
+        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_TOOL_NOT_FOUND_LINK_SHARED_LIB),
+              "{} (needed to link shared library)", {e.what()});
         std::filesystem::remove(object_path);
         return false;
     }
@@ -336,7 +344,7 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
     ok &= (so_res.exit_code == 0);
 
     // Static library
-    std::cout << "Generating static library: " << a_path << std::endl;
+    trace("[compiler::gen_libraries] generating static library '{}'", {a_path.string()});
     tools::exec_result ar_res;
     try {
         std::vector<std::string> ar_args = {"rcs", a_path.string(), object_path.string()};
@@ -344,7 +352,8 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
         ar_args.insert(ar_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         ar_res = tools::lookup_run_process("ar", ar_args);
     } catch (const tools::tool_not_found& e) {
-        std::cerr << "Error: " << e.what() << " (needed to create static library)" << std::endl;
+        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_TOOL_NOT_FOUND_CREATE_STATIC_LIB),
+              "{} (needed to create static library)", {e.what()});
         std::filesystem::remove(object_path);
         return false;
     }

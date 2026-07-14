@@ -1141,9 +1141,10 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         } else if (tgt->is_integer()) {
             if (tgt->is_signed()) {
                 if (src->is_unsigned()) {
-                    auto d = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::operator_diag::ERR_MUL_ASSIGN_INCOMPATIBLE),
+                    auto d = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::type_diag::WARN_CAST_UNSIGNED_TO_SIGNED),
                         "Casting an unsigned integer to a signed integer of the same size may produce "
                         "unexpected results if the value exceeds the signed range (overflow is implementation-defined)");
+                    if (auto pos = expr.first_lexeme()) d.at(*pos);
                     report(d);
                 }
             } else /* if (tgt->is_unsigned())*/  {
@@ -1151,6 +1152,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     auto d = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::type_diag::WARN_CAST_SIGN_CHANGE),
                         "Casting a signed integer to an unsigned integer may reinterpret negative values "
                         "as large positive values (two's complement wrap-around)");
+                    if (auto pos = expr.first_lexeme()) d.at(*pos);
                     report(d);
                 }
             }

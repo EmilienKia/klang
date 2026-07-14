@@ -148,6 +148,9 @@ enum class structure_diag : unsigned int {
     ERR_STRUCT_RECURSIVE_FORBIDDEN                = 0x017E,
     WARN_REDUNDANT_INHERITED_REDECL               = 0x017F,
     WARN_HIDES_INHERITED_DEFAULT_METHOD           = 0x0190,
+    WARN_NESTED_INHERITS_ENCLOSING                = 0x0191,  ///< Inner struct inherits from its enclosing struct
+    WARN_NESTED_INHERITS_INNER                    = 0x0192,  ///< Struct inherits from one of its own inner structs
+    WARN_IMPLICIT_COPY_CTOR_GENERATED             = 0x0193,  ///< Implicit copy constructor generated for a struct with bases/struct members
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -261,6 +264,7 @@ enum class type_diag : unsigned int {
     ERR_DESIG_STRUCT_NO_DEFAULT_CTOR              = 0x0159,
     ERR_CAST_NOT_SUPPORTED                        = 0x016E,
     WARN_CAST_SIGN_CHANGE                         = 0x0170,
+    WARN_CAST_UNSIGNED_TO_SIGNED                  = 0x0194,
 };
 
 } // namespace k::diag

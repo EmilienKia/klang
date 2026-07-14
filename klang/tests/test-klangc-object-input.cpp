@@ -202,7 +202,9 @@ TEST_CASE("klangc: .o files rejected with --jit-exec", "[klangc][object-input]")
     INFO("klangc stderr: " << res.err);
     // Should fail because .o + --jit-exec is incompatible
     REQUIRE(res.exit_code != 0);
-    REQUIRE(res.err.find(".o") != std::string::npos);
+    // Compiler diagnostics (including CLI-driver errors) are reported through
+    // the standard diagnostic infrastructure, which writes to stdout.
+    REQUIRE(res.out.find(".o") != std::string::npos);
 
     std::filesystem::remove(o_path);
 }
@@ -227,7 +229,9 @@ TEST_CASE("klangc: .o files rejected with -c", "[klangc][object-input]") {
     INFO("klangc stderr: " << res.err);
     // Should fail because .o + -c is incompatible
     REQUIRE(res.exit_code != 0);
-    REQUIRE(res.err.find(".o") != std::string::npos);
+    // Compiler diagnostics (including CLI-driver errors) are reported through
+    // the standard diagnostic infrastructure, which writes to stdout.
+    REQUIRE(res.out.find(".o") != std::string::npos);
 
     std::filesystem::remove(o_path);
 }
