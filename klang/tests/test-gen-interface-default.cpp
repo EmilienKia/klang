@@ -226,6 +226,40 @@ test() : int { i: Impl; return via(i); }
     CHECK(fn() == 3);
 }
 
+TEST_CASE("[default] default method resolves inherited member call", "[interface][default][inheritance]") {
+    auto jit = gen_jit(R"SRC(
+module __idefault_inherited_call__;
+interface Sized {
+    size() : int;
+}
+interface Indexed : public Sized {
+    insert(index: int, value: int);
+}
+interface Appendable {
+    append(value: int);
+}
+interface MutableIndexed : public Indexed, public Appendable {
+    default append(value: int) { insert(size(), value); }
+}
+class Vec : public MutableIndexed {
+    _n: int;
+    Vec() { _n = 0; }
+    size() : int { return _n; }
+    insert(index: int, value: int) { _n = _n + 1; }
+}
+test() : int {
+    v: Vec;
+    v.append(1);
+    v.append(2);
+    return v.size();
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 2);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  Template interfaces: default method synthesised per instantiation
 // ════════════════════════════════════════════════════════════════════════════
@@ -390,7 +424,6 @@ class C : public I {
 }
 )SRC"));
 }
-
 
 
 

@@ -160,20 +160,6 @@ interface Sized {
 template<typename T>
 interface Collection : public Sequence<T>, public Sized {
     /**
-     * Return the number of elements in the collection.
-     *
-     * @return Element count.
-     */
-    const size() : unsigned int;
-
-    /**
-     * Tell whether the collection is empty.
-     *
-     * @return `true` when no element is stored.
-     */
-    const isEmpty() : bool;
-
-    /**
      * Return a read-only iterator over the elements in the collection.
      * @return A ConstIterator<T> for the collection.
      */
@@ -252,40 +238,6 @@ interface MutableCollection : public Collection<T>, public MutableSequence<T>, p
 }
 
 /**
- * MutableIndexedCollection<T> — abstract interface for all mutable indexed collections.
- * A mutable indexed collection is a collection that allows modification of its elements by index, including insertion, removal, and updating of values.
- */
-template<typename T>
-interface MutableIndexedCollection : public IndexedCollection<T>, public MutableCollection<T> {
-
-    /**
-     * Set the value of an element at a given index.
-     * @param index Zero-based element index.
-     * @param value Value to set.
-     */
-    set(index : unsigned int, value : const T&);
-
-    /**
-     * Insert a copy of value at the given index.
-     * If index = 0, inserts at the front.
-     * If index >= size, inserts at the back.
-     *
-     * @param index Target insertion index.
-     * @param value Value to insert.
-     */
-    insert(index : unsigned int, value : const T&);
-
-    /**
-     * Remove the element at the given index.
-     * @param index Zero-based element index.
-     * @return `true` if the element was found and removed.
-     */
-    removeAt(index : unsigned int) : bool;
-}
-
-// TODO Add RandomAccessCollection<T> interface for collections that support random access by index, with O(1) time complexity for get and set operations.
-
-/**
  * Appendable<T> — abstract interface for all appendable collections.
  * An appendable collection is a collection that allows adding elements to the end of the collection.
  */
@@ -319,6 +271,49 @@ interface Prependable {
     prependAll(coll : Sequence<T>&);
 }
 
+
+/**
+ * MutableIndexedCollection<T> — abstract interface for all mutable indexed collections.
+ * A mutable indexed collection is a collection that allows modification of its elements by index, including insertion, removal, and updating of values.
+ */
+template<typename T>
+interface MutableIndexedCollection : public IndexedCollection<T>, public MutableCollection<T>, public Appendable<T>, public Prependable<T> {
+
+    /**
+     * Set the value of an element at a given index.
+     * @param index Zero-based element index.
+     * @param value Value to set.
+     */
+    set(index : unsigned int, value : const T&);
+
+    /**
+     * Insert a copy of value at the given index.
+     * If index = 0, inserts at the front.
+     * If index >= size, inserts at the back.
+     *
+     * @param index Target insertion index.
+     * @param value Value to insert.
+     */
+    insert(index : unsigned int, value : const T&);
+
+    /**
+     * Remove the element at the given index.
+     * @param index Zero-based element index.
+     * @return `true` if the element was found and removed.
+     */
+    removeAt(index : unsigned int) : bool;
+
+    default append(value : const T&) {
+        insert(size(), value);
+    }
+
+    default prepend(value : const T&) {
+        insert(0, value);
+    }
+
+}
+
+// TODO Add RandomAccessCollection<T> interface for collections that support random access by index, with O(1) time complexity for get and set operations.
 
 
 

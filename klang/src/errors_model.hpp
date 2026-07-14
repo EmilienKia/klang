@@ -146,6 +146,8 @@ enum class structure_diag : unsigned int {
     WARN_MISSING_OVERRIDE                         = 0x0176,
     ERR_OVERRIDE_NOT_OVERRIDING                   = 0x0177,
     ERR_STRUCT_RECURSIVE_FORBIDDEN                = 0x017E,
+    WARN_REDUNDANT_INHERITED_REDECL               = 0x017F,
+    WARN_HIDES_INHERITED_DEFAULT_METHOD           = 0x0190,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

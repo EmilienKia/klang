@@ -293,10 +293,46 @@ scope_lookup::lookup_function(std::shared_ptr<element> elem, const std::string& 
 std::vector<std::shared_ptr<function>>
 scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string& name) {
     std::vector<std::shared_ptr<function>> result;
+    std::unordered_set<const function*> seen_functions;
+    std::unordered_set<const aggregate*> seen_aggregates;
+
+    auto append_unique = [&](const std::shared_ptr<function>& fn) {
+        if (!fn) return;
+        if (seen_functions.insert(fn.get()).second) {
+            result.push_back(fn);
+        }
+    };
+
+    std::function<void(const std::shared_ptr<aggregate>&)> collect_aggregate_functions;
+    collect_aggregate_functions = [&](const std::shared_ptr<aggregate>& agg) {
+        if (!agg) return;
+        if (!seen_aggregates.insert(agg.get()).second) return;
+
+        auto local = agg->get_functions(name);
+        for (auto& fn : local) {
+            append_unique(fn);
+        }
+        // Follow base aggregates only when this aggregate does not declare
+        // a homonymous member function. This preserves hiding semantics and
+        // prevents ambiguous duplicates (derived + base same signature).
+        if (local.empty()) {
+            for (const auto& bs : agg->get_bases()) {
+                if (bs.base) collect_aggregate_functions(bs.base);
+            }
+        }
+    };
+
     for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto agg = std::dynamic_pointer_cast<aggregate>(current)) {
+            // Member call lookup includes inherited member functions so unqualified
+            // calls inside member/default-method bodies can resolve base methods.
+            collect_aggregate_functions(agg);
+            continue;
+        }
         if (auto fh = std::dynamic_pointer_cast<function_holder>(current)) {
-            auto local = fh->get_functions(name);
-            result.insert(result.end(), local.begin(), local.end());
+            for (auto& fn : fh->get_functions(name)) {
+                append_unique(fn);
+            }
         }
     }
     return result;
@@ -437,4 +473,3 @@ is_enclosing_template_param_name(const element& context_elem, const std::string&
 }
 
 } // namespace k::model::gen
-

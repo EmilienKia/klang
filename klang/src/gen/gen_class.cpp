@@ -191,6 +191,8 @@ build_vtable_layout(aggregate& st,
                     std::vector<std::shared_ptr<function>>& warning_override_final,
                     std::vector<std::shared_ptr<function>>& error_private_overrides,
                     std::vector<std::shared_ptr<function>>& warning_missing_override,
+                    std::vector<std::shared_ptr<function>>& warning_redundant_inherited_redecl,
+                    std::vector<std::shared_ptr<function>>& warning_hides_inherited_default,
                     std::vector<std::shared_ptr<function>>& error_override_not_overriding) {
     auto vt = std::make_shared<vtable_layout>();
 
@@ -284,6 +286,17 @@ build_vtable_layout(aggregate& st,
                         error_override_not_overriding.push_back(func);
                     }
                 } else {
+                    if (std::dynamic_pointer_cast<interface>(st.shared_as<element>())) {
+                        const bool declaration_only_override =
+                            !func->get_existing_block() && !func->is_default_method() && !func->is_compiler_generated();
+                        if (declaration_only_override) {
+                            warning_redundant_inherited_redecl.push_back(func);
+                            if ((entry.func && entry.func->is_default_method())
+                                || (entry.introducing_func && entry.introducing_func->is_default_method())) {
+                                warning_hides_inherited_default.push_back(func);
+                            }
+                        }
+                    }
                     func->set_virtual(true);
                     func->set_vtable_slot((int)entry.slot_index);
                     func->set_overrides(entry.func);
@@ -1145,9 +1158,12 @@ void symbol_resolver::visit_klass(klass& klass) {
     std::vector<std::shared_ptr<function>> warning_override_final;
     std::vector<std::shared_ptr<function>> error_private_overrides;
     std::vector<std::shared_ptr<function>> warning_missing_override;
+    std::vector<std::shared_ptr<function>> warning_redundant_inherited_redecl;
+    std::vector<std::shared_ptr<function>> warning_hides_inherited_default;
     std::vector<std::shared_ptr<function>> error_override_not_overriding;
     auto vt = build_vtable_layout(klass, warning_override_final, error_private_overrides,
-                                  warning_missing_override, error_override_not_overriding);
+                                  warning_missing_override, warning_redundant_inherited_redecl,
+                                  warning_hides_inherited_default, error_override_not_overriding);
 
     for (auto& f : warning_override_final) {
         // Warning: attempting to override a 'final' virtual function → new branch
@@ -1196,6 +1212,34 @@ void symbol_resolver::visit_klass(klass& klass) {
             "function '{}' in class '{}' overrides a virtual function but is not "
             "declared 'override'; add the 'override' specifier",
             {f->get_short_name(), klass.get_short_name()}));
+    }
+
+    for (auto& f : warning_redundant_inherited_redecl) {
+        auto overridden = f->get_overrides();
+        const std::string inherited_from =
+            overridden && overridden->get_owner()
+                ? overridden->get_owner()->get_short_name()
+                : std::string{"<base>"};
+        logger_relay::report(k::log::diagnostic::make_warning(
+            static_cast<unsigned int>(k::diag::structure_diag::WARN_REDUNDANT_INHERITED_REDECL),
+            "function '{}' in interface '{}' redeclares inherited function '{}' from '{}' without changing its contract; "
+            "this redeclaration is redundant",
+            {f->get_short_name(), klass.get_short_name(),
+             overridden ? overridden->get_short_name() : f->get_short_name(),
+             inherited_from}));
+    }
+
+    for (auto& f : warning_hides_inherited_default) {
+        auto overridden = f->get_overrides();
+        const std::string inherited_from =
+            overridden && overridden->get_owner()
+                ? overridden->get_owner()->get_short_name()
+                : std::string{"<base>"};
+        logger_relay::report(k::log::diagnostic::make_warning(
+            static_cast<unsigned int>(k::diag::structure_diag::WARN_HIDES_INHERITED_DEFAULT_METHOD),
+            "function '{}' in interface '{}' redeclares inherited default method from '{}' without a body; "
+            "this hides the inherited default implementation",
+            {f->get_short_name(), klass.get_short_name(), inherited_from}));
     }
 
     // ── Abstract consistency checks ────────────────────────────────────────
@@ -3395,7 +3439,6 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
 
 
 } // namespace k::model::gen
-
 
 
 
