@@ -199,6 +199,12 @@ namespace k::lex {
         std::vector<unsigned int>& lines = this->source->lines;
 
         pos = begin = 0;
+        // Reset the line index: parse() may be called more than once on the same
+        // k::source instance (e.g. a lightweight module-name lookup pass followed
+        // by the real lexing pass). Without clearing first, line offsets would be
+        // duplicated/corrupted, breaking all subsequent line/column coordinate
+        // computations (and thus diagnostic source locations).
+        source.lines.clear();
         source.lines.push_back(0);
 
         // Skip an optional UTF-8 BOM (EF BB BF) at the very start of the file.

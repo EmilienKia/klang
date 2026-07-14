@@ -236,21 +236,23 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         } else {
             // Scan each source for a module declaration
             for (size_t i = 0; i < _sources.size(); ++i) {
-                // We need a temporary copy of the source for lookup because
-                // the real lexing pass will re-lex the source from scratch.
-                k::source tmp_src(_sources[i].path, _sources[i].content);
-                auto mod_name = k::parse::lookup_module_name(tmp_src, *this);
+                // Lex/parse directly on the persisted _sources[i] entry (not a copy):
+                // the returned lexeme's string_view must remain valid for the lifetime
+                // of the compiler so it can be attached to diagnostics below (and even
+                // reported later, e.g. when a subsequent file conflicts with this one).
+                auto mod_name = k::parse::lookup_module_name(_sources[i], *this);
                 if (mod_name) {
                     if (!found_module_decl) {
-                        resolved_unit_name = *mod_name;
+                        resolved_unit_name = mod_name->name;
                         found_module_decl = true;
                         module_decl_file_idx = i;
-                    } else if (!(*mod_name == resolved_unit_name)) {
+                    } else if (!(mod_name->name == resolved_unit_name)) {
                         // Conflicting module declarations
                         auto diag = k::log::diagnostic::make_error(
                             static_cast<unsigned int>(k::diag::compiler_diag::ERR_CONFLICTING_MODULE_DECL),
                             "Conflicting module declarations: '{}' vs '{}'",
-                            {resolved_unit_name.to_string(), mod_name->to_string()});
+                            {resolved_unit_name.to_string(), mod_name->name.to_string()});
+                        if (mod_name->lexeme) diag.at(*mod_name->lexeme);
                         report(diag);
                         _has_compilation_error = true;
                         throw k::log::compiler_error(std::move(diag));

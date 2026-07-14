@@ -196,11 +196,16 @@ void generic_constraint_validator::validate_generic_aggregate(aggregate& agg) {
     std::unordered_set<std::string> pnames;
     for (auto& p : ti->params) { pnames.insert(p.name); }
 
+    // Fallback location: the aggregate's own declaration name, used when a more
+    // precise location (e.g. a member's own declaration) is not tracked in the model.
+    lex::opt_any_lexeme agg_lexeme;
+    if (auto ast_ad = agg.get_ast_aggregate_decl()) agg_lexeme = lex::any_lexeme{ast_ad->name};
+
     for (auto& child : agg.get_children()) {
         auto mv = std::dynamic_pointer_cast<member_variable_definition>(child);
         if (mv) {
             const std::string ctx = "member '" + mv->get_short_name() + "'";
-            validate_type_usage(mv->get_type(), ctx, pnames, ti->params);
+            validate_type_usage(mv->get_type(), ctx, pnames, ti->params, agg_lexeme);
             continue;
         }
         auto fn_elem = std::dynamic_pointer_cast<function>(child);
@@ -221,11 +226,17 @@ void generic_constraint_validator::validate_generic_aggregate(aggregate& agg) {
 
     for (auto& ctor : agg.constructors()) {
         if (ctor == nullptr) continue;
+        lex::opt_any_lexeme ctor_lexeme = agg_lexeme;
+        if (auto ast_fd = ctor->get_ast_function_decl()) ctor_lexeme = lex::any_lexeme{ast_fd->name};
         for (size_t i = 0; i < ctor->get_parameter_size(); ++i) {
             auto param = ctor->get_parameter(i);
             if (param == nullptr) continue;
             const std::string ctx = "constructor parameter '" + param->get_short_name() + "'";
-            validate_type_usage(param->get_type(), ctx, pnames, ti->params);
+            lex::opt_any_lexeme param_lexeme = ctor_lexeme;
+            if (auto ast_ps = param->get_ast_parameter_spec(); ast_ps && ast_ps->name) {
+                param_lexeme = lex::any_lexeme{*ast_ps->name};
+            }
+            validate_type_usage(param->get_type(), ctx, pnames, ti->params, param_lexeme);
         }
 
         validate_statement_tree(ctor->get_existing_block(), pnames, ti->params);
@@ -237,16 +248,23 @@ void generic_constraint_validator::validate_generic_function(
     const std::unordered_set<std::string>& pnames,
     const std::vector<template_param_descriptor>& pdescs)
 {
+    lex::opt_any_lexeme fn_lexeme;
+    if (auto ast_fd = fn.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+
     if (auto ret = fn.get_return_type()) {
         const std::string ctx = "return type of '" + fn.get_short_name() + "'";
-        validate_type_usage(ret, ctx, pnames, pdescs);
+        validate_type_usage(ret, ctx, pnames, pdescs, fn_lexeme);
     }
     for (size_t i = 0; i < fn.get_parameter_size(); ++i) {
         auto param = fn.get_parameter(i);
         if (param == nullptr) continue;
         const std::string ctx = "parameter '" + param->get_short_name()
                                 + "' of '" + fn.get_short_name() + "'";
-        validate_type_usage(param->get_type(), ctx, pnames, pdescs);
+        lex::opt_any_lexeme param_lexeme = fn_lexeme;
+        if (auto ast_ps = param->get_ast_parameter_spec(); ast_ps && ast_ps->name) {
+            param_lexeme = lex::any_lexeme{*ast_ps->name};
+        }
+        validate_type_usage(param->get_type(), ctx, pnames, pdescs, param_lexeme);
     }
 
     validate_statement_tree(fn.get_existing_block(), pnames, pdescs);
@@ -256,15 +274,16 @@ void generic_constraint_validator::validate_type_usage(
     const std::shared_ptr<type>& t,
     const std::string& ctx,
     const std::unordered_set<std::string>& pnames,
-    const std::vector<template_param_descriptor>& pdescs)
+    const std::vector<template_param_descriptor>& pdescs,
+    const lex::opt_any_lexeme& lexeme)
 {
     if (t == nullptr) return;
 
     std::string off = check_direct_usage(t, pnames);
-    if (off.empty() == false) report_direct_usage_error(off, ctx);
+    if (off.empty() == false) report_direct_usage_error(off, ctx, lexeme);
 
     std::string oe = check_owner_constraint(t, pnames, pdescs);
-    if (oe.empty() == false) report_owner_constraint_error(oe, ctx);
+    if (oe.empty() == false) report_owner_constraint_error(oe, ctx, lexeme);
 }
 
 void generic_constraint_validator::validate_statement_tree(
@@ -283,7 +302,9 @@ void generic_constraint_validator::validate_statement_tree(
 
     if (auto var_stmt = std::dynamic_pointer_cast<variable_statement>(stmt)) {
         const std::string ctx = "local variable '" + var_stmt->get_short_name() + "'";
-        validate_type_usage(var_stmt->get_type(), ctx, pnames, pdescs);
+        lex::opt_any_lexeme var_lexeme;
+        if (auto ast_vd = var_stmt->get_ast_variable_decl()) var_lexeme = lex::any_lexeme{ast_vd->name};
+        validate_type_usage(var_stmt->get_type(), ctx, pnames, pdescs, var_lexeme);
         validate_expression_tree(var_stmt->get_init_expr(), pnames, pdescs);
         return;
     }
@@ -304,7 +325,9 @@ void generic_constraint_validator::validate_statement_tree(
         for (auto& cond_var : if_stmt->get_cond_vars()) {
             if (cond_var == nullptr) continue;
             const std::string ctx = "condition variable '" + cond_var->get_short_name() + "'";
-            validate_type_usage(cond_var->get_type(), ctx, pnames, pdescs);
+            lex::opt_any_lexeme var_lexeme;
+            if (auto ast_vd = cond_var->get_ast_variable_decl()) var_lexeme = lex::any_lexeme{ast_vd->name};
+            validate_type_usage(cond_var->get_type(), ctx, pnames, pdescs, var_lexeme);
             validate_expression_tree(cond_var->get_init_expr(), pnames, pdescs);
         }
 
@@ -341,11 +364,11 @@ void generic_constraint_validator::validate_expression_tree(
     }
 
     if (auto cast_expr = std::dynamic_pointer_cast<cast_expression>(expr)) {
-        validate_type_usage(cast_expr->get_cast_type(), "cast target type", pnames, pdescs);
+        validate_type_usage(cast_expr->get_cast_type(), "cast target type", pnames, pdescs, cast_expr->first_lexeme());
     }
 
     if (auto tmp_ctor_expr = std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
-        validate_type_usage(tmp_ctor_expr->constructed_type(), "temporary construction type", pnames, pdescs);
+        validate_type_usage(tmp_ctor_expr->constructed_type(), "temporary construction type", pnames, pdescs, tmp_ctor_expr->first_lexeme());
         for (auto& arg : tmp_ctor_expr->arguments()) {
             validate_expression_tree(arg, pnames, pdescs);
         }
@@ -353,7 +376,7 @@ void generic_constraint_validator::validate_expression_tree(
     }
 
     if (auto new_expr = std::dynamic_pointer_cast<new_expression>(expr)) {
-        validate_type_usage(new_expr->allocated_type(), "new allocation type", pnames, pdescs);
+        validate_type_usage(new_expr->allocated_type(), "new allocation type", pnames, pdescs, new_expr->first_lexeme());
 
         for (auto& arg : new_expr->arguments()) {
             validate_expression_tree(arg, pnames, pdescs);
@@ -428,6 +451,7 @@ void generic_constraint_validator::validate_explicit_template_args(
     const std::string call_name = sym_expr->get_name().empty()
                                   ? std::string("<anonymous>")
                                   : sym_expr->get_name().to_string();
+    lex::opt_any_lexeme call_lexeme = sym_expr->first_lexeme();
 
     for (size_t i = 0; i < ast_args.size(); ++i) {
         const auto& arg = ast_args[i];
@@ -438,7 +462,7 @@ void generic_constraint_validator::validate_explicit_template_args(
         auto arg_type = _context->from_type_specifier(*arg->type_arg);
         const std::string ctx = "explicit template argument #" + std::to_string(i + 1)
                                 + " for call '" + call_name + "'";
-        validate_type_usage(arg_type, ctx, pnames, pdescs);
+        validate_type_usage(arg_type, ctx, pnames, pdescs, call_lexeme);
     }
 }
 
@@ -470,10 +494,12 @@ std::string generic_constraint_validator::check_owner_constraint(
 
 void generic_constraint_validator::report_direct_usage_error(
     const std::string& param_name,
-    const std::string& ctx)
+    const std::string& ctx,
+    const lex::opt_any_lexeme& lexeme)
 {
     throw_error(
         static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_DIRECT_TYPE_USAGE),
+        lexeme,
         "Generic type parameter '" + param_name + "' in " + ctx +
         " is used directly without an addresser. "
         "Wrap it with an addresser: '" + param_name + "!', '" + param_name + "?', '" +
@@ -483,10 +509,12 @@ void generic_constraint_validator::report_direct_usage_error(
 
 void generic_constraint_validator::report_owner_constraint_error(
     const std::string& param_name,
-    const std::string& ctx)
+    const std::string& ctx,
+    const lex::opt_any_lexeme& lexeme)
 {
     throw_error(
         static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_REQUIRES_CLASS),
+        lexeme,
         "Owner ('!') of generic type parameter '" + param_name + "' in " + ctx +
         " requires 'class' or 'interface' constraint (e.g. 'generic<class " +
         param_name + ">'), not 'typename' or 'struct'.");

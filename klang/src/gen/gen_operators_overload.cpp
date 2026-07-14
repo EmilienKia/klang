@@ -184,6 +184,7 @@ type_reference_resolver::resolve_binary_operator_overload(
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_BINARY_OVERLOAD_NOT_FOUND),
             "Ambiguous operator '{}' for type '{}': {} equally viable overloads",
             {op_sym, left_type_str, std::to_string(best.size())});
+        if (auto pos = expr.first_lexeme()) d.at(*pos);
         for (auto* c : best) {
             std::string sig;
             bool first = true;

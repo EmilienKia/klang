@@ -689,8 +689,15 @@ void context::pop_template_param_scope() {
 
 void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
                                    std::unordered_set<struct_type*>& in_progress) {
-    auto throw_context_error = [](unsigned int code, const std::string& msg) -> void {
-        throw context_resolution_error(k::log::diagnostic::make_error(code, msg));
+    // Best-effort source location: the struct's own declaration name, when tracked.
+    lex::opt_any_lexeme struct_lexeme;
+    if (auto agg = st_type->get_struct()) {
+        if (auto ast_ad = agg->get_ast_aggregate_decl()) struct_lexeme = lex::any_lexeme{ast_ad->name};
+    }
+    auto throw_context_error = [&struct_lexeme](unsigned int code, const std::string& msg) -> void {
+        auto diag = k::log::diagnostic::make_error(code, msg);
+        if (struct_lexeme) diag.at(*struct_lexeme);
+        throw context_resolution_error(std::move(diag));
     };
 
     if (st_type->is_resolved()) {

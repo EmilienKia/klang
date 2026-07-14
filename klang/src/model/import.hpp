@@ -20,6 +20,7 @@
 #define KLANG_IMPORT_HPP
 
 #include "../common/common.hpp"
+#include "../lex/lexemes.hpp"
 
 #include <memory>
 #include <string>
@@ -51,6 +52,11 @@ namespace k::model {
 struct imported_module {
     /// Qualified name of the module, e.g. {"math", "vec"}.
     k::name module_name;
+
+    /// Best-effort source location of the 'import' declaration that introduced
+    /// this module (points at the first name token of the qualified identifier).
+    /// Empty for implicitly-injected imports (e.g. the base stdlib "k").
+    lex::opt_any_lexeme lexeme;
 
     /// Absolute path to the .kdi file once resolved (empty before resolution).
     std::string resolved_kdi_path;

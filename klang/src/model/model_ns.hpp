@@ -247,8 +247,11 @@ public:
     /**
      * Register an import declaration (called by model_builder).
      * @param module_name  Qualified name of the module to import.
+     * @param lexeme       Best-effort source location of the import declaration
+     *                     (used to report precise diagnostics, e.g. circular
+     *                     imports or missing KDI files).
      */
-    void add_import(const k::name& module_name);
+    void add_import(const k::name& module_name, const lex::opt_any_lexeme& lexeme = std::nullopt);
 
     /**
      * Read-only access to all declared imports.

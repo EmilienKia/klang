@@ -36,6 +36,16 @@
 namespace k::parse {
 
 /**
+ * Result of a lightweight module-name lookup: the resolved module name plus
+ * the source location of its qualified identifier (first name token), used
+ * to report precise diagnostics (e.g. conflicting module declarations).
+ */
+struct module_name_lookup {
+    k::name name;
+    lex::opt_any_lexeme lexeme;
+};
+
+/**
  * Lightweight lookup: lex + parse only the module declaration from a source.
  * Returns the module name if present, std::nullopt otherwise.
  * Does not report errors when the declaration is simply absent.
@@ -43,9 +53,10 @@ namespace k::parse {
  *
  * @param src    Source to scan (must remain alive while the returned name is used).
  * @param logger Logger for potential lexer/parser errors.
- * @return       The module name, or std::nullopt if no 'module' declaration was found.
+ * @return       The module name (with source location), or std::nullopt if no
+ *               'module' declaration was found.
  */
-std::optional<k::name> lookup_module_name(k::source& src, k::log::logger& logger);
+std::optional<module_name_lookup> lookup_module_name(k::source& src, k::log::logger& logger);
 
 
 

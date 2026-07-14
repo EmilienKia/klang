@@ -230,7 +230,7 @@ std::string kdi_importer::canonical(const k::name& n) {
     return n.to_string();   // e.g. "math::vec"
 }
 
-void kdi_importer::register_root_ns(const std::string& module_name) {
+void kdi_importer::register_root_ns(const std::string& module_name, const lex::opt_any_lexeme& lexeme) {
     // Root component = first "::" separated part
     const std::string root = [&]() -> std::string {
         auto pos = module_name.find("::");
@@ -252,6 +252,7 @@ void kdi_importer::register_root_ns(const std::string& module_name) {
                 "Namespace root collision: module '{}' and module '{}' share the "
                 "same root namespace component '{}'",
                 {module_name, existing, root});
+            if (lexeme) diag.at(*lexeme);
             _logger.report(diag);
             throw k::log::compiler_error(std::move(diag));
         }
@@ -269,6 +270,7 @@ void kdi_importer::register_root_ns(const std::string& module_name) {
                     "--enforce-ns-collision: imported module '{}' root '{}' "
                     "collides with the root namespace of the unit being compiled",
                     {module_name, root});
+                if (lexeme) diag.at(*lexeme);
                 _logger.report(diag);
                 throw k::log::compiler_error(std::move(diag));
             }
@@ -281,7 +283,7 @@ void kdi_importer::register_root_ns(const std::string& module_name) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::shared_ptr<kdi::kdi_file>
-kdi_importer::load_module(const std::string& canon) {
+kdi_importer::load_module(const std::string& canon, const lex::opt_any_lexeme& lexeme) {
 
     // ── Cycle detection (must be BEFORE cache lookup) ─────────────────────
     // A module that is already on the current load stack → circular dependency.
@@ -301,6 +303,7 @@ kdi_importer::load_module(const std::string& canon) {
             static_cast<unsigned int>(k::diag::compiler_diag::ERR_CIRCULAR_IMPORT),
             "Circular import dependency detected: {}",
             {cycle_path});
+        if (lexeme) diag.at(*lexeme);
         _logger.report(diag);
         throw k::log::compiler_error(std::move(diag));
     }
@@ -319,6 +322,7 @@ kdi_importer::load_module(const std::string& canon) {
             "Cannot find KDI description file for imported module '{}': "
             "no .kdi file found on any search path",
             {canon});
+        if (lexeme) diag.at(*lexeme);
         _logger.report(diag);
         throw k::log::compiler_error(std::move(diag));
     }
@@ -332,6 +336,7 @@ kdi_importer::load_module(const std::string& canon) {
             static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_PARSE_FAILED),
             "Failed to read or parse KDI file '{}' for module '{}': {}",
             {path_opt->string(), canon, ex.what()});
+        if (lexeme) diag.at(*lexeme);
         _logger.report(diag);
         throw k::log::compiler_error(std::move(diag));
     }
@@ -363,12 +368,15 @@ kdi_importer::load_module(const std::string& canon) {
                 static_cast<unsigned int>(k::diag::compiler_diag::ERR_CIRCULAR_IMPORT),
                 "Circular import dependency detected: {}",
                 {cycle_path});
+            if (lexeme) diag.at(*lexeme);
             _logger.report(diag);
             throw k::log::compiler_error(std::move(diag));
         }
 
         if (_cache.find(dep_name) == _cache.end()) {
-            auto dep_kdi = load_module(dep_name);   // throws on failure
+            // Propagate the originating import's location: this transitive
+            // dependency chain was triggered by the same 'import' statement.
+            auto dep_kdi = load_module(dep_name, lexeme);   // throws on failure
             if (dep_kdi) {
                 bool is_direct = false;
                 for (const auto& imp : _unit.get_imports()) {
@@ -410,10 +418,10 @@ void kdi_importer::import_all() {
             }
         }
 
-        auto kdi_ptr = load_module(canon);
+        auto kdi_ptr = load_module(canon, imp.lexeme);
 
         // Validate namespace-root collision
-        register_root_ns(canon);
+        register_root_ns(canon, imp.lexeme);
 
         // Fill in the imported_module fields
         imp.kdi = kdi_ptr;
@@ -1082,6 +1090,7 @@ void kdi_importer::check_unused_imports() const {
                 "Imported module '{}' is declared but none of its symbols "
                 "are used in this compilation unit",
                 {canonical(imp.module_name)});
+            if (imp.lexeme) diag.at(*imp.lexeme);
             _logger.report(diag);
         }
     }

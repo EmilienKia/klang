@@ -202,13 +202,18 @@ std::string encode_type_specifier(const std::shared_ptr<ast::type_specifier>& ts
 
 } // anonymous namespace
 
-std::optional<k::name> lookup_module_name(k::source& src, k::log::logger& logger) {
+std::optional<module_name_lookup> lookup_module_name(k::source& src, k::log::logger& logger) {
     try {
         parser p(logger);
         p.parse(src);
         auto mod = p.parse_module_declaration();
         if (mod && mod->qname) {
-            return mod->qname->to_name();
+            module_name_lookup result;
+            result.name = mod->qname->to_name();
+            if (!mod->qname->names.empty()) {
+                result.lexeme = lex::any_lexeme{mod->qname->names.front()};
+            }
+            return result;
         }
     } catch (const parsing_error&) {
         // A malformed module declaration — propagate as absent.

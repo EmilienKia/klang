@@ -1346,12 +1346,14 @@ std::shared_ptr<global_main_function> unit::generate_main_function(std::shared_p
     return _global_main_func;
 }
 
-void unit::add_import(const k::name& module_name) {
+void unit::add_import(const k::name& module_name, const lex::opt_any_lexeme& lexeme) {
     // Avoid duplicates
     for (auto& imp : _imported_modules) {
         if (imp.module_name == module_name) return;
     }
-    _imported_modules.push_back(imported_module{module_name});
+    imported_module imp{module_name};
+    imp.lexeme = lexeme;
+    _imported_modules.push_back(std::move(imp));
 }
 
 imported_module* unit::find_import(const k::name& module_name) {

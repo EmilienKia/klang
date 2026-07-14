@@ -262,7 +262,11 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             }
             func = func->ancestor<function>();
         }
-        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_SYMBOL_NOT_FOUND), std::nullopt,
+        lex::opt_any_lexeme this_lexeme;
+        if (auto sym_expr = dynamic_cast<const symbol_expression*>(&elem)) {
+            this_lexeme = sym_expr->first_lexeme();
+        }
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_SYMBOL_NOT_FOUND), this_lexeme,
             "'this' can only be used inside a non-static member function");
     }
 
@@ -549,7 +553,13 @@ symbol_resolver::resolve_via_using(const element& elem, const name& name) {
     return result;
 }
 
-void symbol_resolver::check_variable_visibility(const variable_definition& var, const element& /*access_site*/) {
+void symbol_resolver::check_variable_visibility(const variable_definition& var, const element& access_site) {
+    // The access site is usually the symbol_expression referencing the variable;
+    // use its source position for diagnostics when available.
+    lex::opt_any_lexeme access_lexeme;
+    if (auto sym_expr = dynamic_cast<const symbol_expression*>(&access_site)) {
+        access_lexeme = sym_expr->first_lexeme();
+    }
     // Step 1: Member variable: check struct member visibility and friend access
     // Member variable in a struct
     if (auto mv = dynamic_cast<const member_variable_definition*>(&var)) {
@@ -559,8 +569,10 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
         if (vis == PUBLIC) return;
         if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
         if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
-        lex::opt_any_lexeme agg_lexeme;
-        if (auto ast_ad = owner_agg->get_ast_aggregate_decl()) agg_lexeme = lex::any_lexeme{ast_ad->name};
+        lex::opt_any_lexeme agg_lexeme = access_lexeme;
+        if (!agg_lexeme) {
+            if (auto ast_ad = owner_agg->get_ast_aggregate_decl()) agg_lexeme = lex::any_lexeme{ast_ad->name};
+        }
         throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_AGGREGATE_VISIBILITY_DENIED), agg_lexeme,
             "{} member variable '{}' of struct '{}' is not accessible here; "
             "it can only be accessed from member functions of '{}'{}",
@@ -585,13 +597,13 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
         if (vis == PROTECTED) {
             auto owner_root = scope_lookup::root_namespace(*owner_ns);
             if (!owner_root || scope_lookup::is_in_same_module(*site, *owner_root)) return;
-            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_VISIBILITY_ACCESS_DENIED), std::nullopt,
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_VISIBILITY_ACCESS_DENIED), access_lexeme,
                 "protected variable '{}' is only accessible within the same module; "
                 "it is declared in module '{}' but accessed from outside",
                 {gv->get_short_name(), owner_root->get_short_name()});
         } else { // PRIVATE
             if (scope_lookup::is_in_same_namespace(*site, *owner_ns)) return;
-            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_VISIBILITY_ACCESS_DENIED), std::nullopt,
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_VISIBILITY_ACCESS_DENIED), access_lexeme,
                 "private variable '{}' is only accessible within namespace '{}'; "
                 "it cannot be accessed from outside that namespace",
                 {gv->get_short_name(), owner_ns->get_short_name()});

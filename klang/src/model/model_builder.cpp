@@ -93,7 +93,11 @@ namespace k::model {
         // Register the import name in the unit (resolved later by kdi_importer)
         if(imp.qname) {
             trace("[model_builder::visit_import] import '{}'", {imp.qname->to_name().to_string()});
-            _unit.add_import(imp.qname->to_name());
+            lex::opt_any_lexeme lexeme;
+            if (!imp.qname->names.empty()) {
+                lexeme = lex::any_lexeme{imp.qname->names.front()};
+            }
+            _unit.add_import(imp.qname->to_name(), lexeme);
         }
     }
 

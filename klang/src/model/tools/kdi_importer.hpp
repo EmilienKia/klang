@@ -157,11 +157,13 @@ private:
     // ── Phase A helpers ──────────────────────────────────────────────────────
 
     /// Load one module by name (may be called recursively for dependencies).
+    /// @param lexeme  Best-effort source location of the 'import' declaration
+    ///                that (directly or transitively) triggered this load.
     std::shared_ptr<kdi::kdi_file>
-    load_module(const std::string& canonical_name);
+    load_module(const std::string& canonical_name, const lex::opt_any_lexeme& lexeme = std::nullopt);
 
     /// Register the root namespace component of an import; throw on collision.
-    void register_root_ns(const std::string& module_name);
+    void register_root_ns(const std::string& module_name, const lex::opt_any_lexeme& lexeme = std::nullopt);
 
     // ── Phase B helpers ──────────────────────────────────────────────────────
 

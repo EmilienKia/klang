@@ -42,6 +42,15 @@ protected:
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
+    [[noreturn]] void throw_error(unsigned int code,
+                                  const lex::opt_any_lexeme& lexeme,
+                                  const std::string& message,
+                                  const std::vector<std::string>& args = {}) {
+        auto diag = k::log::diagnostic::make_error(code, message, args);
+        if (lexeme) diag.at(*lexeme);
+        logger_relay::report(diag);
+        throw resolution_error(std::move(diag));
+    }
 public:
     init_order_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& u)
         : k::log::logger_relay(logger), _context(context), _unit(u) {}
@@ -55,6 +64,8 @@ private:
     using node_t = init_item; // alias for clarity
     /** Return a human-readable label for a node (for error messages). */
     static std::string node_label(const node_t& n);
+    /** Return the best-effort source location for a node (declaration name lexeme), if any. */
+    static lex::opt_any_lexeme node_lexeme(const node_t& n);
     void collect_global_deps_from_expr(
         const std::shared_ptr<expression>& expr,
         std::vector<std::shared_ptr<global_variable_definition>>& out_globals,

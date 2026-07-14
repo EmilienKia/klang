@@ -65,12 +65,13 @@ public:
 
     /**
      * Report a fatal resolution error at the model level.
-     * Since there is no lexeme available, position info is omitted.
      */
     [[noreturn]] void throw_error(unsigned int code,
+                                  const lex::opt_any_lexeme& lexeme,
                                   const std::string& message,
                                   const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
+        if (lexeme) diag.at(*lexeme);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
@@ -104,11 +105,13 @@ private:
                                    const std::unordered_set<std::string>& param_names,
                                    const std::vector<template_param_descriptor>& param_descs);
 
-    /** Validate one declaration/local-variable type in the current generic context. */
+    /** Validate one declaration/local-variable type in the current generic context.
+     *  @param lexeme  Best-effort source location of the declaration/usage being validated. */
     void validate_type_usage(const std::shared_ptr<type>& t,
                              const std::string& context_desc,
                              const std::unordered_set<std::string>& param_names,
-                             const std::vector<template_param_descriptor>& param_descs);
+                             const std::vector<template_param_descriptor>& param_descs,
+                             const lex::opt_any_lexeme& lexeme = std::nullopt);
 
     /** Recursively validate local-variable declarations inside a statement tree. */
     void validate_statement_tree(const std::shared_ptr<statement>& stmt,
@@ -164,17 +167,21 @@ private:
      * Report a direct-usage violation for the given member context.
      * @param param_name  The offending generic parameter name.
      * @param context_desc  Human-readable context (e.g. "member 'val'").
+     * @param lexeme  Best-effort source location.
      */
-    void report_direct_usage_error(const std::string& param_name,
-                                   const std::string& context_desc);
+    [[noreturn]] void report_direct_usage_error(const std::string& param_name,
+                                   const std::string& context_desc,
+                                   const lex::opt_any_lexeme& lexeme);
 
     /**
      * Report an owner-constraint violation for the given context.
      * @param param_name  The offending generic parameter name.
      * @param context_desc  Human-readable context (e.g. "member 'val'").
+     * @param lexeme  Best-effort source location.
      */
-    void report_owner_constraint_error(const std::string& param_name,
-                                       const std::string& context_desc);
+    [[noreturn]] void report_owner_constraint_error(const std::string& param_name,
+                                       const std::string& context_desc,
+                                       const lex::opt_any_lexeme& lexeme);
 };
 
 } // namespace k::model::gen

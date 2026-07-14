@@ -46,6 +46,15 @@ std::string init_order_resolver::node_label(const node_t& n) {
     return "<unknown>";
 }
 
+lex::opt_any_lexeme init_order_resolver::node_lexeme(const node_t& n) {
+    if (auto sc = std::get_if<std::shared_ptr<static_constructor>>(&n)) {
+        if (auto decl = (*sc)->get_ast_function_decl()) return lex::any_lexeme{decl->name};
+    } else if (auto gv = std::get_if<std::shared_ptr<global_variable_definition>>(&n)) {
+        if (auto init_expr = (*gv)->get_init_expr()) return init_expr->first_lexeme();
+    }
+    return std::nullopt;
+}
+
 /**
  * Recursively walk an expression tree and collect:
  *  - all global_variable_definition targets reached via symbol_expression
@@ -404,13 +413,15 @@ void init_order_resolver::resolve() {
     if (construction_order.size() < N) {
         // Collect all nodes still in a cycle (in_degree > 0)
         std::string cycle_members;
+        lex::opt_any_lexeme cycle_lexeme;
         for (size_t i = 0; i < N; ++i) {
             if (in_degree[i] > 0) {
                 if (!cycle_members.empty()) cycle_members += ", ";
                 cycle_members += node_label(nodes[i]);
+                if (!cycle_lexeme) cycle_lexeme = node_lexeme(nodes[i]);
             }
         }
-        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_INIT_ORDER_CYCLE),
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_INIT_ORDER_CYCLE), cycle_lexeme,
             "Cycle detected in global initialization dependency graph. "
             "The following items form a circular dependency: {}",
             {cycle_members});
