@@ -482,13 +482,20 @@ For primitive numeric types, all six comparison operators (`==`, `!=`, `<`, `>`,
 
 `operator <=>` (the *spaceship* operator) is a binary comparison operator, declarable as a member (optionally `const`, `virtual`, `static`), or non-member operator, optionally as a function template — following exactly the same declaration rules as the other comparison operators (see [§4](#4-member-operator-functions) and [§5](#5-non-member-operator-functions)).
 
-Unlike `==`, `!=`, `<`, `>`, `<=`, `>=`, whose result is `bool`, `operator <=>` returns a **signed integer or floating-point primitive type** (`int`, `long`, `short`, `byte`, `float`, or `double`). Its result encodes a three-way ordering:
+Unlike `==`, `!=`, `<`, `>`, `<=`, `>=`, whose result is `bool`, `operator <=>` returns either:
+
+- a **signed integer or floating-point primitive type** (`int`, `long`, `short`, `byte`, `float`, or `double`), encoding a three-way ordering directly; or
+- an **aggregate (struct/class) type**, provided it is comparable to the integer literal `0` (see [Aggregate return type](#aggregate-return-type) below) — this is only actually required when the result is used as a fallback synthesis source, never for direct use.
+
+For the primitive case, the result encodes a three-way ordering:
 
 - negative — the left operand (or `this`) is *less than* the right operand;
 - zero — the two operands are *equal*;
 - positive — the left operand (or `this`) is *greater than* the right operand.
 
 (For floating-point results, infinities and NaN have no defined ordering meaning — they are not specially handled.)
+
+For the aggregate case, the same three-way ordering is expressed by how the returned object compares to the integer literal `0` using whichever comparison operator (`==`, `!=`, `<`, `>`, `<=`, `>=`) is actually needed at a given call site (see below).
 
 Built-in numeric primitive types also support `<=>` directly, with no declaration required: `a <=> b` for two primitives of the same type evaluates to `int`, computed as `(a > b) - (a < b)`.
 
@@ -507,6 +514,43 @@ cmp(a: Pt&, b: Pt&) : int {
 ```
 
 `<=>` sits in the expression grammar between the relational operators and the shift operators (`a < b <=> c` parses as `a < (b <=> c)`); see the grammar's `SpaceshipExpr` rule.
+
+### Aggregate return type
+
+`operator <=>` may also return an aggregate (struct/class) type instead of a primitive. This is useful for representing richer three-way results (e.g. a distinguishable "unordered" state, or a `std::partial_ordering`-like type), or simply for reusing an existing comparable value type as the result.
+
+Direct use of such a `<=>` (`a <=> b`) is **always** allowed, with no extra validation: the aggregate result is just an ordinary value, and it might never be compared to anything.
+
+The aggregate return type only needs to satisfy an additional requirement **when the compiler actually needs to use it as a fallback synthesis source** for one of the six comparison operators (SPACESHIP / SPACESHIP_SWAP tiers, see [Resolution order](#resolution-order) below): the aggregate must declare a comparison operator against the integer literal `0` for whichever wanted operator is being synthesized (e.g. synthesizing `<` from a `<=>` returning `Ordering` requires `Ordering` to declare a usable `operator <(n: <numeric-type>)`).
+
+This "result vs `0`" comparison lookup is deliberately restricted in scope, to keep resolution simple and predictable:
+
+- Only a **direct** match is considered — no further NEGATE/SWAP/SWAP_NEGATE/COMPOSITE synthesis is attempted for it, and no recursive/nested `operator <=>` lookup on the result type itself (i.e. no chained spaceship-of-spaceship).
+- The resolved comparison operator must return `bool`.
+- Its parameter (after any implicit conversion) must be a **non-reference** numeric primitive (`int`, `long`, `short`, `byte`, `float`, or `double`) — reference parameters are rejected, since the compiler builds a plain constant `0` value of that type, not an addressable temporary.
+
+If no such comparison is found (or the aggregate is never used as a fallback source), no error occurs — the restriction only ever surfaces as an error at the *usage site* that would actually need it (i.e. writing `a < b` where the `<=>` result cannot be compared to `0` for `<`), never at the `<=>` declaration itself.
+
+```k
+struct Ordering {
+    v: int;
+    Ordering(av: int) : v(av) {}
+    operator <(n: int) : bool { return v < n; }
+    operator >(n: int) : bool { return v > n; }
+}
+
+struct Point {
+    x: int;
+    Point(ax: int) : x(ax) {}
+    operator <=>(other: Point&) : Ordering { return Ordering(x - other.x); }
+}
+
+test() : bool {
+    a: Point(3);
+    b: Point(5);
+    return a < b;   // synthesized: Ordering(a <=> b) < 0
+}
+```
 
 ### Resolution order
 
@@ -570,7 +614,7 @@ test() : bool {
 
 ### Return-type guard
 
-A synthesized source operator must return `bool`: negating or combining a non-`bool` result would not be meaningful. `DIRECT` matches keep the historical behaviour of accepting any return type declared for the exact operator (see [§3](#3-overloadable-operators)); tiers NEGATE, SWAP, SWAP_NEGATE, and COMPOSITE require the source operator to return `bool`. The SPACESHIP and SPACESHIP_SWAP tiers instead require the source `operator <=>` to return a valid three-way-comparison type (a signed integer or floating-point primitive) — see [above](#the-three-way-comparison-operator).
+A synthesized source operator must return `bool`: negating or combining a non-`bool` result would not be meaningful. `DIRECT` matches keep the historical behaviour of accepting any return type declared for the exact operator (see [§3](#3-overloadable-operators)); tiers NEGATE, SWAP, SWAP_NEGATE, and COMPOSITE require the source operator to return `bool`. The SPACESHIP and SPACESHIP_SWAP tiers instead require the source `operator <=>` to return either a valid three-way-comparison primitive, or an aggregate type with a viable "result vs `0`" comparison for the wanted operator — see [Aggregate return type](#aggregate-return-type) above.
 
 ### Const-correctness and inheritance
 

@@ -268,6 +268,47 @@ bool cmp_op_returns_bool(const std::shared_ptr<function>& f) {
 
 } // anonymous namespace
 
+std::optional<std::pair<std::shared_ptr<function>, std::shared_ptr<type>>>
+/**
+ * See declaration in resolvers_type_ref.hpp for the full contract.
+ */
+type_reference_resolver::try_resolve_spaceship_zero_comparison(
+    const comparison_expression& expr,
+    const std::shared_ptr<type>& result_type,
+    const std::string& wanted_op_name,
+    const std::shared_ptr<expression>& scope_host)
+{
+    auto st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(result_type));
+    if (!st_type) return std::nullopt;
+    auto result_agg = st_type->get_struct();
+    if (!result_agg) return std::nullopt;
+
+    // Placeholder receiver: carries `result_type` for cast-weight scoring purposes only; it
+    // borrows scope_host's parent chain so non-member operator scope lookup can still find
+    // enclosing namespaces/functions. Neither placeholder is ever evaluated/generated —
+    // both are pure type-resolution scaffolding, discarded once this function returns.
+    auto receiver_placeholder = std::make_shared<value_expression>(0);
+    receiver_placeholder->set_parent_expression(scope_host);
+    receiver_placeholder->set_type(result_type);
+
+    auto zero_placeholder = std::make_shared<value_expression>(0);
+    zero_placeholder->set_parent_expression(scope_host);
+    zero_placeholder->set_type(_context->from_type(primitive_type::INT));
+
+    auto [func, adapted_zero, w] = resolve_named_binary_operator_overload(
+        expr, wanted_op_name, result_agg, receiver_placeholder, zero_placeholder, /*is_const_this=*/false);
+
+    if (!func || !cmp_op_returns_bool(func)) return std::nullopt;
+
+    auto arg_type = adapted_zero ? adapted_zero->get_type() : zero_placeholder->get_type();
+    auto arg_type_nc = type::remove_const(arg_type);
+    if (type::is_reference(arg_type_nc)) return std::nullopt; // by-value numeric parameter only (see docs)
+    auto prim_arg = std::dynamic_pointer_cast<primitive_type>(arg_type_nc);
+    if (!prim_arg || prim_arg->is_boolean()) return std::nullopt; // must be a genuine numeric primitive
+
+    return std::make_pair(func, arg_type_nc);
+}
+
 std::optional<type_reference_resolver::comparison_fallback_result>
 /**
  * See declaration in resolvers_type_ref.hpp for the full contract and priority rules.
@@ -315,6 +356,10 @@ type_reference_resolver::resolve_comparison_with_fallback(
         cast_weight weight;
         unsigned tier;
         std::shared_ptr<expression> adapted_arg;
+        /** Phase 2: only set for SPACESHIP/SPACESHIP_SWAP when `func`'s return type is an
+         * aggregate; see comparison_fallback_result::spaceship_zero_func. */
+        std::shared_ptr<function> spaceship_zero_func;
+        std::shared_ptr<type> spaceship_zero_arg_type;
     };
     std::vector<candidate> candidates;
 
@@ -322,26 +367,45 @@ type_reference_resolver::resolve_comparison_with_fallback(
     {
         auto [func, adapted, w] = resolve_named_binary_operator_overload(
             expr, wanted, left_agg, left_expr, right_expr, is_const_left);
-        if (func) candidates.push_back({func, cmp_synthesis::DIRECT, false, w, 0, adapted});
+        if (func) candidates.push_back({func, cmp_synthesis::DIRECT, false, w, 0, adapted, nullptr, nullptr});
     }
 
     // Tier 1: SPACESHIP — source = `operator <=>`, receiver = left, arg = right; wanted is
     // synthesized as a sign test of the spaceship result against 0 (see cmp_synthesis docs).
+    // Phase 2: if the spaceship result is an aggregate (rather than a primitive int/float),
+    // the sign test is instead a call to a directly-declared bool-returning comparison of
+    // that aggregate against the integer literal 0 (see try_resolve_spaceship_zero_comparison).
     {
         auto [func, adapted, w] = resolve_named_binary_operator_overload(
             expr, k::op::OP_SPACESHIP, left_agg, left_expr, right_expr, is_const_left);
-        if (func && is_valid_spaceship_return_type(func->has_return_type() ? func->get_return_type() : nullptr))
-            candidates.push_back({func, cmp_synthesis::SPACESHIP, false, w, 1, adapted});
+        if (func) {
+            auto ret_type = func->has_return_type() ? func->get_return_type() : nullptr;
+            if (is_valid_spaceship_return_type(ret_type)) {
+                candidates.push_back({func, cmp_synthesis::SPACESHIP, false, w, 1, adapted, nullptr, nullptr});
+            } else if (auto zero_match = try_resolve_spaceship_zero_comparison(expr, ret_type, wanted, left_expr)) {
+                candidates.push_back({func, cmp_synthesis::SPACESHIP, false, w, 1, adapted,
+                                       zero_match->first, zero_match->second});
+            }
+        }
     }
 
     // Tier 2: SPACESHIP_SWAP — source = `operator <=>` declared on the right operand's
     // aggregate, receiver = right, arg = left; wanted is synthesized as a sign test of the
     // (operand-reversed) spaceship result against 0, using the swapped operator semantics.
+    // Phase 2: same aggregate-result handling as tier 1, but probing the swapped wanted op.
     if (right_agg) {
         auto [func, adapted, w] = resolve_named_binary_operator_overload(
             expr, k::op::OP_SPACESHIP, right_agg, right_expr, left_expr, is_const_right);
-        if (func && is_valid_spaceship_return_type(func->has_return_type() ? func->get_return_type() : nullptr))
-            candidates.push_back({func, cmp_synthesis::SPACESHIP_SWAP, false, w, 2, adapted});
+        if (func) {
+            auto ret_type = func->has_return_type() ? func->get_return_type() : nullptr;
+            if (is_valid_spaceship_return_type(ret_type)) {
+                candidates.push_back({func, cmp_synthesis::SPACESHIP_SWAP, false, w, 2, adapted, nullptr, nullptr});
+            } else if (auto zero_match = try_resolve_spaceship_zero_comparison(
+                           expr, ret_type, swap_of_cmp_op(wanted), right_expr)) {
+                candidates.push_back({func, cmp_synthesis::SPACESHIP_SWAP, false, w, 2, adapted,
+                                       zero_match->first, zero_match->second});
+            }
+        }
     }
 
     // Tier 3: NEGATE — source = negate_of(wanted), receiver = left, arg = right.
@@ -415,6 +479,8 @@ type_reference_resolver::resolve_comparison_with_fallback(
     result.synthesis = best->synthesis;
     result.composite_negate_terms = best->negate_terms;
     result.adapted_arg = best->adapted_arg;
+    result.spaceship_zero_func = best->spaceship_zero_func;
+    result.spaceship_zero_arg_type = best->spaceship_zero_arg_type;
     return result;
 }
 

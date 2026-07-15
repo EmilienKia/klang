@@ -796,6 +796,20 @@ protected:
      */
     std::optional<virtual_dispatch_info> _composite_dispatch2;
 
+    /**
+     * Phase 2 (aggregate `operator <=>` return type): only set for SPACESHIP/SPACESHIP_SWAP
+     * synthesis when the spaceship source operator's return type is an aggregate rather
+     * than a primitive int/float. Names the resolved, bool-returning comparison operator
+     * used to compare that aggregate result against the integer literal 0. Null means the
+     * spaceship source's return type is a primitive int/float, and the ordinary
+     * sign-test-against-zero codegen (ICmp/FCmp) applies instead.
+     */
+    std::shared_ptr<function> _spaceship_zero_func;
+    /** Dispatch info for `_spaceship_zero_func` (only meaningful if it is virtual). */
+    std::optional<virtual_dispatch_info> _spaceship_zero_dispatch;
+    /** Numeric primitive type used to build the integer-zero argument for `_spaceship_zero_func`. */
+    std::shared_ptr<type> _spaceship_zero_arg_type;
+
 public:
     void accept(model_visitor &visitor) override;
     std::shared_ptr<expression> clone() const override = 0;
@@ -813,6 +827,18 @@ public:
     bool has_composite_dispatch_info() const { return _composite_dispatch2.has_value(); }
     const virtual_dispatch_info& get_composite_dispatch_info() const { return _composite_dispatch2.value(); }
     void set_composite_dispatch_info(virtual_dispatch_info info) { _composite_dispatch2 = std::move(info); }
+
+    /** Phase 2: resolved bool-returning comparison of the (aggregate) spaceship result vs 0. */
+    bool has_spaceship_zero_func() const { return _spaceship_zero_func != nullptr; }
+    std::shared_ptr<function> get_spaceship_zero_func() const { return _spaceship_zero_func; }
+    void set_spaceship_zero_func(std::shared_ptr<function> f) { _spaceship_zero_func = std::move(f); }
+
+    bool has_spaceship_zero_dispatch_info() const { return _spaceship_zero_dispatch.has_value(); }
+    const virtual_dispatch_info& get_spaceship_zero_dispatch_info() const { return _spaceship_zero_dispatch.value(); }
+    void set_spaceship_zero_dispatch_info(virtual_dispatch_info info) { _spaceship_zero_dispatch = std::move(info); }
+
+    std::shared_ptr<type> get_spaceship_zero_arg_type() const { return _spaceship_zero_arg_type; }
+    void set_spaceship_zero_arg_type(std::shared_ptr<type> t) { _spaceship_zero_arg_type = std::move(t); }
 };
 
 class equal_expression : public comparison_expression {

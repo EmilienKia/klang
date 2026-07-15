@@ -627,7 +627,48 @@ protected:
          * (composite candidates require an exact type match on both sides, see cmp_synthesis).
          */
         std::shared_ptr<expression> adapted_arg;
+        /**
+         * Phase 2 (aggregate `operator <=>` return type): only meaningful for
+         * SPACESHIP/SPACESHIP_SWAP when `func`'s return type is an aggregate rather than a
+         * primitive int/float. Names the resolved, bool-returning comparison operator used
+         * to compare that aggregate result against the integer literal 0 (DIRECT match only
+         * — see try_resolve_spaceship_zero_comparison()). Null => `func`'s return type is a
+         * primitive int/float and the ordinary sign-test-against-zero codegen applies.
+         */
+        std::shared_ptr<function> spaceship_zero_func;
+        /** Numeric primitive type used for the integer-zero argument of `spaceship_zero_func`. */
+        std::shared_ptr<type> spaceship_zero_arg_type;
     };
+
+    /**
+     * Phase 2 (aggregate `operator <=>` return type): when a resolved `operator <=>`
+     * returns an aggregate rather than a primitive signed int/float, attempts to resolve a
+     * direct, bool-returning comparison of that aggregate against the integer literal `0`,
+     * probing `wanted_op_name` (the caller passes the already swap-adjusted name for
+     * SPACESHIP_SWAP). This is intentionally restricted to a single DIRECT match: no
+     * NEGATE/SWAP/SWAP_NEGATE/COMPOSITE synthesis and no recursion into a nested
+     * `operator <=>` declared on the result type itself — see
+     * doc/spec/language/functions/operators.md §9 for the documented scope of this
+     * restriction. The candidate's parameter (once adapted) must be a non-reference numeric
+     * primitive (int/long/short/byte/float/double), so the codegen side can build a plain
+     * zero constant of that type.
+     *
+     * @param expr           The outer comparison expression (used for diagnostics only).
+     * @param result_type    The (non-primitive) declared return type of the resolved
+     *                        `operator <=>`.
+     * @param wanted_op_name Canonical comparison operator name to probe (e.g. "__operator_lt_").
+     * @param scope_host     An already-resolved expression whose parent chain provides the
+     *                        enclosing scope for non-member operator lookup. Borrowed only
+     *                        for scope traversal — its own type/value is never used.
+     * @return {func, adapted_zero_arg_type} if a viable bool-returning candidate is found,
+     *         else std::nullopt.
+     */
+    std::optional<std::pair<std::shared_ptr<function>, std::shared_ptr<type>>>
+    try_resolve_spaceship_zero_comparison(
+        const comparison_expression& expr,
+        const std::shared_ptr<type>& result_type,
+        const std::string& wanted_op_name,
+        const std::shared_ptr<expression>& scope_host);
 
     /**
      * Resolve the comparison operator actually written in `expr` (==, !=, <, >, <=, >=)

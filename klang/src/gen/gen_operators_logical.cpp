@@ -593,6 +593,24 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
                                 expr.set_composite_dispatch_info(std::move(di2));
                             }
                         }
+
+                        // Phase 2: if the spaceship source's return type is an aggregate, the
+                        // resolved "aggregate-result vs 0" comparison also needs its own
+                        // dispatch info, since it is called on the (aggregate) spaceship
+                        // result — a receiver distinct from either original operand.
+                        if (result->spaceship_zero_func) {
+                            expr.set_spaceship_zero_func(result->spaceship_zero_func);
+                            expr.set_spaceship_zero_arg_type(result->spaceship_zero_arg_type);
+                            if (result->spaceship_zero_func->is_member()) {
+                                auto zdi = compute_operator_dispatch_info(
+                                    result->spaceship_zero_func, op_func->get_return_type());
+                                expr.set_spaceship_zero_dispatch_info(std::move(zdi));
+                            } else {
+                                virtual_dispatch_info zdi;
+                                zdi.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                                expr.set_spaceship_zero_dispatch_info(std::move(zdi));
+                            }
+                        }
                         return;
                     }
                 }
@@ -711,6 +729,14 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
  * Evaluate a single call to a resolved comparison "source" operator function, given
  * already-evaluated LLVM values for its receiver ('this', or first non-member arg) and
  * argument (or second non-member arg). See generators.hpp for the full contract.
+ *
+ * Historically comparison source operators always returned bool (never sret). Phase 2
+ * (aggregate `operator <=>` return type) needs this helper to also support calling the
+ * spaceship operator itself when it returns an aggregate (sret ABI) — see
+ * generate_binary_operator_overload() in gen_operators_overload.cpp for the reference sret
+ * pattern this mirrors (entry-block alloca, prepended sret arg, destructor-cleanup tracking).
+ * When sret is used, the returned llvm::Value* is the sret destination pointer (not a call
+ * result), exactly like every other sret-returning expression in this codebase.
  */
 llvm::Value* implementation_generator::call_comparison_source_operator(
     const std::shared_ptr<function>& op_func,
@@ -728,22 +754,55 @@ llvm::Value* implementation_generator::call_comparison_source_operator(
 
     std::vector<llvm::Value*> args = { receiver_or_first_val, arg_or_second_val };
 
-    // Comparison source operators always return bool, which never uses sret ABI, so this
-    // helper is much simpler than generate_binary_operator_overload (no sret bookkeeping).
+    bool op_needs_sret = op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+
     auto build_fn_type = [&]() -> llvm::FunctionType* {
         if (llvm_func) return llvm_func->getFunctionType();
         std::vector<llvm::Type*> param_types;
+        if (op_needs_sret)
+            param_types.push_back(llvm::PointerType::get(**_context, 0));
         if (op_func->is_member() && !op_func->is_static() && op_func->get_this_parameter())
             param_types.push_back(_context->get_llvm_type(op_func->get_this_parameter()->get_type()));
         for (const auto& param : op_func->parameters())
             param_types.push_back(_context->get_llvm_type(param->get_type()));
-        llvm::Type* ret_type = _context->get_llvm_type(op_func->get_return_type());
+        llvm::Type* ret_type = op_needs_sret
+            ? llvm::Type::getVoidTy(**_context)
+            : _context->get_llvm_type(op_func->get_return_type());
         return llvm::FunctionType::get(ret_type, param_types, false);
+    };
+
+    // Allocate an entry-block sret temporary, prepend it to `args`, and register it for
+    // destructor cleanup at end-of-statement (see emit_expression_temporaries_cleanup()).
+    // Returns the alloca pointer, which becomes this call's "result" value.
+    auto prepare_sret = [&]() -> llvm::AllocaInst* {
+        auto ret_type_nc = type::remove_const(op_func->get_return_type());
+        llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
+        llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+        llvm::AllocaInst* sret_dest = entry_builder.CreateAlloca(llvm_ret, nullptr, "cmp_ss_sret_tmp");
+        args.insert(args.begin(), sret_dest);
+        auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
+        if (ret_st && ret_st->get_struct()) {
+            auto dtor = ret_st->get_struct()->get_destructor();
+            if (dtor) {
+                auto dtor_fn = dtor->shared_as<k::model::function>();
+                auto dtor_it = _context->_functions.find(dtor_fn);
+                if (dtor_it != _context->_functions.end())
+                    _expression_temporaries.push_back({sret_dest, dtor_it->second, nullptr});
+            }
+        }
+        return sret_dest;
     };
 
     if (dispatch_info.kind == virtual_dispatch_info::dispatch_kind::VTABLE) {
         llvm::FunctionType* fn_type = build_fn_type();
         if (dispatch_info.dispatch_class) {
+            if (op_needs_sret) {
+                auto* sret_dest = prepare_sret();
+                emit_virtual_dispatch_call(*_builder, *dispatch_info.dispatch_class, args[1],
+                    dispatch_info.slot_index, fn_type, args, _context, "cmp_vcall");
+                return sret_dest;
+            }
             auto* result = emit_virtual_dispatch_call(*_builder, *dispatch_info.dispatch_class, args[0],
                 dispatch_info.slot_index, fn_type, args, _context, "cmp_vcall");
             if (result) return result;
@@ -755,7 +814,9 @@ llvm::Value* implementation_generator::call_comparison_source_operator(
             if (struct_llvm_type) {
                 llvm::LLVMContext& llvm_ctx = **_context;
                 llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
-                llvm::Value* vptr_addr = _builder->CreateStructGEP(struct_llvm_type, args[0], 0, "cmp_imp_vptr_addr");
+                llvm::Value* this_val = args[0]; // capture before prepare_sret() shifts indices
+                llvm::AllocaInst* sret_dest = op_needs_sret ? prepare_sret() : nullptr;
+                llvm::Value* vptr_addr = _builder->CreateStructGEP(struct_llvm_type, this_val, 0, "cmp_imp_vptr_addr");
                 llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "cmp_imp_vptr");
                 const uint64_t ptr_size = 8;
                 llvm::Value* slot_offset = llvm::ConstantInt::get(
@@ -763,7 +824,8 @@ llvm::Value* implementation_generator::call_comparison_source_operator(
                 llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                     llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "cmp_imp_vtbl_slot");
                 llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "cmp_imp_fn_ptr");
-                return _builder->CreateCall(fn_type, fn_ptr, args, "cmp_imp_vcall");
+                auto* call = _builder->CreateCall(fn_type, fn_ptr, args, "cmp_imp_vcall");
+                return sret_dest ? static_cast<llvm::Value*>(sret_dest) : static_cast<llvm::Value*>(call);
             }
         }
     }
@@ -773,7 +835,29 @@ llvm::Value* implementation_generator::call_comparison_source_operator(
             "Internal error: comparison source operator '{}' has no LLVM definition and is not dispatched virtually",
             {op_func->get_short_name()});
     }
+    if (op_needs_sret) {
+        auto* sret_dest = prepare_sret();
+        _builder->CreateCall(llvm_func, args, "");
+        return sret_dest;
+    }
     return _builder->CreateCall(llvm_func, args, "cmp_call");
+}
+
+/**
+ * Phase 2 (aggregate `operator <=>` return type): see declaration in generators.hpp.
+ */
+llvm::Value* implementation_generator::generate_spaceship_zero_comparison(comparison_expression& expr, llvm::Value* ss_result) {
+    auto zero_func = expr.get_spaceship_zero_func();
+    auto arg_type = expr.get_spaceship_zero_arg_type();
+    llvm::Type* llvm_arg_type = _context->get_llvm_type(arg_type);
+
+    auto prim_arg = std::dynamic_pointer_cast<primitive_type>(type::remove_const(arg_type));
+    llvm::Value* zero_const = (prim_arg && prim_arg->is_float())
+        ? static_cast<llvm::Value*>(llvm::ConstantFP::get(llvm_arg_type, 0.0))
+        : static_cast<llvm::Value*>(llvm::ConstantInt::get(llvm_arg_type, 0));
+
+    return call_comparison_source_operator(
+        zero_func, expr.get_spaceship_zero_dispatch_info(), ss_result, zero_const);
 }
 
 /**
@@ -827,8 +911,12 @@ bool implementation_generator::generate_comparison_operator(comparison_expressio
             // (left <=> right) OP 0, where OP is the expr's own wanted comparison.
             llvm::Value* ss = call_comparison_source_operator(
                 op_func, expr.get_operator_dispatch_info(), left_val, right_val);
-            std::string wanted_op = get_binary_operator_name(expr);
-            result = compare_spaceship_result_to_zero(ss, wanted_op);
+            if (expr.has_spaceship_zero_func()) {
+                result = generate_spaceship_zero_comparison(expr, ss);
+            } else {
+                std::string wanted_op = get_binary_operator_name(expr);
+                result = compare_spaceship_result_to_zero(ss, wanted_op);
+            }
             break;
         }
         case cmp_synthesis::SPACESHIP_SWAP: {
@@ -836,8 +924,12 @@ bool implementation_generator::generate_comparison_operator(comparison_expressio
             // (the spaceship source is declared on the right operand's aggregate).
             llvm::Value* ss = call_comparison_source_operator(
                 op_func, expr.get_operator_dispatch_info(), right_val, left_val);
-            std::string wanted_op = swap_of_cmp_op(get_binary_operator_name(expr));
-            result = compare_spaceship_result_to_zero(ss, wanted_op);
+            if (expr.has_spaceship_zero_func()) {
+                result = generate_spaceship_zero_comparison(expr, ss);
+            } else {
+                std::string wanted_op = swap_of_cmp_op(get_binary_operator_name(expr));
+                result = compare_spaceship_result_to_zero(ss, wanted_op);
+            }
             break;
         }
         case cmp_synthesis::COMPOSITE_AND:

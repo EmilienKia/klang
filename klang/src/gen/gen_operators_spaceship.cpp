@@ -61,9 +61,10 @@ void type_reference_resolver::visit_spaceship_expression(spaceship_expression& e
                     if (adapted_right && adapted_right != right) {
                         expr.assign_right(adapted_right);
                     }
-                    if (!op_func->has_return_type() || !is_valid_spaceship_return_type(op_func->get_return_type())) {
+                    if (!op_func->has_return_type() || !is_spaceship_return_shape_ok(op_func->get_return_type())) {
                         throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SPACESHIP_BAD_RETURN_TYPE), expr.first_lexeme(),
-                            "'operator <=>' must return a signed integer or floating-point primitive type; "
+                            "'operator <=>' must return a signed integer or floating-point primitive type, "
+                            "or an aggregate (struct/class) type comparable to the integer literal 0; "
                             "'{}' declares a return type of '{}'",
                             {agg->get_short_name(),
                              op_func->has_return_type() ? op_func->get_return_type()->to_string() : "void"});

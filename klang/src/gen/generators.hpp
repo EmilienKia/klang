@@ -565,6 +565,19 @@ public:
     llvm::Value* compare_spaceship_result_to_zero(llvm::Value* spaceship_result, const std::string& wanted_op_name);
 
     /**
+     * Phase 2 (aggregate `operator <=>` return type): compare an aggregate spaceship
+     * result against the integer literal `0` using the resolved bool-returning comparison
+     * operator stored on `expr` (comparison_expression::get_spaceship_zero_func()), instead
+     * of the primitive ICmp/FCmp path used by compare_spaceship_result_to_zero(). Builds a
+     * plain LLVM integer/float zero constant of comparison_expression::get_spaceship_zero_arg_type()
+     * and calls the resolved operator via call_comparison_source_operator().
+     * @param expr      The comparison expression node (must have has_spaceship_zero_func()).
+     * @param ss_result The (aggregate, sret-allocated) LLVM value produced by the spaceship call.
+     * @return The i1 LLVM value produced by the resolved comparison operator.
+     */
+    llvm::Value* generate_spaceship_zero_comparison(comparison_expression& expr, llvm::Value* ss_result);
+
+    /**
      * Generate a function call for a unary operator overload.
      * Returns true if the overload was handled (and _value is set), false if not an overload.
      */

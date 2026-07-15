@@ -119,6 +119,22 @@ bool is_valid_spaceship_return_type(const std::shared_ptr<type>& t) {
     return pt->is_integer() && pt->is_signed();
 }
 
+/**
+ * True if `t` is an acceptable *declared* return type for `operator <=>`: either a signed
+ * integer/floating-point primitive (Phase 1, checked via is_valid_spaceship_return_type),
+ * or an aggregate (struct/class/interface) type (Phase 2). Aggregate return types are not
+ * further validated here — whether such a type is actually usable as a fallback-synthesis
+ * source (i.e. whether it is itself comparable to the integer literal 0) is only checked
+ * on demand, at the point a specific comparison operator (==, !=, <, >, <=, >=) actually
+ * needs to be synthesized from it; see try_resolve_spaceship_zero_comparison() in
+ * gen_operators_overload.cpp and doc/spec/language/functions/operators.md §9.
+ */
+bool is_spaceship_return_shape_ok(const std::shared_ptr<type>& t) {
+    if (is_valid_spaceship_return_type(t)) return true;
+    if (!t) return false;
+    return type::is_struct(type::remove_const(t));
+}
+
 } // anonymous namespace
 
 namespace {
