@@ -96,6 +96,7 @@ struct Vec2 {
 | Shift | `<<` `>>` |
 | Logical | `&&` `\|\|` |
 | Comparison | `==` `!=` `<` `>` `<=` `>=` |
+| Three-way comparison | `<=>` |
 | Assignment | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` |
 
 A member binary operator takes **one explicit parameter** (the right-hand operand); `this` is the left-hand operand.
@@ -477,17 +478,51 @@ test() {
 
 For primitive numeric types, all six comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) are implicitly available. For aggregate types (struct, class, interface), each comparison operator must normally be declared explicitly — but declaring all six is often tedious or unnecessary. The compiler therefore applies a **fallback synthesis rule**: if the *exact* operator used in an expression is not declared, the compiler tries to synthesize it from another declared comparison operator using boolean algebra, before reporting a compile error.
 
+### The three-way comparison operator (`<=>`)
+
+`operator <=>` (the *spaceship* operator) is a binary comparison operator, declarable as a member (optionally `const`, `virtual`, `static`), or non-member operator, optionally as a function template — following exactly the same declaration rules as the other comparison operators (see [§4](#4-member-operator-functions) and [§5](#5-non-member-operator-functions)).
+
+Unlike `==`, `!=`, `<`, `>`, `<=`, `>=`, whose result is `bool`, `operator <=>` returns a **signed integer or floating-point primitive type** (`int`, `long`, `short`, `byte`, `float`, or `double`). Its result encodes a three-way ordering:
+
+- negative — the left operand (or `this`) is *less than* the right operand;
+- zero — the two operands are *equal*;
+- positive — the left operand (or `this`) is *greater than* the right operand.
+
+(For floating-point results, infinities and NaN have no defined ordering meaning — they are not specially handled.)
+
+Built-in numeric primitive types also support `<=>` directly, with no declaration required: `a <=> b` for two primitives of the same type evaluates to `int`, computed as `(a > b) - (a < b)`.
+
+`operator <=>` can be used directly in an expression, exactly like the other comparison operators:
+
+```k
+struct Pt {
+    x: int;
+    Pt(ax: int) : x(ax) {}
+    operator <=>(other: Pt&) : int { return x - other.x; }
+}
+
+cmp(a: Pt&, b: Pt&) : int {
+    return a <=> b;   // direct use — calls Pt::operator<=> directly
+}
+```
+
+`<=>` sits in the expression grammar between the relational operators and the shift operators (`a < b <=> c` parses as `a < (b <=> c)`); see the grammar's `SpaceshipExpr` rule.
+
 ### Resolution order
 
 For an expression `a OP b` where `a` (or `b`) is an aggregate type, the compiler searches for a way to compute `OP` in the following order, from least to most complex:
 
 1. **DIRECT** — the exact operator `OP` is declared. Used as-is (this is the pre-existing behaviour described in [§8](#8-overload-resolution)).
-2. **NEGATE** — the logical negation of `OP` is declared; synthesize `OP(a, b) = !negate_of(OP)(a, b)`.
-3. **SWAP** — `OP` is declared with operands reversed; synthesize `OP(a, b) = swap_of(OP)(b, a)`.
-4. **SWAP_NEGATE** — the negation of the swapped operator is declared; synthesize `OP(a, b) = !swap_of(negate_of(OP))(b, a)` (equivalently, `!negate_of(swap_of(OP))(b, a)`).
-5. **COMPOSITE** (only for `==` / `!=`) — a single declared relational operator (`<`, `>`, `<=`, or `>=`) is called *twice*, once with each operand order, and the two boolean results are combined with a logical AND (for `==`) or OR (for `!=`).
+2. **SPACESHIP** — `operator <=>` is declared on the left operand's (or `this`'s) aggregate type; synthesize `OP(a, b) = compare(a <=> b, OP)` (i.e. compare the three-way result against zero the way `OP` requires — e.g. `<` succeeds when the result is negative).
+3. **SPACESHIP_SWAP** — no usable `<=>` is declared on the left operand's type, but one is declared on the right operand's aggregate type; synthesize `OP(a, b) = compare(b <=> a, swap_of(OP))` (operands are swapped for the `<=>` call, and the wanted comparison is swapped accordingly — e.g. `a < b` becomes "is `b <=> a` positive").
+4. **NEGATE** — the logical negation of `OP` is declared; synthesize `OP(a, b) = !negate_of(OP)(a, b)`.
+5. **SWAP** — `OP` is declared with operands reversed; synthesize `OP(a, b) = swap_of(OP)(b, a)`.
+6. **SWAP_NEGATE** — the negation of the swapped operator is declared; synthesize `OP(a, b) = !swap_of(negate_of(OP))(b, a)` (equivalently, `!negate_of(swap_of(OP))(b, a)`).
+7. **COMPOSITE** (only for `==` / `!=`) — a single declared relational operator (`<`, `>`, `<=`, or `>=`) is called *twice*, once with each operand order, and the two boolean results are combined with a logical AND (for `==`) or OR (for `!=`).
 
 If none of these rules produces a match, compilation fails with a clear error.
+
+Because SPACESHIP and SPACESHIP_SWAP sit *above* NEGATE/SWAP/SWAP_NEGATE/COMPOSITE in this list, a declared `<=>` is preferred as a synthesis source over the older boolean-algebra tiers whenever both are viable at the same cast weight (see [Priority](#priority-type-relaxation-beats-synthesis-complexity) below) — but an exactly-declared `OP` (tier DIRECT) always wins over synthesizing from `<=>`. In short: *exact operator > spaceship > boolean-algebra fallback*.
 
 ### Derivation table
 
@@ -535,7 +570,7 @@ test() : bool {
 
 ### Return-type guard
 
-A synthesized source operator must return `bool`: negating or combining a non-`bool` result would not be meaningful. `DIRECT` matches keep the historical behaviour of accepting any return type declared for the exact operator (see [§3](#3-overloadable-operators)); only tiers 2–5 (NEGATE, SWAP, SWAP_NEGATE, COMPOSITE) require the source operator to return `bool`.
+A synthesized source operator must return `bool`: negating or combining a non-`bool` result would not be meaningful. `DIRECT` matches keep the historical behaviour of accepting any return type declared for the exact operator (see [§3](#3-overloadable-operators)); tiers NEGATE, SWAP, SWAP_NEGATE, and COMPOSITE require the source operator to return `bool`. The SPACESHIP and SPACESHIP_SWAP tiers instead require the source `operator <=>` to return a valid three-way-comparison type (a signed integer or floating-point primitive) — see [above](#the-three-way-comparison-operator).
 
 ### Const-correctness and inheritance
 
@@ -564,7 +599,7 @@ test() : bool {
 
 ### No match found
 
-If no DIRECT, NEGATE, SWAP, SWAP_NEGATE, or COMPOSITE candidate is viable — e.g. the aggregate declares no comparison operator at all — the compiler reports a compile-time error at the comparison expression.
+If no DIRECT, SPACESHIP, SPACESHIP_SWAP, NEGATE, SWAP, SWAP_NEGATE, or COMPOSITE candidate is viable — e.g. the aggregate declares no comparison operator (nor `<=>`) at all — the compiler reports a compile-time error at the comparison expression.
 
 ---
 

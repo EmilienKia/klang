@@ -421,6 +421,10 @@ void default_model_visitor::visit_greater_equal_expression(greater_equal_express
     visit_comparison_expression(expr);
 }
 
+void default_model_visitor::visit_spaceship_expression(spaceship_expression &expr) {
+    visit_binary_expression(expr);
+}
+
 void default_model_visitor::visit_subscript_expression(subscript_expression& expr) {
     visit_binary_expression(expr);
 }

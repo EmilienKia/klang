@@ -286,7 +286,7 @@ ast::expr_ptr parser::parse_relational_expr()
 {
     ast::expr_ptr left_expr;
 
-    if(ast::expr_ptr first = parse_shifting_expr()) {
+    if(ast::expr_ptr first = parse_spaceship_expr()) {
         left_expr = first;
     } else {
         return {};
@@ -303,11 +303,38 @@ ast::expr_ptr parser::parse_relational_expr()
             return left_expr;
         }
 
-        ast::expr_ptr right_expr = parse_shifting_expr();
+        ast::expr_ptr right_expr = parse_spaceship_expr();
         if(right_expr) {
             left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
         } else {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_RELATIONAL_EXPECT_SUBEXPR), _lexer.pick_current(), "Relational expression is expecting a sub expression after the relational '<', '>', '<=' or '>=' operators");
+        }
+    }
+
+}
+
+ast::expr_ptr parser::parse_spaceship_expr()
+{
+    ast::expr_ptr left_expr;
+
+    if(ast::expr_ptr first = parse_shifting_expr()) {
+        left_expr = first;
+    } else {
+        return {};
+    }
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::CHEVRON_OPEN_EQUAL_CHEVRON_CLOSE) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_shifting_expr();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_SPACESHIP_EXPECT_SUBEXPR), _lexer.pick_current(), "Spaceship expression is expecting a sub expression after the '<=>' operator");
         }
     }
 

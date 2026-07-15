@@ -809,6 +809,13 @@ public:
         dump_expr_type(expr);
     }
 
+    // --- Spaceship -------------------------------------------------------------
+
+    void visit_spaceship_expression(spaceship_expression& expr) override {
+        expr.left()->accept(*this);  _stm << " <=> "; expr.right()->accept(*this);
+        dump_expr_type(expr);
+    }
+
     // --- Subscript -----------------------------------------------------------
 
     void visit_subscript_expression(subscript_expression& expr) override {

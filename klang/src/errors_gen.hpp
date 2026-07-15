@@ -67,6 +67,9 @@ enum class operator_diag : unsigned int {
     ERR_MUL_ASSIGN_INCOMPATIBLE                   = 0x016F,
     ERR_SUB_ASSIGN_INCOMPATIBLE                   = 0x0171,
     ERR_DIV_ASSIGN_INCOMPATIBLE                   = 0x0172,
+    ERR_SPACESHIP_OVERLOAD_NOT_FOUND               = 0x0173,
+    ERR_SPACESHIP_BAD_RETURN_TYPE                  = 0x0174,
+    ERR_SPACESHIP_NOT_PRIMITIVE                    = 0x0175,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -202,6 +205,8 @@ enum class codegen_diag : unsigned int {
     INTERNAL_ERR_F054                             = 0xF054,
     INTERNAL_ERR_F055                             = 0xF055,
     INTERNAL_ERR_F056                             = 0xF056,
+    INTERNAL_ERR_F057                             = 0xF057,
+    INTERNAL_ERR_F058                             = 0xF058,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

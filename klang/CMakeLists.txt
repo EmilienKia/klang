@@ -60,6 +60,7 @@ add_library(klang
         src/gen/gen_operators_assign.cpp
         src/gen/gen_operators_unary.cpp
         src/gen/gen_operators_logical.cpp
+        src/gen/gen_operators_spaceship.cpp
         src/gen/gen_statements.cpp
         src/gen/gen_unit.cpp
         src/gen/gen_struct.cpp
@@ -202,6 +203,7 @@ klang_gen_test(klang-tests-gen-arithmetic 180
         tests/test-gen-arithmetic.cpp
         tests/test-gen-operator-overload.cpp
         tests/test-gen-comparison-fallback.cpp
+        tests/test-gen-spaceship.cpp
         tests/test-gen-assign-operator.cpp
         tests/test-gen-cast.cpp
         tests/test-gen-cast-indirection.cpp

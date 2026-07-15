@@ -424,6 +424,8 @@ protected:
 
     void visit_comparison_expression(comparison_expression&) override;
 
+    void visit_spaceship_expression(spaceship_expression&) override;
+
     void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression &) override;
     void visit_constructor_invocation_expression(constructor_invocation_expression &) override;

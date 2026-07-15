@@ -553,6 +553,18 @@ public:
         llvm::Value* arg_or_second_val);
 
     /**
+     * Compare a spaceship ("<=>") source operator's signed-integer or floating-point
+     * result against the integer literal `0`, using the semantics of the wanted
+     * comparison operator (canonical name, e.g. k::op::OP_LT). Used by
+     * generate_comparison_operator() for the SPACESHIP/SPACESHIP_SWAP synthesis kinds.
+     * @param spaceship_result The i32/float LLVM value produced by the spaceship call.
+     * @param wanted_op_name    Canonical name of the comparison operator to test for
+     *                          (k::op::OP_EQ, OP_NE, OP_LT, OP_GT, OP_LE, OP_GE).
+     * @return The i1 LLVM value produced by the zero-test.
+     */
+    llvm::Value* compare_spaceship_result_to_zero(llvm::Value* spaceship_result, const std::string& wanted_op_name);
+
+    /**
      * Generate a function call for a unary operator overload.
      * Returns true if the overload was handled (and _value is set), false if not an overload.
      */
@@ -614,6 +626,8 @@ public:
     void visit_greater_expression(greater_expression&) override;
     void visit_lesser_equal_expression(lesser_equal_expression&) override;
     void visit_greater_equal_expression(greater_equal_expression&) override;
+
+    void visit_spaceship_expression(spaceship_expression&) override;
 
     void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression&) override;

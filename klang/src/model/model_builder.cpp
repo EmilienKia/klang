@@ -2080,6 +2080,9 @@ namespace k::model {
             case lex::operator_::CHEVRON_CLOSE_EQUAL:
                 _expr = model::greater_equal_expression::make_shared(lexpr, rexpr);
                 break;
+            case lex::operator_::CHEVRON_OPEN_EQUAL_CHEVRON_CLOSE:
+                _expr = model::spaceship_expression::make_shared(lexpr, rexpr);
+                break;
             default: // TODO other operations
                 throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_UNSUPPORTED_BINARY_OP), expr.op, "Binary operator '{}' is not supported", {std::string{expr.op.content}});
                 break;

@@ -1493,6 +1493,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 case lex::operator_::CHEVRON_CLOSE: canonical_name = "__operator_gt_"; break;
                 case lex::operator_::CHEVRON_OPEN_EQUAL: canonical_name = "__operator_le_"; break;
                 case lex::operator_::CHEVRON_CLOSE_EQUAL: canonical_name = "__operator_ge_"; break;
+                case lex::operator_::CHEVRON_OPEN_EQUAL_CHEVRON_CLOSE: canonical_name = "__operator_ss_"; break;
                 case lex::operator_::EQUAL: canonical_name = "__operator_aS_"; break;
                 case lex::operator_::PLUS_EQUAL: canonical_name = "__operator_pL_"; break;
                 case lex::operator_::MINUS_EQUAL: canonical_name = "__operator_mI_"; break;

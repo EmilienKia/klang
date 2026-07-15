@@ -325,5 +325,12 @@ void greater_equal_expression::accept(model_visitor &visitor) {
     visitor.visit_greater_equal_expression(*this);
 }
 
+//
+// Spaceship (three-way comparison) expression
+//
+void spaceship_expression::accept(model_visitor &visitor) {
+    visitor.visit_spaceship_expression(*this);
+}
+
 
 } // namespace k::model

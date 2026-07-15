@@ -82,6 +82,48 @@ std::string encode_type_for_cast_operator(const std::shared_ptr<type>& t) {
 namespace {
 
 /**
+ * Swap pairing used by comparison-operator fallback synthesis (and by direct spaceship-
+ * fallback codegen): the operator obtained by reversing operand order.
+ * == <-> ==, != <-> !=, < <-> >, <= <-> >=. Returns empty string for non-comparison
+ * operator names. Shared between gen_operators_overload.cpp (tier resolution) and
+ * gen_operators_logical.cpp (SPACESHIP_SWAP codegen).
+ */
+std::string swap_of_cmp_op(const std::string& op) {
+    if (op == k::op::OP_EQ) return k::op::OP_EQ;
+    if (op == k::op::OP_NE) return k::op::OP_NE;
+    if (op == k::op::OP_LT) return k::op::OP_GT;
+    if (op == k::op::OP_GT) return k::op::OP_LT;
+    if (op == k::op::OP_LE) return k::op::OP_GE;
+    if (op == k::op::OP_GE) return k::op::OP_LE;
+    return {};
+}
+
+} // anonymous namespace
+
+namespace {
+
+/**
+ * True if `t` (once const-stripped) is a signed integer or floating-point primitive —
+ * the only return types accepted for a declared `operator <=>` in Phase 1. Shared between
+ * the spaceship direct-use type resolution (gen_operators_spaceship.cpp) and the
+ * comparison-operator fallback synthesis (resolve_comparison_with_fallback, in
+ * gen_operators_overload.cpp) which probes `operator <=>` as a fallback source. See
+ * doc/spec/language/functions/operators.md, "Overloadable operators".
+ */
+bool is_valid_spaceship_return_type(const std::shared_ptr<type>& t) {
+    if (!t) return false;
+    auto rt = type::remove_const(t);
+    auto pt = std::dynamic_pointer_cast<primitive_type>(rt);
+    if (!pt) return false;
+    if (pt->is_float()) return true;
+    return pt->is_integer() && pt->is_signed();
+}
+
+} // anonymous namespace
+
+namespace {
+
+/**
  * Get the canonical operator function name for a binary expression.
  * Returns empty string if the expression type does not map to an overloadable operator.
  */
@@ -104,6 +146,7 @@ std::string get_binary_operator_name(const binary_expression& expr) {
     if (dynamic_cast<const greater_expression*>(&expr)) return "__operator_gt_";
     if (dynamic_cast<const lesser_equal_expression*>(&expr)) return "__operator_le_";
     if (dynamic_cast<const greater_equal_expression*>(&expr)) return "__operator_ge_";
+    if (dynamic_cast<const spaceship_expression*>(&expr)) return "__operator_ss_";
     if (dynamic_cast<const simple_assignation_expression*>(&expr)) return "__operator_aS_";
     if (dynamic_cast<const additition_assignation_expression*>(&expr)) return "__operator_pL_";
     if (dynamic_cast<const substraction_assignation_expression*>(&expr)) return "__operator_mI_";

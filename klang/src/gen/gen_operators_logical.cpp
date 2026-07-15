@@ -23,6 +23,7 @@
 #include "../parse/ast.hpp"
 
 #include "../errors.hpp"
+#include "gen_operators_helpers.hpp"
 
 namespace k::model::gen {
 
@@ -550,7 +551,8 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
                         // COMPOSITE_* never adapts (requires an exact type match, see
                         // cmp_synthesis docs), so result->adapted_arg is always null there.
                         bool receiver_is_right = (result->synthesis == cmp_synthesis::SWAP
-                                                || result->synthesis == cmp_synthesis::SWAP_NEGATE);
+                                                || result->synthesis == cmp_synthesis::SWAP_NEGATE
+                                                || result->synthesis == cmp_synthesis::SPACESHIP_SWAP);
                         if (result->adapted_arg) {
                             if (receiver_is_right) {
                                 if (result->adapted_arg != left) expr.assign_left(result->adapted_arg);
@@ -821,6 +823,23 @@ bool implementation_generator::generate_comparison_operator(comparison_expressio
             result = call_comparison_source_operator(op_func, expr.get_operator_dispatch_info(), right_val, left_val);
             result = _builder->CreateNot(result, "cmp_negate");
             break;
+        case cmp_synthesis::SPACESHIP: {
+            // (left <=> right) OP 0, where OP is the expr's own wanted comparison.
+            llvm::Value* ss = call_comparison_source_operator(
+                op_func, expr.get_operator_dispatch_info(), left_val, right_val);
+            std::string wanted_op = get_binary_operator_name(expr);
+            result = compare_spaceship_result_to_zero(ss, wanted_op);
+            break;
+        }
+        case cmp_synthesis::SPACESHIP_SWAP: {
+            // (right <=> left) OP' 0, where OP' is the swap of the expr's wanted comparison
+            // (the spaceship source is declared on the right operand's aggregate).
+            llvm::Value* ss = call_comparison_source_operator(
+                op_func, expr.get_operator_dispatch_info(), right_val, left_val);
+            std::string wanted_op = swap_of_cmp_op(get_binary_operator_name(expr));
+            result = compare_spaceship_result_to_zero(ss, wanted_op);
+            break;
+        }
         case cmp_synthesis::COMPOSITE_AND:
         case cmp_synthesis::COMPOSITE_OR: {
             llvm::Value* term1 = call_comparison_source_operator(

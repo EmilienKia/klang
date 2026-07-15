@@ -416,9 +416,14 @@ public:
     ast::expr_ptr parse_equality_expr();
 
     /**
-     * RelationalExpr = ShiftingExpr , { ( '<' | '>' | '<=' | '>=' ) , ShiftingExpr } ;
+     * RelationalExpr = SpaceshipExpr , { ( '<' | '>' | '<=' | '>=' ) , SpaceshipExpr } ;
      */
     ast::expr_ptr parse_relational_expr();
+
+    /**
+     * SpaceshipExpr = ShiftingExpr , { '<=>' , ShiftingExpr } ;
+     */
+    ast::expr_ptr parse_spaceship_expr();
 
     /**
      * ShiftingExpr = AdditiveExpr , { ( '<<' | '>>' ) , AdditiveExpr } ;

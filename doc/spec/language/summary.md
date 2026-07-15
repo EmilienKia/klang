@@ -50,7 +50,7 @@
 - **Tokens:** identifiers, keywords, literals, punctuators, operators.
 - **Identifiers:** sequence of letters (`A-Z`, `a-z`, `_`) and digits (`0-9`), starting with a letter. Identifiers composed solely of `_` are reserved. Must not be a keyword.
 - **Punctuators:** `(` `)` `{` `}` `[` `]` `;` `,` `::` `...` `@`
-- **Operators:** `.` `->` `.*` `->*` `?` `:` `!` `~` `#` `=` `+` `-` `*` `/` `&` `|` `?` `%` `<<` `>>` `+=` `-=` `*=` `/=` `&=` `|=` `^=` `%=` `<<=` `>>=` `==` `!=` `<` `>` `<=` `>=` `&&` `||` `++` `--` `**`
+- **Operators:** `.` `->` `.*` `->*` `?` `:` `!` `~` `#` `=` `+` `-` `*` `/` `&` `|` `?` `%` `<<` `>>` `+=` `-=` `*=` `/=` `&=` `|=` `^=` `%=` `<<=` `>>=` `==` `!=` `<` `>` `<=` `>=` `<=>` `&&` `||` `++` `--` `**`
 
 ---
 
@@ -427,15 +427,16 @@ An **unprefixed** literal defaults to `char[]` (UTF-32). When it is passed as a 
 | 4     | `*` `/` `%` | Left→Right |
 | 5     | `+` `-` | Left→Right |
 | 6     | `<<` `>>` | Left→Right |
-| 7     | `<` `>` `<=` `>=` | Left→Right |
-| 8     | `==` `!=` | Left→Right |
-| 9     | `&` (bitwise AND) | Left→Right |
-| 10    | `?` (bitwise XOR) | Left→Right |
-| 11    | `\|` (bitwise OR) | Left→Right |
-| 12    | `&&` | Left→Right |
-| 13    | `\|\|` | Left→Right |
-| 14    | `?:` (ternary) | Right→Left |
-| 15    | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` | Right→Left |
+| 7     | `<=>` | Left→Right |
+| 8     | `<` `>` `<=` `>=` | Left→Right |
+| 9     | `==` `!=` | Left→Right |
+| 10    | `&` (bitwise AND) | Left→Right |
+| 11    | `?` (bitwise XOR) | Left→Right |
+| 12    | `\|` (bitwise OR) | Left→Right |
+| 13    | `&&` | Left→Right |
+| 14    | `\|\|` | Left→Right |
+| 15    | `?:` (ternary) | Right→Left |
+| 16    | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` | Right→Left |
 
 ### 8.3 Unary Operators
 
@@ -461,6 +462,7 @@ An **unprefixed** literal defaults to `char[]` (UTF-32). When it is passed as a 
 - **Shifts**: `<<`, `>>`. Right shift is arithmetic (signed) or logical (unsigned).
 - **Comparisons**: `==`, `!=`, `<`, `>`, `<=`, `>=` → `bool`.
   - Address comparison for `T*`, `T+`, `T?`, `T!` (`==`/`!=` only). `T&` compares values.
+- **Three-way comparison**: `<=>` → signed integer or floating-point primitive (negative/zero/positive for less/equal/greater). Also overloadable on aggregates; used as a comparison-operator fallback source (see [operators.md](functions/operators.md#9-comparison-operator-fallback-synthesis)).
 - **Logical**: `&&`, `||` — short-circuit evaluation (and-then / or-else).
 - **Ternary**: `cond ? then : else`.
 
@@ -721,7 +723,7 @@ public compute() : int -> Base::impl;  // visibility change
 Declaration with `operator` + operator symbol.
 
 **Overloadable operators:**
-- Binary: `+` `-` `*` `/` `%` `&` `|` `?` `<<` `>>` `&&` `||` `==` `!=` `<` `>` `<=` `>=` `=` `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`
+- Binary: `+` `-` `*` `/` `%` `&` `|` `?` `<<` `>>` `&&` `||` `==` `!=` `<` `>` `<=` `>=` `<=>` `=` `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`
 - Unary: `+` `-` `~` `!` `++_` `--_` `_++` `_--`
 - Cast: `operator() : TargetType`
 
@@ -735,6 +737,7 @@ Rules:
 - Interfaces: abstract operators can be declared.
 - Exported in libraries (member and non-member).
 - `operator ++_` / `--_` = prefix. `operator _++` / `_--` = postfix.
+- `operator <=>` (three-way comparison): returns a signed integer or floating-point primitive (negative/zero/positive). Used as a fallback synthesis source for `==`/`!=`/`<`/`>`/`<=`/`>=` when the exact comparison operator isn't declared on the aggregate (see [operators.md §9](functions/operators.md#9-comparison-operator-fallback-synthesis)).
 - **Restrictions**: at least one aggregate operand, no new operators, no arity change, `[]` and `()` (call) are not overloadable.
 
 ### 10.8 Static Functions

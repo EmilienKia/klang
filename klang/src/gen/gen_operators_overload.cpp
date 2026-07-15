@@ -253,21 +253,6 @@ std::string negate_of_cmp_op(const std::string& op) {
     return {};
 }
 
-/**
- * Swap pairing used by comparison-operator fallback synthesis: the operator obtained by
- * reversing operand order. == <-> ==, != <-> !=, < <-> >, <= <-> >=.
- * Returns empty string for non-comparison operator names.
- */
-std::string swap_of_cmp_op(const std::string& op) {
-    if (op == k::op::OP_EQ) return k::op::OP_EQ;
-    if (op == k::op::OP_NE) return k::op::OP_NE;
-    if (op == k::op::OP_LT) return k::op::OP_GT;
-    if (op == k::op::OP_GT) return k::op::OP_LT;
-    if (op == k::op::OP_LE) return k::op::OP_GE;
-    if (op == k::op::OP_GE) return k::op::OP_LE;
-    return {};
-}
-
 /** True for strict relational operators (< and >), false for <=, >=, ==, !=. */
 bool is_strict_cmp_op(const std::string& op) {
     return op == k::op::OP_LT || op == k::op::OP_GT;
@@ -340,40 +325,59 @@ type_reference_resolver::resolve_comparison_with_fallback(
         if (func) candidates.push_back({func, cmp_synthesis::DIRECT, false, w, 0, adapted});
     }
 
-    // Tier 1: NEGATE — source = negate_of(wanted), receiver = left, arg = right.
+    // Tier 1: SPACESHIP — source = `operator <=>`, receiver = left, arg = right; wanted is
+    // synthesized as a sign test of the spaceship result against 0 (see cmp_synthesis docs).
+    {
+        auto [func, adapted, w] = resolve_named_binary_operator_overload(
+            expr, k::op::OP_SPACESHIP, left_agg, left_expr, right_expr, is_const_left);
+        if (func && is_valid_spaceship_return_type(func->has_return_type() ? func->get_return_type() : nullptr))
+            candidates.push_back({func, cmp_synthesis::SPACESHIP, false, w, 1, adapted});
+    }
+
+    // Tier 2: SPACESHIP_SWAP — source = `operator <=>` declared on the right operand's
+    // aggregate, receiver = right, arg = left; wanted is synthesized as a sign test of the
+    // (operand-reversed) spaceship result against 0, using the swapped operator semantics.
+    if (right_agg) {
+        auto [func, adapted, w] = resolve_named_binary_operator_overload(
+            expr, k::op::OP_SPACESHIP, right_agg, right_expr, left_expr, is_const_right);
+        if (func && is_valid_spaceship_return_type(func->has_return_type() ? func->get_return_type() : nullptr))
+            candidates.push_back({func, cmp_synthesis::SPACESHIP_SWAP, false, w, 2, adapted});
+    }
+
+    // Tier 3: NEGATE — source = negate_of(wanted), receiver = left, arg = right.
     {
         std::string src_op = negate_of_cmp_op(wanted);
         if (!src_op.empty()) {
             auto [func, adapted, w] = resolve_named_binary_operator_overload(
                 expr, src_op, left_agg, left_expr, right_expr, is_const_left);
             if (func && cmp_op_returns_bool(func))
-                candidates.push_back({func, cmp_synthesis::NEGATE, false, w, 1, adapted});
+                candidates.push_back({func, cmp_synthesis::NEGATE, false, w, 3, adapted});
         }
     }
 
-    // Tier 2: SWAP — source = swap_of(wanted), receiver = right, arg = left.
+    // Tier 4: SWAP — source = swap_of(wanted), receiver = right, arg = left.
     if (right_agg) {
         std::string src_op = swap_of_cmp_op(wanted);
         if (!src_op.empty()) {
             auto [func, adapted, w] = resolve_named_binary_operator_overload(
                 expr, src_op, right_agg, right_expr, left_expr, is_const_right);
             if (func && cmp_op_returns_bool(func))
-                candidates.push_back({func, cmp_synthesis::SWAP, false, w, 2, adapted});
+                candidates.push_back({func, cmp_synthesis::SWAP, false, w, 4, adapted});
         }
     }
 
-    // Tier 3: SWAP_NEGATE — source = negate_of(swap_of(wanted)), receiver = right, arg = left.
+    // Tier 5: SWAP_NEGATE — source = negate_of(swap_of(wanted)), receiver = right, arg = left.
     if (right_agg) {
         std::string src_op = negate_of_cmp_op(swap_of_cmp_op(wanted));
         if (!src_op.empty()) {
             auto [func, adapted, w] = resolve_named_binary_operator_overload(
                 expr, src_op, right_agg, right_expr, left_expr, is_const_right);
             if (func && cmp_op_returns_bool(func))
-                candidates.push_back({func, cmp_synthesis::SWAP_NEGATE, false, w, 3, adapted});
+                candidates.push_back({func, cmp_synthesis::SWAP_NEGATE, false, w, 5, adapted});
         }
     }
 
-    // Tier 4: COMPOSITE — only for == and !=, from a single declared relational base
+    // Tier 6: COMPOSITE — only for == and !=, from a single declared relational base
     // operator usable identically both ways, with zero adaptation needed either way.
     bool wanted_is_eq = (wanted == k::op::OP_EQ);
     bool wanted_is_ne = (wanted == k::op::OP_NE);
@@ -391,7 +395,7 @@ type_reference_resolver::resolve_comparison_with_fallback(
 
             bool negate_terms = (is_strict_cmp_op(base) == wanted_is_eq);
             cmp_synthesis kind = wanted_is_eq ? cmp_synthesis::COMPOSITE_AND : cmp_synthesis::COMPOSITE_OR;
-            candidates.push_back({func_n, kind, negate_terms, CAST_NONE, 4, nullptr});
+            candidates.push_back({func_n, kind, negate_terms, CAST_NONE, 6, nullptr});
         }
     }
 

@@ -64,6 +64,7 @@
  * | | +- greater_expression
  * | | +- lesser_equal_expression
  * | | +- greater_equal_expression
+ * | +- spaceship_expression
  */
 
 #ifndef KLANG_MODEL_OPERATORS_HPP
@@ -713,7 +714,8 @@ public:
  * Describes how a comparison expression's result is actually produced when the exact
  * comparison operator (==, !=, <, >, <=, >=) is not declared on the operand's aggregate
  * type, but can be synthesized from another declared comparison operator via boolean
- * algebra. See doc/spec/language/functions/operators.md, "Comparison operator fallback".
+ * algebra, or from a declared spaceship (`<=>`) operator via a sign test against zero.
+ * See doc/spec/language/functions/operators.md, "Comparison operator fallback".
  *
  * A single "source" operator function is resolved and stored in the inherited
  * binary_expression::_operator_func (with binary_expression::_operator_dispatch_info
@@ -724,6 +726,8 @@ public:
  * Operand order / combination fed to the source operator (`src`), where a/b are the
  * expression's original left/right operands:
  *   DIRECT         : src(a, b)                       — exact operator, kept as declared.
+ *   SPACESHIP      : wanted_test(src(a, b), 0)        — src is `operator <=>` on a's type.
+ *   SPACESHIP_SWAP : swap_of(wanted)_test(src(b, a), 0) — src is `operator <=>` on b's type.
  *   NEGATE         : !src(a, b)
  *   SWAP           : src(b, a)
  *   SWAP_NEGATE    : !src(b, a)
@@ -731,10 +735,26 @@ public:
  *   COMPOSITE_OR   : src(a, b) || src(b, a)
  * When composite_negate_terms() is true, each term above is additionally negated
  * before combination (i.e. `!src(a,b) && !src(b,a)` / `!src(a,b) || !src(b,a)`).
+ *
+ * For SPACESHIP/SPACESHIP_SWAP, `wanted_test`/`swap_of(wanted)_test` denotes comparing the
+ * source spaceship call's signed-integer or floating-point result against the integer
+ * literal `0` using the wanted comparison operator (or its swap pairing for
+ * SPACESHIP_SWAP, since `b <=> a` has operands reversed relative to `a <=> b`) — e.g. for
+ * wanted `<`, SPACESHIP tests `src(a,b) < 0`. See k::op operator swap pairings.
  */
 enum class cmp_synthesis {
     /** Exact operator declared and used as-is; declared return type is kept. */
     DIRECT,
+    /**
+     * Wanted = wanted_test(source(left, right), 0), where source is a declared
+     * `operator <=>` found on the left operand's aggregate type. See class docs.
+     */
+    SPACESHIP,
+    /**
+     * Wanted = swap_of(wanted)_test(source(right, left), 0), where source is a declared
+     * `operator <=>` found on the right operand's aggregate type. See class docs.
+     */
+    SPACESHIP_SWAP,
     /** Wanted = !source(left, right). */
     NEGATE,
     /** Wanted = source(right, left). */
@@ -902,6 +922,39 @@ public:
     }
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<greater_equal_expression> c{new greater_equal_expression()};
+        c->_type = _type;
+        c->_ast_node = _ast_node;
+        if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
+        return c;
+    }
+};
+
+/**
+ * Three-way comparison ("spaceship") expression: `a <=> b`.
+ *
+ * Unlike comparison_expression (whose six operators always ultimately produce `bool`),
+ * spaceship_expression's result type is whatever the resolved `operator <=>` declares as
+ * its return type (Phase 1: a signed integer or floating-point primitive; Phase 2: any
+ * aggregate type that is itself comparable to the integer literal `0`), or `int` for the
+ * builtin primitive-operand spaceship.
+ *
+ * `<=>` is never itself synthesized from another operator — it is, on the contrary, the
+ * first fallback source used to synthesize `==`, `!=`, `<`, `>`, `<=`, `>=` when the exact
+ * operator is not declared (see k::model::cmp_synthesis::SPACESHIP / SPACESHIP_SWAP and
+ * doc/spec/language/functions/operators.md, "Comparison operator fallback").
+ */
+class spaceship_expression : public binary_expression {
+protected:
+    spaceship_expression() = default;
+public:
+    void accept(model_visitor &visitor) override;
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<spaceship_expression> expr{new spaceship_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<spaceship_expression> c{new spaceship_expression()};
         c->_type = _type;
         c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());

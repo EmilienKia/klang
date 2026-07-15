@@ -258,12 +258,13 @@ Code generation and resolution passes. All live in `namespace k::model::gen`.
 | `gen_expr_cast.cpp` | `visit_cast_expression`; also `type_reference_resolver` cast visitors |
 | `gen_adapt_type.cpp` | `adapt_type()` and `adapt_reference_load_value()` — implicit type adaptation |
 | `gen_operators.cpp` | **Stub** — split below |
-| `gen_operators_helpers.hpp` | Anonymous-namespace helpers: `encode_type_for_cast_operator`, `get_binary_operator_name`, `get_unary_operator_name`, `get_operator_symbol`, `collect_member_operators_from_hierarchy` |
-| `gen_operators_overload.cpp` | `resolve/generate_binary/unary/cast_operator_overload` |
+| `gen_operators_helpers.hpp` | Anonymous-namespace helpers: `encode_type_for_cast_operator`, `get_binary_operator_name`, `get_unary_operator_name`, `get_operator_symbol`, `collect_member_operators_from_hierarchy`, `is_valid_spaceship_return_type`, `swap_of_cmp_op` |
+| `gen_operators_overload.cpp` | `resolve/generate_binary/unary/cast_operator_overload`; `resolve_comparison_with_fallback` (7-tier synthesis: DIRECT, SPACESHIP, SPACESHIP_SWAP, NEGATE, SWAP, SWAP_NEGATE, COMPOSITE) |
 | `gen_operators_arithmetic.cpp` | `process_arithmetic`, binary arithmetic visitors (+, -, *, /, %, &, \|, ^, <<, >>) |
 | `gen_operators_assign.cpp` | `visit_assignation_expression` + all compound-assignment visitors |
 | `gen_operators_unary.cpp` | `visit_arithmetic_unary_expression`, prefix/postfix inc/dec, unary +/−, `~` visitors |
-| `gen_operators_logical.cpp` | `visit_logical_binary/unary_expression`, all comparison visitors (==, !=, <, >, <=, >=) |
+| `gen_operators_logical.cpp` | `visit_logical_binary/unary_expression`, all comparison visitors (==, !=, <, >, <=, >=); `generate_comparison_operator` synthesis codegen incl. SPACESHIP/SPACESHIP_SWAP |
+| `gen_operators_spaceship.cpp` | `type_reference_resolver::visit_spaceship_expression` (direct `<=>` type resolution: operator overload or builtin primitive fallback), `implementation_generator::visit_spaceship_expression` (direct `<=>` codegen), `implementation_generator::compare_spaceship_result_to_zero` (compares a `<=>` result against 0 per wanted comparison op, used by fallback synthesis) |
 
 ### `libk/`
 
@@ -402,7 +403,7 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Understand import system | `model/tools/kdi_importer.cpp`, `model/imported.hpp` |
 | Understand union types | `model/model_union.hpp`, `gen/gen_struct.cpp` (visit_union), `gen/gen_expr_member.cpp` (union access), `gen/gen_statements.cpp` (emit_union_cleanup) |
 | Understand union inheritance | `model/model_union.hpp` (base_union, reindex, all_alternatives_ptrs), `gen/gen_struct.cpp` (symbol_resolver::visit_union base resolution), `gen/gen_operators_assign.cpp` (upcast/downcast codegen), `gen/resolvers_scope_lookup.cpp` (is_base_union_of, lookup_union) |
-| Fix/extend comparison operator fallback (synthesis) | `model/operators.hpp` (`comparison_expression` synthesis descriptor), `gen/gen_operators_overload.cpp` (`resolve_comparison_with_fallback` — the 5-tier priority algorithm), `gen/gen_operators_logical.cpp` (`generate_comparison_operator`, `call_comparison_source_operator` — synthesis codegen; all six comparison visitors), `klang/tests/test-gen-comparison-fallback.cpp` (permanent test suite), spec: `doc/spec/language/functions/operators.md` §9 |
+| Fix/extend comparison operator fallback (synthesis) | `model/operators.hpp` (`comparison_expression` synthesis descriptor), `gen/gen_operators_overload.cpp` (`resolve_comparison_with_fallback` — the 7-tier priority algorithm: DIRECT, SPACESHIP, SPACESHIP_SWAP, NEGATE, SWAP, SWAP_NEGATE, COMPOSITE), `gen/gen_operators_logical.cpp` (`generate_comparison_operator`, `call_comparison_source_operator` — synthesis codegen; all six comparison visitors), `gen/gen_operators_spaceship.cpp` (`<=>` direct usage + `compare_spaceship_result_to_zero`), `klang/tests/test-gen-comparison-fallback.cpp` + `klang/tests/test-gen-spaceship.cpp` (permanent test suites), spec: `doc/spec/language/functions/operators.md` §9 |
 | Understand doc-comment parsing | `parse/doc_comment_parser.hpp/.cpp` (marker cleaning + generic `{tag,content}` entry extraction), `parse/ast.hpp` (`ast::documentation` with `entries[]`), `model/documentation.hpp/.cpp` (semantic interpretation: entries → param/return/throws/tparam/tagged) |
 | Add a test | `klang/tests/test-gen-*.cpp` (follow existing pattern with `helpers.cpp`) |
 

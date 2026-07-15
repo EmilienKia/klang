@@ -66,6 +66,7 @@ inline constexpr const char* OP_LT        = "__operator_lt_";   // <
 inline constexpr const char* OP_GT        = "__operator_gt_";   // >
 inline constexpr const char* OP_LE        = "__operator_le_";   // <=
 inline constexpr const char* OP_GE        = "__operator_ge_";   // >=
+inline constexpr const char* OP_SPACESHIP = "__operator_ss_";   // <=> (three-way comparison)
 
 // ── Assignment ───────────────────────────────────────────────────────────────
 inline constexpr const char* OP_ASSIGN    = "__operator_aS_";   // =
@@ -183,6 +184,7 @@ inline std::string get_operator_symbol(const std::string& name) {
     if (name == OP_GT)        return ">";
     if (name == OP_LE)        return "<=";
     if (name == OP_GE)        return ">=";
+    if (name == OP_SPACESHIP) return "<=>";
     if (name == OP_ASSIGN)    return "=";
     if (name == OP_ADD_ASGN)  return "+=";
     if (name == OP_SUB_ASGN)  return "-=";

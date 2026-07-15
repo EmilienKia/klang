@@ -152,6 +152,8 @@ public:
     virtual void visit_lesser_equal_expression(lesser_equal_expression&) =0;
     virtual void visit_greater_equal_expression(greater_equal_expression&) =0;
 
+    virtual void visit_spaceship_expression(spaceship_expression&) =0;
+
     virtual void visit_subscript_expression(subscript_expression&) =0;
     virtual void visit_function_invocation_expression(function_invocation_expression&) =0;
     virtual void visit_pack_expansion_expression(pack_expansion_expression&) =0;
@@ -271,6 +273,8 @@ public:
     void visit_greater_expression(greater_expression&) override;
     void visit_lesser_equal_expression(lesser_equal_expression&) override;
     void visit_greater_equal_expression(greater_equal_expression&) override;
+
+    void visit_spaceship_expression(spaceship_expression&) override;
 
     void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression&) override;
