@@ -201,6 +201,7 @@ klang_gen_test(klang-tests-gen-core 120
 klang_gen_test(klang-tests-gen-arithmetic 180
         tests/test-gen-arithmetic.cpp
         tests/test-gen-operator-overload.cpp
+        tests/test-gen-comparison-fallback.cpp
         tests/test-gen-assign-operator.cpp
         tests/test-gen-cast.cpp
         tests/test-gen-cast-indirection.cpp

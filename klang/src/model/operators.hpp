@@ -709,12 +709,90 @@ public:
     }
 };
 
+/**
+ * Describes how a comparison expression's result is actually produced when the exact
+ * comparison operator (==, !=, <, >, <=, >=) is not declared on the operand's aggregate
+ * type, but can be synthesized from another declared comparison operator via boolean
+ * algebra. See doc/spec/language/functions/operators.md, "Comparison operator fallback".
+ *
+ * A single "source" operator function is resolved and stored in the inherited
+ * binary_expression::_operator_func (with binary_expression::_operator_dispatch_info
+ * describing its dispatch). All synthesis kinds reuse that single source operator,
+ * calling it once (single-source kinds) or twice with swapped operands (composite
+ * kinds) — never two *different* operator functions.
+ *
+ * Operand order / combination fed to the source operator (`src`), where a/b are the
+ * expression's original left/right operands:
+ *   DIRECT         : src(a, b)                       — exact operator, kept as declared.
+ *   NEGATE         : !src(a, b)
+ *   SWAP           : src(b, a)
+ *   SWAP_NEGATE    : !src(b, a)
+ *   COMPOSITE_AND  : src(a, b) && src(b, a)           — wanted is == or !=.
+ *   COMPOSITE_OR   : src(a, b) || src(b, a)
+ * When composite_negate_terms() is true, each term above is additionally negated
+ * before combination (i.e. `!src(a,b) && !src(b,a)` / `!src(a,b) || !src(b,a)`).
+ */
+enum class cmp_synthesis {
+    /** Exact operator declared and used as-is; declared return type is kept. */
+    DIRECT,
+    /** Wanted = !source(left, right). */
+    NEGATE,
+    /** Wanted = source(right, left). */
+    SWAP,
+    /** Wanted = !source(right, left). */
+    SWAP_NEGATE,
+    /**
+     * Wanted (== or !=) = source(left, right) && source(right, left) [terms optionally
+     * negated]. Restriction: only chosen when BOTH calls need zero operand adaptation
+     * (cast_weight == CAST_NONE), so the two already-evaluated operand LLVM values can be
+     * reused verbatim in both calls without re-evaluating (and therefore without risking
+     * duplicate side effects) or needing separate adapted expression trees.
+     */
+    COMPOSITE_AND,
+    /** Wanted (== or !=) = source(left, right) || source(right, left) [terms optionally
+     * negated]. Same CAST_NONE restriction as COMPOSITE_AND. */
+    COMPOSITE_OR,
+};
+
 class comparison_expression : public binary_expression {
 protected:
     comparison_expression() = default;
+
+    /** Synthesis strategy chosen at resolution time (DIRECT if the exact operator was found). */
+    cmp_synthesis _cmp_synthesis = cmp_synthesis::DIRECT;
+
+    /**
+     * Only meaningful when _cmp_synthesis is COMPOSITE_AND or COMPOSITE_OR: whether each
+     * of the two source-operator calls must be logically negated before being combined
+     * with && / ||. See class-level documentation for the exact recipes.
+     */
+    bool _composite_negate_terms = false;
+
+    /**
+     * Dispatch info for the *second* source-operator call of a COMPOSITE_AND/COMPOSITE_OR
+     * synthesis (receiver = right operand). The first call's dispatch info (receiver =
+     * left operand, or the sole call's dispatch info for non-composite kinds) is stored in
+     * the inherited binary_expression::_operator_dispatch_info.
+     */
+    std::optional<virtual_dispatch_info> _composite_dispatch2;
+
 public:
     void accept(model_visitor &visitor) override;
     std::shared_ptr<expression> clone() const override = 0;
+
+    /** Synthesis strategy used to produce this comparison's result. */
+    cmp_synthesis get_cmp_synthesis() const { return _cmp_synthesis; }
+    void set_cmp_synthesis(cmp_synthesis synth) { _cmp_synthesis = synth; }
+    bool is_synthesized() const { return _cmp_synthesis != cmp_synthesis::DIRECT; }
+
+    /** Whether the two composite terms must be negated before combination (COMPOSITE_* only). */
+    bool composite_negate_terms() const { return _composite_negate_terms; }
+    void set_composite_negate_terms(bool negate) { _composite_negate_terms = negate; }
+
+    /** Dispatch info for the second composite call (COMPOSITE_* only; receiver = right operand). */
+    bool has_composite_dispatch_info() const { return _composite_dispatch2.has_value(); }
+    const virtual_dispatch_info& get_composite_dispatch_info() const { return _composite_dispatch2.value(); }
+    void set_composite_dispatch_info(virtual_dispatch_info info) { _composite_dispatch2 = std::move(info); }
 };
 
 class equal_expression : public comparison_expression {

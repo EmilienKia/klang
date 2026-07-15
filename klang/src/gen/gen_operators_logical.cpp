@@ -506,6 +506,9 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     // ─────────────────────────────────────────────────────────────────────────
 
     // ── Operator overload for aggregate types (before reference stripping) ──
+    // Tries the exact comparison operator first, then — if not declared — progressively
+    // more complex fallback syntheses from other declared comparison operators.
+    // See k::model::cmp_synthesis and resolve_comparison_with_fallback() for the full rule.
     {
         auto check_left = left_type;
         if (type::is_reference(check_left)) {
@@ -513,31 +516,80 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         }
         bool is_const_left = type::is_const(check_left);
         check_left = type::remove_const(check_left);
+
+        auto check_right = right_type;
+        if (type::is_reference(check_right)) {
+            check_right = check_right->get_subtype();
+        }
+        bool is_const_right = type::is_const(check_right);
+        check_right = type::remove_const(check_right);
+
         if (type::is_struct(check_left)) {
             auto st_type = std::dynamic_pointer_cast<struct_type>(check_left);
             if (st_type) {
                 auto agg = st_type->get_struct();
                 if (agg) {
-                    auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
-                    if (op_func) {
-                        expr.set_operator_func(op_func);
-                        // Apply the adapted right operand (implicit cast if needed)
-                        if (adapted_right && adapted_right != right) {
-                            expr.assign_right(adapted_right);
+                    std::shared_ptr<aggregate> right_agg;
+                    if (type::is_struct(check_right)) {
+                        if (auto right_st_type = std::dynamic_pointer_cast<struct_type>(check_right)) {
+                            right_agg = right_st_type->get_struct();
                         }
-                        if (op_func->has_return_type()) {
+                    }
+
+                    auto result = resolve_comparison_with_fallback(
+                        expr, agg, right_agg, left, right, is_const_left, is_const_right);
+                    if (result) {
+                        auto op_func = result->func;
+                        expr.set_operator_func(op_func);
+                        expr.set_cmp_synthesis(result->synthesis);
+                        expr.set_composite_negate_terms(result->composite_negate_terms);
+
+                        // Apply argument adaptation (implicit cast), if any: for DIRECT/NEGATE
+                        // the adapted operand replaces the right operand (arg role); for
+                        // SWAP/SWAP_NEGATE it replaces the left operand (arg role there).
+                        // COMPOSITE_* never adapts (requires an exact type match, see
+                        // cmp_synthesis docs), so result->adapted_arg is always null there.
+                        bool receiver_is_right = (result->synthesis == cmp_synthesis::SWAP
+                                                || result->synthesis == cmp_synthesis::SWAP_NEGATE);
+                        if (result->adapted_arg) {
+                            if (receiver_is_right) {
+                                if (result->adapted_arg != left) expr.assign_left(result->adapted_arg);
+                            } else {
+                                if (result->adapted_arg != right) expr.assign_right(result->adapted_arg);
+                            }
+                        }
+
+                        if (op_func->has_return_type() && result->synthesis == cmp_synthesis::DIRECT) {
                             expr.set_type(op_func->get_return_type());
                         } else {
                             static auto bool_type_cached = _context->from_type(primitive_type::BOOL);
                             expr.set_type(bool_type_cached);
                         }
+
+                        // Primary call's dispatch info: receiver = left, unless SWAP/SWAP_NEGATE
+                        // (receiver = right).
+                        auto primary_receiver_type = receiver_is_right ? right_type : left_type;
                         if (op_func->is_member()) {
-                            auto di = compute_operator_dispatch_info(op_func, left_type);
+                            auto di = compute_operator_dispatch_info(op_func, primary_receiver_type);
                             expr.set_operator_dispatch_info(std::move(di));
                         } else {
                             virtual_dispatch_info di;
                             di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
                             expr.set_operator_dispatch_info(std::move(di));
+                        }
+
+                        // Composite kinds need a second dispatch info for the swapped-receiver
+                        // (right operand) call.
+                        if (result->synthesis == cmp_synthesis::COMPOSITE_AND
+                            || result->synthesis == cmp_synthesis::COMPOSITE_OR) {
+                            if (op_func->is_member()) {
+                                auto di2 = compute_operator_dispatch_info(op_func, right_type);
+                                expr.set_composite_dispatch_info(std::move(di2));
+                            } else {
+                                virtual_dispatch_info di2;
+                                di2.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                                expr.set_composite_dispatch_info(std::move(di2));
+                            }
                         }
                         return;
                     }
@@ -650,11 +702,152 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
 }
 
 //
+// Comparison operator overload / fallback synthesis codegen
+//
+
+/**
+ * Evaluate a single call to a resolved comparison "source" operator function, given
+ * already-evaluated LLVM values for its receiver ('this', or first non-member arg) and
+ * argument (or second non-member arg). See generators.hpp for the full contract.
+ */
+llvm::Value* implementation_generator::call_comparison_source_operator(
+    const std::shared_ptr<function>& op_func,
+    const virtual_dispatch_info& dispatch_info,
+    llvm::Value* receiver_or_first_val,
+    llvm::Value* arg_or_second_val)
+{
+    auto it = _context->_functions.find(op_func);
+    llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
+    if (!llvm_func && !(op_func->is_virtual() && (op_func->is_abstract_func() || op_func->is_external()))) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F055), std::nullopt,
+            "Internal error: comparison source operator '{}' has no LLVM definition",
+            {op_func->get_short_name()});
+    }
+
+    std::vector<llvm::Value*> args = { receiver_or_first_val, arg_or_second_val };
+
+    // Comparison source operators always return bool, which never uses sret ABI, so this
+    // helper is much simpler than generate_binary_operator_overload (no sret bookkeeping).
+    auto build_fn_type = [&]() -> llvm::FunctionType* {
+        if (llvm_func) return llvm_func->getFunctionType();
+        std::vector<llvm::Type*> param_types;
+        if (op_func->is_member() && !op_func->is_static() && op_func->get_this_parameter())
+            param_types.push_back(_context->get_llvm_type(op_func->get_this_parameter()->get_type()));
+        for (const auto& param : op_func->parameters())
+            param_types.push_back(_context->get_llvm_type(param->get_type()));
+        llvm::Type* ret_type = _context->get_llvm_type(op_func->get_return_type());
+        return llvm::FunctionType::get(ret_type, param_types, false);
+    };
+
+    if (dispatch_info.kind == virtual_dispatch_info::dispatch_kind::VTABLE) {
+        llvm::FunctionType* fn_type = build_fn_type();
+        if (dispatch_info.dispatch_class) {
+            auto* result = emit_virtual_dispatch_call(*_builder, *dispatch_info.dispatch_class, args[0],
+                dispatch_info.slot_index, fn_type, args, _context, "cmp_vcall");
+            if (result) return result;
+            // Fallback: emit_virtual_dispatch_call returned nullptr (vtable not ready?) — fall
+            // through to the direct-call path below.
+        } else if (dispatch_info.imported_dispatch_agg) {
+            auto imp_agg = dispatch_info.imported_dispatch_agg;
+            auto* struct_llvm_type = imp_agg->get_struct_type() ? imp_agg->get_struct_type()->get_llvm_type() : nullptr;
+            if (struct_llvm_type) {
+                llvm::LLVMContext& llvm_ctx = **_context;
+                llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                llvm::Value* vptr_addr = _builder->CreateStructGEP(struct_llvm_type, args[0], 0, "cmp_imp_vptr_addr");
+                llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "cmp_imp_vptr");
+                const uint64_t ptr_size = 8;
+                llvm::Value* slot_offset = llvm::ConstantInt::get(
+                    llvm::Type::getInt64Ty(llvm_ctx), (dispatch_info.slot_index + 1) * ptr_size);
+                llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
+                    llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "cmp_imp_vtbl_slot");
+                llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "cmp_imp_fn_ptr");
+                return _builder->CreateCall(fn_type, fn_ptr, args, "cmp_imp_vcall");
+            }
+        }
+    }
+
+    if (!llvm_func) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F056), std::nullopt,
+            "Internal error: comparison source operator '{}' has no LLVM definition and is not dispatched virtually",
+            {op_func->get_short_name()});
+    }
+    return _builder->CreateCall(llvm_func, args, "cmp_call");
+}
+
+/**
+ * Generate code for a comparison expression whose result comes from an aggregate operator
+ * overload, handling both the exact ("DIRECT") operator and all fallback synthesis kinds.
+ * See k::model::cmp_synthesis for the semantics of each kind.
+ */
+bool implementation_generator::generate_comparison_operator(comparison_expression& expr) {
+    if (!expr.has_operator_overload()) return false;
+
+    auto op_func = expr.get_operator_func();
+    auto kind = expr.get_cmp_synthesis();
+
+    // Evaluate both operands exactly once; every synthesis kind below reuses these two
+    // LLVM values (in different receiver/argument roles), never re-evaluating the operand
+    // expression trees, so operand side effects only ever happen once.
+    expr.left()->accept(*this);
+    llvm::Value* left_val = _value;
+    if (!left_val) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F055), expr.first_lexeme(),
+            "Internal error: left operand for comparison operator overload produced no LLVM value");
+    }
+    expr.right()->accept(*this);
+    llvm::Value* right_val = _value;
+    if (!right_val) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F056), expr.first_lexeme(),
+            "Internal error: right operand for comparison operator overload produced no LLVM value");
+    }
+
+    llvm::Value* result = nullptr;
+    switch (kind) {
+        case cmp_synthesis::DIRECT:
+            // src(left, right)
+            result = call_comparison_source_operator(op_func, expr.get_operator_dispatch_info(), left_val, right_val);
+            break;
+        case cmp_synthesis::NEGATE:
+            // !src(left, right)
+            result = call_comparison_source_operator(op_func, expr.get_operator_dispatch_info(), left_val, right_val);
+            result = _builder->CreateNot(result, "cmp_negate");
+            break;
+        case cmp_synthesis::SWAP:
+            // src(right, left)
+            result = call_comparison_source_operator(op_func, expr.get_operator_dispatch_info(), right_val, left_val);
+            break;
+        case cmp_synthesis::SWAP_NEGATE:
+            // !src(right, left)
+            result = call_comparison_source_operator(op_func, expr.get_operator_dispatch_info(), right_val, left_val);
+            result = _builder->CreateNot(result, "cmp_negate");
+            break;
+        case cmp_synthesis::COMPOSITE_AND:
+        case cmp_synthesis::COMPOSITE_OR: {
+            llvm::Value* term1 = call_comparison_source_operator(
+                op_func, expr.get_operator_dispatch_info(), left_val, right_val);
+            llvm::Value* term2 = call_comparison_source_operator(
+                op_func, expr.get_composite_dispatch_info(), right_val, left_val);
+            if (expr.composite_negate_terms()) {
+                term1 = _builder->CreateNot(term1, "cmp_composite_neg1");
+                term2 = _builder->CreateNot(term2, "cmp_composite_neg2");
+            }
+            result = (kind == cmp_synthesis::COMPOSITE_AND)
+                ? _builder->CreateAnd(term1, term2, "cmp_composite_and")
+                : _builder->CreateOr(term1, term2, "cmp_composite_or");
+            break;
+        }
+    }
+
+    _value = result;
+    return true;
+}
+
+//
 // Equal expression (==)
 //
 
 void implementation_generator::visit_equal_expression(equal_expression& expr) {
-    if (generate_binary_operator_overload(expr)) return;
+    if (generate_comparison_operator(expr)) return;
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -714,7 +907,7 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 //
 
 void implementation_generator::visit_different_expression(different_expression& expr) {
-    if (generate_binary_operator_overload(expr)) return;
+    if (generate_comparison_operator(expr)) return;
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -774,7 +967,7 @@ void implementation_generator::visit_different_expression(different_expression& 
 //
 
 void implementation_generator::visit_lesser_expression(lesser_expression& expr) {
-    if (generate_binary_operator_overload(expr)) return;
+    if (generate_comparison_operator(expr)) return;
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -821,7 +1014,7 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
 //
 
 void implementation_generator::visit_greater_expression(greater_expression& expr) {
-    if (generate_binary_operator_overload(expr)) return;
+    if (generate_comparison_operator(expr)) return;
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -868,7 +1061,7 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
 //
 
 void implementation_generator::visit_lesser_equal_expression(lesser_equal_expression& expr) {
-    if (generate_binary_operator_overload(expr)) return;
+    if (generate_comparison_operator(expr)) return;
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -915,7 +1108,7 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
 //
 
 void implementation_generator::visit_greater_equal_expression(greater_equal_expression& expr) {
-    if (generate_binary_operator_overload(expr)) return;
+    if (generate_comparison_operator(expr)) return;
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {

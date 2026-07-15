@@ -201,6 +201,7 @@ enum class codegen_diag : unsigned int {
     INTERNAL_ERR_F053                             = 0xF053,
     INTERNAL_ERR_F054                             = 0xF054,
     INTERNAL_ERR_F055                             = 0xF055,
+    INTERNAL_ERR_F056                             = 0xF056,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -402,6 +402,7 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Understand import system | `model/tools/kdi_importer.cpp`, `model/imported.hpp` |
 | Understand union types | `model/model_union.hpp`, `gen/gen_struct.cpp` (visit_union), `gen/gen_expr_member.cpp` (union access), `gen/gen_statements.cpp` (emit_union_cleanup) |
 | Understand union inheritance | `model/model_union.hpp` (base_union, reindex, all_alternatives_ptrs), `gen/gen_struct.cpp` (symbol_resolver::visit_union base resolution), `gen/gen_operators_assign.cpp` (upcast/downcast codegen), `gen/resolvers_scope_lookup.cpp` (is_base_union_of, lookup_union) |
+| Fix/extend comparison operator fallback (synthesis) | `model/operators.hpp` (`comparison_expression` synthesis descriptor), `gen/gen_operators_overload.cpp` (`resolve_comparison_with_fallback` — the 5-tier priority algorithm), `gen/gen_operators_logical.cpp` (`generate_comparison_operator`, `call_comparison_source_operator` — synthesis codegen; all six comparison visitors), `klang/tests/test-gen-comparison-fallback.cpp` (permanent test suite), spec: `doc/spec/language/functions/operators.md` §9 |
 | Understand doc-comment parsing | `parse/doc_comment_parser.hpp/.cpp` (marker cleaning + generic `{tag,content}` entry extraction), `parse/ast.hpp` (`ast::documentation` with `entries[]`), `model/documentation.hpp/.cpp` (semantic interpretation: entries → param/return/throws/tparam/tagged) |
 | Add a test | `klang/tests/test-gen-*.cpp` (follow existing pattern with `helpers.cpp`) |
 

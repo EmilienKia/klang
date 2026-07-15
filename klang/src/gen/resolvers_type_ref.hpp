@@ -22,6 +22,7 @@
 #include "resolvers_common.hpp"
 
 #include <unordered_map>
+#include <tuple>
 
 namespace k::model::gen {
 
@@ -580,6 +581,88 @@ protected:
         const std::shared_ptr<expression>& left_expr,
         const std::shared_ptr<expression>& right_expr,
         bool is_const_this = false);
+
+    /**
+     * Resolve a binary operator overload for an explicitly-named operator, rather than the
+     * operator naturally matching `expr`'s dynamic type. Shared core behind
+     * resolve_binary_operator_overload(); also used by resolve_comparison_with_fallback to
+     * probe for alternative source operators (e.g. probing `>=` while resolving a `<`
+     * expression) that can synthesize the operator actually written in source.
+     * @param expr          The expression node (used for diagnostics only).
+     * @param op_name       Canonical operator function name to search for (e.g. "__operator_eq_").
+     * @param left_agg      The aggregate type used as the member-lookup receiver ("this" side).
+     * @param left_expr     The expression bound to the receiver ("this") / first non-member param.
+     * @param right_expr    The expression bound to the sole member param / second non-member param.
+     * @param is_const_this True if left_expr is a const object (only const member operators are viable).
+     * @return {best_func, adapted_right, best_score} or {nullptr, nullptr, CAST_IMPOSSIBLE} if no
+     *         viable match exists.
+     */
+    std::tuple<std::shared_ptr<function>, std::shared_ptr<expression>, cast_weight>
+    resolve_named_binary_operator_overload(
+        const binary_expression& expr,
+        const std::string& op_name,
+        const std::shared_ptr<aggregate>& left_agg,
+        const std::shared_ptr<expression>& left_expr,
+        const std::shared_ptr<expression>& right_expr,
+        bool is_const_this = false);
+
+    /**
+     * Result of resolve_comparison_with_fallback(): describes the source operator function
+     * to call and how to combine its result(s) to produce the wanted comparison operator.
+     * See k::model::cmp_synthesis for the full set of synthesis kinds and their semantics.
+     */
+    struct comparison_fallback_result {
+        /** The single source operator function to call (used once, or twice for COMPOSITE_*). */
+        std::shared_ptr<function> func;
+        /** How to combine call(s) to `func` to produce the wanted comparison result. */
+        cmp_synthesis synthesis = cmp_synthesis::DIRECT;
+        /** Only meaningful for COMPOSITE_AND/COMPOSITE_OR; see cmp_synthesis docs. */
+        bool composite_negate_terms = false;
+        /**
+         * Adapted "argument"-role operand for the primary (or only) call, or nullptr if no
+         * adaptation is needed. For DIRECT/NEGATE this replaces the right operand; for
+         * SWAP/SWAP_NEGATE this replaces the left operand. Always nullptr for COMPOSITE_*
+         * (composite candidates require an exact type match on both sides, see cmp_synthesis).
+         */
+        std::shared_ptr<expression> adapted_arg;
+    };
+
+    /**
+     * Resolve the comparison operator actually written in `expr` (==, !=, <, >, <=, >=)
+     * against aggregate operand(s), trying — in strict priority order — the exact operator
+     * first, then progressively more complex fallback syntheses from other declared
+     * comparison operators (see k::model::cmp_synthesis), before giving up.
+     *
+     * Priority: candidates are ranked by ascending (cast_weight, tier) pairs, i.e. type
+     * relaxation is the primary criterion (exact-typed candidates always beat any candidate
+     * requiring an implicit conversion, regardless of synthesis complexity) and synthesis
+     * tier (0=exact .. 4=composite) only breaks ties at equal cast_weight. Ties at equal
+     * (cast_weight, tier) are broken by a fixed enumeration order (exact, negate, swap,
+     * swap+negate, then composite over <, >, <=, >= in that order) rather than raising an
+     * ambiguity error.
+     *
+     * @param expr           The comparison expression node (used to determine the wanted
+     *                        operator and for diagnostics).
+     * @param left_agg       Aggregate type of the left operand (required; this mirrors the
+     *                        pre-existing restriction that operator-overload resolution for
+     *                        comparisons only triggers when the left operand is an aggregate).
+     * @param right_agg      Aggregate type of the right operand, or nullptr if the right
+     *                        operand is not an aggregate (SWAP/SWAP_NEGATE/COMPOSITE tiers,
+     *                        which use the right operand as receiver, are skipped in that case).
+     * @param left_expr      The left operand expression.
+     * @param right_expr     The right operand expression.
+     * @param is_const_left  True if the left operand is a const object.
+     * @param is_const_right True if the right operand is a const object.
+     * @return The resolved result, or std::nullopt if no viable candidate exists at any tier.
+     */
+    std::optional<comparison_fallback_result> resolve_comparison_with_fallback(
+        const comparison_expression& expr,
+        const std::shared_ptr<aggregate>& left_agg,
+        const std::shared_ptr<aggregate>& right_agg,
+        const std::shared_ptr<expression>& left_expr,
+        const std::shared_ptr<expression>& right_expr,
+        bool is_const_left,
+        bool is_const_right);
 
     /**
      * Resolve a unary operator overload for an aggregate type, using cast-weight scoring

@@ -27,9 +27,14 @@
 
 namespace k::model::gen {
 
-std::pair<std::shared_ptr<function>, std::shared_ptr<expression>>
+std::tuple<std::shared_ptr<function>, std::shared_ptr<expression>, type_reference_resolver::cast_weight>
 /**
- * Resolve a binary operator overload for an aggregate type using cast-weight scoring.
+ * Resolve a binary operator overload for an aggregate type using cast-weight scoring,
+ * for an explicitly-named operator (rather than the operator naturally matching `expr`'s
+ * dynamic type). This is the shared core used both for plain operator resolution and for
+ * comparison-operator fallback synthesis (see resolve_comparison_with_fallback), where a
+ * *different* operator name than the one written in source may need to be probed (e.g.
+ * probing for a declared `>=` while resolving a `<` expression).
  *
  * Steps:
  *   1. Collect member operator candidates from the aggregate.
@@ -38,17 +43,24 @@ std::pair<std::shared_ptr<function>, std::shared_ptr<expression>>
  *   4. Prefer member operators over non-member when scores are equal.
  *   5. Filter by const-this if the left operand is const.
  *
- * @return {best_func, adapted_right} or {nullptr, nullptr} if no viable match.
+ * @param expr          The binary/comparison expression node (used for diagnostics only).
+ * @param op_name       Canonical operator function name to search for (e.g. "__operator_eq_").
+ * @param left_agg      The aggregate type used as the member-lookup receiver ("this" side).
+ * @param left_expr     The expression bound to the receiver ("this") / first non-member param.
+ * @param right_expr    The expression bound to the sole member param / second non-member param.
+ * @param is_const_this True if left_expr is a const object (only const member operators are viable).
+ * @return {best_func, adapted_right, best_score} or {nullptr, nullptr, CAST_IMPOSSIBLE} if no
+ *         viable match exists.
  */
-type_reference_resolver::resolve_binary_operator_overload(
+type_reference_resolver::resolve_named_binary_operator_overload(
     const binary_expression& expr,
+    const std::string& op_name,
     const std::shared_ptr<aggregate>& left_agg,
     const std::shared_ptr<expression>& left_expr,
     const std::shared_ptr<expression>& right_expr,
     bool is_const_this)
 {
-    std::string op_name = get_binary_operator_name(expr);
-    if (op_name.empty()) return {nullptr, nullptr};
+    if (op_name.empty() || !left_agg) return {nullptr, nullptr, CAST_IMPOSSIBLE};
 
     // Step 1: Collect member operator candidates from the aggregate
     // Collect all candidate functions: member first (with inheritance), then non-member.
@@ -93,7 +105,7 @@ type_reference_resolver::resolve_binary_operator_overload(
         member_funcs = std::move(const_members);
     }
 
-    if (member_funcs.empty() && non_member_funcs.empty()) return {nullptr, nullptr};
+    if (member_funcs.empty() && non_member_funcs.empty()) return {nullptr, nullptr, CAST_IMPOSSIBLE};
 
     struct CandInfo {
         std::shared_ptr<function> func;
@@ -143,7 +155,7 @@ type_reference_resolver::resolve_binary_operator_overload(
     }
 
     // Step 4: Prefer member operators over non-member when scores are equal
-    if (valid.empty()) return {nullptr, nullptr};
+    if (valid.empty()) return {nullptr, nullptr, CAST_IMPOSSIBLE};
 
     // Step 5: Select best candidate.
     // Best = lowest score; among equal scores, prefer member over non-member.
@@ -199,7 +211,207 @@ type_reference_resolver::resolve_binary_operator_overload(
         throw resolution_error(std::move(d));
     }
 
-    return {best[0]->func, best[0]->adapted_right};
+    return {best[0]->func, best[0]->adapted_right, best_score};
+}
+
+std::pair<std::shared_ptr<function>, std::shared_ptr<expression>>
+/**
+ * Resolve a binary operator overload for an aggregate type using cast-weight scoring, for
+ * the operator naturally matching `expr`'s dynamic type. Thin wrapper over
+ * resolve_named_binary_operator_overload(); see that function for the full algorithm.
+ *
+ * @return {best_func, adapted_right} or {nullptr, nullptr} if no viable match.
+ */
+type_reference_resolver::resolve_binary_operator_overload(
+    const binary_expression& expr,
+    const std::shared_ptr<aggregate>& left_agg,
+    const std::shared_ptr<expression>& left_expr,
+    const std::shared_ptr<expression>& right_expr,
+    bool is_const_this)
+{
+    std::string op_name = get_binary_operator_name(expr);
+    if (op_name.empty()) return {nullptr, nullptr};
+    auto [func, adapted_right, weight] = resolve_named_binary_operator_overload(
+        expr, op_name, left_agg, left_expr, right_expr, is_const_this);
+    return {func, adapted_right};
+}
+
+namespace {
+
+/**
+ * Negation pairing used by comparison-operator fallback synthesis: the operator on the
+ * other side of a logical negation. == <-> !=, < <-> >=, > <-> <=.
+ * Returns empty string for non-comparison operator names.
+ */
+std::string negate_of_cmp_op(const std::string& op) {
+    if (op == k::op::OP_EQ) return k::op::OP_NE;
+    if (op == k::op::OP_NE) return k::op::OP_EQ;
+    if (op == k::op::OP_LT) return k::op::OP_GE;
+    if (op == k::op::OP_GE) return k::op::OP_LT;
+    if (op == k::op::OP_GT) return k::op::OP_LE;
+    if (op == k::op::OP_LE) return k::op::OP_GT;
+    return {};
+}
+
+/**
+ * Swap pairing used by comparison-operator fallback synthesis: the operator obtained by
+ * reversing operand order. == <-> ==, != <-> !=, < <-> >, <= <-> >=.
+ * Returns empty string for non-comparison operator names.
+ */
+std::string swap_of_cmp_op(const std::string& op) {
+    if (op == k::op::OP_EQ) return k::op::OP_EQ;
+    if (op == k::op::OP_NE) return k::op::OP_NE;
+    if (op == k::op::OP_LT) return k::op::OP_GT;
+    if (op == k::op::OP_GT) return k::op::OP_LT;
+    if (op == k::op::OP_LE) return k::op::OP_GE;
+    if (op == k::op::OP_GE) return k::op::OP_LE;
+    return {};
+}
+
+/** True for strict relational operators (< and >), false for <=, >=, ==, !=. */
+bool is_strict_cmp_op(const std::string& op) {
+    return op == k::op::OP_LT || op == k::op::OP_GT;
+}
+
+/** True if `f` declares (or inherits) a `bool` return type, required for any synthesized source op. */
+bool cmp_op_returns_bool(const std::shared_ptr<function>& f) {
+    if (!f || !f->has_return_type()) return false;
+    auto t = type::remove_const(f->get_return_type());
+    auto pt = std::dynamic_pointer_cast<primitive_type>(t);
+    return pt && pt->is_boolean();
+}
+
+} // anonymous namespace
+
+std::optional<type_reference_resolver::comparison_fallback_result>
+/**
+ * See declaration in resolvers_type_ref.hpp for the full contract and priority rules.
+ *
+ * Implementation notes:
+ *  - Every candidate reuses resolve_named_binary_operator_overload(), probing a
+ *    *different* operator name than the one written in source (for NEGATE/SWAP/
+ *    SWAP_NEGATE) or the same name from the opposite receiver (for the second half of a
+ *    COMPOSITE_* probe).
+ *  - Tiers 1-3 (NEGATE/SWAP/SWAP_NEGATE) additionally require the candidate source
+ *    operator to return `bool`: a non-bool result cannot be logically negated/combined
+ *    meaningfully. DIRECT (tier 0) keeps the historical behaviour of accepting any
+ *    return type.
+ *  - Tier 4 (COMPOSITE_*) only synthesizes == and !=, from a *single* declared relational
+ *    operator (<, >, <=, or >=) callable identically as both left-as-receiver and
+ *    right-as-receiver (same resolved function both ways), and only when neither call
+ *    needs any operand adaptation (cast_weight == CAST_NONE) — see cmp_synthesis docs for
+ *    why this restriction keeps codegen correct (single operand evaluation, no expression
+ *    rewriting needed). Concretely: adapt_type() for a non-exact "struct rvalue -> ref<same
+ *    struct>" binding (CAST_REF_CONV) wraps the operand in a NEW temporary_construction_expression
+ *    that re-evaluates the original operand sub-expression when generated; since composite
+ *    codegen evaluates expr.left()/expr.right() only once and reuses the raw value for both
+ *    directional calls, allowing non-exact bindings here would silently reintroduce double
+ *    evaluation of the operand. Practical effect: composite fires for named variables/
+ *    parameters of the exact aggregate type (the common case), but not for chained temporaries
+ *    (e.g. comparing two function-call results directly) — that falls through to a compile
+ *    error if no other tier applies, which is safe (if less complete) behaviour.
+ */
+type_reference_resolver::resolve_comparison_with_fallback(
+    const comparison_expression& expr,
+    const std::shared_ptr<aggregate>& left_agg,
+    const std::shared_ptr<aggregate>& right_agg,
+    const std::shared_ptr<expression>& left_expr,
+    const std::shared_ptr<expression>& right_expr,
+    bool is_const_left,
+    bool is_const_right)
+{
+    std::string wanted = get_binary_operator_name(expr);
+    if (wanted.empty() || !left_agg) return std::nullopt;
+
+    struct candidate {
+        std::shared_ptr<function> func;
+        cmp_synthesis synthesis;
+        bool negate_terms;
+        cast_weight weight;
+        unsigned tier;
+        std::shared_ptr<expression> adapted_arg;
+    };
+    std::vector<candidate> candidates;
+
+    // Tier 0: DIRECT — the exact operator, receiver = left, arg = right.
+    {
+        auto [func, adapted, w] = resolve_named_binary_operator_overload(
+            expr, wanted, left_agg, left_expr, right_expr, is_const_left);
+        if (func) candidates.push_back({func, cmp_synthesis::DIRECT, false, w, 0, adapted});
+    }
+
+    // Tier 1: NEGATE — source = negate_of(wanted), receiver = left, arg = right.
+    {
+        std::string src_op = negate_of_cmp_op(wanted);
+        if (!src_op.empty()) {
+            auto [func, adapted, w] = resolve_named_binary_operator_overload(
+                expr, src_op, left_agg, left_expr, right_expr, is_const_left);
+            if (func && cmp_op_returns_bool(func))
+                candidates.push_back({func, cmp_synthesis::NEGATE, false, w, 1, adapted});
+        }
+    }
+
+    // Tier 2: SWAP — source = swap_of(wanted), receiver = right, arg = left.
+    if (right_agg) {
+        std::string src_op = swap_of_cmp_op(wanted);
+        if (!src_op.empty()) {
+            auto [func, adapted, w] = resolve_named_binary_operator_overload(
+                expr, src_op, right_agg, right_expr, left_expr, is_const_right);
+            if (func && cmp_op_returns_bool(func))
+                candidates.push_back({func, cmp_synthesis::SWAP, false, w, 2, adapted});
+        }
+    }
+
+    // Tier 3: SWAP_NEGATE — source = negate_of(swap_of(wanted)), receiver = right, arg = left.
+    if (right_agg) {
+        std::string src_op = negate_of_cmp_op(swap_of_cmp_op(wanted));
+        if (!src_op.empty()) {
+            auto [func, adapted, w] = resolve_named_binary_operator_overload(
+                expr, src_op, right_agg, right_expr, left_expr, is_const_right);
+            if (func && cmp_op_returns_bool(func))
+                candidates.push_back({func, cmp_synthesis::SWAP_NEGATE, false, w, 3, adapted});
+        }
+    }
+
+    // Tier 4: COMPOSITE — only for == and !=, from a single declared relational base
+    // operator usable identically both ways, with zero adaptation needed either way.
+    bool wanted_is_eq = (wanted == k::op::OP_EQ);
+    bool wanted_is_ne = (wanted == k::op::OP_NE);
+    if ((wanted_is_eq || wanted_is_ne) && right_agg) {
+        static const char* bases[] = { k::op::OP_LT, k::op::OP_GT, k::op::OP_LE, k::op::OP_GE };
+        for (const char* base : bases) {
+            auto [func_n, adapted_n, w_n] = resolve_named_binary_operator_overload(
+                expr, base, left_agg, left_expr, right_expr, is_const_left);
+            if (!func_n || w_n != CAST_NONE) continue;
+            auto [func_s, adapted_s, w_s] = resolve_named_binary_operator_overload(
+                expr, base, right_agg, right_expr, left_expr, is_const_right);
+            if (!func_s || w_s != CAST_NONE) continue;
+            if (func_n != func_s) continue; // must be the identical function both ways
+            if (!cmp_op_returns_bool(func_n)) continue;
+
+            bool negate_terms = (is_strict_cmp_op(base) == wanted_is_eq);
+            cmp_synthesis kind = wanted_is_eq ? cmp_synthesis::COMPOSITE_AND : cmp_synthesis::COMPOSITE_OR;
+            candidates.push_back({func_n, kind, negate_terms, CAST_NONE, 4, nullptr});
+        }
+    }
+
+    if (candidates.empty()) return std::nullopt;
+
+    // Select by ascending (cast_weight, tier); first-found wins ties (stable enumeration
+    // order above already reflects "least complex first").
+    const candidate* best = &candidates.front();
+    for (const auto& c : candidates) {
+        if (c.weight < best->weight || (c.weight == best->weight && c.tier < best->tier)) {
+            best = &c;
+        }
+    }
+
+    comparison_fallback_result result;
+    result.func = best->func;
+    result.synthesis = best->synthesis;
+    result.composite_negate_terms = best->negate_terms;
+    result.adapted_arg = best->adapted_arg;
+    return result;
 }
 
 /**

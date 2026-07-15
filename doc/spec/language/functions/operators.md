@@ -17,12 +17,13 @@ When an expression uses an operator whose left-hand operand (or sole operand, fo
 6. [Prefix and postfix increment / decrement](#6-prefix-and-postfix-increment--decrement)
 7. [Cast operator](#7-cast-operator)
 8. [Overload resolution](#8-overload-resolution)
-9. [Const operator functions](#9-const-operator-functions)
-10. [Operators and inheritance](#10-operators-and-inheritance)
-11. [Operators and interfaces](#11-operators-and-interfaces)
-12. [Operators across module boundaries](#12-operators-across-module-boundaries)
-13. [Operator chaining](#13-operator-chaining)
-14. [Restrictions](#14-restrictions)
+9. [Comparison operator fallback (synthesis)](#9-comparison-operator-fallback-synthesis)
+10. [Const operator functions](#10-const-operator-functions)
+11. [Operators and inheritance](#11-operators-and-inheritance)
+12. [Operators and interfaces](#12-operators-and-interfaces)
+13. [Operators across module boundaries](#13-operators-across-module-boundaries)
+14. [Operator chaining](#14-operator-chaining)
+15. [Restrictions](#15-restrictions)
 
 ---
 
@@ -422,7 +423,7 @@ When multiple candidate operator functions exist (from the aggregate, its base c
 ### Resolution steps
 
 1. **Collect candidates:**
-   - Member operators from the aggregate and its inheritance hierarchy (with [name-hiding](#10-operators-and-inheritance)).
+   - Member operators from the aggregate and its inheritance hierarchy (with [name-hiding](#11-operators-and-inheritance)).
    - Non-member operators visible in the enclosing scope whose first parameter matches the left-hand operand's type.
 
 2. **Score each candidate** by computing a *cast weight* for the right-hand operand (binary) or sole operand (non-member unary):
@@ -472,7 +473,102 @@ test() {
 
 ---
 
-## 9. Const operator functions
+## 9. Comparison operator fallback (synthesis)
+
+For primitive numeric types, all six comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) are implicitly available. For aggregate types (struct, class, interface), each comparison operator must normally be declared explicitly — but declaring all six is often tedious or unnecessary. The compiler therefore applies a **fallback synthesis rule**: if the *exact* operator used in an expression is not declared, the compiler tries to synthesize it from another declared comparison operator using boolean algebra, before reporting a compile error.
+
+### Resolution order
+
+For an expression `a OP b` where `a` (or `b`) is an aggregate type, the compiler searches for a way to compute `OP` in the following order, from least to most complex:
+
+1. **DIRECT** — the exact operator `OP` is declared. Used as-is (this is the pre-existing behaviour described in [§8](#8-overload-resolution)).
+2. **NEGATE** — the logical negation of `OP` is declared; synthesize `OP(a, b) = !negate_of(OP)(a, b)`.
+3. **SWAP** — `OP` is declared with operands reversed; synthesize `OP(a, b) = swap_of(OP)(b, a)`.
+4. **SWAP_NEGATE** — the negation of the swapped operator is declared; synthesize `OP(a, b) = !swap_of(negate_of(OP))(b, a)` (equivalently, `!negate_of(swap_of(OP))(b, a)`).
+5. **COMPOSITE** (only for `==` / `!=`) — a single declared relational operator (`<`, `>`, `<=`, or `>=`) is called *twice*, once with each operand order, and the two boolean results are combined with a logical AND (for `==`) or OR (for `!=`).
+
+If none of these rules produces a match, compilation fails with a clear error.
+
+### Derivation table
+
+| Wanted | NEGATE source | SWAP source | SWAP_NEGATE source |
+|--------|---------------|-------------|---------------------|
+| `==`   | `!=`          | `==`        | *(not applicable — negate(swap(==)) = negate(==) = !=, already covered by NEGATE)* |
+| `!=`   | `==`          | `!=`        | *(not applicable, symmetric to above)* |
+| `<`    | `>=`          | `>`         | `<=` |
+| `>`    | `<=`          | `<`         | `>=` |
+| `<=`   | `>`           | `>=`        | `<` |
+| `>=`   | `<`           | `<=`        | `>` |
+
+Pairings used above:
+- **Negation pairs:** `== ↔ !=`, `< ↔ >=`, `> ↔ <=`.
+- **Swap pairs** (operand order reversed): `== ↔ ==`, `!= ↔ !=`, `< ↔ >`, `<= ↔ >=`.
+
+**COMPOSITE** synthesizes only `==`/`!=`, from a single relational operator `R` (`<`, `>`, `<=`, or `>=`) declared once:
+
+| Wanted | Formula |
+|--------|---------|
+| `==`   | `R(a,b) == R(b,a)`, negated if `R` is strict (`<`/`>`): `!R(a,b) && !R(b,a)` for `<`/`>`, or `R(a,b) && R(b,a)` for `<=`/`>=` — concretely: two objects are equal iff neither is strictly less/greater than the other (using `<`/`>`), or both `<=`/`>=` hold in both directions. |
+| `!=`   | The logical complement of the `==` formula above (OR instead of AND). |
+
+Example: declaring only `operator <` lets the compiler synthesize `==` as `!(a < b) && !(b < a)`, and `!=` as `(a < b) || (b < a)`.
+
+### Priority: type relaxation beats synthesis complexity
+
+Each candidate (whether DIRECT or synthesized) is scored by the same *cast weight* used for [ordinary overload resolution](#8-overload-resolution) — how much implicit conversion the operands need to match the candidate's declared parameter type. The compiler selects the candidate with the **lowest cast weight first**; the synthesis tier (1 through 5 above) is only used to break ties between candidates that need the *same* amount of type relaxation.
+
+In other words: a same-tier match always wins over a lower-tier match if it needs less type relaxation. For example, if `operator ==(n: int)` requires no conversion but `operator !=(n: long)` requires a widening conversion, then synthesizing `!=` from `==` (NEGATE, no conversion needed) is preferred over calling the declared `!=(long)` directly (DIRECT, but with a conversion):
+
+```k
+struct Vec {
+    v: int;
+    Vec(av: int) : v(av) {}
+    operator ==(n: int) : bool { return v == n; }
+    operator !=(n: long) : bool { return true; }   // always true — a decoy
+}
+
+test() : bool {
+    a: Vec(5);
+    return a != 5;   // synthesized via NEGATE of ==(int); returns false, NOT the decoy
+}
+```
+
+### Return-type guard
+
+A synthesized source operator must return `bool`: negating or combining a non-`bool` result would not be meaningful. `DIRECT` matches keep the historical behaviour of accepting any return type declared for the exact operator (see [§3](#3-overloadable-operators)); only tiers 2–5 (NEGATE, SWAP, SWAP_NEGATE, COMPOSITE) require the source operator to return `bool`.
+
+### Const-correctness and inheritance
+
+Fallback synthesis reuses the same [const-correctness rules](#10-const-operator-functions) and [inheritance/name-hiding rules](#11-operators-and-inheritance) as ordinary operator resolution: a synthesized call to a member source operator is only viable if that operator's constness is compatible with the receiver, and a source operator declared in a base class is a valid synthesis source for a derived-class receiver.
+
+### Composite restriction: exact type match required
+
+The COMPOSITE tier additionally requires **no operand adaptation** in either call direction — both operands must already be exactly the aggregate type the base operator declares (no implicit conversion, no rvalue-to-reference materialization). This is a deliberate, documented scope limitation: without it, each of the two composite calls could require independently materializing a temporary copy of an operand, which would re-evaluate the operand's original sub-expression once per call and risk executing side effects more than once. In practice this means:
+
+- Composite synthesis works for named variables and parameters of the exact aggregate type (the common case).
+- It does **not** fire when an operand is itself a temporary requiring materialization (e.g. comparing two function-call results directly with `==` when only `<` is declared); if no other tier applies, this is a compile-time error rather than a silent double-evaluation.
+
+```k
+struct Ord {
+    v: int;
+    Ord(av: int) : v(av) {}
+    operator <(other: Ord&) : bool { return v < other.v; }
+}
+
+test() : bool {
+    a: Ord(3);
+    b: Ord(3);
+    return a == b;   // OK: COMPOSITE synthesis, a and b are exact-type variables
+}
+```
+
+### No match found
+
+If no DIRECT, NEGATE, SWAP, SWAP_NEGATE, or COMPOSITE candidate is viable — e.g. the aggregate declares no comparison operator at all — the compiler reports a compile-time error at the comparison expression.
+
+---
+
+## 10. Const operator functions
 
 A member operator function may be declared `const`, meaning it can be called on const objects.
 
@@ -557,7 +653,7 @@ If a struct is declared `const`, all its non-static member functions (including 
 
 ---
 
-## 10. Operators and inheritance
+## 11. Operators and inheritance
 
 ### Inherited operators
 
@@ -601,7 +697,7 @@ When `a + b` is called through a base-class reference and `a`'s dynamic type has
 
 ---
 
-## 11. Operators and interfaces
+## 12. Operators and interfaces
 
 An `interface` may declare abstract operator functions.
 A class implementing the interface must provide a concrete implementation.
@@ -628,7 +724,7 @@ test() : int {
 
 ---
 
-## 12. Operators across module boundaries
+## 13. Operators across module boundaries
 
 Operator functions are exported as part of a library and can be used in importing modules.
 Both member and non-member operators are exported.
@@ -660,7 +756,7 @@ main() : int {
 
 ---
 
-## 13. Operator chaining
+## 14. Operator chaining
 
 Operators on aggregate types can be chained in the same way as built-in operators.
 Each sub-expression is evaluated according to operator precedence and the result is used as an operand for the next operation.
@@ -684,7 +780,7 @@ test() : int {
 
 ---
 
-## 14. Restrictions
+## 15. Restrictions
 
 - **Only aggregate types:** operator overloading is only available when at least one operand is of a user-defined aggregate type (struct, class, or interface). Operators between two primitive types always use the built-in semantics.
 - **No new operators:** only existing K operators can be overloaded. No new operator symbols can be introduced.

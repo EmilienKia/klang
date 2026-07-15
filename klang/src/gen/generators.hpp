@@ -528,6 +528,31 @@ public:
     bool generate_binary_operator_overload(binary_expression& expr);
 
     /**
+     * Generate code for a comparison expression (==, !=, <, >, <=, >=) whose result is
+     * produced via an aggregate operator overload, handling both the exact ("DIRECT")
+     * operator case and all comparison-fallback synthesis kinds (NEGATE, SWAP,
+     * SWAP_NEGATE, COMPOSITE_AND, COMPOSITE_OR) recorded on the expression by
+     * type_reference_resolver::resolve_comparison_with_fallback().
+     * Returns true if handled (and _value is set to the i1 boolean result), false if
+     * expr has no operator overload at all (caller should fall back to primitive compare).
+     */
+    bool generate_comparison_operator(comparison_expression& expr);
+
+    /**
+     * Evaluate a single call to a resolved comparison "source" operator function, given
+     * already-evaluated LLVM values for its receiver ('this', or first non-member arg)
+     * and argument (or second non-member arg). Comparison source operators always return
+     * bool, so this helper never needs sret handling (unlike generate_binary_operator_overload).
+     * Handles direct calls and virtual (vtable) dispatch per dispatch_info.
+     * @return The i1 LLVM value produced by the call.
+     */
+    llvm::Value* call_comparison_source_operator(
+        const std::shared_ptr<function>& op_func,
+        const virtual_dispatch_info& dispatch_info,
+        llvm::Value* receiver_or_first_val,
+        llvm::Value* arg_or_second_val);
+
+    /**
      * Generate a function call for a unary operator overload.
      * Returns true if the overload was handled (and _value is set), false if not an overload.
      */

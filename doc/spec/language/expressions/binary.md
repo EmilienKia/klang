@@ -121,6 +121,18 @@ null == null  // true
 > **Note:** Only `==` and `!=` are supported for address comparison. Relational
 > operators (`<`, `>`, `<=`, `>=`) on indirections are a compile-time error.
 
+### Comparison operators on aggregate types
+
+When either operand is a user-defined aggregate type (struct, class, or interface),
+the operator must be provided by an [operator function](../functions/operators.md).
+Rather than requiring all six operators to be declared explicitly, the compiler
+applies a fallback rule: if the exact operator is not declared, it tries to
+**synthesize** it from another declared comparison operator (e.g. synthesizing
+`!=` from a declared `==` via negation, or synthesizing all four relational
+operators from a single declared `<`). See
+[Operators — §9. Comparison operator fallback (synthesis)](../functions/operators.md#9-comparison-operator-fallback-synthesis)
+for the exhaustive derivation table and priority rule.
+
 **Examples:**
 ```k
 min(a: int, b: int) : int {
