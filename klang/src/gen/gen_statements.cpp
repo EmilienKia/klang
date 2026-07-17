@@ -227,11 +227,12 @@ void implementation_generator::emit_scope_variable_cleanup(
 
         auto vt = var_stmt->get_type();
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-            if (st_type->get_struct()) {
-                auto dtor = st_type->get_struct()->get_destructor();
+            if (auto agg = st_type->get_struct()) {
+                auto dtor = agg->get_destructor();
                 if (!dtor) continue;
                 auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
                 if (dtor_it == _context->_functions.end()) continue;
+                const bool virtual_dtor = agg->has_vtable();
 
                 if (use_dtor_flags) {
                     auto flag_it = _dtor_flags.find(var_stmt);
@@ -243,14 +244,22 @@ void implementation_generator::emit_scope_variable_cleanup(
                         auto* skip_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "cleanup_skip_dtor", func);
                         _builder->CreateCondBr(flag_val, do_dtor_bb, skip_dtor_bb);
                         _builder->SetInsertPoint(do_dtor_bb);
-                        _builder->CreateCall(dtor_it->second, {alloca});
+                        if (virtual_dtor) {
+                            emit_virtual_destructor_call(_builder.get(), *agg, alloca);
+                        } else {
+                            _builder->CreateCall(dtor_it->second, {alloca});
+                        }
                         _builder->CreateBr(skip_dtor_bb);
                         _builder->SetInsertPoint(skip_dtor_bb);
                         continue;
                     }
                 }
 
-                _builder->CreateCall(dtor_it->second, {alloca});
+                if (virtual_dtor) {
+                    emit_virtual_destructor_call(_builder.get(), *agg, alloca);
+                } else {
+                    _builder->CreateCall(dtor_it->second, {alloca});
+                }
             } else {
                 auto udef = find_union_for_struct_type(_unit, st_type);
                 if (udef) emit_union_cleanup(alloca, *udef);

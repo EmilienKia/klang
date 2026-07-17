@@ -25,7 +25,9 @@
 
 #include "../model/model.hpp"
 #include "../model/context.hpp"
+#include "../model/imported.hpp"
 #include "../parse/ast.hpp"
+#include "../../../libkdi/src/kdi_aggregates.hpp"
 
 #include <map>
 #include <memory>
@@ -93,6 +95,83 @@ inline void apply_instantiation_linkage(llvm::Module& mod,
 inline bool should_merge_aggregate_symbols(const k::model::aggregate& agg)
 {
     return agg.is_instantiation() || agg.is_template();
+}
+
+/**
+ * Emit a virtual (vtable-dispatched) call to the destructor of the object
+ * pointed to by `this_ptr`, whose static type is `st`.
+ *
+ * The destructor always occupies the universal vtable slot 0 (see
+ * build_vtable_layout() in gen_class.cpp): ::k::Object declares the first-ever
+ * virtual destructor at slot 0, and every derived class/interface that reaches
+ * Object through its *primary* vtable base chain inherits and overrides that
+ * same slot — never introducing a new one. This makes the destructor
+ * reachable at a fixed vtable offset from any class/interface-typed reference.
+ *
+ * Handles both:
+ *  - locally-declared aggregates (klass/interface compiled in this unit), whose
+ *    vptr always lives at struct field 0;
+ *  - KDI-imported aggregates (imported_klass/imported_interface), whose vptr
+ *    field index is read from the imported KDI layout metadata (usually also
+ *    field 0, but looked up generically for correctness).
+ *
+ * The vtable memory layout is `{ RTTI ptr, slot0 fn ptr, slot1 fn ptr, … }`,
+ * so the destructor (logical slot 0) sits at byte offset `ptr_size` (one
+ * pointer past the RTTI slot).
+ *
+ * No-op if `st` has no vtable (non-virtual / struct types never reach here —
+ * callers are expected to only invoke this when st.has_vtable() is true, but
+ * it's safe to call unconditionally).
+ *
+ * @param builder   The IRBuilder positioned at the insertion point.
+ * @param st        The static K model type of the object being destroyed.
+ * @param this_ptr  The (non-null) pointer to the object.
+ */
+inline void emit_virtual_destructor_call(
+    llvm::IRBuilder<>* builder,
+    aggregate& st,
+    llvm::Value* this_ptr)
+{
+    if (!st.has_vtable()) return;
+
+    llvm::LLVMContext& llvm_ctx = builder->getContext();
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    auto struct_type = st.get_struct_type();
+    auto* struct_llvm_type = struct_type ? struct_type->get_llvm_type() : nullptr;
+    if (!struct_llvm_type) return;
+
+    // Determine the vptr field index. Locally-declared aggregates always put
+    // the (primary) vptr at field 0. Imported aggregates carry the actual
+    // index in their KDI layout metadata (still field 0 in every case seen so
+    // far, but resolved properly rather than assumed).
+    uint32_t vptr_field_index = 0;
+    if (auto* imp_agg = dynamic_cast<imported_aggregate*>(&st)) {
+        if (const auto* kdi_agg = imp_agg->get_kdi_aggregate()) {
+            for (const auto& lf : kdi_agg->layout) {
+                if (auto* vp = std::get_if<kdi::kdi_layout_vptr>(&lf)) {
+                    vptr_field_index = vp->llvm_field_index;
+                    break;
+                }
+            }
+        }
+    }
+
+    llvm::Value* vptr_addr = builder->CreateStructGEP(
+        struct_llvm_type, this_ptr, vptr_field_index, "dtor_vptr_addr");
+    llvm::Value* vptr = builder->CreateLoad(ptr_ty, vptr_addr, "dtor_vptr");
+
+    // Vtable layout is { RTTI ptr, slot0 (dtor) fn ptr, slot1 fn ptr, … }:
+    // the destructor is always at byte offset `ptr_size` (one pointer past RTTI).
+    const uint64_t ptr_size = 8;
+    llvm::Value* slot_offset = llvm::ConstantInt::get(
+        llvm::Type::getInt64Ty(llvm_ctx), ptr_size);
+    llvm::Value* fn_ptr_addr = builder->CreateInBoundsGEP(
+        llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "dtor_slot_addr");
+    llvm::Value* fn_ptr = builder->CreateLoad(ptr_ty, fn_ptr_addr, "dtor_fn_ptr");
+
+    auto* fn_type = llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
+    builder->CreateCall(fn_type, fn_ptr, {this_ptr});
 }
 
 /**
@@ -200,13 +279,20 @@ inline void emit_owner_object_destroy(
             }
         }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
-        // Call destructor if struct (single object)
+        // Call destructor if struct (single object). If the static type has a
+        // vtable (class/interface reaching ::k::Object), dispatch virtually so
+        // the most-derived override runs even though the owner is statically
+        // typed as a base (e.g. deleting/releasing through an interface owner).
         auto st = st_type->get_struct();
-        auto dtor = st ? st->get_destructor() : nullptr;
-        if (dtor) {
-            auto dtor_it = functions.find(dtor->shared_as<function>());
-            if (dtor_it != functions.end()) {
-                builder->CreateCall(dtor_it->second, {ptr_value});
+        if (st && st->has_vtable()) {
+            emit_virtual_destructor_call(builder, *st, ptr_value);
+        } else {
+            auto dtor = st ? st->get_destructor() : nullptr;
+            if (dtor) {
+                auto dtor_it = functions.find(dtor->shared_as<function>());
+                if (dtor_it != functions.end()) {
+                    builder->CreateCall(dtor_it->second, {ptr_value});
+                }
             }
         }
     }
