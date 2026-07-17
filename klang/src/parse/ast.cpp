@@ -149,6 +149,10 @@ void ast::for_statement::visit(ast_visitor &visitor) {
     visitor.visit_for_statement(*this);
 }
 
+void ast::foreach_statement::visit(ast_visitor &visitor) {
+    visitor.visit_foreach_statement(*this);
+}
+
 void ast::expression_statement::visit(ast_visitor& visitor) {
     visitor.visit_expression_statement(*this);
 }
@@ -380,6 +384,10 @@ void default_ast_visitor::visit_while_statement(ast::while_statement &) {
 }
 
 void default_ast_visitor::visit_for_statement(ast::for_statement &) {
+
+}
+
+void default_ast_visitor::visit_foreach_statement(ast::foreach_statement &) {
 
 }
 

@@ -351,6 +351,17 @@ public:
     std::shared_ptr<ast::for_statement> parse_for_statement();
 
     /**
+     * ForEachStatement = 'for' , '(' , { Specifier } , Identifier , ':' , TypeSpec ,
+     *                                   '=' , ConditionalExpr ,
+     *                       ')' , Statement ;
+     *
+     * Tried before parse_for_statement(): if the '=' ConditionalExpr is directly
+     * followed by ')' this is a foreach statement; otherwise the whole attempt is
+     * rolled back so parse_for_statement() can (re)parse the classic for form.
+     */
+    std::shared_ptr<ast::foreach_statement> parse_foreach_statement();
+
+    /**
      * Statement = BlockStatement | ReturnStatement | IfElseStatement
      *           | WhileStatement | ForStatement | UsingDecl
      *           | VariableDecl | ExpressionStatement ;

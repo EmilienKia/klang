@@ -434,6 +434,20 @@ public:
         stmt.get_nested_stmt()->accept(*this);
     }
 
+    void visit_foreach_statement(foreach_statement& stmt) override {
+        prefix() << "for ( ";
+        if(auto& var = stmt.get_loop_var()) {
+            visit_variable_definition(*var, true);
+        }
+        _stm << " = ";
+        if(auto& source = stmt.get_source_expr()) {
+            source->accept(*this);
+        }
+        _stm << " ) " << std::endl;
+        auto pf = prefix_inc();
+        stmt.get_nested_stmt()->accept(*this);
+    }
+
     void visit_block(block& blk) override {
         prefix() << "{" << std::endl;
         {

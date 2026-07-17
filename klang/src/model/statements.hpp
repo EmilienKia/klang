@@ -323,6 +323,106 @@ public:
 
 
 /**
+ * The concrete source kind of a foreach statement, determined once the source
+ * expression's type is fully resolved (Pass D, type_reference_resolver).
+ * Undetermined until then.
+ */
+enum class foreach_kind {
+    UNRESOLVED, ///< Not yet determined (before Pass D).
+    ARRAY,      ///< Source is an array (or reference to array); iterates by index.
+    ITERATOR,   ///< Source is a ::k::Iterator<T> / ::k::ConstIterator<T>; iterates via next()/hasValue().
+    SEQUENCE,   ///< Source is a ::k::Sequence<T> / ::k::MutableSequence<T>; sugar over ITERATOR.
+};
+
+/**
+ * Foreach statement: 'for ( [specifiers] name : type = source_expr ) nested_stmt'.
+ *
+ * Unlike the classic 'for' statement, there is a single nested expression (the
+ * source expression) rather than test/step expressions separated by ';'. The
+ * concrete iteration strategy (ARRAY / ITERATOR / SEQUENCE) is only known once
+ * the source expression's type is resolved (see foreach_kind), at which point
+ * the type_reference_resolver synthesizes the hidden helper variables/expressions
+ * needed by codegen (index counter and test/step expressions for ARRAY; current
+ * "optional" holder for ITERATOR; hidden iterator variable for SEQUENCE).
+ *
+ * The foreach-declared variable (_loop_var) is local to the foreach statement and
+ * is constructed then destroyed at every iteration (unlike a classic for-loop's
+ * decl_stmt, which lives for the entire loop).
+ */
+class foreach_statement : public statement, public variable_holder, public using_holder
+{
+protected:
+    /** The user-declared foreach loop variable ('name : type' part). Rebuilt (construct/destruct) every iteration. */
+    std::shared_ptr<variable_statement> _loop_var;
+    /** The source expression (initexpr): array, iterator, or sequence. */
+    std::shared_ptr<expression> _source_expr;
+    /** The loop body. */
+    std::shared_ptr<statement> _nested_stmt;
+
+    /** Iteration strategy, set by type_reference_resolver once _source_expr's type is known. */
+    foreach_kind _kind = foreach_kind::UNRESOLVED;
+
+    // ── ARRAY variant (synthesized by type_reference_resolver) ─────────────
+    /** Hidden index counter (unsigned int, initialised to 0). */
+    std::shared_ptr<variable_statement> _index_var;
+    /** 'index_var < source_expr.size' */
+    std::shared_ptr<expression> _test_expr;
+    /** 'index_var++' */
+    std::shared_ptr<expression> _step_expr;
+    /** 'source_expr[index_var]', adapted to the loop variable's declared type; used as _loop_var's init_expr. */
+    std::shared_ptr<expression> _current_expr;
+
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    void on_variable_defined(std::shared_ptr<variable_definition>) override;
+
+public:
+    foreach_statement() = delete;
+    foreach_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
+    foreach_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::foreach_statement>& ast) :
+            statement(parent) { _ast_node = ast; }
+
+    void accept(model_visitor& visitor) override;
+
+    std::shared_ptr<k::parse::ast::foreach_statement> get_ast_foreach_stmt() const;
+
+    void set_ast_foreach_stmt(const std::shared_ptr<k::parse::ast::foreach_statement> &ast_foreach_stmt);
+
+    const std::shared_ptr<variable_statement> &get_loop_var() const;
+
+    const std::shared_ptr<expression> &get_source_expr() const;
+
+    void set_source_expr(const std::shared_ptr<expression> &source_expr);
+
+    const std::shared_ptr<statement> &get_nested_stmt() const;
+
+    void set_nested_stmt(const std::shared_ptr<statement> &nested_stmt);
+
+    foreach_kind get_kind() const { return _kind; }
+
+    void set_kind(foreach_kind kind) { _kind = kind; }
+
+    const std::shared_ptr<variable_statement> &get_index_var() const;
+
+    void set_index_var(const std::shared_ptr<variable_statement> &index_var);
+
+    const std::shared_ptr<expression> &get_test_expr() const;
+
+    void set_test_expr(const std::shared_ptr<expression> &test_expr);
+
+    const std::shared_ptr<expression> &get_step_expr() const;
+
+    void set_step_expr(const std::shared_ptr<expression> &step_expr);
+
+    const std::shared_ptr<expression> &get_current_expr() const;
+
+    void set_current_expr(const std::shared_ptr<expression> &current_expr);
+
+    std::shared_ptr<variable_holder> get_variable_holder() override;
+    std::shared_ptr<const variable_holder> get_variable_holder() const override;
+};
+
+
+/**
  * Expression statement
  */
 class expression_statement : public statement
@@ -379,6 +479,7 @@ class variable_statement : public statement, public variable_definition
 protected:
     friend class block;
     friend class for_statement;
+    friend class foreach_statement;
     friend class if_else_statement;
     friend class catch_clause;
     friend class gen::implementation_generator;

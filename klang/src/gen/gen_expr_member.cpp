@@ -1128,7 +1128,14 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
             {arr_type_inner ? arr_type_inner->to_string() : "?"});
     }
     auto arr_type = std::dynamic_pointer_cast<array_type>(arr_type_inner);
-    expr.set_type(arr_type->get_subtype()->get_reference());
+    // Propagate const from the array itself (or the indirection pointing to it) to the
+    // element type: reading through a `const T[]`/`const T[N]` (or a const-qualified
+    // indirection to it) must yield a `const T&`, never a mutable `T&`.
+    auto elem_type = arr_type->get_subtype();
+    if (is_const_left && !type::is_const(elem_type)) {
+        elem_type = elem_type->get_const();
+    }
+    expr.set_type(elem_type->get_reference());
 
     // Check the right hand can be cast to unsigned integer
     // TODO adapt to the really right index type.

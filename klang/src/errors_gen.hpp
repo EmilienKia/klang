@@ -207,6 +207,7 @@ enum class codegen_diag : unsigned int {
     INTERNAL_ERR_F056                             = 0xF056,
     INTERNAL_ERR_F057                             = 0xF057,
     INTERNAL_ERR_F058                             = 0xF058,
+    INTERNAL_ERR_F059                             = 0xF059, ///< Foreach codegen reached with an unsupported/unresolved iteration kind.
 };
 
 // ────────────────────────────────────────────────────────────────────────────

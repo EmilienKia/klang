@@ -813,6 +813,30 @@ ast::expr_ptr parser::parse_postfix_expr()
     return any;
 }
 
+namespace {
+    /**
+     * True for the simple (non-compound) primitive-type keywords, i.e. those
+     * whose source spelling is, on its own, a valid key of
+     * context::from_string()'s primitive type map. Compound forms such as
+     * 'unsigned int' or 'long long' are intentionally excluded (see caller).
+     */
+    bool is_simple_primitive_type_keyword(lex::keyword::type_t type) {
+        switch (type) {
+            case lex::keyword::BOOL:
+            case lex::keyword::BYTE:
+            case lex::keyword::CHAR:
+            case lex::keyword::SHORT:
+            case lex::keyword::INT:
+            case lex::keyword::LONG:
+            case lex::keyword::FLOAT:
+            case lex::keyword::DOUBLE:
+                return true;
+            default:
+                return false;
+        }
+    }
+}
+
 ast::expr_ptr parser::parse_primary_expr()
 {
     lex::lex_holder holder(_lexer);
@@ -844,6 +868,21 @@ ast::expr_ptr parser::parse_primary_expr()
         // Brace-init list as a primary expression: {expr, expr, ...}
         auto open_brace = lex::as<lex::punctuator>(l);
         return parse_brace_init_list(open_brace);
+    } else if (lex::is<lex::keyword>(l) && is_simple_primitive_type_keyword(lex::as<lex::keyword>(l).type)
+               && _lexer.get() == lex::punctuator::BRACKET_OPEN) {
+        // Recognize a single (non-compound) primitive-type keyword immediately
+        // followed by '[' as an identifier-like expression, so that a primitive
+        // array temporary (e.g. `int[]{1, 2, 3}`) can be parsed via the existing
+        // T[]{...} postfix-brace rule below in parse_postfix_expr(), mirroring
+        // the pre-existing support for struct/class type names. Compound forms
+        // ('unsigned int', 'long long') are not handled here: synthesizing a
+        // combined identifier from two keyword tokens would require an owned
+        // string, whereas `lexeme::content` is a non-owning string_view that
+        // must point into the original source buffer.
+        _lexer.unget();
+        auto kw = lex::as<lex::keyword>(l);
+        return std::make_shared<ast::identifier_expr>(
+            ast::qualified_identifier(std::nullopt, std::vector<lex::identifier>{lex::identifier{kw.content}}));
     } else {
         holder.rollback();
         return parse_identifier_expr();

@@ -68,6 +68,7 @@ protected:
     typedef context if_else_context;
     typedef context while_context;
     typedef context for_context;
+    typedef context foreach_context;
     typedef context break_context;
     typedef context continue_context;
     typedef context expr_stmt_context;
@@ -157,6 +158,7 @@ protected:
     void visit_if_else_statement(parse::ast::if_else_statement &) override;
     void visit_while_statement(parse::ast::while_statement &) override;
     void visit_for_statement(parse::ast::for_statement &) override;
+    void visit_foreach_statement(parse::ast::foreach_statement &) override;
     void visit_expression_statement(parse::ast::expression_statement &) override;
 
     void visit_literal_expr(parse::ast::literal_expr &) override;

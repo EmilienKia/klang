@@ -2908,6 +2908,272 @@ void declaration_generator::visit_for_statement(for_statement& stmt) {
     stmt.get_nested_stmt()->accept(*this);
 }
 
+//
+// Foreach statement
+//
+
+void symbol_resolver::visit_foreach_statement(foreach_statement& stmt)
+{
+    // Resolve the loop variable's declared type name references.
+    if (auto loop_var = stmt.get_loop_var()) {
+        loop_var->accept(*this);
+    }
+
+    // Resolve the source expression.
+    if (auto source = stmt.get_source_expr()) {
+        source->accept(*this);
+    }
+
+    // Resolve nested statement.
+    stmt.get_nested_stmt()->accept(*this);
+}
+
+/**
+ * Resolve a foreach statement.
+ *
+ * Steps:
+ *   1. Resolve the loop variable's declared type and reject owner/drain (a
+ *      foreach loop never takes ownership of the source's elements).
+ *   2. Resolve the source expression's type.
+ *   3. Determine the concrete iteration kind from the (dereferenced,
+ *      const-stripped) source type. Phase 1 only supports ARRAY; ITERATOR and
+ *      SEQUENCE are added in later phases.
+ *   4. ARRAY: synthesize the hidden index variable ('$index : uint = 0'), the
+ *      test expression ('$index < source.size'), the step expression
+ *      ('$index++'), and the current-element expression ('source[$index]'),
+ *      which becomes the loop variable's init_expr. Delegating the loop
+ *      variable's resolution to the generic visit_variable_definition dispatch
+ *      (via loop_var->accept(*this)) reuses all existing const-promotion,
+ *      addresser-matching, and copy-vs-reference-bind validation for free.
+ *   5. Resolve the nested statement.
+ */
+void type_reference_resolver::visit_foreach_statement(foreach_statement& stmt)
+{
+    auto loop_var = stmt.get_loop_var();
+    auto source_expr = stmt.get_source_expr();
+
+    lex::opt_any_lexeme for_lexeme;
+    if (auto ast = stmt.get_ast_foreach_stmt()) {
+        for_lexeme = lex::any_lexeme{ast->for_kw};
+    }
+
+    if (!loop_var || !source_expr) {
+        throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOREACH_STMT_BAD_SCOPE), for_lexeme,
+            "Internal error: foreach statement is missing its loop variable or source expression");
+    }
+
+    // Step 1: resolve the loop variable's declared type first, so we can
+    // reject owner/drain before doing any further synthesis work.
+    resolve_variable_type(*loop_var, for_lexeme);
+    auto loop_var_type = loop_var->get_type();
+
+    if (type::is_owner(loop_var_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_FOREACH_VAR_OWNER_FORBIDDEN), for_lexeme,
+            "Foreach loop variable cannot be an owner ('!'): a foreach loop cannot take ownership of the source's elements");
+    }
+    if (type::is_drain(loop_var_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_FOREACH_VAR_DRAIN_FORBIDDEN), for_lexeme,
+            "Foreach loop variable cannot be a drain ('#'): a foreach loop cannot take ownership of the source's elements");
+    }
+
+    // Step 2: resolve the source expression's type.
+    source_expr->accept(*this);
+
+    // Step 3: determine the concrete iteration kind.
+    auto source_type = source_expr->get_type();
+    auto unwrapped = source_type;
+    if (type::is_reference(unwrapped)) {
+        unwrapped = unwrapped->get_subtype();
+        if (type::is_reference(unwrapped)) {
+            unwrapped = unwrapped->get_subtype();
+        }
+    }
+    unwrapped = type::remove_const(unwrapped);
+
+    if (type::is_array(unwrapped)) {
+        stmt.set_kind(foreach_kind::ARRAY);
+
+        // Step 4a: hidden index variable '$index : uint = 0'.
+        auto index_var_def = stmt.append_variable("$index");
+        auto index_var = std::dynamic_pointer_cast<variable_statement>(index_var_def);
+        auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+        index_var->set_type(uint_type);
+        index_var->set_const(false);
+        // Primitives expect init_expr to be a constructor_invocation_expression
+        // wrapping the value (see model_builder::visit_variable_decl); a bare
+        // value_expression is not recognised by validate_primitive_variable.
+        auto zero = value_expression::from_value(static_cast<unsigned int>(0));
+        static_cast<variable_definition&>(*index_var).set_init_expr(
+            constructor_invocation_expression::make_shared(index_var, {zero}));
+        index_var->accept(*this);
+
+        // Step 4b: test expression '$index < source.size'.
+        auto size_symbol = symbol_expression::from_identifier(name("size"));
+        auto size_member = member_of_object_expression::make_shared(source_expr->clone(), size_symbol);
+        auto test_expr = lesser_expression::make_shared(symbol_expression::from_variable(index_var), size_member);
+        test_expr->accept(*this);
+        auto bool_type = _context->from_type(primitive_type::BOOL);
+        auto test_cast = adapt_type(test_expr, bool_type);
+        if (test_cast) {
+            test_expr = test_cast;
+        }
+        stmt.set_test_expr(test_expr);
+
+        // Step 4c: step expression '$index++'.
+        auto step_expr = postfix_increment_expression::make_shared(symbol_expression::from_variable(index_var));
+        step_expr->accept(*this);
+        stmt.set_step_expr(step_expr);
+
+        // Step 4d: current-element expression 'source[$index]', bound as the
+        // loop variable's init_expr. Resolving the loop variable through the
+        // generic visit_variable_definition dispatch handles const-promotion,
+        // addresser-matching, and copy-vs-reference-bind semantics for free.
+        auto current_expr = subscript_expression::make_shared(source_expr->clone(), symbol_expression::from_variable(index_var));
+        stmt.set_current_expr(current_expr);
+        // Mirror model_builder::visit_variable_decl's init_expr shaping: indirection
+        // types (pointer/link/view — owner/drain are already forbidden above) store
+        // the raw address-valued expression directly, while every other category
+        // (primitive, struct, reference, enum, ...) expects init_expr to be a
+        // constructor_invocation_expression wrapping the value as a single argument;
+        // this is what validate_primitive/struct/reference_variable() below expect.
+        if (type::is_pointer(loop_var_type) || type::is_link(loop_var_type) || type::is_view(loop_var_type)) {
+            static_cast<variable_definition&>(*loop_var).set_init_expr(current_expr);
+        } else {
+            static_cast<variable_definition&>(*loop_var).set_init_expr(
+                constructor_invocation_expression::make_shared(loop_var, {current_expr}));
+        }
+        loop_var->accept(*this);
+    } else {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_FOREACH_SOURCE_NOT_ITERABLE), for_lexeme,
+            "Foreach source expression must be an array, a ::k::Iterator/::k::ConstIterator, or a "
+            "::k::Sequence/::k::MutableSequence; got type '{}'",
+            {source_type ? source_type->to_string() : std::string("?")});
+    }
+
+    // Step 5: resolve the nested statement.
+    stmt.get_nested_stmt()->accept(*this);
+}
+
+void declaration_generator::visit_foreach_statement(foreach_statement& stmt) {
+    stmt.get_nested_stmt()->accept(*this);
+}
+
+/**
+ * Generate LLVM IR for an ARRAY-variant foreach statement.
+ *
+ * Structure (mirrors visit_for_statement, with a per-iteration
+ * construct/destruct of the loop variable instead of a single decl living for
+ * the whole loop):
+ *
+ *   entry:
+ *     $index = 0
+ *     br condition
+ *   condition:
+ *     %t = $index < source.size
+ *     condbr %t, nested, continue
+ *   nested:
+ *     construct loop_var from source[$index]
+ *     <nested_stmt>
+ *     destroy loop_var
+ *     br step
+ *   step:
+ *     $index++
+ *     br condition
+ *   continue:
+ *     ...
+ */
+void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
+{
+    if (stmt.get_kind() != foreach_kind::ARRAY) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F059),
+            lex::opt_any_lexeme{},
+            "Internal error: foreach codegen currently only supports the ARRAY variant");
+    }
+
+    auto lexeme = get_statement_debug_lexeme(stmt);
+    set_debug_location(lexeme);
+
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* cond_block = llvm::BasicBlock::Create(**_context, "foreach-condition");
+    llvm::BasicBlock* nested_block = llvm::BasicBlock::Create(**_context, "foreach-nested");
+    llvm::BasicBlock* step_block = llvm::BasicBlock::Create(**_context, "foreach-step");
+    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "foreach-continue");
+
+    // Initialize the hidden index variable ($index = 0).
+    stmt.get_index_var()->accept(*this);
+
+    set_debug_location(lexeme);
+    _builder->CreateBr(cond_block);
+
+    func->insert(func->end(), cond_block);
+    _builder->SetInsertPoint(cond_block);
+
+    // Condition: $index < source.size
+    _value = nullptr;
+    stmt.get_test_expr()->accept(*this);
+    llvm::Value* test_value = _value;
+    _value = nullptr;
+    emit_expression_temporaries_cleanup(lexeme);
+
+    set_debug_location(lexeme);
+    _builder->CreateCondBr(test_value, nested_block, cont_block);
+
+    func->insert(func->end(), nested_block);
+    _builder->SetInsertPoint(nested_block);
+
+    // Construct the loop variable from the current element (source[$index]).
+    stmt.get_loop_var()->accept(*this);
+
+    // Push a cleanup "scope" for the loop var, recording the depth BEFORE the
+    // push so that emit_active_scope_cleanup (used by break/continue/return)
+    // treats the loop variable's scope as being inside the loop and destroys
+    // it correctly on early exit.
+    size_t depth_before_loopvar = _cleanup_vars_stack.size();
+    _cleanup_vars_stack.push({stmt.get_loop_var()});
+
+    std::unique_ptr<debug_scope_guard> body_debug_scope;
+    if (!std::dynamic_pointer_cast<block>(stmt.get_nested_stmt())) {
+        body_debug_scope = std::make_unique<debug_scope_guard>(_debug_info.get(), _builder.get(), _current_debug_scope,
+            get_statement_debug_lexeme(stmt));
+    }
+
+    _loop_exit_blocks.push(cont_block);
+    _loop_continue_blocks.push(step_block);
+    _loop_cleanup_depth.push(depth_before_loopvar);
+    _loop_finally_depth.push(_finally_stack.size());
+
+    stmt.get_nested_stmt()->accept(*this);
+
+    body_debug_scope.reset();
+
+    _loop_finally_depth.pop();
+    _loop_cleanup_depth.pop();
+    _loop_continue_blocks.pop();
+    _loop_exit_blocks.pop();
+
+    // Normal fall-through: destroy the loop variable for this iteration.
+    emit_scope_variable_cleanup(_cleanup_vars_stack.top(), "foreach_loopvar_cleanup");
+    _cleanup_vars_stack.pop();
+
+    set_debug_location(lexeme);
+    _builder->CreateBr(step_block);
+
+    func->insert(func->end(), step_block);
+    _builder->SetInsertPoint(step_block);
+
+    // Step: $index++
+    _value = nullptr;
+    stmt.get_step_expr()->accept(*this);
+    _value = nullptr;
+    emit_expression_temporaries_cleanup(lexeme);
+
+    set_debug_location(lexeme);
+    _builder->CreateBr(cond_block);
+
+    func->insert(func->end(), cont_block);
+    _builder->SetInsertPoint(cont_block);
+}
+
 /**
  * Generate LLVM IR for a for loop.
  *

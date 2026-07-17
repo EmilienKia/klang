@@ -1626,6 +1626,10 @@ namespace k::model {
                 in_loop = true;
                 break;
             }
+            if (std::dynamic_pointer_cast<foreach_context>(*it) && std::dynamic_pointer_cast<model::foreach_statement>((*it)->content)) {
+                in_loop = true;
+                break;
+            }
         }
         if (!in_loop) {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BREAK_NOT_IN_LOOP), stmt.break_kw, "'break' statement can only appear inside a loop body (while or for)");
@@ -1650,6 +1654,10 @@ namespace k::model {
                 break;
             }
             if (std::dynamic_pointer_cast<for_context>(*it) && std::dynamic_pointer_cast<model::for_statement>((*it)->content)) {
+                in_loop = true;
+                break;
+            }
+            if (std::dynamic_pointer_cast<foreach_context>(*it) && std::dynamic_pointer_cast<model::foreach_statement>((*it)->content)) {
                 in_loop = true;
                 break;
             }
@@ -1927,6 +1935,71 @@ namespace k::model {
         }
 
         _stmt = for_stmt;
+    }
+
+    void model_builder::visit_foreach_statement(parse::ast::foreach_statement &stmt) {
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOREACH_STMT_BAD_SCOPE), stmt.for_kw, "'for' (foreach) statement cannot appear here; it must be inside a function or block body");
+        }
+
+        auto foreach_stmt = std::make_shared<model::foreach_statement>(parent_scope, stmt.shared_as<parse::ast::foreach_statement>());
+
+        // Push loop context (recognized by visit_break_statement/visit_continue_statement)
+        stack<foreach_context> push(_contexts, foreach_stmt);
+
+        // Build the loop variable directly. Unlike a normal variable_decl, the AST's
+        // 'init' field holds the foreach *source* expression (array/iterator/sequence),
+        // NOT a constructor-invocation initializer — so we must NOT delegate to
+        // visit_variable_decl here.
+        if (!stmt.decl_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOREACH_STMT_NEEDS_BODY), stmt.for_kw, "'for' (foreach) statement requires a loop-variable declaration: 'for (name : type = source) {{ ... }}'");
+        }
+        auto& decl = *stmt.decl_expr;
+
+        bool is_static = lex::keyword::has(decl.specifiers, lex::keyword::STATIC);
+        bool is_const  = lex::keyword::has(decl.specifiers, lex::keyword::CONST);
+
+        std::shared_ptr<model::variable_definition> loop_var_def = foreach_stmt->append_variable(std::string{decl.name.content}, is_static);
+        if (auto var_stmt = std::dynamic_pointer_cast<model::variable_statement>(loop_var_def)) {
+            var_stmt->set_ast_variable_decl(stmt.decl_expr);
+        }
+
+        auto var_type = _context->from_type_specifier(*decl.type);
+        // Normalize: if the type itself is const-qualified, strip the const from the
+        // type and promote it to the is_const flag (same normalization as visit_variable_decl).
+        if (type::is_const(var_type)) {
+            var_type = type::remove_const(var_type);
+            is_const = true;
+        }
+        loop_var_def->set_type(var_type);
+        loop_var_def->set_const(is_const);
+
+        // Source expression (array / iterator / sequence).
+        _expr.reset();
+        if (decl.init) {
+            decl.init->visit(*this);
+        }
+        if (_expr) {
+            foreach_stmt->set_source_expr(_expr);
+            _expr.reset();
+        } else {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOREACH_STMT_NEEDS_BODY), stmt.for_kw, "'for' (foreach) statement requires a source expression: 'for (name : type = source) {{ ... }}'");
+        }
+
+        // Nested statement
+        _stmt.reset();
+        if(stmt.nested_stmt) {
+            stmt.nested_stmt->visit(*this);
+        } /* else process absence in next if */
+        if(_stmt) {
+            foreach_stmt->set_nested_stmt(_stmt);
+            _stmt.reset();
+        } else {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOREACH_STMT_NEEDS_BODY), stmt.for_kw, "'for' (foreach) statement requires a body: 'for (name : type = source) {{ ... }}'");
+        }
+
+        _stmt = foreach_stmt;
     }
 
     void model_builder::visit_expression_statement(parse::ast::expression_statement &stmt) {

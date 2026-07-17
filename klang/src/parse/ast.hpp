@@ -888,6 +888,27 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Foreach statement: 'for' '(' [Specifier] Identifier ':' TypeSpec '=' ConditionalExpr ')' Statement
+         *
+         * Unlike the classic for_statement, there is a single nested expression between the
+         * parentheses (no ';' separators). The loop variable declaration is reused as-is
+         * (ast::variable_decl), its 'init' member holding the iterated expression (array,
+         * iterator or sequence — the actual variant is only known after type resolution).
+         */
+        struct foreach_statement : public statement {
+            lex::keyword for_kw;
+            std::shared_ptr<variable_decl> decl_expr;
+            std::shared_ptr<statement> nested_stmt;
+
+            foreach_statement(const lex::keyword &for_kw,
+                               const std::shared_ptr<variable_decl> &decl_expr,
+                               const std::shared_ptr<statement> &nested_stmt) :
+                    for_kw(for_kw), decl_expr(decl_expr), nested_stmt(nested_stmt) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         //
         // Declarations
         //
@@ -1587,6 +1608,7 @@ namespace k::parse {
         virtual void visit_if_else_statement(ast::if_else_statement &) = 0;
         virtual void visit_while_statement(ast::while_statement &) = 0;
         virtual void visit_for_statement(ast::for_statement &) = 0;
+        virtual void visit_foreach_statement(ast::foreach_statement &) = 0;
         virtual void visit_expression_statement(ast::expression_statement &) = 0;
 
         virtual void visit_literal_expr(ast::literal_expr &) = 0;
@@ -1658,6 +1680,7 @@ namespace k::parse {
         void visit_if_else_statement(ast::if_else_statement &) override;
         void visit_while_statement(ast::while_statement &) override;
         void visit_for_statement(ast::for_statement &) override;
+        void visit_foreach_statement(ast::foreach_statement &) override;
         void visit_expression_statement(ast::expression_statement &) override;
 
         void visit_literal_expr(ast::literal_expr &) override;

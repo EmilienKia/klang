@@ -247,6 +247,107 @@ void for_statement::on_variable_defined(std::shared_ptr<variable_definition> var
 
 
 //
+// Foreach statement
+//
+void foreach_statement::accept(model_visitor &visitor) {
+    visitor.visit_foreach_statement(*this);
+}
+
+std::shared_ptr<k::parse::ast::foreach_statement> foreach_statement::get_ast_foreach_stmt() const {
+    return get_ast_node_as<k::parse::ast::foreach_statement>();
+}
+
+void foreach_statement::set_ast_foreach_stmt(const std::shared_ptr<k::parse::ast::foreach_statement> &ast_foreach_stmt) {
+    _ast_node = ast_foreach_stmt;
+}
+
+const std::shared_ptr<variable_statement>& foreach_statement::get_loop_var() const {
+    return _loop_var;
+}
+
+const std::shared_ptr<expression>& foreach_statement::get_source_expr() const {
+    return _source_expr;
+}
+
+void foreach_statement::set_source_expr(const std::shared_ptr<expression> &source_expr) {
+    _source_expr = source_expr;
+    set_this_as_parent_to(_source_expr);
+}
+
+const std::shared_ptr<statement>& foreach_statement::get_nested_stmt() const {
+    return _nested_stmt;
+}
+
+void foreach_statement::set_nested_stmt(const std::shared_ptr<statement> &nested_stmt) {
+    _nested_stmt = nested_stmt;
+    set_this_as_parent_to(_nested_stmt);
+}
+
+const std::shared_ptr<variable_statement>& foreach_statement::get_index_var() const {
+    return _index_var;
+}
+
+void foreach_statement::set_index_var(const std::shared_ptr<variable_statement> &index_var) {
+    _index_var = index_var;
+}
+
+const std::shared_ptr<expression>& foreach_statement::get_test_expr() const {
+    return _test_expr;
+}
+
+void foreach_statement::set_test_expr(const std::shared_ptr<expression> &test_expr) {
+    _test_expr = test_expr;
+    set_this_as_parent_to(_test_expr);
+}
+
+const std::shared_ptr<expression>& foreach_statement::get_step_expr() const {
+    return _step_expr;
+}
+
+void foreach_statement::set_step_expr(const std::shared_ptr<expression> &step_expr) {
+    _step_expr = step_expr;
+    set_this_as_parent_to(_step_expr);
+}
+
+const std::shared_ptr<expression>& foreach_statement::get_current_expr() const {
+    return _current_expr;
+}
+
+void foreach_statement::set_current_expr(const std::shared_ptr<expression> &current_expr) {
+    _current_expr = current_expr;
+    set_this_as_parent_to(_current_expr);
+}
+
+std::shared_ptr<variable_holder> foreach_statement::get_variable_holder() {
+    return shared_as<variable_holder>();
+}
+
+std::shared_ptr<const variable_holder> foreach_statement::get_variable_holder() const {
+    return shared_as<const variable_holder>();
+}
+
+std::shared_ptr<variable_definition> foreach_statement::do_create_variable(const std::string &name, bool is_static) {
+    if (is_static) {
+        std::clog << "A foreach-declared variable cannot be declared static : " << name << ", ignore it" << std::endl;
+    }
+    return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<statement>(), name));
+}
+
+void foreach_statement::on_variable_defined(std::shared_ptr<variable_definition> var) {
+    // The user-declared loop variable is always created first (during model
+    // building); any subsequent variable (the hidden index counter, created
+    // later by type_reference_resolver for the ARRAY variant) is routed to
+    // _index_var.
+    auto var_stmt = std::dynamic_pointer_cast<variable_statement>(var);
+    if (!_loop_var) {
+        _loop_var = var_stmt;
+    } else {
+        _index_var = var_stmt;
+    }
+}
+
+
+//
 // Expression statement
 //
 void expression_statement::accept(model_visitor &visitor) {

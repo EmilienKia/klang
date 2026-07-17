@@ -93,6 +93,9 @@ enum class model_diag : unsigned int {
     ERR_DEFAULT_INVALID_SPECIFIER                 = 0x018D,
     ERR_DEFAULT_ON_PRIVATE                        = 0x018E,
     ERR_DEFAULT_ON_CTOR_DTOR                      = 0x018F,
+    // Foreach statement model-building errors (0x01F6-0x01FF)
+    ERR_FOREACH_STMT_BAD_SCOPE                    = 0x01F6,
+    ERR_FOREACH_STMT_NEEDS_BODY                   = 0x01F7,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -265,6 +268,10 @@ enum class type_diag : unsigned int {
     ERR_CAST_NOT_SUPPORTED                        = 0x016E,
     WARN_CAST_SIGN_CHANGE                         = 0x0170,
     WARN_CAST_UNSIGNED_TO_SIGNED                  = 0x0194,
+    // Foreach statement type-resolution errors (0x01F8-0x01FF)
+    ERR_FOREACH_SOURCE_NOT_ITERABLE               = 0x01F8,
+    ERR_FOREACH_VAR_OWNER_FORBIDDEN                = 0x01F9,
+    ERR_FOREACH_VAR_DRAIN_FORBIDDEN                = 0x01FA,
 };
 
 } // namespace k::diag

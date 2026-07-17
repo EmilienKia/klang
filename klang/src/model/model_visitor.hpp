@@ -77,6 +77,7 @@ public:
     virtual void visit_if_else_statement(if_else_statement&) =0;
     virtual void visit_while_statement(while_statement&) =0;
     virtual void visit_for_statement(for_statement&) =0;
+    virtual void visit_foreach_statement(foreach_statement&) =0;
     virtual void visit_expression_statement(expression_statement&) =0;
     virtual void visit_variable_statement(variable_statement&) =0;
 
@@ -198,6 +199,7 @@ public:
     void visit_if_else_statement(if_else_statement&) override;
     void visit_while_statement(while_statement&) override;
     void visit_for_statement(for_statement&) override;
+    void visit_foreach_statement(foreach_statement&) override;
     void visit_expression_statement(expression_statement&) override;
     void visit_variable_statement(variable_statement&) override;
 

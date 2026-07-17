@@ -257,6 +257,7 @@ klang_gen_test(klang-tests-gen-memory 90
         tests/test-gen-uniform-array-init.cpp
         tests/test-gen-array-subscript-indirection.cpp
         tests/test-gen-array-size.cpp
+        tests/test-gen-foreach.cpp
 )
 
 # ---------------------------------------------------------------------------

@@ -996,6 +996,16 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         return;
     }
 
+    // ── null → indirection: emit a null pointer constant of the target type ──
+    // All indirection kinds (pointer/link/view/owner) share the same opaque
+    // pointer representation at the LLVM IR level.
+    if(type::is_null(source_type) &&
+       (type::is_pointer(target_type) || type::is_link(target_type) ||
+        type::is_view(target_type) || type::is_owner(target_type))) {
+        _value = llvm::ConstantPointerNull::get(llvm::PointerType::get(_builder->getContext(), 0));
+        return;
+    }
+
     // ── Indirection reinterpret: owner ↔ pointer ↔ link ↔ view ────────────
     // All indirection types share the same LLVM opaque-pointer representation,
     // so an owner-to-pointer borrow (or any other combination) is a no-op cast
@@ -1102,8 +1112,10 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             "cannot cast from '{}' to '{}'; only casts between primitive types are currently implemented",
             {source_type->to_string(), target_type->to_string()});
     }
-    auto src = std::dynamic_pointer_cast<primitive_type>(source_type);
-    auto tgt = std::dynamic_pointer_cast<primitive_type>(target_type);
+    // Strip const before casting to primitive_type: a `const T` source (e.g. reading
+    // through a const array/reference) must still be castable exactly like a plain `T`.
+    auto src = std::dynamic_pointer_cast<primitive_type>(type::remove_const(source_type));
+    auto tgt = std::dynamic_pointer_cast<primitive_type>(type::remove_const(target_type));
 
     // Step 3: Pointer/link/view/owner casts: bitcast or GEP for struct upcast
     _value = nullptr;

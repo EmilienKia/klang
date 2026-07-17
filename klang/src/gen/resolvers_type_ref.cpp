@@ -3399,6 +3399,19 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     // For value-level adaptation, strip const from both sides.
     auto type_nc = type::remove_const(type);
 
+    // ── Null literal → any nullable indirection type ────────────────────────────
+    // The `null` literal has no intrinsic pointed-to type: it is valid wherever a
+    // nullable indirection (pointer, link, view or owner) is expected, regardless
+    // of context (variable init, array literal element, argument, ...).
+    if (type::is_null(type_src)) {
+        if (type::is_pointer(type_nc) || type::is_link(type_nc) ||
+            type::is_view(type_nc) || type::is_owner(type_nc)) {
+            auto cast = cast_expression::make_shared(expr, type_nc);
+            cast->set_type(type_nc);
+            return cast;
+        }
+    }
+
     // ── Function reference types ────────────────────────────────────────────────
     if (std::dynamic_pointer_cast<function_reference_type>(type_nc) ||
         std::dynamic_pointer_cast<function_reference_type>(type_src)) {

@@ -559,6 +559,79 @@ std::shared_ptr<ast::while_statement> parser::parse_while_statement() {
     );
 }
 
+std::shared_ptr<ast::foreach_statement> parser::parse_foreach_statement()
+{
+    lex::lex_holder holder(_lexer);
+
+    auto lfor = _lexer.get();
+    if(lfor != lex::keyword::FOR) {
+        holder.rollback();
+        return {};
+    }
+
+    auto lpopen = _lexer.get();
+    if(lpopen != lex::punctuator::PARENTHESIS_OPEN) {
+        holder.rollback();
+        return {};
+    }
+
+    std::vector<lex::keyword> specifiers = parse_specifiers();
+
+    auto lname = _lexer.get();
+    if(lex::is_not<lex::identifier>(lname)) {
+        holder.rollback();
+        return {};
+    }
+
+    auto lcolon = _lexer.get();
+    if(lcolon != lex::operator_::COLON) {
+        holder.rollback();
+        return {};
+    }
+
+    std::shared_ptr<ast::type_specifier> type = parse_type_spec();
+    if(!type) {
+        holder.rollback();
+        return {};
+    }
+
+    auto lequal = _lexer.get();
+    if(lequal != lex::operator_::EQUAL) {
+        // Not a foreach form (constructor-call or brace-init decl belongs to the classic for).
+        holder.rollback();
+        return {};
+    }
+
+    auto init_expr = parse_conditional_expr();
+    if(!init_expr) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_FOREACH_EXPECT_INIT_EXPR), _lexer.pick_current(), "Foreach statement expects an initialization expression after the equal operator '='");
+    }
+
+    // Disambiguation point: ')' means foreach, ';' means classic for (roll back and let
+    // parse_for_statement() reparse it), anything else is a genuine syntax error.
+    auto lpclose_or_semicolon = _lexer.get();
+    if(lpclose_or_semicolon == lex::punctuator::SEMICOLON) {
+        holder.rollback();
+        return {};
+    }
+    if(lpclose_or_semicolon != lex::punctuator::PARENTHESIS_CLOSE) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_FOREACH_EXPECT_CLOSE_OR_SEMICOLON), lpclose_or_semicolon, "Foreach statement expects a closing parenthesis ')' after the initialization expression");
+    }
+
+    auto nested_stmt = parse_statement();
+    if(!nested_stmt) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_FOREACH_EXPECT_BODY), lpclose_or_semicolon, "Foreach statement expects a statement after the close parenthesis ')'");
+    }
+
+    auto decl_expr = std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, init_expr);
+
+    return std::make_shared<ast::foreach_statement>(
+            lex::as<lex::keyword>(lfor),
+            decl_expr,
+            nested_stmt
+    );
+}
+
 std::shared_ptr<ast::for_statement> parser::parse_for_statement()
 {
     lex::lex_holder holder(_lexer);
@@ -656,6 +729,10 @@ std::shared_ptr<ast::statement> parser::parse_statement()
 
     if(auto while_stmt = parse_while_statement()) {
         return while_stmt;
+    }
+
+    if(auto foreach_stmt = parse_foreach_statement()) {
+        return foreach_stmt;
     }
 
     if(auto for_stmt = parse_for_statement()) {

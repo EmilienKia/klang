@@ -229,6 +229,10 @@ enum class parser_diag : unsigned int {
     ERR_THROWS_EXPECT_TYPE                        = 0x01DA,
     ERR_TRY_EXPECT_FINALLY_BODY                   = 0x01DB,
     ERR_SPACESHIP_EXPECT_SUBEXPR                  = 0x01DC,
+    // Foreach statement parser errors (0x01F3–0x01FF)
+    ERR_FOREACH_EXPECT_INIT_EXPR                  = 0x01F3,
+    ERR_FOREACH_EXPECT_CLOSE_OR_SEMICOLON         = 0x01F4,
+    ERR_FOREACH_EXPECT_BODY                       = 0x01F5,
 };
 
 } // namespace k::diag

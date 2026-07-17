@@ -155,6 +155,10 @@ void default_model_visitor::visit_for_statement(for_statement& stmt) {
     visit_statement(stmt);
 }
 
+void default_model_visitor::visit_foreach_statement(foreach_statement& stmt) {
+    visit_statement(stmt);
+}
+
 void default_model_visitor::visit_expression_statement(expression_statement &stmt) {
     visit_statement(stmt);
 }
