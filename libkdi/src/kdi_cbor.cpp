@@ -744,6 +744,7 @@ cbor_item_t* encode_destructor(const kdi_destructor& d) {
     map_push(m, "visibility",   encode_visibility(d.visibility));
     if (d.is_virtual)            map_push(m, "is_virtual",            cbor_bool(true));
     if (d.is_compiler_generated) map_push(m, "is_compiler_generated", cbor_bool(true));
+    if (d.vtable_slot >= 0) map_push(m, "vtable_slot", cbor_build_uint32(static_cast<uint32_t>(d.vtable_slot)));
     map_push(m, "mangled_name",    cbor_str(d.mangled_name));
     map_push(m, "mangled_name_d2", cbor_str(d.mangled_name_d2));
     map_push(m, "llvm_def",        cbor_str(d.llvm_def));
@@ -756,6 +757,7 @@ kdi_destructor decode_destructor(cbor_item_t* item, const std::string& path) {
     d.visibility            = decode_visibility(item, "visibility", path);
     d.is_virtual            = opt_bool(item, "is_virtual");
     d.is_compiler_generated = opt_bool(item, "is_compiler_generated");
+    d.vtable_slot           = opt_int32(item, "vtable_slot", -1);
     d.mangled_name          = req_string(item, "mangled_name", path);
     d.mangled_name_d2       = opt_string(item, "mangled_name_d2");
     d.llvm_def              = req_string(item, "llvm_def", path);

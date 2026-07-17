@@ -1273,6 +1273,7 @@ void kdi_builder::visit_destructor(destructor& dtor) {
     kd.visibility            = to_kdi_vis(dtor.get_visibility());
     kd.is_virtual            = dtor.is_virtual();
     kd.is_compiler_generated = dtor.is_compiler_generated();
+    kd.vtable_slot           = dtor.get_vtable_slot();
     kd.mangled_name          = dtor.get_mangled_name();
     if (auto ctx = dtor.get_context())
         kd.mangled_name_d2 = mangler(ctx).mangle_destructor_d2(dtor);

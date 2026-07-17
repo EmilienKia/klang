@@ -103,6 +103,7 @@ imported_destructor::imported_destructor(std::shared_ptr<aggregate> parent,
     if (kdi_dtor) {
         _mangled_name = kdi_dtor->mangled_name;
         if (kdi_dtor->is_virtual) _is_virtual = true;
+        _vtable_slot = kdi_dtor->vtable_slot;
     }
 }
 void imported_destructor::update_mangled_name() {

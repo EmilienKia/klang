@@ -241,6 +241,7 @@ klang_gen_test(klang-tests-gen-classes 120
         tests/test-gen-upcast.cpp
         tests/test-gen-interface.cpp
         tests/test-gen-interface-default.cpp
+        tests/test-gen-virtual-destructor.cpp
 )
 
 # ---------------------------------------------------------------------------

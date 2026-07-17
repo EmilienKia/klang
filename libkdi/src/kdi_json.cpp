@@ -559,6 +559,7 @@ static json to_json(const kdi_destructor& d) {
         {"visibility",            vis_to_str(d.visibility)},
         {"is_virtual",            d.is_virtual},
         {"is_compiler_generated", d.is_compiler_generated},
+        {"vtable_slot",           d.vtable_slot},
         {"mangled_name",          d.mangled_name},
         {"mangled_name_d2",       d.mangled_name_d2},
         {"llvm_def",              d.llvm_def},
@@ -571,6 +572,7 @@ static kdi_destructor from_json_destructor(const json& j) {
     d.visibility            = vis_from_str(j.value("visibility", "public"));
     d.is_virtual            = j.value("is_virtual", false);
     d.is_compiler_generated = j.value("is_compiler_generated", false);
+    d.vtable_slot           = j.value("vtable_slot", -1);
     d.mangled_name          = j.value("mangled_name", "");
     d.mangled_name_d2       = j.value("mangled_name_d2", "");
     d.llvm_def              = j.at("llvm_def");

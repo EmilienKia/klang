@@ -255,6 +255,10 @@ struct kdi_destructor {
     kdi_visibility visibility             = kdi_visibility::public_;
     bool           is_virtual             = false;
     bool           is_compiler_generated  = false;
+    /// Vtable slot index when is_virtual; always 0 (the universal destructor
+    /// slot reserved by ::k::Object — see build_vtable_layout() in
+    /// gen_class.cpp). -1 when not virtual.
+    int32_t        vtable_slot            = -1;
     std::string    mangled_name;           ///< D1 variant
     std::string    mangled_name_d2;        ///< D2 (base-subobject) variant
     /// LLVM IR prototype of the D1 destructor variant, e.g.

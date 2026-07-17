@@ -33,7 +33,12 @@
  *       virtual (takes the slot, overrides) but cannot be further overridden.
  *     - Private functions are NOT virtual.
  *     - Static functions are NOT virtual.
- *     - Constructors and destructors are NOT virtual.
+ *   - Constructors are NOT virtual (no dispatchable pointer).
+ *   - Destructors ARE virtual once a class reaches ::k::Object (which
+ *     declares the universal destructor vtable slot 0 — see
+ *     test-gen-virtual-destructor.cpp for dedicated coverage); a class with
+ *     no vtable at all (no stdlib / no Object in scope) still has no
+ *     destructor vtable slot.
  *
  * Tests covered:
  *  ── struct no-virtuality enforcement ─────────────────────────────────────
@@ -53,7 +58,7 @@
  *   [K] private method cannot override a virtual function
  *  ── class static methods are NOT virtual ─────────────────────────────────
  *   [L] static class method has no vtable slot
- *  ── constructors / destructors are NOT virtual ────────────────────────────
+ *  ── constructors are NOT virtual ─────────────────────────────────────────
  *   [M] constructors have no vtable slot (no dispatchable pointer)
  *  ── 'final' on a NEW method — NOT virtual ────────────────────────────────
  *   [N] new 'final' method in class is NOT virtual
