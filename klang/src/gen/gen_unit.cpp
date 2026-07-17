@@ -20,6 +20,7 @@
 //
 #include "resolvers.hpp"
 #include "generators.hpp"
+#include "gen_helpers.hpp"
 
 #include "../model/imported.hpp"
 #include "../model/expressions.hpp"
@@ -58,16 +59,8 @@ void symbol_resolver::visit_named_element(named_element& named) {
 // But Global main method is
 //
 
-/// Return true if the given aggregate is ::k::Object (the root base class).
-/// The root namespace is named after the module (e.g. "k" for module k),
-/// so Object's parent namespace IS the root when compiling module k.
-static bool is_k_object(const aggregate& agg) {
-    if (agg.get_short_name() != "Object") return false;
-    auto parent_ns = agg.parent<ns>();
-    if (!parent_ns) return false;
-    if (parent_ns->get_short_name() != "k") return false;
-    return true;
-}
+// is_k_object() moved to gen_helpers.hpp (shared with gen_class.cpp's
+// universal destructor vtable slot seeding).
 
 /// Return true if the given aggregate is ::k::Annotation (the root annotation base).
 static bool is_k_annotation(const aggregate& agg) {
@@ -106,9 +99,18 @@ void symbol_resolver::visit_unit(unit& unit)
     auto root_ns = _unit.get_root_namespace();
 
     // ── Pre-pass 0: implicit Object inheritance ─────────────────────────────────
-    // Every class that has no declared base classes (and is not ::k::Object itself)
-    // implicitly inherits from ::k::Object.  We inject that base before any
-    // resolution so that the rest of the pipeline sees it as a normal base.
+    // Every class OR interface that has no declared base classes (and is not
+    // ::k::Object itself) implicitly (and virtually) inherits from ::k::Object.
+    // We inject that base before any resolution so that the rest of the
+    // pipeline sees it as a normal base.
+    //
+    // Interfaces are included (not just classes) so that ::k::Object — and in
+    // particular its virtual destructor at vtable slot 0 — is reachable via the
+    // primary vtable inheritance chain from ANY root type, including abstract
+    // interfaces with no by-value representation (e.g. ::k::Iterator<T>,
+    // ::k::Sequence<T>). Since K's inheritance is always virtual, a class that
+    // implements several such interfaces still gets exactly one shared Object
+    // sub-object (existing virtual-base deduplication handles this).
     //
     // The injection only triggers when k::Object is actually reachable:
     //   - the current compilation unit defines it (module k), or
@@ -122,8 +124,9 @@ void symbol_resolver::visit_unit(unit& unit)
             inject_implicit_object = [&](const std::vector<std::shared_ptr<element>>& children) {
                 for (auto& child : children) {
                     if (auto kl = std::dynamic_pointer_cast<klass>(child)) {
-                        // Only true classes (not interfaces) get implicit Object inheritance
-                        if (kl->is_class() && !kl->has_bases() && !is_k_object(*kl)) {
+                        // Both classes and interfaces get implicit Object inheritance
+                        // when they have no declared base of their own.
+                        if (!kl->has_bases() && !is_k_object(*kl)) {
                             kl->add_base("Object", PUBLIC);
                         }
                         // Recurse into nested aggregates
@@ -183,7 +186,12 @@ void symbol_resolver::visit_unit(unit& unit)
                             // Skip template base names (e.g. "Collection<T>") —
                             // they require type resolution and will be handled in visit_structure.
                             if (bs.raw_name.find('<') != std::string::npos) continue;
-                            auto base_st = scope_lookup::lookup_structure(st->shared_as<element>(), bs.raw_name);
+                            // Use the qualified/imported-aware lookup so that diamond
+                            // detection sees bases declared with a namespace-qualified
+                            // name (e.g. "k::Object") or reachable only through an
+                            // imported KDI module — not just simple local names.
+                            auto base_st = scope_lookup::lookup_structure_or_import(
+                                _unit, _context, st->shared_as<element>(), bs.raw_name);
                             if (base_st) bs.base = base_st;
                             // Errors (not found, final, cross-type) will be caught properly in visit_structure
                         }

@@ -255,6 +255,23 @@ public:
     virtual bool is_annotation() const { return false; }
 
     /**
+     * True if this aggregate was materialised from an imported KDI module
+     * (as opposed to being declared in the current compilation unit).
+     *
+     * Imported aggregates have an ALREADY-COMPILED LLVM struct layout and
+     * machine code (in their originating shared/static library), frozen at
+     * that library's own compile time. Diamond (virtual-base) detection must
+     * never retroactively mark one of an imported aggregate's OWN base_spec
+     * edges as virtual purely because some later, unrelated compilation
+     * combines it into a new diamond: doing so would silently change how
+     * this compilation lays out/accesses that imported aggregate's members
+     * relative to what its originating library actually compiled, causing
+     * an ABI mismatch (wrong offsets, corrupted vtable pointers, crashes).
+     * See aggregate_type_resolver/klass::compute_virtual_bases_for().
+     */
+    virtual bool is_imported() const { return false; }
+
+    /**
      * Check whether this annotation type has @Retention(Policy::SOURCE).
      * Returns true if the type explicitly specifies SOURCE retention.
      * Returns false (RUNTIME) if @Retention is absent or set to RUNTIME.

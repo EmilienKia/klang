@@ -1091,6 +1091,16 @@ namespace {
 
         std::function<void(aggregate*)> mark_virtual_edges;
         mark_virtual_edges = [&](aggregate* cur) {
+            // Never mutate base_spec edges owned by an already-compiled imported
+            // aggregate: its LLVM struct layout and machine code are frozen by its
+            // originating library at that library's own compile time. A diamond
+            // that only becomes visible when combining imported bases in THIS
+            // (unrelated) compilation cannot be resolved by retroactively sharing
+            // storage for it — doing so would silently disagree with the fixed
+            // offsets the originating library actually compiled, corrupting vptrs
+            // and member accesses at runtime. Such diamonds keep their (ABI-safe)
+            // duplicated sub-object representation instead.
+            if (cur->is_imported()) return;
             for (auto& bs : cur->get_bases_mutable()) {
                 if (!bs.base || !participates_in_diamond_detection(bs.base.get())) continue;
                 if (diamond_bases.count(bs.base.get())) {

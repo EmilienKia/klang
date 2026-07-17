@@ -16,6 +16,8 @@
  * limitations under the License.
  */
 #include "resolvers_scope_lookup.hpp"
+#include "resolvers_aggregate.hpp"
+#include "../model/imported.hpp"
 
 namespace k::model::gen {
 
@@ -346,6 +348,54 @@ scope_lookup::lookup_structure(std::shared_ptr<element> elem, const std::string&
                 return agg;
             }
         }
+    }
+    return {};
+}
+
+namespace {
+/// Split a "::"-separated qualified name into its parts (no root-prefix handling).
+std::vector<std::string> split_qualified_name(const std::string& name) {
+    std::vector<std::string> parts;
+    std::size_t start = 0;
+    while (true) {
+        auto pos = name.find("::", start);
+        if (pos == std::string::npos) {
+            parts.push_back(name.substr(start));
+            break;
+        }
+        parts.push_back(name.substr(start, pos - start));
+        start = pos + 2;
+    }
+    return parts;
+}
+} // anonymous namespace
+
+std::shared_ptr<aggregate>
+scope_lookup::lookup_structure_or_import(unit& u, const std::shared_ptr<context>& ctx,
+                                          std::shared_ptr<element> elem, const std::string& name) {
+    // Simple (unqualified) name: standard scope-chain lookup among locally
+    // declared aggregates first.
+    if (name.find("::") == std::string::npos) {
+        if (auto agg = lookup_structure(elem, name)) return agg;
+    } else {
+        // Namespace-qualified name (e.g. "k::Object"): descend namespaces from
+        // the compilation unit's root, matching locally-declared aggregates.
+        if (auto root_ns_ptr = root_namespace(*elem)) {
+            k::name qname{false, split_qualified_name(name)};
+            if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, qname)) {
+                return res;
+            }
+        }
+    }
+
+    // Fallback: the name may refer to a type materialised from a KDI-imported
+    // module (e.g. "Object" or "k::Object" reachable via `import k;`), which is
+    // not part of the locally-declared aggregate tree at all. This handles both
+    // simple and qualified forms uniformly (find_imported_type searches across
+    // all imported modules by whatever name form is given).
+    k::name qname{false, split_qualified_name(name)};
+    if (auto imp_agg = u.get_or_create_imported_aggregate(qname, ctx)) {
+        return std::dynamic_pointer_cast<aggregate>(imp_agg);
     }
     return {};
 }

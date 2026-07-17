@@ -449,52 +449,10 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             }
 
             if (!base_st) {
-            // Try scope-local lookup first (simple name or namespace-qualified)
-            if (bs.raw_name.find("::") == std::string::npos) {
-                // Simple name: standard scope-chain lookup
-                base_st = scope_lookup::lookup_structure(st.shared_as<element>(), bs.raw_name);
-            } else {
-                // Qualified name: split on "::" and descend namespaces from root
-                auto root_ns_ptr = scope_lookup::root_namespace(st);
-                if (root_ns_ptr) {
-                    std::vector<std::string> parts;
-                    std::size_t start = 0;
-                    while (true) {
-                        auto pos = bs.raw_name.find("::", start);
-                        if (pos == std::string::npos) {
-                            parts.push_back(bs.raw_name.substr(start));
-                            break;
-                        }
-                        parts.push_back(bs.raw_name.substr(start, pos - start));
-                        start = pos + 2;
-                    }
-                    k::name qname{false, parts};
-                    if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, qname)) {
-                        base_st = res;
-                    }
-                }
-            }
-
-            // Fallback: search imported modules
-            if (!base_st) {
-                std::vector<std::string> parts;
-                std::size_t start = 0;
-                const auto& raw = bs.raw_name;
-                while (true) {
-                    auto pos = raw.find("::", start);
-                    if (pos == std::string::npos) {
-                        parts.push_back(raw.substr(start));
-                        break;
-                    }
-                    parts.push_back(raw.substr(start, pos - start));
-                    start = pos + 2;
-                }
-                k::name qname{false, parts};
-                if (auto imp_agg = _unit.get_or_create_imported_aggregate(qname, _context)) {
-                    // imported_aggregate is also an aggregate (via inheritance)
-                    base_st = std::dynamic_pointer_cast<aggregate>(imp_agg);
-                }
-            }
+            // Qualified/imported-aware lookup: handles simple names, namespace-qualified
+            // names (e.g. "k::Object") resolved among locally-declared aggregates, and
+            // names only reachable through a KDI-imported module.
+            base_st = scope_lookup::lookup_structure_or_import(_unit, _context, st.shared_as<element>(), bs.raw_name);
             } // end if (!base_st) — template base was already resolved above
 
             if (!base_st) {

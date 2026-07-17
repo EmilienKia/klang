@@ -35,6 +35,24 @@ module k;
 const class Object {
 public:
     /**
+     * Virtual destructor.
+     *
+     * Declared first so it occupies vtable slot 0 (right after the RTTI slot),
+     * making it the universal, stable destructor slot for every class and
+     * interface in the whole type hierarchy: since every class and every
+     * root interface implicitly (and virtually) extends ::k::Object, any
+     * object can be destroyed polymorphically through a reference/owner
+     * typed as its declared (possibly abstract/interface) type, as long as
+     * ::k::Object stays reachable via the primary vtable inheritance chain.
+     *
+     * Empty by default: subclasses override it to release their own
+     * resources; the compiler-generated chaining logic still calls each
+     * base's destructor explicitly (this is not related to overriding).
+     */
+    ~Object() {
+    }
+
+    /**
      * Return a hash code for this object.
      *
      * Default implementation returns `0`. Subclasses should override this

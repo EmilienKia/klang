@@ -65,6 +65,23 @@ public:
     lookup_structure(std::shared_ptr<element> elem, const std::string& name);
 
     /**
+     * Fully general aggregate lookup: like lookup_structure(), but additionally
+     * handles namespace-qualified names (e.g. "k::Object") and falls back to
+     * materialising an imported aggregate (via unit::get_or_create_imported_aggregate)
+     * when the name is not found among locally-declared aggregates.
+     *
+     * This is the resolution strategy any base-class / type name lookup needs as
+     * soon as it may reference a qualified and/or imported type (as opposed to
+     * lookup_structure(), which only walks the local scope chain by simple name).
+     * Use this instead of lookup_structure() whenever the raw name may come from
+     * KDI-imported modules or be namespace-qualified — e.g. resolving base_spec
+     * raw names for diamond (virtual base) detection.
+     */
+    static std::shared_ptr<aggregate>
+    lookup_structure_or_import(unit& u, const std::shared_ptr<context>& ctx,
+                                std::shared_ptr<element> elem, const std::string& name);
+
+    /**
      * Look up an enumeration by name, starting from elem and walking up the scope chain.
      */
     static std::shared_ptr<enumeration>

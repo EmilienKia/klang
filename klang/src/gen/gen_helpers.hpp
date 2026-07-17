@@ -33,6 +33,22 @@
 namespace k::model::gen {
 
 /**
+ * Return true if the given aggregate is ::k::Object (the root base class).
+ * The root namespace is named after the module (e.g. "k" for module k),
+ * so Object's parent namespace IS the root when compiling module k.
+ *
+ * Shared between gen_unit.cpp (implicit-base injection) and gen_class.cpp
+ * (universal destructor vtable slot seeding).
+ */
+inline bool is_k_object(const aggregate& agg) {
+    if (agg.get_short_name() != "Object") return false;
+    auto parent_ns = agg.parent<ns>();
+    if (!parent_ns) return false;
+    if (parent_ns->get_short_name() != "k") return false;
+    return true;
+}
+
+/**
  * Apply the linkage policy for a **template instantiation** symbol.
  *
  * Template instantiations follow the C++ ODR model: every translation unit /

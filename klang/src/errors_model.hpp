@@ -154,6 +154,7 @@ enum class structure_diag : unsigned int {
     WARN_NESTED_INHERITS_ENCLOSING                = 0x0191,  ///< Inner struct inherits from its enclosing struct
     WARN_NESTED_INHERITS_INNER                    = 0x0192,  ///< Struct inherits from one of its own inner structs
     WARN_IMPLICIT_COPY_CTOR_GENERATED             = 0x0193,  ///< Implicit copy constructor generated for a struct with bases/struct members
+    ERR_VIRTUAL_DTOR_SECONDARY_BASE                = 0x0194,  ///< Virtual destructor reachable only via a secondary (non-primary) vtable base — needs a this-adjustment thunk, not yet supported (see TODO.md)
 };
 
 // ────────────────────────────────────────────────────────────────────────────

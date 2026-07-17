@@ -169,6 +169,7 @@ public:
     bool is_external() const { return true; }
     bool is_class() const override { return false; }
     bool has_vtable() const override { return false; }
+    bool is_imported() const override { return true; }
 };
 
 class imported_structure : public imported_aggregate {

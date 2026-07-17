@@ -1107,9 +1107,23 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
     }
 
     // ── Set up vtable_layout for imported types with vtables ────────────────
-    // Store vtable/RTTI symbol names and slot count. The LLVM global declarations
-    // are created lazily later (when the LLVM module exists) by the codegen passes
-    // that need them.
+    // Store vtable/RTTI symbol names and a FULLY populated entry list (both
+    // `introducing_func` and `func` for every slot), not just slot counts.
+    // This mirrors gen_class.cpp's build_vtable_layout() inherit-then-override
+    // algorithm, applied here to imported aggregates so that a LOCAL class
+    // deriving from an imported base can correctly inherit ALL of that base's
+    // vtable entries — including slots introduced by a further-removed
+    // grandparent that this immediate imported base never itself redeclares
+    // (e.g. ::k::Exception redeclares no methods of its own: all of its vtable
+    // slots — the destructor, hash(), getCode(), getCause(), hasCause() — are
+    // inherited from ::k::Object/::k::Throwable). Without this, a local class
+    // like `MyErr : public Exception` that doesn't override anything would
+    // still need its OWN vtable once its own (compiler-generated) destructor
+    // overrides the inherited destructor slot, and that new vtable would be
+    // missing every slot Exception itself never redeclared — corrupting
+    // virtual dispatch for those methods. Bases are always materialised
+    // (recursively, bottom-up) before this point, so the primary base's own
+    // vtable_layout (if any) is already complete when we get here.
     if (kdi_agg->vtable.has_value()) {
         const auto& kdi_vt = kdi_agg->vtable.value();
 
@@ -1117,11 +1131,60 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         vt_layout->vtable_symbol = kdi_vt.vtable_symbol;
         vt_layout->rtti_symbol = kdi_vt.rtti_symbol;
 
-        // Populate entries so slot_count() returns the right value
-        for (std::size_t i = 0; i < kdi_vt.slots.size(); ++i) {
-            vtable_entry ve;
-            ve.slot_index = kdi_vt.slots[i].slot_index;
-            vt_layout->entries.push_back(ve);
+        // Find the primary base (first declared base with a vtable, local or
+        // imported), matching build_vtable_layout()'s selection rule.
+        std::shared_ptr<vtable_layout> primary_base_vt;
+        for (auto& bs : agg->get_bases()) {
+            if (auto base_kl = std::dynamic_pointer_cast<klass>(bs.base)) {
+                if (base_kl->has_vtable()) { primary_base_vt = base_kl->get_vtable(); break; }
+            } else if (auto base_imp = std::dynamic_pointer_cast<imported_aggregate>(bs.base)) {
+                if (base_imp->has_vtable()) { primary_base_vt = base_imp->get_vtable(); break; }
+            }
+        }
+
+        // 1. Inherit the primary base's fully-resolved entries verbatim.
+        if (primary_base_vt) {
+            for (auto& entry : primary_base_vt->entries) {
+                vtable_entry inherited;
+                inherited.slot_index = entry.slot_index;
+                inherited.introducing_func = entry.introducing_func;
+                inherited.func = entry.func;
+                vt_layout->entries.push_back(inherited);
+            }
+        }
+
+        // 2. Overlay this aggregate's own slots (destructor + methods), either
+        //    overriding an inherited slot at the same index or introducing a
+        //    brand-new one (e.g. this is the very first class in the chain to
+        //    declare a vtable at all).
+        auto find_or_append_slot = [&](std::uint32_t slot_index) -> vtable_entry& {
+            for (auto& entry : vt_layout->entries) {
+                if (entry.slot_index == slot_index) return entry;
+            }
+            vtable_entry new_entry;
+            new_entry.slot_index = slot_index;
+            vt_layout->entries.push_back(new_entry);
+            return vt_layout->entries.back();
+        };
+
+        for (const auto& slot : kdi_vt.slots) {
+            auto& entry = find_or_append_slot(slot.slot_index);
+            if (slot.introducing_func.find("::~") != std::string::npos) {
+                if (auto id = agg->get_destructor()) {
+                    if (!entry.introducing_func) entry.introducing_func = id;
+                    entry.func = id;
+                    id->set_vtable_slot((int)slot.slot_index);
+                }
+            } else {
+                for (auto& child : agg->get_children()) {
+                    auto im = std::dynamic_pointer_cast<imported_method>(child);
+                    if (im && im->get_vtable_slot() == (int)slot.slot_index) {
+                        if (!entry.introducing_func) entry.introducing_func = im;
+                        entry.func = im;
+                        break;
+                    }
+                }
+            }
         }
 
         // Wire the vtable layout to the imported aggregate

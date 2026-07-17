@@ -228,31 +228,87 @@ build_vtable_layout(aggregate& st,
             next_slot = std::max(next_slot, entry.slot_index + 1);
         }
     } else if (primary_base_imp) {
-        // Imported primary base: build vtable entries from KDI slot descriptors.
-        // Each slot's introducing_func is the imported_method with that slot_index.
-        const auto* kdi_agg = primary_base_imp->get_kdi_aggregate();
-        if (kdi_agg && kdi_agg->vtable.has_value()) {
-            const auto& kdi_vt = kdi_agg->vtable.value();
-            for (const auto& slot : kdi_vt.slots) {
-                // Find the imported_method that introduces this slot
-                std::shared_ptr<function> intro_func;
-                for (auto& child : primary_base_imp->get_children()) {
-                    auto im = std::dynamic_pointer_cast<imported_method>(child);
-                    if (im && im->get_vtable_slot() == (int)slot.slot_index) {
-                        intro_func = im;
-                        break;
-                    }
-                }
-                if (!intro_func) continue; // skip if not found
+        // Imported primary base: its own vtable_layout is already fully
+        // resolved (introducing_func + func populated for every slot,
+        // including slots introduced by a further-removed grandparent that
+        // this immediate base never itself redeclares — e.g. ::k::Exception
+        // redeclares no methods of its own; all its slots are inherited from
+        // ::k::Throwable/::k::Object). See
+        // unit::get_or_create_imported_aggregate() in imported.cpp, which
+        // populates it with the same inherit-then-override algorithm used
+        // here. Just copy it verbatim.
+        if (auto base_vt = primary_base_imp->get_vtable()) {
+            for (auto& entry : base_vt->entries) {
                 vtable_entry inherited;
-                inherited.slot_index = slot.slot_index;
-                inherited.introducing_func = intro_func;
-                inherited.func = intro_func;  // initially: the imported method
+                inherited.slot_index = entry.slot_index;
+                inherited.introducing_func = entry.introducing_func;
+                inherited.func = entry.func;
                 vt->entries.push_back(inherited);
-                next_slot = std::max(next_slot, (size_t)slot.slot_index + 1);
+                next_slot = std::max(next_slot, (size_t)entry.slot_index + 1);
             }
         }
     }
+
+    // ── Destructor slot (universal slot 0, matched by type, not by name) ──
+    // The destructor cannot be matched by short-name signature comparison like
+    // regular virtual methods (every class's destructor is spelled "~ClassName",
+    // so names never match across a hierarchy). Instead, by convention,
+    // ::k::Object declares the FIRST-ever virtual destructor at vtable slot 0.
+    // Every class/interface that transitively reaches Object via its primary
+    // base chain inherits that same slot 0, and its own (explicit or
+    // compiler-generated) destructor always overrides it — it never introduces
+    // a new slot. This keeps the destructor slot reachable at a fixed, stable
+    // position from ANY class/interface reference in the whole hierarchy, as
+    // long as ::k::Object stays on the *primary* vtable inheritance path (see
+    // known limitation for secondary/multiple-inheritance bases below).
+    {
+        bool inherited_dtor_slot = !vt->entries.empty()
+            && std::dynamic_pointer_cast<destructor>(vt->entries[0].introducing_func) != nullptr;
+
+        auto own_dtor = st.get_destructor();
+
+        if (inherited_dtor_slot) {
+            // Override the inherited destructor slot with this aggregate's own
+            // destructor (present because every klass gets one — explicit or
+            // compiler-generated — once any base already has one: see
+            // symbol_resolver::visit_aggregate's implicit-destructor logic).
+            if (own_dtor) {
+                auto& dtor_entry = vt->entries[0];
+                own_dtor->set_virtual(true);
+                own_dtor->set_vtable_slot(0);
+                own_dtor->set_overrides(dtor_entry.func);
+                dtor_entry.func = own_dtor;
+            }
+        } else if (own_dtor && !st.has_bases()) {
+            // Root aggregate with its own destructor and no bases at all: this
+            // is ::k::Object itself (the only root type expected to declare an
+            // explicit destructor without any base — every other class/interface
+            // either has ::k::Object injected as an implicit base, or (in
+            // standalone compilations without the stdlib) has no destructor
+            // slot concept at all). Seed the universal destructor slot 0.
+            own_dtor->set_virtual(true);
+            own_dtor->set_vtable_slot(0);
+            vtable_entry dtor_slot;
+            dtor_slot.slot_index = next_slot++;
+            dtor_slot.introducing_func = own_dtor;
+            dtor_slot.func = own_dtor;
+            vt->entries.insert(vt->entries.begin(), dtor_slot);
+        }
+        // Otherwise: no inherited destructor slot and this aggregate is not the
+        // destructor-seeding root — either ::k::Object is unavailable (standalone
+        // test compilation without the stdlib) or this aggregate has no
+        // destructor need at all. Preserves today's static-dispatch behaviour.
+    }
+
+    // NOTE: destroying an object through a reference/owner typed as a
+    // *secondary* (non-primary) vtable base does not yet route to the most-
+    // derived destructor override (would require a this-adjustment "deleting
+    // destructor" thunk, like C++'s D0). This is a known, documented gap
+    // (see TODO.md) — deliberately NOT rejected at compile time here, because
+    // multiple-interface-inheriting classes are common in the stdlib
+    // (e.g. ::k::MutableCollection<T>) and must keep compiling; before this
+    // change destructors were never virtual at all, so this is strictly no
+    // worse than the prior behaviour, only less complete than the primary path.
 
     // Process own functions
     for (auto& child : st.get_children()) {
@@ -260,7 +316,7 @@ build_vtable_layout(aggregate& st,
         if (!func) continue;
         if (func->is_static()) continue;
         if (std::dynamic_pointer_cast<constructor>(func)) continue;
-        if (std::dynamic_pointer_cast<destructor>(func)) continue;
+        if (std::dynamic_pointer_cast<destructor>(func)) continue; // handled above, by type not by name
 
         auto vis = func->get_visibility();
 
@@ -1571,13 +1627,28 @@ void declaration_generator::visit_klass(klass& klass) {
         // ── Build the RTTI struct type ──────────────────────────────────────────
         // Both interfaces and classes:
         //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
-        //     ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
-        //     i32 flags, ptr annotations, ptr functions, ptr constructors }
-        //   (11 ptr fields + 1 i32 field = 12 fields)
+        //     ptr __vptr_Object__, ptr name, ptr fullName, ptr bases, ptr nested,
+        //     ptr enclosing, i32 flags, ptr annotations, ptr functions,
+        //     ptr constructors }
+        //   (12 ptr fields + 1 i32 field = 13 fields)
+        //
+        // The __vptr_Object__ field exists because ::k::TypeInfo (the root of
+        // the AggregateType/TypeInfo interface chain that ::k::Class/::k::Interface
+        // extend) itself implicitly extends ::k::Object. Since TypeInfo is
+        // reached via a single, non-diamond chain (Class -> AggregateType ->
+        // TypeInfo -> Object), Object gets its own embedded, non-virtual
+        // base sub-object (its own vptr) nested inside TypeInfo's own
+        // sub-object — one level deeper than AggregateType/TypeInfo. This
+        // flattened RTTI representation must mirror ::k::Class's/::k::Interface's
+        // ACTUAL LLVM struct layout field-for-field (see rtti.c's comments) so
+        // that Class's/Interface's own methods (getBases(), getFunctions(),
+        // etc.), which GEP into "this" using their own struct type, read the
+        // correct field when "this" is actually one of these flattened RTTI
+        // globals reinterpreted as a Class/Interface instance.
         std::string rtti_struct_name = "__rtti_" + klass.get_short_name() + "__";
         llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
         std::vector<llvm::Type*> rtti_fields = {
-            ptr_ty, ptr_ty, ptr_ty,     // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__
+            ptr_ty, ptr_ty, ptr_ty, ptr_ty,  // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__, __vptr_Object__
             ptr_ty, ptr_ty,             // name, fullName
             ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
             i32_ty,                      // flags
@@ -1628,15 +1699,16 @@ void declaration_generator::visit_klass(klass& klass) {
             null_ptr,       // field 0: __vptr__                → patched later
             null_ptr,       // field 1: __vptr_AggregateType__  → patched later
             null_ptr,       // field 2: __vptr_TypeInfo__       → patched later
-            name_cstr,      // field 3: name                    → short name (char[]?)
-            fullname_cstr,  // field 4: fullName                → fully qualified name (char[]?)
-            null_ptr,       // field 5: bases                   → patched later
-            null_ptr,       // field 6: nested                  → patched later
-            null_ptr,       // field 7: enclosing               → patched later
-            llvm::ConstantInt::get(i32_ty, 0),  // field 8: flags → patched later
-            null_ptr,       // field 9: annotations             → patched later
-            null_ptr,       // field 10: functions              → patched later
-            null_ptr        // field 11: constructors           → patched later
+            null_ptr,       // field 3: __vptr_Object__         → patched later
+            name_cstr,      // field 4: name                    → short name (char[]?)
+            fullname_cstr,  // field 5: fullName                → fully qualified name (char[]?)
+            null_ptr,       // field 6: bases                   → patched later
+            null_ptr,       // field 7: nested                  → patched later
+            null_ptr,       // field 8: enclosing               → patched later
+            llvm::ConstantInt::get(i32_ty, 0),  // field 9: flags → patched later
+            null_ptr,       // field 10: annotations            → patched later
+            null_ptr,       // field 11: functions              → patched later
+            null_ptr        // field 12: constructors           → patched later
         };
         llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
         auto rtti_gv = new llvm::GlobalVariable(
@@ -1917,10 +1989,11 @@ void implementation_generator::patch_rtti_global(klass& klass) {
     //   f) Synthesize Function RTTI globals for public member functions.
     //   g) Synthesize Constructor RTTI globals for public constructors (classes only).
     //
-    // Both interfaces and classes share the same layout (12 fields):
+    // Both interfaces and classes share the same layout (13 fields):
     //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
-    //     ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
-    //     i32 flags, ptr annotations, ptr functions, ptr constructors }
+    //     ptr __vptr_Object__, ptr name, ptr fullName, ptr bases, ptr nested,
+    //     ptr enclosing, i32 flags, ptr annotations, ptr functions,
+    //     ptr constructors }
     //
     // When the vtable symbols are not available (e.g. standalone compilation
     // without libk), the RTTI global keeps null vptrs.  typeid comparison
@@ -1934,20 +2007,26 @@ void implementation_generator::patch_rtti_global(klass& klass) {
 
         // ── a) Look up the correct descriptor vtable symbols ───────────────────
         // Interfaces use ::k::Interface vtables, classes use ::k::Class vtables.
-        // Each has three vtable levels: primary, AggregateType secondary, TypeInfo secondary.
-        std::string desc_vtable_name, desc_at_vtable_name, desc_ti_vtable_name;
+        // Each has four vtable levels: primary, AggregateType secondary, TypeInfo
+        // secondary, Object secondary (Object is reached via TypeInfo's own
+        // implicit Object base, one level deeper than AggregateType/TypeInfo —
+        // see the RTTI struct layout comment above).
+        std::string desc_vtable_name, desc_at_vtable_name, desc_ti_vtable_name, desc_obj_vtable_name;
         if (is_iface) {
             desc_vtable_name    = "_KTVN1k9InterfaceE";
             desc_at_vtable_name = "_KTVN1k9InterfaceE_for_AggregateType";
             desc_ti_vtable_name = "_KTVN1k9InterfaceE_for_TypeInfo";
+            desc_obj_vtable_name = "_KTVN1k9InterfaceE_for_Object";
         } else {
             desc_vtable_name    = "_KTVN1k5ClassE";
             desc_at_vtable_name = "_KTVN1k5ClassE_for_AggregateType";
             desc_ti_vtable_name = "_KTVN1k5ClassE_for_TypeInfo";
+            desc_obj_vtable_name = "_KTVN1k5ClassE_for_Object";
         }
         llvm::Constant* desc_vt    = _context->module().getNamedGlobal(desc_vtable_name);
         llvm::Constant* desc_at_vt = _context->module().getNamedGlobal(desc_at_vtable_name);
         llvm::Constant* desc_ti_vt = _context->module().getNamedGlobal(desc_ti_vtable_name);
+        llvm::Constant* desc_obj_vt = _context->module().getNamedGlobal(desc_obj_vtable_name);
 
         // If the primary vtable symbol is not in this module, declare it as
         // external so that user-defined classes in modules importing libk get
@@ -1955,8 +2034,9 @@ void implementation_generator::patch_rtti_global(klass& klass) {
         // Only create the external declaration if this module (directly or
         // transitively) depends on libk — standalone modules without libk
         // keep null vptrs to avoid unresolvable link-time symbol references.
-        // Secondary AggregateType and TypeInfo vtables now have external linkage
-        // and can be resolved from libk — declare them as external when unavailable.
+        // Secondary AggregateType, TypeInfo and Object vtables now have external
+        // linkage and can be resolved from libk — declare them as external when
+        // unavailable.
         if (!desc_vt) {
             // Check if this module imports k (directly or transitively)
             if (has_libk) {
@@ -1980,6 +2060,14 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                     _context->module(), ptr_ty,
                     true, llvm::GlobalValue::ExternalLinkage,
                     nullptr, desc_ti_vtable_name);
+            }
+        }
+        if (!desc_obj_vt) {
+            if (has_libk) {
+                desc_obj_vt = new llvm::GlobalVariable(
+                    _context->module(), ptr_ty,
+                    true, llvm::GlobalValue::ExternalLinkage,
+                    nullptr, desc_obj_vtable_name);
             }
         }
 
@@ -2083,6 +2171,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
         llvm::Constant* vptr_field    = desc_vt    ? desc_vt    : old_struct->getOperand(0);
         llvm::Constant* at_vptr_field = desc_at_vt ? desc_at_vt : old_struct->getOperand(1);
         llvm::Constant* ti_vptr_field = desc_ti_vt ? desc_ti_vt : old_struct->getOperand(2);
+        llvm::Constant* obj_vptr_field = desc_obj_vt ? desc_obj_vt : old_struct->getOperand(3);
 
         // ── d) Compute the flags bitfield ──────────────────────────────────────
         // Bits 0-1: visibility (0=PUBLIC, 1=PROTECTED, 2=PRIVATE)
@@ -2522,15 +2611,16 @@ void implementation_generator::patch_rtti_global(klass& klass) {
             vptr_field,                        // field 0: __vptr__
             at_vptr_field,                     // field 1: __vptr_AggregateType__
             ti_vptr_field,                     // field 2: __vptr_TypeInfo__
-            old_struct->getOperand(3),         // field 3: name (keep as-is)
-            old_struct->getOperand(4),         // field 4: fullName (keep as-is)
-            bases_gv ? bases_gv : null_ptr,    // field 5: bases
-            nested_gv ? nested_gv : null_ptr,  // field 6: nested
-            enclosing_rtti,                    // field 7: enclosing
-            llvm::ConstantInt::get(i32_ty, flags_val),  // field 8: flags
-            annotations_gv,                    // field 9: annotations
-            functions_gv,                      // field 10: functions
-            constructors_gv                    // field 11: constructors
+            obj_vptr_field,                    // field 3: __vptr_Object__
+            old_struct->getOperand(4),         // field 4: name (keep as-is)
+            old_struct->getOperand(5),         // field 5: fullName (keep as-is)
+            bases_gv ? bases_gv : null_ptr,    // field 6: bases
+            nested_gv ? nested_gv : null_ptr,  // field 7: nested
+            enclosing_rtti,                    // field 8: enclosing
+            llvm::ConstantInt::get(i32_ty, flags_val),  // field 9: flags
+            annotations_gv,                    // field 10: annotations
+            functions_gv,                      // field 11: functions
+            constructors_gv                    // field 12: constructors
         };
 
         // Step 8: Create final ConstantStruct and set as initializer for RTTI global
@@ -3197,11 +3287,16 @@ void declaration_generator::visit_annotation_type(annotation_type& ann) {
 
     // ── RTTI global (AnnotationType instance) ────────────────────────────────
     // Layout: { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
-    //           ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
-    //           i32 flags, ptr annotations, ptr functions }
+    //           ptr __vptr_Object__, ptr name, ptr fullName, ptr bases,
+    //           ptr nested, ptr enclosing, i32 flags, ptr annotations,
+    //           ptr functions }
+    // (see the klass RTTI struct comment in declaration_generator::visit_klass
+    // for why a 4th __vptr_Object__ field is needed: ::k::AnnotationType also
+    // extends ::k::AggregateType, whose TypeInfo root now implicitly extends
+    // ::k::Object.)
     std::string rtti_struct_name = "__rtti_" + ann.get_short_name() + "__";
     std::vector<llvm::Type*> rtti_fields = {
-        ptr_ty, ptr_ty, ptr_ty,     // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__
+        ptr_ty, ptr_ty, ptr_ty, ptr_ty,  // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__, __vptr_Object__
         ptr_ty, ptr_ty,             // name, fullName
         ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
         i32_ty,                      // flags
@@ -3242,14 +3337,15 @@ void declaration_generator::visit_annotation_type(annotation_type& ann) {
         null_ptr,       // field 0: __vptr__                → patched later
         null_ptr,       // field 1: __vptr_AggregateType__  → patched later
         null_ptr,       // field 2: __vptr_TypeInfo__       → patched later
-        name_cstr,      // field 3: name
-        fullname_cstr,  // field 4: fullName
-        null_ptr,       // field 5: bases                   → patched later
-        null_ptr,       // field 6: nested                  → patched later
-        null_ptr,       // field 7: enclosing               → patched later
-        llvm::ConstantInt::get(i32_ty, 0),  // field 8: flags → patched later
-        null_ptr,       // field 9: annotations             → patched later
-        null_ptr        // field 10: functions              (always null for annotations)
+        null_ptr,       // field 3: __vptr_Object__         → patched later
+        name_cstr,      // field 4: name
+        fullname_cstr,  // field 5: fullName
+        null_ptr,       // field 6: bases                   → patched later
+        null_ptr,       // field 7: nested                  → patched later
+        null_ptr,       // field 8: enclosing               → patched later
+        llvm::ConstantInt::get(i32_ty, 0),  // field 9: flags → patched later
+        null_ptr,       // field 10: annotations            → patched later
+        null_ptr        // field 11: functions              (always null for annotations)
     };
     llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
     auto rtti_gv = new llvm::GlobalVariable(
@@ -3299,10 +3395,12 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
     std::string desc_vtable_name    = "_KTVN1k14AnnotationTypeE";
     std::string desc_at_vtable_name = "_KTVN1k14AnnotationTypeE_for_AggregateType";
     std::string desc_ti_vtable_name = "_KTVN1k14AnnotationTypeE_for_TypeInfo";
+    std::string desc_obj_vtable_name = "_KTVN1k14AnnotationTypeE_for_Object";
 
     llvm::Constant* desc_vt    = _context->module().getNamedGlobal(desc_vtable_name);
     llvm::Constant* desc_at_vt = _context->module().getNamedGlobal(desc_at_vtable_name);
     llvm::Constant* desc_ti_vt = _context->module().getNamedGlobal(desc_ti_vtable_name);
+    llvm::Constant* desc_obj_vt = _context->module().getNamedGlobal(desc_obj_vtable_name);
 
     // Try external declaration if not in this module
     if (!desc_vt) {
@@ -3340,6 +3438,7 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
     llvm::Constant* vptr_field    = desc_vt    ? desc_vt    : old_struct->getOperand(0);
     llvm::Constant* at_vptr_field = desc_at_vt ? desc_at_vt : old_struct->getOperand(1);
     llvm::Constant* ti_vptr_field = desc_ti_vt ? desc_ti_vt : old_struct->getOperand(2);
+    llvm::Constant* obj_vptr_field = desc_obj_vt ? desc_obj_vt : old_struct->getOperand(3);
 
     // ── Synthesize annotation instance globals (meta-annotations) ─────────
     // For each annotation_instance on this annotation type, emit a constant
@@ -3427,14 +3526,15 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
         vptr_field,                        // field 0: __vptr__
         at_vptr_field,                     // field 1: __vptr_AggregateType__
         ti_vptr_field,                     // field 2: __vptr_TypeInfo__
-        old_struct->getOperand(3),         // field 3: name (keep as-is)
-        old_struct->getOperand(4),         // field 4: fullName (keep as-is)
-        null_ptr,                          // field 5: bases (TODO: populate later)
-        null_ptr,                          // field 6: nested
-        null_ptr,                          // field 7: enclosing
-        llvm::ConstantInt::get(i32_ty, flags_val),  // field 8: flags
-        annotations_gv,                    // field 9: annotations
-        null_ptr                           // field 10: functions (always null for annotations)
+        obj_vptr_field,                    // field 3: __vptr_Object__
+        old_struct->getOperand(4),         // field 4: name (keep as-is)
+        old_struct->getOperand(5),         // field 5: fullName (keep as-is)
+        null_ptr,                          // field 6: bases (TODO: populate later)
+        null_ptr,                          // field 7: nested
+        null_ptr,                          // field 8: enclosing
+        llvm::ConstantInt::get(i32_ty, flags_val),  // field 9: flags
+        annotations_gv,                    // field 10: annotations
+        null_ptr                           // field 11: functions (always null for annotations)
     };
 
     rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));

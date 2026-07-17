@@ -56,21 +56,21 @@ void* __k_annotation_get_type(void* ann) {
 /**
  * __k_class_get_functions — Extract the functions array from a Class RTTI global.
  *
- * In the RTTI struct layout, the functions array is stored at field index 10
- * (after the 3 vptrs, name, fullName, bases, nested, enclosing, flags, annotations).
+ * In the RTTI struct layout, the functions array is stored at field index 11
+ * (after the 4 vptrs, name, fullName, bases, nested, enclosing, flags, annotations).
  * The struct layout is:
- *   { ptr vptr, ptr vptr_at, ptr vptr_ti, ptr name, ptr fullName,
+ *   { ptr vptr, ptr vptr_at, ptr vptr_ti, ptr vptr_obj, ptr name, ptr fullName,
  *     ptr bases, ptr nested, ptr enclosing, i32 flags, ptr annotations, ptr functions }
  *
  * IMPORTANT: this function takes a Class& (not AggregateType&) so that the K
  * compiler passes a pointer to the START of the RTTI struct, without any
  * base-class pointer adjustment.  If we used AggregateType&, the pointer
  * would be shifted by +8 bytes to the AggregateType sub-object, causing
- * fields[10] to read past the end of the struct.
+ * fields[11] to read past the end of the struct.
  *
- * On 64-bit systems, fields 0-7 are ptrs (64 bytes), field 8 is i32 with
- * 4 bytes of padding (total 8 bytes), field 9 is ptr (8 bytes), field 10
- * is ptr (8 bytes).  Field 10 is at byte offset 80 = 10 * sizeof(void*).
+ * On 64-bit systems, fields 0-8 are ptrs (72 bytes), field 9 is i32 with
+ * 4 bytes of padding (total 8 bytes), field 10 is ptr (8 bytes), field 11
+ * is ptr (8 bytes).  Field 11 is at byte offset 88 = 11 * sizeof(void*).
  *
  * @param rtti  Pointer to the Class RTTI global (start of struct).
  * @return      Pointer to the functions K-array (Function?[]?), or null.
@@ -78,8 +78,8 @@ void* __k_annotation_get_type(void* ann) {
 void* __k_class_get_functions(void* rtti) {
     if (!rtti) return (void*)0;
     void** fields = (void**)rtti;
-    /* Field 10 = functions (after 3 vptrs + name + fullName + bases + nested + enclosing + flags_slot + annotations) */
-    return fields[10];
+    /* Field 11 = functions (after 4 vptrs + name + fullName + bases + nested + enclosing + flags_slot + annotations) */
+    return fields[11];
 }
 
 /**
@@ -95,16 +95,16 @@ void* __k_class_get_functions(void* rtti) {
 void* __k_iface_get_functions(void* rtti) {
     if (!rtti) return (void*)0;
     void** fields = (void**)rtti;
-    return fields[10];
+    return fields[11];
 }
 
 /**
  * __k_class_get_constructors — Extract the constructors array from a Class RTTI global.
  *
- * In the RTTI struct layout, the constructors array is stored at field index 11
- * (after functions at field 10).
+ * In the RTTI struct layout, the constructors array is stored at field index 12
+ * (after functions at field 11).
  * The struct layout is:
- *   { ptr vptr, ptr vptr_at, ptr vptr_ti, ptr name, ptr fullName,
+ *   { ptr vptr, ptr vptr_at, ptr vptr_ti, ptr vptr_obj, ptr name, ptr fullName,
  *     ptr bases, ptr nested, ptr enclosing, i32 flags, ptr annotations,
  *     ptr functions, ptr constructors }
  *
@@ -118,7 +118,7 @@ void* __k_iface_get_functions(void* rtti) {
 void* __k_class_get_constructors(void* rtti) {
     if (!rtti) return (void*)0;
     void** fields = (void**)rtti;
-    /* Field 11 = constructors (after functions at field 10) */
-    return fields[11];
+    /* Field 12 = constructors (after functions at field 11) */
+    return fields[12];
 }
 
