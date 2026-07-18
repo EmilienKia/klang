@@ -459,7 +459,7 @@ class LinkedList : public MutableIndexedCollection<T> {
     /**
      * Return a read-only iterator over the list from head to tail.
      */
-    constIterator() : ConstIterator<T>! {
+    const constIterator() : ConstIterator<T>! {
         return new LinkedListConstIterator<T>(this);
     }
 
@@ -489,11 +489,11 @@ class LinkedList : public MutableIndexedCollection<T> {
 template<typename T>
 class LinkedListConstIterator : public ConstIterator<T> {
 private:
-    _list : LinkedList<T>*;
+    _list : const LinkedList<T>*;
     _index : unsigned int;
 
 public:
-    LinkedListConstIterator(list : LinkedList<T>&) {
+    LinkedListConstIterator(list : const LinkedList<T>&) {
         _list = &list;
         _index = 0;
     }
@@ -505,7 +505,7 @@ public:
         }
         current : unsigned int = _index;
         _index = _index + 1;
-        value : T& = _list->get(current);
+        value : const T& = _list->get(current);
         result.set(value);
         return result;
     }
@@ -1091,7 +1091,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
     /**
      * Return a read-only iterator over the list from head to tail.
      */
-    constIterator() : ConstIterator<T>! {
+    const constIterator() : ConstIterator<T>! {
         return new DoubleLinkedListConstIterator<T>(this);
     }
 
@@ -1114,7 +1114,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
     /**
      * Return a read-only reverse iterator over the list from tail to head.
      */
-    constReverseIterator() : ConstIterator<T>! {
+    const constReverseIterator() : ConstIterator<T>! {
         return new ReverseDoubleLinkedListConstIterator<T>(this);
     }
 
@@ -1135,10 +1135,10 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
 template<typename T>
 class DoubleLinkedListConstIterator : public ConstIterator<T> {
 private:
-    _list : DoubleLinkedList<T>*;
+    _list : const DoubleLinkedList<T>*;
     _index : unsigned int;
 public:
-    DoubleLinkedListConstIterator(list : DoubleLinkedList<T>&) {
+    DoubleLinkedListConstIterator(list : const DoubleLinkedList<T>&) {
         _list = &list;
         _index = 0;
     }
@@ -1150,7 +1150,7 @@ public:
         }
         current : unsigned int = _index;
         _index = _index + 1;
-        value : T& = _list->get(current);
+        value : const T& = _list->get(current);
         result.set(value);
         return result;
     }
@@ -1195,11 +1195,11 @@ public:
 template<typename T>
 class ReverseDoubleLinkedListConstIterator : public ConstIterator<T> {
 private:
-    _list : DoubleLinkedList<T>*;
+    _list : const DoubleLinkedList<T>*;
     _nextIndex : unsigned int;
     _hasNext : bool;
 public:
-    ReverseDoubleLinkedListConstIterator(list : DoubleLinkedList<T>&) {
+    ReverseDoubleLinkedListConstIterator(list : const DoubleLinkedList<T>&) {
         _list = &list;
         if (list.size() == 0) {
             _nextIndex = 0;
@@ -1223,7 +1223,7 @@ public:
             _nextIndex = index - 1;
         }
 
-        value : T& = _list->get(index);
+        value : const T& = _list->get(index);
         result.set(value);
         return result;
     }

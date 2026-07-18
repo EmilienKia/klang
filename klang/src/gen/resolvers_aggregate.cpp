@@ -58,6 +58,8 @@ void ensure_klass_vtable_built(klass& kl) {
     //    bottom-up before we process `kl` itself. Virtual bases are included here:
     //    a virtual base still owns a vtable and its methods still need slots for
     //    dispatch (only its placement in the layout / primary chain differs).
+    //    Imported bases (e.g. ::k::Object loaded from a KDI) already have a
+    //    fully-resolved vtable_layout by construction — nothing to do for those.
     for (auto& bs : kl.get_bases()) {
         if (!bs.base) continue;
         if (auto base_kl = std::dynamic_pointer_cast<klass>(bs.base)) {
@@ -68,15 +70,35 @@ void ensure_klass_vtable_built(klass& kl) {
     auto vt = std::make_shared<vtable_layout>();
     size_t next_slot = 0;
 
-    // 2. Determine the primary base (first non-virtual base with a vtable)
-    //    and inherit its full (now complete) entry list.
+    // 2. Determine the primary base (first declared base with a vtable) and
+    //    inherit its full (now complete) entry list. The primary base can be
+    //    either a local klass or an IMPORTED aggregate (e.g. ::k::Object, when
+    //    the current module imports k rather than defining it) — mirrors
+    //    gen_class.cpp's build_vtable_layout(), which handles both cases.
+    //
+    // Note: K's inheritance model makes EVERY base virtual (diamond-safe) by
+    // design — klass::compute_virtual_bases_single() (called by the template
+    // instantiator right before this function) sets base_spec::is_virtual =
+    // true on every base edge, not just genuine diamond cases. A base_spec::
+    // is_virtual check here would therefore always be true and skip every
+    // base unconditionally, silently degrading every template instantiation's
+    // vtable to "no inherited slots at all" — this used to be exactly that
+    // bug (mirrors gen_class.cpp's build_vtable_layout(), which never checks
+    // is_virtual for this same reason).
     std::shared_ptr<klass> primary_base;
+    std::shared_ptr<imported_aggregate> primary_base_imp;
     for (auto& bs : kl.get_bases()) {
-        if (bs.is_virtual || !bs.base) continue;
+        if (!bs.base) continue;
         if (auto base_kl = std::dynamic_pointer_cast<klass>(bs.base)) {
             if (base_kl->has_vtable()) {
                 primary_base = base_kl;
                 break;
+            }
+        } else if (auto imp = std::dynamic_pointer_cast<imported_aggregate>(bs.base)) {
+            if (imp->has_vtable() && !primary_base_imp) {
+                primary_base_imp = imp;
+                // Don't break — prefer a local klass if one comes first (matches
+                // declaration order priority in gen_class.cpp).
             }
         }
     }
@@ -88,6 +110,55 @@ void ensure_klass_vtable_built(klass& kl) {
             inherited.func = entry.func;
             vt->entries.push_back(inherited);
             next_slot = std::max(next_slot, entry.slot_index + 1);
+        }
+    } else if (primary_base_imp) {
+        if (auto base_vt = primary_base_imp->get_vtable()) {
+            for (auto& entry : base_vt->entries) {
+                vtable_entry inherited;
+                inherited.slot_index = entry.slot_index;
+                inherited.introducing_func = entry.introducing_func;
+                inherited.func = entry.func;
+                vt->entries.push_back(inherited);
+                next_slot = std::max(next_slot, (size_t)entry.slot_index + 1);
+            }
+        }
+    }
+
+    // ── Destructor slot (universal slot 0) ──────────────────────────────────
+    // Mirrors the destructor-slot handling in gen_class.cpp's build_vtable_layout():
+    // ::k::Object declares the first-ever virtual destructor at vtable slot 0,
+    // and every class/interface reaching Object via its primary base chain
+    // inherits that same slot 0, overridden by its own (explicit or
+    // compiler-generated) destructor. Template instantiations bypass
+    // symbol_resolver's normal build_vtable_layout() pass, so this must be
+    // replicated here too — otherwise the destructor slot is silently dropped
+    // and the instantiation's first own virtual method collides with slot 0,
+    // causing it to be dispatched through as if it were the destructor.
+    {
+        bool inherited_dtor_slot = !vt->entries.empty()
+            && std::dynamic_pointer_cast<destructor>(vt->entries[0].introducing_func) != nullptr;
+
+        auto own_dtor = kl.get_destructor();
+
+        if (inherited_dtor_slot) {
+            if (own_dtor) {
+                auto& dtor_entry = vt->entries[0];
+                own_dtor->set_virtual(true);
+                own_dtor->set_vtable_slot(0);
+                own_dtor->set_overrides(dtor_entry.func);
+                dtor_entry.func = own_dtor;
+            }
+        } else if (own_dtor && !kl.has_bases()) {
+            // Root aggregate with its own destructor and no bases at all: this is
+            // ::k::Object itself — not expected to reach this template-instantiation
+            // path, but handled defensively for symmetry with build_vtable_layout().
+            own_dtor->set_virtual(true);
+            own_dtor->set_vtable_slot(0);
+            vtable_entry dtor_slot;
+            dtor_slot.slot_index = next_slot++;
+            dtor_slot.introducing_func = own_dtor;
+            dtor_slot.func = own_dtor;
+            vt->entries.insert(vt->entries.begin(), dtor_slot);
         }
     }
 
@@ -1407,68 +1478,14 @@ void aggregate_type_resolver::visit_klass(klass& klass) {
     visit_aggregate(klass);
 
     // If vtable is missing (e.g. template instantiation created after symbol_resolver),
-    // build it now. This replicates the essential logic of symbol_resolver::visit_klass.
+    // build it now via the canonical, shared algorithm (handles the universal
+    // destructor slot 0, arbitrary-depth base recursion, and secondary-base
+    // override linking) — see resolvers_common.hpp's ensure_klass_vtable_built().
+    // Not calling this used to duplicate that logic in a stale, incomplete copy
+    // that omitted destructor-slot handling entirely, silently letting the first
+    // own virtual method collide with slot 0 (the destructor's slot).
     if (!klass.has_vtable() && (klass.is_class() || std::dynamic_pointer_cast<model::interface>(klass.shared_as<element>()))) {
-        auto vt = std::make_shared<vtable_layout>();
-        size_t next_slot = 0;
-
-        // Inherit vtable entries from primary base (first base with a vtable)
-        for (auto& bs : klass.get_bases()) {
-            if (!bs.base) continue;
-            if (auto base_kl = std::dynamic_pointer_cast<model::klass>(bs.base)) {
-                if (base_kl->has_vtable()) {
-                    for (auto& entry : base_kl->get_vtable()->entries) {
-                        vtable_entry inherited;
-                        inherited.slot_index = entry.slot_index;
-                        inherited.introducing_func = entry.introducing_func;
-                        inherited.func = entry.func;
-                        vt->entries.push_back(inherited);
-                        next_slot = std::max(next_slot, entry.slot_index + 1);
-                    }
-                    break; // Only primary base
-                }
-            }
-        }
-
-        // Process own functions
-        for (auto& child : klass.get_children()) {
-            auto func = std::dynamic_pointer_cast<function>(child);
-            if (!func) continue;
-            if (func->is_static()) continue;
-            if (std::dynamic_pointer_cast<constructor>(func)) continue;
-            if (std::dynamic_pointer_cast<destructor>(func)) continue;
-            if (func->get_visibility() == PRIVATE) continue;
-
-            // Check if this method overrides an existing vtable slot
-            bool found_override = false;
-            for (auto& entry : vt->entries) {
-                if (entry.introducing_func
-                    && func->get_short_name() == entry.introducing_func->get_short_name()
-                    && func->parameters().size() == entry.introducing_func->parameters().size()) {
-                    func->set_virtual(true);
-                    func->set_vtable_slot((int)entry.slot_index);
-                    func->set_overrides(entry.func);
-                    entry.func = func;
-                    found_override = true;
-                    break;
-                }
-            }
-
-            if (!found_override) {
-                // New virtual slot
-                func->set_virtual(true);
-                func->set_vtable_slot((int)next_slot);
-                vtable_entry new_entry;
-                new_entry.slot_index = next_slot++;
-                new_entry.introducing_func = func;
-                new_entry.func = func;
-                vt->entries.push_back(new_entry);
-            }
-        }
-
-        if (!vt->entries.empty()) {
-            klass.set_vtable(vt);
-        }
+        ensure_klass_vtable_built(klass);
     }
 
     // Build the LLVM struct type for the vtable (mirrors type_reference_resolver::visit_klass)

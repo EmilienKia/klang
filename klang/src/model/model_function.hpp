@@ -542,6 +542,19 @@ public:
 protected:
     std::vector<member_init_spec> _member_inits;
     bool _is_copy_constructor = false;
+    // Guards template_instantiator::inject_constructor_member_inits() against
+    // being invoked more than once for the same (freshly-instantiated)
+    // constructor. Template instantiation can be triggered from multiple,
+    // independent resolver entry points (aggregate_type_resolver's own
+    // instantiation path and type_reference_resolver's on-demand path) that
+    // both resolve to the SAME cached concrete aggregate/constructor; without
+    // this guard, each trigger would re-inject a duplicate set of base/vbase
+    // constructor-call statements into the constructor's body. If one such
+    // duplicate injection happens after the aggregate's one-shot
+    // resolve_instantiated_aggregate() visit already ran, its statements are
+    // never type-resolved, leaving a null constructor at codegen time (crashes
+    // with "LLVM declaration not found for constructor of type ...").
+    bool _base_inits_injected = false;
 
     constructor(std::shared_ptr<aggregate> parent) :
         function(parent) {}
@@ -561,6 +574,10 @@ public:
 
     bool is_copy_constructor() const { return _is_copy_constructor; }
     void set_copy_constructor(bool v) { _is_copy_constructor = v; }
+
+    /** True once template_instantiator::inject_constructor_member_inits() has run for this constructor. */
+    bool are_base_inits_injected() const { return _base_inits_injected; }
+    void set_base_inits_injected(bool v) { _base_inits_injected = v; }
 };
 
 class destructor : public function {

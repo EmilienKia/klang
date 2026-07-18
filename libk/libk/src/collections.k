@@ -81,7 +81,7 @@ interface Sequence {
      * Return a read-only iterator over the elements.
      * @return A ConstIterator<T> for read-only traversal.
      */
-    constIterator() : ConstIterator<T>!;
+    const constIterator() : ConstIterator<T>!;
 
 /*
     // TODO implement following manipulators:
@@ -112,7 +112,7 @@ interface ReversibleSequence : public Sequence<T> {
      * Return a read-only reverse iterator over the elements.
      * @return A ConstIterator<T> traversing elements back to front.
      */
-    constReverseIterator() : ConstIterator<T>!;
+    const constReverseIterator() : ConstIterator<T>!;
 }
 
 /**
@@ -163,7 +163,7 @@ interface Collection : public Sequence<T>, public Sized {
      * Return a read-only iterator over the elements in the collection.
      * @return A ConstIterator<T> for the collection.
      */
-    constIterator() : ConstIterator<T>!;
+    const constIterator() : ConstIterator<T>!;
 
     /**
      * Tell whether the collection contains a given value.

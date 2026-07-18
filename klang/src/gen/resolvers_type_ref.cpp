@@ -1832,6 +1832,24 @@ std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
     const element* scope_elem)
 {
     if (type::is_resolved(inner)) return inner;
+
+    // Peel a const wrapper around an otherwise-unresolved inner type
+    // (e.g. `const Vector<int>` inside `const Vector<int>&`): resolve the
+    // wrapped type first -- which may trigger template instantiation -- then
+    // re-apply const to the resolved result. Without this, callers that pass
+    // a reference/pointer/etc.'s subtype straight into resolve_inner_type
+    // (as gen_variable_definition.cpp's Step 4 does) would see a const_type
+    // that is neither already-resolved nor a plain unresolved_type, and fall
+    // through to the unconditional _context->resolve_type(inner) call below,
+    // which cannot instantiate templates and thus fails to resolve at all.
+    if (auto const_inner = std::dynamic_pointer_cast<const_type>(inner)) {
+        auto resolved_sub = resolve_inner_type(const_inner->get_subtype(), scope_elem);
+        if (resolved_sub && (type::is_resolved(resolved_sub) || std::dynamic_pointer_cast<struct_type>(resolved_sub))) {
+            return resolved_sub->get_const();
+        }
+        return nullptr;
+    }
+
     if (auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(inner)) {
 
         // ── Template instantiation path ─────────────────────────────────

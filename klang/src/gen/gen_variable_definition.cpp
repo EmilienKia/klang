@@ -764,9 +764,26 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
         return;
     }
 
-    if (!type::are_equal(arg_sub, var_sub)) {
+    // Case B, step 5: Const-compatibility. A mutable reference cannot alias a
+    // const source (would allow mutating a const object); a const reference
+    // may always bind to a mutable or const source (const promotion).
+    if (type::is_const(arg_sub) && !type::is_const(var_sub)) {
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_REF_VAR_CONST_MISMATCH), ctx.var_lexeme,
+            "Cannot bind mutable reference variable '{}' of type '{}' to a const expression of type '{}': "
+            "this would allow modification of a const object through the mutable reference",
+            {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
+             arg_type ? arg_type->to_string() : "?"});
+        return;
+    }
+
+    // Compare/cast on the const-stripped subtypes: const-ness itself is not part
+    // of the identity/inheritance check (handled above), only the underlying type is.
+    auto arg_sub_nc = type::remove_const(arg_sub);
+    auto var_sub_nc = type::remove_const(var_sub);
+
+    if (!type::are_equal(arg_sub_nc, var_sub_nc)) {
         bool ok = check_and_insert_inheritance_cast(
-            arg_sub, var_sub, arg, ctx.var_type,
+            arg_sub_nc, var_sub_nc, arg, ctx.var_type,
             [&](std::shared_ptr<expression> e) { ctx.init_expr->assign_argument(0, e); },
             /*null_is_fatal=*/true);
         if (!ok) {

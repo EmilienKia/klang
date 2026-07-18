@@ -2921,6 +2921,53 @@ void declaration_generator::visit_for_statement(for_statement& stmt) {
 // Foreach statement
 //
 
+namespace {
+
+/**
+ * Search 'agg' itself, then its full transitive base hierarchy, for a concrete
+ * template instantiation whose origin template short name is 'base_name'.
+ *
+ * Note: template instantiations are placed as children of whichever scope
+ * first triggers their instantiation (not necessarily the origin template's
+ * own namespace), so their fully-qualified name cannot be used to verify they
+ * really originate from the K standard library. This is therefore a
+ * name-based heuristic: it assumes no unrelated user-defined template uses
+ * the exact same short name ("Iterator", "ConstIterator", "Sequence",
+ * "MutableSequence") for an unrelated purpose — consistent with how the rest
+ * of the foreach ITERATOR/SEQUENCE detection identifies these library types.
+ *
+ * Returns the matching aggregate (which may be 'agg' itself or one of its
+ * bases), or nullptr if no match is found.
+ */
+std::shared_ptr<aggregate> find_libk_tpl_base(const std::shared_ptr<aggregate>& agg, const std::string& base_name) {
+    auto matches = [&](const std::shared_ptr<aggregate>& a) {
+        return a && a->has_tpl_args() && a->get_tpl_base_name() == base_name;
+    };
+    if (!agg) return nullptr;
+    if (matches(agg)) return agg;
+    for (auto& bs : agg->get_all_bases()) {
+        if (matches(bs.base)) return bs.base;
+    }
+    return {};
+}
+
+} // anonymous namespace
+
+std::shared_ptr<type> type_reference_resolver::lookup_method_return_type(
+        const std::shared_ptr<aggregate>& agg,
+        const std::string& method_name,
+        const lex::opt_any_lexeme& lexeme) {
+    auto fns = scope_lookup::lookup_functions(agg, method_name);
+    if (fns.empty() || !fns.front()) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05A), lexeme,
+            "Internal error: expected method '{}' not found on type '{}'; "
+            "the K standard library's Iterator/ConstIterator/Sequence/MutableSequence "
+            "interfaces are expected to declare it",
+            {method_name, agg ? agg->get_fq_name() : std::string("?")});
+    }
+    return fns.front()->get_return_type();
+}
+
 void symbol_resolver::visit_foreach_statement(foreach_statement& stmt)
 {
     // Resolve the loop variable's declared type name references.
@@ -2997,7 +3044,27 @@ void type_reference_resolver::visit_foreach_statement(foreach_statement& stmt)
             unwrapped = unwrapped->get_subtype();
         }
     }
+    // Capture constness before stripping it: a const source (e.g. 'const Vector<int>&')
+    // must use constIterator()/ConstIterator's next(), never the mutable iterator()/next(),
+    // even if the aggregate also implements MutableSequence/Iterator.
+    bool source_is_const = type::is_const(unwrapped);
     unwrapped = type::remove_const(unwrapped);
+
+    // Determine the "aggregate-bearing" type for ITERATOR/SEQUENCE detection.
+    // Iterator<T>/ConstIterator<T>/Sequence<T>/MutableSequence<T> are interfaces
+    // with no by-value representation: any variable holding one is necessarily
+    // an indirection (owner, link, view, or pointer) — unwrap exactly one such
+    // layer to reach the underlying struct type. Arrays are never wrapped this
+    // way, so this does not affect ARRAY detection below.
+    auto agg_source = unwrapped;
+    if (type::is_owner(agg_source) || type::is_link(agg_source) || type::is_view(agg_source) || type::is_pointer(agg_source)) {
+        auto pointee = agg_source->get_subtype();
+        source_is_const = source_is_const || type::is_const(pointee);
+        agg_source = type::remove_const(pointee);
+    }
+
+    auto unwrapped_struct = std::dynamic_pointer_cast<struct_type>(agg_source);
+    auto agg = unwrapped_struct ? unwrapped_struct->get_struct() : nullptr;
 
     if (type::is_array(unwrapped)) {
         stmt.set_kind(foreach_kind::ARRAY);
@@ -3052,6 +3119,106 @@ void type_reference_resolver::visit_foreach_statement(foreach_statement& stmt)
                 constructor_invocation_expression::make_shared(loop_var, {current_expr}));
         }
         loop_var->accept(*this);
+    } else if (agg && (find_libk_tpl_base(agg, "Iterator") || find_libk_tpl_base(agg, "ConstIterator")
+                       || find_libk_tpl_base(agg, "MutableSequence") || find_libk_tpl_base(agg, "Sequence"))) {
+        // Step 3b: ITERATOR (direct ::k::Iterator<T>/::k::ConstIterator<T> source) or
+        // SEQUENCE (::k::Sequence<T>/::k::MutableSequence<T> source, sugar over ITERATOR).
+        //
+        // 'iter_agg' is the concrete Iterator<T>/ConstIterator<T> aggregate whose next()
+        // is called every iteration. 'make_iter_source' produces a fresh expression
+        // (evaluating the iterator exactly once, then re-reading that same hidden
+        // variable/the user's source variable) to call next() on — safe to invoke twice
+        // (initial + step) since re-reading a variable is idempotent, unlike re-invoking
+        // 'iterator()'/'constIterator()' which would create a second, independent iterator.
+        std::shared_ptr<aggregate> iter_agg;
+        std::function<std::shared_ptr<expression>()> make_iter_source;
+
+        if (find_libk_tpl_base(agg, "Iterator") || find_libk_tpl_base(agg, "ConstIterator")) {
+            stmt.set_kind(foreach_kind::ITERATOR);
+            iter_agg = agg;
+            make_iter_source = [source_expr]() { return source_expr->clone(); };
+        } else {
+            stmt.set_kind(foreach_kind::SEQUENCE);
+            bool is_mutable_seq = static_cast<bool>(find_libk_tpl_base(agg, "MutableSequence"));
+            // A const source (e.g. 'const Vector<int>&') can only call const member
+            // functions, so it must use the Sequence base's 'constIterator()' even
+            // when the concrete aggregate also implements MutableSequence's mutable
+            // 'iterator()' — matching the source_is_const check already applied above
+            // for the ITERATOR/next() dispatch.
+            const std::string method_name = (is_mutable_seq && !source_is_const) ? "iterator" : "constIterator";
+
+            // Hidden owner variable holding the fresh iterator obtained by calling
+            // 'source_expr.iterator()'/'source_expr.constIterator()' exactly once,
+            // before the loop begins.
+            auto iter_ret_type = lookup_method_return_type(agg, method_name, for_lexeme);
+            auto iterator_var_def = stmt.append_variable("$iterator");
+            auto iterator_var = std::dynamic_pointer_cast<variable_statement>(iterator_var_def);
+            iterator_var->set_type(iter_ret_type);
+            iterator_var->set_const(false);
+            auto iterator_call = function_invocation_expression::make_shared(
+                member_of_object_expression::make_shared(source_expr->clone(), symbol_expression::from_identifier(name(method_name))),
+                {});
+            // Owner variable: init_expr is stored raw, not wrapped (see
+            // model_builder::visit_variable_decl's shaping for owner/pointer/link/view).
+            static_cast<variable_definition&>(*iterator_var).set_init_expr(iterator_call);
+            iterator_var->accept(*this);
+            stmt.set_iterator_var(iterator_var);
+
+            auto owner_iter_type = std::dynamic_pointer_cast<owner_type>(type::remove_const(iter_ret_type));
+            auto iter_struct_type = owner_iter_type
+                ? std::dynamic_pointer_cast<struct_type>(type::remove_const(owner_iter_type->get_owned_type()))
+                : nullptr;
+            iter_agg = iter_struct_type ? iter_struct_type->get_struct() : nullptr;
+            make_iter_source = [iterator_var]() { return symbol_expression::from_variable(iterator_var); };
+        }
+
+        // Step 4a: hidden driver variable '$current : <next()'s return type> = iter_source.next()'.
+        auto next_ret_type = lookup_method_return_type(iter_agg, "next", for_lexeme);
+        auto current_var_def = stmt.append_variable("$current");
+        auto current_var = std::dynamic_pointer_cast<variable_statement>(current_var_def);
+        current_var->set_type(next_ret_type);
+        current_var->set_const(false);
+        auto first_next_call = function_invocation_expression::make_shared(
+            member_of_object_expression::make_shared(make_iter_source(), symbol_expression::from_identifier(name("next"))),
+            {});
+        // next() returns a struct by value: init_expr must be a constructor_invocation_expression
+        // wrapping the value, matching validate_struct_variable's expectations.
+        static_cast<variable_definition&>(*current_var).set_init_expr(
+            constructor_invocation_expression::make_shared(current_var, {first_next_call}));
+        current_var->accept(*this);
+
+        // Step 4b: test expression '$current.hasValue()'.
+        auto has_value_call = function_invocation_expression::make_shared(
+            member_of_object_expression::make_shared(symbol_expression::from_variable(current_var), symbol_expression::from_identifier(name("hasValue"))),
+            {});
+        has_value_call->accept(*this);
+        auto bool_type = _context->from_type(primitive_type::BOOL);
+        auto test_cast = adapt_type(has_value_call, bool_type);
+        stmt.set_test_expr(test_cast ? test_cast : has_value_call);
+
+        // Step 4c: step expression '$current = iter_source.next()'.
+        auto next_call = function_invocation_expression::make_shared(
+            member_of_object_expression::make_shared(make_iter_source(), symbol_expression::from_identifier(name("next"))),
+            {});
+        auto step_expr = simple_assignation_expression::make_shared(symbol_expression::from_variable(current_var), next_call);
+        step_expr->accept(*this);
+        stmt.set_step_expr(step_expr);
+
+        // Step 4d: current-element expression '$current.get()', bound as the loop
+        // variable's init_expr. This has the same shape (a reference to T) as ARRAY's
+        // 'source[$index]', so the same generic variable-definition dispatch handles
+        // const-promotion, addresser-matching, and copy-vs-reference-bind semantics.
+        auto current_expr = function_invocation_expression::make_shared(
+            member_of_object_expression::make_shared(symbol_expression::from_variable(current_var), symbol_expression::from_identifier(name("get"))),
+            {});
+        stmt.set_current_expr(current_expr);
+        if (type::is_pointer(loop_var_type) || type::is_link(loop_var_type) || type::is_view(loop_var_type)) {
+            static_cast<variable_definition&>(*loop_var).set_init_expr(current_expr);
+        } else {
+            static_cast<variable_definition&>(*loop_var).set_init_expr(
+                constructor_invocation_expression::make_shared(loop_var, {current_expr}));
+        }
+        loop_var->accept(*this);
     } else {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_FOREACH_SOURCE_NOT_ITERABLE), for_lexeme,
             "Foreach source expression must be an array, a ::k::Iterator/::k::ConstIterator, or a "
@@ -3068,35 +3235,47 @@ void declaration_generator::visit_foreach_statement(foreach_statement& stmt) {
 }
 
 /**
- * Generate LLVM IR for an ARRAY-variant foreach statement.
+ * Generate LLVM IR for a foreach statement (ARRAY, ITERATOR, or SEQUENCE variant).
  *
  * Structure (mirrors visit_for_statement, with a per-iteration
  * construct/destruct of the loop variable instead of a single decl living for
  * the whole loop):
  *
  *   entry:
- *     $index = 0
+ *     [SEQUENCE only] $iterator = source.iterator()/constIterator()
+ *     $index / $current = <initial driver value>   (ARRAY: 0; ITERATOR/SEQUENCE: iter.next())
  *     br condition
  *   condition:
- *     %t = $index < source.size
+ *     %t = $index < source.size   /   $current.hasValue()
  *     condbr %t, nested, continue
  *   nested:
- *     construct loop_var from source[$index]
+ *     construct loop_var from source[$index]   /   $current.get()
  *     <nested_stmt>
  *     destroy loop_var
  *     br step
  *   step:
- *     $index++
+ *     $index++   /   $current = iter.next()
  *     br condition
  *   continue:
+ *     [SEQUENCE only] destroy $iterator
  *     ...
+ *
+ * The hidden $iterator variable (SEQUENCE only) is constructed once before the
+ * loop and lives for the whole loop's duration: its cleanup scope is pushed
+ * onto _cleanup_vars_stack BEFORE _loop_cleanup_depth is captured, so per-
+ * iteration break/continue cleanup never touches it; it is explicitly
+ * destroyed once at the very start of cont_block, which is the convergence
+ * point of BOTH normal loop exit (condition false) and 'break' (jumps
+ * directly to cont_block) — giving it the same cleanup guarantee already
+ * established for the per-iteration loop variable.
  */
 void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
 {
-    if (stmt.get_kind() != foreach_kind::ARRAY) {
+    if (stmt.get_kind() != foreach_kind::ARRAY && stmt.get_kind() != foreach_kind::ITERATOR
+        && stmt.get_kind() != foreach_kind::SEQUENCE) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F059),
             lex::opt_any_lexeme{},
-            "Internal error: foreach codegen currently only supports the ARRAY variant");
+            "Internal error: foreach codegen only supports the ARRAY, ITERATOR, and SEQUENCE variants");
     }
 
     auto lexeme = get_statement_debug_lexeme(stmt);
@@ -3108,7 +3287,18 @@ void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
     llvm::BasicBlock* step_block = llvm::BasicBlock::Create(**_context, "foreach-step");
     llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "foreach-continue");
 
-    // Initialize the hidden index variable ($index = 0).
+    // SEQUENCE only: construct the hidden owned iterator once, before the loop,
+    // and register its cleanup scope now (before _loop_cleanup_depth is
+    // captured below) so break/continue per-iteration cleanup does not
+    // destroy it.
+    bool has_iterator_scope = false;
+    if (auto iterator_var = stmt.get_iterator_var()) {
+        iterator_var->accept(*this);
+        _cleanup_vars_stack.push({iterator_var});
+        has_iterator_scope = true;
+    }
+
+    // Initialize the hidden driver variable ($index = 0, or $current = iter.next()).
     stmt.get_index_var()->accept(*this);
 
     set_debug_location(lexeme);
@@ -3181,6 +3371,14 @@ void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
 
     func->insert(func->end(), cont_block);
     _builder->SetInsertPoint(cont_block);
+
+    // SEQUENCE only: destroy the hidden owned iterator now. This is the
+    // convergence point of both normal loop exit and 'break', so it uniformly
+    // covers both without needing per-exit-path duplication.
+    if (has_iterator_scope) {
+        emit_scope_variable_cleanup(_cleanup_vars_stack.top(), "foreach_iterator_cleanup");
+        _cleanup_vars_stack.pop();
+    }
 }
 
 /**

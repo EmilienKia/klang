@@ -348,7 +348,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     /**
      *  Return a read-only iterator over the elements of the vector.
      */
-    constIterator() : ConstIterator<T>! {
+    const constIterator() : ConstIterator<T>! {
         return new VectorConstIterator<T>(this, 0);
     }
 
@@ -362,7 +362,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     /**
      * Return a read-only reverse iterator over the elements of the vector.
      */
-    constReverseIterator() : ConstIterator<T>! {
+    const constReverseIterator() : ConstIterator<T>! {
         return new VectorReverseConstIterator<T>(this);
     }
 
@@ -383,11 +383,11 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
 template<typename T>
 class VectorConstIterator : public ConstIterator<T> {
 private:
-    _vec : Vector<T>*;
+    _vec : const Vector<T>*;
     _index : unsigned int;
 
 public:
-    VectorConstIterator(vec : Vector<T>&, index : unsigned int) {
+    VectorConstIterator(vec : const Vector<T>&, index : unsigned int) {
         _vec = &vec;
         _index = index;
     }
@@ -399,7 +399,7 @@ public:
         }
         current : unsigned int = _index;
         _index = _index + 1;
-        value : T& = _vec->get(current);
+        value : const T& = _vec->get(current);
         result.set(value);
         return result;
     }
@@ -446,11 +446,11 @@ public:
 template<typename T>
 class VectorReverseConstIterator : public ConstIterator<T> {
 private:
-    _vec : Vector<T>*;
+    _vec : const Vector<T>*;
     _index : unsigned int;
 
 public:
-    VectorReverseConstIterator(vec : Vector<T>&) {
+    VectorReverseConstIterator(vec : const Vector<T>&) {
         _vec = &vec;
         _index = vec.size();
     }
@@ -462,7 +462,7 @@ public:
         }
         _index = _index - 1;
         current : unsigned int = _index;
-        value : T& = _vec->get(current);
+        value : const T& = _vec->get(current);
         result.set(value);
         return result;
     }

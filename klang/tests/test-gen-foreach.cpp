@@ -392,3 +392,300 @@ TEST_CASE("Foreach array — non-iterable source is rejected", "[gen][foreach][a
     )SRC", nullptr));
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Iterator / sequence foreach tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Foreach sequence — sum Vector<int> via copy", "[gen][foreach][sequence]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            vec.pushBack(2);
+            vec.pushBack(3);
+            sum : int = 0;
+            for(x : int = vec) {
+                sum = sum + x;
+            }
+            return sum;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 6);
+}
+
+TEST_CASE("Foreach iterator — direct Iterator<T> object", "[gen][foreach][iterator]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(10);
+            vec.pushBack(20);
+            vec.pushBack(30);
+            it : Iterator<int>! = vec.iterator();
+            sum : int = 0;
+            for(x : int = it) {
+                sum = sum + x;
+            }
+            return sum;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 60);
+}
+
+TEST_CASE("Foreach sequence — mutable in-place via reference", "[gen][foreach][sequence]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            vec.pushBack(2);
+            vec.pushBack(3);
+            for(x : int& = vec) {
+                x = x * 10;
+            }
+            sum : int = 0;
+            for(x : int = vec) {
+                sum = sum + x;
+            }
+            return sum;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 60);
+}
+
+TEST_CASE("Foreach sequence — break and continue", "[gen][foreach][sequence]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            vec.pushBack(2);
+            vec.pushBack(3);
+            vec.pushBack(4);
+            vec.pushBack(5);
+            sum : int = 0;
+            for(x : int = vec) {
+                if (x == 2) { continue; }
+                if (x == 5) { break; }
+                sum = sum + x;
+            }
+            return sum;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 1 + 3 + 4);
+}
+
+TEST_CASE("Foreach sequence — empty sequence never enters body", "[gen][foreach][sequence]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            vec : Vector<int>;
+            sum : int = 0;
+            for(x : int = vec) {
+                sum = sum + 1;
+            }
+            return sum;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 0);
+}
+
+namespace {
+std::shared_ptr<k::path_lookup_file_resolver> stdlib_search_resolver() {
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    return resolver;
+}
+}
+
+TEST_CASE("Foreach iterator — const source: mutable ref forbidden", "[gen][foreach][iterator][errors]") {
+    REQUIRE(compile_should_fail(R"SRC(
+        module test;
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            cv : const Vector<int>& = vec;
+            for(x : int& = cv) {
+                x = 1;
+            }
+            return 0;
+        }
+    )SRC", stdlib_search_resolver()));
+}
+
+TEST_CASE("Foreach iterator — owner loop var forbidden on sequence", "[gen][foreach][sequence][errors]") {
+    REQUIRE(compile_should_fail(R"SRC(
+        module test;
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            for(x : int! = vec) {
+            }
+            return 0;
+        }
+    )SRC", stdlib_search_resolver()));
+}
+
+TEST_CASE("Foreach iterator — const source sums via copy (constIterator)", "[gen][foreach][iterator]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            vec : Vector<int>;
+            vec.pushBack(1);
+            vec.pushBack(2);
+            vec.pushBack(3);
+            cv : const Vector<int>& = vec;
+            sum : int = 0;
+            for(x : int = cv) {
+                sum = sum + x;
+            }
+            return sum;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 6);
+}
+
+TEST_CASE("Foreach sequence — iterator() called exactly once, destroyed once (full loop)", "[gen][foreach][sequence]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        class CountingIter : public ConstIterator<int> {
+            static dtor_count : int = 0;
+            idx : int = 0;
+            limit : int;
+            CountingIter(l : int) { limit = l; }
+            ~CountingIter() { CountingIter::dtor_count = CountingIter::dtor_count + 1; }
+            next() : OptionalConstRef<int> {
+                if (idx < limit) {
+                    idx = idx + 1;
+                    return OptionalConstRef<int>(idx);
+                }
+                return OptionalConstRef<int>();
+            }
+        }
+
+        class CountingSeq : public Sequence<int> {
+            static call_count : int = 0;
+            const constIterator() : ConstIterator<int>! {
+                CountingSeq::call_count = CountingSeq::call_count + 1;
+                return new CountingIter(5);
+            }
+        }
+
+        run_loop_full() : int {
+            seq : CountingSeq;
+            sum : int = 0;
+            for(x : int = seq) {
+                sum = sum + x;
+            }
+            return sum;
+        }
+
+        get_call_count() : int {
+            return CountingSeq::call_count;
+        }
+
+        get_dtor_count() : int {
+            return CountingIter::dtor_count;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run_loop_full = jit->lookup_symbol<int(*)()>("run_loop_full");
+    auto get_call_count = jit->lookup_symbol<int(*)()>("get_call_count");
+    auto get_dtor_count = jit->lookup_symbol<int(*)()>("get_dtor_count");
+    REQUIRE(run_loop_full != nullptr);
+    REQUIRE(get_call_count != nullptr);
+    REQUIRE(get_dtor_count != nullptr);
+    REQUIRE(get_call_count() == 0);
+    REQUIRE(get_dtor_count() == 0);
+    REQUIRE(run_loop_full() == 1 + 2 + 3 + 4 + 5);
+    // constIterator() must be called exactly once (not once per iteration),
+    // and the hidden owned iterator must be destroyed exactly once at loop end.
+    REQUIRE(get_call_count() == 1);
+    REQUIRE(get_dtor_count() == 1);
+}
+
+TEST_CASE("Foreach sequence — hidden iterator destroyed once on break", "[gen][foreach][sequence]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        class CountingIter : public ConstIterator<int> {
+            static dtor_count : int = 0;
+            idx : int = 0;
+            limit : int;
+            CountingIter(l : int) { limit = l; }
+            ~CountingIter() { CountingIter::dtor_count = CountingIter::dtor_count + 1; }
+            next() : OptionalConstRef<int> {
+                if (idx < limit) {
+                    idx = idx + 1;
+                    return OptionalConstRef<int>(idx);
+                }
+                return OptionalConstRef<int>();
+            }
+        }
+
+        class CountingSeq : public Sequence<int> {
+            static call_count : int = 0;
+            const constIterator() : ConstIterator<int>! {
+                CountingSeq::call_count = CountingSeq::call_count + 1;
+                return new CountingIter(5);
+            }
+        }
+
+        run_loop_break() : int {
+            seq : CountingSeq;
+            sum : int = 0;
+            for(x : int = seq) {
+                if (x == 3) { break; }
+                sum = sum + x;
+            }
+            return sum;
+        }
+
+        get_call_count() : int {
+            return CountingSeq::call_count;
+        }
+
+        get_dtor_count() : int {
+            return CountingIter::dtor_count;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run_loop_break = jit->lookup_symbol<int(*)()>("run_loop_break");
+    auto get_call_count = jit->lookup_symbol<int(*)()>("get_call_count");
+    auto get_dtor_count = jit->lookup_symbol<int(*)()>("get_dtor_count");
+    REQUIRE(run_loop_break != nullptr);
+    REQUIRE(get_call_count != nullptr);
+    REQUIRE(get_dtor_count != nullptr);
+    REQUIRE(run_loop_break() == 1 + 2);
+    REQUIRE(get_call_count() == 1);
+    REQUIRE(get_dtor_count() == 1);
+}

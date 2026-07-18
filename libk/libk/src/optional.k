@@ -241,18 +241,16 @@ public:
 /**
  * OptionalConstRef<T> — a type-safe container for an optional read-only reference.
  *
- * Wraps a nullable pointer to T, exposing only immutable (const) access.
+ * Wraps a nullable pointer to const T, exposing only immutable (const) access.
  * Does not own the referenced object. Rebinding is not supported by design.
  *
- * Note: K has no mutable-pointer-to-const type; immutability is enforced
- * through the accessor API (get / operator* / getOr all return const T&).
- *
- * Can be constructed from an OptionalRef<T> (mutable-to-const widening).
+ * Can be constructed from a const or mutable reference to T (mutable-to-const
+ * widening), including from an OptionalRef<T>.
  */
 template<typename T>
 final struct OptionalConstRef {
 protected:
-    _ptr : T*;
+    _ptr : const T*;
 
 public:
     /**
@@ -263,8 +261,9 @@ public:
 
     /**
      * Constructor from a reference. Stores a pointer to value.
+     * Accepts a const reference so both const and mutable sources can be wrapped.
      */
-    OptionalConstRef(value : T&) {
+    OptionalConstRef(value : const T&) {
         _ptr = &value;
     }
 
@@ -307,10 +306,11 @@ public:
 
     /**
      * Rebind this OptionalConstRef to point at value.
-     * Takes a mutable reference because K has no pointer-to-const type;
-     * const access is enforced through the get/operator* accessors.
+     * Accepts a const reference; the referenced pointer is stored as
+     * `const T*`, and immutability is enforced through the get/operator*
+     * accessors (which always return `const T&`).
      */
-    set(value : T&) {
+    set(value : const T&) {
         _ptr = &value;
     }
 
