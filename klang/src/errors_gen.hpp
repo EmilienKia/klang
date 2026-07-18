@@ -208,6 +208,7 @@ enum class codegen_diag : unsigned int {
     INTERNAL_ERR_F057                             = 0xF057,
     INTERNAL_ERR_F058                             = 0xF058,
     INTERNAL_ERR_F059                             = 0xF059, ///< Foreach codegen reached with an unsupported/unresolved iteration kind.
+    INTERNAL_ERR_F05A                             = 0xF05A, ///< Foreach ITERATOR/SEQUENCE: expected method (next/iterator/constIterator) not found on the resolved aggregate.
 };
 
 // ────────────────────────────────────────────────────────────────────────────

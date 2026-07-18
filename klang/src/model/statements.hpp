@@ -362,14 +362,34 @@ protected:
     /** Iteration strategy, set by type_reference_resolver once _source_expr's type is known. */
     foreach_kind _kind = foreach_kind::UNRESOLVED;
 
-    // ── ARRAY variant (synthesized by type_reference_resolver) ─────────────
-    /** Hidden index counter (unsigned int, initialised to 0). */
+    // ── SEQUENCE variant only (synthesized by type_reference_resolver) ─────
+    /**
+     * Hidden owner variable holding the iterator obtained from the sequence source
+     * (via a synthesized 'source_expr.iterator()' or 'source_expr.constIterator()' call).
+     * Constructed once, before the loop begins; destroyed once, after the loop ends.
+     * Null for ARRAY and ITERATOR (which iterate directly over source_expr/an existing
+     * iterator, taking no ownership of anything).
+     */
+    std::shared_ptr<variable_statement> _iterator_var;
+
+    // ── ARRAY / ITERATOR / SEQUENCE common driver variable ──────────────────
+    /**
+     * Hidden per-loop "driver" variable, constructed once before the loop and updated
+     * once per iteration by _step_expr:
+     *   - ARRAY: an 'unsigned int' index counter, initialised to 0.
+     *   - ITERATOR / SEQUENCE: an 'OptionalRef<T>'/'OptionalConstRef<T>' holder,
+     *     initialised to the first 'next()' call result.
+     */
     std::shared_ptr<variable_statement> _index_var;
-    /** 'index_var < source_expr.size' */
+    /** ARRAY: 'index_var < source_expr.size'. ITERATOR/SEQUENCE: 'index_var.hasValue()'. */
     std::shared_ptr<expression> _test_expr;
-    /** 'index_var++' */
+    /** ARRAY: 'index_var++'. ITERATOR/SEQUENCE: 'index_var = iterator.next()'. */
     std::shared_ptr<expression> _step_expr;
-    /** 'source_expr[index_var]', adapted to the loop variable's declared type; used as _loop_var's init_expr. */
+    /**
+     * The current-element expression, adapted to the loop variable's declared type and
+     * used as _loop_var's init_expr. ARRAY: 'source_expr[index_var]'. ITERATOR/SEQUENCE:
+     * 'index_var.get()'.
+     */
     std::shared_ptr<expression> _current_expr;
 
     std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
@@ -400,6 +420,10 @@ public:
     foreach_kind get_kind() const { return _kind; }
 
     void set_kind(foreach_kind kind) { _kind = kind; }
+
+    const std::shared_ptr<variable_statement> &get_iterator_var() const;
+
+    void set_iterator_var(const std::shared_ptr<variable_statement> &iterator_var);
 
     const std::shared_ptr<variable_statement> &get_index_var() const;
 

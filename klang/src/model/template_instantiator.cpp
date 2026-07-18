@@ -1454,6 +1454,33 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
                     bs.base = std::static_pointer_cast<aggregate>(imp);
                 }
             }
+
+            // Final fallback: an unqualified base name that isn't reachable from
+            // the template's own origin module — this is the case for a base
+            // implicitly injected on the TEMPLATE DEFINITION itself (e.g. every
+            // class/interface with no declared base implicitly extends
+            // "::k::Object", and every annotation implicitly extends
+            // "::k::Annotation" — see symbol_resolver::visit_unit's implicit-base
+            // pre-passes in gen_unit.cpp). That injection runs once on the
+            // template definition and is copied verbatim into every instantiation
+            // (loop just above), but the name was never namespace-qualified nor
+            // tied to the template's origin module, so neither lookup above finds
+            // it. Search every module actually imported by THIS compilation unit
+            // (mirrors scope_lookup::lookup_structure_or_import's import fallback,
+            // used by the equivalent non-template base-resolution path in
+            // gen_struct.cpp) — this generically covers "Object", "Annotation",
+            // and any other implicitly-injected or otherwise reachable base name,
+            // not just ones specific to k::Object.
+            if (!bs.base) {
+                for (const auto& imp_mod : unit.get_imports()) {
+                    if (imp_mod.module_name.empty()) continue;
+                    if (auto imp = unit.get_or_create_imported_aggregate(
+                            imp_mod.module_name.with_back(bs.raw_name), ctx)) {
+                        bs.base = std::static_pointer_cast<aggregate>(imp);
+                        break;
+                    }
+                }
+            }
         }
     }
 

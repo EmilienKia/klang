@@ -216,6 +216,20 @@ protected:
      */
     static std::shared_ptr<type> strip_ref_array(const std::shared_ptr<type>& t);
 
+    /**
+     * Look up a single member function by name on 'agg' (including inherited
+     * members) and return its return type. Used by the foreach ITERATOR/SEQUENCE
+     * resolver to determine the hidden helper variables' types (e.g. the return
+     * type of 'next()'/'iterator()'/'constIterator()') without needing to resolve
+     * a synthesized call expression first. Throws an internal error if the method
+     * cannot be found (defensive: the libk interfaces this is used for always
+     * declare exactly the expected methods).
+     */
+    std::shared_ptr<type> lookup_method_return_type(
+        const std::shared_ptr<aggregate>& agg,
+        const std::string& method_name,
+        const lex::opt_any_lexeme& lexeme);
+
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
         logger_relay::report(diag);

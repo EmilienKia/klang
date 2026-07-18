@@ -230,6 +230,57 @@
       instead of the silent memcpy fallback, so copying an owning aggregate that has no copy
       constructor becomes a compile-time error. Add a `compile_should_fail` regression test.
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts — workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
+- [x] ✅ **FIXED — Virtual destructor dispatch through a secondary (non-primary)
+      vtable base, plus a real bug found while verifying it: template classes with
+      no explicit base never got their implicit `::k::Object` base resolved.**
+      An earlier defensive code comment in `gen/gen_class.cpp` speculated that
+      destroying an object through a reference/owner statically typed as a
+      *secondary* base (any base other than the primary one sharing the object's
+      main `__vptr__`) might not route to the most-derived destructor override,
+      reasoning that the name-based matching helper `have_same_virtual_signature()`
+      can't recognise `~Base` and `~Derived` as "the same slot". Investigation
+      showed this specific reasoning does not apply in practice: secondary vtable
+      slots are filled by `compute_secondary_vtable_specs()`/`build_spec()` in
+      `gen/resolvers_materializer.cpp`, which matches slots primarily via the
+      `overrides` chain (`overrides_base_func()`), not by name. Every class's
+      destructor `set_overrides()` call chains back to `::k::Object::~Object` as
+      the common `introducing_func`, so the overrides-chain match always succeeds
+      for destructors — the broken name-based fallback is never reached. Verified
+      (manual `klangc` repros) across a plain 2-interface/2-level hierarchy, a
+      3-level chain destroyed via a secondary base two hops removed, and a local
+      class extending the real imported `::k::Collection<T>` (which itself extends
+      `::k::Sequence<T>` and `::k::Sized`), destroyed via the secondary
+      `::k::Sized!` reference.
+      However, the FIRST attempt at a template-instantiated-hierarchy repro
+      uncovered a genuine, more severe bug (not the one originally documented):
+      `ensure_klass_vtable_built()` (`gen/resolvers_aggregate.cpp`, the
+      template-instantiation-specific vtable-building path) silently left
+      `has_vtable()` **false** for a template class with no *explicit* base — i.e.
+      the common case, since every K class/interface with no declared base
+      implicitly extends `::k::Object` (injected by `symbol_resolver::visit_unit`'s
+      pre-pass in `gen/gen_unit.cpp`, running once on the template *definition*
+      only). Root cause: `template_instantiator::instantiate_aggregate()`'s
+      base-resolution loop cloned this implicit `"Object"` base_spec into every
+      instantiation but only knew how to resolve *explicit* bases (written in the
+      template source) — the implicit one has no namespace qualification and isn't
+      tied to the template's origin module, so it was silently left with
+      `bs.base == nullptr`. With no resolvable base, `ensure_klass_vtable_built()`
+      never built a vtable at all, and `emit_owner_object_destroy()`
+      (`gen/gen_helpers.hpp`) silently fell back to a **static** (non-virtual)
+      destructor call for `delete`/scope-exit on ANY reference typed as that base
+      class — not just secondary bases: even destroying through the class's own
+      *direct, non-template* base (e.g. `GrandParent<int>!` holding a
+      `Child<int>`) called only `~GrandParent()`, never `~Child()`. Fixed by adding
+      a final fallback in `instantiate_aggregate()`'s base-resolution loop: search
+      every module actually imported by the compilation unit for the unqualified
+      base name (mirrors `scope_lookup::lookup_structure_or_import()`'s import
+      fallback, used by the equivalent non-template path in `gen/gen_struct.cpp`) —
+      this generically covers `"Object"`, `"Annotation"`, and any other
+      implicitly-injected or otherwise-reachable base name, not just
+      `::k::Object` specifically. Regression tests added:
+      `klang/tests/test-gen-virtual-destructor.cpp`
+      (`[gen][class][virtual-destructor][secondary-base]`). The stale comment in
+      `gen/gen_class.cpp` was corrected to reflect this.
 - [ ] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases; extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
 - [ ] Inline method call on a template-aggregate value chained from a one-liner is
       now supported. Bugs (a), (b) and (c) below are all **fixed**. Repro tests:

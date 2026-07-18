@@ -283,6 +283,14 @@ void foreach_statement::set_nested_stmt(const std::shared_ptr<statement> &nested
     set_this_as_parent_to(_nested_stmt);
 }
 
+const std::shared_ptr<variable_statement>& foreach_statement::get_iterator_var() const {
+    return _iterator_var;
+}
+
+void foreach_statement::set_iterator_var(const std::shared_ptr<variable_statement> &iterator_var) {
+    _iterator_var = iterator_var;
+}
+
 const std::shared_ptr<variable_statement>& foreach_statement::get_index_var() const {
     return _index_var;
 }
@@ -335,12 +343,19 @@ std::shared_ptr<variable_definition> foreach_statement::do_create_variable(const
 
 void foreach_statement::on_variable_defined(std::shared_ptr<variable_definition> var) {
     // The user-declared loop variable is always created first (during model
-    // building); any subsequent variable (the hidden index counter, created
-    // later by type_reference_resolver for the ARRAY variant) is routed to
-    // _index_var.
+    // building). Any subsequent hidden variable created later by
+    // type_reference_resolver is routed as follows:
+    //   - SEQUENCE: the first hidden variable is the owned iterator (_iterator_var,
+    //     created before the driver variable, since the driver's init_expr calls
+    //     next() on it); the second is the driver variable (_index_var).
+    //   - ARRAY / ITERATOR: the (only) hidden variable is the driver (_index_var).
+    // This relies on set_kind(SEQUENCE) having already been called before the
+    // iterator variable is appended.
     auto var_stmt = std::dynamic_pointer_cast<variable_statement>(var);
     if (!_loop_var) {
         _loop_var = var_stmt;
+    } else if (_kind == foreach_kind::SEQUENCE && !_iterator_var) {
+        _iterator_var = var_stmt;
     } else {
         _index_var = var_stmt;
     }

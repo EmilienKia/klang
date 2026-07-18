@@ -301,14 +301,18 @@ build_vtable_layout(aggregate& st,
     }
 
     // NOTE: destroying an object through a reference/owner typed as a
-    // *secondary* (non-primary) vtable base does not yet route to the most-
-    // derived destructor override (would require a this-adjustment "deleting
-    // destructor" thunk, like C++'s D0). This is a known, documented gap
-    // (see TODO.md) — deliberately NOT rejected at compile time here, because
-    // multiple-interface-inheriting classes are common in the stdlib
-    // (e.g. ::k::MutableCollection<T>) and must keep compiling; before this
-    // change destructors were never virtual at all, so this is strictly no
-    // worse than the prior behaviour, only less complete than the primary path.
+    // *secondary* (non-primary) vtable base DOES correctly route to the most-
+    // derived destructor override. Secondary vtable slots are filled by
+    // resolvers_materializer.cpp's compute_secondary_vtable_specs()/build_spec(),
+    // which matches destructor slots via the `overrides` chain
+    // (overrides_base_func()) — every class's destructor ultimately traces back
+    // to ::k::Object::~Object as its introducing_func, regardless of how many
+    // intermediate levels skip declaring their own destructor — so the
+    // overrides-chain match always succeeds without needing the (broken,
+    // name-based) same_virtual_sig() fallback. Verified with plain classes,
+    // multi-level hierarchies, template-instantiated classes, and real
+    // imported-KDI interfaces (e.g. ::k::Collection<T>/::k::Sized) — see
+    // klang/tests/test-gen-virtual-destructor.cpp for the regression tests.
 
     // Process own functions
     for (auto& child : st.get_children()) {

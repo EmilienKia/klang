@@ -40,6 +40,14 @@
  *      SECOND listed interface base (not the primary vtable path) still
  *      calls the most-derived destructor exactly once, with the correctly
  *      adjusted 'this' pointer (verified via distinguishable field values).
+ *  [6] Secondary interface base through a multi-level chain: the destructor
+ *      is introduced two hops above the most-derived class; destroying
+ *      through the secondary base still resolves the whole chain in order.
+ *  [7] Secondary interface base with a template-instantiated hierarchy:
+ *      same scenario as [5]/[6] but with template classes/interfaces,
+ *      exercising the template-instantiation vtable-building path
+ *      (ensure_klass_vtable_built() in resolvers_aggregate.cpp) rather than
+ *      the plain-class path (build_vtable_layout() in gen_class.cpp).
  */
 
 #include <catch2/catch_all.hpp>
@@ -230,4 +238,85 @@ TEST_CASE("Virtual destructor: destroying through secondary interface base still
     auto get_field_sum = jit->lookup_symbol<int(*)()>("get_field_sum");
     REQUIRE(get_field_sum != nullptr);
     CHECK(get_field_sum() == 333);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [6] Secondary interface base, multi-level chain (destructor introduced two
+//      hops above the most-derived class)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Virtual destructor: secondary base still resolves through a multi-level chain", "[gen][vdtor]") {
+    auto jit = gen_jit(R"SRC(
+        module __test_vdtor_secondary_base_chain__;
+
+        dtor_log : int = 0;
+
+        interface IX { x() : int; }
+        interface IY { y() : int; }
+
+        class GrandParent : IX, IY {
+            ~GrandParent() { dtor_log = dtor_log * 10 + 1; }
+            override x() : int { return 1; }
+            override y() : int { return 2; }
+        }
+        class Parent : GrandParent {
+            ~Parent() { dtor_log = dtor_log * 10 + 2; }
+        }
+        class Child : Parent {
+            ~Child() { dtor_log = dtor_log * 10 + 3; }
+        }
+
+        test() : int {
+            // Destroy two hops removed, through the secondary base IY.
+            y : IY! = new Child();
+            delete y;
+            return dtor_log;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    // Child's dtor runs first (3), then Parent (32), then GrandParent (321).
+    CHECK(test() == 321);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [7] Secondary interface base with a template-instantiated hierarchy
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Virtual destructor: secondary base still resolves for a template-instantiated hierarchy", "[gen][vdtor][templates]") {
+    auto jit = gen_jit(R"SRC(
+        module __test_vdtor_secondary_base_template__;
+
+        dtor_log : int = 0;
+
+        template<typename T>
+        interface IX { }
+        template<typename T>
+        interface IY { }
+
+        template<typename T>
+        class GrandParent : IX<T>, IY<T> {
+            ~GrandParent() { dtor_log = dtor_log * 10 + 1; }
+        }
+        template<typename T>
+        class Child : GrandParent<T> {
+            ~Child() { dtor_log = dtor_log * 10 + 2; }
+        }
+
+        test() : int {
+            // Destroy the template-instantiated Child<int> through the
+            // secondary base IY<int>.
+            y : IY<int>! = new Child<int>();
+            delete y;
+            return dtor_log;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    // Child's dtor runs first (2), then GrandParent's (21).
+    CHECK(test() == 21);
 }
