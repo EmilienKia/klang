@@ -1528,6 +1528,14 @@ void declaration_generator::visit_klass(klass& klass) {
                         _context->module(), base_vtable_llvm_type,
                         true, llvm::GlobalValue::ExternalLinkage,
                         null_struct, sec_vtable_name);
+                    // Template instantiations and type-erased generic templates: merge this
+                    // secondary (base/interface) vtable across modules (linkonce_odr + COMDAT),
+                    // same as the primary vtable/RTTI below — otherwise every consumer of a
+                    // libk/user template that implements a base interface re-emits this thunk
+                    // as a strong `external` symbol, which collides at static-link time.
+                    if (should_merge_aggregate_symbols(klass)) {
+                        apply_instantiation_linkage(_context->module(), sec_gv, sec_vtable_name);
+                    }
 
                     auto sec_vt_layout = std::make_shared<vtable_layout>();
                     sec_vt_layout->llvm_global = sec_gv;
@@ -1570,6 +1578,11 @@ void declaration_generator::visit_klass(klass& klass) {
                 _context->module(), base_vt->llvm_type,
                 true, llvm::GlobalValue::ExternalLinkage,
                 null_struct, sec_vtable_name);
+            // Same rationale as the non-virtual-base secondary vtables above: merge
+            // across modules for template instantiations / type-erased generics.
+            if (should_merge_aggregate_symbols(klass)) {
+                apply_instantiation_linkage(_context->module(), sec_gv, sec_vtable_name);
+            }
 
             auto sec_vt_layout = std::make_shared<vtable_layout>();
             sec_vt_layout->llvm_global = sec_gv;

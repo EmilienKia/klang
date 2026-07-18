@@ -161,6 +161,21 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
         }
     }
 
+    // Step 3c: Sized→unsized array widening: T[N] → T[] (same element type).
+    // At the LLVM IR level both are opaque pointers, so this is a no-op cast —
+    // applies uniformly to pointer/link/view (and reference) indirections.
+    {
+        auto src_arr = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
+        auto tgt_arr = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
+        if (src_arr && tgt_arr && !tgt_arr->is_sized()
+                && type::are_equal(type::remove_const(src_arr->get_subtype()), type::remove_const(tgt_arr->get_subtype()))) {
+            auto cast = cast_expression::make_shared(arg, target_type);
+            cast->set_type(target_type);
+            assign_arg(cast);
+            return true;
+        }
+    }
+
     // Step 4: Otherwise return false (incompatible types)
     return false;  // incompatible
 }

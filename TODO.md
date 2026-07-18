@@ -18,9 +18,58 @@
   - [ ] SFINAE-like overload filtering based on template constraints
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
   - Known generic call-site limitations (found by Phase 12, tracked for future fix):
-    - [ ] Generic constructor call with owner `T!` argument: synthesized ctor takes `byte*!`, call site `ConcreteType!` implicit cast not supported
-    - [ ] Member access on `T*` inside generic body (opaque pointer — by design; workaround: access at call site)
-    - [ ] Explicit generic type args in generic member method call on non-generic host class (`obj.method<Dog>(arg)`)
+    - [ ] **Generic constructor call with owner `T!` argument.** Symptom: instantiating a
+      generic class whose constructor takes `T!` (owner) with a concrete `ConcreteType!`
+      argument at the call site fails to compile. Root cause: the "uniform synthesis" model
+      erases every generic type parameter `T` to `byte*` in the synthesized body, so a
+      constructor parameter declared `v : T!` becomes `v : byte*!` in the emitted IR. The
+      call-site overload resolver then tries to implicitly convert the caller's
+      `ConcreteType!` (owner of a concrete aggregate) to `byte*!` (owner of an opaque byte
+      pointer) and there is currently no adaptation path for owner-to-opaque-owner
+      conversion (unlike plain pointers, where `ConcreteType* → byte*` already has an
+      adaptation rule). Fix direction: extend `adapt_from_owner` / `gen_adapt_type.cpp`
+      with an owner-erasure conversion symmetric to the existing pointer-erasure one, and
+      make sure the destructor/move semantics of the erased `byte*!` correctly delegate to
+      the concrete type's real destructor (needed because owners run cleanup code, unlike
+      raw pointers). Repro: `test-gen-generic.cpp`, "Known-limitation: generic constructor
+      with owner arg at call site" (`[.][generic][known-limitation]`).
+    - [ ] **Member access on `T*` inside a generic body.** Symptom: inside a generic
+      class/function body, writing `v.field` where `v : T*` fails to compile — this is a
+      deliberate by-design restriction, not a regression. Root cause: the "uniform
+      synthesis" model compiles the generic body exactly once, with every type parameter
+      erased to `byte*` (an opaque pointer with no known fields), so the generated IR has no
+      layout information to resolve `.field` against. Concrete field access can only happen
+      where the concrete type is known, i.e. at the call site, outside the generic body.
+      This is an architectural trade-off (single compiled body reused for every
+      instantiation, vs. per-instantiation monomorphization like C++ templates) rather than
+      a bug — proper support would require either (a) monomorphizing generic bodies per
+      concrete type argument (large change: multiplies codegen work and drops the "compile
+      generic body once" invariant relied upon elsewhere), or (b) a constrained-generics /
+      concept system that lets the body describe the subset of `T`'s layout it needs (e.g.
+      "T has field `x : int`") and synthesizes per-field accessor thunks — effectively a
+      lightweight vtable-of-accessors passed alongside the erased pointer. Both are
+      substantial, cross-cutting designs; recommend scoping as a dedicated future phase
+      (concepts / type traits, already listed above) rather than a point fix. Repro:
+      `test-gen-generic.cpp`, "Known-limitation: member access on generic T* in generic
+      body" (`[.][generic][known-limitation]`).
+    - [ ] **Explicit generic type args in a member method call on a non-generic host
+      class** (`obj.method<Dog>(arg)`). Symptom: calling a generic *method* of an
+      otherwise non-generic host class/struct with an explicit type argument list fails to
+      resolve `Dog` as a type argument. Root cause (to be confirmed by deeper
+      investigation, not yet root-caused to the same depth as the two items above):
+      overload resolution for member-function calls in `resolvers_type_ref.cpp` /
+      `gen_expr_invocation.cpp` appears to special-case explicit template argument lists
+      primarily for calls where the *enclosing aggregate itself* is generic (so the
+      argument-list parsing/binding path is wired through the aggregate's own template
+      parameter substitution machinery); when the host class is a plain non-generic
+      class but only the *method* is a generic (`generic<class T> method(...)`), the
+      explicit `<Dog>` argument list is not threaded through the same substitution path
+      and the call fails to bind. Fix direction: audit the explicit-template-argument
+      parsing/binding path for member-function invocation expressions and ensure it does
+      not assume the host aggregate is itself generic before accepting explicit type
+      arguments for a per-method generic. Repro: `test-gen-generic.cpp`,
+      "Known-limitation: explicit generic type args in member method call"
+      (`[.][generic][known-limitation]`).
     - [ ] `ConcreteType! → byte*` implicit cast at generic setter sites (runtime returns 0 instead of value)
     - [x] **Nested-node template collection runtime under JIT** — **DONE**. `LinkedList<T>` /
       `DoubleLinkedList<T>` (nested-node templates) now allocate, link, index and destroy
@@ -40,7 +89,35 @@
       `aggregate_type_resolver::resolve_type_from_root`, so a static factory call such as
       `Expected<unsigned int, ::k::io::StreamOutOfData>::expected(...)` inside an imported
       stream method resolves instead of falling back to the un-instantiated template.
-    - [ ] Origin-aware homing of imported template definitions: re-injected imported templates are flattened into the consumer module's **root** namespace (via the `module <ns>;`-rename trick in `kdi_importer::materialise_template_def`), so two *imported* templates with the same short name from different modules (`a::Box`, `b::Box`) clash at the model/symbol level (the flatten dedups by short name in root). The instantiation `struct_type` registry is already collision-safe (keyed by an origin-qualified name via `unit::make_instantiation_registry_key`; see test `[template][instantiation][ns-collision]`), but the *model-level* symbol clash remains. **Why the naive fix is blocked**: simply homing the re-parsed template under `root::<origin>` (nested-`namespace` wrapping instead of the module-rename trick) breaks **unqualified access** to imported top-level symbols — `import mylib;` currently behaves like `using namespace mylib;`, so imported function templates must be reachable as bare `sum_pair<int>(...)`. Homing them under `::consumer::mylib::sum_pair` makes unqualified lookup fail (proven: it regresses the 4 `[cross-tpl][consumer-inst]` function-template tests in `test-import.cpp`). The real fix is therefore **deeper than homing**: scope lookup (`resolvers_scope_lookup.cpp`) must resolve unqualified imported symbols from their origin namespaces (an `import`-as-`using-namespace` mechanism) so the flatten can be dropped; homonymous imports then naturally require qualification. See skipped test `[import][template][homonym-imports][.]` documenting the target behaviour.
+    - [ ] **Homonymous imported templates from different modules** (origin-aware homing
+      of imported template definitions). Symptom: a consumer module imports two libraries
+      that each export a top-level template with the same short name (e.g. both `boxa` and
+      `boxb` export a template `Box<T>`); instantiating both as `boxa::Box<int>` and
+      `boxb::Box<int>` should behave as two distinct types with independent layouts, but
+      the two colliding template *definitions* are merged and the second import silently
+      wins, giving wrong behaviour instead of a compile error. Root cause: re-injected
+      imported templates are flattened into the consumer module's **root** namespace (via
+      the `module <ns>;`-rename trick in `kdi_importer::materialise_template_def`), so two
+      *imported* templates with the same short name from different modules (`a::Box`,
+      `b::Box`) clash at the model/symbol level (the flatten dedups by short name in root).
+      The instantiation `struct_type` registry is already collision-safe (keyed by an
+      origin-qualified name via `unit::make_instantiation_registry_key`; see test
+      `[template][instantiation][ns-collision]`), but the *model-level* symbol clash
+      remains. **Why the naive fix is blocked**: simply homing the re-parsed template under
+      `root::<origin>` (nested-`namespace` wrapping instead of the module-rename trick)
+      breaks **unqualified access** to imported top-level symbols — `import mylib;`
+      currently behaves like `using namespace mylib;`, so imported function templates must
+      be reachable as bare `sum_pair<int>(...)`. Homing them under
+      `::consumer::mylib::sum_pair` makes unqualified lookup fail (proven: it regresses the
+      4 `[cross-tpl][consumer-inst]` function-template tests in `test-import.cpp`). The real
+      fix is therefore **deeper than homing**: scope lookup (`resolvers_scope_lookup.cpp`)
+      must resolve unqualified imported symbols from their origin namespaces (an
+      `import`-as-`using-namespace` mechanism) so the flatten can be dropped; homonymous
+      imports then naturally require qualification once that mechanism exists. This is a
+      structural change to the import/scope-resolution model (affects every unqualified
+      symbol lookup path), not a local fix — recommend scoping as a dedicated phase.
+      Repro/target-behaviour test: `test-import.cpp`, "Known-limitation: homonymous imported
+      templates from different modules" (`[.][import][template][homonym-imports]`).
     - [x] **Static-link diamond of a libk template instantiation** (cross-module COMDAT,
       base-erased generic RTTI) — **DONE**. Two libs A and B plus an executable C all
       instantiate the same libk template (`::k::Optional<int>`, `::k::Expected<int,int>`):
@@ -53,6 +130,14 @@
         - vtable / RTTI globals (`_KTV` / `_KTRI`) of any template / generic / instantiation
           aggregate → `linkonce_odr` + COMDAT (`gen_class.cpp` `visit_klass`, guarded by
           `should_merge_aggregate_symbols` = `is_instantiation() || is_template()`);
+        - **secondary (base/interface) vtable globals** (named `<vtable>_for_<BaseName>`,
+          created for base-interface thunks and virtual-base thunks in `collect_all_bases`)
+          were still missed by the above and kept plain `ExternalLinkage` — this was the
+          actual remaining cause of "multiple definition" errors whenever a statically-linked
+          template instantiation implemented a base interface or reached a shared virtual
+          base (e.g. `Vector<T>` implementing `Collection`/`Sized`/…). Fixed by applying the
+          same `should_merge_aggregate_symbols` + `apply_instantiation_linkage` treatment to
+          both `sec_gv` creation sites in `gen_class.cpp`;
         - reflection function descriptors (`_KTRF`, member + free) → module-local
           (`PrivateLinkage`) since they are referenced only by baked pointers, never by name
           (`gen_class.cpp`, `gen_unit.cpp`) — matching the already-private ctor/param descriptors.
@@ -130,29 +215,28 @@
       and prevents constructor-body virtual-call crashes.
       Regression test: `test-gen-lifecycle.cpp`
       (`[gen][lifecycle][cat1][vptr]`).
-- [ ] **Sized→unsized array implicit conversion broken for most indirection kinds.**
+- [x] **Sized→unsized array implicit conversion broken for most indirection kinds — FIXED.**
       Discovered while writing the `foreach` array-variant test suite
       (`klang/tests/test-gen-foreach.cpp`, "unsized array reference parameter").
-      A sized array `T[N]` is supposed to implicitly widen to the corresponding
-      unsized array indirection `T[]&` / `T[]+` / `T[]*` / `T[]?` when passed as an
-      argument (see `doc/spec/language/summary.md` and the pre-existing, currently
-      **unregistered** test file `klang/tests/test-gen-array-unsized-conv.cpp`, which
-      is not wired into `klang/CMakeLists.txt`). In practice:
-      - `T[]&` (explicit reference) and `T[]+`/`T[]*`/`T[]?` (link/pointer/view)
-        parameters fail to bind at all: `validate_reference_variable` /
-        `validate_link_variable` / `validate_pointer_variable` / `validate_view_variable`
-        (`gen/gen_variable_definition.cpp`) reject the sized-array argument with
-        "... cannot be bound to an expression of type '...': the referenced/linked/
-        view types are incompatible (no inheritance relationship)" — they never special-case
-        array widening (unlike the owner (`!`) validator, which does handle it correctly).
-      - `T[]` (no explicit addresser, i.e. bare unsized-array parameter) and `T[]!`
-        (owner) *compile* successfully, but the resulting parameter is unusable at
-        runtime: even a plain `while` loop indexing `a[i]` on such a parameter
-        **segfaults** (ABI/codegen bug, not caught by the type-resolution passes).
-      Register `test-gen-array-unsized-conv.cpp` in `klang/CMakeLists.txt` once fixed
-      (9 of its 14 cases currently fail) and un-skip
-      `Known-limitation: foreach over an unsized array reference parameter`
-      (`[.][foreach][known-limitation]`) in `klang/tests/test-gen-foreach.cpp`.
+      Root causes and fixes:
+      - `context::from_type_specifier` (`model/context.cpp`): an explicit `T[]&`
+        double-wrapped the reference (`ref<ref<array<T>>>`) instead of producing the
+        single-level `ref<array<T>>` that bare `T[]` and overload resolution expect
+        (the `AMPERSAND` branch called `subtype->get_reference()` on a subtype that
+        was *already* `ref<array<T>>`, unlike the `*`/`+`/`?`/`!` branches which
+        correctly unwrap first). Fixed by unwrapping before re-wrapping, matching the
+        other indirection kinds.
+      - `check_and_insert_inheritance_cast` (`gen/gen_variable_definition.cpp`) and
+        `adapt_from_{pointer,link,view,owner}` (`gen/gen_adapt_type.cpp`) did not
+        special-case sized→unsized array widening (unlike `validate_owner_variable`,
+        which had its own ad-hoc check). Fixed by extending
+        `types_match_array_const_compatible` to also accept a sized source vs. an
+        unsized target, and using it (or an equivalent direct check) in all of the
+        above.
+      Registered `klang/tests/test-gen-array-unsized-conv.cpp` in `klang/CMakeLists.txt`
+      (all 14 cases now pass) and un-skipped
+      `Foreach over an unsized array reference parameter (sized→unsized widening)`
+      (`[gen][foreach][array]`) in `klang/tests/test-gen-foreach.cpp`.
 - [ ] **ARRAY-variant `foreach` re-evaluates its source expression on every iteration
       instead of exactly once.** `type_reference_resolver::visit_foreach_statement`
       (`gen/gen_statements.cpp`) builds the `.size` test expression and the

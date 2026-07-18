@@ -3697,27 +3697,25 @@ TEST_CASE("import instantiation diamond - user-declared Box<int> template in two
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// [.][instantiation-diamond-static] STATIC-LINK diamond of a libk template.
+// [instantiation-diamond-static] STATIC-LINK diamond of a libk template.
 //
-// SKIPPED - known limitation. The static-archive variant of the diamond above
-// (link the executable against optdiamond_a.a + optdiamond_b.a instead of the
-// .so files) currently fails to link with "multiple definition" errors on the
-// root-homed, strong RTTI reflection function descriptors (_KTRF..., e.g.
-// ::removeBack, ::get) that every consumer of a libk template emits for the
-// type-erased generic templates.
+// FIXED. The static-archive variant of the diamond above (link the executable
+// against two static archives instead of two .so files) used to fail to link
+// with "multiple definition" errors on secondary (base/interface) vtable
+// globals (named `<vtable>_for_<BaseName>`) re-emitted by every consumer of a
+// libk/user template that implements a base interface or reaches a shared
+// virtual base. These globals were always created with plain ExternalLinkage,
+// unlike the primary vtable/RTTI globals which already got the merge-friendly
+// linkonce_odr + COMDAT treatment for template instantiations.
 //
-// These descriptors are homed at the root namespace (no class prefix) and
-// emitted with ExternalLinkage; the shared-library diamond tolerates them
-// because default visibility lets the loader interpose one copy, but a static
-// link pulls every copy into one image and the strong symbols collide.
+// Fixed in gen_class.cpp: secondary vtable globals now go through the same
+// `should_merge_aggregate_symbols()` + `apply_instantiation_linkage()` path as
+// the primary vtable/RTTI globals.
 //
-// Fix belongs to Phase 3 (apply linkonce_odr + COMDAT to base-erased generic
-// RTTI / reflection descriptors). Tracked in TODO.md.
+// This scenario (both a libk-template diamond and a user-declared-template
+// diamond, statically linked) is now covered by real, non-skipped, passing
+// tests in test-klangc-static-diamond.cpp:
+//   - "klangc: static-link diamond of a libk template instantiation"
+//   - "klangc: static-link diamond of a user-declared template instantiation"
 // ─────────────────────────────────────────────────────────────────────────────
-
-TEST_CASE("import instantiation diamond - static-link of libk template (KNOWN LIMITATION)",
-          "[.][import][e2e][instantiation-diamond-static]") {
-    // Intentionally skipped: see the comment above and TODO.md.
-    SUCCEED("documented known limitation - static-link diamond of libk templates");
-}
 

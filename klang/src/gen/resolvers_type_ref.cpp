@@ -1979,13 +1979,17 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 }
 
 /**
- * Compare two types allowing const-widening on array elements.
- * Returns true when:
+ * Compare two array types allowing const-widening on elements, and/or a
+ * sized→unsized widening on the source side. Returns true when:
  *   - src_nc == tgt_nc (identity), or
- *   - both are (unsized) array types whose element types match after
- *     stripping const (e.g. array<char> matches array<const<char>>).
- * The caller is responsible for ensuring the conversion direction is safe
- * (source non-const → target const is widening, reverse is not).
+ *   - both are unsized array types whose element types match after
+ *     stripping const (e.g. array<char> matches array<const<char>>), or
+ *   - src is a *sized* array T[N] and tgt is an *unsized* array T[] with the
+ *     same element type after stripping const (sized→unsized widening; both
+ *     share the same { count, data[] } heap/opaque-pointer representation).
+ * The caller is responsible for ensuring the conversion direction is safe:
+ * this helper only ever widens (source non-const → target const, or source
+ * sized → target unsized); it never narrows in the reverse direction.
  */
 bool type_reference_resolver::types_match_array_const_compatible(
         const std::shared_ptr<type>& src_nc,
@@ -1993,7 +1997,7 @@ bool type_reference_resolver::types_match_array_const_compatible(
     if (src_nc == tgt_nc) return true;
     auto src_arr = std::dynamic_pointer_cast<array_type>(src_nc);
     auto tgt_arr = std::dynamic_pointer_cast<array_type>(tgt_nc);
-    if (src_arr && tgt_arr && !src_arr->is_sized() && !tgt_arr->is_sized()) {
+    if (src_arr && tgt_arr && !tgt_arr->is_sized()) {
         auto src_elem = type::remove_const(src_arr->get_subtype());
         auto tgt_elem = type::remove_const(tgt_arr->get_subtype());
         return src_elem == tgt_elem;

@@ -172,7 +172,7 @@ klang_gen_test(klang-tests-model 60
 # ---------------------------------------------------------------------------
 # Group 3 — Codegen core: functions, statements, control flow, init order
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-core 120
+klang_gen_test(klang-tests-gen-core 300
         tests/test-gen.cpp
         tests/test-gen-statements.cpp
         tests/test-gen-resolution.cpp
@@ -199,7 +199,7 @@ klang_gen_test(klang-tests-gen-core 120
 # Group 4 — Arithmetic, operators, casts
 # Isolated because test-gen-arithmetic.cpp alone takes ~20s.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arithmetic 180
+klang_gen_test(klang-tests-gen-arithmetic 400
         tests/test-gen-arithmetic.cpp
         tests/test-gen-operator-overload.cpp
         tests/test-gen-comparison-fallback.cpp
@@ -212,7 +212,7 @@ klang_gen_test(klang-tests-gen-arithmetic 180
 # ---------------------------------------------------------------------------
 # Group 5 — Algebraic and special types: enums, unions, const, null, annotations
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-types 120
+klang_gen_test(klang-tests-gen-types 250
         tests/test-gen-enum.cpp
         tests/test-gen-union.cpp
         tests/test-gen-union-template.cpp
@@ -258,6 +258,7 @@ klang_gen_test(klang-tests-gen-memory 90
         tests/test-gen-uniform-array-init.cpp
         tests/test-gen-array-subscript-indirection.cpp
         tests/test-gen-array-size.cpp
+        tests/test-gen-array-unsized-conv.cpp
         tests/test-gen-foreach.cpp
 )
 

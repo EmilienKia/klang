@@ -261,6 +261,17 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
     } else if(auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*ptr->subtype);
         if(ptr->pointer_type==lex::operator_::AMPERSAND) {
+            // int[] is canonicalized to reference(array(int)) for stack/parameter use.
+            // An explicit int[]& must produce that very same single-level reference,
+            // not reference(reference(array(int))) — unwrap before re-wrapping, same
+            // as the pointer/link/view/owner cases below.
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(subtype)) {
+                if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                    if (!arr->is_sized()) {
+                        return subtype;
+                    }
+                }
+            }
             return subtype->get_reference();
         }
         // int[] is canonicalized to reference(array(int)) for stack/parameter use,

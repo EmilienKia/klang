@@ -168,6 +168,12 @@ type_reference_resolver::adapt_from_pointer(
                 cast->set_type(type_nc);
                 return cast;
             }
+            // Sized→unsized array widening: ptr<T[N]> → ptr<T[]>/lnk<T[]>
+            if (types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
             return {};
         }
         return expr;
@@ -228,6 +234,12 @@ type_reference_resolver::adapt_from_link(
                     return upcast;
                 }
             }
+            // Sized→unsized array widening: lnk<T[N]> → lnk/ptr/view<T[]>
+            if (types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
             return {};
         }
         return expr;
@@ -287,6 +299,12 @@ type_reference_resolver::adapt_from_view(
                     return upcast;
                 }
             }
+            // Sized→unsized array widening: view<T[N]> → view/ptr<T[]>
+            if (types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
             return {};
         }
         return expr;
@@ -344,6 +362,12 @@ type_reference_resolver::adapt_from_owner(
         }
         // Generic erasure: owner<Concrete> ↔ owner<byte*> (no-op at IR level)
         if (is_generic_erasure_pair(src_sub_nc, tgt_sub_nc)) {
+            auto cast = cast_expression::make_shared(expr, type_nc);
+            cast->set_type(type_nc);
+            return cast;
+        }
+        // Sized→unsized array widening: owner<T[N]> → owner<T[]>
+        if (types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
             auto cast = cast_expression::make_shared(expr, type_nc);
             cast->set_type(type_nc);
             return cast;

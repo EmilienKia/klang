@@ -177,21 +177,40 @@ TEST_CASE("Foreach array — owner loop variable is still forbidden with a tempo
 // Sized vs unsized array parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_CASE("Known-limitation: foreach over an unsized array reference parameter",
-          "[.][foreach][known-limitation]") {
-    // LIMITATION: passing a sized array `int[4]` to an `int[]&` (or `+`/`*`/`?`)
-    // parameter relies on the sized→unsized array implicit widening conversion,
-    // which is broken for all indirection kinds except `!` (owner) — see
-    // `validate_reference_variable` / `validate_link_variable` /
-    // `validate_pointer_variable` / `validate_view_variable`
-    // (`gen/gen_variable_definition.cpp`). The bare `int[]` (no addresser) and
-    // `int[]!` (owner) forms compile but crash at runtime when indexed (a
-    // pre-existing ABI/codegen bug, unrelated to `foreach`).
-    // Tracked in TODO.md; see also the pre-existing (currently unregistered)
-    // `klang/tests/test-gen-array-unsized-conv.cpp`.
-    SKIP("Sized->unsized array implicit conversion is broken for reference/link/"
-         "pointer/view parameters, and unusable at runtime for the bare/owner forms; "
-         "foreach itself works correctly once a valid unsized array reference exists.");
+TEST_CASE("Foreach over an unsized array reference parameter (sized→unsized widening)",
+          "[gen][foreach][array]") {
+    // Previously a known limitation: passing a sized array `int[4]` to an
+    // `int[]&` (or `+`/`*`/`?`) parameter relies on the sized→unsized array
+    // implicit widening conversion. Fixed by:
+    //  - context::from_type_specifier: explicit `T[]&` no longer double-wraps
+    //    the reference (it used to produce ref<ref<array<T>>> instead of the
+    //    single-level ref<array<T>> that bare `T[]` and overload resolution
+    //    expect).
+    //  - check_and_insert_inheritance_cast / adapt_from_{pointer,link,view,owner}:
+    //    now accept a sized-array source when the target is the matching
+    //    unsized array, for all indirection kinds.
+    // See `klang/tests/test-gen-array-unsized-conv.cpp` for focused coverage
+    // of every indirection kind; this test keeps the original foreach repro.
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        sumArr(arr : int[]&) : int {
+            sum : int = 0;
+            for(x : int = arr) {
+                sum = sum + x;
+            }
+            return sum;
+        }
+
+        test() : int {
+            a : int[4]{1, 2, 3, 4};
+            return sumArr(a);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 10);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
