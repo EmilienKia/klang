@@ -1202,6 +1202,14 @@ namespace k::model {
 
         // Propagate 'final' specifier for functions
         bool is_final_func = lex::keyword::has(func.specifiers, lex::keyword::FINAL);
+        if (is_final_func
+            && (std::dynamic_pointer_cast<model::constructor>(function)
+                || std::dynamic_pointer_cast<model::destructor>(function)
+                || func.is_destructor)) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FINAL_ON_CTOR_DTOR), func.name,
+                "Specifier 'final' is not allowed on constructor or destructor '{}'",
+                {func_name});
+        }
         function->set_final_func(is_final_func);
 
 

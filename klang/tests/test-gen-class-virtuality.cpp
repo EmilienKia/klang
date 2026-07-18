@@ -77,6 +77,10 @@
  *  ── cross-struct/class error ──────────────────────────────────────────────
  *   [S] struct inheriting from class → error
  *   [T] class inheriting from struct → error
+ *  ── 'final' is NOT allowed on constructors/destructors (ERR_FINAL_ON_CTOR_DTOR = 0x0195) ──
+ *   [V] final on a class constructor → error
+ *   [W] final on a class destructor → error
+ *   [X] final on a struct constructor → error
  */
 
 #include <catch2/catch_all.hpp>
@@ -1162,5 +1166,40 @@ test_c() : int { d: D; return call_c(d); }
     // Struct: no dispatch; B::who=2, C::who=3
     CHECK(fn_b() == 2);
     CHECK(fn_c() == 3);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [V,W,X] 'final' is NOT allowed on constructors/destructors
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[V] final on a class constructor is an error", "[class][virtuality][final][error]") {
+
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module __cls_final_on_ctor__;
+class Foo {
+    final Foo() {}
+}
+)SRC"));
+}
+
+TEST_CASE("[W] final on a class destructor is an error", "[class][virtuality][final][error]") {
+
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module __cls_final_on_dtor__;
+class Foo {
+    Foo() {}
+    final ~Foo() {}
+}
+)SRC"));
+}
+
+TEST_CASE("[X] final on a struct constructor is an error", "[struct][virtuality][final][error]") {
+
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module __struct_final_on_ctor__;
+struct Foo {
+    final Foo() {}
+}
+)SRC"));
 }
 

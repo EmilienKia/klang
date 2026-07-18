@@ -81,6 +81,7 @@ enum class model_diag : unsigned int {
     ERR_RETURN_VAR_NAME_MISMATCH                  = 0x00B2,
     ERR_RETURN_VAR_NOT_IN_FUNC                    = 0x00B3,
     ERR_RETURN_VAR_TYPE_NOT_REF                   = 0x00B4,
+    ERR_FINAL_ON_CTOR_DTOR                        = 0x0195,
     ERR_OVERRIDE_ON_STATIC                        = 0x0178,
     ERR_OVERRIDE_ON_ABSTRACT                      = 0x0179,
     ERR_OVERRIDE_ON_CTOR_DTOR                     = 0x017A,
