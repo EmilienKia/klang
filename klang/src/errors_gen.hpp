@@ -119,96 +119,378 @@ enum class statement_diag : unsigned int {
 // ────────────────────────────────────────────────────────────────────────────
 enum class codegen_diag : unsigned int {
     ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS               = 0x011E,
+
+    /**
+     * Null sub-expression in a unary expression reaching symbol resolution, a
+     * root namespace with no name at codegen, or the top-level catch-all for
+     * any unexpected non-compiler exception during compilation.
+     */
     INTERNAL_ERR_F001                             = 0xF001,
+
+    /**
+     * A binary expression has a null left or right operand when
+     * symbol_resolver visits it; indicates a malformed AST.
+     */
     INTERNAL_ERR_F002                             = 0xF002,
+
+    /**
+     * A symbol reached the type-resolution phase without being resolved by
+     * symbol_resolver first, or a constructor has no owner structure.
+     */
     INTERNAL_ERR_F003                             = 0xF003,
+
+    /**
+     * A unary expression's sub-expression is null during type resolution, or
+     * a destructor/variable definition is missing its owner structure or
+     * function-reference type; indicates a bug in an earlier pass.
+     */
     INTERNAL_ERR_F004                             = 0xF004,
+
+    /**
+     * The sub-expression of a unary operator could not be type-resolved
+     * before the unary expression itself is typed.
+     */
     INTERNAL_ERR_F005                             = 0xF005,
+
+    /**
+     * A binary expression has a null left or right operand when
+     * type_reference_resolver visits it.
+     */
     INTERNAL_ERR_F006                             = 0xF006,
+
+    /// The left operand of a binary operator could not be type-resolved.
     INTERNAL_ERR_F007                             = 0xF007,
+
+    /// The right operand of a binary operator could not be type-resolved.
     INTERNAL_ERR_F008                             = 0xF008,
+
+    /**
+     * A constructor invocation expression's constructed symbol does not
+     * refer to a variable definition.
+     */
     INTERNAL_ERR_F009                             = 0xF009,
+
+    /// A constructor invocation refers to a variable with no resolved type.
     INTERNAL_ERR_F00A                             = 0xF00A,
+
+    /// The '!' (logical NOT) operator has a non-primitive operand reaching code generation.
     INTERNAL_ERR_F00B                             = 0xF00B,
+
+    /// The '==' expression produced a null left or right LLVM value during codegen.
     INTERNAL_ERR_F00C                             = 0xF00C,
+
+    /// The '==' operator has a non-primitive operand reaching code generation.
     INTERNAL_ERR_F00D                             = 0xF00D,
+
+    /// The '!=' expression produced a null left or right LLVM value during codegen.
     INTERNAL_ERR_F00E                             = 0xF00E,
+
+    /// The '!=' operator has a non-primitive operand reaching code generation.
     INTERNAL_ERR_F00F                             = 0xF00F,
+
+    /// The '<' expression produced a null left or right LLVM value during codegen.
     INTERNAL_ERR_F010                             = 0xF010,
+
+    /// The '<' operator has a non-primitive operand reaching code generation.
     INTERNAL_ERR_F011                             = 0xF011,
+
+    /// The '>' expression produced a null left or right LLVM value during codegen.
     INTERNAL_ERR_F012                             = 0xF012,
+
+    /// The '>' operator has a non-primitive operand reaching code generation.
     INTERNAL_ERR_F013                             = 0xF013,
+
+    /// The '<=' expression produced a null left or right LLVM value during codegen.
     INTERNAL_ERR_F014                             = 0xF014,
+
+    /// The '<=' operator has a non-primitive operand reaching code generation.
     INTERNAL_ERR_F015                             = 0xF015,
+
+    /**
+     * The '>=' expression produced a null left or right LLVM value, or has a
+     * non-primitive operand, reaching code generation.
+     */
     INTERNAL_ERR_F016                             = 0xF016,
+
+    /// An enum_type used in a constructor invocation has no associated enumeration model object.
     INTERNAL_ERR_F017                             = 0xF017,
+
+    /// The single initialisation argument for a reference-kind ('&') variable is null.
     INTERNAL_ERR_F018                             = 0xF018,
+
+    /// The single initialisation argument for a link-kind ('+') variable is null.
     INTERNAL_ERR_F019                             = 0xF019,
+
+    /// The single initialisation argument for a view-kind ('?') variable is null.
     INTERNAL_ERR_F01A                             = 0xF01A,
+
+    /**
+     * The LLVM function declaration could not be materialised for a function
+     * (missing this-parameter, or unresolved this/parameter/return LLVM
+     * type), or no enclosing function context was found for a member access.
+     */
     INTERNAL_ERR_F01B                             = 0xF01B,
+
+    /**
+     * No 'this' pointer found in the enclosing function for a member
+     * variable access, or a global static-constructor function was not
+     * found in the LLVM function table.
+     */
     INTERNAL_ERR_F01C                             = 0xF01C,
+
+    /// No struct context found on the code-generation stack when accessing a member variable.
     INTERNAL_ERR_F01D                             = 0xF01D,
+
+    /**
+     * Could not reach the struct owning a member variable via the
+     * __parent__/__base__ chain, or the struct has no member with the
+     * expected name.
+     */
     INTERNAL_ERR_F01E                             = 0xF01E,
+
+    /**
+     * Could not find the struct owning a member variable in the __parent__
+     * chain, or the struct has no LLVM type information for member access.
+     */
     INTERNAL_ERR_F01F                             = 0xF01F,
+
+    /**
+     * An unsupported variable-definition kind (not parameter/global/local/
+     * member) was encountered while generating a symbol, or its type could
+     * not be mapped to an LLVM type.
+     */
     INTERNAL_ERR_F020                             = 0xF020,
+
+    /// No LLVM function declaration was found for a resolved function symbol.
     INTERNAL_ERR_F021                             = 0xF021,
+
+    /// The LLVM function object registered for a resolved function is null.
     INTERNAL_ERR_F022                             = 0xF022,
+
+    /// The sub-expression of an address-of ('&') operator produced no LLVM value.
     INTERNAL_ERR_F023                             = 0xF023,
+
+    /**
+     * A struct has no member with the expected name during codegen, or the
+     * union definition/alternative for a member access could not be found.
+     */
     INTERNAL_ERR_F024                             = 0xF024,
+
+    /// The '.' operator is applied to a non-struct type during code generation.
     INTERNAL_ERR_F025                             = 0xF025,
+
+    /**
+     * An unsupported call-expression form (not direct/member/pointer-to-
+     * member) reached code generation, or a sized/unsized array has no LLVM
+     * struct type during subscript codegen.
+     */
     INTERNAL_ERR_F026                             = 0xF026,
+
+    /// A member function call has a non-symbol callee.
     INTERNAL_ERR_F027                             = 0xF027,
+
+    /**
+     * Failed to generate the 'this'/object argument for a member function
+     * call, or the sub-expression of a drain ('#') operator produced no
+     * LLVM value.
+     */
     INTERNAL_ERR_F028                             = 0xF028,
+
+    /// A call argument produced no LLVM value during code generation.
     INTERNAL_ERR_F029                             = 0xF029,
+
+    /// No LLVM declaration was found for a (non-abstract, non-external-virtual) function.
     INTERNAL_ERR_F02A                             = 0xF02A,
+
+    /// The LLVM function object is null for a resolved, non-abstract function.
     INTERNAL_ERR_F02B                             = 0xF02B,
+
+    /**
+     * A constructor-invocation/temporary-construction expression does not
+     * refer to a resolved variable definition or struct type.
+     */
     INTERNAL_ERR_F02C                             = 0xF02C,
+
+    /// Failed to obtain an LLVM reference for the object being constructed.
     INTERNAL_ERR_F02D                             = 0xF02D,
+
+    /**
+     * Failed to generate an LLVM constant from a literal value expression
+     * during primitive constructor invocation.
+     */
     INTERNAL_ERR_F02E                             = 0xF02E,
+
+    /**
+     * Failed to generate an LLVM value for a primitive-variable
+     * initialisation argument, or could not build a FunctionType for an
+     * imported virtual dispatch call.
+     */
     INTERNAL_ERR_F02F                             = 0xF02F,
+
+    /**
+     * A constructor argument produced no LLVM value, or an imported
+     * aggregate has no LLVM struct type for virtual dispatch.
+     */
     INTERNAL_ERR_F030                             = 0xF030,
+
+    /// No LLVM declaration was found for a constructor of a given struct type.
     INTERNAL_ERR_F031                             = 0xF031,
+
+    /// The LLVM constructor function object is null for a given struct type.
     INTERNAL_ERR_F032                             = 0xF032,
+
+    /// A cast expression has an unresolved source or target type reaching code generation.
     INTERNAL_ERR_F033                             = 0xF033,
+
+    /**
+     * The expression being cast, or a reference/drain variable's storage
+     * location, could not be resolved to an LLVM value/location.
+     */
     INTERNAL_ERR_F034                             = 0xF034,
+
+    /**
+     * An assignment expression, or a reference-variable initialisation
+     * argument, produced a null LLVM value.
+     */
     INTERNAL_ERR_F035                             = 0xF035,
+
+    /**
+     * The '+=' expression produced a null left or right LLVM value, or a
+     * reference variable has no initialisation argument.
+     */
     INTERNAL_ERR_F036                             = 0xF036,
+
+    /**
+     * The '-=' expression produced a null left or right LLVM value, or a
+     * sized array variable has no LLVM struct type.
+     */
     INTERNAL_ERR_F037                             = 0xF037,
+
+    /// The '*=' expression produced a null left or right LLVM value.
     INTERNAL_ERR_F038                             = 0xF038,
+
+    /// The '/=' expression produced a null left or right LLVM value.
     INTERNAL_ERR_F039                             = 0xF039,
+
+    /// The '%=' expression produced a null left or right LLVM value.
     INTERNAL_ERR_F03A                             = 0xF03A,
+
+    /// The '&=' expression produced a null left or right LLVM value.
     INTERNAL_ERR_F03B                             = 0xF03B,
+
+    /// The '|=' expression produced a null left or right LLVM value.
     INTERNAL_ERR_F03C                             = 0xF03C,
+
+    /// The '^=' expression produced a null left or right LLVM value.
     INTERNAL_ERR_F03D                             = 0xF03D,
+
+    /// The '<<=' expression produced a null left or right LLVM value.
     INTERNAL_ERR_F03E                             = 0xF03E,
+
+    /// The '>>=' expression produced a null left or right LLVM value.
     INTERNAL_ERR_F03F                             = 0xF03F,
+
+    /// Dynamic cast: source or target is not a class/interface/annotation aggregate with RTTI.
     INTERNAL_ERR_F040                             = 0xF040,
+
+    /// Dynamic cast: the RTTI global for the target class could not be found in the module.
     INTERNAL_ERR_F041                             = 0xF041,
+
+    /// Dynamic cast: the source aggregate has no vtable/vptr.
     INTERNAL_ERR_F042                             = 0xF042,
+
+    /// Dynamic cast: the source class's LLVM type was not built.
     INTERNAL_ERR_F043                             = 0xF043,
+
+    /**
+     * An indirect call through a function-reference variable produced no
+     * LLVM value for the callee address.
+     */
     INTERNAL_ERR_F044                             = 0xF044,
+
+    /// An indirect call lacks a function_reference_type annotation on its callee.
     INTERNAL_ERR_F045                             = 0xF045,
+
+    /// Could not map a K parameter type to its LLVM type for an indirect call.
     INTERNAL_ERR_F046                             = 0xF046,
+
+    /// An argument for an indirect call produced no LLVM value.
     INTERNAL_ERR_F047                             = 0xF047,
+
+    /// An INDIRECT_MEMBER (pointer-to-member) dispatch is missing its pm_expression callee.
     INTERNAL_ERR_F048                             = 0xF048,
+
+    /// An INDIRECT_MEMBER call could not obtain the member function pointer.
     INTERNAL_ERR_F049                             = 0xF049,
+
+    /**
+     * A binary operator-overload function has no LLVM definition, whether
+     * checked before evaluating operands or after failing virtual dispatch.
+     */
     INTERNAL_ERR_F04A                             = 0xF04A,
+
+    /// The left operand for a member binary operator overload produced no LLVM value.
     INTERNAL_ERR_F04B                             = 0xF04B,
+
+    /// The right operand for a member binary operator overload produced no LLVM value.
     INTERNAL_ERR_F04C                             = 0xF04C,
+
+    /// The left operand for a non-member binary operator overload produced no LLVM value.
     INTERNAL_ERR_F04D                             = 0xF04D,
+
+    /// The right operand for a non-member binary operator overload produced no LLVM value.
     INTERNAL_ERR_F04E                             = 0xF04E,
+
+    /**
+     * A unary operator-overload function has no LLVM definition, whether
+     * checked before evaluating the operand or after failing virtual dispatch.
+     */
     INTERNAL_ERR_F04F                             = 0xF04F,
+
+    /// The operand for a member unary operator overload produced no LLVM value.
     INTERNAL_ERR_F050                             = 0xF050,
+
+    /// The operand for a non-member unary operator overload produced no LLVM value.
     INTERNAL_ERR_F051                             = 0xF051,
+
+    /**
+     * A casting-operator overload function (operator_cv) has no LLVM
+     * definition, whether checked before evaluating the source expression
+     * or after failing virtual dispatch.
+     */
     INTERNAL_ERR_F052                             = 0xF052,
+
+    /// The source operand for a casting operator overload produced no LLVM value.
     INTERNAL_ERR_F053                             = 0xF053,
+
+    /// Failed to generate an LLVM value for an enum-variable initialisation argument.
     INTERNAL_ERR_F054                             = 0xF054,
+
+    /**
+     * A comparison "source" operator used for fallback synthesis has no LLVM
+     * definition, the left operand of a comparison-operator-overload call
+     * produced no LLVM value, or the generated LLVM module failed verification.
+     */
     INTERNAL_ERR_F055                             = 0xF055,
+
+    /**
+     * A comparison "source" operator has no LLVM definition and is not
+     * dispatched virtually, or the right operand of a comparison-operator-
+     * overload call produced no LLVM value.
+     */
     INTERNAL_ERR_F056                             = 0xF056,
+
+    /// The '<=>' (spaceship) expression produced a null left or right LLVM value.
     INTERNAL_ERR_F057                             = 0xF057,
+
+    /// The builtin '<=>' operator has a non-primitive operand reaching code generation.
     INTERNAL_ERR_F058                             = 0xF058,
-    INTERNAL_ERR_F059                             = 0xF059, ///< Foreach codegen reached with an unsupported/unresolved iteration kind.
-    INTERNAL_ERR_F05A                             = 0xF05A, ///< Foreach ITERATOR/SEQUENCE: expected method (next/iterator/constIterator) not found on the resolved aggregate.
+
+    /// Foreach codegen reached with an unsupported/unresolved iteration kind (only ARRAY, ITERATOR, SEQUENCE are supported).
+    INTERNAL_ERR_F059                             = 0xF059,
+
+    /// Foreach ITERATOR/SEQUENCE: expected method (next/iterator/constIterator) not found on the resolved aggregate.
+    INTERNAL_ERR_F05A                             = 0xF05A,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
