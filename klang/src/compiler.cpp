@@ -543,6 +543,14 @@ void compiler::set_log_level(log::diagnostic::severity level) {
     _log_level = level;
 }
 
+void compiler::set_ignored_diagnostic_codes(std::vector<unsigned int> codes) {
+    _ignored_diagnostic_codes = std::set<unsigned int>(codes.begin(), codes.end());
+}
+
+void compiler::add_ignored_diagnostic_code(unsigned int code) {
+    _ignored_diagnostic_codes.insert(code);
+}
+
 void compiler::set_log_file(const std::string& path) {
     if (path.empty()) {
         _log_stream = nullptr;

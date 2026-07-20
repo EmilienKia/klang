@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <set>
 #include <ostream>
 #include <optional>
 
@@ -105,6 +106,16 @@ protected:
     /** Current log-level threshold. Messages below this level are silently discarded.
      *  Default: info (trace and debug are suppressed). */
     log::diagnostic::severity _log_level = log::diagnostic::severity::info;
+
+    /**
+     * Diagnostic codes to silently discard in report(), regardless of the
+     * current log-level threshold.
+     * Only ever applies to diagnostics with severity strictly below `error`
+     * (trace, debug, info, warning) AND a non-zero code — errors and fatals
+     * are NEVER suppressed by this mechanism, and code-less trace/debug
+     * messages (code == 0) are never matched.
+     */
+    std::set<unsigned int> _ignored_diagnostic_codes;
 
     /** Output stream for log messages. Defaults to stdout.
      *  When a --log-file is specified, this points to the opened file stream. */
@@ -239,6 +250,23 @@ public:
      *              If empty, logs go to std::cout (the default).
      */
     void set_log_file(const std::string& path);
+
+    /**
+     * Replace the full set of diagnostic codes to silently ignore.
+     * Only ever affects diagnostics with severity strictly below `error`
+     * (trace, debug, info, warning) that carry a non-zero code; errors and
+     * fatals are never suppressed regardless of this set's content.
+     * @param codes  Diagnostic codes (as used in k::diag::* enums) to ignore.
+     */
+    void set_ignored_diagnostic_codes(std::vector<unsigned int> codes);
+
+    /** Add a single diagnostic code to the ignore set (see set_ignored_diagnostic_codes). */
+    void add_ignored_diagnostic_code(unsigned int code);
+
+    /** Current set of ignored diagnostic codes. */
+    const std::set<unsigned int>& get_ignored_diagnostic_codes() const {
+        return _ignored_diagnostic_codes;
+    }
 
     /**
      * Resolve automatic IR file names based on the output file path.

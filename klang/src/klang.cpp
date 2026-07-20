@@ -25,6 +25,8 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cctype>
+#include <cstdlib>
 
 #include <dlfcn.h>
 
@@ -55,6 +57,44 @@
 
 namespace po = boost::program_options;
 
+/**
+ * Name of the environment variable listing extra diagnostic codes to ignore
+ * (comma or colon separated, decimal or 0x-hex). Cumulative with --ignore-diagnostic.
+ */
+static constexpr const char* KLANG_IGNORE_DIAGNOSTICS_ENV_VAR = "KLANG_IGNORE_DIAGNOSTICS";
+
+/**
+ * Parse a single diagnostic code token, accepting both decimal ("368") and
+ * 0x-prefixed hexadecimal ("0x0170") forms. Returns std::nullopt on failure.
+ */
+static std::optional<unsigned int> parse_diagnostic_code(const std::string& token) {
+    if (token.empty()) return std::nullopt;
+    try {
+        size_t pos = 0;
+        unsigned long value = std::stoul(token, &pos, 0 /* auto-detect base: 0x.., 0.., decimal */);
+        if (pos != token.size()) return std::nullopt;
+        return static_cast<unsigned int>(value);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+/** Split a comma/colon-separated list of diagnostic codes into individual tokens. */
+static std::vector<std::string> split_code_list(const std::string& list) {
+    std::vector<std::string> tokens;
+    std::string current;
+    for (char c : list) {
+        if (c == ',' || c == ':') {
+            if (!current.empty()) tokens.push_back(current);
+            current.clear();
+        } else if (!std::isspace(static_cast<unsigned char>(c))) {
+            current += c;
+        }
+    }
+    if (!current.empty()) tokens.push_back(current);
+    return tokens;
+}
+
 static std::string read_text_file_content(const std::string& path) {
     std::ostringstream ss;
     std::ifstream input_file(path);
@@ -81,6 +121,7 @@ int main(int argc, const char** argv) {
     std::string forced_module_name;         // --module-name
     std::string log_level_str;              // --log-level
     std::string log_file;                   // --log-file
+    std::vector<std::string> ignore_diagnostic_strs; // --ignore-diagnostic
     unsigned int dwarf_version = 5;         // --gdwarf-*
 
     k::compiler::initialize();
@@ -152,6 +193,14 @@ int main(int argc, const char** argv) {
                 po::value<std::string>(&log_file),
                 "Redirect log output to a file. Use 'stderr' to write to "
                 "standard error. Default: stdout.")
+            ("ignore-diagnostic",
+                po::value<std::vector<std::string>>(&ignore_diagnostic_strs)->composing(),
+                "Silence a specific diagnostic code (decimal or 0x-hex, e.g. "
+                "0x0170). Only ever affects trace/debug/info/warning messages "
+                "that carry a code — errors and fatals are never silenced. "
+                "May be repeated. Also cumulative with the "
+                "KLANG_IGNORE_DIAGNOSTICS environment variable (comma/colon "
+                "separated list).")
             ;
 
     po::options_description cli_target_options("Target options");
@@ -434,6 +483,30 @@ int main(int argc, const char** argv) {
             }
             if (vm.count("log-file") > 0) {
                 compiler->set_log_file(log_file);
+            }
+        }
+
+        // ── Ignored diagnostic codes (--ignore-diagnostic + env var) ────────
+        {
+            std::vector<unsigned int> ignored_codes;
+            for (const auto& tok : ignore_diagnostic_strs) {
+                if (auto code = parse_diagnostic_code(tok)) {
+                    ignored_codes.push_back(*code);
+                } else {
+                    compiler->diagnostics().warn(
+                        static_cast<unsigned int>(k::diag::compiler_diag::WARN_UNKNOWN_DIAGNOSTIC_CODE),
+                        "--ignore-diagnostic: cannot parse diagnostic code '{}' — ignored", {tok});
+                }
+            }
+            if (const char* env = std::getenv(KLANG_IGNORE_DIAGNOSTICS_ENV_VAR)) {
+                for (const auto& tok : split_code_list(env)) {
+                    if (auto code = parse_diagnostic_code(tok)) {
+                        ignored_codes.push_back(*code);
+                    }
+                }
+            }
+            if (!ignored_codes.empty()) {
+                compiler->set_ignored_diagnostic_codes(std::move(ignored_codes));
             }
         }
 

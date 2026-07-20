@@ -67,10 +67,23 @@ static std::shared_ptr<k::path_lookup_file_resolver> make_stdlib_resolver() {
     return resolver;
 }
 
-std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, bool optimize) {
+/**
+ * Apply a per-test list of diagnostic codes to silence (see
+ * k::compiler::set_ignored_diagnostic_codes). No-op when the list is empty.
+ * Must be called right after k::compiler::create(), before parsing.
+ */
+static void apply_ignored_diag_codes(k::compiler& comp, const IgnoredDiagCodes& ignored_diag_codes) {
+    if (!ignored_diag_codes.empty()) {
+        comp.set_ignored_diagnostic_codes(ignored_diag_codes);
+    }
+}
+
+std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, bool optimize,
+                                             const IgnoredDiagCodes& ignored_diag_codes) {
     if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
     comp->set_file_resolver(make_stdlib_resolver());
+    apply_ignored_diag_codes(*comp, ignored_diag_codes);
     try {
         comp->parse_source("", src, optimize, dump);
         return comp->to_jit();
@@ -84,11 +97,13 @@ std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, boo
     }
 }
 
-std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool dump, bool optimize) {
+std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool dump, bool optimize,
+                                                    const IgnoredDiagCodes& ignored_diag_codes) {
     // parse_source always rethrows — compiler_error subclasses propagate directly to the caller.
     if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
     comp->set_file_resolver(make_stdlib_resolver());
+    apply_ignored_diag_codes(*comp, ignored_diag_codes);
     comp->parse_source("", src, optimize, dump);
     return comp->to_jit();
 }
@@ -97,7 +112,8 @@ std::unique_ptr<k::model::gen::jit> gen_jit_with_stdlib(
     std::string_view src,
     const std::string& stdlib_kdi_dir,
     const std::string& stdlib_lib_dir,
-    bool dump, bool optimize)
+    bool dump, bool optimize,
+    const IgnoredDiagCodes& ignored_diag_codes)
 {
     if (!ensure_libk_loaded()) return nullptr;
 
@@ -106,6 +122,7 @@ std::unique_ptr<k::model::gen::jit> gen_jit_with_stdlib(
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
     resolver->add_search_dir(stdlib_kdi_dir);
     comp->set_file_resolver(resolver);
+    apply_ignored_diag_codes(*comp, ignored_diag_codes);
 
     try {
         comp->parse_source("", src, optimize, dump);
@@ -121,10 +138,12 @@ std::unique_ptr<k::model::gen::jit> gen_jit_with_stdlib(
 std::unique_ptr<k::model::gen::jit> gen_jit_multi(
     std::vector<std::pair<std::string, std::string>> sources,
     bool dump, bool optimize,
-    const std::string& forced_module_name) {
+    const std::string& forced_module_name,
+    const IgnoredDiagCodes& ignored_diag_codes) {
     if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
     comp->set_file_resolver(make_stdlib_resolver());
+    apply_ignored_diag_codes(*comp, ignored_diag_codes);
     try {
         comp->parse_sources(std::move(sources), optimize, dump, forced_module_name);
         return comp->to_jit();
@@ -139,17 +158,20 @@ std::unique_ptr<k::model::gen::jit> gen_jit_multi(
 std::unique_ptr<k::model::gen::jit> gen_jit_multi_throws(
     std::vector<std::pair<std::string, std::string>> sources,
     bool dump, bool optimize,
-    const std::string& forced_module_name) {
+    const std::string& forced_module_name,
+    const IgnoredDiagCodes& ignored_diag_codes) {
     if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
     comp->set_file_resolver(make_stdlib_resolver());
+    apply_ignored_diag_codes(*comp, ignored_diag_codes);
     comp->parse_sources(std::move(sources), optimize, dump, forced_module_name);
     return comp->to_jit();
 }
 
 
 
-bool compile_text(const std::string_view& source, const std::string& out_file) {
+bool compile_text(const std::string_view& source, const std::string& out_file,
+                   const IgnoredDiagCodes& ignored_diag_codes = {}) {
     // Ensure LLVM targets are registered before any target lookup.
     k::compiler::initialize();
 
@@ -175,6 +197,7 @@ bool compile_text(const std::string_view& source, const std::string& out_file) {
 
     auto compiler = k::compiler::create(target_machine);
     compiler->set_file_resolver(make_stdlib_resolver());
+    apply_ignored_diag_codes(*compiler, ignored_diag_codes);
     try {
         compiler->parse_source("", source, true, false);
     } catch (const k::log::compiler_error&) {
@@ -183,7 +206,7 @@ bool compile_text(const std::string_view& source, const std::string& out_file) {
     return compiler->gen_executable(out_file);
 }
 
-k::tools::exec_result build_and_exec(const std::string_view& src) {
+k::tools::exec_result build_and_exec(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes) {
     char out_file[] = "/tmp/klang_test_XXXXXX";
     int fd = ::mkstemp(out_file);
     if (fd == -1) {
@@ -191,7 +214,7 @@ k::tools::exec_result build_and_exec(const std::string_view& src) {
     }
     ::close(fd);
 
-    if (!compile_text(src, out_file)) {
+    if (!compile_text(src, out_file, ignored_diag_codes)) {
         std::filesystem::remove(out_file);
         throw std::runtime_error("Error building source code");
     }
@@ -220,7 +243,7 @@ llvm::TargetMachine* make_pic_target_machine() {
 
 // ---------------------------------------------------------------------------
 
-std::string build_shared_library(const std::string_view& src) {
+std::string build_shared_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes) {
     char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
     int fd = ::mkstemp(tmp_stem);
     if (fd == -1) {
@@ -231,6 +254,7 @@ std::string build_shared_library(const std::string_view& src) {
     std::filesystem::remove(tmp_stem);
 
     auto compiler = k::compiler::create(make_pic_target_machine());
+    apply_ignored_diag_codes(*compiler, ignored_diag_codes);
     try {
         compiler->parse_source("", src, true, false);
     } catch (const k::log::compiler_error&) {
@@ -245,7 +269,7 @@ std::string build_shared_library(const std::string_view& src) {
     return out_file;
 }
 
-std::string build_static_library(const std::string_view& src) {
+std::string build_static_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes) {
     char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
     int fd = ::mkstemp(tmp_stem);
     if (fd == -1) {
@@ -256,6 +280,7 @@ std::string build_static_library(const std::string_view& src) {
     std::filesystem::remove(tmp_stem);
 
     auto compiler = k::compiler::create(make_pic_target_machine());
+    apply_ignored_diag_codes(*compiler, ignored_diag_codes);
     try {
         compiler->parse_source("", src, true, false);
     } catch (const k::log::compiler_error&) {
@@ -270,7 +295,8 @@ std::string build_static_library(const std::string_view& src) {
     return out_file;
 }
 
-std::pair<std::string, std::string> build_both_libraries(const std::string_view& src) {
+std::pair<std::string, std::string> build_both_libraries(const std::string_view& src,
+                                                          const IgnoredDiagCodes& ignored_diag_codes) {
     // Generate unique names for both outputs
     char tmp_so[] = "/tmp/klang_lib_test_XXXXXX";
     int fd_so = ::mkstemp(tmp_so);
@@ -287,6 +313,7 @@ std::pair<std::string, std::string> build_both_libraries(const std::string_view&
     std::filesystem::remove(tmp_a);
 
     auto compiler = k::compiler::create(make_pic_target_machine());
+    apply_ignored_diag_codes(*compiler, ignored_diag_codes);
     try {
         compiler->parse_source("", src, true, false);
     } catch (const k::log::compiler_error&) {
@@ -307,7 +334,8 @@ std::pair<std::string, std::string> build_both_libraries(const std::string_view&
 // ---------------------------------------------------------------------------
 
 k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
-                                            const std::string_view& exec_src)
+                                            const std::string_view& exec_src,
+                                            const IgnoredDiagCodes& ignored_diag_codes)
 {
     // ── Step 1: compile each library ──────────────────────────────────────
     for (std::size_t i = 0; i < libs.size(); ++i) {
@@ -320,6 +348,7 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
         std::filesystem::remove(tmp_stem);
 
         auto lib_comp = k::compiler::create(make_pic_target_machine());
+        apply_ignored_diag_codes(*lib_comp, ignored_diag_codes);
 
         // Give this library access to the KDIs of all previously-compiled libs
         // (it may import types/functions from earlier libs in the list)
@@ -410,6 +439,7 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
     }
 
     auto exe_comp = k::compiler::create(make_pic_target_machine());
+    apply_ignored_diag_codes(*exe_comp, ignored_diag_codes);
     exe_comp->set_file_resolver(resolver);
     try {
         exe_comp->parse_source("main.k", exec_src, true, false);
@@ -487,7 +517,8 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
 k::tools::exec_result build_exec_with_libs_direct_only(
     std::vector<LibSpec>& libs,
     const std::string_view& exec_src,
-    const std::vector<std::string>& direct_imports)
+    const std::vector<std::string>& direct_imports,
+    const IgnoredDiagCodes& ignored_diag_codes)
 {
     // ── Step 1: compile all libraries (same as build_exec_with_libs) ──────
     for (std::size_t i = 0; i < libs.size(); ++i) {
@@ -500,6 +531,7 @@ k::tools::exec_result build_exec_with_libs_direct_only(
         std::filesystem::remove(tmp_stem);
 
         auto lib_comp = k::compiler::create(make_pic_target_machine());
+        apply_ignored_diag_codes(*lib_comp, ignored_diag_codes);
         if (i > 0) {
             auto resolver = std::make_shared<k::path_lookup_file_resolver>();
             for (std::size_t j = 0; j < i; ++j) {
@@ -607,6 +639,7 @@ k::tools::exec_result build_exec_with_libs_direct_only(
     }
 
     auto exe_comp = k::compiler::create(make_pic_target_machine());
+    apply_ignored_diag_codes(*exe_comp, ignored_diag_codes);
     exe_comp->set_file_resolver(resolver);
     try {
         exe_comp->parse_source("main.k", exec_src, true, false);
@@ -693,10 +726,12 @@ k::tools::exec_result build_exec_with_libs_direct_only(
 // ---------------------------------------------------------------------------
 
 bool compile_should_fail(const std::string_view& src,
-                         std::shared_ptr<k::path_lookup_file_resolver> resolver)
+                         std::shared_ptr<k::path_lookup_file_resolver> resolver,
+                         const IgnoredDiagCodes& ignored_diag_codes)
 {
     try {
         auto comp = k::compiler::create(make_pic_target_machine());
+        apply_ignored_diag_codes(*comp, ignored_diag_codes);
         if (resolver) comp->set_file_resolver(resolver);
         comp->parse_source("test.k", src, true, false);
         return false; // No exception thrown — compilation succeeded unexpectedly
@@ -712,7 +747,8 @@ bool compile_should_fail(const std::string_view& src,
 bool compile_collect_diagnostics(
     const std::string_view& src,
     std::shared_ptr<k::path_lookup_file_resolver> resolver,
-    test_logger& out_logger)
+    test_logger& out_logger,
+    const IgnoredDiagCodes& ignored_diag_codes)
 {
     // We cannot inject a logger into k::compiler directly (it IS a logger and
     // prints to stderr).  Instead we compile normally and capture the warnings
@@ -730,6 +766,7 @@ bool compile_collect_diagnostics(
     // (see test_kdi_importer_unused_import_* tests in test-import.cpp).
     try {
         auto comp = k::compiler::create(make_pic_target_machine());
+        apply_ignored_diag_codes(*comp, ignored_diag_codes);
         if (resolver) comp->set_file_resolver(resolver);
         comp->parse_source("test.k", src, true, false);
         return true;
@@ -744,7 +781,8 @@ bool compile_collect_diagnostics(
 // ---------------------------------------------------------------------------
 
 k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
-                                           const std::string_view& exec_src)
+                                           const std::string_view& exec_src,
+                                           const IgnoredDiagCodes& ignored_diag_codes)
 {
     // ── Step 1: compile the library ────────────────────────────────────────
     char tmp_so_stem[] = "/tmp/klang_lib_test_XXXXXX";
@@ -756,6 +794,7 @@ k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
 
     // Compiler for the library
     auto lib_comp = k::compiler::create(make_pic_target_machine());
+    apply_ignored_diag_codes(*lib_comp, ignored_diag_codes);
     lib_comp->set_file_resolver(make_stdlib_resolver());
     try {
         lib_comp->parse_source("lib.k", lib_src, true, false);
@@ -819,6 +858,7 @@ k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
     resolver->add_search_dir(lib_dir);
 
     auto exe_comp = k::compiler::create(make_pic_target_machine());
+    apply_ignored_diag_codes(*exe_comp, ignored_diag_codes);
     exe_comp->set_file_resolver(resolver);
     try {
         exe_comp->parse_source("main.k", exec_src, true, false);
@@ -921,8 +961,9 @@ void test_logger::report(const k::log::diagnostic& diag) {
 // Model inspection helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-std::shared_ptr<k::compiler> compile_model(std::string_view src) {
+std::shared_ptr<k::compiler> compile_model(std::string_view src, const IgnoredDiagCodes& ignored_diag_codes) {
     auto comp = k::compiler::create();
+    apply_ignored_diag_codes(*comp, ignored_diag_codes);
     try {
         comp->parse_source("", src, /*optimize=*/false, /*dump=*/false);
         return comp;
@@ -934,9 +975,11 @@ std::shared_ptr<k::compiler> compile_model(std::string_view src) {
     }
 }
 
-std::shared_ptr<k::compiler> compile_model_with_stdlib(std::string_view src) {
+std::shared_ptr<k::compiler> compile_model_with_stdlib(std::string_view src,
+                                                        const IgnoredDiagCodes& ignored_diag_codes) {
     if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
+    apply_ignored_diag_codes(*comp, ignored_diag_codes);
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
     resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
     comp->set_file_resolver(resolver);

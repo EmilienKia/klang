@@ -72,6 +72,7 @@ enum class compiler_diag : unsigned int {
     ERR_GEN_KDI_JSON_WRITE_FAILED                 = 0x01F0,
     ERR_GDWARF_OPTIONS_MUTUALLY_EXCLUSIVE          = 0x01F1,
     WARN_UNKNOWN_LOG_LEVEL                        = 0x01F2,
+    WARN_UNKNOWN_DIAGNOSTIC_CODE                  = 0x01FB,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

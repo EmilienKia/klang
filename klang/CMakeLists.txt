@@ -193,6 +193,7 @@ klang_gen_test(klang-tests-gen-core 300
         tests/test-gen-if-multi-softfail.cpp
         tests/test-multi-source.cpp
         tests/test-gen-exceptions.cpp
+        tests/test-gen-diagnostic-suppression.cpp
 )
 
 # ---------------------------------------------------------------------------

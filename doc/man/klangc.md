@@ -155,6 +155,43 @@ file.  Useful for build systems that determine the module name externally.
 
 ---
 
+### Diagnostic / Logging Options
+
+**`--log-level=`_level_**  
+Set the global log-level threshold. Messages with a severity strictly below
+_level_ are silently discarded before any further processing (including the
+per-code suppression below). Accepted values: `trace`, `debug`, `info`
+(default), `warning`, `error`, `fatal`.
+
+**`--log-file=`_path_**  
+Redirect **trace**/**debug** log messages to _path_. Use `stderr` to write to
+standard error. Default: standard output.  
+Note: this only affects `trace`/`debug` messages; `info`/`warning`/`error`/
+`fatal` diagnostics (including source excerpts) are always printed to
+standard output regardless of `--log-file`.
+
+**`--ignore-diagnostic=`_code_** (repeatable)  
+Silence a specific diagnostic code, given as a decimal (`368`) or `0x`-prefixed
+hexadecimal (`0x0170`) value. This is useful to reduce log noise from a
+specific, well-understood warning (e.g. a recurring implicit-conversion or
+implicit-copy-constructor-generation warning) without raising the global
+`--log-level` threshold and losing every other warning.  
+**Scope of the suppression:** only diagnostics with severity strictly below
+`error` (`trace`, `debug`, `info`, `warning`) **and** a non-zero code are
+eligible. Diagnostics reported as `error` or `fatal` are **never** silenced by
+this mechanism, even if their numeric code happens to match — this prevents a
+coincidental code collision from hiding a real compilation failure.  
+May be repeated to ignore several codes; cumulative with the
+`KLANG_IGNORE_DIAGNOSTICS` environment variable.
+
+Example:
+
+```sh
+klangc --ignore-diagnostic 0x0170 --ignore-diagnostic 0x0193 mylib.k
+```
+
+---
+
 ### Debug Information Options
 
 These options control native debug information emission (DWARF) in the LLVM IR
@@ -344,6 +381,7 @@ Error codes are sequential hexadecimal numbers. User-facing codes range from
 | `0x0006` | Error | KDI file not found for an imported module |
 | `0x0007` | Error | KDI file found but failed to parse (corrupt or wrong schema version) |
 | `0x0008` | Warning | **Imported module declared but none of its symbols are used** — emitted once per unused `import` declaration after all resolver passes complete |
+| `0x0193` | Warning | A struct/class has bases or struct members but no user-defined copy constructor; a default one is generated |
 
 Diagnostic messages are printed to **stderr** in the following format:
 
@@ -355,6 +393,11 @@ Diagnostic messages are printed to **stderr** in the following format:
 
 Severity levels are `Info`, `Warning`, `Error` and `Fatal`. Error codes are
 displayed as zero-padded five-digit hexadecimal values.
+
+Repeated or noisy warning codes (e.g. `0x0193` above, or an implicit-conversion
+warning) can be silenced individually with `--ignore-diagnostic` or the
+`KLANG_IGNORE_DIAGNOSTICS` environment variable — see *Diagnostic / Logging
+Options* above.
 
 ---
 
@@ -752,6 +795,13 @@ Colon-separated (UNIX) or semicolon-separated (Windows) list of directories
 appended to the KDI and library search path, after `-I` directories and
 before the system directories.  The variable name can be overridden with
 `--lib-path-env=`_name_ or disabled entirely with `--no-lib-path-env`.
+
+**`KLANG_IGNORE_DIAGNOSTICS`**  
+Comma- or colon-separated list of diagnostic codes (decimal or `0x`-hex,
+e.g. `0x0170,0x0193`) to silence, cumulative with `--ignore-diagnostic`.
+Same scope restriction applies: only `trace`/`debug`/`info`/`warning`
+diagnostics with a non-zero code can be silenced this way; `error`/`fatal`
+diagnostics are never affected.
 
 ---
 

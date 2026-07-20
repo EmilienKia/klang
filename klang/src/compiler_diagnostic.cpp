@@ -127,6 +127,16 @@ void compiler::report(const k::log::diagnostic& diag) {
     // Filter by log-level threshold
     if (diag.level < _log_level) return;
 
+    // Filter by ignored diagnostic codes. Only ever applies to diagnostics
+    // strictly below `error` severity (trace/debug/info/warning) that carry
+    // a non-zero code — errors and fatals are never suppressible this way,
+    // and code-less trace/debug messages (code == 0) never match.
+    if (diag.level < log::diagnostic::severity::error
+        && diag.code != 0
+        && _ignored_diagnostic_codes.count(diag.code)) {
+        return;
+    }
+
     const unsigned int code = diag.code;
     const auto sev = (int)diag.level;
     const char* sev_str = severity_str[sev < 6 ? sev : 4];

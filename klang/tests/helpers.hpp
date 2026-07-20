@@ -51,7 +51,18 @@
  */
 llvm::TargetMachine* make_pic_target_machine();
 
-std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false, bool optimize = true);
+/**
+ * Diagnostic codes to silence for a single test.
+ * Only non-error/fatal diagnostics carrying a non-zero code can be silenced
+ * (see k::compiler::set_ignored_diagnostic_codes). Pass a concise brace-init
+ * list at the call site, e.g.:
+ *
+ *   gen_jit(src, false, true, {0x0170, 0x0194});
+ */
+using IgnoredDiagCodes = std::vector<unsigned int>;
+
+std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false, bool optimize = true,
+                                             const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Like gen_jit() but configures a file resolver so that the K base standard
@@ -68,7 +79,8 @@ std::unique_ptr<k::model::gen::jit> gen_jit_with_stdlib(
     std::string_view src,
     const std::string& stdlib_kdi_dir,
     const std::string& stdlib_lib_dir,
-    bool dump = false, bool optimize = true);
+    bool dump = false, bool optimize = true,
+    const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Like gen_jit() but compiles multiple source files as a single compilation unit.
@@ -80,7 +92,8 @@ std::unique_ptr<k::model::gen::jit> gen_jit_with_stdlib(
 std::unique_ptr<k::model::gen::jit> gen_jit_multi(
     std::vector<std::pair<std::string, std::string>> sources,
     bool dump = false, bool optimize = true,
-    const std::string& forced_module_name = "");
+    const std::string& forced_module_name = "",
+    const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Like gen_jit_multi() but lets compiler exceptions propagate to the caller.
@@ -89,7 +102,8 @@ std::unique_ptr<k::model::gen::jit> gen_jit_multi(
 std::unique_ptr<k::model::gen::jit> gen_jit_multi_throws(
     std::vector<std::pair<std::string, std::string>> sources,
     bool dump = false, bool optimize = true,
-    const std::string& forced_module_name = "");
+    const std::string& forced_module_name = "",
+    const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Like gen_jit() but lets k::log::compiler_error (and its subclasses) propagate
@@ -98,9 +112,10 @@ std::unique_ptr<k::model::gen::jit> gen_jit_multi_throws(
  *
  *   REQUIRE_THROWS_AS(gen_jit_throws(src), k::model::gen::resolution_error);
  */
-std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool dump = false, bool optimize = true);
+std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool dump = false, bool optimize = true,
+                                                    const IgnoredDiagCodes& ignored_diag_codes = {});
 
-k::tools::exec_result build_and_exec(const std::string_view& src);
+k::tools::exec_result build_and_exec(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Compile the given K source into a shared library (.so).
@@ -108,7 +123,7 @@ k::tools::exec_result build_and_exec(const std::string_view& src);
  * Throws std::runtime_error on failure.
  * The caller is responsible for removing the file when done.
  */
-std::string build_shared_library(const std::string_view& src);
+std::string build_shared_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Compile the given K source into a static library (.a).
@@ -116,7 +131,7 @@ std::string build_shared_library(const std::string_view& src);
  * Throws std::runtime_error on failure.
  * The caller is responsible for removing the file when done.
  */
-std::string build_static_library(const std::string_view& src);
+std::string build_static_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Compile the given K source into both a shared library (.so) and a static
@@ -125,7 +140,8 @@ std::string build_static_library(const std::string_view& src);
  * Throws std::runtime_error on failure.
  * The caller is responsible for removing both files when done.
  */
-std::pair<std::string, std::string> build_both_libraries(const std::string_view& src);
+std::pair<std::string, std::string> build_both_libraries(const std::string_view& src,
+                                                          const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Compile a library from @p lib_src and an executable from @p exec_src
@@ -141,7 +157,8 @@ std::pair<std::string, std::string> build_both_libraries(const std::string_view&
  * @throws std::runtime_error on any compilation / link failure.
  */
 k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
-                                           const std::string_view& exec_src);
+                                           const std::string_view& exec_src,
+                                           const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Description of a library to build for build_exec_with_libs().
@@ -167,7 +184,8 @@ struct LibSpec {
  * @throws std::runtime_error on any compilation / link / run failure.
  */
 k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
-                                            const std::string_view& exec_src);
+                                            const std::string_view& exec_src,
+                                            const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Identical to build_exec_with_libs() but when building the executable only
@@ -189,7 +207,8 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
 k::tools::exec_result build_exec_with_libs_direct_only(
     std::vector<LibSpec>& libs,
     const std::string_view& exec_src,
-    const std::vector<std::string>& direct_imports);
+    const std::vector<std::string>& direct_imports,
+    const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Compile @p src as a K source for an executable, with the given resolver,
@@ -200,7 +219,8 @@ k::tools::exec_result build_exec_with_libs_direct_only(
  *   REQUIRE( compile_should_fail(src, resolver) );
  */
 bool compile_should_fail(const std::string_view& src,
-                         std::shared_ptr<k::path_lookup_file_resolver> resolver);
+                         std::shared_ptr<k::path_lookup_file_resolver> resolver,
+                         const IgnoredDiagCodes& ignored_diag_codes = {});
 
 class test_logger : public k::log::logger {
 public:
@@ -246,7 +266,8 @@ public:
 bool compile_collect_diagnostics(
     const std::string_view& src,
     std::shared_ptr<k::path_lookup_file_resolver> resolver,
-    test_logger& out_logger);
+    test_logger& out_logger,
+    const IgnoredDiagCodes& ignored_diag_codes = {});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Model inspection helpers
@@ -258,7 +279,7 @@ bool compile_collect_diagnostics(
  * Note: parse_source() runs ALL passes including code generation; we inspect
  * the model AFTER full compilation so all materializer passes have run.
  */
-std::shared_ptr<k::compiler> compile_model(std::string_view src);
+std::shared_ptr<k::compiler> compile_model(std::string_view src, const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Like compile_model() but configures a file resolver so the K standard
@@ -266,7 +287,8 @@ std::shared_ptr<k::compiler> compile_model(std::string_view src);
  * process so imported symbols can resolve.  Use this when the K source
  * contains `import k;`.
  */
-std::shared_ptr<k::compiler> compile_model_with_stdlib(std::string_view src);
+std::shared_ptr<k::compiler> compile_model_with_stdlib(std::string_view src,
+                                                        const IgnoredDiagCodes& ignored_diag_codes = {});
 
 /**
  * Navigate to an aggregate by its short name within the root namespace.
