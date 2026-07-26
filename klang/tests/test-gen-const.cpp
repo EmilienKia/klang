@@ -948,3 +948,62 @@ TEST_CASE("Class: derived const method cannot call base mutable method", "[gen][
         }
     )SRC"));
 }
+
+// =============================================================================
+// CONST + POINTER-RETURNING OVERLOAD, ACCESSED VIA POINTER-DEREFERENCE (regression)
+// =============================================================================
+
+// Regression test for a compiler bug found while implementing HashSet<T> (see
+// libk/libk/src/set.k): a member field declared as a pointer-to-const container
+// (e.g. 'const Vector<T>*') forces overload resolution to select the 'const'
+// overload of a method that returns a reference to the element type ('const T&').
+// When T is itself a pointer-like type, initializing a local variable from that
+// call (through '->', i.e. pointer-dereference call syntax) must still emit the
+// extra dereference that turns a "reference-to-pointer" return value into the
+// actual pointer value. The check gating that dereference used to look at the
+// referenced type via type::is_any_indirection() without unwrapping a leading
+// 'const' qualifier, so it silently skipped the dereference whenever the const
+// overload's 'const T&' return type was picked -- corrupting the resulting
+// pointer (it held the address of the storage slot instead of its contents).
+// Fixed in gen_statements.cpp's visit_variable_statement() by unwrapping const
+// via type::remove_const() before the is_any_indirection() check.
+TEST_CASE("Const pointer-to-container field: get() returning const T& where T is a pointer, called via '->'",
+          "[gen][const][pointer][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module __const_ptr_ref_pointer_return__;
+
+        struct Box {
+            v : int = 0;
+        }
+
+        class Reader {
+            private:
+            _items : const Vector<Box*>*;
+
+            public:
+            Reader(items : const Vector<Box*>&) {
+                _items = &items;
+            }
+
+            readFirst() : int {
+                p : Box* = _items->get(0);
+                return p->v;
+            }
+        }
+
+        test() : int {
+            vec : Vector<Box*>;
+            b : Box! = new Box();
+            b.v = 42;
+            raw : Box* = b;
+            vec.append(raw);
+
+            r : Reader! = new Reader(vec);
+            return r->readFirst();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}

@@ -3690,7 +3690,11 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
                 if (k::model::type::is_reference(init_type)) {
                     auto sub = std::dynamic_pointer_cast<k::model::reference_type>(init_type);
                     auto inner = sub->get_subtype();
-                    if (k::model::type::is_any_indirection(inner)) {
+                    // Unwrap a possible 'const' qualifier before checking for
+                    // indirection: a reference to a const pointer-like type
+                    // (e.g. 'const T&' where T is itself a pointer) still needs
+                    // the extra dereference to obtain the actual pointer value.
+                    if (k::model::type::is_any_indirection(k::model::type::remove_const(inner))) {
                         llvm::Type* inner_llvm = _context->get_llvm_type(inner);
                         addr_val = _builder->CreateLoad(inner_llvm, _value, "indir_init_load");
                     }
