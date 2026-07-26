@@ -413,6 +413,26 @@
         `Optional template-qualified static factory call (inline)`
         (`[libk][optional][inline]`) in `test-optional.cpp`.
 
+- [ ] **Pre-existing, unrelated test failures — tracked for future investigation** (found
+      while implementing `Set<T>`/`ListSet<T>`/`TreeSet<T>`/`HashSet<T>`; confirmed via
+      bisection to be unaffected by the Set work or by the const/reference-indirection
+      fix in `gen_statements.cpp`, i.e. they fail identically with or without those
+      changes):
+      - **`test-gen-foreach.cpp` uses a stale `Vector<T>::pushBack` method name.**
+        5 test cases (e.g. "Foreach sequence — sum Vector<int> via copy",
+        `[gen][foreach][sequence]`) call `vec.pushBack(...)`, but `Vector<T>`
+        (`libk/libk/src/vector.k`) only exposes `append(...)` — `pushBack` was presumably
+        renamed at some point and these tests were never updated. Fix: rename the calls
+        to `append` in `klang/tests/test-gen-foreach.cpp`.
+      - **`DataStream round-trip long` fails on a negative value round-trip.**
+        `[libk][io][data]` in `libk/libk/tests/test-io-data-streams.cpp`: writing/reading
+        back `-1L` through `DataOutputStream`/`DataInputStream` returns something other
+        than `-1` (test returns `2`, i.e. the `v1 != -1` check fails) — looks like a
+        sign-extension issue in the long read/write path. Not yet root-caused.
+      - **`Transform streams one-to-one and buffering` fails.**
+        `[libk][io][transform]` in `libk/libk/tests/test-io-transform-streams.cpp`
+        (assertion around line 317) — not yet root-caused.
+
 ### libk
 - Refactor libk C functions wrapping to reduce intermediate method counts
 - Add following to base libk:
