@@ -540,6 +540,15 @@ enum class template_diag : unsigned int {
     ERR_TPL_ARG_NOT_AGGREGATE                     = 0x0184,
     ERR_TPL_VALUE_ARG_NOT_CONSTANT                = 0x0185,
     ERR_TPL_VALUE_ARG_TYPE_MISMATCH               = 0x0186,
+
+    /**
+     * Template aggregate instantiation recursed past the maximum allowed
+     * depth (e.g. a template that (directly or transitively) instantiates
+     * itself as a base or member with an ever-changing argument, such as
+     * `template<typename T> class Node : public Node<T*> { }`). Raised
+     * instead of letting the compiler overflow its own call stack.
+     */
+    ERR_TPL_INSTANTIATION_DEPTH_EXCEEDED           = 0x0187,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

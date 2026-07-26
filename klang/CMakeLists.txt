@@ -291,6 +291,7 @@ klang_gen_test(klang-tests-gen-templates 120
         tests/test-gen-template-packs.cpp
         tests/test-gen-template-deduction.cpp
         tests/test-gen-member-template.cpp
+        tests/test-gen-template-recursion-guard.cpp
 )
 
 # ---------------------------------------------------------------------------

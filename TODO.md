@@ -374,10 +374,17 @@
       text carried by the KDI; if parsing or model building fails, the template simply
       becomes unavailable for cross-module instantiation with no diagnostic at all. Report
       an error instead.
-- [ ] **No recursion-depth limit on template instantiation.**
-      `template_instantiator::instantiate_aggregate()` recurses without any depth guard, so
-      a recursive template (accidental or malicious) overflows the stack and crashes the
-      compiler instead of reporting a `template-instantiation-depth-exceeded` diagnostic.
+- [x] **FIXED — no recursion-depth limit on template instantiation.**
+      `template_instantiator::instantiate_aggregate()` recursed without any depth guard
+      (e.g. via its "resolve template base classes immediately" step), so a recursive
+      template (accidental or malicious, such as mutually-recursive bases `A<T> : B<T>` /
+      `B<T> : A<T>`) overflowed the compiler's own call stack instead of reporting a
+      diagnostic.
+      - Fix applied: a thread-local recursion counter (`MAX_TEMPLATE_INSTANTIATION_DEPTH =
+        256`) guards every call to `instantiate_aggregate()`; exceeding it raises
+        `template_diag::ERR_TPL_INSTANTIATION_DEPTH_EXCEEDED` (0x0187) instead of crashing.
+      - Regression test: `[template][instantiation][recursion-guard]` in
+        `klang/tests/test-gen-template-recursion-guard.cpp`.
 - [ ] **Value template arguments are limited to primitive types.**
       `build_value_substitution_map()` only accepts `int`, `long`, `float`, `double`,
       `bool`, `char`, `string` and `nullptr` values; no enum constants, no

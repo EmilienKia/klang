@@ -22,6 +22,7 @@
 #include "statements.hpp"
 #include "expressions.hpp"
 #include "imported.hpp"
+#include "../errors.hpp"
 
 #include <sstream>
 #include <queue>
@@ -29,6 +30,26 @@
 #include <unordered_map>
 
 namespace k::model {
+
+namespace {
+
+// Guards template_instantiator::instantiate_aggregate() against unbounded
+// recursion. Recursion can happen directly (a template instantiates itself
+// as a base, e.g. `Node<T> : Node<T*>`) or indirectly through the resolver
+// call sites that re-enter instantiate_aggregate while resolving a nested
+// member type of the very instantiation being built. Either way, each
+// nested call increases this thread-local counter for the lifetime of the
+// call; exceeding the limit raises a diagnostic instead of overflowing the
+// compiler's own call stack.
+constexpr int MAX_TEMPLATE_INSTANTIATION_DEPTH = 256;
+thread_local int g_template_instantiation_depth = 0;
+
+struct template_instantiation_depth_guard {
+    template_instantiation_depth_guard() { ++g_template_instantiation_depth; }
+    ~template_instantiation_depth_guard() { --g_template_instantiation_depth; }
+};
+
+} // anonymous namespace
 
 namespace {
 constexpr const char* generic_synthesis_key = "<generic_synthesis>";
@@ -1333,6 +1354,18 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     std::shared_ptr<context> ctx,
     k::log::logger& logger)
 {
+    if (g_template_instantiation_depth >= MAX_TEMPLATE_INSTANTIATION_DEPTH) {
+        auto diag = k::log::diagnostic::make_error(
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_INSTANTIATION_DEPTH_EXCEEDED),
+            "template instantiation of '{0}' exceeded the maximum recursion depth ({1}); "
+            "check for a recursive template definition (e.g. a template that instantiates "
+            "itself as a base or member with an ever-changing argument)",
+            {tpl_def.get_short_name(), std::to_string(MAX_TEMPLATE_INSTANTIATION_DEPTH)});
+        logger.report(diag);
+        throw k::log::compiler_error(std::move(diag));
+    }
+    template_instantiation_depth_guard depth_guard;
+
     auto* ti = tpl_def.get_tpl_info();
     if (!ti) return nullptr;
 
