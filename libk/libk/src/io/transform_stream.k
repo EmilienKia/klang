@@ -211,9 +211,9 @@ protected:
 
     doTransform(in : const I&) {
         results : ::k::Vector<O> = transform(in);
-        n : int = results.getSize();
+        n : int = results.size();
         for (j : int = 0; j < n; j = j + 1) {
-            buffer.pushBack(results[j]);
+            buffer.append(results[j]);
         }
     }
 }
@@ -238,7 +238,7 @@ public:
                 break;
             }
 
-            buffer.pushBack(current.get());
+            buffer.append(current.get());
             result : ::k::Optional<O> = transform(buffer);
             if (result.hasValue()) {
                 buffer.clear();
@@ -317,7 +317,7 @@ public:
 
         current : ::k::Optional<I> = _in->read();
         while (current.hasValue()) {
-            inputBuffer.pushBack(current.get());
+            inputBuffer.append(current.get());
             doTransform(inputBuffer);
             if (!outputBuffer.isEmpty()) {
                 result : O = outputBuffer[0];
@@ -352,7 +352,7 @@ public:
             if (!current.hasValue()) {
                 break;
             }
-            inputBuffer.pushBack(current.get());
+            inputBuffer.append(current.get());
             doTransform(inputBuffer);
             if (!outputBuffer.isEmpty()) {
                 buf[off + written] = outputBuffer[0];
@@ -380,7 +380,7 @@ public:
             if (!current.hasValue()) {
                 break;
             }
-            inputBuffer.pushBack(current.get());
+            inputBuffer.append(current.get());
             doTransform(inputBuffer);
             if (!outputBuffer.isEmpty()) {
                 outputBuffer.removeFront();
@@ -400,9 +400,9 @@ protected:
     doTransform(in : const ::k::Vector<I>&) {
         result : ::k::Vector<O> = transform(in);
         if (!result.isEmpty()) {
-            n : int = result.getSize();
+            n : int = result.size();
             for (j : int = 0; j < n; j = j + 1) {
-                outputBuffer.pushBack(result[j]);
+                outputBuffer.append(result[j]);
             }
             inputBuffer.clear();
         }
@@ -511,7 +511,7 @@ protected:
 
     emit(values : const ::k::Vector<O>&) {
         i : int = 0;
-        while (i < values.getSize()) {
+        while (i < values.size()) {
             _out->write(values[i]);
             i = i + 1;
         }
@@ -532,7 +532,7 @@ public:
     ManyToOneTransformOutputStream() : TransformOutputStream() {}
 
     write(value: I) : OutputStream<I>& {
-        buffer.pushBack(value);
+        buffer.append(value);
         result : ::k::Optional<O> = transform(buffer);
         if (result.hasValue()) {
             buffer.clear();
@@ -577,7 +577,7 @@ public:
     ManyToManyTransformOutputStream() : TransformOutputStream() {}
 
     write(value: I) : OutputStream<I>& {
-        inputBuffer.pushBack(value);
+        inputBuffer.append(value);
         transformAndEmit();
         return this;
     }
@@ -611,9 +611,9 @@ protected:
     transformAndEmit() {
         result : ::k::Vector<O> = transform(inputBuffer);
         if (!result.isEmpty()) {
-            n : int = result.getSize();
+            n : int = result.size();
             for (j : int = 0; j < n; j = j + 1) {
-                outputBuffer.pushBack(result[j]);
+                outputBuffer.append(result[j]);
             }
             inputBuffer.clear();
             flushBufferedOutputs();

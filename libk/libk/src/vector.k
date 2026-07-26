@@ -27,13 +27,13 @@ module k;
  * elements) and a capacity (allocated slots). When the size exceeds
  * the capacity, the buffer is reallocated with a growth factor of 2.
  *
- * Provides O(1) indexed access, O(1) amortized pushBack, O(n) insert
+ * Provides O(1) indexed access, O(1) amortized append, O(n) insert
  * and remove operations.
  *
  * Usage:
  *   vec : Vector<int>;
- *   vec.pushBack(42);
- *   vec.pushBack(10);
+ *   vec.append(42);
+ *   vec.prepend(10);
  *   val : int& = vec[0];       // 42
  *   vec.removeAt(0);
  *   vec.clear();
@@ -85,11 +85,6 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
         return _size;
     }
 
-    /** Backward-compatible alias. */
-    const getSize() : unsigned int {
-        return size();
-    }
-
     /** Return the current capacity of the internal buffer. */
     const getCapacity() : unsigned int {
         return _capacity;
@@ -109,16 +104,6 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     /** Insert a copy of value at the front of the vector. O(n). */
     prepend(value : const T&) {
         insert(0, value);
-    }
-
-    /** Backward-compatible alias. */
-    pushBack(value : const T&) {
-        append(value);
-    }
-
-    /** Backward-compatible alias. */
-    pushFront(value : const T&) {
-        prepend(value);
     }
 
     prependAll(coll : Sequence<T>&) {
@@ -216,22 +201,22 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     }
 
     /** Return a mutable reference to the front element. Undefined if empty. */
-    peekFront() : T& {
+    first() : T& {
         return _slot.get(0);
     }
 
     /** Return a const reference to the front element. Undefined if empty. */
-    const peekFront() : const T& {
+    const first() : const T& {
         return _slot.get(0);
     }
 
     /** Return a mutable reference to the back element. Undefined if empty. */
-    peekBack() : T& {
+    last() : T& {
         return _slot.get(_size - 1);
     }
 
     /** Return a const reference to the back element. Undefined if empty. */
-    const peekBack() : const T& {
+    const last() : const T& {
         return _slot.get(_size - 1);
     }
 
@@ -260,12 +245,12 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     }
 
     /** Remove the front element. O(n). Returns true if an element was removed. */
-    removeFront() : bool {
+    removeFirst() : bool {
         return removeAt(0);
     }
 
     /** Remove the last element. Returns true if an element was removed. */
-    removeBack() : bool {
+    removeLast() : bool {
         if (_size == 0) return false;
         _size = _size - 1;
         _slot.destruct(_size);

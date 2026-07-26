@@ -34,8 +34,8 @@ module k;
  *
  * Usage:
  *   lst : LinkedList<int>;
- *   lst.pushBack(42);
- *   lst.pushFront(10);
+ *   lst.append(42);
+ *   lst.prepend(10);
  *   front : int& = lst.peekFront();   // 10
  *   lst.removeFront();
  *   lst.clear();
@@ -119,11 +119,6 @@ class LinkedList : public MutableIndexedCollection<T> {
         return _size;
     }
 
-    /** Backward-compatible alias. */
-    const getSize() : unsigned int {
-       return size();
-    }
-
     /**
      * Insert a value at the back of the list.
      *
@@ -156,16 +151,6 @@ class LinkedList : public MutableIndexedCollection<T> {
        }
        _head = node;
        _size = _size + 1;
-    }
-
-    /** Backward-compatible alias. */
-    pushBack(value : const T&) {
-       append(value);
-    }
-
-    /** Backward-compatible alias. */
-    pushFront(value : const T&) {
-       prepend(value);
     }
 
     prependAll(coll : Sequence<T>&) {
@@ -306,22 +291,22 @@ class LinkedList : public MutableIndexedCollection<T> {
     }
 
     /** Return a mutable reference to the front element. Undefined if empty. */
-    peekFront() : T& {
+    first() : T& {
         return _head.getValue();
     }
 
     /** Return a const reference to the front element. Undefined if empty. */
-    const peekFront() : const T& {
+    const first() : const T& {
         return _head.getValue();
     }
 
     /** Return a mutable reference to the back element. Undefined if empty. */
-    peekBack() : T& {
+    last() : T& {
         return _tail->getValue();
     }
 
     /** Return a const reference to the back element. Undefined if empty. */
-    const peekBack() : const T& {
+    const last() : const T& {
         return _tail->getValue();
     }
 
@@ -557,8 +542,8 @@ public:
  *
  * Usage:
  *   lst : DoubleLinkedList<int>;
- *   lst.pushBack(42);
- *   lst.pushFront(10);
+ *   lst.append(42);
+ *   lst.prepend(10);
  *   front : int& = lst.peekFront();   // 10
  *   lst.removeFront();
  *   lst.removeBack();
@@ -631,11 +616,6 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
         return _size;
     }
 
-    /** Backward-compatible alias. */
-    const getSize() : unsigned int {
-        return size();
-    }
-
     /** Insert a copy of value at the back of the list. */
     append(value : const T&) {
         node : DoubleLinkedListNode! = new DoubleLinkedListNode();
@@ -664,16 +644,6 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
         }
         _head = node;
         _size = _size + 1;
-    }
-
-    /** Backward-compatible alias. */
-    pushBack(value : const T&) {
-        append(value);
-    }
-
-    /** Backward-compatible alias. */
-    pushFront(value : const T&) {
-        prepend(value);
     }
 
     prependAll(coll : Sequence<T>&) {
@@ -877,22 +847,22 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
     }
 
     /** Return a mutable reference to the front element. Undefined if empty. */
-    peekFront() : T& {
+    first() : T& {
         return _head.getValue();
     }
 
     /** Return a const reference to the front element. Undefined if empty. */
-    const peekFront() : const T& {
+    const first() : const T& {
         return _head.getValue();
     }
 
     /** Return a mutable reference to the back element. Undefined if empty. */
-    peekBack() : T& {
+    last() : T& {
         return _tail->getValue();
     }
 
     /** Return a const reference to the back element. Undefined if empty. */
-    const peekBack() : const T& {
+    const last() : const T& {
         return _tail->getValue();
     }
 
