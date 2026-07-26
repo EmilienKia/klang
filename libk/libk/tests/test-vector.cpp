@@ -982,7 +982,6 @@ TEST_CASE("Vector<int> — prvalue returned by value, e2e build and exec",
 //  offsets / vtable thunk generation for repeated/diamond interface bases.
 // ═══════════════════════════════════════════════════════════════════════════════
 TEST_CASE("Vector<int> — through Sequence<int>& (const iteration)", "[libk][vector][interface][sequence]") {
-    SKIP("Currently failing. To be investigated");
     auto j = jit_k(R"SRC(
         module __vec_iface_sequence__;
 

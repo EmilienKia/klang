@@ -2071,6 +2071,24 @@ void template_instantiator::ensure_agg_names_assigned(std::shared_ptr<aggregate>
 void template_instantiator::inject_base_subobject_fields(std::shared_ptr<aggregate> concrete) {
     if (!concrete || !concrete->has_bases()) return;
 
+    // Insert new __base_X__/__vbptr_X__ fields right after the existing __vptr__
+    // field (if the aggregate already has one) instead of unconditionally at
+    // _children.begin(). This function recurses into already-instantiated base
+    // aggregates (e.g. a shared virtual-base interface reached again through a
+    // different derived path); if that base already materialised its own
+    // __vptr__ at position 0, inserting a new field at begin() would push it
+    // BEFORE __vptr__, corrupting the layout every consumer (codegen GEPs,
+    // constructor vbptr repoint logic, etc.) assumes for offset 0.
+    auto insert_pos = [&]() {
+        auto it = concrete->_children.begin();
+        for (; it != concrete->_children.end(); ++it) {
+            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(*it)) {
+                if (mv->get_short_name() == "__vptr__") { ++it; return it; }
+            }
+        }
+        return concrete->_children.begin();
+    };
+
     auto& bases_mutable = concrete->get_bases_mutable();
     for (auto it = bases_mutable.rbegin(); it != bases_mutable.rend(); ++it) {
         auto& bs = *it;
@@ -2091,7 +2109,7 @@ void template_instantiator::inject_base_subobject_fields(std::shared_ptr<aggrega
             if (!concrete->_vars.count(vbptr_name)) {
                 auto vbptr_field = member_variable_definition::make_shared(concrete->shared_as<aggregate>(), vbptr_name);
                 concrete->_vars.insert({vbptr_name, vbptr_field});
-                concrete->_children.insert(concrete->_children.begin(), vbptr_field);
+                concrete->_children.insert(insert_pos(), vbptr_field);
             }
         } else {
             std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
@@ -2099,7 +2117,7 @@ void template_instantiator::inject_base_subobject_fields(std::shared_ptr<aggrega
                 auto subobj_field = member_variable_definition::make_shared(concrete->shared_as<aggregate>(), subobj_name);
                 subobj_field->set_type(bs.base->get_struct_type());
                 concrete->_vars.insert({subobj_name, subobj_field});
-                concrete->_children.insert(concrete->_children.begin(), subobj_field);
+                concrete->_children.insert(insert_pos(), subobj_field);
             }
         }
 

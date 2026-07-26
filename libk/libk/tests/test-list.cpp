@@ -1218,7 +1218,6 @@ TEST_CASE("LinkedList<int> — through MutableIndexedCollection<int>& (set/inser
 
 TEST_CASE("DoubleLinkedList<int> — through Sequence<int>& (const iteration)",
           "[libk][list][dlist][interface][sequence]") {
-    SKIP("Currently failing. To be investigated. Maybe same problem than \"Vector<int> — through Sequence<int>& (const iteration)\"");
     auto j = jit_k(R"SRC(
         module __dll_iface_sequence__;
 
