@@ -1050,7 +1050,15 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         k::parse::parser parser(_logger, ksrc);
         auto ast_unit = parser.parse_unit();
 
-        if (!ast_unit || ast_unit->declarations.empty()) return;
+        if (!ast_unit || ast_unit->declarations.empty()) {
+            _logger.error(
+                static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_TEMPLATE_REPARSE_FAILED),
+                "Failed to re-parse imported template '{0}': the stored KDI source "
+                "produced no usable declaration; the template is unavailable for "
+                "cross-module instantiation",
+                {tdef.name});
+            return;
+        }
 
         // ── 4. Build the parsed declaration into the model ──────────────────
         //    Save and restore the unit name because model_builder::visit will
@@ -1087,9 +1095,16 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             if (auto un  = root->get_union(tdef.name))      tag(un->get_tpl_info());
         }
 
-    } catch (const std::exception&) {
-        // If parsing/building fails, silently skip this template definition.
-        // The template simply won't be available for cross-module instantiation.
+    } catch (const std::exception& ex) {
+        // Parsing/model-building of the re-injected template source failed. Report it
+        // instead of leaving the template silently unavailable for cross-module
+        // instantiation (non-fatal: the current compilation may not even reference
+        // this particular template).
+        _logger.error(
+            static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_TEMPLATE_REPARSE_FAILED),
+            "Failed to re-parse imported template '{0}': {1}; the template is "
+            "unavailable for cross-module instantiation",
+            {tdef.name, std::string(ex.what())});
     }
 }
 

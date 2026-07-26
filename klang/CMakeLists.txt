@@ -300,6 +300,7 @@ klang_gen_test(klang-tests-gen-templates 120
 klang_gen_test(klang-tests-import 90
         tests/test-import.cpp
         tests/test-prod-lib.cpp
+        tests/test-import-template-reparse-diagnostic.cpp
 )
 
 #

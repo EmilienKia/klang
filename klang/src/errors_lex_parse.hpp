@@ -73,6 +73,14 @@ enum class compiler_diag : unsigned int {
     ERR_GDWARF_OPTIONS_MUTUALLY_EXCLUSIVE          = 0x01F1,
     WARN_UNKNOWN_LOG_LEVEL                        = 0x01F2,
     WARN_UNKNOWN_DIAGNOSTIC_CODE                  = 0x01FB,
+
+    /**
+     * Re-parsing the source text of an imported template definition (carried
+     * verbatim inside the KDI) failed — either parsing/model-building threw,
+     * or produced no usable declaration. The template becomes unavailable
+     * for cross-module instantiation; this used to fail completely silently.
+     */
+    ERR_KDI_TEMPLATE_REPARSE_FAILED               = 0x01FC,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

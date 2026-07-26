@@ -369,11 +369,18 @@
       exactly the path nested *structs* already used. Should a nested type ever be resolved
       before instantiation again, `compiler::verify_mangled_names()` plus the KDI layout
       conflict check will catch the resulting collision instead of miscompiling.
-- [ ] **Silent failure when re-parsing an imported template definition.**
-      `kdi_importer::materialise_template_def()` (~L1013-1042) re-parses the template source
-      text carried by the KDI; if parsing or model building fails, the template simply
-      becomes unavailable for cross-module instantiation with no diagnostic at all. Report
-      an error instead.
+- [x] **FIXED — silent failure when re-parsing an imported template definition.**
+      `kdi_importer::materialise_template_def()` re-parses the template source text carried
+      by the KDI; if parsing/model-building failed, or produced no usable declaration, the
+      template simply became unavailable for cross-module instantiation with no diagnostic
+      at all.
+      - Fix applied: both failure paths (parse/model-build exception, and empty/no
+        declaration produced) now report `compiler_diag::ERR_KDI_TEMPLATE_REPARSE_FAILED`
+        (0x01FC) via the logger — non-fatal (the current compilation may not even reference
+        the broken template), but no longer silent.
+      - Regression test: `[import][template][kdi][reparse-diagnostic]` in
+        `klang/tests/test-import-template-reparse-diagnostic.cpp` (corrupts a real KDI's
+        stored template source via CBOR read/write and asserts the diagnostic is emitted).
 - [x] **FIXED — no recursion-depth limit on template instantiation.**
       `template_instantiator::instantiate_aggregate()` recursed without any depth guard
       (e.g. via its "resolve template base classes immediately" step), so a recursive
