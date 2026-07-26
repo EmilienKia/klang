@@ -422,9 +422,9 @@ TEST_CASE("Foreach sequence — sum Vector<int> via copy", "[gen][foreach][seque
 
         test() : int {
             vec : Vector<int>;
-            vec.pushBack(1);
-            vec.pushBack(2);
-            vec.pushBack(3);
+            vec.append(1);
+            vec.append(2);
+            vec.append(3);
             sum : int = 0;
             for(x : int = vec) {
                 sum = sum + x;
@@ -444,9 +444,9 @@ TEST_CASE("Foreach iterator — direct Iterator<T> object", "[gen][foreach][iter
 
         test() : int {
             vec : Vector<int>;
-            vec.pushBack(10);
-            vec.pushBack(20);
-            vec.pushBack(30);
+            vec.append(10);
+            vec.append(20);
+            vec.append(30);
             it : Iterator<int>! = vec.iterator();
             sum : int = 0;
             for(x : int = it) {
@@ -467,9 +467,9 @@ TEST_CASE("Foreach sequence — mutable in-place via reference", "[gen][foreach]
 
         test() : int {
             vec : Vector<int>;
-            vec.pushBack(1);
-            vec.pushBack(2);
-            vec.pushBack(3);
+            vec.append(1);
+            vec.append(2);
+            vec.append(3);
             for(x : int& = vec) {
                 x = x * 10;
             }
@@ -492,11 +492,11 @@ TEST_CASE("Foreach sequence — break and continue", "[gen][foreach][sequence]")
 
         test() : int {
             vec : Vector<int>;
-            vec.pushBack(1);
-            vec.pushBack(2);
-            vec.pushBack(3);
-            vec.pushBack(4);
-            vec.pushBack(5);
+            vec.append(1);
+            vec.append(2);
+            vec.append(3);
+            vec.append(4);
+            vec.append(5);
             sum : int = 0;
             for(x : int = vec) {
                 if (x == 2) { continue; }
@@ -545,7 +545,7 @@ TEST_CASE("Foreach iterator — const source: mutable ref forbidden", "[gen][for
 
         test() : int {
             vec : Vector<int>;
-            vec.pushBack(1);
+            vec.append(1);
             cv : const Vector<int>& = vec;
             for(x : int& = cv) {
                 x = 1;
@@ -561,7 +561,7 @@ TEST_CASE("Foreach iterator — owner loop var forbidden on sequence", "[gen][fo
 
         test() : int {
             vec : Vector<int>;
-            vec.pushBack(1);
+            vec.append(1);
             for(x : int! = vec) {
             }
             return 0;
@@ -575,9 +575,9 @@ TEST_CASE("Foreach iterator — const source sums via copy (constIterator)", "[g
 
         test() : int {
             vec : Vector<int>;
-            vec.pushBack(1);
-            vec.pushBack(2);
-            vec.pushBack(3);
+            vec.append(1);
+            vec.append(2);
+            vec.append(3);
             cv : const Vector<int>& = vec;
             sum : int = 0;
             for(x : int = cv) {
