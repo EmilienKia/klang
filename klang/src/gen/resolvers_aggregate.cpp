@@ -861,6 +861,16 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                 fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
             }
             fn->update_mangled_name();
+        } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
+            // Static member variables (cloned as global_variable_definition) also need
+            // their FQ/mangled name re-derived here now that the parent aggregate has
+            // its own root-prefixed name: without it, declaration_generator::
+            // visit_global_variable_definition emits the LLVM global with an empty
+            // name (get_mangled_name() == ""), which LLVM auto-numbers as an anonymous
+            // global (e.g. "@0"), breaking JIT module loading.
+            if (auto parent_named = gv->template parent<named_element>()) {
+                gv->assign_name(parent_named->get_name().with_back(gv->get_short_name()));
+            }
         }
     }
 
