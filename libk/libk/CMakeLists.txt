@@ -23,6 +23,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/collections.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/list.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/vector.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/set.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/array_stream.k

@@ -175,11 +175,43 @@ interface Collection : public Sequence<T>, public Sized {
 }
 
 /**
+ * OrderedCollection<T> — abstract interface for all ordered collections.
+ * An ordered collection is a collection that maintains the order of its elements.
+ */
+template<typename T>
+interface OrderedCollection : public Collection<T> {
+    /**
+     * Return a read-only reference to the first element, or empty if the collection is empty.
+     * @return An OptionalConstRef<T> holding the first element, or empty.
+     */
+    first() : OptionalConstRef<T>;
+    /**
+     * Return a read-only reference to the last element, or empty if the collection is empty.
+     * @return An OptionalConstRef<T> holding the last element, or empty.
+     */
+    last() : OptionalConstRef<T>;
+}
+
+template<typename T>
+interface MutableOrderedCollection : public OrderedCollection<T>, public MutableCollection<T> {
+    /**
+     * Return a mutable reference to the first element, or empty if the collection is empty.
+     * @return An OptionalRef<T> holding the first element, or empty.
+     */
+    first() : OptionalRef<T>;
+    /**
+     * Return a mutable reference to the last element, or empty if the collection is empty.
+     * @return An OptionalRef<T> holding the last element, or empty.
+     */
+    last() : OptionalRef<T>;
+}
+
+/**
  * IndexedCollection<T> — abstract interface for all indexed collections.
  * An indexed collection is a collection that allows access to its elements by index.
  */
 template<typename T>
-interface IndexedCollection : public Collection<T> {
+interface IndexedCollection : public OrderedCollection<T> {
     /**
      * Return a mutable reference to an element at a given index.
      *
@@ -221,7 +253,7 @@ interface IndexedCollection : public Collection<T> {
  * It also provides a mutable iterator (via MutableSequence<T>) in addition to the read-only constIterator().
  */
 template<typename T>
-interface MutableCollection : public Collection<T>, public MutableSequence<T>, public Appendable<T>, public Prependable<T> {
+interface MutableCollection : public Collection<T>, public MutableSequence<T> {
     /**
      * Remove the first occurrence of a value from the collection.
      * @param value Value to remove.
@@ -277,7 +309,7 @@ interface Prependable {
  * A mutable indexed collection is a collection that allows modification of its elements by index, including insertion, removal, and updating of values.
  */
 template<typename T>
-interface MutableIndexedCollection : public IndexedCollection<T>, public MutableCollection<T>, public Appendable<T>, public Prependable<T> {
+interface MutableIndexedCollection : public IndexedCollection<T>, public MutableOrderedCollection<T>, public Appendable<T>, public Prependable<T> {
 
     /**
      * Set the value of an element at a given index.
