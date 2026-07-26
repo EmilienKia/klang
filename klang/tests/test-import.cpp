@@ -3719,3 +3719,64 @@ TEST_CASE("import instantiation diamond - user-declared Box<int> template in two
 //   - "klangc: static-link diamond of a user-declared template instantiation"
 // ─────────────────────────────────────────────────────────────────────────────
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import][mangling][enum-param] Cross-module overloads differing only by an enum
+// parameter.
+//
+// The mangling half is FIXED: mangler::mangle_type() used to return an empty encoding for
+// enumerations, so both overloads were recorded in the .kdi under the very same mangled
+// name while the .so actually exported '<sym>' and '<sym>.1' (LLVM auto-uniquification,
+// invisible to the KDI). Both overloads now get distinct symbols — asserted below.
+//
+// The remaining half is a KNOWN LIMITATION (skipped): an unqualified call to an imported
+// function is bound eagerly by symbol_resolver to the first matching imported overload and
+// never reaches type_reference_resolver::get_best_matching_function, so the consumer still
+// calls the ErrA overload for an ErrB argument. See TODO.md, "Unqualified calls to imported
+// functions bypass overload resolution".
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Imported overloads differing only by an enum parameter have distinct symbols",
+          "[import][mangling][enum-param]") {
+    auto comp = compile_model(R"K(
+        module enumovl;
+        public enum ErrA { a1 = 1; a2 = 2; }
+        public enum ErrB { b1 = 7; b2 = 8; }
+        public f(x : ErrA) : int { return 100; }
+        public f(x : ErrB) : int { return 200; }
+    )K");
+    REQUIRE(comp != nullptr);
+
+    auto root_ns = comp->get_unit()->get_root_namespace();
+    auto overloads = root_ns->get_functions("f");
+    REQUIRE(overloads.size() == 2);
+    CHECK_FALSE(overloads[0]->get_mangled_name().empty());
+    CHECK_FALSE(overloads[1]->get_mangled_name().empty());
+    CHECK(overloads[0]->get_mangled_name() != overloads[1]->get_mangled_name());
+    // No symbol may carry LLVM's '.N' uniquification suffix: those never reach the KDI.
+    CHECK(overloads[0]->get_mangled_name().find('.') == std::string::npos);
+    CHECK(overloads[1]->get_mangled_name().find('.') == std::string::npos);
+}
+
+TEST_CASE("Known-limitation: cross-module overload selection on an imported enum argument",
+          "[.][import][mangling][enum-param]") {
+    auto result = build_exec_with_lib(R"K(
+        module enumovl2;
+        public enum ErrA { a1 = 1; a2 = 2; }
+        public enum ErrB { b1 = 7; b2 = 8; }
+        public f(x : ErrA) : int { return 100; }
+        public f(x : ErrB) : int { return 200; }
+    )K", R"K(
+        module main;
+        import enumovl2;
+        main() : int {
+            if (f(enumovl2::ErrA::a1) != 100) return 1;
+            if (f(enumovl2::ErrB::b1) != 200) return 2;
+            return 0;
+        }
+    )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 0 );
+}

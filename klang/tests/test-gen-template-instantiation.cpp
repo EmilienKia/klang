@@ -30,6 +30,7 @@
  */
 
 #include <catch2/catch_all.hpp>
+#include <set>
 #include <sstream>
 
 #include "helpers.hpp"
@@ -574,3 +575,88 @@ TEST_CASE("[O] Multi-level template interface hierarchy builds vtable recursivel
 
 
 
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Instantiated-name injectivity
+//
+// build_instantiated_name() used to map every non-alphanumeric character of a template
+// argument to '_', so Box<T*>, Box<T&>, Box<T!>, Box<T+>, Box<T?> and Box<T#> all produced
+// the short name "Box__T_" and collapsed onto a single model aggregate sharing one LLVM
+// type — while the symbol mangler still gave their methods distinct names.
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Instantiations differing only by addresser are distinct",
+          "[template][instantiation][addresser-distinct]") {
+    auto comp = compile_model(R"SRC(
+        module __inst_addresser__;
+        struct S { a : long; b : long; }
+        template<typename T>
+        struct Box {
+            _v : T;
+            public:
+            Box() {}
+        }
+        useIt() : int {
+            byval  : Box<S>;
+            byptr  : Box<S*>;
+            byref  : Box<S&>;
+            bylink : Box<S+>;
+            byview : Box<S?>;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto root_ns = comp->get_unit()->get_root_namespace();
+
+    // Collect the struct_type of every Box instantiation; they must all differ.
+    std::vector<std::shared_ptr<k::model::aggregate>> boxes;
+    for (const auto& child : root_ns->get_children()) {
+        auto agg = std::dynamic_pointer_cast<k::model::aggregate>(child);
+        if (!agg) continue;
+        if (agg->get_short_name().rfind("Box__", 0) == 0) boxes.push_back(agg);
+    }
+    REQUIRE(boxes.size() == 5);
+
+    std::set<std::string> short_names;
+    std::set<const void*> struct_types;
+    for (const auto& box : boxes) {
+        short_names.insert(box->get_short_name());
+        struct_types.insert(box->get_struct_type().get());
+    }
+    CHECK(short_names.size() == 5);
+    CHECK(struct_types.size() == 5);
+}
+
+TEST_CASE("Instantiated name qualifies a namespaced type argument",
+          "[template][instantiation][addresser-distinct]") {
+    // `struct_type::to_string()` yields the *short* name, so two same-named types from
+    // different namespaces used to produce the same instantiation key and the same
+    // instantiated aggregate name. type_display_name() now uses the fully-qualified name.
+    auto comp = compile_model(R"SRC(
+        module __inst_ns__;
+        namespace a { struct Item { v : int; } }
+        template<typename T>
+        struct Box {
+            _v : T;
+            public:
+            Box() {}
+        }
+        useIt() : int {
+            x : Box<a::Item>;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto root_ns = comp->get_unit()->get_root_namespace();
+    std::string box_name;
+    for (const auto& child : root_ns->get_children()) {
+        auto agg = std::dynamic_pointer_cast<k::model::aggregate>(child);
+        if (!agg) continue;
+        if (agg->get_short_name().rfind("Box__", 0) == 0) box_name = agg->get_short_name();
+    }
+    REQUIRE(!box_name.empty());
+    // '::' is encoded as "_N" by the injective identifier escaper.
+    CHECK(box_name.find("a_NItem") != std::string::npos);
+}

@@ -127,8 +127,8 @@ TEST_CASE("[C] Mangling: Pair<int, float> has two-arg IifE encoding",
     REQUIRE(comp != nullptr);
 
     auto root_ns = comp->get_unit()->get_root_namespace();
-    // Multi-param instantiation: "Pair__int_float" (__ after base, _ between args)
-    auto pair_if = root_ns->get_aggregate("Pair__int_float");
+    // Multi-param instantiation: "Pair__int__float" (__ after base, __ between args)
+    auto pair_if = root_ns->get_aggregate("Pair__int__float");
     REQUIRE(pair_if != nullptr);
 
     auto mangled = pair_if->get_mangled_name();
@@ -442,3 +442,107 @@ TEST_CASE("[J] Mangling: generic synthesized constructor keeps one symbol across
 }
 
 
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Mangling exhaustiveness
+//
+//  mangle_type() used to return an empty string for several type kinds, most notably
+//  enumerations. Two overloads differing only by an enum parameter then produced the very
+//  same symbol; within one module LLVM auto-renamed the second to "…E.1" (invisible to the
+//  KDI), and a consumer linking against the library called the first overload for both.
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Mangling: enum parameters produce distinct symbols",
+          "[gen][mangling][exhaustive]") {
+    auto comp = compile_model(R"SRC(
+        module __mangle_enum__;
+        enum ErrA { a1; a2; }
+        enum ErrB { b1; b2; b3; }
+        f(x : ErrA) : int { return 100; }
+        f(x : ErrB) : int { return 200; }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto root_ns = comp->get_unit()->get_root_namespace();
+    auto overloads = root_ns->get_functions("f");
+    REQUIRE(overloads.size() == 2);
+
+    const auto& m0 = overloads[0]->get_mangled_name();
+    const auto& m1 = overloads[1]->get_mangled_name();
+    CHECK_FALSE(m0.empty());
+    CHECK_FALSE(m1.empty());
+    CHECK(m0 != m1);
+    // Enumerations are encoded as 'Te' followed by their qualified name.
+    CHECK(m0.find("Te") != std::string::npos);
+    CHECK(m1.find("Te") != std::string::npos);
+    CHECK((m0.find("ErrA") != std::string::npos) != (m1.find("ErrA") != std::string::npos));
+}
+
+TEST_CASE("Mangling: enum template argument is not erased",
+          "[gen][mangling][exhaustive]") {
+    // Expected<long, StreamOutOfData> used to mangle as '…ExpectedIxE…': the enum argument
+    // was silently dropped, so Expected<long, EnumA> and Expected<long, EnumB> were
+    // indistinguishable at link time (and linkonce_odr/COMDAT merged them arbitrarily).
+    auto comp = compile_model(R"SRC(
+        module __mangle_enum_tpl__;
+        enum ErrA { a1; }
+        enum ErrB { b1; }
+        template<typename R, typename E>
+        struct Box {
+            _v : R;
+            _e : E;
+            public:
+            Box() {}
+            setErr(e : E&) : void { _e = e; }
+        }
+        useA(x : ErrA) : int { b : Box<int, ErrA>; b.setErr(x); return 0; }
+        useB(x : ErrB) : int { b : Box<int, ErrB>; b.setErr(x); return 0; }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto root_ns = comp->get_unit()->get_root_namespace();
+    std::vector<std::string> set_err_symbols;
+    for (const auto& child : root_ns->get_children()) {
+        auto agg = std::dynamic_pointer_cast<k::model::aggregate>(child);
+        if (!agg || agg->get_short_name().rfind("Box__", 0) != 0) continue;
+        for (const auto& fn : agg->get_functions("setErr")) {
+            set_err_symbols.push_back(fn->get_mangled_name());
+        }
+    }
+    REQUIRE(set_err_symbols.size() == 2);
+    CHECK_FALSE(set_err_symbols[0].empty());
+    CHECK(set_err_symbols[0] != set_err_symbols[1]);
+}
+
+TEST_CASE("Mangling: no two emitted entities share a mangled name",
+          "[gen][mangling][exhaustive]") {
+    // compiler::verify_mangled_names() runs before code generation and rejects both empty
+    // and duplicated mangled names, so simply compiling this unit exercises the check over
+    // a broad mix of type kinds.
+    auto comp = compile_model(R"SRC(
+        module __mangle_mix__;
+        enum Colour : int { red; green; }
+        struct Point { x : int; y : int; }
+        template<typename T>
+        struct Wrap {
+            _v : T;
+            public:
+            Wrap() {}
+        }
+        g(a : Colour) : int { return 1; }
+        g(a : Point&) : int { return 2; }
+        g(a : Point*) : int { return 3; }
+        g(a : int) : int { return 4; }
+        g(a : long) : int { return 5; }
+        g(a : char) : int { return 6; }
+        g(a : byte) : int { return 7; }
+        g(a : bool) : int { return 8; }
+        use() : int {
+            wi : Wrap<int>;
+            wp : Wrap<Point>;
+            wr : Wrap<Point*>;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+}

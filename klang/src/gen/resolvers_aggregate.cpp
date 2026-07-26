@@ -871,6 +871,32 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             if (auto parent_named = gv->template parent<named_element>()) {
                 gv->assign_name(parent_named->get_name().with_back(gv->get_short_name()));
             }
+        } else if (auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
+            // Nested unions (e.g. Expected<R,E>::Storage) need the same treatment: they
+            // were created by template_instantiator before the enclosing instantiation had
+            // a root-prefixed name, so their mangled name would otherwise stay empty and
+            // every instantiation's union would be emitted as the same anonymous LLVM type.
+            if (auto parent_named = nested_un->template parent<named_element>()) {
+                nested_un->assign_name(parent_named->get_name().with_back(nested_un->get_short_name()));
+            }
+            nested_un->update_mangled_name();
+            if (auto kind_enum = nested_un->get_kind_enum()) {
+                // assign_name() recomputes the mangled name.
+                kind_enum->assign_name(nested_un->get_name().with_back(kind_enum->get_short_name()));
+            }
+        } else if (auto nested_agg = std::dynamic_pointer_cast<aggregate>(child)) {
+            if (auto parent_named = nested_agg->template parent<named_element>()) {
+                nested_agg->assign_name(parent_named->get_name().with_back(nested_agg->get_short_name()));
+            }
+            nested_agg->update_mangled_name();
+            for (auto& nested_child : nested_agg->get_children()) {
+                if (auto nested_fn = std::dynamic_pointer_cast<function>(nested_child)) {
+                    if (auto parent_named = nested_fn->template parent<named_element>()) {
+                        nested_fn->assign_name(parent_named->get_name().with_back(nested_fn->get_short_name()));
+                    }
+                    nested_fn->update_mangled_name();
+                }
+            }
         }
     }
 
@@ -1815,6 +1841,16 @@ void aggregate_type_resolver::visit_global_main_function(global_main_function& /
 void aggregate_type_resolver::visit_union(union_type_def& un) {
     // Skip template definitions — only instantiations are resolved
     if (un.is_template()) return;
+
+    // Skip a union nested inside a template *definition*: it is a blueprint, not a type.
+    // Resolving it would give it a struct_type / LLVM type that every instantiation would
+    // then share (template_instantiator::clone_nested_union used to reuse it), collapsing
+    // sibling instantiations with differently-sized payloads onto a single layout.
+    for (auto parent = un.parent<element>(); parent; parent = parent->parent<element>()) {
+        if (auto agg = std::dynamic_pointer_cast<aggregate>(parent)) {
+            if (agg->is_template()) return;
+        }
+    }
 
     // ── Ensure base union is fully resolved first ─────────────────────────────
     if (un.has_base_union() && un.get_base_union()) {

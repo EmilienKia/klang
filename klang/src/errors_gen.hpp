@@ -121,6 +121,42 @@ enum class codegen_diag : unsigned int {
     ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS               = 0x011E,
 
     /**
+     * A model element that must be emitted (or exported through a KDI) produced an
+     * empty mangled name. An empty name makes distinct entities indistinguishable at
+     * link time, so it is always a compiler bug rather than a user error.
+     */
+    ERR_MANGLED_NAME_EMPTY                        = 0x0200,
+
+    /**
+     * Two distinct model elements of the same unit produced the same mangled name.
+     * Because template instantiations are emitted `linkonce_odr` in a `Comdat::Any`
+     * group keyed by the mangled name, such a collision would silently make the linker
+     * keep a single, arbitrarily chosen definition.
+     */
+    ERR_DUPLICATE_MANGLED_NAME                    = 0x0201,
+
+    /**
+     * An LLVM type name reaching the KDI exporter contains a '.' — the marker of LLVM's
+     * automatic uniquification of colliding type names. Such names depend on compilation
+     * order and are therefore not stable across builds nor usable for cross-module type
+     * identity.
+     */
+    ERR_LLVM_TYPE_NAME_NOT_CANONICAL               = 0x0202,
+
+    /**
+     * Two imported KDI entries declare the same LLVM type name with different bodies.
+     * Deduplicating them by name would give one of the two entities the other's layout.
+     */
+    ERR_KDI_TYPE_LAYOUT_CONFLICT                   = 0x0203,
+
+    /**
+     * `mangler::mangle_type()` was given a type it cannot encode. `mangle_type()` is
+     * total by contract: returning an empty string here would silently collapse distinct
+     * symbols.
+     */
+    INTERNAL_ERR_MANGLE_TYPE                      = 0xF020,
+
+    /**
      * Null sub-expression in a unary expression reaching symbol resolution, a
      * root namespace with no name at codegen, or the top-level catch-all for
      * any unexpected non-compiler exception during compilation.

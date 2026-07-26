@@ -762,6 +762,15 @@ void type_reference_resolver::visit_function(function& fn) {
         }
     }
 
+    // Recompute the mangled name now that parameter and return types are fully resolved.
+    // signature_resolver already recomputes it once, but some type kinds (notably
+    // enumerations) are only resolved by this pass, and a parameter still carrying an
+    // unresolved_type mangles to a placeholder. Two overloads differing only by such a
+    // parameter would then keep provisional — and possibly colliding — symbols.
+    if (!fn.is_extern()) {
+        fn.update_mangled_name();
+    }
+
     // Redirected functions have no body to visit
     if (fn.is_redirected()) {
         return;

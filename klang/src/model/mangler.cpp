@@ -24,6 +24,7 @@
 #include "type.hpp"
 
 #include "../common/operator_names.hpp"
+#include "../errors.hpp"
 
 #include <cstring>
 
@@ -86,7 +87,7 @@
 
 #define TYPE_VOID           "v"
 #define TYPE_BOOL           "b"
-#define TYPE_CHAR           "Di"
+#define TYPE_CHAR           "c"
 #define TYPE_BYTE           "a"
 #define TYPE_UCHAR          "h"
 #define TYPE_UBYTE          "h"
@@ -96,9 +97,20 @@
 #define TYPE_UINT           "j"
 #define TYPE_LONG           "x"
 #define TYPE_ULONG          "y"
+#define TYPE_LONG_LONG      "n"
+#define TYPE_ULONG_LONG     "o"
 #define TYPE_FLOAT          "f"
 #define TYPE_DOUBLE         "d"
 #define TYPE_LONG_DOUBLE    "e"
+
+/// Prefix introducing an enumeration type, followed by its qualified name.
+#define TYPE_ENUM           "Te"
+
+/// Placeholder for a not-yet-resolved type, followed by its length-prefixed type id.
+#define TYPE_UNRESOLVED     "Xu"
+
+/// The type of the `null` literal (only reachable as an argument type).
+#define TYPE_NULL           "Xz"
 
 
 namespace k::model {
@@ -608,12 +620,40 @@ std::string mangler::mangle_type(const type& ty) const {
             case primitive_type::UNSIGNED_INT: return TYPE_UINT;
             case primitive_type::LONG: return TYPE_LONG;
             case primitive_type::UNSIGNED_LONG: return TYPE_ULONG;
+            case primitive_type::LONG_LONG: return TYPE_LONG_LONG;
+            case primitive_type::UNSIGNED_LONG_LONG: return TYPE_ULONG_LONG;
             case primitive_type::FLOAT: return TYPE_FLOAT;
             case primitive_type::DOUBLE: return TYPE_DOUBLE;
-            default:
-                // TODO throw an exception : unsupported primitive ty
-                return "";
         }
+        throw_unmanglable_type(ty, "unknown primitive type kind");
+    } else if (auto enum_ty = dynamic_cast<const enum_type*>(&ty)) {
+        return TYPE_ENUM + mangle_enum(*enum_ty);
+    } else if (dynamic_cast<const null_type*>(&ty)) {
+        return TYPE_NULL;
+    } else if (auto unres = dynamic_cast<const unresolved_type*>(&ty)) {
+        // Mangled names are computed once from the raw declaration and recomputed by
+        // signature_resolver once the signature is fully resolved. Until then a type may
+        // still be unresolved: emit a deterministic, non-empty placeholder rather than an
+        // empty string, which would make distinct overloads collide. A placeholder that
+        // survives to code generation is a compiler bug and is rejected by
+        // compiler::verify_mangled_names().
+        const std::string id = unres->type_id();
+        return TYPE_UNRESOLVED + std::to_string(id.size()) + id;
+    } else if (auto unres_fn = dynamic_cast<const unresolved_function_ref_type*>(&ty)) {
+        // Function-reference types (`*(int)`, `Counter::*(int)`) are deliberately left
+        // unresolved by signature_resolver and only resolved by type_reference_resolver.
+        // Emit a provisional but structurally distinct placeholder in the meantime.
+        std::ostringstream s;
+        s << TYPE_UNRESOLVED << static_cast<int>(unres_fn->get_ref_kind())
+          << SYMBOL_MODIFIER_FN_REF;
+        if (!unres_fn->owner_name().parts().empty()) {
+            s << SYMBOL_MODIFIER_MEM_FN << mangle_fq_name(unres_fn->owner_name(), false);
+        }
+        for (const auto& p : unres_fn->parameter_types()) {
+            s << (p ? mangle_type(*p) : std::string{TYPE_VOID});
+        }
+        s << SYMBOL_QUALIFIED_SUFFIX;
+        return s.str();
     } else if (auto ref_ty = dynamic_cast<const reference_type*>(&ty)) {
         return SYMBOL_MODIFIER_REF + mangle_type(*ref_ty->get_referenced_type());
     } else if (auto ptr_ty = dynamic_cast<const pointer_type*>(&ty)) {
@@ -683,22 +723,82 @@ std::string mangler::mangle_type(const type& ty) const {
         auto st = struct_ty->get_struct();
         if (!st) {
             // Union type (struct_type with no owning aggregate): mangle by name.
-            // The struct_type name is the short name; we need to construct a
-            // fully-qualified name. For now, use the name stored on the struct_type.
-            std::string sname = struct_ty->name();
-            if (sname.empty()) return "";
-            // Build a simple qualified name for mangling
-            return std::to_string(sname.size()) + sname;
+            // struct_type::name() holds the fully-qualified name (without the leading
+            // "::") for every named union, so split it back into components and emit the
+            // regular 'N<len><part>...E' qualified form. Emitting the raw short name here
+            // would let two same-named unions from different namespaces collide.
+            return mangle_qualified_type_name(struct_ty->name());
         }
         if (st->has_tpl_args()) {
             return mangle_structure(*st);
         }
         return mangle_structure(st->get_name());
-    } else {
-        // TODO throw exception : unsupported type
-        return "";
     }
+    throw_unmanglable_type(ty, "unsupported type kind");
+}
 
+std::string mangler::mangle_enum(const enum_type& ty) const {
+    if (auto en = ty.get_enumeration()) {
+        const auto& n = en->get_name();
+        if (!n.parts().empty()) {
+            return mangle_fq_name(n, true);
+        }
+        return mangle_qualified_type_name(en->get_fq_name());
+    }
+    throw_unmanglable_type(ty, "enumeration type with no backing enumeration");
+}
+
+std::string mangler::mangle_qualified_type_name(const std::string& fq_name) {
+    // Accept both "::a::b::C" and "a::b::C"; produce "_KN1a1b1CE".
+    std::string_view sv{fq_name};
+    while (sv.size() >= 2 && sv[0] == ':' && sv[1] == ':') {
+        sv.remove_prefix(2);
+    }
+    if (sv.empty()) {
+        throw_unmanglable_type_name(fq_name);
+    }
+    std::ostringstream mangled;
+    mangled << K_LANG_SYMBOL_PREFIX SYMBOL_QUALIFIED_PREFIX;
+    size_t pos = 0;
+    while (pos <= sv.size()) {
+        const size_t next = sv.find("::", pos);
+        const std::string_view part = (next == std::string_view::npos)
+            ? sv.substr(pos)
+            : sv.substr(pos, next - pos);
+        if (!part.empty()) {
+            mangled << part.size() << part;
+        }
+        if (next == std::string_view::npos) break;
+        pos = next + 2;
+    }
+    mangled << SYMBOL_QUALIFIED_SUFFIX;
+    return mangled.str();
+}
+
+[[noreturn]] void mangler::throw_unmanglable_type(const type& ty, const std::string& reason) {
+    std::string desc;
+    try {
+        desc = ty.to_string();
+    } catch (...) {
+        desc = "<undisplayable>";
+    }
+    throw log::compiler_error(log::diagnostic{
+        static_cast<unsigned int>(diag::codegen_diag::INTERNAL_ERR_MANGLE_TYPE),
+        log::diagnostic::severity::fatal,
+        "Internal error: cannot mangle type '{}' ({}); every resolved type must have a "
+        "unique non-empty mangled encoding",
+        {desc, reason}
+    });
+}
+
+[[noreturn]] void mangler::throw_unmanglable_type_name(const std::string& fq_name) {
+    throw log::compiler_error(log::diagnostic{
+        static_cast<unsigned int>(diag::codegen_diag::INTERNAL_ERR_MANGLE_TYPE),
+        log::diagnostic::severity::fatal,
+        "Internal error: cannot mangle an unnamed type (raw name '{}'); every type "
+        "reaching the mangler must have a qualified name",
+        {fq_name}
+    });
 }
 
 std::string mangler::mangle_constructor_c2(const constructor& ctor) const {

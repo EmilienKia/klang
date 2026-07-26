@@ -29,6 +29,8 @@
 
 #include <sstream>
 #include <stdexcept>
+#include <functional>
+#include <unordered_map>
 #include <unordered_set>
 #include "../../errors.hpp"
 
@@ -474,10 +476,17 @@ static std::string extract_llvm_type_name(const std::string& llvm_def) {
     return llvm_def.substr(1, eq - 1); // strip leading '%'
 }
 
-/// Collect all LLVM struct type definition strings from @p ns (recursively)
-/// into @p out, deduplicating by type name so that shared inner types (e.g.
-/// the private %_union shared across all Expected<T,E> specialisations) appear
-/// at most once in the combined IR blob.
+/// Collect all LLVM struct type definition strings from @p ns (recursively) into @p out,
+/// deduplicating by type name so a type shared by several KDIs appears at most once in the
+/// combined IR blob (LLVM rejects two definitions of the same type name).
+///
+/// Deduplication by name is only sound because every LLVM type name is unique per entity:
+/// a nested type of a template instantiation is named after its enclosing instantiation
+/// (`Expected__long__…::Storage_union`), not by its bare short name. When that invariant is
+/// broken, two structurally different types share a name and the silent skip below would
+/// collapse them onto a single (possibly too small) layout — exactly the bug that made
+/// `Expected<long,E>` reuse `Expected<int,E>`'s 4-byte payload. Any same-name/different-body
+/// pair is therefore reported as a fatal error rather than silently dropped.
 ///
 /// Nested-union defs are emitted BEFORE the containing aggregate's def so that
 /// LLVM resolves the inner type without creating an opaque forward-reference for
@@ -485,53 +494,43 @@ static std::string extract_llvm_type_name(const std::string& llvm_def) {
 ///
 /// @param ns        KDI namespace to walk.
 /// @param out       Accumulated combined IR string.
-/// @param seen      Set of already-emitted type names (prevents duplicates).
-static void collect_llvm_defs_from_namespace(const kdi::kdi_namespace& ns,
-                                              std::string& out,
-                                              std::unordered_set<std::string>& seen)
+/// @param seen      Already-emitted type name → definition body (detects conflicts).
+/// @param on_conflict Invoked with (type name, first body, conflicting body).
+static void collect_llvm_defs_from_namespace(
+    const kdi::kdi_namespace& ns,
+    std::string& out,
+    std::unordered_map<std::string, std::string>& seen,
+    const std::function<void(const std::string&, const std::string&, const std::string&)>& on_conflict)
 {
+    const auto emit = [&](const std::string& llvm_def) {
+        if (llvm_def.empty()) return;
+        auto tname = extract_llvm_type_name(llvm_def);
+        if (tname.empty()) {
+            // No parsable name: emit as-is (defensive, matches the historical behaviour).
+            out += llvm_def;
+            out += '\n';
+            return;
+        }
+        auto [it, inserted] = seen.emplace(tname, llvm_def);
+        if (inserted) {
+            out += llvm_def;
+            out += '\n';
+        } else if (it->second != llvm_def) {
+            on_conflict(tname, it->second, llvm_def);
+        }
+    };
+
     for (const auto& agg : ns.aggregates) {
         // 1. Nested unions first (dependencies before the aggregate that references them).
-        for (const auto& nested_un : agg.nested_unions) {
-            if (!nested_un.llvm_def.empty()) {
-                auto tname = extract_llvm_type_name(nested_un.llvm_def);
-                if (tname.empty() || seen.insert(tname).second) {
-                    // Either we couldn't extract a name (emit anyway) or it is new.
-                    out += nested_un.llvm_def;
-                    out += '\n';
-                }
-            }
-        }
+        for (const auto& nested_un : agg.nested_unions) emit(nested_un.llvm_def);
         // 2. Nested aggregates (public/protected inner types).
-        for (const auto& nested : agg.nested) {
-            if (!nested.llvm_def.empty()) {
-                auto tname = extract_llvm_type_name(nested.llvm_def);
-                if (tname.empty() || seen.insert(tname).second) {
-                    out += nested.llvm_def;
-                    out += '\n';
-                }
-            }
-        }
+        for (const auto& nested : agg.nested) emit(nested.llvm_def);
         // 3. The aggregate's own struct type def (e.g. '%Base = type { ptr, i32 }').
-        if (!agg.llvm_def.empty()) {
-            auto tname = extract_llvm_type_name(agg.llvm_def);
-            if (tname.empty() || seen.insert(tname).second) {
-                out += agg.llvm_def;
-                out += '\n';
-            }
-        }
+        emit(agg.llvm_def);
     }
     for (const auto& child_ns : ns.namespaces) {
-        collect_llvm_defs_from_namespace(child_ns, out, seen);
+        collect_llvm_defs_from_namespace(child_ns, out, seen, on_conflict);
     }
-}
-
-/// Wrapper that creates the deduplication set and calls the inner overload.
-static void collect_llvm_defs_from_namespace(const kdi::kdi_namespace& ns,
-                                              std::string& out)
-{
-    std::unordered_set<std::string> seen;
-    collect_llvm_defs_from_namespace(ns, out, seen);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -545,22 +544,34 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
     // Include both direct imports AND transitive deps so that base-class types
     // from indirect imports are available during resolution.
     //
-    // A single shared `seen` set across all KDIs ensures that types used by
-    // multiple specialisations (e.g. the %_union inner type shared by all
-    // Expected<T,E> instantiations) are emitted exactly once in the combined
-    // blob.  Duplicates cause LLVM IR parse errors which silently drop ALL
-    // type bodies, leaving every aggregate as an opaque (unsized) placeholder.
+    // A single shared `seen` map across all KDIs ensures that a type reachable through
+    // several KDIs is emitted exactly once in the combined blob. Duplicates cause LLVM IR
+    // parse errors which silently drop ALL type bodies, leaving every aggregate as an
+    // opaque (unsized) placeholder. Two *different* bodies under the same name mean the
+    // producing module violated the "one LLVM type name per entity" invariant; dropping one
+    // of them would silently give an entity the wrong layout, so it is a fatal error.
     std::string combined_ir;
     combined_ir.reserve(4096);
-    std::unordered_set<std::string> seen_type_names;
+    std::unordered_map<std::string, std::string> seen_type_names;
+    const auto on_conflict = [this](const std::string& tname,
+                                    const std::string& first,
+                                    const std::string& second) {
+        auto diag = k::log::diagnostic::make_error(
+            static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+            "Imported LLVM type '{0}' has two different definitions: '{1}' and '{2}'; "
+            "a type name must identify exactly one layout across all imported modules",
+            {tname, first, second});
+        _logger.report(diag);
+        throw k::log::compiler_error(std::move(diag));
+    };
     // Transitive deps first (bases before derived)
     for (const auto& tdep : _transitive_kdis) {
         if (!tdep) continue;
-        collect_llvm_defs_from_namespace(tdep->unit.root_ns, combined_ir, seen_type_names);
+        collect_llvm_defs_from_namespace(tdep->unit.root_ns, combined_ir, seen_type_names, on_conflict);
     }
     for (const auto& imp : _unit.get_imports()) {
         if (!imp.kdi) continue;
-        collect_llvm_defs_from_namespace(imp.kdi->unit.root_ns, combined_ir, seen_type_names);
+        collect_llvm_defs_from_namespace(imp.kdi->unit.root_ns, combined_ir, seen_type_names, on_conflict);
     }
     if (!combined_ir.empty()) {
         ctx->intern_all_llvm_struct_defs(combined_ir);

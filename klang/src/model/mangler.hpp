@@ -63,23 +63,35 @@
  * The basic types are encoded as:
  * - 'v' for void (only for return types or to indicate no parameters)
  * - 'b' for bool
- * - 'c' for char (8 bits)
- * - 'h' for unsigned char
+ * - 'c' for char (32 bits, Unicode code point)
+ * - 'a' for byte (8 bits, signed)
+ * - 'h' for unsigned byte / unsigned char
  * - 's' for short (16 bits)
  * - 't' for unsigned short
  * - 'i' for int (32 bits)
  * - 'j' for unsigned int
  * - 'x' for long (64 bits)
  * - 'y' for unsigned long
+ * - 'n' for long long (128 bits)
+ * - 'o' for unsigned long long
  * - 'f' for float (32 bits)
  * - 'd' for double (64 bits)
  * - 'e' for long double (128 bits)
+ * Enumeration types are encoded as 'Te' followed by their qualified name, so that two
+ * enumerations never collide with each other nor with a structure of the same name.
  * Qualified types (e.g., structures) are encoded using the same name mangling scheme as symbol names:
  * 'N' + encoded qualified name + [template parameter] + 'E'
+ *
+ * `mangle_type()` is **total**: every resolved type has a distinct, non-empty encoding.
+ * An unmanglable type is an internal compiler error, never a silently empty string --
+ * an empty or duplicated encoding would collapse distinct symbols into one and, because
+ * template instantiations are emitted `linkonce_odr` in a `Comdat::Any` group keyed by
+ * the mangled name, silently miscompile at link time.
  */
 namespace k::model {
 
 class type;
+class enum_type;
 class context;
 class function;
 class constructor;
@@ -109,6 +121,22 @@ protected:
         const std::string& tpl_inst_name,
         const std::string& tpl_base_name,
         bool with_k_prefix = false) const;
+
+    /** Encode an enumeration type as 'Te' + its qualified name. */
+    std::string mangle_enum(const enum_type& ty) const;
+
+    /**
+     * Encode a "a::b::C" (or "::a::b::C") fully-qualified type name into the regular
+     * '_KN<len><part>...E' qualified form, for types that carry their name as a plain
+     * string rather than as a `name` object (e.g. unions).
+     */
+    static std::string mangle_qualified_type_name(const std::string& fq_name);
+
+    /** Report an internal compiler error for a type that has no mangled encoding. */
+    [[noreturn]] static void throw_unmanglable_type(const type& ty, const std::string& reason);
+
+    /** Report an internal compiler error for a type whose qualified name is empty. */
+    [[noreturn]] static void throw_unmanglable_type_name(const std::string& fq_name);
 
 public:
     mangler() = delete;

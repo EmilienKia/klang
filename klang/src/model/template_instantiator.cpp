@@ -25,6 +25,8 @@
 
 #include <sstream>
 #include <queue>
+#include <cctype>
+#include <unordered_map>
 
 namespace k::model {
 
@@ -36,9 +38,74 @@ constexpr const char* generic_synthesis_key = "<generic_synthesis>";
 // Name / key helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** Drop a leading "::" from a fully-qualified name. */
+std::string strip_root_prefix(const std::string& fq) {
+    if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') return fq.substr(2);
+    return fq;
+}
+
 std::string type_display_name(const std::shared_ptr<type>& t) {
     if (!t) return "?";
+
+    // Leaf user-defined types: prefer the fully-qualified name. `struct_type::to_string()`
+    // and `enum_type::to_string()` use the short name, so two same-named types coming from
+    // different namespaces would otherwise produce the same instantiation key and the same
+    // instantiated aggregate name (a::S and b::S both giving `Box__struct_nS`).
+    if (auto st = std::dynamic_pointer_cast<struct_type>(t)) {
+        if (auto agg = st->get_struct()) {
+            if (auto fq = strip_root_prefix(agg->get_fq_name()); !fq.empty()) return fq;
+        }
+        return strip_root_prefix(st->name());
+    }
+    if (auto et = std::dynamic_pointer_cast<enum_type>(t)) {
+        if (auto en = et->get_enumeration()) {
+            if (auto fq = strip_root_prefix(en->get_fq_name()); !fq.empty()) return fq;
+        }
+        return t->to_string();
+    }
+
+    // Wrapper types: rebuild the display around the (qualified) inner name, mirroring the
+    // suffixes produced by the corresponding `to_string()` overloads.
+    if (auto inner = t->get_subtype()) {
+        if (type::is_const(t))     return "const " + type_display_name(inner);
+        if (type::is_pointer(t))   return type_display_name(inner) + "*";
+        if (type::is_reference(t)) return type_display_name(inner) + "&";
+        if (type::is_link(t))      return type_display_name(inner) + "+";
+        if (type::is_view(t))      return type_display_name(inner) + "?";
+        if (type::is_owner(t))     return type_display_name(inner) + "!";
+        if (type::is_drain(t))     return type_display_name(inner) + "#";
+        if (type::is_sized_array(t)) {
+            auto sa = std::dynamic_pointer_cast<sized_array_type>(t);
+            return type_display_name(inner) + "[" + std::to_string(sa->get_size()) + "]";
+        }
+        if (type::is_array(t))     return type_display_name(inner) + "[]";
+    }
+
     return t->to_string();
+}
+
+/**
+ * Build the type name of a nested union cloned into a concrete instantiation.
+ *
+ * The name must be unique per instantiation: sibling instantiations own distinct
+ * `struct_type`s / `llvm::StructType`s whose payload sizes differ. A shared name would
+ * make the context's struct registry (keyed by name) and the KDI importer (which
+ * deduplicates LLVM type definitions by name) collapse them onto a single layout.
+ * Qualifying by the enclosing instantiation's name — itself unique — gives a
+ * deterministic name that does not rely on LLVM's `.N` auto-uniquification.
+ */
+std::string nested_type_name(const aggregate& owner, const std::string& union_name) {
+    std::string base = owner.get_fq_name();
+    if (base.size() >= 2 && base[0] == ':' && base[1] == ':') {
+        base = base.substr(2);
+    }
+    if (base.empty()) {
+        base = owner.get_short_name();
+    }
+    if (base.empty()) {
+        return union_name;
+    }
+    return base + "::" + union_name;
 }
 
 std::string build_instantiation_key(const std::vector<template_argument>& args) {
@@ -79,32 +146,82 @@ std::string build_instantiation_key(const std::vector<template_argument>& args) 
     return oss.str();
 }
 
+/**
+ * Escape one component (a type display name, a value, a base name) into an identifier-safe
+ * and **injective** form.
+ *
+ * Every non-alphanumeric character is replaced by a two-character escape `_<letter>`, and
+ * `_` itself is escaped as `_u`. Since every escape is `_` followed by a **non-underscore**
+ * character, an encoded component can never contain `__`, which lets
+ * `build_instantiated_name()` use `__` as an unambiguous argument separator.
+ *
+ * This is what makes `Box<T*>`, `Box<T&>`, `Box<T!>`, `Box<T+>`, `Box<T?>` and `Box<T#>`
+ * distinct instantiations: the previous scheme mapped every non-alphanumeric character to
+ * `_`, so all six collapsed onto a single `Box__T_` aggregate sharing one LLVM type.
+ */
+std::string escape_name_component(const std::string& s) {
+    static const std::unordered_map<char, char> escapes = {
+        {'_', 'u'}, {'*', 'p'}, {'&', 'r'}, {'!', 'o'}, {'+', 'l'}, {'?', 'v'},
+        {'#', 'd'}, {':', 'n'}, {'[', 'a'}, {']', 'e'}, {'<', 't'}, {'>', 'g'},
+        {',', 'c'}, {' ', 's'}, {'.', 'f'}, {'-', 'm'}, {'(', 'b'}, {')', 'q'},
+        {'"', 'y'}, {'\'', 'j'}, {'=', 'w'}, {'/', 'h'},
+    };
+    static const char* hex_digits = "0123456789ABCDEF";
+
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        if (std::isalnum(c)) {
+            out.push_back(static_cast<char>(c));
+            continue;
+        }
+        // '::' gets its own escape so that qualified names stay readable.
+        if (c == ':' && i + 1 < s.size() && s[i + 1] == ':') {
+            out += "_N";
+            ++i;
+            continue;
+        }
+        auto it = escapes.find(static_cast<char>(c));
+        if (it != escapes.end()) {
+            out.push_back('_');
+            out.push_back(it->second);
+        } else {
+            // Any other byte: '_x' followed by its two hex digits ('x' is never used as a
+            // simple escape letter, so this stays unambiguous).
+            out.push_back('_');
+            out.push_back('x');
+            out.push_back(hex_digits[(c >> 4) & 0xF]);
+            out.push_back(hex_digits[c & 0xF]);
+        }
+    }
+    return out;
+}
+
 std::string build_instantiated_name(const std::string& base_name,
-                                     const std::vector<template_argument>& args) {
+                                      const std::vector<template_argument>& args) {
+    // The base name is a plain K identifier and is emitted verbatim so that instantiated
+    // names stay readable (`Box__int`, `get_n__42`). The only residual ambiguity is a
+    // template whose *own* name contains "__" (e.g. `A__B<x>` vs `A<B, x>`); that case is
+    // caught by the duplicate-mangled-name verification instead of miscompiling silently.
     std::ostringstream oss;
     oss << base_name << "__";
     for (size_t i = 0; i < args.size(); ++i) {
-        if (i > 0) oss << "_";
+        if (i > 0) oss << "__";
         if (args[i].is_pack()) {
-            // Pack argument: encode count and types
-            for (size_t j = 0; j < args[i].pack_types.size(); ++j) {
-                if (j > 0) oss << "_";
-                std::string tn = type_display_name(args[i].pack_types[j]);
-                for (char& c : tn) {
-                    if (!std::isalnum(c)) c = '_';
-                }
-                oss << tn;
-            }
-            if (args[i].pack_types.empty()) {
-                oss << "0"; // empty pack
+            // Pack argument: the leading '_k<count>' distinguishes a single pack argument
+            // from the same types passed as separate template arguments.
+            oss << "_k" << args[i].pack_types.size();
+            for (const auto& pack_type : args[i].pack_types) {
+                oss << "_" << escape_name_component(type_display_name(pack_type));
             }
         } else if (args[i].is_type()) {
-            std::string tn = type_display_name(args[i].type_arg);
-            for (char& c : tn) {
-                if (!std::isalnum(c)) c = '_';
-            }
-            oss << tn;
+            oss << escape_name_component(type_display_name(args[i].type_arg));
         } else if (args[i].value_arg.has_value()) {
+            // `void`, `null`, `true`, `false` and numeric literals are all reserved words
+            // or start with a digit / '-', so none of them can collide with an escaped type
+            // name. String values can (`Box<"abc">` vs `Box<abc>`) and therefore keep an
+            // explicit `_V` marker.
             std::visit([&oss](auto&& v) {
                 using T = std::decay_t<decltype(v)>;
                 if constexpr (std::is_same_v<T, std::monostate>) {
@@ -114,24 +231,15 @@ std::string build_instantiated_name(const std::string& base_name,
                 } else if constexpr (std::is_same_v<T, bool>) {
                     oss << (v ? "true" : "false");
                 } else if constexpr (std::is_same_v<T, std::string>) {
-                    std::string s = v;
-                    for (char& c : s) {
-                        if (!std::isalnum(c)) c = '_';
-                    }
-                    oss << s;
-                } else if constexpr (std::is_floating_point_v<T>) {
-                    // Use a sanitized representation for floats in names
-                    std::string s = std::to_string(v);
-                    for (char& c : s) {
-                        if (c == '.' || c == '-') c = '_';
-                    }
-                    oss << s;
+                    oss << "_V" << escape_name_component(v);
+                } else if constexpr (std::is_same_v<T, char>) {
+                    oss << escape_name_component(std::to_string(static_cast<int>(v)));
                 } else {
-                    oss << v;
+                    oss << escape_name_component(std::to_string(v));
                 }
             }, *args[i].value_arg);
         } else {
-            oss << "0";
+            oss << "_z";
         }
     }
     return oss.str();
@@ -1099,6 +1207,19 @@ void template_instantiator::clone_nested_aggregate(
     // Nested aggregate of an instantiation is itself part of the instantiation.
     nested->mark_instantiation();
 
+    // Give the nested aggregate a struct_type named after the enclosing instantiation.
+    // The later resolution passes would otherwise create it from the bare short name, so
+    // Outer<int>::Inner and Outer<long>::Inner would both be called "Inner" and rely on
+    // LLVM's compilation-order-dependent ".N" auto-uniquification — which then leaks into
+    // the exported KDI and makes cross-module type identity non-deterministic.
+    if (ctx && !nested->get_struct_type()) {
+        std::shared_ptr<struct_type> nested_st{
+            new struct_type(nested_type_name(*target, src.get_short_name()),
+                            nested->shared_as<aggregate>())};
+        ctx->add_struct(nested_st);
+        nested->set_struct_type(nested_st);
+    }
+
     // Copy base class specs (raw names — resolved later by resolution passes)
     // Substitute template type parameters in base names (e.g. "Collection<T>" → "Collection<int>")
     for (auto& bs : src.get_bases()) {
@@ -1162,16 +1283,17 @@ void template_instantiator::clone_nested_union(
 
     nested->set_visibility(src.get_visibility());
 
-    // Reuse the source union's struct_type (if it has one) so that any member-variable
-    // type references that were already resolved against the source struct_type continue
-    // to match in find_union_by_struct_type lookups.  The LLVM layout is shared with the
-    // template definition; concrete size computations happen in declaration_generator.
-    if (src.get_struct_type()) {
-        nested->set_struct_type(src.get_struct_type());
-    } else if (ctx) {
-        // Source has no struct_type yet (uncommon): create an opaque one for type-lookup purposes.
-        auto st_name = src.get_short_name();
+    // Give the nested union a **fresh** struct_type and LLVM struct type, one per
+    // instantiation. Reusing the template definition's struct_type (as this code used to
+    // do) makes every sibling instantiation share a single llvm::StructType; since
+    // declaration_generator::visit_union() only computes the payload size of the first
+    // instantiation it finalises and skips the others, an Expected<long,E> could end up
+    // with the 4-byte payload computed for Expected<int,E> and silently truncate values.
+    if (ctx) {
+        const std::string st_name = nested_type_name(*target, src.get_short_name());
         auto st_type = std::make_shared<struct_type>(st_name, std::weak_ptr<aggregate>{});
+        auto* union_llvm_type = llvm::StructType::create(ctx->llvm_context(), st_name + "_union");
+        ctx->attach_llvm_struct_type(st_type, union_llvm_type);
         ctx->add_struct(st_type);
         nested->set_struct_type(st_type);
     }

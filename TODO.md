@@ -18,6 +18,10 @@
   - [ ] Standalone template enum declarations
   - [ ] Template constructors (independent of aggregate template)
   - [ ] SFINAE-like overload filtering based on template constraints
+  - [ ] Variable templates (`template<typename T> const size : int = ...`)
+  - [ ] Non-primitive value template arguments (enum constants, compile-time constant
+        expressions, aggregates) — currently limited to `int`/`long`/`float`/`double`/
+        `bool`/`char`/`string`/`nullptr`
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
 - Add unions, typed unions (discriminated/tagged unions à la std::variant)
     - [ ] Enum-based discriminant interrogation (`u.type()` → enum)
@@ -230,60 +234,154 @@
       constructor becomes a compile-time error. Add a `compile_should_fail` regression test.
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts — workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
 - [ ] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases; extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
-- [ ] **`DataStream round-trip long` fails on a negative value round-trip — root-caused,
-      fix plan proposed, not yet fixed (compiler bug, needs discussion before fixing).**
-      `[libk][io][data]` in `libk/libk/tests/test-io-data-streams.cpp`: writing/reading
-      back `-1L` through `DataOutputStream`/`DataInputStream` returns `4294967295`
-      instead of `-1` (high 32 bits of the `long` get zeroed).
-      - **Root cause**: this is a genuine **compiler bug** (KDI import/export +
-        template instantiation), not a `libk` API/semantics bug, and reproduces even in
-        a plain non-JIT compiled executable. `Expected<R,E>`
-        (`libk/libk/src/expected.k`) has a private nested `union Storage { result: R;
-        error: E; }`. When `k::io` (containing `Expected<byte,SOD>`,
-        `Expected<int,SOD>`, `Expected<long,SOD>`, … sibling instantiations with
-        different-sized `R`) is compiled into `libk.so`/`k.kdi` and then imported via
-        KDI into a consuming translation unit, all sibling `Storage` union
-        instantiations collapse onto a single (too-small) LLVM struct type/layout —
-        concretely, `Expected<long,StreamOutOfData>`'s union ends up using the 4-byte
-        layout computed for a smaller `R` (verified with `gdb`/`--emit-raw-ir`: the
-        high 4 bytes of the stored `long` are silently zeroed). Contributing factors
-        identified in the compiler:
-        1. `template_instantiator::clone_nested_union()`
-           (`klang/src/model/template_instantiator.cpp`, ~L1153-1200) reuses the
-           **template definition's** `struct_type` across all outer-template
-           instantiations instead of creating a fresh LLVM struct type per
-           instantiation.
-        2. `mangler::mangle_union()` (`klang/src/model/mangler.cpp`, ~L380) does not
-           qualify a nested (non-template-parameterized) union's mangled name by the
-           enclosing instantiation's template arguments, so `Expected<byte,E>::Storage`
-           and `Expected<long,E>::Storage` can mangle to the same LLVM type name.
-        3. `kdi_importer.cpp`'s `collect_llvm_defs_from_namespace()` (~L477-535)
-           explicitly deduplicates LLVM struct definitions **by type name string**
-           across the whole KDI, with a comment assuming shared inner types like
-           `Expected<T,E>`'s private union are always interchangeable across
-           specializations — false when `T`'s size varies.
-      - **Proposed fix plan** (needs go-ahead before implementing, since it touches
-        template instantiation, name mangling, and the KDI format handling — all core
-        compiler internals):
-        1. Make nested-union mangled names instantiation-qualified (fix mangling so
-           `Storage` inside `Expected<byte,E>` vs `Expected<long,E>` produce distinct
-           mangled/LLVM type names), removing the false name collision at the root.
-        2. Stop reusing the template definition's `struct_type` in
-           `clone_nested_union()`; create a fresh `llvm::StructType` per instantiation
-           and let `declaration_generator::visit_union()` compute its own `max_size`
-           independently for each.
-        3. Re-audit `kdi_importer.cpp`'s type-name-based LLVM def deduplication: once
-           names are correctly unique per instantiation (step 1), the existing dedup-by-
-           name logic becomes safe again — but add a regression test that would have
-           caught silent incorrect dedup (e.g. two sibling `Expected<T,E>` KDI-imported
-           instantiations with different-sized `T`, asserting on both instantiations'
-           values simultaneously in one process).
-        4. Add a permanent regression test in `klang/tests/test-gen-*.cpp` compiling two
-           sibling template instantiations with differently-sized nested-union payloads
-           through an actual KDI export/import round-trip (not just in one translation
-           unit — the bug does not reproduce without the KDI round-trip).
-      - No `libk` API changes needed for this fix — it is entirely internal to the
-        `klang` compiler (mangling, template instantiation, KDI import).
+- [x] **FIXED — `DataStream round-trip long` failed on a negative value round-trip.**
+      `[libk][io][data]` in `libk/libk/tests/test-io-data-streams.cpp`: writing/reading back
+      `-1L` through `DataOutputStream`/`DataInputStream` returned `4294967295` instead of
+      `-1` (high 32 bits of the `long` were zeroed).
+      - **Root cause**: a compiler bug in template instantiation, not a `libk` API bug.
+        `Expected<R,E>` (`libk/libk/src/expected.k`) has a private nested
+        `union Storage { result: R; error: E; }`. All sibling instantiations
+        (`Expected<byte,SOD>`, `Expected<int,SOD>`, `Expected<long,SOD>`, …) **shared a
+        single `llvm::StructType` for `Storage`**, so only the first instantiation whose
+        layout was finalised decided the payload size for all of them. It reproduced in a
+        plain single translation unit, without any KDI round-trip, and was an
+        **instantiation-order race** (instantiating the large payload first hid it).
+      - Fixes applied:
+        1. `template_instantiator::clone_nested_union()` no longer reuses the template
+           definition's `struct_type`; it creates a fresh `struct_type` + opaque
+           `llvm::StructType` per instantiation, named after the enclosing instantiation
+           (`nested_type_name()`).
+        2. `aggregate_type_resolver::visit_union()` skips unions nested in a template
+           *definition* — a blueprint must never get a materialised type.
+        3. `resolvers_aggregate.cpp` / `resolvers_type_ref.cpp` now assign fully-qualified
+           names (and recompute mangled names) to the nested unions, nested aggregates and
+           synthesised `Kind` enums of an instantiation, so no entity is emitted anonymously.
+        4. `kdi_importer.cpp`'s dedup-by-type-name is now conflict-checking (see below).
+      - Regression tests: `[gen][union][template][nested-layout]` in
+        `klang/tests/test-gen-union-template.cpp` (single-TU sibling layouts, three payload
+        sizes, and a full KDI export/import round-trip).
+- [x] **FIXED — `mangler::mangle_type()` was not exhaustive and silently returned `""`
+      for several type kinds, producing colliding symbols (cross-module miscompilation).**
+      It had no branch for `enum_type`, and none for `primitive_type::LONG_LONG` /
+      `UNSIGNED_LONG_LONG`, `null_type` or `unresolved_function_ref_type`.
+      - Confirmed damage: a library exporting `f(x: ErrA)` and `f(x: ErrB)` (two enums)
+        recorded **the same** `mangled_name` for both in its `.kdi`, while the `.so`
+        exported `<sym>` and `<sym>.1` (LLVM auto-uniquification, invisible to the KDI); a
+        consumer then called the first overload for both. The same erasure dropped enum
+        *template arguments*: `Expected<long, StreamOutOfData>` mangled as
+        `_KFN1k8ExpectedIxE…`, making `Expected<long, EnumA>` and `Expected<long, EnumB>`
+        indistinguishable at link time under `linkonce_odr` + `Comdat::Any`.
+      - Fixes applied: `mangle_type()` is now **total** — enums encode as `Te` + qualified
+        name, the missing primitives and `null_type` have codes, unions without an owning
+        aggregate mangle by their qualified name instead of their short name, unresolved
+        types get a deterministic placeholder (recomputed once resolution completes), and
+        any remaining fall-through raises `INTERNAL_ERR_MANGLE_TYPE` instead of returning
+        `""`. `TYPE_CHAR` changed from `"Di"` to `"c"` to remove its ambiguity with the
+        drain modifier `D` applied to `int`. `type_reference_resolver::visit_function()`
+        recomputes the mangled name after full type resolution (enums are only resolved in
+        that pass), and `compute_cast_weight()` gained an enumeration identity rule so two
+        unrelated enums are never implicitly interconvertible.
+      - Regression tests: `[gen][mangling][exhaustive]` in
+        `klang/tests/test-gen-template-mangling.cpp`, `[import][mangling][enum-param]` in
+        `klang/tests/test-import.cpp`.
+- [x] **FIXED — `build_instantiated_name()` was not injective, so distinct template
+      instantiations collapsed onto a single model aggregate / LLVM type.**
+      It built an instantiation's short name by mapping **every** non-alphanumeric character
+      to `_`: `Box<int*>`, `Box<int&>` and `Box<int!>` all became `Box__int_` and produced a
+      single `%Box__int_ = type { ptr }`, while the symbol mangler still gave their methods
+      distinct names (a split brain between the two naming systems). Realistic damage:
+      `Vector<String!>` (owning, runs the destructor) and `Vector<String*>` (raw) became the
+      same aggregate.
+      - Fix applied: every component is now escaped with a prefix-free, injective scheme
+        (`_u` for `_`, `_p` `*`, `_r` `&`, `_o` `!`, `_l` `+`, `_v` `?`, `_d` `#`, `_N` for
+        `::`, `_x<hex>` otherwise). Since no escape can produce `__`, `__` is used as the
+        unambiguous argument separator. Common names are unchanged (`Box__int`,
+        `get_n__42`); multi-argument names now read `Pair__int__float`. `type_display_name()`
+        additionally uses the **fully-qualified** name of struct/enum arguments (recursing
+        through addresser wrappers), because `struct_type::to_string()` yields the short name
+        and `a::S` / `b::S` would otherwise share an instantiation key and name.
+      - Residual, documented ambiguity: a template whose *own* name contains `__` (e.g.
+        `A__B<x>` vs `A<B, x>`). It is caught by `compiler::verify_mangled_names()` instead
+        of miscompiling silently.
+      - Regression tests: `[template][instantiation][addresser-distinct]` in
+        `klang/tests/test-gen-template-instantiation.cpp`.
+- [x] **FIXED — nested types of a template instantiation got unqualified LLVM type names,
+      leaking LLVM's `.N` auto-uniquification into the KDI.**
+      A nested `struct Inner` inside `Outer<T>` was emitted as `%Inner` for `Outer<int>` and
+      `%Inner.1` for `Outer<long>`; the suffix is assigned by LLVM purely from *compilation
+      order*, so it was neither deterministic nor reproducible across builds. The exported
+      `.kdi` then mapped both `::…::Outer__int::Inner` and `::…::Outer__long::Inner` to the
+      same `mangled_name` `Inner` while their `llvm_def`s differed.
+      - Fix applied: `template_instantiator::clone_nested_aggregate()` (and
+        `clone_nested_union()`) now create the nested `struct_type` up front with a name
+        qualified by the enclosing instantiation (`Outer__long::Inner`), and the resolvers
+        assign matching fully-qualified K names. `libk.kdi` no longer contains a single
+        `.N`-suffixed LLVM type name.
+- [ ] **Unqualified calls to imported functions bypass overload resolution.**
+      A library exporting two overloads `f(x: ErrA)` / `f(x: ErrB)` (or any two overloads
+      differing only in an imported parameter type) is called from a consumer module as
+      `f(ovllib::ErrB::b1)`; the call is bound by `symbol_resolver` to the **first**
+      matching imported function and never reaches
+      `type_reference_resolver::get_best_matching_function` (verified: no
+      `[get_best_matching_function] selected …` trace is emitted for the call, and the
+      emitted IR calls the `ErrA` overload with the `ErrB` argument value).
+      Distinct from the mangling gap that used to mask it: since `mangle_type()` was made
+      exhaustive the two overloads now have distinct symbols and are both declared in the
+      consumer, but the wrong one is still selected.
+      Fix direction: route imported-function call sites through the same overload-resolution
+      path as local ones instead of binding eagerly during symbol resolution.
+- [x] **FIXED — `compute_cast_weight()` had no enumeration identity rule.** Unrelated
+      enumerations sharing an underlying integer type scored identically, so overload
+      resolution silently picked the first candidate. Derived → base enum conversion stays
+      allowed.
+- [ ] **`enum X : long` ignores the explicit underlying type.**
+      `enum ErrA : byte { … }` and `enum ErrB : long { … }` both produce `i8` fields:
+      `struct Holder { ea : ErrA; eb : ErrB; }` emits `%Holder = type { i8, i8 }`.
+      Independent of templates, but it currently *masks* layout collisions caused by the
+      mangling gaps above (every enum happens to be the same size), so it must be fixed
+      together with them to get meaningful regression coverage.
+      The grammar already specifies this (`doc/spec/language/grammar.ebnf`, ~L458-468:
+      "if TypeSpec does not resolve to an enum type, it is the explicit underlying type").
+- [x] **FIXED — there was no diagnostic for an empty or duplicated mangled name.**
+      `update_mangled_name()` silently yielded `""` for elements whose name had no root
+      prefix, and nothing checked that two distinct elements of the same unit produced the
+      same mangled name. Because template instantiations are emitted `linkonce_odr` in a
+      `Comdat::Any` group keyed by the mangled name, **any mangling collision became a
+      silent miscompilation at link time** — which is what let all the bugs above go
+      unnoticed.
+      - Fix applied: `compiler::verify_mangled_names()` runs at the start of
+        `process_generation()` and raises `ERR_MANGLED_NAME_EMPTY` (0x0200) or
+        `ERR_DUPLICATE_MANGLED_NAME` (0x0201) over every emitted function, aggregate, union
+        and enumeration. Deleted functions and template blueprints are exempt (never
+        emitted). Regression coverage: `[gen][mangling][exhaustive]`.
+- [x] **FIXED — `update_mangled_name()` was called before the fully-qualified name was
+      assigned in the template-cloning paths**, so nested unions/aggregates of an
+      instantiation kept an empty mangled name (hence the anonymous `%_union`).
+      `resolvers_aggregate.cpp` and `resolvers_type_ref.cpp` now assign the FQ name and
+      recompute the mangled name for every nested union, nested aggregate and synthesised
+      `Kind` enum of an instantiation.
+- [x] **FIXED (by construction) — a member variable typed by a nested type of a template
+      was not re-substituted to the concrete nested type.**
+      `substitute_type()` only rewrites `unresolved_type` leaves, so a member declared
+      `_storage : Storage` kept the template definition's `struct_type`. This is now moot:
+      unions nested in a template *definition* are never resolved, so such a member stays an
+      `unresolved_type` and is resolved later within the concrete aggregate's own scope —
+      exactly the path nested *structs* already used. Should a nested type ever be resolved
+      before instantiation again, `compiler::verify_mangled_names()` plus the KDI layout
+      conflict check will catch the resulting collision instead of miscompiling.
+- [ ] **Silent failure when re-parsing an imported template definition.**
+      `kdi_importer::materialise_template_def()` (~L1013-1042) re-parses the template source
+      text carried by the KDI; if parsing or model building fails, the template simply
+      becomes unavailable for cross-module instantiation with no diagnostic at all. Report
+      an error instead.
+- [ ] **No recursion-depth limit on template instantiation.**
+      `template_instantiator::instantiate_aggregate()` recurses without any depth guard, so
+      a recursive template (accidental or malicious) overflows the stack and crashes the
+      compiler instead of reporting a `template-instantiation-depth-exceeded` diagnostic.
+- [ ] **Value template arguments are limited to primitive types.**
+      `build_value_substitution_map()` only accepts `int`, `long`, `float`, `double`,
+      `bool`, `char`, `string` and `nullptr` values; no enum constants, no
+      compile-time-constant expressions, no aggregates.
 
 ### Auxiliary Tools (libkdi / kditool)
 

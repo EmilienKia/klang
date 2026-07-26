@@ -116,6 +116,7 @@ A missing transitive KDI is a **fatal error**.
 | `compiler.hpp / .cpp` | Core pipeline, parse/codegen orchestration, IR/obj/exe output |
 | `compiler_linker.cpp` | `gen_executable`, `gen_shared_library`, `gen_static_library`, `gen_libraries`, `gen_kdi`, `build_import_link_args` |
 | `compiler_diagnostic.cpp` | `report()`, `print_logs()`, `log_source_line*()`, coordinate helpers |
+| `compiler.cpp` (`verify_mangled_names`) | Pre-codegen check: no emitted entity may have an empty or duplicated mangled name |
 | `errors.hpp` | **Umbrella** → `errors_lex_parse.hpp` → `errors_model.hpp` → `errors_gen.hpp` |
 | `errors_lex_parse.hpp` | `compiler_diag`, `lexer_diag`, `parser_diag` |
 | `errors_model.hpp` | `model_diag`, `symbol_diag`, `structure_diag`, `function_diag`, `type_diag` |
@@ -318,6 +319,37 @@ For example, `type_reference_resolver` visitor bodies live in:
 The lexer supports `lex_holder` for save/restore of the token stream position.
 Parser methods use it to implement backtracking without throwing.
 
+### Naming and mangling invariants
+
+Two independent naming systems must both stay injective; a collision in either one is a
+silent miscompilation, because template instantiations are emitted `linkonce_odr` in a
+`Comdat::Any` group keyed by the mangled name (`gen/gen_helpers.hpp`,
+`apply_instantiation_linkage()`), so the linker keeps one arbitrary definition instead of
+reporting a duplicate symbol.
+
+| System | Built by | Used for |
+|--------|----------|----------|
+| Symbol mangling (`_K…`) | `mangler::mangle_*` (`model/mangler.cpp`) | LLVM function symbols, KDI `mangled_name` fields, cross-module link resolution |
+| Instantiated / nested type names | `build_instantiated_name()`, `nested_type_name()` (`model/template_instantiator.cpp`) | K-level short & FQ names, instantiation registry keys, LLVM struct type names, KDI type table |
+
+Rules to preserve when touching either:
+
+- **`mangler::mangle_type()` is total.** Every resolved type has a distinct non-empty
+  encoding; an unhandled kind raises `codegen_diag::INTERNAL_ERR_MANGLE_TYPE` instead of
+  returning `""`. Adding a new `type` subclass means adding a branch here.
+- **`escape_name_component()` is prefix-free.** Every escape is `_` followed by a
+  non-underscore character, so an encoded component never contains `__` — which is what makes
+  `__` a safe argument separator in `build_instantiated_name()`.
+- **Nested types of an instantiation are qualified by their enclosing instantiation**
+  (`Expected__long__…::Storage`). Never let a nested type keep a bare short name: sibling
+  instantiations would share an LLVM type, and the KDI importer deduplicates LLVM type
+  definitions by name.
+- **Never rely on LLVM's `.N` auto-uniquification.** It depends on compilation order and
+  leaks into the exported KDI, breaking cross-module type identity.
+- `compiler::verify_mangled_names()` enforces the first rule before code generation; the KDI
+  importer enforces the last two by rejecting two different bodies under one type name
+  (`codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT`).
+
 ### Error Reporting
 Each resolver/generator inherits `log::logger_relay` and uses:
 ```cpp
@@ -399,7 +431,8 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Add linking logic | `compiler_linker.cpp` |
 | Add a diagnostic message | `compiler_diagnostic.cpp` |
 | Understand template instantiation | `model/template_instantiator.cpp`, called from `resolvers_aggregate.cpp` |
-| Understand name mangling | `model/mangler.cpp` |
+| Understand name mangling | `model/mangler.cpp` (symbol names), `model/template_instantiator.cpp` `build_instantiated_name()` / `escape_name_component()` / `nested_type_name()` (K-level and LLVM type names) |
+| Debug a symbol collision / wrong overload at link time | `compiler.cpp` `verify_mangled_names()`, `model/mangler.cpp` `mangle_type()`, `gen/gen_helpers.hpp` `apply_instantiation_linkage()` |
 | Understand import system | `model/tools/kdi_importer.cpp`, `model/imported.hpp` |
 | Understand union types | `model/model_union.hpp`, `gen/gen_struct.cpp` (visit_union), `gen/gen_expr_member.cpp` (union access), `gen/gen_statements.cpp` (emit_union_cleanup) |
 | Understand union inheritance | `model/model_union.hpp` (base_union, reindex, all_alternatives_ptrs), `gen/gen_struct.cpp` (symbol_resolver::visit_union base resolution), `gen/gen_operators_assign.cpp` (upcast/downcast codegen), `gen/resolvers_scope_lookup.cpp` (is_base_union_of, lookup_union) |

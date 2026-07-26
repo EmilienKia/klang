@@ -1547,6 +1547,19 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             }
             nested->update_mangled_name();
             update_children_names(*nested);
+        } else if (auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
+            // Nested unions (e.g. Expected<R,E>::Storage) were created by
+            // template_instantiator before the enclosing instantiation had a
+            // root-prefixed name; without this their mangled name stays empty and every
+            // instantiation's union would be emitted as the same anonymous LLVM type.
+            if (auto ancestor = nested_un->template ancestor<named_element>()) {
+                nested_un->assign_name(ancestor->get_name().with_back(nested_un->get_short_name()));
+            }
+            nested_un->update_mangled_name();
+            if (auto kind_enum = nested_un->get_kind_enum()) {
+                // assign_name() recomputes the mangled name.
+                kind_enum->assign_name(nested_un->get_name().with_back(kind_enum->get_short_name()));
+            }
         }
     }
 
@@ -2096,6 +2109,38 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         }
     }
     // ── End function reference type cases ─────────────────────────────────────
+
+    // --- Enumeration identity -------------------------------------------------
+    // Two unrelated enumerations are never implicitly convertible into each other,
+    // even though they share the same underlying integer representation. Without this
+    // rule, overload resolution scores f(EnumA) and f(EnumB) identically for an EnumB
+    // argument and silently selects the first candidate. Derivation (enum B : A) stays
+    // allowed in the derived → base direction.
+    {
+        const auto peel_enum = [](std::shared_ptr<type> t) -> std::shared_ptr<enum_type> {
+            t = type::remove_const(t);
+            if (type::is_reference(t)) t = type::remove_const(t->get_subtype());
+            return std::dynamic_pointer_cast<enum_type>(t);
+        };
+        auto src_enum = peel_enum(type_src);
+        auto tgt_enum = peel_enum(tgt_nc);
+        if (src_enum && tgt_enum && src_enum != tgt_enum) {
+            auto src_en = src_enum->get_enumeration();
+            auto tgt_en = tgt_enum->get_enumeration();
+            const auto derives_from = [](std::shared_ptr<enumeration> derived,
+                                         const std::shared_ptr<enumeration>& base) {
+                for (auto e = std::move(derived); e; e = e->get_base()) {
+                    if (e == base) return true;
+                }
+                return false;
+            };
+            const bool related = src_en && tgt_en
+                && (src_en == tgt_en || derives_from(src_en, tgt_en));
+            if (!related) {
+                return CAST_IMPOSSIBLE;
+            }
+        }
+    }
 
     // --- Null literal → any nullable indirection: always valid ─────────────
     if (type::is_null(type_src)) {

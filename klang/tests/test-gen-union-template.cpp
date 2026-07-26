@@ -195,3 +195,143 @@ TEST_CASE("Template union definition imported and instantiated by consumer", "[g
     )");
     REQUIRE(result.exit_code == 33);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Nested union inside a template aggregate: per-instantiation layout
+//
+// Regression tests for the `DataStream round-trip long` bug. Sibling instantiations of a
+// template holding a *nested* union used to share a single llvm::StructType (created for
+// the template *definition* and reused by template_instantiator::clone_nested_union). Since
+// declaration_generator::visit_union only sizes the first instantiation it finalises and
+// skips the others, Expected<long,E> could end up with the 4-byte payload computed for
+// Expected<int,E>, silently truncating the stored value.
+//
+// The declaration order below matters: the small payload is instantiated first, so a shared
+// union type would be sized to 4 bytes and the 8-byte round-trip would fail.
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Nested union in a template: sibling instantiations keep their own layout",
+          "[gen][union][template][nested-layout]") {
+    auto jit = gen_jit(R"(
+        module test;
+        template<typename R, typename E>
+        struct Holder {
+            private:
+            union Storage {
+                result: R;
+                error: E;
+            }
+            _storage : Storage;
+            public:
+            Holder() {}
+            setResult(value : R&) { _storage.result = value; }
+            const getResult() : R { return _storage.result; }
+        }
+
+        // Instantiated FIRST: a shared union type would be sized from this one.
+        small_first(v : int) : int {
+            h : Holder<int, bool>;
+            h.setResult(v);
+            return h.getResult();
+        }
+
+        // Copying by value is what makes a too-small layout observable: the copy is a
+        // memcpy of sizeof(Holder<long,bool>), which drops the high bytes.
+        big_round_trip(v : long) : long {
+            h : Holder<long, bool>;
+            h.setResult(v);
+            copy : Holder<long, bool> = h;
+            return copy.getResult();
+        }
+    )");
+    REQUIRE(jit);
+
+    auto small = jit->lookup_symbol<int(*)(int)>("small_first");
+    REQUIRE(small != nullptr);
+    CHECK(small(7) == 7);
+
+    auto big = jit->lookup_symbol<long(*)(long)>("big_round_trip");
+    REQUIRE(big != nullptr);
+    CHECK(big(1234567890123L) == 1234567890123L);
+    CHECK(big(-1L) == -1L);
+}
+
+TEST_CASE("Nested union in a template: three payload sizes coexist",
+          "[gen][union][template][nested-layout]") {
+    auto jit = gen_jit(R"(
+        module test;
+        template<typename R>
+        struct Box {
+            private:
+            union Store {
+                v: R;
+                tag: byte;
+            }
+            _s : Store;
+            public:
+            Box() {}
+            set(value : R&) { _s.v = value; }
+            const get() : R { return _s.v; }
+        }
+        run_byte(v : byte) : byte { b : Box<byte>; b.set(v); c : Box<byte> = b; return c.get(); }
+        run_int(v : int)   : int  { b : Box<int>;  b.set(v); c : Box<int>  = b; return c.get(); }
+        run_long(v : long) : long { b : Box<long>; b.set(v); c : Box<long> = b; return c.get(); }
+    )");
+    REQUIRE(jit);
+
+    auto rb = jit->lookup_symbol<signed char(*)(signed char)>("run_byte");
+    auto ri = jit->lookup_symbol<int(*)(int)>("run_int");
+    auto rl = jit->lookup_symbol<long(*)(long)>("run_long");
+    REQUIRE(rb != nullptr);
+    REQUIRE(ri != nullptr);
+    REQUIRE(rl != nullptr);
+
+    CHECK(rb(-42) == -42);
+    CHECK(ri(-123456789) == -123456789);
+    CHECK(rl(-1L) == -1L);
+}
+
+TEST_CASE("Nested union in a template survives a KDI export/import round-trip",
+          "[gen][union][template][nested-layout][import][run]") {
+    // The producing module instantiates the small payload first and the consumer reads back
+    // both. Before the fix the KDI importer deduplicated LLVM type definitions by name and,
+    // because every instantiation's union was the anonymous `%_union`, all of them collapsed
+    // onto a single 4-byte layout in the consumer.
+    auto result = build_exec_with_lib(R"(
+        module mylib;
+        public:
+        template<typename R, typename E>
+        struct Holder {
+            private:
+            union Storage {
+                result: R;
+                error: E;
+            }
+            _storage : Storage;
+            public:
+            Holder() {}
+            setResult(value : R&) { _storage.result = value; }
+            const getResult() : R { return _storage.result; }
+        }
+        make_small(v : int) : int {
+            h : Holder<int, bool>;
+            h.setResult(v);
+            return h.getResult();
+        }
+        make_big(v : long) : long {
+            h : Holder<long, bool>;
+            h.setResult(v);
+            return h.getResult();
+        }
+    )", R"(
+        module main;
+        import mylib;
+        main() : int {
+            if (mylib::make_small(7) != 7) return 1;
+            if (mylib::make_big(-1) != -1) return 2;
+            if (mylib::make_big(1234567890123) != 1234567890123) return 3;
+            return 0;
+        }
+    )");
+    REQUIRE(result.exit_code == 0);
+}

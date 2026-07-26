@@ -135,6 +135,21 @@ protected:
 
     void process_generation(bool optimize = true, bool dump = true);
 
+    /**
+     * Verify that every model element about to be emitted has a usable mangled name.
+     *
+     * Rejects two situations that would otherwise silently miscompile:
+     *  - an **empty** mangled name, which makes distinct entities indistinguishable;
+     *  - **two distinct entities sharing one mangled name**. Template instantiations are
+     *    emitted `linkonce_odr` in a `Comdat::Any` group keyed by the mangled name, so the
+     *    linker would keep a single, arbitrarily chosen definition instead of reporting a
+     *    duplicate symbol.
+     *
+     * Overloads legitimately share a short name but never a mangled name; a collision here
+     * always means the mangler lost information (see `mangler::mangle_type()`).
+     */
+    void verify_mangled_names();
+
     compiler(llvm::TargetMachine* target = nullptr);
 
 public:

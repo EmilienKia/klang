@@ -25,6 +25,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <functional>
+#include <unordered_map>
 #include <unordered_set>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
@@ -457,6 +459,9 @@ bool compiler::has_main_method() const {
 
 void compiler::process_generation(bool optimize, bool dump) {
 
+    trace("[compiler::process_generation] verifying mangled names");
+    verify_mangled_names();
+
     trace("[compiler::process_generation] initializing LLVM module");
     _context->init_module(_model_unit->get_unit_name());
 
@@ -597,6 +602,78 @@ void compiler::resolve_ir_filenames(const std::string& output_file) {
     }
     if (_ir_output_options.emit_opt_ir && _ir_output_options.opt_ir_file.empty()) {
         _ir_output_options.opt_ir_file = stem.string() + ".opt.ll";
+    }
+}
+
+namespace {
+
+/// Human-readable description of a model element, used in mangled-name diagnostics.
+std::string describe_element(const k::model::named_element& elem) {
+    const std::string fq = elem.get_fq_name();
+    return fq.empty() ? elem.get_short_name() : fq;
+}
+
+} // anonymous namespace
+
+void compiler::verify_mangled_names() {
+    // fq-name of the first owner of each mangled name, so a collision can name both sides.
+    std::unordered_map<std::string, std::string> seen;
+
+    const auto check = [&](const k::model::named_element& elem, const char* kind) {
+        const std::string& mangled = elem.get_mangled_name();
+        const std::string who = describe_element(elem);
+        if (mangled.empty()) {
+            auto diag = k::log::diagnostic::make_fatal(
+                static_cast<unsigned int>(k::diag::codegen_diag::ERR_MANGLED_NAME_EMPTY),
+                "Internal error: {0} '{1}' has an empty mangled name",
+                {kind, who});
+            report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
+        auto [it, inserted] = seen.emplace(mangled, who);
+        if (!inserted && it->second != who) {
+            auto diag = k::log::diagnostic::make_fatal(
+                static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME),
+                "Internal error: {0} '{1}' and '{2}' both mangle to '{3}'; "
+                "distinct entities must never share a mangled name",
+                {kind, who, it->second, mangled});
+            report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
+    };
+
+    std::function<void(const std::shared_ptr<k::model::element>&)> walk =
+        [&](const std::shared_ptr<k::model::element>& elem) {
+            if (!elem) return;
+
+            if (auto fn = std::dynamic_pointer_cast<k::model::function>(elem)) {
+                // Template definitions are blueprints; deleted functions are never emitted
+                // and legitimately carry no mangled name.
+                if (!fn->is_template() && !fn->is_deleted()) check(*fn, "function");
+                return;
+            }
+            if (auto un = std::dynamic_pointer_cast<k::model::union_type_def>(elem)) {
+                if (!un->is_template()) check(*un, "union");
+                return;
+            }
+            if (auto en = std::dynamic_pointer_cast<k::model::enumeration>(elem)) {
+                check(*en, "enumeration");
+                return;
+            }
+            if (auto agg = std::dynamic_pointer_cast<k::model::aggregate>(elem)) {
+                if (agg->is_template()) return; // blueprint: children are not emitted either
+                check(*agg, "aggregate");
+                for (const auto& child : agg->get_children()) walk(child);
+                return;
+            }
+            if (auto nspace = std::dynamic_pointer_cast<k::model::ns>(elem)) {
+                for (const auto& child : nspace->get_children()) walk(child);
+                return;
+            }
+        };
+
+    if (_model_unit) {
+        walk(_model_unit->get_root_namespace());
     }
 }
 
