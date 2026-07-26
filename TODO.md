@@ -419,19 +419,72 @@
       (`libk/libk/src/vector.k`) only exposes `append(...)` — `pushBack` was presumably
       renamed at some point and these tests were never updated. Fixed by updating the
       call sites to `append(...)` in `klang/tests/test-gen-foreach.cpp` (no API change).
-- [ ] **Pre-existing, unrelated test failures — tracked for future investigation** (found
-      while implementing `Set<T>`/`ListSet<T>`/`TreeSet<T>`/`HashSet<T>`; confirmed via
-      bisection to be unaffected by the Set work or by the const/reference-indirection
-      fix in `gen_statements.cpp`, i.e. they fail identically with or without those
-      changes):
-      - **`DataStream round-trip long` fails on a negative value round-trip.**
-        `[libk][io][data]` in `libk/libk/tests/test-io-data-streams.cpp`: writing/reading
-        back `-1L` through `DataOutputStream`/`DataInputStream` returns something other
-        than `-1` (test returns `2`, i.e. the `v1 != -1` check fails) — looks like a
-        sign-extension issue in the long read/write path. Not yet root-caused.
-      - **`Transform streams one-to-one and buffering` fails.**
-        `[libk][io][transform]` in `libk/libk/tests/test-io-transform-streams.cpp`
-        (assertion around line 317) — not yet root-caused.
+- [x] **`Transform streams one-to-one and buffering` failed — FIXED.**
+      `[libk][io][transform]` in `libk/libk/tests/test-io-transform-streams.cpp`. Root
+      cause: commit `cce3f7b` ("Remove legacy compatibility method names for collections")
+      renamed `Vector<T>::removeFront()` → `removeFirst()` and updated most call sites in
+      `libk/libk/src/io/transform_stream.k` (`pushBack`→`append`, `getSize`→`size`), but
+      missed the 13 `removeFront()` call sites in that same file — a genuine bug in
+      shipped `libk` production code (not just the test), since `removeFront` no longer
+      exists on `Vector<T>`. The test itself also still used the pre-rename
+      `pushBack`/`getSize` names. Fixed by updating all `removeFront()` call sites in
+      `transform_stream.k` to `removeFirst()`, and updating the test to use
+      `append`/`size`. No API change — `removeFirst` already existed; this only fixes
+      stale call sites left over from an incomplete mechanical rename.
+- [ ] **`DataStream round-trip long` fails on a negative value round-trip — root-caused,
+      fix plan proposed, not yet fixed (compiler bug, needs discussion before fixing).**
+      `[libk][io][data]` in `libk/libk/tests/test-io-data-streams.cpp`: writing/reading
+      back `-1L` through `DataOutputStream`/`DataInputStream` returns `4294967295`
+      instead of `-1` (high 32 bits of the `long` get zeroed).
+      - **Root cause**: this is a genuine **compiler bug** (KDI import/export +
+        template instantiation), not a `libk` API/semantics bug, and reproduces even in
+        a plain non-JIT compiled executable. `Expected<R,E>`
+        (`libk/libk/src/expected.k`) has a private nested `union Storage { result: R;
+        error: E; }`. When `k::io` (containing `Expected<byte,SOD>`,
+        `Expected<int,SOD>`, `Expected<long,SOD>`, … sibling instantiations with
+        different-sized `R`) is compiled into `libk.so`/`k.kdi` and then imported via
+        KDI into a consuming translation unit, all sibling `Storage` union
+        instantiations collapse onto a single (too-small) LLVM struct type/layout —
+        concretely, `Expected<long,StreamOutOfData>`'s union ends up using the 4-byte
+        layout computed for a smaller `R` (verified with `gdb`/`--emit-raw-ir`: the
+        high 4 bytes of the stored `long` are silently zeroed). Contributing factors
+        identified in the compiler:
+        1. `template_instantiator::clone_nested_union()`
+           (`klang/src/model/template_instantiator.cpp`, ~L1153-1200) reuses the
+           **template definition's** `struct_type` across all outer-template
+           instantiations instead of creating a fresh LLVM struct type per
+           instantiation.
+        2. `mangler::mangle_union()` (`klang/src/model/mangler.cpp`, ~L380) does not
+           qualify a nested (non-template-parameterized) union's mangled name by the
+           enclosing instantiation's template arguments, so `Expected<byte,E>::Storage`
+           and `Expected<long,E>::Storage` can mangle to the same LLVM type name.
+        3. `kdi_importer.cpp`'s `collect_llvm_defs_from_namespace()` (~L477-535)
+           explicitly deduplicates LLVM struct definitions **by type name string**
+           across the whole KDI, with a comment assuming shared inner types like
+           `Expected<T,E>`'s private union are always interchangeable across
+           specializations — false when `T`'s size varies.
+      - **Proposed fix plan** (needs go-ahead before implementing, since it touches
+        template instantiation, name mangling, and the KDI format handling — all core
+        compiler internals):
+        1. Make nested-union mangled names instantiation-qualified (fix mangling so
+           `Storage` inside `Expected<byte,E>` vs `Expected<long,E>` produce distinct
+           mangled/LLVM type names), removing the false name collision at the root.
+        2. Stop reusing the template definition's `struct_type` in
+           `clone_nested_union()`; create a fresh `llvm::StructType` per instantiation
+           and let `declaration_generator::visit_union()` compute its own `max_size`
+           independently for each.
+        3. Re-audit `kdi_importer.cpp`'s type-name-based LLVM def deduplication: once
+           names are correctly unique per instantiation (step 1), the existing dedup-by-
+           name logic becomes safe again — but add a regression test that would have
+           caught silent incorrect dedup (e.g. two sibling `Expected<T,E>` KDI-imported
+           instantiations with different-sized `T`, asserting on both instantiations'
+           values simultaneously in one process).
+        4. Add a permanent regression test in `klang/tests/test-gen-*.cpp` compiling two
+           sibling template instantiations with differently-sized nested-union payloads
+           through an actual KDI export/import round-trip (not just in one translation
+           unit — the bug does not reproduce without the KDI round-trip).
+      - No `libk` API changes needed for this fix — it is entirely internal to the
+        `klang` compiler (mangling, template instantiation, KDI import).
 
 ### libk
 - Refactor libk C functions wrapping to reduce intermediate method counts

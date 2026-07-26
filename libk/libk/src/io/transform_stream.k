@@ -126,7 +126,7 @@ public:
     read() : ::k::Optional<O> {
         if (!buffer.isEmpty()) {
             result : O = buffer[0];
-            buffer.removeFront();
+            buffer.removeFirst();
             return ::k::Optional<O>(result);
         }
 
@@ -135,7 +135,7 @@ public:
             doTransform(current.get());
             if (!buffer.isEmpty()) {
                 result : O = buffer[0];
-                buffer.removeFront();
+                buffer.removeFirst();
                 return ::k::Optional<O>(result);
             }
             current = _in->read();
@@ -157,7 +157,7 @@ public:
         while (written < actual) {
             if (!buffer.isEmpty()) {
                 buf[off + written] = buffer[0];
-                buffer.removeFront();
+                buffer.removeFirst();
                 written = written + 1;
                 continue;
             }
@@ -169,7 +169,7 @@ public:
             doTransform(current.get());
             if (!buffer.isEmpty()) {
                 buf[off + written] = buffer[0];
-                buffer.removeFront();
+                buffer.removeFirst();
                 written = written + 1;
             }
         }
@@ -184,7 +184,7 @@ public:
         skipped : unsigned long = 0;
         while (skipped < n) {
             if (!buffer.isEmpty()) {
-                buffer.removeFront();
+                buffer.removeFirst();
                 skipped = skipped + 1;
                 continue;
             }
@@ -195,7 +195,7 @@ public:
             }
             doTransform(current.get());
             if (!buffer.isEmpty()) {
-                buffer.removeFront();
+                buffer.removeFirst();
                 skipped = skipped + 1;
             }
         }
@@ -311,7 +311,7 @@ public:
     read() : ::k::Optional<O> {
         if (!outputBuffer.isEmpty()) {
             result : O = outputBuffer[0];
-            outputBuffer.removeFront();
+            outputBuffer.removeFirst();
             return ::k::Optional<O>(result);
         }
 
@@ -321,7 +321,7 @@ public:
             doTransform(inputBuffer);
             if (!outputBuffer.isEmpty()) {
                 result : O = outputBuffer[0];
-                outputBuffer.removeFront();
+                outputBuffer.removeFirst();
                 return ::k::Optional<O>(result);
             }
             current = _in->read();
@@ -343,7 +343,7 @@ public:
         while (written < actual) {
             if (!outputBuffer.isEmpty()) {
                 buf[off + written] = outputBuffer[0];
-                outputBuffer.removeFront();
+                outputBuffer.removeFirst();
                 written = written + 1;
                 continue;
             }
@@ -356,7 +356,7 @@ public:
             doTransform(inputBuffer);
             if (!outputBuffer.isEmpty()) {
                 buf[off + written] = outputBuffer[0];
-                outputBuffer.removeFront();
+                outputBuffer.removeFirst();
                 written = written + 1;
             }
         }
@@ -371,7 +371,7 @@ public:
         skipped : unsigned long = 0;
         while (skipped < n) {
             if (!outputBuffer.isEmpty()) {
-                outputBuffer.removeFront();
+                outputBuffer.removeFirst();
                 skipped = skipped + 1;
                 continue;
             }
@@ -383,7 +383,7 @@ public:
             inputBuffer.append(current.get());
             doTransform(inputBuffer);
             if (!outputBuffer.isEmpty()) {
-                outputBuffer.removeFront();
+                outputBuffer.removeFirst();
                 skipped = skipped + 1;
             }
         }
@@ -623,7 +623,7 @@ protected:
     flushBufferedOutputs() {
         while (!outputBuffer.isEmpty()) {
             _out->write(outputBuffer[0]);
-            outputBuffer.removeFront();
+            outputBuffer.removeFirst();
         }
     }
 }

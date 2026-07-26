@@ -68,8 +68,8 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
                 if (((in % (long) 2)) == (long) 0) {
                     return out;
                 }
-                out.pushBack(in);
-                out.pushBack(in + (long) 1000);
+                out.append(in);
+                out.append(in + (long) 1000);
                 return out;
             }
         }
@@ -79,7 +79,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             PairSum(input: k::io::InputStream<int>*) : ManyToOneTransformInputStream(input) {}
 
             transform(in : const ::k::Vector<int>&) : ::k::Optional<int> {
-                if (in.getSize() < 2) {
+                if (in.size() < 2) {
                     return ::k::Optional<int>();
                 }
                 return ::k::Optional<int>(in[0] + in[1]);
@@ -92,11 +92,11 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
 
             transform(in : const ::k::Vector<int>&) : ::k::Vector<int> {
                 out : ::k::Vector<int>;
-                if (in.getSize() < 3) {
+                if (in.size() < 3) {
                     return out;
                 }
-                out.pushBack(in[0] + in[1]);
-                out.pushBack(in[2] - in[0]);
+                out.append(in[0] + in[1]);
+                out.append(in[2] - in[0]);
                 return out;
             }
         }
@@ -213,8 +213,8 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
                 if ((in % 2) == 0) {
                     return out;
                 }
-                out.pushBack(in);
-                out.pushBack(in + 1000);
+                out.append(in);
+                out.append(in + 1000);
                 return out;
             }
         }
@@ -224,7 +224,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
             PairSumOut(output: k::io::OutputStream<long>*) : ManyToOneTransformOutputStream(output) {}
 
             transform(in : const ::k::Vector<long>&) : ::k::Optional<long> {
-                if (in.getSize() < 2) {
+                if (in.size() < 2) {
                     return ::k::Optional<long>();
                 }
                 return ::k::Optional<long>(in[0] + in[1]);
@@ -237,12 +237,12 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
 
             transform(in : const ::k::Vector<long>&) : ::k::Vector<long> {
                 out : ::k::Vector<long>;
-                if (in.getSize() < 3) {
+                if (in.size() < 3) {
                     return out;
                 }
-                out.pushBack(in[0]);
-                out.pushBack(in[1] * (long) 2);
-                out.pushBack(in[2] * (long) 3);
+                out.append(in[0]);
+                out.append(in[1] * (long) 2);
+                out.append(in[2] * (long) 3);
                 return out;
             }
         }
