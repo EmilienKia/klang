@@ -204,12 +204,19 @@
         exactly once") — a temporary array literal whose elements call a side-effecting
         counting function; asserts the function is called exactly once per element
         (`call_count == 3`), not once per iteration/condition-check.
-      - **Discovered but out of scope**: binding a *sized* array to a local variable of
-        *unsized* array reference (`T[]&`) or link (`T[]+`) type segfaults at runtime, even
-        for a simple read — a pre-existing, unrelated bug in local-variable unsized-array
-        widening (the existing `test-gen-array-unsized-conv.cpp` suite only covers widening
-        via function parameters/struct links, not raw local variable declarations). Not
-        fixed here; should get its own TODO entry and regression test.
+      - **Follow-up investigation (not a standing bug)**: while designing the fix above, an
+        alternative approach using an *unsized* array reference/link type for `$source`
+        appeared to segfault at runtime in manual `.k` snippets tried at the time. A
+        dedicated follow-up investigation tried to reproduce this with a plain local
+        variable of type `int[]&` / `int[]+` bound to a sized array (read, write,
+        mutation-through-reference, `.size` access, global vs. local source, via
+        `klangc --jit-exec`, a native compiled executable, and the `gen_jit` Catch2 test
+        harness) and **could not reproduce any crash** — all variants read/wrote/propagated
+        correctly. The earlier segfault was most likely an artifact of the author's own
+        in-progress experimental code at that point in the design process (a half-finished
+        manual codegen attempt for the abandoned `$source`-as-unsized-type approach), not a
+        defect reachable from valid K source in the committed codebase. No fix needed; no
+        regression test added (nothing to regress against).
 - [ ] Implicit user-defined cast-operator conversions are not applied: a class with
       `operator() : T` is not implicitly converted in an initialisation/argument context
       (e.g. `x : int = wrapper;` yields garbage). Only explicit casts work, and only for
