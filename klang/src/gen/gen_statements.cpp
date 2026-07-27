@@ -2994,13 +2994,18 @@ void symbol_resolver::visit_foreach_statement(foreach_statement& stmt)
  *   3. Determine the concrete iteration kind from the (dereferenced,
  *      const-stripped) source type. Phase 1 only supports ARRAY; ITERATOR and
  *      SEQUENCE are added in later phases.
- *   4. ARRAY: synthesize the hidden index variable ('$index : uint = 0'), the
- *      test expression ('$index < source.size'), the step expression
- *      ('$index++'), and the current-element expression ('source[$index]'),
- *      which becomes the loop variable's init_expr. Delegating the loop
- *      variable's resolution to the generic visit_variable_definition dispatch
- *      (via loop_var->accept(*this)) reuses all existing const-promotion,
- *      addresser-matching, and copy-vs-reference-bind validation for free.
+ *   4. ARRAY: synthesize the hidden source variable ('$source : <array>& =
+ *      source_expr', bound once from a clone of source_expr), the hidden index
+ *      variable ('$index : uint = 0'), the test expression ('$index <
+ *      $source.size'), the step expression ('$index++'), and the
+ *      current-element expression ('$source[$index]'), which becomes the loop
+ *      variable's init_expr. Reading the array through '$source' instead of
+ *      cloning source_expr a second time for the test and a third time for the
+ *      subscript ensures source_expr is evaluated exactly once, not once per
+ *      iteration. Delegating the loop variable's resolution to the generic
+ *      visit_variable_definition dispatch (via loop_var->accept(*this)) reuses
+ *      all existing const-promotion, addresser-matching, and
+ *      copy-vs-reference-bind validation for free.
  *   5. Resolve the nested statement.
  */
 void type_reference_resolver::visit_foreach_statement(foreach_statement& stmt)
@@ -3069,7 +3074,25 @@ void type_reference_resolver::visit_foreach_statement(foreach_statement& stmt)
     if (type::is_array(unwrapped)) {
         stmt.set_kind(foreach_kind::ARRAY);
 
-        // Step 4a: hidden index variable '$index : uint = 0'.
+        // Step 4a: hidden source variable '$source : <array>& = source_expr',
+        // bound exactly once, before the loop begins. The size test (Step 4c)
+        // and the per-iteration subscript (Step 4e) both read the array
+        // through this hidden reference instead of separately cloning
+        // source_expr, so any runtime side effect of evaluating source_expr
+        // (e.g. constructing a temporary array literal via array_init_expression)
+        // happens exactly once rather than once per iteration.
+        auto source_var_def = stmt.append_variable("$source");
+        auto source_var = std::dynamic_pointer_cast<variable_statement>(source_var_def);
+        std::shared_ptr<type> source_arr_type = source_is_const ? unwrapped->get_const() : unwrapped;
+        auto array_ref_type = source_arr_type->get_reference();
+        source_var->set_type(array_ref_type);
+        source_var->set_const(false);
+        static_cast<variable_definition&>(*source_var).set_init_expr(
+            constructor_invocation_expression::make_shared(source_var, {source_expr->clone()}));
+        source_var->accept(*this);
+        stmt.set_source_var(source_var);
+
+        // Step 4b: hidden index variable '$index : uint = 0'.
         auto index_var_def = stmt.append_variable("$index");
         auto index_var = std::dynamic_pointer_cast<variable_statement>(index_var_def);
         auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
@@ -3083,9 +3106,9 @@ void type_reference_resolver::visit_foreach_statement(foreach_statement& stmt)
             constructor_invocation_expression::make_shared(index_var, {zero}));
         index_var->accept(*this);
 
-        // Step 4b: test expression '$index < source.size'.
+        // Step 4c: test expression '$index < $source.size'.
         auto size_symbol = symbol_expression::from_identifier(name("size"));
-        auto size_member = member_of_object_expression::make_shared(source_expr->clone(), size_symbol);
+        auto size_member = member_of_object_expression::make_shared(symbol_expression::from_variable(source_var), size_symbol);
         auto test_expr = lesser_expression::make_shared(symbol_expression::from_variable(index_var), size_member);
         test_expr->accept(*this);
         auto bool_type = _context->from_type(primitive_type::BOOL);
@@ -3095,16 +3118,16 @@ void type_reference_resolver::visit_foreach_statement(foreach_statement& stmt)
         }
         stmt.set_test_expr(test_expr);
 
-        // Step 4c: step expression '$index++'.
+        // Step 4d: step expression '$index++'.
         auto step_expr = postfix_increment_expression::make_shared(symbol_expression::from_variable(index_var));
         step_expr->accept(*this);
         stmt.set_step_expr(step_expr);
 
-        // Step 4d: current-element expression 'source[$index]', bound as the
+        // Step 4e: current-element expression '$source[$index]', bound as the
         // loop variable's init_expr. Resolving the loop variable through the
         // generic visit_variable_definition dispatch handles const-promotion,
         // addresser-matching, and copy-vs-reference-bind semantics for free.
-        auto current_expr = subscript_expression::make_shared(source_expr->clone(), symbol_expression::from_variable(index_var));
+        auto current_expr = subscript_expression::make_shared(symbol_expression::from_variable(source_var), symbol_expression::from_variable(index_var));
         stmt.set_current_expr(current_expr);
         // Mirror model_builder::visit_variable_decl's init_expr shaping: indirection
         // types (pointer/link/view — owner/drain are already forbidden above) store
@@ -3243,13 +3266,14 @@ void declaration_generator::visit_foreach_statement(foreach_statement& stmt) {
  *
  *   entry:
  *     [SEQUENCE only] $iterator = source.iterator()/constIterator()
+ *     [ARRAY only] $source = source_expr   (bound once, before the loop)
  *     $index / $current = <initial driver value>   (ARRAY: 0; ITERATOR/SEQUENCE: iter.next())
  *     br condition
  *   condition:
- *     %t = $index < source.size   /   $current.hasValue()
+ *     %t = $index < $source.size   /   $current.hasValue()
  *     condbr %t, nested, continue
  *   nested:
- *     construct loop_var from source[$index]   /   $current.get()
+ *     construct loop_var from $source[$index]   /   $current.get()
  *     <nested_stmt>
  *     destroy loop_var
  *     br step
@@ -3268,6 +3292,13 @@ void declaration_generator::visit_foreach_statement(foreach_statement& stmt) {
  * point of BOTH normal loop exit (condition false) and 'break' (jumps
  * directly to cont_block) — giving it the same cleanup guarantee already
  * established for the per-iteration loop variable.
+ *
+ * The hidden $source variable (ARRAY only) is likewise constructed once before
+ * the loop, from a clone of source_expr, so that a non-idempotent source
+ * expression (e.g. a temporary array literal) is evaluated exactly once rather
+ * than once per iteration (previously source_expr was cloned separately for
+ * the size test and for the per-iteration subscript). Being a plain reference,
+ * it owns nothing and needs no cleanup scope.
  */
 void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
 {
@@ -3296,6 +3327,36 @@ void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
         iterator_var->accept(*this);
         _cleanup_vars_stack.push({iterator_var});
         has_iterator_scope = true;
+    }
+
+    // ARRAY only: construct the hidden reference variable bound once to the
+    // source array, before the loop begins. Built manually here (instead of
+    // delegating to the generic variable_statement codegen path) because that
+    // path's "reference to a *sized* array" case performs a value COPY into a
+    // freshly allocated buffer (see gen_expr_construct.cpp's "int[N]& :
+    // copy-initialise" branch, which supports truncating/zero-padding between
+    // mismatched sizes) rather than a true address-of alias -- which would
+    // silently defeat mutation-through-reference for a foreach loop variable
+    // declared as a reference type. Instead we store the address of the
+    // (already resolved, evaluated exactly once) source array directly,
+    // mirroring the plain-reference ("T&") binding path. It never owns
+    // anything, so it needs no cleanup scope, unlike $iterator above.
+    if (auto source_var = stmt.get_source_var()) {
+        llvm::IRBuilder<> entry_build(&func->getEntryBlock(), func->getEntryBlock().begin());
+        llvm::Type* source_llvm_type = _context->get_llvm_type(source_var->get_type());
+        llvm::AllocaInst* source_alloca = entry_build.CreateAlloca(source_llvm_type, nullptr, "$source");
+        _context->_variables.insert({source_var, source_alloca});
+
+        auto source_init = std::dynamic_pointer_cast<constructor_invocation_expression>(source_var->get_init_expr());
+        _value = nullptr;
+        if (source_init && !source_init->empty()) {
+            source_init->argument(0)->accept(*this);
+        }
+        if (_value) {
+            _builder->CreateStore(_value, source_alloca);
+        }
+        _value = nullptr;
+        emit_expression_temporaries_cleanup(lexeme);
     }
 
     // Initialize the hidden driver variable ($index = 0, or $current = iter.next()).

@@ -156,19 +156,19 @@
 
 #### Current bugs and gaps to fix
 
-- [ ] **ARRAY-variant `foreach` re-evaluates its source expression on every iteration
-      instead of exactly once.** `type_reference_resolver::visit_foreach_statement`
-      (`gen/gen_statements.cpp`) builds the `.size` test expression and the
+- [x] **FIXED — ARRAY-variant `foreach` re-evaluated its source expression on every
+      iteration instead of exactly once.** `type_reference_resolver::visit_foreach_statement`
+      (`gen/gen_statements.cpp`) built the `.size` test expression and the
       per-iteration `source[$index]` subscript from two *separate* `source_expr->clone()`
       calls, and the generated test expression lives in the loop's condition basic
-      block, so it is re-evaluated at runtime on every iteration (standard loop-condition
+      block, so it was re-evaluated at runtime on every iteration (standard loop-condition
       codegen — see `implementation_generator::visit_foreach_statement`). For a plain
-      variable source (`for (x : int = arr)`) this is harmless (re-reading the same
+      variable source (`for (x : int = arr)`) this was harmless (re-reading the same
       variable's address is idempotent and cheap), which is why the existing test suite
-      never caught it. It becomes a real correctness/perf smell once the source is a
+      never caught it. It became a real correctness/perf smell once the source was a
       non-trivial expression — most notably a temporary array literal built directly in
       the init expression (`for (x : int = int[]{1, 2, 30})`, added to support the
-      primitive-array-literal foreach feature): the temporary array is reconstructed
+      primitive-array-literal foreach feature): the temporary array was reconstructed
       (all element stores re-executed) once per `.size` check *and* once more per
       successful iteration, i.e. `O(iterations × size)` redundant work instead of `O(size)`.
       Confirmed by manual stress-testing (not a permanent test, to avoid slow CI): a
@@ -176,17 +176,40 @@
       for a 5 000-element one (~20× for 4× the size — the expected quadratic blow-up),
       though results stayed numerically correct in all cases tried (no crash, since LLVM
       keeps the temporary's `alloca` in the function's entry block — no per-iteration
-      stack growth). Recommended fix: synthesize a hidden `$source` variable (mirroring
-      the existing `$index` pattern) bound *once* to `source_expr` (as a reference to the
-      array — `array_init_expression`'s resolved type is always `<array>&`, so this works
-      uniformly for both lvalue arrays and temporary literals), then rewrite the `.size`
-      test and the per-iteration subscript to read from `$source` instead of re-cloning
-      `source_expr`. Not fixed yet: doing so safely requires auditing whether re-visiting
-      an already-resolved `source_expr` via the generic `variable_definition` visit path
-      is idempotent, or whether the hidden variable must be constructed *before* the
-      first (and only) resolution pass of `source_expr` instead. Add a permanent
-      regression test (e.g. a ctor-counting struct element or a large literal with a
-      tight iteration/compile-time budget) once fixed.
+      stack growth).
+      - Fix applied: a hidden `$source` variable (mirroring the existing `$index`
+        pattern) is now synthesized once in `type_reference_resolver::visit_foreach_statement`,
+        bound to a single clone of `source_expr` via `constructor_invocation_expression`
+        and resolved through `accept(*this)` (safe: it visits a fresh clone, not the
+        original `source_expr` node). The `.size` test and the per-iteration subscript
+        now read `$source` via `symbol_expression::from_variable()` instead of re-cloning
+        `source_expr`. Routing support added to `foreach_statement` (`model/statements.hpp`
+        / `.cpp`): a new `_source_var` field, `get_source_var()`/`set_source_var()`, and an
+        `on_variable_defined()` branch routing the first ARRAY-kind hidden variable to it.
+      - Follow-up codegen wrinkle: declaring a variable of type "reference to a *sized*
+        array" (`T[N]&`) — exactly `$source`'s type, needed to keep `.size`/subscript
+        resolution unchanged — unconditionally triggers a copy-initialisation codegen path
+        (`gen_expr_construct.cpp`, "int[N]& : copy-initialise" case) that allocates a
+        *fresh* local array buffer and copies elements into it, rather than aliasing the
+        original array's storage. That is correct/intentional for user-facing `T[N]&`
+        declarations (it supports size-mismatched copy/pad semantics) but would silently
+        break mutation-through-reference semantics for this hidden alias variable.
+        `implementation_generator::visit_foreach_statement` therefore constructs `$source`
+        manually — direct `alloca` + address-store of the evaluated source, bypassing the
+        generic copy-semantics codegen path entirely — instead of dispatching through the
+        generic `variable_statement`/`constructor_invocation_expression` codegen used for
+        ordinary reference variables.
+      - Regression test: `[gen][foreach][array][temporary][regression]` in
+        `klang/tests/test-gen-foreach.cpp` ("array literal source expression is evaluated
+        exactly once") — a temporary array literal whose elements call a side-effecting
+        counting function; asserts the function is called exactly once per element
+        (`call_count == 3`), not once per iteration/condition-check.
+      - **Discovered but out of scope**: binding a *sized* array to a local variable of
+        *unsized* array reference (`T[]&`) or link (`T[]+`) type segfaults at runtime, even
+        for a simple read — a pre-existing, unrelated bug in local-variable unsized-array
+        widening (the existing `test-gen-array-unsized-conv.cpp` suite only covers widening
+        via function parameters/struct links, not raw local variable declarations). Not
+        fixed here; should get its own TODO entry and regression test.
 - [ ] Implicit user-defined cast-operator conversions are not applied: a class with
       `operator() : T` is not implicitly converted in an initialisation/argument context
       (e.g. `x : int = wrapper;` yields garbage). Only explicit casts work, and only for

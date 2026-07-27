@@ -173,6 +173,50 @@ TEST_CASE("Foreach array — owner loop variable is still forbidden with a tempo
     )SRC", nullptr));
 }
 
+TEST_CASE("Foreach array — array literal source expression is evaluated exactly once, "
+          "not once per iteration/condition-check",
+          "[gen][foreach][array][temporary][regression]") {
+    // Regression test for the bug where the ARRAY-variant `foreach` re-cloned its
+    // `source_expr` twice per codegen site (once for the `.size` loop-condition
+    // check, once for the per-iteration subscript), causing a non-idempotent source
+    // expression (here, an array literal whose elements call a side-effecting
+    // counting function) to be reconstructed on every iteration instead of exactly
+    // once. Each element-call increments a shared counter; if the source array were
+    // rebuilt more than once, `get_call_count()` would read a value far above 3 and
+    // `sum` would reflect stale/inconsistent element values across iterations.
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        struct Counter {
+            static call_count : int = 0;
+        }
+
+        next() : int {
+            Counter::call_count = Counter::call_count + 1;
+            return Counter::call_count;
+        }
+
+        test() : int {
+            sum : int = 0;
+            for(x : int = int[]{next(), next(), next()}) {
+                sum = sum + x;
+            }
+            return sum;
+        }
+
+        get_call_count() : int {
+            return Counter::call_count;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto get_call_count = jit->lookup_symbol<int(*)()>("get_call_count");
+    REQUIRE(test != nullptr);
+    REQUIRE(get_call_count != nullptr);
+    REQUIRE(test() == 6);          // 1 + 2 + 3
+    REQUIRE(get_call_count() == 3); // `next()` called exactly once per element, exactly once overall
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sized vs unsized array parameters
 // ─────────────────────────────────────────────────────────────────────────────

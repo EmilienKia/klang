@@ -372,6 +372,19 @@ protected:
      */
     std::shared_ptr<variable_statement> _iterator_var;
 
+    // ── ARRAY variant only (synthesized by type_reference_resolver) ────────
+    /**
+     * Hidden reference variable bound once, before the loop begins, to the
+     * (possibly non-idempotent) source expression: '$source : <array>& = source_expr'.
+     * The size test ('_test_expr') and the per-iteration subscript
+     * ('_current_expr') both read the array through this variable instead of
+     * re-evaluating source_expr, so any runtime side effect of evaluating
+     * source_expr (e.g. constructing a temporary array literal) happens
+     * exactly once rather than once per iteration. Null for ITERATOR and
+     * SEQUENCE (which never re-evaluate source_expr more than once already).
+     */
+    std::shared_ptr<variable_statement> _source_var;
+
     // ── ARRAY / ITERATOR / SEQUENCE common driver variable ──────────────────
     /**
      * Hidden per-loop "driver" variable, constructed once before the loop and updated
@@ -424,6 +437,10 @@ public:
     const std::shared_ptr<variable_statement> &get_iterator_var() const;
 
     void set_iterator_var(const std::shared_ptr<variable_statement> &iterator_var);
+
+    const std::shared_ptr<variable_statement> &get_source_var() const;
+
+    void set_source_var(const std::shared_ptr<variable_statement> &source_var);
 
     const std::shared_ptr<variable_statement> &get_index_var() const;
 

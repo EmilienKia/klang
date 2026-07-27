@@ -291,6 +291,14 @@ void foreach_statement::set_iterator_var(const std::shared_ptr<variable_statemen
     _iterator_var = iterator_var;
 }
 
+const std::shared_ptr<variable_statement>& foreach_statement::get_source_var() const {
+    return _source_var;
+}
+
+void foreach_statement::set_source_var(const std::shared_ptr<variable_statement> &source_var) {
+    _source_var = source_var;
+}
+
 const std::shared_ptr<variable_statement>& foreach_statement::get_index_var() const {
     return _index_var;
 }
@@ -348,14 +356,20 @@ void foreach_statement::on_variable_defined(std::shared_ptr<variable_definition>
     //   - SEQUENCE: the first hidden variable is the owned iterator (_iterator_var,
     //     created before the driver variable, since the driver's init_expr calls
     //     next() on it); the second is the driver variable (_index_var).
-    //   - ARRAY / ITERATOR: the (only) hidden variable is the driver (_index_var).
-    // This relies on set_kind(SEQUENCE) having already been called before the
-    // iterator variable is appended.
+    //   - ARRAY: the first hidden variable is the once-bound source reference
+    //     (_source_var, created before the index variable, since the test/current
+    //     expressions read the array through it); the second is the driver
+    //     variable (_index_var).
+    //   - ITERATOR: the (only) hidden variable is the driver (_index_var).
+    // This relies on set_kind(...) having already been called before the first
+    // hidden variable is appended.
     auto var_stmt = std::dynamic_pointer_cast<variable_statement>(var);
     if (!_loop_var) {
         _loop_var = var_stmt;
     } else if (_kind == foreach_kind::SEQUENCE && !_iterator_var) {
         _iterator_var = var_stmt;
+    } else if (_kind == foreach_kind::ARRAY && !_source_var) {
+        _source_var = var_stmt;
     } else {
         _index_var = var_stmt;
     }
