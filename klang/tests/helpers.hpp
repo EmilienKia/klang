@@ -308,6 +308,12 @@ find_klass(const std::shared_ptr<k::compiler>& comp, const std::string& name);
 std::shared_ptr<k::model::annotation_type>
 find_annotation_type(const std::shared_ptr<k::compiler>& comp, const std::string& name);
 
+/**
+ * Navigate to an enumeration by its short name within the root namespace.
+ */
+std::shared_ptr<k::model::enumeration>
+find_enum(const std::shared_ptr<k::compiler>& comp, const std::string& name);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // AST traversal helpers
 // ═══════════════════════════════════════════════════════════════════════════

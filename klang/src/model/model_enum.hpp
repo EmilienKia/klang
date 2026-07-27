@@ -71,6 +71,14 @@ protected:
     std::vector<enum_entry_def> _entries;
     std::shared_ptr<enum_type> _type;
     std::shared_ptr<primitive_type> _underlying_type;
+    /**
+     * Explicit underlying primitive type requested via 'enum X : <primitive>'
+     * (e.g. 'enum X : long'). Set by model_builder when the ':' type spec is a
+     * primitive keyword rather than a base enum or object type name. When set,
+     * symbol_resolver uses it verbatim as _underlying_type instead of computing
+     * the smallest type that fits the declared entry values.
+     */
+    std::shared_ptr<primitive_type> _explicit_underlying_type;
     /** Non-null for object-backed typed enums: the struct_type of the backing object. */
     std::shared_ptr<struct_type> _object_type;
     /** LLVM global constant array for object-backed typed enums: `[N x StructType]`. */
@@ -129,6 +137,10 @@ public:
 
     std::shared_ptr<primitive_type> get_underlying_type() const { return _underlying_type; }
     void set_underlying_type(std::shared_ptr<primitive_type> t) { _underlying_type = t; }
+
+    /** Explicit underlying type from 'enum X : <primitive>', if any (see field doc above). */
+    std::shared_ptr<primitive_type> get_explicit_underlying_type() const { return _explicit_underlying_type; }
+    void set_explicit_underlying_type(std::shared_ptr<primitive_type> t) { _explicit_underlying_type = std::move(t); }
 
     /** True when enum entries are represented as indices into a static backing table. */
     bool is_object_backed() const { return _object_type != nullptr; }

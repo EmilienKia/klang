@@ -34,6 +34,7 @@
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Verifier.h>
 
+#include <limits>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -1498,7 +1499,9 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         work[0].is_default = true;
     }
 
-    // ── 5. Determine the smallest underlying type ──
+    // ── 5. Determine the underlying type ──
+    // Either the explicit primitive type from 'enum X : <primitive>', or (absent that)
+    // the smallest primitive type that can hold all declared entry values.
     std::shared_ptr<primitive_type> underlying;
     if (en.is_object_backed()) {
         // Object-backed: runtime representation is an unsigned index into the backing table.
@@ -1521,19 +1524,59 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             if (we.resolved_value > max_val) max_val = we.resolved_value;
         }
 
-        primitive_type::PRIMITIVE_TYPE prim_type;
-        if (min_val >= 0) {
-            if (max_val <= 255) prim_type = primitive_type::UNSIGNED_BYTE;
-            else if (max_val <= 65535) prim_type = primitive_type::UNSIGNED_SHORT;
-            else if (max_val <= 4294967295LL) prim_type = primitive_type::UNSIGNED_INT;
-            else prim_type = primitive_type::UNSIGNED_LONG;
+        if (auto explicit_underlying = en.get_explicit_underlying_type()) {
+            // Explicit underlying type from 'enum X : <primitive>' (grammar.ebnf EnumDecl
+            // disambiguation): use it verbatim instead of the smallest-fit computation,
+            // after checking it can actually hold every declared entry value.
+            int64_t type_min = 0, type_max = 0;
+            bool is_integer = true;
+            switch (explicit_underlying->get_type()) {
+                case primitive_type::BYTE:                type_min = -128; type_max = 127; break;
+                case primitive_type::UNSIGNED_BYTE:       type_min = 0; type_max = 255; break;
+                case primitive_type::SHORT:               type_min = -32768; type_max = 32767; break;
+                case primitive_type::UNSIGNED_SHORT:      type_min = 0; type_max = 65535; break;
+                case primitive_type::INT:                 type_min = -2147483648LL; type_max = 2147483647LL; break;
+                case primitive_type::UNSIGNED_INT:        type_min = 0; type_max = 4294967295LL; break;
+                case primitive_type::LONG:
+                case primitive_type::LONG_LONG:
+                    type_min = std::numeric_limits<int64_t>::min();
+                    type_max = std::numeric_limits<int64_t>::max();
+                    break;
+                case primitive_type::UNSIGNED_LONG:
+                case primitive_type::UNSIGNED_LONG_LONG:
+                    type_min = 0;
+                    type_max = std::numeric_limits<int64_t>::max();
+                    break;
+                default:
+                    is_integer = false;
+                    break;
+            }
+            if (!is_integer) {
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_EXPLICIT_UNDERLYING_NOT_INTEGER), en_lexeme,
+                    "Enum '{}': explicit underlying type must be an integer primitive type",
+                    {en.get_short_name()});
+            }
+            if (min_val < type_min || max_val > type_max) {
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_EXPLICIT_UNDERLYING_TOO_SMALL), en_lexeme,
+                    "Enum '{}': explicit underlying type cannot hold declared entry values (range [{}, {}])",
+                    {en.get_short_name(), std::to_string(min_val), std::to_string(max_val)});
+            }
+            underlying = explicit_underlying;
         } else {
-            if (min_val >= -128 && max_val <= 127) prim_type = primitive_type::BYTE;
-            else if (min_val >= -32768 && max_val <= 32767) prim_type = primitive_type::SHORT;
-            else if (min_val >= -2147483648LL && max_val <= 2147483647LL) prim_type = primitive_type::INT;
-            else prim_type = primitive_type::LONG;
+            primitive_type::PRIMITIVE_TYPE prim_type;
+            if (min_val >= 0) {
+                if (max_val <= 255) prim_type = primitive_type::UNSIGNED_BYTE;
+                else if (max_val <= 65535) prim_type = primitive_type::UNSIGNED_SHORT;
+                else if (max_val <= 4294967295LL) prim_type = primitive_type::UNSIGNED_INT;
+                else prim_type = primitive_type::UNSIGNED_LONG;
+            } else {
+                if (min_val >= -128 && max_val <= 127) prim_type = primitive_type::BYTE;
+                else if (min_val >= -32768 && max_val <= 32767) prim_type = primitive_type::SHORT;
+                else if (min_val >= -2147483648LL && max_val <= 2147483647LL) prim_type = primitive_type::INT;
+                else prim_type = primitive_type::LONG;
+            }
+            underlying = _context->from_type(prim_type);
         }
-        underlying = _context->from_type(prim_type);
     }
     en.set_underlying_type(underlying);
 

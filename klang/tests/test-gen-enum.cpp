@@ -18,6 +18,8 @@
 
 #include <catch2/catch_all.hpp>
 
+#include <llvm/IR/DerivedTypes.h>
+
 #include "../src/errors.hpp"
 #include "helpers.hpp"
 
@@ -1347,4 +1349,92 @@ TEST_CASE("Enum template-argument member default init keeps underlying width",
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("run")() == 7);
 }
+
+// ============================================================
+// Explicit underlying type (grammar.ebnf EnumDecl disambiguation, TODO.md)
+//
+// 'enum X : <primitive>' must use <primitive> as the underlying type verbatim,
+// not the smallest primitive type that happens to fit the declared entry
+// values. Before the fix, `resolve_enumeration()` always recomputed the
+// smallest-fit type and silently discarded the explicit one, so two unrelated
+// enums with the same (small) entry values but different declared underlying
+// types ended up with identical LLVM representations — masking any layout or
+// mangling collision between them.
+// ============================================================
+
+TEST_CASE("Enum explicit underlying type is honored, not the smallest-fit type",
+          "[gen][enum][underlying][regression]") {
+    auto comp = compile_model(R"(
+        module test;
+        enum ErrA : byte { A; B; }
+        enum ErrB : long { A; B; }
+    )");
+    REQUIRE(comp != nullptr);
+
+    auto err_a = find_enum(comp, "ErrA");
+    auto err_b = find_enum(comp, "ErrB");
+    REQUIRE(err_a != nullptr);
+    REQUIRE(err_b != nullptr);
+
+    // Both enums declare only entries 0 and 1 — a smallest-fit computation
+    // would pick the same 1-byte type for both. The explicit underlying type
+    // must be honored instead.
+    REQUIRE(err_a->get_underlying_type() != nullptr);
+    REQUIRE(err_b->get_underlying_type() != nullptr);
+    CHECK(err_a->get_underlying_type()->type_size() == 8);   // byte  → 8 bits
+    CHECK(err_b->get_underlying_type()->type_size() == 64);  // long  → 64 bits
+}
+
+TEST_CASE("Struct fields keep distinct enum underlying widths (no layout collision)",
+          "[gen][enum][underlying][regression]") {
+    // Exact repro from TODO.md: struct Holder { ea : ErrA; eb : ErrB; } used to
+    // emit `%Holder = type { i8, i8 }` for both fields regardless of ErrB's
+    // explicit 'long' underlying type.
+    auto comp = compile_model(R"(
+        module test;
+        enum ErrA : byte { A; B; }
+        enum ErrB : long { A; B; }
+        struct Holder {
+            ea : ErrA;
+            eb : ErrB;
+        }
+    )");
+    REQUIRE(comp != nullptr);
+
+    auto holder = find_aggregate(comp, "Holder");
+    REQUIRE(holder != nullptr);
+    auto st = holder->get_struct_type();
+    REQUIRE(st != nullptr);
+
+    auto llvm_st = llvm::dyn_cast<llvm::StructType>(st->get_llvm_type());
+    REQUIRE(llvm_st != nullptr);
+    REQUIRE(llvm_st->getNumElements() == 2);
+    CHECK(llvm_st->getElementType(0)->getIntegerBitWidth() == 8);
+    CHECK(llvm_st->getElementType(1)->getIntegerBitWidth() == 64);
+}
+
+TEST_CASE("Enum explicit underlying type still applies when it matches the smallest fit",
+          "[gen][enum][underlying][regression]") {
+    // Sanity check: the explicit-type path must not regress the common case
+    // where the declared type happens to be the smallest fit anyway.
+    auto comp = compile_model(R"(
+        module test;
+        enum Flag : byte { On; Off; }
+    )");
+    REQUIRE(comp != nullptr);
+    auto flag = find_enum(comp, "Flag");
+    REQUIRE(flag != nullptr);
+    REQUIRE(flag->get_underlying_type() != nullptr);
+    CHECK(flag->get_underlying_type()->type_size() == 8);
+    CHECK(flag->get_underlying_type()->is_unsigned() == false);
+}
+
+TEST_CASE("Enum explicit underlying type rejects out-of-range entry values",
+          "[gen][enum][underlying][regression]") {
+    REQUIRE_THROWS(gen_jit_throws(R"(
+        module test;
+        enum TooSmall : byte { A = 1000; }
+    )"));
+}
+
 

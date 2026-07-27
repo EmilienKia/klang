@@ -1012,6 +1012,14 @@ find_annotation_type(const std::shared_ptr<k::compiler>& comp, const std::string
     return std::dynamic_pointer_cast<k::model::annotation_type>(find_aggregate(comp, name));
 }
 
+std::shared_ptr<k::model::enumeration>
+find_enum(const std::shared_ptr<k::compiler>& comp, const std::string& name) {
+    if (!comp || !comp->get_unit()) return nullptr;
+    auto root = comp->get_unit()->get_root_namespace();
+    if (!root) return nullptr;
+    return root->get_enum(name);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // AST traversal helpers
 // ═══════════════════════════════════════════════════════════════════════════

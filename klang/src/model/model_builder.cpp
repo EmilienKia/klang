@@ -700,6 +700,19 @@ namespace k::model {
             en->set_base_name(*decl.base_name);
         }
 
+        // If 'enum X : <primitive>' names a primitive keyword type (e.g. 'byte', 'long')
+        // rather than a base enum or object type, it is the explicit underlying type
+        // (grammar.ebnf, EnumDecl disambiguation). Primitive keyword types resolve
+        // immediately (no forward-reference concern), so this can be done eagerly here.
+        if (decl.explicit_underlying_type) {
+            if (auto kts = std::dynamic_pointer_cast<parse::ast::keyword_type_specifier>(decl.explicit_underlying_type)) {
+                auto resolved = _context->from_type_specifier(*kts);
+                if (auto prim = std::dynamic_pointer_cast<model::primitive_type>(resolved)) {
+                    en->set_explicit_underlying_type(prim);
+                }
+            }
+        }
+
         // Collect raw entries from AST — validation and value resolution are
         // performed later by the symbol_resolver (so that forward-declared or
         // yet-to-be-visited base enums are available).

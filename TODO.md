@@ -364,14 +364,24 @@
       enumerations sharing an underlying integer type scored identically, so overload
       resolution silently picked the first candidate. Derived → base enum conversion stays
       allowed.
-- [ ] **`enum X : long` ignores the explicit underlying type.**
-      `enum ErrA : byte { … }` and `enum ErrB : long { … }` both produce `i8` fields:
-      `struct Holder { ea : ErrA; eb : ErrB; }` emits `%Holder = type { i8, i8 }`.
-      Independent of templates, but it currently *masks* layout collisions caused by the
-      mangling gaps above (every enum happens to be the same size), so it must be fixed
-      together with them to get meaningful regression coverage.
-      The grammar already specifies this (`doc/spec/language/grammar.ebnf`, ~L458-468:
-      "if TypeSpec does not resolve to an enum type, it is the explicit underlying type").
+- [x] **FIXED — `enum X : long` ignored the explicit underlying type.**
+      `enum ErrA : byte { … }` and `enum ErrB : long { … }` both produced `i8` fields:
+      `struct Holder { ea : ErrA; eb : ErrB; }` emitted `%Holder = type { i8, i8 }`.
+      `symbol_resolver::resolve_enumeration()` always recomputed the smallest primitive
+      type that fits the declared entry values and silently discarded the explicit
+      `': <primitive>'` type spec — the parser only forwarded it to the model as
+      `base_name` for `identified_type_specifier` (base-enum / object-backed derivation),
+      never for `keyword_type_specifier` (`byte`, `long`, …).
+      - Fix applied: `enumeration::_explicit_underlying_type` (`model/model_enum.hpp`)
+        stores the primitive type resolved eagerly by `model_builder::visit_enum_decl()`
+        from a `keyword_type_specifier` ':' type spec. `resolve_enumeration()`
+        (`gen/gen_struct.cpp`) uses it verbatim instead of the smallest-fit computation,
+        after checking the declared entries actually fit (`ERR_ENUM_EXPLICIT_UNDERLYING_TOO_SMALL`
+        0x0197) and that the named type is an integer primitive
+        (`ERR_ENUM_EXPLICIT_UNDERLYING_NOT_INTEGER` 0x0196).
+      - Regression coverage: `[gen][enum][underlying][regression]` in
+        `klang/tests/test-gen-enum.cpp`, including a direct check of the emitted
+        `%Holder = type { i8, i64 }` LLVM layout from the repro above.
 - [x] **FIXED — there was no diagnostic for an empty or duplicated mangled name.**
       `update_mangled_name()` silently yielded `""` for elements whose name had no root
       prefix, and nothing checked that two distinct elements of the same unit produced the
