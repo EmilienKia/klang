@@ -141,7 +141,23 @@ Type =
 | { "kind": "aggregate", "fq_name": text }
 | { "kind": "enum", "fq_name": text }
 | { "kind": "template_param", "name": text }
+| { "kind": "generic_ref", "name": text, "args": array[Type] }
 ```
+
+`template_param` references a template parameter by name (e.g. `T`) as it
+appears inside an uninstantiated template's own declaration.
+
+`generic_ref` references another named type applied with template type
+arguments, as it appears inside an uninstantiated template's own declaration
+(e.g. the member type `MultiSlot<T>` inside `template<typename T> class
+Vector`). Unlike `aggregate`, the referenced name may not resolve to a
+concrete aggregate outside of an instantiation context — it can name another
+template (own or imported) that has not been (and may never be)
+instantiated with concrete arguments. Each entry in `args` is itself a full
+`Type`, so nested template-parameter references (e.g. `Node<T>` inside
+`List<T>`) are preserved structurally. Only type arguments are represented;
+a non-type (value) argument in such a nested reference falls back to a
+`void` placeholder entry.
 
 ---
 
@@ -427,9 +443,18 @@ TemplateDef = {
 
 Rules:
 
-* Classic templates serialize their full `source` and may omit signature fields.
+* Classic (non-generic) templates serialize their full `source` (the
+  authoritative form used by the compiler to re-parse/re-instantiate the
+  template cross-module) **and** a declaration-only `aggregate_signature` or
+  `function_signature` matching `entity_kind`. The structured signature lets
+  documentation tooling (e.g. `kditool docgen`) render a template's
+  fields/constructors/methods the same way as a regular (non-template)
+  aggregate/function — with template-parameter-dependent types tagged as
+  `template_param` / `generic_ref` — instead of only a raw source dump.
 * Generic templates set `is_generic = true`, serialize an empty `source`, and
   provide exactly one declaration signature matching `entity_kind`.
+* Union templates are always classic (no `union_signature` payload exists);
+  they only ever serialize `source`.
 
 ---
 

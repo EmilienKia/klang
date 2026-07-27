@@ -228,6 +228,11 @@ static json to_json(const kdi_type& t) {
             return {{"kind","enum"},{"fq_name",v.fq_name}};
         else if constexpr (std::is_same_v<T, kdi_template_param_ref>)
             return {{"kind","template_param"},{"name",v.name}};
+        else if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
+            json as = json::array();
+            for (auto& a : v.args) as.push_back(to_json(*a));
+            return {{"kind","generic_ref"},{"name",v.name},{"args",as}};
+        }
         else
             return {{"kind","unknown"}};
     }, t.value);
@@ -292,6 +297,14 @@ static kdi_type from_json_type(const json& j) {
         return kdi_type::make_enum(j.at("fq_name").get<std::string>());
     if (kind == "template_param")
         return kdi_type::make_template_param(j.at("name").get<std::string>());
+    if (kind == "generic_ref") {
+        kdi_generic_ref_type r;
+        r.name = j.at("name").get<std::string>();
+        if (j.contains("args"))
+            for (auto& a : j.at("args"))
+                r.args.push_back(std::make_shared<kdi_type>(from_json_type(a)));
+        return kdi_type{std::move(r)};
+    }
     throw kdi_json_error("unknown type kind: " + kind);
 }
 

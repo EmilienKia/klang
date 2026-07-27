@@ -60,6 +60,28 @@ static int64_t integer_literal_to_i64(const lex::integer& lit) {
 }
 
 /**
+ * True for compiler-synthesized field names that are purely an internal ABI
+ * mechanism (vtable pointer(s), enclosing-instance back-reference, base/
+ * virtual-base sub-object storage) and must never be surfaced as a
+ * user-visible member — neither in a regular aggregate export (where they
+ * are already excluded by build_layout(), which turns them into dedicated
+ * layout-kind entries instead of named members) nor in a template's
+ * declaration-only signature (build_generic_template_aggregate_signature),
+ * which walks the model's named variables directly and would otherwise
+ * leak them. Mirrors the skip-list used by
+ * template_instantiator::clone_member_variable() when copying members into
+ * a fresh instantiation.
+ */
+static bool is_synthetic_member_name(const std::string& name) {
+    if (name == "__parent__") return true;
+    if (name.rfind("__vptr", 0) == 0) return true;
+    if (name.rfind("__base_", 0) == 0) return true;
+    if (name.rfind("__vbptr_", 0) == 0) return true;
+    if (name.rfind("__vbase_", 0) == 0) return true;
+    return false;
+}
+
+/**
  * Capture the LLVM IR declaration line of @p fn as a string.
  * The result is a single-line "declare <rettype> @<name>(<params>)" string,
  * without trailing newline, suitable for storage in kdi::*::llvm_def.
@@ -291,6 +313,30 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
                 return kdi::kdi_type::make_template_param(id);
             }
         }
+
+        // Not a bare template-parameter name. If it is resolved to a concrete
+        // type (e.g. imported/instantiated), fall through to the normal
+        // conversion below. Otherwise this names another (possibly still
+        // uninstantiated) type applied with template arguments — e.g. the
+        // member type "MultiSlot<T>" inside the still-generic "Vector<T>"
+        // declaration. Preserve that structurally as a kdi_generic_ref_type
+        // instead of silently losing it as void.
+        if (!ut->is_resolved()) {
+            kdi::kdi_generic_ref_type gref;
+            gref.name = id;
+            for (const auto& arg : ut->get_ast_template_args()) {
+                if (arg && arg->is_type() && arg->type_arg) {
+                    auto arg_type = _ctx.from_type_specifier(*arg->type_arg);
+                    gref.args.push_back(std::make_shared<kdi::kdi_type>(
+                        to_kdi_signature_type(arg_type, ti)));
+                } else {
+                    // Value (non-type) template argument: not structurally
+                    // representable in kdi_generic_ref_type (see kdi_types.hpp).
+                    gref.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void()));
+                }
+            }
+            return kdi::kdi_type{std::move(gref)};
+        }
     }
 
     if (auto ct = std::dynamic_pointer_cast<const_type>(t)) {
@@ -403,6 +449,13 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
     for (const auto& [name, var] : agg.variables()) {
         auto mv = std::dynamic_pointer_cast<member_variable_definition>(var);
         if (!mv || !is_exported(mv->get_visibility())) continue;
+        // Skip compiler-synthesized ABI-mechanism fields (vtable pointer(s),
+        // enclosing-instance back-reference, base/virtual-base sub-object
+        // storage): they are internal implementation details, not part of
+        // the template's documented API surface. A regular (non-template)
+        // aggregate export never sees these either — build_layout() turns
+        // them into dedicated layout-kind entries instead of named members.
+        if (is_synthetic_member_name(mv->get_short_name())) continue;
         kdi::kdi_layout_member member;
         member.name = mv->get_short_name();
         member.fq_name = mv->get_fq_name();
@@ -1625,6 +1678,28 @@ kdi::kdi_template_def kdi_builder::build_template_def(
         }
     }
 
+    // Always populate a structured signature alongside the raw source (when
+    // not already built above for the generic-template case). This lets
+    // documentation tooling (kditool docgen) render a template's fields,
+    // constructors and methods the same way as a regular (non-template)
+    // aggregate/function, with template-parameter-dependent types tagged as
+    // distinct entities (kdi_template_param_ref / kdi_generic_ref_type)
+    // rather than only a raw source dump. `def.source` itself is left
+    // untouched — it remains the authoritative form used by the compiler to
+    // re-parse/re-instantiate imported templates cross-module.
+    if (!def.aggregate_signature) {
+        if (auto agg_ptr = dynamic_cast<const aggregate*>(entity)) {
+            def.aggregate_signature = std::make_shared<kdi::kdi_aggregate>(
+                build_generic_template_aggregate_signature(*agg_ptr, ti, def.fq_name));
+        }
+    }
+    if (!def.function_signature) {
+        if (auto fn_ptr = dynamic_cast<const function*>(entity)) {
+            def.function_signature = std::make_shared<kdi::kdi_function>(
+                build_generic_template_function_signature(*fn_ptr, ti, def.fq_name));
+        }
+    }
+
     for (auto& param : ti.params) {
         kdi::kdi_template_param kparam;
         kparam.name = param.name;
@@ -1638,11 +1713,11 @@ kdi::kdi_template_def kdi_builder::build_template_def(
         }
 
         if (param.constraint_type)
-            kparam.constraint_type = to_kdi_type(param.constraint_type);
+            kparam.constraint_type = to_kdi_signature_type(param.constraint_type, ti);
         if (param.default_type)
-            kparam.default_type = to_kdi_type(param.default_type);
+            kparam.default_type = to_kdi_signature_type(param.default_type, ti);
         if (param.value_type)
-            kparam.value_type = to_kdi_type(param.value_type);
+            kparam.value_type = to_kdi_signature_type(param.value_type, ti);
         if (param.default_value.has_value()) {
             kparam.default_value = std::visit([](auto&& v) -> std::string {
                 using T = std::decay_t<decltype(v)>;

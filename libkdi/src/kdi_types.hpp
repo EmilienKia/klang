@@ -139,6 +139,28 @@ struct kdi_template_param_ref {
     std::string name;         ///< e.g. "T"
 };
 
+/**
+ * Reference to a named type applied with template (type) arguments, as it
+ * appears inside an uninstantiated template's own declaration (e.g. the
+ * member type "MultiSlot<T>" inside `template<typename T> class Vector`).
+ *
+ * Unlike kdi_aggregate_ref, the referenced name may not resolve to a concrete
+ * aggregate outside of an instantiation context — it can name another
+ * template (own or imported) that has not been (and may never be)
+ * instantiated with concrete arguments. Each argument is itself a full
+ * kdi_type so that nested template-parameter references (e.g. "Node<T>"
+ * inside "List<T>") are preserved structurally instead of degrading to
+ * opaque source text.
+ *
+ * Only type arguments are represented (the common case for libk-style
+ * collections). A non-type (value) argument used in such a nested reference
+ * falls back to a single unresolved kdi_void_type placeholder entry.
+ */
+struct kdi_generic_ref_type {
+    std::string name;                                ///< base name as written (e.g. "MultiSlot"), unqualified
+    std::vector<std::shared_ptr<kdi_type>> args;      ///< template type arguments
+};
+
 // ── Tagged union ─────────────────────────────────────────────────────────────
 
 using kdi_type_variant = std::variant<
@@ -159,7 +181,8 @@ using kdi_type_variant = std::variant<
     kdi_fn_ref_type,
     kdi_aggregate_ref,
     kdi_enum_ref,
-    kdi_template_param_ref
+    kdi_template_param_ref,
+    kdi_generic_ref_type
 >;
 
 /** A complete K type, encoded as a tagged union. */

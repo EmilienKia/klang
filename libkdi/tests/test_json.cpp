@@ -121,6 +121,21 @@ TEST_CASE("JSON: owner type round-trips", "[json][type]") {
     REQUIRE( std::holds_alternative<kdi_template_param_ref>(inner.value) );
     REQUIRE( std::get<kdi_template_param_ref>(inner.value).name == "T" );
 }
+TEST_CASE("JSON: generic_ref type round-trips", "[json][type]") {
+    // Reference to another (possibly still-uninstantiated) template applied
+    // with template type arguments, e.g. "MultiSlot<T>" inside "Vector<T>".
+    kdi_generic_ref_type gref;
+    gref.name = "MultiSlot";
+    gref.args.push_back(std::make_shared<kdi_type>(kdi_type::make_template_param("T")));
+
+    auto t = rt_type(kdi_type{std::move(gref)});
+    REQUIRE( std::holds_alternative<kdi_generic_ref_type>(t.value) );
+    auto& g = std::get<kdi_generic_ref_type>(t.value);
+    REQUIRE( g.name == "MultiSlot" );
+    REQUIRE( g.args.size() == 1u );
+    REQUIRE( std::holds_alternative<kdi_template_param_ref>(g.args[0]->value) );
+    REQUIRE( std::get<kdi_template_param_ref>(g.args[0]->value).name == "T" );
+}
 TEST_CASE("JSON: const type round-trips", "[json][type]") {
     kdi_const_type c; c.inner = std::make_shared<kdi_type>(kdi_type::make_int(32));
     auto t = rt_type(kdi_type{std::move(c)});

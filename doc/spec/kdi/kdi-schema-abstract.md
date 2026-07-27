@@ -99,6 +99,13 @@ KdiType = one of:
   { kind: "aggregate", fq_name: string }  -- reference into KdiTypeTable
   { kind: "enum", fq_name: string }       -- reference into KdiTypeTable.enums
   { kind: "template_param", name: string } -- template-signature placeholder
+  { kind: "generic_ref", name: string, args: [KdiType] }
+    -- Reference to another (possibly still-uninstantiated) named type applied
+    -- with template type arguments, as it appears inside an uninstantiated
+    -- template's own declaration (e.g. member type "MultiSlot<T>" inside
+    -- "template<typename T> class Vector"). Only type arguments are
+    -- represented; a value argument in such a nested reference falls back to
+    -- a single "void" placeholder entry in `args`.
 ```
 
 ---
@@ -185,10 +192,19 @@ KdiTemplateDef {
 
 Rules:
 
-* Classic `template<...>` definitions export `source` and may omit signature fields.
+* Classic `template<...>` definitions export their full `source` (the
+  authoritative form used by the compiler to re-parse/re-instantiate the
+  template cross-module) **and** a declaration-only `aggregate_signature` or
+  `function_signature` matching `entity_kind`. The structured signature lets
+  documentation tooling document a template's fields/constructors/methods the
+  same way as a regular (non-template) aggregate/function, with
+  template-parameter-dependent types tagged as `template_param` /
+  `generic_ref` instead of only a raw source dump.
 * `generic<...>` definitions export `is_generic = true`, MUST leave `source` empty,
   and MUST provide exactly one matching signature field:
   `aggregate_signature` for aggregate entities, `function_signature` for free functions.
+* Union templates are always classic (no signature payload exists for unions);
+  they only ever export `source`.
 KdiAggregate {
   -- Identity
   kind         : "struct" | "class" | "interface"

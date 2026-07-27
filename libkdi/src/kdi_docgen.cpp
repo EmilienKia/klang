@@ -22,6 +22,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -72,7 +73,15 @@ std::string type_to_string(const kdi_type& t) {
         }
         if constexpr (std::is_same_v<T, kdi_aggregate_ref>) return v.fq_name;
         if constexpr (std::is_same_v<T, kdi_enum_ref>) return "enum " + v.fq_name;
-        if constexpr (std::is_same_v<T, kdi_template_param_ref>) return "$" + v.name;
+        if constexpr (std::is_same_v<T, kdi_template_param_ref>) return v.name;
+        if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
+            std::string s = v.name + "<";
+            for (size_t i = 0; i < v.args.size(); ++i) {
+                if (i) s += ", ";
+                s += (v.args[i] ? type_to_string(*v.args[i]) : "?");
+            }
+            return s + ">";
+        }
         return "?";
     }, t.value);
 }
@@ -397,83 +406,43 @@ bool write_enum_page(const kdi_enum& en,
     return true;
 }
 
-bool write_aggregate_page(const kdi_aggregate& agg,
-                          const fs::path& file_path,
-                          const fs::path& ns_dir,
-                          const fs::path& module_root,
-                          const std::string& root_fq,
-                          const std::string& qualified_simple_name,
-                          std::vector<symbol_ref>& refs,
-                          std::string* error_message);
-
-bool write_aggregate_nested(const kdi_aggregate& agg,
-                            const fs::path& ns_dir,
-                            const fs::path& module_root,
-                            const std::string& root_fq,
-                            const std::string& name_prefix,
-                            std::vector<symbol_ref>& refs,
-                            std::string* error_message)
-{
-    const std::string file_stem = name_prefix.empty() ? agg.name : name_prefix + "." + agg.name;
-    const fs::path file_path = ns_dir / (file_stem + ".md");
-    if (!write_aggregate_page(agg,
-                              file_path,
-                              ns_dir,
-                              module_root,
-                              root_fq,
-                              file_stem,
-                              refs,
-                              error_message))
-        return false;
-
-    for (const auto& nested : agg.nested) {
-        if (!write_aggregate_nested(nested,
-                                    ns_dir,
-                                    module_root,
-                                    root_fq,
-                                    file_stem,
-                                    refs,
-                                    error_message))
-            return false;
-    }
-    for (const auto& un : agg.nested_unions) {
-        const std::string nested_file = file_stem + "." + un.name;
-        const fs::path un_path = ns_dir / (nested_file + ".md");
-        if (!write_union_page(un,
-                              un_path,
-                              module_root,
-                              root_fq,
-                              refs,
-                              error_message,
-                              nested_file))
-            return false;
-    }
-
-    return true;
+std::string template_param_to_string(const kdi_template_param& p) {
+    std::string s;
+    if (p.kind == "value")
+        s = (p.value_type ? type_to_string(*p.value_type) : "value") + " " + p.name;
+    else
+        s = p.kind + " " + p.name;
+    if (p.constraint_type)
+        s += " : " + type_to_string(*p.constraint_type);
+    if (p.default_type)
+        s += " = " + type_to_string(*p.default_type);
+    else if (p.default_value)
+        s += " = " + *p.default_value;
+    return s;
 }
 
-bool write_aggregate_page(const kdi_aggregate& agg,
-                          const fs::path& file_path,
-                          const fs::path& ns_dir,
-                          const fs::path& module_root,
-                          const std::string& root_fq,
-                          const std::string& qualified_simple_name,
-                          std::vector<symbol_ref>& refs,
-                          std::string* error_message)
-{
-    std::ostringstream out;
-    out << "# " << md_escape(agg.name) << "\n\n";
-    out << "## Overview\n\n";
-    out << "| Property | Value |\n";
-    out << "|---|---|\n";
-    out << "| Kind | " << code(aggregate_kind_to_string(agg.kind)) << " |\n";
-    out << "| Fully qualified name | " << code(agg.fq_name) << " |\n";
-    out << "| Visibility | " << code(visibility_to_string(agg.visibility)) << " |\n";
-    out << "| Abstract | " << code(agg.is_abstract ? "true" : "false") << " |\n";
-    out << "| Final | " << code(agg.is_final ? "true" : "false") << " |\n";
-    out << "\n[Back to namespace index](index.md)\n";
-    append_doc_block(out, agg.doc);
+std::string template_params_str(const std::vector<kdi_template_param>& params) {
+    std::string s = "<";
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i) s += ", ";
+        s += template_param_to_string(params[i]);
+    }
+    return s + ">";
+}
 
+/**
+ * Render the structured body of an aggregate (Member Variables, Members,
+ * Nested Types, and the detailed sections) into `out`.
+ *
+ * Shared between regular aggregate pages and template aggregate pages (whose
+ * `aggregate_signature` is a full-fledged kdi_aggregate) so that a template
+ * class documents its fields/constructors/methods exactly like its
+ * non-template equivalents, instead of a raw source dump.
+ */
+void write_aggregate_body(std::ostringstream& out,
+                          const kdi_aggregate& agg,
+                          const std::string& qualified_simple_name)
+{
     std::vector<kdi_layout_member> fields;
     for (const auto& field : agg.layout) {
         if (auto member = std::get_if<kdi_layout_member>(&field))
@@ -489,6 +458,9 @@ bool write_aggregate_page(const kdi_aggregate& agg,
     });
 
     std::vector<kdi_method> methods = agg.methods;
+    methods.erase(std::remove_if(methods.begin(), methods.end(), [](const auto& m) {
+        return m.template_origin.has_value();
+    }), methods.end());
     std::sort(methods.begin(), methods.end(), [](const auto& a, const auto& b) {
         if (a.name != b.name) return a.name < b.name;
         return a.mangled_name < b.mangled_name;
@@ -555,14 +527,20 @@ bool write_aggregate_page(const kdi_aggregate& agg,
     out << "\n## Nested Types\n\n";
     struct nested_row { std::string name; std::string link; std::string brief; };
     std::vector<nested_row> nested_rows;
-    for (const auto& nested : agg.nested)
+    for (const auto& nested : agg.nested) {
+        if (nested.template_origin.has_value())
+            continue; // Skip synthesized template instantiations - not useful in docs.
         nested_rows.push_back({nested.name,
                                qualified_simple_name + "." + nested.name + ".md",
                                compact_doc_brief(nested.doc)});
-    for (const auto& nested : agg.nested_unions)
+    }
+    for (const auto& nested : agg.nested_unions) {
+        if (nested.template_origin.has_value())
+            continue; // Skip synthesized template instantiations - not useful in docs.
         nested_rows.push_back({nested.name,
                                qualified_simple_name + "." + nested.name + ".md",
                                compact_doc_brief(nested.doc)});
+    }
     std::sort(nested_rows.begin(), nested_rows.end(), [](const auto& a, const auto& b) {
         return a.name < b.name;
     });
@@ -618,6 +596,271 @@ bool write_aggregate_page(const kdi_aggregate& agg,
         out << "- Static: `" << (method.is_static ? "true" : "false") << "`\n";
         append_doc_function(out, method.doc);
     }
+}
+
+/**
+ * Emit symbol-reference entries (for typed-references.md) for an aggregate's
+ * fields/static variables/constructors/destructor/methods. Shared between
+ * regular aggregate pages and template aggregate pages.
+ */
+void add_aggregate_member_refs(std::vector<symbol_ref>& refs,
+                               const kdi_aggregate& agg,
+                               const std::string& type_link,
+                               const std::string& fq_scope)
+{
+    std::vector<kdi_layout_member> fields;
+    for (const auto& field : agg.layout) {
+        if (auto member = std::get_if<kdi_layout_member>(&field))
+            fields.push_back(*member);
+    }
+    std::sort(fields.begin(), fields.end(), [](const auto& a, const auto& b) {
+        return a.name < b.name;
+    });
+    std::vector<kdi_variable> static_vars = agg.static_vars;
+    std::sort(static_vars.begin(), static_vars.end(), [](const auto& a, const auto& b) {
+        return a.name < b.name;
+    });
+    std::vector<kdi_method> methods = agg.methods;
+    methods.erase(std::remove_if(methods.begin(), methods.end(), [](const auto& m) {
+        return m.template_origin.has_value();
+    }), methods.end());
+    std::sort(methods.begin(), methods.end(), [](const auto& a, const auto& b) {
+        if (a.name != b.name) return a.name < b.name;
+        return a.mangled_name < b.mangled_name;
+    });
+    std::vector<kdi_constructor> constructors = agg.constructors;
+    std::sort(constructors.begin(), constructors.end(), [](const auto& a, const auto& b) {
+        if (a.params.size() != b.params.size()) return a.params.size() < b.params.size();
+        return a.mangled_name < b.mangled_name;
+    });
+
+    for (size_t i = 0; i < fields.size(); ++i) {
+        const auto& field = fields[i];
+        add_reference(refs,
+                      "field",
+                      field.name,
+                      fq_scope,
+                      type_to_string(field.type),
+                      type_link + "#field-" + make_slug(field.name) + "-" + std::to_string(i));
+    }
+    for (size_t i = 0; i < static_vars.size(); ++i) {
+        const auto& var = static_vars[i];
+        add_reference(refs,
+                      "static-variable",
+                      var.name,
+                      fq_scope,
+                      type_to_string(var.type),
+                      type_link + "#static-var-" + make_slug(var.name) + "-" + std::to_string(i),
+                      compact_doc_brief(var.doc));
+    }
+    for (size_t i = 0; i < methods.size(); ++i) {
+        const auto& method = methods[i];
+        add_reference(refs,
+                      "method",
+                      method.name,
+                      fq_scope,
+                      make_signature(method.name, method.params, &method.return_type),
+                      type_link + "#method-" + make_slug(method.name) + "-" + std::to_string(i),
+                      compact_doc_brief(method.doc));
+    }
+    for (size_t i = 0; i < constructors.size(); ++i) {
+        add_reference(refs,
+                      "constructor",
+                      agg.name,
+                      fq_scope,
+                      make_signature(agg.name, constructors[i].params, nullptr),
+                      type_link + "#ctor-" + std::to_string(i),
+                      compact_doc_brief(constructors[i].doc));
+    }
+    if (agg.destructor.has_value()) {
+        add_reference(refs,
+                      "destructor",
+                      "~" + agg.name,
+                      fq_scope,
+                      "destructor",
+                      type_link + "#dtor",
+                      compact_doc_brief(agg.destructor->doc));
+    }
+}
+
+bool write_template_def_page(const kdi_template_def& def,
+                             const fs::path& file_path,
+                             const fs::path& module_root,
+                             const std::string& root_fq,
+                             std::vector<symbol_ref>& refs,
+                             std::string* error_message)
+{
+    std::ostringstream out;
+    out << "# " << md_escape(def.name) << "\n\n";
+    out << "## Overview\n\n";
+    out << "| Property | Value |\n";
+    out << "|---|---|\n";
+    out << "| Kind | " << code("template " + def.entity_kind) << " |\n";
+    out << "| Fully qualified name | " << code(def.fq_name) << " |\n";
+    out << "| Visibility | " << code(def.visibility) << " |\n";
+    out << "| Generic | " << code(def.is_generic ? "true" : "false") << " |\n";
+    if (!def.origin_module.empty())
+        out << "| Origin module | " << code(def.origin_module) << " |\n";
+    out << "\n[Back to namespace index](index.md)\n";
+
+    out << "\n## Template Parameters\n\n";
+    if (def.params.empty()) {
+        out << "- *(none)*\n";
+    } else {
+        out << "| Name | Kind | Constraint / Value type | Default |\n";
+        out << "|---|---|---|---|\n";
+        for (const auto& p : def.params) {
+            std::string constraint;
+            if (p.constraint_type) constraint = type_to_string(*p.constraint_type);
+            else if (p.value_type) constraint = type_to_string(*p.value_type);
+            std::string default_val;
+            if (p.default_type) default_val = type_to_string(*p.default_type);
+            else if (p.default_value) default_val = *p.default_value;
+            out << "| " << code(p.name) << " | " << code(p.kind) << " | "
+                << (constraint.empty() ? "-" : code(constraint)) << " | "
+                << (default_val.empty() ? "-" : code(default_val)) << " |\n";
+        }
+    }
+
+    // Structured rendering: an aggregate-kind template documents its
+    // fields/constructors/methods with the exact same sections as a regular
+    // (non-template) aggregate page — template-parameter-dependent types are
+    // tagged distinctly (kdi_template_param_ref / kdi_generic_ref_type)
+    // rather than collapsed into an opaque source dump. A function-kind
+    // template gets an equivalent Signature/Parameters/Return type rendering.
+    if (def.aggregate_signature) {
+        write_aggregate_body(out, *def.aggregate_signature, def.name);
+    } else if (def.function_signature) {
+        out << "\n## Signature\n\n";
+        out << "- " << code(make_signature(def.function_signature->name,
+                                           def.function_signature->params,
+                                           &def.function_signature->return_type)) << "\n";
+        out << "\n## Parameters\n\n";
+        if (def.function_signature->params.empty()) {
+            out << "- *(none)*\n";
+        } else {
+            out << "| Name | Type |\n";
+            out << "|---|---|\n";
+            for (const auto& p : def.function_signature->params)
+                out << "| " << code(p.name) << " | " << code(type_to_string(p.type)) << " |\n";
+        }
+        out << "\n## Return Type\n\n";
+        out << code(type_to_string(def.function_signature->return_type)) << "\n";
+        append_doc_function(out, def.function_signature->doc);
+    }
+
+    // The raw K declaration source is kept as a supplementary reference
+    // (default member initializers, annotations, and other syntax not
+    // captured by the structured signature above are only visible there).
+    // Generic templates are signature-only and have no re-emittable source.
+    if (!def.source.empty()) {
+        out << "\n## Declaration Source\n\n";
+        out << "```k\n" << def.source << "\n```\n";
+    } else if (!def.aggregate_signature && !def.function_signature) {
+        out << "\n*No declaration source or signature available for this template.*\n";
+    }
+    if (!write_file(file_path, out.str(), error_message))
+        return false;
+
+    const std::string link = rel_link(module_root, file_path);
+    const std::string scope = strip_prefix(parent_scope(def.fq_name), root_fq);
+    add_reference(refs,
+                  "template " + def.entity_kind,
+                  def.name,
+                  scope,
+                  "template" + template_params_str(def.params),
+                  link);
+
+    if (def.aggregate_signature) {
+        add_aggregate_member_refs(refs, *def.aggregate_signature, link,
+                                  strip_prefix(def.fq_name, root_fq));
+    }
+
+    return true;
+}
+
+bool write_aggregate_page(const kdi_aggregate& agg,
+                          const fs::path& file_path,
+                          const fs::path& ns_dir,
+                          const fs::path& module_root,
+                          const std::string& root_fq,
+                          const std::string& qualified_simple_name,
+                          std::vector<symbol_ref>& refs,
+                          std::string* error_message);
+
+bool write_aggregate_nested(const kdi_aggregate& agg,
+                            const fs::path& ns_dir,
+                            const fs::path& module_root,
+                            const std::string& root_fq,
+                            const std::string& name_prefix,
+                            std::vector<symbol_ref>& refs,
+                            std::string* error_message)
+{
+    const std::string file_stem = name_prefix.empty() ? agg.name : name_prefix + "." + agg.name;
+    const fs::path file_path = ns_dir / (file_stem + ".md");
+    if (!write_aggregate_page(agg,
+                              file_path,
+                              ns_dir,
+                              module_root,
+                              root_fq,
+                              file_stem,
+                              refs,
+                              error_message))
+        return false;
+
+    for (const auto& nested : agg.nested) {
+        if (nested.template_origin.has_value())
+            continue; // Skip synthesized template instantiations - not useful in docs.
+        if (!write_aggregate_nested(nested,
+                                    ns_dir,
+                                    module_root,
+                                    root_fq,
+                                    file_stem,
+                                    refs,
+                                    error_message))
+            return false;
+    }
+    for (const auto& un : agg.nested_unions) {
+        if (un.template_origin.has_value())
+            continue; // Skip synthesized template instantiations - not useful in docs.
+        const std::string nested_file = file_stem + "." + un.name;
+        const fs::path un_path = ns_dir / (nested_file + ".md");
+        if (!write_union_page(un,
+                              un_path,
+                              module_root,
+                              root_fq,
+                              refs,
+                              error_message,
+                              nested_file))
+            return false;
+    }
+
+    return true;
+}
+
+bool write_aggregate_page(const kdi_aggregate& agg,
+                          const fs::path& file_path,
+                          const fs::path& ns_dir,
+                          const fs::path& module_root,
+                          const std::string& root_fq,
+                          const std::string& qualified_simple_name,
+                          std::vector<symbol_ref>& refs,
+                          std::string* error_message)
+{
+    std::ostringstream out;
+    out << "# " << md_escape(agg.name) << "\n\n";
+    out << "## Overview\n\n";
+    out << "| Property | Value |\n";
+    out << "|---|---|\n";
+    out << "| Kind | " << code(aggregate_kind_to_string(agg.kind)) << " |\n";
+    out << "| Fully qualified name | " << code(agg.fq_name) << " |\n";
+    out << "| Visibility | " << code(visibility_to_string(agg.visibility)) << " |\n";
+    out << "| Abstract | " << code(agg.is_abstract ? "true" : "false") << " |\n";
+    out << "| Final | " << code(agg.is_final ? "true" : "false") << " |\n";
+    out << "\n[Back to namespace index](index.md)\n";
+    append_doc_block(out, agg.doc);
+
+    write_aggregate_body(out, agg, qualified_simple_name);
 
     if (!write_file(file_path, out.str(), error_message))
         return false;
@@ -632,53 +875,7 @@ bool write_aggregate_page(const kdi_aggregate& agg,
                   type_link,
                   compact_doc_brief(agg.doc));
 
-    for (size_t i = 0; i < fields.size(); ++i) {
-        const auto& field = fields[i];
-        add_reference(refs,
-                      "field",
-                      field.name,
-                      strip_prefix(agg.fq_name, root_fq),
-                      type_to_string(field.type),
-                      type_link + "#field-" + make_slug(field.name) + "-" + std::to_string(i));
-    }
-    for (size_t i = 0; i < static_vars.size(); ++i) {
-        const auto& var = static_vars[i];
-        add_reference(refs,
-                      "static-variable",
-                      var.name,
-                      strip_prefix(agg.fq_name, root_fq),
-                      type_to_string(var.type),
-                      type_link + "#static-var-" + make_slug(var.name) + "-" + std::to_string(i),
-                      compact_doc_brief(var.doc));
-    }
-    for (size_t i = 0; i < methods.size(); ++i) {
-        const auto& method = methods[i];
-        add_reference(refs,
-                      "method",
-                      method.name,
-                      strip_prefix(agg.fq_name, root_fq),
-                      make_signature(method.name, method.params, &method.return_type),
-                      type_link + "#method-" + make_slug(method.name) + "-" + std::to_string(i),
-                      compact_doc_brief(method.doc));
-    }
-    for (size_t i = 0; i < constructors.size(); ++i) {
-        add_reference(refs,
-                      "constructor",
-                      agg.name,
-                      strip_prefix(agg.fq_name, root_fq),
-                      make_signature(agg.name, constructors[i].params, nullptr),
-                      type_link + "#ctor-" + std::to_string(i),
-                      compact_doc_brief(constructors[i].doc));
-    }
-    if (agg.destructor.has_value()) {
-        add_reference(refs,
-                      "destructor",
-                      "~" + agg.name,
-                      strip_prefix(agg.fq_name, root_fq),
-                      "destructor",
-                      type_link + "#dtor",
-                      compact_doc_brief(agg.destructor->doc));
-    }
+    add_aggregate_member_refs(refs, agg, type_link, strip_prefix(agg.fq_name, root_fq));
 
     return true;
 }
@@ -714,11 +911,24 @@ bool write_namespace_tree(const kdi_namespace& ns,
     }
 
     std::vector<kdi_namespace> child_ns = ns.namespaces;
+    // Defensive guard against a pre-existing KDI export quirk: an auto-imported
+    // module (e.g. the implicit `import k;`) can surface as an inert, fully-empty
+    // "mirror" child namespace whose fq_name fails to properly extend the parent's
+    // (collapsing to the parent's own scope). Writing such a child would resolve to
+    // the very same directory as the current namespace and silently overwrite its
+    // freshly written index page. These mirrors carry no real content (they only
+    // exist to shadow imported symbols resolved elsewhere), so they are safely skipped.
+    child_ns.erase(std::remove_if(child_ns.begin(), child_ns.end(), [&](const kdi_namespace& c) {
+        return strip_prefix(c.fq_name, root_fq).empty();
+    }), child_ns.end());
     std::sort(child_ns.begin(), child_ns.end(), [](const auto& a, const auto& b) {
         return a.name < b.name;
     });
 
     std::vector<kdi_aggregate> aggregates = ns.aggregates;
+    aggregates.erase(std::remove_if(aggregates.begin(), aggregates.end(), [](const auto& a) {
+        return a.template_origin.has_value();
+    }), aggregates.end());
     std::sort(aggregates.begin(), aggregates.end(), [](const auto& a, const auto& b) {
         return a.name < b.name;
     });
@@ -729,11 +939,17 @@ bool write_namespace_tree(const kdi_namespace& ns,
     });
 
     std::vector<kdi_union> unions = ns.unions;
+    unions.erase(std::remove_if(unions.begin(), unions.end(), [](const auto& u) {
+        return u.template_origin.has_value();
+    }), unions.end());
     std::sort(unions.begin(), unions.end(), [](const auto& a, const auto& b) {
         return a.name < b.name;
     });
 
     std::vector<kdi_function> functions = ns.functions;
+    functions.erase(std::remove_if(functions.begin(), functions.end(), [](const auto& f) {
+        return f.template_origin.has_value();
+    }), functions.end());
     std::sort(functions.begin(), functions.end(), [](const auto& a, const auto& b) {
         if (a.name != b.name) return a.name < b.name;
         return a.mangled_name < b.mangled_name;
@@ -743,6 +959,32 @@ bool write_namespace_tree(const kdi_namespace& ns,
     std::sort(variables.begin(), variables.end(), [](const auto& a, const auto& b) {
         return a.name < b.name;
     });
+
+    // Collect names of template instantiations at this scope, so that member
+    // templates re-walked from within an instantiation's cloned body (e.g. a
+    // generic method still nested under `UniSlot__byte`) can be excluded below:
+    // they are pure synthesis duplicates of the method already documented on
+    // the original template declaration's page.
+    std::set<std::string> instantiation_names;
+    for (const auto& a : ns.aggregates)
+        if (a.template_origin) instantiation_names.insert(a.name);
+    for (const auto& u : ns.unions)
+        if (u.template_origin) instantiation_names.insert(u.name);
+
+    std::vector<kdi_template_def> template_defs = ns.template_defs;
+    template_defs.erase(std::remove_if(template_defs.begin(), template_defs.end(), [&](const auto& td) {
+        const std::string parent = parent_scope(td.fq_name);
+        const auto pos = parent.rfind("::");
+        const std::string parent_short = pos == std::string::npos ? parent : parent.substr(pos + 2);
+        return instantiation_names.count(parent_short) > 0;
+    }), template_defs.end());
+    std::sort(template_defs.begin(), template_defs.end(), [](const auto& a, const auto& b) {
+        return a.name < b.name;
+    });
+    std::vector<kdi_template_def> function_templates;
+    for (const auto& td : template_defs)
+        if (td.entity_kind == "function")
+            function_templates.push_back(td);
 
     std::ostringstream out;
     if (with_module_header && file) {
@@ -787,6 +1029,9 @@ bool write_namespace_tree(const kdi_namespace& ns,
         rows.push_back({en.name, "enum", en.name + ".md", compact_doc_brief(en.doc)});
     for (const auto& un : unions)
         rows.push_back({un.name, "union", un.name + ".md", compact_doc_brief(un.doc)});
+    for (const auto& td : template_defs)
+        if (td.entity_kind != "function")
+            rows.push_back({td.name, "template " + td.entity_kind, td.name + ".md", std::string()});
     std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
         return a.name < b.name;
     });
@@ -814,6 +1059,17 @@ bool write_namespace_tree(const kdi_namespace& ns,
             out << "| [" << code(make_signature(fn.name, fn.params, &fn.return_type))
                 << "](#" << fn_anchors[i] << ") | " << md_escape(compact_doc_brief(fn.doc)) << " |\n";
         }
+    }
+
+    out << "\n## Function Templates\n\n";
+    if (function_templates.empty()) {
+        out << "- *(none)*\n";
+    } else {
+        out << "| Name | Parameters |\n";
+        out << "|---|---|\n";
+        for (const auto& td : function_templates)
+            out << "| [" << code(td.name) << "](" << td.name << ".md) | "
+                << code(template_params_str(td.params)) << " |\n";
     }
 
     std::vector<std::string> var_anchors(variables.size());
@@ -911,6 +1167,15 @@ bool write_namespace_tree(const kdi_namespace& ns,
                               refs,
                               error_message,
                               un.name))
+            return false;
+    }
+    for (const auto& td : template_defs) {
+        if (!write_template_def_page(td,
+                                     ns_dir / (td.name + ".md"),
+                                     module_root,
+                                     root_fq,
+                                     refs,
+                                     error_message))
             return false;
     }
 

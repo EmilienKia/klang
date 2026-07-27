@@ -77,6 +77,14 @@ std::string type_str(const kdi_type& t) {
             return "enum " + v.fq_name;
         if constexpr (std::is_same_v<T, kdi_template_param_ref>)
             return "$" + v.name;
+        if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
+            std::string s = v.name + "<";
+            for (size_t i = 0; i < v.args.size(); ++i) {
+                if (i) s += ", ";
+                s += (v.args[i] ? type_str(*v.args[i]) : "?");
+            }
+            return s + ">";
+        }
         return "?";
     }, t.value);
 }

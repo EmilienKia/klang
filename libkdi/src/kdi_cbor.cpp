@@ -465,6 +465,12 @@ cbor_item_t* encode_type(const kdi_type& t) {
         } else if constexpr (std::is_same_v<T, kdi_template_param_ref>) {
             map_push(m, "kind", cbor_str("template_param"));
             map_push(m, "name", cbor_str(v.name));
+        } else if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
+            map_push(m, "kind", cbor_str("generic_ref"));
+            map_push(m, "name", cbor_str(v.name));
+            cbor_item_t* aa = cbor_new_indefinite_array();
+            for (auto& a : v.args) cbor_array_push(aa, cbor_move(encode_type(*a)));
+            map_push(m, "args", aa);
         }
     }, t.value);
     return m;
@@ -533,6 +539,20 @@ kdi_type decode_type(cbor_item_t* item, const std::string& path) {
     }
     if (kind == "template_param") {
         return {kdi_template_param_ref{req_string(item, "name", path)}};
+    }
+    if (kind == "generic_ref") {
+        kdi_generic_ref_type t;
+        t.name = req_string(item, "name", path);
+        auto* aa = map_get(item, "args");
+        if (aa && cbor_isa_array(aa)) {
+            size_t n = cbor_array_size(aa);
+            for (size_t i = 0; i < n; ++i) {
+                t.args.push_back(std::make_shared<kdi_type>(
+                    decode_type(cbor_array_get(aa, i),
+                                path + ".args[" + std::to_string(i) + "]")));
+            }
+        }
+        return {t};
     }
     throw kdi_parse_error("unknown type kind '" + kind + "' at " + path);
 }
