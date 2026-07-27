@@ -82,6 +82,15 @@ kdi_file make_docgen_model() {
     ping.doc->brief = "Checks that the thing responds to a liveness probe.";
     thing.methods.push_back(ping);
 
+    // Regression coverage: a method whose return type references a concrete
+    // template instantiation (kdi_aggregate_ref pointing at the compiler-
+    // synthesized "Container__int") must render using the real generic
+    // arguments ("Container<int32>"), not the synthesized/mangled name.
+    kdi_method get_container;
+    get_container.name = "getContainer";
+    get_container.return_type = kdi_type::make_aggregate("demo::mod::Container__int");
+    thing.methods.push_back(get_container);
+
     kdi_layout_member id;
     id.name = "id";
     id.type = kdi_type::make_int(32, true);
@@ -218,6 +227,9 @@ kdi_file make_docgen_model() {
         inst.template_origin = kdi_template_origin{};
         inst.template_origin->base_name = "Container";
         inst.template_origin->base_fq_name = "demo::mod::Container";
+        kdi_template_arg int_arg;
+        int_arg.type_arg = kdi_type::make_int(32, true);
+        inst.template_origin->args.push_back(int_arg);
 
         kdi_method inst_method;
         inst_method.name = "getValue";
@@ -291,11 +303,11 @@ TEST_CASE("docgen: generate markdown tree with module root index", "[docgen]") {
     REQUIRE(root_index.find("[util](util/index.md)") != std::string::npos);
     REQUIRE(root_index.find("| Name | Kind | Brief |") != std::string::npos);
     REQUIRE(root_index.find("| [`Thing`](Thing.md) | `class` | Main sample class used by docgen tests. |") != std::string::npos);
-    REQUIRE(root_index.find("| [`Container`](Container.md) | `template class` |") != std::string::npos);
+    REQUIRE(root_index.find("| [`Container&lt;T&gt;`](Container.md) | `template class` |") != std::string::npos);
     REQUIRE(root_index.find("| Signature | Brief |") != std::string::npos);
     REQUIRE(root_index.find("| [`makeThing() : void`](#fn-makething-0) | Create a Thing. |") != std::string::npos);
     REQUIRE(root_index.find("## Function Templates") != std::string::npos);
-    REQUIRE(root_index.find("[`makeContainer`](makeContainer.md)") != std::string::npos);
+    REQUIRE(root_index.find("[`makeContainer&lt;T&gt;`](makeContainer.md)") != std::string::npos);
     REQUIRE(root_index.find("| Name | Type | Brief |") != std::string::npos);
     REQUIRE(root_index.find("| [`VERSION`](#var-version-0) | `unsigned int32` | Public API version exposed to consumers. |") != std::string::npos);
     REQUIRE(root_index.find("[details](#") == std::string::npos);
@@ -314,8 +326,13 @@ TEST_CASE("docgen: generate markdown tree with module root index", "[docgen]") {
     REQUIRE_FALSE(fs::exists(module_root / "construct.md"));
 
     const std::string thing_md = read_text_file(module_root / "Thing.md");
-    REQUIRE(thing_md.find("- [`ping() : bool`](#method-ping-0) - Checks that the thing responds to a liveness probe.") != std::string::npos);
+    REQUIRE(thing_md.find("- [`ping() : bool`](#method-ping-1) - Checks that the thing responds to a liveness probe.") != std::string::npos);
     REQUIRE(thing_md.find("- [Inner](Thing.Inner.md) - Nested helper payload.") != std::string::npos);
+    // Regression: a method returning a concrete template instantiation must
+    // render using the real generic arguments ("Container<int32>"), not the
+    // compiler-synthesized/mangled name ("Container__int").
+    REQUIRE(thing_md.find("getContainer() : demo::mod::Container&lt;int32&gt;") != std::string::npos);
+    REQUIRE(thing_md.find("Container__int") == std::string::npos);
 
     const std::string container_md = read_text_file(module_root / "Container.md");
     REQUIRE(container_md.find("`template class`") != std::string::npos);
@@ -391,9 +408,9 @@ TEST_CASE("docgen: generate html tree with direct links on names", "[docgen]") {
     const std::string root_index = read_text_file(module_root / "index.html");
     REQUIRE(root_index.find("<a href=\"util/index.html\">util</a>") != std::string::npos);
     REQUIRE(root_index.find("<a href=\"Thing.html\">Thing</a>") != std::string::npos);
-    REQUIRE(root_index.find("<a href=\"Container.html\">Container</a>") != std::string::npos);
+    REQUIRE(root_index.find("<a href=\"Container.html\">Container&lt;T&gt;</a>") != std::string::npos);
     REQUIRE(root_index.find("<a href=\"#fn-makething-0\">makeThing() : void</a>") != std::string::npos);
-    REQUIRE(root_index.find("<a href=\"makeContainer.html\">makeContainer</a>") != std::string::npos);
+    REQUIRE(root_index.find("<a href=\"makeContainer.html\">makeContainer&lt;T&gt;</a>") != std::string::npos);
     REQUIRE(root_index.find("<a href=\"#var-version-0\">VERSION</a>") != std::string::npos);
     REQUIRE(root_index.find("<th>Brief</th>") != std::string::npos);
     REQUIRE(root_index.find("Main sample class used by docgen tests.") != std::string::npos);
@@ -419,6 +436,11 @@ TEST_CASE("docgen: generate html tree with direct links on names", "[docgen]") {
     REQUIRE(thing_page.find("Checks that the thing responds to a liveness probe.") != std::string::npos);
     REQUIRE(thing_page.find("Nested helper payload.") != std::string::npos);
     REQUIRE(thing_page.find(">detail<") == std::string::npos);
+    // Regression: a method returning a concrete template instantiation must
+    // render using the real generic arguments ("Container<int32>"), not the
+    // compiler-synthesized/mangled name ("Container__int").
+    REQUIRE(thing_page.find("getContainer() : demo::mod::Container&lt;int32&gt;") != std::string::npos);
+    REQUIRE(thing_page.find("Container__int") == std::string::npos);
 
     const std::string container_page = read_text_file(module_root / "Container.html");
     REQUIRE(container_page.find("template class") != std::string::npos);

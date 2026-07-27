@@ -33,6 +33,7 @@
 #include <sstream>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -330,6 +331,41 @@ struct html_ctx {
 
 // ─── Shared utilities (mirrors kdi_docgen.cpp anonymous helpers) ──────────────
 
+// Index of concrete template instantiations (aggregate/union fq_name -> template
+// origin), populated once per doc-generation run so that any type reference to
+// a compiler-synthesized instantiation (e.g. "k::Expected__unsigned_sint__...")
+// can be rendered using the real generic syntax (e.g. "k::Expected<unsigned int32, ...>")
+// instead of the mangled/synthesized name.
+static std::unordered_map<std::string, kdi_template_origin> g_instantiation_origins_h;
+
+// Strip a leading "::" root-prefix, to match the KDI convention used by
+// kdi_aggregate_ref::fq_name (always stored without the prefix).
+static std::string strip_root_prefix_h(const std::string& fq) {
+    return (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') ? fq.substr(2) : fq;
+}
+
+static void collect_instantiation_origins_h(const kdi_aggregate& agg) {
+    if (agg.template_origin)
+        g_instantiation_origins_h[strip_root_prefix_h(agg.fq_name)] = *agg.template_origin;
+    for (auto& nested : agg.nested)
+        collect_instantiation_origins_h(nested);
+    for (auto& nested_union : agg.nested_unions) {
+        if (nested_union.template_origin)
+            g_instantiation_origins_h[strip_root_prefix_h(nested_union.fq_name)] = *nested_union.template_origin;
+    }
+}
+
+static void collect_instantiation_origins_h(const kdi_namespace& ns) {
+    for (auto& agg : ns.aggregates)
+        collect_instantiation_origins_h(agg);
+    for (auto& u : ns.unions) {
+        if (u.template_origin)
+            g_instantiation_origins_h[strip_root_prefix_h(u.fq_name)] = *u.template_origin;
+    }
+    for (auto& child : ns.namespaces)
+        collect_instantiation_origins_h(child);
+}
+
 static std::string type_to_string_h(const kdi_type& t) {
     return std::visit([](const auto& v) -> std::string {
         using T = std::decay_t<decltype(v)>;
@@ -357,7 +393,25 @@ static std::string type_to_string_h(const kdi_type& t) {
             }
             return s + ") : " + (v.ret ? type_to_string_h(*v.ret) : "void");
         }
-        if constexpr (std::is_same_v<T, kdi_aggregate_ref>) return v.fq_name;
+        if constexpr (std::is_same_v<T, kdi_aggregate_ref>) {
+            // If this reference targets a compiler-synthesized concrete template
+            // instantiation, render it using its real generic arguments instead
+            // of the synthesized/mangled fq_name.
+            auto it = g_instantiation_origins_h.find(v.fq_name);
+            if (it != g_instantiation_origins_h.end()) {
+                const kdi_template_origin& origin = it->second;
+                std::string s = strip_root_prefix_h(origin.base_fq_name) + "<";
+                for (size_t i = 0; i < origin.args.size(); ++i) {
+                    if (i) s += ", ";
+                    const auto& arg = origin.args[i];
+                    if (arg.type_arg) s += type_to_string_h(*arg.type_arg);
+                    else if (arg.value_arg) s += *arg.value_arg;
+                    else s += "?";
+                }
+                return s + ">";
+            }
+            return v.fq_name;
+        }
         if constexpr (std::is_same_v<T, kdi_enum_ref>)      return "enum " + v.fq_name;
         if constexpr (std::is_same_v<T, kdi_template_param_ref>) return v.name;
         if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
@@ -795,6 +849,24 @@ static std::string template_params_str_h(const std::vector<kdi_template_param>& 
 }
 
 /**
+ * Build the "<P1, P2, ...>" suffix (bare parameter names only) appended to a
+ * template's short or fully-qualified name wherever it is displayed, so a
+ * generic declaration reads as e.g. "Expected<R, E>" rather than the bare
+ * "Expected" — consistent with how a concrete instantiation would be named.
+ * Returns an empty string for a non-generic (parameterless) template.
+ */
+static std::string template_param_names_str_h(const std::vector<kdi_template_param>& params) {
+    if (params.empty())
+        return {};
+    std::string s = "<";
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i) s += ", ";
+        s += params[i].name;
+    }
+    return s + ">";
+}
+
+/**
  * Render the structured body of an aggregate (Member Variables, Members,
  * Nested Types, and the detailed sections) into `content`.
  *
@@ -1080,6 +1152,7 @@ static bool write_template_def_page_html(const kdi_template_def& def,
                                           std::string* err)
 {
     const fs::path file_path = ns_dir / (def.name + ".html");
+    const std::string param_suffix = template_param_names_str_h(def.params);
 
     std::vector<std::pair<std::string,std::string>> bc_parts;
     const std::string rel_scope = strip_pfx(parent_scope_h(def.fq_name), ctx.root_fq);
@@ -1091,15 +1164,15 @@ static bool write_template_def_page_html(const kdi_template_def& def,
             bc_parts.emplace_back(part, rel_link_h(ns_dir, ctx.module_root / built / "index.html"));
         }
     }
-    bc_parts.emplace_back(def.name, "");
+    bc_parts.emplace_back(def.name + param_suffix, "");
 
     std::ostringstream content;
-    content << "<h1 class=\"ptitle\">" << html_escape(def.name)
+    content << "<h1 class=\"ptitle\">" << html_escape(def.name + param_suffix)
             << kind_badge("template " + def.entity_kind) << "</h1>\n";
 
     content << "<div class=\"ov\"><table>\n"
             << "<tr><th>Property</th><th>Value</th></tr>\n"
-            << "<tr><td>Fully qualified name</td><td>" << hcode(def.fq_name) << "</td></tr>\n"
+            << "<tr><td>Fully qualified name</td><td>" << hcode(def.fq_name + param_suffix) << "</td></tr>\n"
             << "<tr><td>Visibility</td><td>" << vis_tag_str(def.visibility) << "</td></tr>\n"
             << "<tr><td>Generic</td><td>" << hcode(def.is_generic ? "true" : "false") << "</td></tr>\n";
     if (!def.origin_module.empty())
@@ -1168,13 +1241,13 @@ static bool write_template_def_page_html(const kdi_template_def& def,
     }
 
     const std::string page_html = make_page(ctx, ns_dir,
-        def.name + " — template " + def.entity_kind, make_breadcrumbs(bc_parts), content.str());
+        def.name + param_suffix + " — template " + def.entity_kind, make_breadcrumbs(bc_parts), content.str());
 
     if (!write_file_h(file_path, page_html, err)) return false;
 
     const std::string link = rel_link_h(ctx.module_root, file_path);
     const std::string scope = strip_pfx(parent_scope_h(def.fq_name), ctx.root_fq);
-    add_ref(refs, "template " + def.entity_kind, def.name, scope,
+    add_ref(refs, "template " + def.entity_kind, def.name + param_suffix, scope,
             "template" + template_params_str_h(def.params), link);
 
     if (def.aggregate_signature) {
@@ -1511,7 +1584,8 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
     for (const auto& u : unions)     rows.push_back({u.name, "union", u.name + ".html", compact_doc_brief_h(u.doc)});
     for (const auto& td : template_defs)
         if (td.entity_kind != "function")
-            rows.push_back({td.name, "template " + td.entity_kind, td.name + ".html", std::string()});
+            rows.push_back({td.name + template_param_names_str_h(td.params),
+                            "template " + td.entity_kind, td.name + ".html", std::string()});
     std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
 
     content << "<h2 class=\"sh\">Types</h2>\n";
@@ -1558,7 +1632,7 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
                 << "<thead><tr><th>Name</th><th>Parameters</th></tr></thead>\n<tbody>\n";
         for (const auto& td : function_templates)
             content << "<tr><td class=\"tn\"><a href=\"" << td.name << ".html\">"
-                    << html_escape(td.name) << "</a></td>"
+                    << html_escape(td.name + template_param_names_str_h(td.params)) << "</a></td>"
                     << "<td class=\"tt\">" << hcode(template_params_str_h(td.params)) << "</td></tr>\n";
         content << "</tbody></table>\n";
     }
@@ -1757,6 +1831,12 @@ bool kdi_generate_html_doc(const kdi_file& file,
                             std::string* error_message)
 {
     try {
+        // (Re)build the concrete-instantiation index used by type_to_string_h() so
+        // that references to synthesized template instantiations render with
+        // their real generic arguments (see collect_instantiation_origins_h()).
+        g_instantiation_origins_h.clear();
+        collect_instantiation_origins_h(file.unit.root_ns);
+
         const fs::path destination = destination_dir.empty()
                                          ? fs::path(".")
                                          : fs::path(destination_dir);
