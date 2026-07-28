@@ -139,6 +139,75 @@ kdi_file make_docgen_model() {
     color.doc->brief = "Enumeration of display colors.";
     file.unit.root_ns.enums.push_back(color);
 
+    // Regression coverage for the "## Inheritance" section (regular
+    // class/interface hierarchy): an interface with no bases, a class
+    // implementing it directly, and a further class deriving from that one
+    // (transitively implementing the interface). Exercises: direct bases,
+    // the transitive "implemented interfaces" closure, module-local direct
+    // subclasses, and (interfaces only) module-local direct-or-indirect
+    // implementors.
+    {
+        kdi_aggregate greeter;
+        greeter.kind = kdi_aggregate_kind::interface_;
+        greeter.name = "Greeter";
+        greeter.fq_name = "demo::mod::Greeter";
+        file.unit.root_ns.aggregates.push_back(greeter);
+
+        kdi_aggregate talker;
+        talker.kind = kdi_aggregate_kind::class_;
+        talker.name = "Talker";
+        talker.fq_name = "demo::mod::Talker";
+        kdi_base talker_base;
+        talker_base.fq_name = "demo::mod::Greeter";
+        talker_base.is_virtual = true;
+        talker.bases.push_back(talker_base);
+        file.unit.root_ns.aggregates.push_back(talker);
+
+        kdi_aggregate super_talker;
+        super_talker.kind = kdi_aggregate_kind::class_;
+        super_talker.name = "SuperTalker";
+        super_talker.fq_name = "demo::mod::SuperTalker";
+        kdi_base super_talker_base;
+        super_talker_base.fq_name = "demo::mod::Talker";
+        super_talker_base.is_virtual = true;
+        super_talker.bases.push_back(super_talker_base);
+        file.unit.root_ns.aggregates.push_back(super_talker);
+    }
+
+    // Regression coverage for enum ascendant/descendant relationships
+    // (direct only): a base enum with no parent, and a derived enum
+    // referencing it via base_fq_name.
+    {
+        kdi_enum status;
+        status.name = "Status";
+        status.fq_name = "demo::mod::Status";
+        status.underlying_type = kdi_type::make_int(32, true);
+        file.unit.root_ns.enums.push_back(status);
+
+        kdi_enum extended_status;
+        extended_status.name = "ExtendedStatus";
+        extended_status.fq_name = "demo::mod::ExtendedStatus";
+        extended_status.underlying_type = kdi_type::make_int(32, true);
+        extended_status.base_fq_name = "demo::mod::Status";
+        file.unit.root_ns.enums.push_back(extended_status);
+    }
+
+    // Regression coverage for union ascendant/descendant relationships
+    // (direct only): a base union with no parent, and a derived union
+    // referencing it via base_union_fq_name.
+    {
+        kdi_union result;
+        result.name = "Result";
+        result.fq_name = "demo::mod::Result";
+        file.unit.root_ns.unions.push_back(result);
+
+        kdi_union extended_result;
+        extended_result.name = "ExtendedResult";
+        extended_result.fq_name = "demo::mod::ExtendedResult";
+        extended_result.base_union_fq_name = "demo::mod::Result";
+        file.unit.root_ns.unions.push_back(extended_result);
+    }
+
     // Aggregate (class) template definition — exercises the "Types" listing
     // and dedicated template page (covers collection-like templates such as
     // Vector/List/Set, which were previously silently dropped by docgen).
@@ -199,10 +268,44 @@ kdi_file make_docgen_model() {
         get_value.visibility = kdi_visibility::public_;
         sig.methods.push_back(get_value);
 
+        // Regression coverage: a template's base reference is raw K source
+        // text ("Boxed<T>"), not a resolved fq_name, since KDI cannot resolve
+        // template argument identity at export time. The hierarchy resolver
+        // must match this against the "Boxed" template def registered below
+        // via its bare short-name alias.
+        kdi_base container_base;
+        container_base.fq_name = "Boxed<T>";
+        container_base.is_virtual = true;
+        sig.bases.push_back(container_base);
+
         container_tpl.aggregate_signature = std::make_shared<kdi_aggregate>(std::move(sig));
     }
 
     file.unit.root_ns.template_defs.push_back(container_tpl);
+
+    // Template interface with no bases, referenced above by Container<T> via
+    // its bare short name ("Boxed<T>") rather than a fully-qualified name.
+    {
+        kdi_template_def boxed_tpl;
+        boxed_tpl.name = "Boxed";
+        boxed_tpl.fq_name = "demo::mod::Boxed";
+        boxed_tpl.entity_kind = "interface";
+        boxed_tpl.visibility = "public";
+        boxed_tpl.is_generic = false;
+        kdi_template_param boxed_type_param;
+        boxed_type_param.kind = "typename";
+        boxed_type_param.name = "T";
+        boxed_tpl.params.push_back(boxed_type_param);
+
+        kdi_aggregate boxed_sig;
+        boxed_sig.kind = kdi_aggregate_kind::interface_;
+        boxed_sig.name = "Boxed";
+        boxed_sig.fq_name = "demo::mod::Boxed";
+        boxed_sig.visibility = kdi_visibility::public_;
+        boxed_tpl.aggregate_signature = std::make_shared<kdi_aggregate>(std::move(boxed_sig));
+
+        file.unit.root_ns.template_defs.push_back(boxed_tpl);
+    }
 
     // Function template definition — exercises the "Function Templates" section.
     kdi_template_def make_container_tpl;
@@ -385,6 +488,44 @@ TEST_CASE("docgen: generate markdown tree with module root index", "[docgen]") {
     // Raw source is now a supplementary section, not the primary content.
     REQUIRE(container_md.find("## Declaration Source") != std::string::npos);
     REQUIRE(container_md.find("class Container {") != std::string::npos);
+    // Regression: a template's raw generic base reference ("Boxed<T>") must
+    // resolve, via the bare short-name alias, to the "Boxed" template def's
+    // own dedicated page.
+    REQUIRE(container_md.find("## Inheritance") != std::string::npos);
+    REQUIRE(container_md.find("**Base types:** [`Boxed&lt;T&gt;`](Boxed.md)") != std::string::npos);
+
+    // Regression: regular class/interface hierarchy — direct bases, the
+    // transitive "implemented interfaces" closure, module-local direct
+    // subclasses, and (interfaces only) module-local direct-or-indirect
+    // implementors, all linked to their dedicated pages.
+    const std::string greeter_md = read_text_file(module_root / "Greeter.md");
+    REQUIRE(greeter_md.find("**Base types:** *(none)*") != std::string::npos);
+    REQUIRE(greeter_md.find("**Known direct subclasses (this module):** [`Talker`](Talker.md)") != std::string::npos);
+    REQUIRE(greeter_md.find("**Known implementors, direct or indirect (this module):** [`SuperTalker`](SuperTalker.md), [`Talker`](Talker.md)") != std::string::npos);
+
+    const std::string talker_md = read_text_file(module_root / "Talker.md");
+    REQUIRE(talker_md.find("**Base types:** [`Greeter`](Greeter.md)") != std::string::npos);
+    REQUIRE(talker_md.find("**All implemented interfaces:** [`Greeter`](Greeter.md)") != std::string::npos);
+    REQUIRE(talker_md.find("**Known direct subclasses (this module):** [`SuperTalker`](SuperTalker.md)") != std::string::npos);
+
+    const std::string super_talker_md = read_text_file(module_root / "SuperTalker.md");
+    REQUIRE(super_talker_md.find("**Base types:** [`Talker`](Talker.md)") != std::string::npos);
+    REQUIRE(super_talker_md.find("**All implemented interfaces:** [`Greeter`](Greeter.md)") != std::string::npos);
+    REQUIRE(super_talker_md.find("**Known direct subclasses (this module):** *(none)*") != std::string::npos);
+
+    // Regression: enum direct-only ascendant/descendant relationships.
+    const std::string status_md = read_text_file(module_root / "Status.md");
+    REQUIRE(status_md.find("**Base enum:** *(none)*") != std::string::npos);
+    REQUIRE(status_md.find("**Derived enums (this module, direct only):** [`ExtendedStatus`](ExtendedStatus.md)") != std::string::npos);
+    const std::string extended_status_md = read_text_file(module_root / "ExtendedStatus.md");
+    REQUIRE(extended_status_md.find("**Base enum:** [`Status`](Status.md)") != std::string::npos);
+
+    // Regression: union direct-only ascendant/descendant relationships.
+    const std::string result_md = read_text_file(module_root / "Result.md");
+    REQUIRE(result_md.find("**Base union:** *(none)*") != std::string::npos);
+    REQUIRE(result_md.find("**Derived unions (this module, direct only):** [`ExtendedResult`](ExtendedResult.md)") != std::string::npos);
+    const std::string extended_result_md = read_text_file(module_root / "ExtendedResult.md");
+    REQUIRE(extended_result_md.find("**Base union:** [`Result`](Result.md)") != std::string::npos);
 
     const std::string make_container_md = read_text_file(module_root / "makeContainer.md");
     REQUIRE(make_container_md.find("`template function`") != std::string::npos);
@@ -498,6 +639,33 @@ TEST_CASE("docgen: generate html tree with direct links on names", "[docgen]") {
     REQUIRE(container_page.find("getValue() : T") != std::string::npos);
     REQUIRE(container_page.find("Declaration Source") != std::string::npos);
     REQUIRE(container_page.find("class Container {") != std::string::npos);
+    // Regression: a template's raw generic base reference ("Boxed<T>") must
+    // resolve, via the bare short-name alias, to the "Boxed" template def's
+    // own dedicated page.
+    REQUIRE(container_page.find("Inheritance") != std::string::npos);
+    REQUIRE(container_page.find("<a href=\"Boxed.html\"><code>Boxed&lt;T&gt;</code></a>") != std::string::npos);
+
+    // Regression: regular class/interface hierarchy — direct bases, the
+    // transitive "implemented interfaces" closure, module-local direct
+    // subclasses, and (interfaces only) module-local direct-or-indirect
+    // implementors, all linked to their dedicated pages.
+    const std::string greeter_page = read_text_file(module_root / "Greeter.html");
+    REQUIRE(greeter_page.find("<strong>Known direct subclasses (this module):</strong> <a href=\"Talker.html\"><code>Talker</code></a>") != std::string::npos);
+    REQUIRE(greeter_page.find("<strong>Known implementors, direct or indirect (this module):</strong> <a href=\"SuperTalker.html\"><code>SuperTalker</code></a>, <a href=\"Talker.html\"><code>Talker</code></a>") != std::string::npos);
+
+    const std::string talker_page = read_text_file(module_root / "Talker.html");
+    REQUIRE(talker_page.find("<strong>Base types:</strong> <a href=\"Greeter.html\"><code>Greeter</code></a>") != std::string::npos);
+    REQUIRE(talker_page.find("<strong>All implemented interfaces:</strong> <a href=\"Greeter.html\"><code>Greeter</code></a>") != std::string::npos);
+
+    const std::string super_talker_page = read_text_file(module_root / "SuperTalker.html");
+    REQUIRE(super_talker_page.find("<strong>Base types:</strong> <a href=\"Talker.html\"><code>Talker</code></a>") != std::string::npos);
+    REQUIRE(super_talker_page.find("<strong>All implemented interfaces:</strong> <a href=\"Greeter.html\"><code>Greeter</code></a>") != std::string::npos);
+
+    // Regression: enum/union direct-only ascendant/descendant relationships.
+    const std::string status_page = read_text_file(module_root / "Status.html");
+    REQUIRE(status_page.find("<strong>Derived enums (this module, direct only):</strong> <a href=\"ExtendedStatus.html\"><code>ExtendedStatus</code></a>") != std::string::npos);
+    const std::string result_page = read_text_file(module_root / "Result.html");
+    REQUIRE(result_page.find("<strong>Derived unions (this module, direct only):</strong> <a href=\"ExtendedResult.html\"><code>ExtendedResult</code></a>") != std::string::npos);
 
     const std::string make_container_page = read_text_file(module_root / "makeContainer.html");
     REQUIRE(make_container_page.find("template function") != std::string::npos);

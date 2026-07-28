@@ -22,11 +22,13 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <set>
 #include <sstream>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -412,6 +414,320 @@ void add_reference(std::vector<symbol_ref>& refs,
                     std::move(brief)});
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Inheritance / hierarchy cross-reference index
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Built once per doc-generation run (see collect_hierarchy_index()) so that
+// base (extends/implements) and derived (known direct subclasses / known
+// implementors) relationships can be rendered as a link whenever the target
+// is part of the module currently being documented. A base/derived type
+// defined in another module cannot be linked: kditool docgen processes one
+// KDI file at a time and has no way to know where that other module's page
+// will be written (a separate, independent invocation of the tool) -- such
+// references degrade gracefully to a plain, unlinked fully-qualified name.
+//
+// Every K inheritance link is virtual, so a class transitively implements
+// every interface reachable through any of its bases, however deep; this is
+// exposed as a flattened "All implemented interfaces" list, in addition to
+// the direct "Base types" list.
+//
+// A template's own base list (kdi_aggregate_signature::bases, see
+// build_generic_template_aggregate_signature() in kdi_exporter.cpp) is raw K
+// source text (e.g. "OrderedCollection<T>"), not a resolved fq_name, because
+// KDI does not resolve template argument identity. hierarchy_key() extracts
+// a matchable identifier from such a reference (dropping the generic
+// argument list and any leading "::"); a template node is additionally
+// registered under its bare short name (its most common in-source spelling)
+// so that this raw form still resolves to the right page.
+
+struct hierarchy_node {
+    std::string              canonical_key;  ///< fq-based identity, used for de-duplication
+    fs::path                 page_path;
+    bool                     is_interface = false;
+    std::string              display_name;   ///< short name (+ template params), shown in links
+    std::vector<std::string> base_keys;      ///< keys (any registered form) of direct bases
+    std::vector<std::string> self_keys;      ///< every key this node is registered under
+};
+
+std::unordered_map<std::string, hierarchy_node> g_hierarchy_nodes;
+// Direct-base key -> canonical keys of nodes that directly derive from it.
+std::unordered_map<std::string, std::vector<std::string>> g_direct_derived;
+
+std::unordered_map<std::string, fs::path>    g_enum_pages;
+std::unordered_map<std::string, std::string> g_enum_display;
+std::unordered_map<std::string, std::vector<std::string>> g_enum_direct_derived;
+
+std::unordered_map<std::string, fs::path>    g_union_pages;
+std::unordered_map<std::string, std::string> g_union_display;
+std::unordered_map<std::string, std::vector<std::string>> g_union_direct_derived;
+
+/**
+ * Normalise a base-type reference to a matchable identifier: strips a
+ * trailing generic argument list ("<...>") and any leading "::" root prefix.
+ */
+std::string hierarchy_key(const std::string& raw) {
+    const auto lt = raw.find('<');
+    std::string ident = lt == std::string::npos ? raw : raw.substr(0, lt);
+    while (!ident.empty() && std::isspace(static_cast<unsigned char>(ident.back())))
+        ident.pop_back();
+    return trim_root_prefix(ident);
+}
+
+void register_hierarchy_node(const std::string& canonical_key,
+                             const std::vector<std::string>& alias_keys,
+                             fs::path page_path,
+                             bool is_interface,
+                             const std::string& display_name,
+                             const std::vector<std::string>& raw_bases)
+{
+    hierarchy_node node;
+    node.canonical_key = canonical_key;
+    node.page_path = std::move(page_path);
+    node.is_interface = is_interface;
+    node.display_name = display_name;
+    node.self_keys.push_back(canonical_key);
+    for (const auto& a : alias_keys)
+        node.self_keys.push_back(a);
+
+    for (const auto& raw : raw_bases) {
+        std::string key = hierarchy_key(raw);
+        // A base referencing a compiler-synthesized concrete template
+        // instantiation (e.g. a regular class extending "Container<int>")
+        // resolves to the owning template's page, not the (undocumented)
+        // synthesized instantiation.
+        auto inst_it = g_instantiation_origins.find(key);
+        if (inst_it != g_instantiation_origins.end())
+            key = hierarchy_key(inst_it->second.base_fq_name);
+        node.base_keys.push_back(key);
+        g_direct_derived[key].push_back(canonical_key);
+    }
+
+    g_hierarchy_nodes[canonical_key] = node;
+    for (const auto& a : alias_keys)
+        g_hierarchy_nodes.emplace(a, node);
+}
+
+/** Render a single hierarchy reference as a link (if locally resolvable) or plain code text. */
+std::string render_hierarchy_ref(const std::string& raw, const fs::path& ns_dir) {
+    std::string key = hierarchy_key(raw);
+    auto inst_it = g_instantiation_origins.find(key);
+    if (inst_it != g_instantiation_origins.end())
+        key = hierarchy_key(inst_it->second.base_fq_name);
+    auto node_it = g_hierarchy_nodes.find(key);
+    if (node_it != g_hierarchy_nodes.end())
+        return "[" + code(node_it->second.display_name) + "](" +
+               rel_link(ns_dir, node_it->second.page_path) + ")";
+    return code(trim_root_prefix(raw));
+}
+
+/** Render a hierarchy node already identified by its own key (derived/implementor lists). */
+std::string render_hierarchy_node_ref(const std::string& key, const fs::path& ns_dir) {
+    auto node_it = g_hierarchy_nodes.find(key);
+    if (node_it == g_hierarchy_nodes.end())
+        return code(key);
+    return "[" + code(node_it->second.display_name) + "](" +
+           rel_link(ns_dir, node_it->second.page_path) + ")";
+}
+
+/**
+ * Render the "## Inheritance" section for a class/interface: direct bases,
+ * the flattened transitive closure of implemented interfaces, module-local
+ * known direct subclasses, and (interfaces only) module-local known
+ * implementors (direct or indirect). Shared between regular aggregate pages
+ * and template aggregate-signature pages.
+ */
+void write_aggregate_hierarchy_section(std::ostringstream& out,
+                                       const kdi_aggregate& agg,
+                                       const fs::path& ns_dir)
+{
+    if (agg.kind != kdi_aggregate_kind::class_ && agg.kind != kdi_aggregate_kind::interface_)
+        return;
+
+    const std::string self_key = hierarchy_key(agg.fq_name);
+
+    out << "\n## Inheritance\n\n";
+
+    out << "- **Base types:** ";
+    if (agg.bases.empty()) {
+        out << "*(none)*\n";
+    } else {
+        for (size_t i = 0; i < agg.bases.size(); ++i) {
+            if (i) out << ", ";
+            out << render_hierarchy_ref(agg.bases[i].fq_name, ns_dir);
+        }
+        out << "\n";
+    }
+
+    std::vector<std::string> all_interfaces;
+    {
+        std::unordered_set<std::string> visited{self_key};
+        std::function<void(const std::string&)> walk = [&](const std::string& key) {
+            auto it = g_hierarchy_nodes.find(key);
+            if (it == g_hierarchy_nodes.end())
+                return;
+            for (const auto& base_key : it->second.base_keys) {
+                if (!visited.insert(base_key).second)
+                    continue;
+                auto bit = g_hierarchy_nodes.find(base_key);
+                if (bit != g_hierarchy_nodes.end() && bit->second.is_interface)
+                    all_interfaces.push_back(bit->second.canonical_key);
+                walk(base_key);
+            }
+        };
+        walk(self_key);
+    }
+    std::sort(all_interfaces.begin(), all_interfaces.end());
+    out << "- **All implemented interfaces:** ";
+    if (all_interfaces.empty()) {
+        out << "*(none)*\n";
+    } else {
+        for (size_t i = 0; i < all_interfaces.size(); ++i) {
+            if (i) out << ", ";
+            out << render_hierarchy_node_ref(all_interfaces[i], ns_dir);
+        }
+        out << "\n";
+    }
+
+    std::vector<std::string> direct_sub;
+    {
+        std::unordered_set<std::string> seen;
+        auto it = g_hierarchy_nodes.find(self_key);
+        if (it != g_hierarchy_nodes.end()) {
+            for (const auto& k : it->second.self_keys) {
+                auto dit = g_direct_derived.find(k);
+                if (dit == g_direct_derived.end())
+                    continue;
+                for (const auto& d : dit->second)
+                    if (seen.insert(d).second)
+                        direct_sub.push_back(d);
+            }
+        }
+    }
+    std::sort(direct_sub.begin(), direct_sub.end());
+    out << "- **Known direct subclasses (this module):** ";
+    if (direct_sub.empty()) {
+        out << "*(none)*\n";
+    } else {
+        for (size_t i = 0; i < direct_sub.size(); ++i) {
+            if (i) out << ", ";
+            out << render_hierarchy_node_ref(direct_sub[i], ns_dir);
+        }
+        out << "\n";
+    }
+
+    if (agg.kind == kdi_aggregate_kind::interface_) {
+        std::vector<std::string> implementors;
+        {
+            std::unordered_set<std::string> visited;
+            std::vector<std::string> queue;
+            auto it = g_hierarchy_nodes.find(self_key);
+            if (it != g_hierarchy_nodes.end())
+                for (const auto& k : it->second.self_keys)
+                    queue.push_back(k);
+            while (!queue.empty()) {
+                std::string cur = queue.back();
+                queue.pop_back();
+                auto dit = g_direct_derived.find(cur);
+                if (dit == g_direct_derived.end())
+                    continue;
+                for (const auto& d : dit->second) {
+                    if (!visited.insert(d).second)
+                        continue;
+                    implementors.push_back(d);
+                    auto nit = g_hierarchy_nodes.find(d);
+                    if (nit != g_hierarchy_nodes.end())
+                        for (const auto& k2 : nit->second.self_keys)
+                            queue.push_back(k2);
+                }
+            }
+        }
+        std::sort(implementors.begin(), implementors.end());
+        out << "- **Known implementors, direct or indirect (this module):** ";
+        if (implementors.empty()) {
+            out << "*(none)*\n";
+        } else {
+            for (size_t i = 0; i < implementors.size(); ++i) {
+                if (i) out << ", ";
+                out << render_hierarchy_node_ref(implementors[i], ns_dir);
+            }
+            out << "\n";
+        }
+    }
+}
+
+/** Render the "## Inheritance" section for an enum: direct base enum (ascendant) and
+ *  module-local direct derived enums (descendants) -- direct relationships only. */
+void write_enum_hierarchy_section(std::ostringstream& out, const kdi_enum& en, const fs::path& ns_dir) {
+    const std::string self_key = hierarchy_key(en.fq_name);
+
+    out << "\n## Inheritance\n\n";
+
+    out << "- **Base enum:** ";
+    if (en.base_fq_name && !en.base_fq_name->empty()) {
+        const std::string key = hierarchy_key(*en.base_fq_name);
+        auto it = g_enum_pages.find(key);
+        if (it != g_enum_pages.end())
+            out << "[" << code(g_enum_display[key]) << "](" << rel_link(ns_dir, it->second) << ")\n";
+        else
+            out << code(trim_root_prefix(*en.base_fq_name)) << "\n";
+    } else {
+        out << "*(none)*\n";
+    }
+
+    out << "- **Derived enums (this module, direct only):** ";
+    auto dit = g_enum_direct_derived.find(self_key);
+    if (dit == g_enum_direct_derived.end() || dit->second.empty()) {
+        out << "*(none)*\n";
+    } else {
+        std::vector<std::string> derived = dit->second;
+        std::sort(derived.begin(), derived.end());
+        for (size_t i = 0; i < derived.size(); ++i) {
+            if (i) out << ", ";
+            auto pit = g_enum_pages.find(derived[i]);
+            out << "[" << code(g_enum_display[derived[i]]) << "]("
+                << (pit != g_enum_pages.end() ? rel_link(ns_dir, pit->second) : std::string()) << ")";
+        }
+        out << "\n";
+    }
+}
+
+/** Render the "## Inheritance" section for a union: direct base union (ascendant) and
+ *  module-local direct derived unions (descendants) -- direct relationships only. */
+void write_union_hierarchy_section(std::ostringstream& out, const kdi_union& un, const fs::path& ns_dir) {
+    const std::string self_key = hierarchy_key(un.fq_name);
+
+    out << "\n## Inheritance\n\n";
+
+    out << "- **Base union:** ";
+    if (!un.base_union_fq_name.empty()) {
+        const std::string key = hierarchy_key(un.base_union_fq_name);
+        auto it = g_union_pages.find(key);
+        if (it != g_union_pages.end())
+            out << "[" << code(g_union_display[key]) << "](" << rel_link(ns_dir, it->second) << ")\n";
+        else
+            out << code(trim_root_prefix(un.base_union_fq_name)) << "\n";
+    } else {
+        out << "*(none)*\n";
+    }
+
+    out << "- **Derived unions (this module, direct only):** ";
+    auto dit = g_union_direct_derived.find(self_key);
+    if (dit == g_union_direct_derived.end() || dit->second.empty()) {
+        out << "*(none)*\n";
+    } else {
+        std::vector<std::string> derived = dit->second;
+        std::sort(derived.begin(), derived.end());
+        for (size_t i = 0; i < derived.size(); ++i) {
+            if (i) out << ", ";
+            auto pit = g_union_pages.find(derived[i]);
+            out << "[" << code(g_union_display[derived[i]]) << "]("
+                << (pit != g_union_pages.end() ? rel_link(ns_dir, pit->second) : std::string()) << ")";
+        }
+        out << "\n";
+    }
+}
+
 bool write_union_page(const kdi_union& un,
                       const fs::path& file_path,
                       const fs::path& module_root,
@@ -430,6 +746,8 @@ bool write_union_page(const kdi_union& un,
     out << "| Visibility | " << code(visibility_to_string(un.visibility)) << " |\n";
     out << "\n[Back to namespace index](index.md)\n";
     append_doc_block(out, un.doc);
+
+    write_union_hierarchy_section(out, un, file_path.parent_path());
 
     std::vector<kdi_union_alternative> alternatives = un.alternatives;
     std::sort(alternatives.begin(), alternatives.end(), [](const auto& a, const auto& b) {
@@ -496,6 +814,8 @@ bool write_enum_page(const kdi_enum& en,
     out << "\n[Back to namespace index](index.md)\n";
     append_doc_block(out, en.doc);
 
+    write_enum_hierarchy_section(out, en, file_path.parent_path());
+
     std::vector<kdi_enum_entry> entries = en.entries;
     std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
         return a.name < b.name;
@@ -561,6 +881,96 @@ std::string template_param_names_str(const std::vector<kdi_template_param>& para
 }
 
 /**
+ * Populate the hierarchy cross-reference index (g_hierarchy_nodes and
+ * friends) for one aggregate and, recursively, its nested aggregates/unions.
+ * Synthesized template instantiations are skipped: they have no doc page and
+ * are not part of the module's public hierarchy graph.
+ */
+void collect_hierarchy_index(const kdi_aggregate& agg,
+                             const fs::path& ns_dir,
+                             const std::string& file_stem)
+{
+    if (agg.template_origin)
+        return;
+
+    std::vector<std::string> raw_bases;
+    raw_bases.reserve(agg.bases.size());
+    for (const auto& b : agg.bases)
+        raw_bases.push_back(b.fq_name);
+
+    register_hierarchy_node(hierarchy_key(agg.fq_name), {agg.name},
+                            ns_dir / (file_stem + ".md"),
+                            agg.kind == kdi_aggregate_kind::interface_,
+                            agg.name, raw_bases);
+
+    for (const auto& nested : agg.nested) {
+        if (nested.template_origin)
+            continue;
+        collect_hierarchy_index(nested, ns_dir, file_stem + "." + nested.name);
+    }
+    for (const auto& u : agg.nested_unions) {
+        if (u.template_origin)
+            continue;
+        const std::string ukey = hierarchy_key(u.fq_name);
+        g_union_pages[ukey] = ns_dir / (file_stem + "." + u.name + ".md");
+        g_union_display[ukey] = u.name;
+        if (!u.base_union_fq_name.empty())
+            g_union_direct_derived[hierarchy_key(u.base_union_fq_name)].push_back(ukey);
+    }
+}
+
+/** Populate the hierarchy cross-reference index for one namespace and, recursively,
+ *  its child namespaces. See collect_hierarchy_index(kdi_aggregate) above. */
+void collect_hierarchy_index(const kdi_namespace& ns,
+                             const fs::path& module_root,
+                             const std::string& root_fq)
+{
+    const std::string rel_scope = strip_prefix(ns.fq_name, root_fq);
+    fs::path ns_dir = module_root;
+    if (!rel_scope.empty())
+        for (const auto& part : split_scope(rel_scope))
+            ns_dir /= part;
+
+    for (const auto& agg : ns.aggregates)
+        collect_hierarchy_index(agg, ns_dir, agg.name);
+
+    for (const auto& en : ns.enums) {
+        const std::string key = hierarchy_key(en.fq_name);
+        g_enum_pages[key] = ns_dir / (en.name + ".md");
+        g_enum_display[key] = en.name;
+        if (en.base_fq_name && !en.base_fq_name->empty())
+            g_enum_direct_derived[hierarchy_key(*en.base_fq_name)].push_back(key);
+    }
+
+    for (const auto& un : ns.unions) {
+        if (un.template_origin)
+            continue;
+        const std::string key = hierarchy_key(un.fq_name);
+        g_union_pages[key] = ns_dir / (un.name + ".md");
+        g_union_display[key] = un.name;
+        if (!un.base_union_fq_name.empty())
+            g_union_direct_derived[hierarchy_key(un.base_union_fq_name)].push_back(key);
+    }
+
+    for (const auto& td : ns.template_defs) {
+        if (td.entity_kind == "function" || !td.aggregate_signature)
+            continue;
+        std::vector<std::string> raw_bases;
+        raw_bases.reserve(td.aggregate_signature->bases.size());
+        for (const auto& b : td.aggregate_signature->bases)
+            raw_bases.push_back(b.fq_name);
+        register_hierarchy_node(hierarchy_key(td.fq_name), {td.name},
+                                ns_dir / (td.name + ".md"),
+                                td.entity_kind == "interface",
+                                td.name + template_param_names_str(td.params),
+                                raw_bases);
+    }
+
+    for (const auto& child : ns.namespaces)
+        collect_hierarchy_index(child, module_root, root_fq);
+}
+
+/**
  * Render the structured body of an aggregate (Member Variables, Members,
  * Nested Types, and the detailed sections) into `out`.
  *
@@ -571,8 +981,11 @@ std::string template_param_names_str(const std::vector<kdi_template_param>& para
  */
 void write_aggregate_body(std::ostringstream& out,
                           const kdi_aggregate& agg,
-                          const std::string& qualified_simple_name)
+                          const std::string& qualified_simple_name,
+                          const fs::path& ns_dir)
 {
+    write_aggregate_hierarchy_section(out, agg, ns_dir);
+
     std::vector<kdi_layout_member> fields;
     for (const auto& field : agg.layout) {
         if (auto member = std::get_if<kdi_layout_member>(&field))
@@ -860,7 +1273,7 @@ bool write_template_def_page(const kdi_template_def& def,
     // rather than collapsed into an opaque source dump. A function-kind
     // template gets an equivalent Signature/Parameters/Return type rendering.
     if (def.aggregate_signature) {
-        write_aggregate_body(out, *def.aggregate_signature, def.name);
+        write_aggregate_body(out, *def.aggregate_signature, def.name, file_path.parent_path());
     } else if (def.function_signature) {
         out << "\n## Signature\n\n";
         out << "- " << code(make_signature(def.function_signature->name,
@@ -991,7 +1404,7 @@ bool write_aggregate_page(const kdi_aggregate& agg,
     out << "\n[Back to namespace index](index.md)\n";
     append_doc_block(out, agg.doc);
 
-    write_aggregate_body(out, agg, qualified_simple_name);
+    write_aggregate_body(out, agg, qualified_simple_name, ns_dir);
 
     if (!write_file(file_path, out.str(), error_message))
         return false;
@@ -1419,6 +1832,18 @@ bool kdi_generate_markdown_doc(const kdi_file& file,
         const std::string root_fq = !file.unit.root_ns.fq_name.empty()
                                         ? file.unit.root_ns.fq_name
                                         : file.header.module_name;
+
+        // (Re)build the hierarchy cross-reference index (bases/derived, per
+        // module) used to render the "## Inheritance" sections with links.
+        g_hierarchy_nodes.clear();
+        g_direct_derived.clear();
+        g_enum_pages.clear();
+        g_enum_display.clear();
+        g_enum_direct_derived.clear();
+        g_union_pages.clear();
+        g_union_display.clear();
+        g_union_direct_derived.clear();
+        collect_hierarchy_index(file.unit.root_ns, module_root, root_fq);
 
         std::vector<symbol_ref> refs;
         if (!write_namespace_tree(file.unit.root_ns,
