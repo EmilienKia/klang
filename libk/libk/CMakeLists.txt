@@ -24,6 +24,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/list.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/vector.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/set.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/map.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/array_stream.k
@@ -215,6 +216,7 @@ add_executable(libk-tests
     tests/test-optional.cpp
     tests/test-vector.cpp
     tests/test-set.cpp
+    tests/test-map.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)
