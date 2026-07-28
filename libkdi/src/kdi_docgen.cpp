@@ -155,12 +155,69 @@ std::string visibility_to_string(kdi_visibility visibility) {
     return visibility == kdi_visibility::public_ ? "public" : "protected";
 }
 
+/**
+ * Translate an internal canonical operator function name (e.g. "__operator_eq_")
+ * into its human-readable K declaration syntax (e.g. "operator =="), per the
+ * canonical name table in doc/spec/language/functions/operators.md. Cast
+ * operators ("__operator_cv_...") become the bare "operator" keyword, since the
+ * cast target type is already rendered by make_signature() via the return type
+ * (yielding "operator() : T", matching the spec's declaration syntax exactly).
+ * Non-operator names are returned unchanged.
+ */
+std::string operator_display_name(const std::string& name) {
+    static const std::string cv_prefix = "__operator_cv_";
+    if (name.compare(0, cv_prefix.size(), cv_prefix) == 0)
+        return "operator";
+
+    static const std::unordered_map<std::string, std::string> symbols = {
+        {"__operator_pl_", "operator +"},
+        {"__operator_mi_", "operator -"},
+        {"__operator_ml_", "operator *"},
+        {"__operator_dv_", "operator /"},
+        {"__operator_rm_", "operator %"},
+        {"__operator_an_", "operator &"},
+        {"__operator_or_", "operator |"},
+        {"__operator_eo_", "operator ^"},
+        {"__operator_co_", "operator ~"},
+        {"__operator_ls_", "operator <<"},
+        {"__operator_rs_", "operator >>"},
+        {"__operator_aa_", "operator &&"},
+        {"__operator_oo_", "operator ||"},
+        {"__operator_nt_", "operator !"},
+        {"__operator_eq_", "operator =="},
+        {"__operator_ne_", "operator !="},
+        {"__operator_lt_", "operator <"},
+        {"__operator_gt_", "operator >"},
+        {"__operator_le_", "operator <="},
+        {"__operator_ge_", "operator >="},
+        {"__operator_ss_", "operator <=>"},
+        {"__operator_aS_", "operator ="},
+        {"__operator_pL_", "operator +="},
+        {"__operator_mI_", "operator -="},
+        {"__operator_mL_", "operator *="},
+        {"__operator_dV_", "operator /="},
+        {"__operator_rM_", "operator %="},
+        {"__operator_aN_", "operator &="},
+        {"__operator_oR_", "operator |="},
+        {"__operator_eO_", "operator ^="},
+        {"__operator_lS_", "operator <<="},
+        {"__operator_rS_", "operator >>="},
+        {"__operator_pp_", "operator ++_"},
+        {"__operator_mm_", "operator --_"},
+        {"__operator_PP_", "operator _++"},
+        {"__operator_MM_", "operator _--"},
+        {"__operator_ix_", "operator []"},
+    };
+    auto it = symbols.find(name);
+    return it != symbols.end() ? it->second : name;
+}
+
 std::string make_signature(const std::string& name,
                            const std::vector<kdi_param>& params,
                            const kdi_type* ret)
 {
     std::ostringstream out;
-    out << name << "(";
+    out << operator_display_name(name) << "(";
     for (size_t i = 0; i < params.size(); ++i) {
         if (i) out << ", ";
         out << params[i].name;
@@ -730,7 +787,7 @@ void add_aggregate_member_refs(std::vector<symbol_ref>& refs,
         const auto& method = methods[i];
         add_reference(refs,
                       "method",
-                      method.name,
+                      operator_display_name(method.name),
                       fq_scope,
                       make_signature(method.name, method.params, &method.return_type),
                       type_link + "#method-" + make_slug(method.name) + "-" + std::to_string(i),

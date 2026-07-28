@@ -91,6 +91,31 @@ kdi_file make_docgen_model() {
     get_container.return_type = kdi_type::make_aggregate("demo::mod::Container__int");
     thing.methods.push_back(get_container);
 
+    // Regression coverage: operator methods must render using their human-
+    // readable K declaration syntax ("operator ==", "operator []"), not the
+    // internal canonical name ("__operator_eq_", "__operator_ix_"), per
+    // doc/spec/language/functions/operators.md. Anchors/slugs stay based on
+    // the raw internal name so links remain stable.
+    kdi_method eq_op;
+    eq_op.name = "__operator_eq_";
+    eq_op.is_operator = true;
+    eq_op.return_type = kdi_type::make_bool();
+    kdi_param eq_other;
+    eq_other.name = "other";
+    eq_other.type = kdi_type{kdi_ref_type{std::make_shared<kdi_type>(kdi_type::make_aggregate("demo::mod::Thing"))}};
+    eq_op.params.push_back(eq_other);
+    thing.methods.push_back(eq_op);
+
+    kdi_method ix_op;
+    ix_op.name = "__operator_ix_";
+    ix_op.is_operator = true;
+    ix_op.return_type = kdi_type::make_int(32, true);
+    kdi_param ix_index;
+    ix_index.name = "index";
+    ix_index.type = kdi_type::make_int(32, false);
+    ix_op.params.push_back(ix_index);
+    thing.methods.push_back(ix_op);
+
     kdi_layout_member id;
     id.name = "id";
     id.type = kdi_type::make_int(32, true);
@@ -326,13 +351,20 @@ TEST_CASE("docgen: generate markdown tree with module root index", "[docgen]") {
     REQUIRE_FALSE(fs::exists(module_root / "construct.md"));
 
     const std::string thing_md = read_text_file(module_root / "Thing.md");
-    REQUIRE(thing_md.find("- [`ping() : bool`](#method-ping-1) - Checks that the thing responds to a liveness probe.") != std::string::npos);
+    REQUIRE(thing_md.find("- [`ping() : bool`](#method-ping-3) - Checks that the thing responds to a liveness probe.") != std::string::npos);
     REQUIRE(thing_md.find("- [Inner](Thing.Inner.md) - Nested helper payload.") != std::string::npos);
     // Regression: a method returning a concrete template instantiation must
     // render using the real generic arguments ("Container<int32>"), not the
     // compiler-synthesized/mangled name ("Container__int").
     REQUIRE(thing_md.find("getContainer() : demo::mod::Container&lt;int32&gt;") != std::string::npos);
     REQUIRE(thing_md.find("Container__int") == std::string::npos);
+    // Regression: operator methods render with human-readable K declaration
+    // syntax ("operator ==", "operator []"), not the raw internal canonical
+    // name ("__operator_eq_", "__operator_ix_"). Anchors stay on the raw name.
+    REQUIRE(thing_md.find("operator ==(other: &demo::mod::Thing) : bool") != std::string::npos);
+    REQUIRE(thing_md.find("operator [](index: unsigned int32) : int32") != std::string::npos);
+    REQUIRE(thing_md.find("__operator_eq_") == std::string::npos);
+    REQUIRE(thing_md.find("__operator_ix_") == std::string::npos);
 
     const std::string container_md = read_text_file(module_root / "Container.md");
     REQUIRE(container_md.find("`template class`") != std::string::npos);
@@ -373,6 +405,12 @@ TEST_CASE("docgen: generate markdown tree with module root index", "[docgen]") {
     // Regression: instantiation artifacts must not leak into the reference tables.
     REQUIRE(refs.find("Container__int") == std::string::npos);
     REQUIRE(refs.find("makeContainer__int") == std::string::npos);
+    // Regression: the reference-table "Name" column shows the human-readable
+    // operator form, not the raw internal name.
+    REQUIRE(refs.find("[`operator ==`](Thing.md") != std::string::npos);
+    REQUIRE(refs.find("[`operator []`](Thing.md") != std::string::npos);
+    REQUIRE(refs.find("__operator_eq_") == std::string::npos);
+    REQUIRE(refs.find("__operator_ix_") == std::string::npos);
 
     const std::string typed_refs = read_text_file(module_root / "typed-references.md");
     REQUIRE(typed_refs.find("| Name | Scope | Type | Brief |") != std::string::npos);
@@ -441,6 +479,12 @@ TEST_CASE("docgen: generate html tree with direct links on names", "[docgen]") {
     // compiler-synthesized/mangled name ("Container__int").
     REQUIRE(thing_page.find("getContainer() : demo::mod::Container&lt;int32&gt;") != std::string::npos);
     REQUIRE(thing_page.find("Container__int") == std::string::npos);
+    // Regression: operator methods render with human-readable K declaration
+    // syntax ("operator ==", "operator []"), not the raw internal name.
+    REQUIRE(thing_page.find("operator ==(other: &amp;demo::mod::Thing) : bool") != std::string::npos);
+    REQUIRE(thing_page.find("operator [](index: unsigned int32) : int32") != std::string::npos);
+    REQUIRE(thing_page.find("__operator_eq_") == std::string::npos);
+    REQUIRE(thing_page.find("__operator_ix_") == std::string::npos);
 
     const std::string container_page = read_text_file(module_root / "Container.html");
     REQUIRE(container_page.find("template class") != std::string::npos);
@@ -471,6 +515,12 @@ TEST_CASE("docgen: generate html tree with direct links on names", "[docgen]") {
     // Regression: instantiation artifacts must not leak into the reference tables.
     REQUIRE(name_refs.find("Container__int") == std::string::npos);
     REQUIRE(name_refs.find("makeContainer__int") == std::string::npos);
+    // Regression: operator methods render with human-readable K declaration
+    // syntax in the reference table's "Name" column, not the raw internal name.
+    REQUIRE(name_refs.find(">operator ==</a>") != std::string::npos);
+    REQUIRE(name_refs.find(">operator []</a>") != std::string::npos);
+    REQUIRE(name_refs.find("__operator_eq_") == std::string::npos);
+    REQUIRE(name_refs.find("__operator_ix_") == std::string::npos);
 
     const std::string typed_refs = read_text_file(module_root / "typed-references.html");
     REQUIRE(typed_refs.find("<th>Brief</th>") != std::string::npos);
