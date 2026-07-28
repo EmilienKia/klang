@@ -298,11 +298,52 @@ scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string&
     std::unordered_set<const function*> seen_functions;
     std::unordered_set<const aggregate*> seen_aggregates;
 
-    auto append_unique = [&](const std::shared_ptr<function>& fn) {
-        if (!fn) return;
-        if (seen_functions.insert(fn.get()).second) {
-            result.push_back(fn);
+    // True if two candidate functions share the same parameter-type signature
+    // (same short name already guaranteed by construction here, since every
+    // candidate comes from a get_functions(name) lookup). Used below to detect
+    // when a base-class overload is truly shadowed/overridden by an
+    // already-collected (more-derived) function, as opposed to being a
+    // distinct overload with a different arity/parameter list (e.g. a getter
+    // declared in a base interface and a setter of the same name declared in
+    // a derived interface).
+    auto same_param_signature = [](const function& a, const function& b) {
+        if (a.is_const_member() != b.is_const_member()) return false;
+        if (a.get_parameter_size() != b.get_parameter_size()) return false;
+        for (size_t i = 0; i < a.get_parameter_size(); ++i) {
+            auto ta = std::const_pointer_cast<type>(a.get_parameter(i)->get_type());
+            auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
+            bool eq = type::are_equal(ta, tb);
+            if (!eq) eq = ta && tb && ta->to_string() == tb->to_string();
+            if (!eq) return false;
         }
+        return true;
+    };
+
+    // Plain identity-based append: used for candidates collected at the same
+    // scope level (e.g. several free-function overloads in a namespace, or
+    // successive enclosing scopes). Duplicate signatures here are genuine
+    // ambiguities and must both be kept so overload resolution can report them.
+    auto append_unique_simple = [&](const std::shared_ptr<function>& fn) {
+        if (!fn) return;
+        if (!seen_functions.insert(fn.get()).second) return;
+        result.push_back(fn);
+    };
+
+    // Append a candidate coming from an aggregate's own member list, skipping
+    // it only if shadowed by an already-collected, more-derived function with
+    // the identical parameter signature (a true override/shadow) — the
+    // more-derived version already in `result` must win. A same-named but
+    // differently-shaped overload from a base is kept. This shadow check must
+    // NOT apply across unrelated same-level candidates (e.g. free-function
+    // overloads), only across the derived-to-base aggregate hierarchy, since
+    // `collect_aggregate_functions` recurses most-derived first.
+    auto append_unique_member = [&](const std::shared_ptr<function>& fn) {
+        if (!fn) return;
+        if (!seen_functions.insert(fn.get()).second) return;
+        for (auto& existing : result) {
+            if (same_param_signature(*existing, *fn)) return;
+        }
+        result.push_back(fn);
     };
 
     std::function<void(const std::shared_ptr<aggregate>&)> collect_aggregate_functions;
@@ -312,15 +353,18 @@ scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string&
 
         auto local = agg->get_functions(name);
         for (auto& fn : local) {
-            append_unique(fn);
+            append_unique_member(fn);
         }
-        // Follow base aggregates only when this aggregate does not declare
-        // a homonymous member function. This preserves hiding semantics and
-        // prevents ambiguous duplicates (derived + base same signature).
-        if (local.empty()) {
-            for (const auto& bs : agg->get_bases()) {
-                if (bs.base) collect_aggregate_functions(bs.base);
-            }
+        // Always continue into bases: append_unique_member() already skips any
+        // base overload whose parameter signature is identical to an
+        // already-collected (more-derived) one, so a true override still hides
+        // its base slot, while a distinct overload (different arity/params)
+        // declared in a base — e.g. Entry<K,V>::value() (getter) vs
+        // MutableEntry<K,V>::value(v) (setter) — remains part of the candidate
+        // set instead of being unconditionally hidden just because the derived
+        // type also declares a same-named member.
+        for (const auto& bs : agg->get_bases()) {
+            if (bs.base) collect_aggregate_functions(bs.base);
         }
     };
 
@@ -333,7 +377,7 @@ scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string&
         }
         if (auto fh = std::dynamic_pointer_cast<function_holder>(current)) {
             for (auto& fn : fh->get_functions(name)) {
-                append_unique(fn);
+                append_unique_simple(fn);
             }
         }
     }

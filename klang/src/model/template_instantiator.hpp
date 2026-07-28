@@ -253,6 +253,29 @@ public:
 
 private:
     /**
+     * Resolve a (possibly generic) base-class type name — as produced by
+     * substitute_base_name(), e.g. "int", "Pair<int,int>",
+     * "Iter<Pair<int,int>>" — to a concrete model type, instantiating any
+     * nested template aggregate along the way.
+     *
+     * A plain (non-generic) name is resolved through a 5-tier fallback chain
+     * (substitution map → primitive → user-defined aggregate → context name
+     * lookup → reverse substitution-value match). A generic name recurses
+     * into each of its TOP-LEVEL arguments (split respecting nested
+     * angle-bracket depth) so that nested compound arguments (e.g. the
+     * "Pair<int,int>" inside "Iter<Pair<int,int>>") are themselves
+     * instantiated rather than only ever handled as an opaque,
+     * unresolvable whole.
+     */
+    static std::shared_ptr<type> resolve_base_type_name(
+        const std::string& name,
+        const type_substitution_map& subst,
+        const std::shared_ptr<ns>& parent_ns,
+        k::model::unit& unit,
+        const std::shared_ptr<context>& ctx,
+        k::log::logger& logger);
+
+    /**
      * Assign a fully-qualified name and mangled name to `agg` (if not already
      * set) and to all of its function/constructor children. See the detailed
      * comment at the definition site (template_instantiator.cpp) for why this

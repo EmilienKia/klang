@@ -371,3 +371,34 @@ TEST_CASE("SimpleList emplaceFront with default constructor (zero args)", "[gen]
 // The generated code selects the zero-arg construct intrinsic instead of
 // the arg-forwarding variant. This will be fixed in a future compiler update.
 
+// Regression test for a compiler bug found while implementing the Map<K,V>
+// stdlib collection: `populate_function_from_template` (template_instantiator.cpp),
+// used to clone a template method's parameters when instantiating a template
+// class, never copied a parameter's default-value expression. A template
+// method declared with a default argument (e.g. `set(x: T, log: bool = true)`)
+// therefore lost that default once the enclosing class template was
+// instantiated, so calling it with fewer arguments than declared failed
+// overload resolution ("No viable overload found ... none of the 1
+// candidate(s) can be called").
+TEST_CASE("Template class method keeps its default parameter value after instantiation", "[gen][member-template][default-param][regression]") {
+    auto jit = gen_jit(R"SRC(
+module __mt_default_param__;
+template<typename T>
+class Box {
+    v: T;
+    Box(x: T) : v(x) {}
+    set(x: T, log: bool = true) : void { v = x; }
+    get() : T { return v; }
+}
+test() : int {
+    b: Box<int>(1);
+    b.set(5);   // relies on the instantiated method's default value for `log`
+    return b.get();
+}
+)SRC");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 5);
+}
+

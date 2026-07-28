@@ -790,3 +790,45 @@ test_via_left()     : int { b: Both; return via_left(b); }
     CHECK(fvl() == -1);
 }
 
+// Regression test for a compiler bug found while implementing the Map<K,V>
+// stdlib collection: `scope_lookup::lookup_functions` used to stop looking at
+// base aggregates entirely as soon as the derived type declared ANY member
+// with the same short name, even when that derived member was a genuinely
+// different overload (different parameter list) from the one declared in the
+// base. This made a base-declared getter (0 params) invisible through a
+// reference typed as the derived interface that only re-declares a setter
+// overload (1 param) of the same name — "No viable overload found for 'value'
+// with 0 argument(s)". The fix must keep BOTH overloads reachable (the getter
+// from the base, the setter from the derived interface) while still letting a
+// true override (identical signature) in the derived type correctly shadow
+// the base one.
+TEST_CASE("Base getter and derived setter of same name are both reachable through the derived reference", "[interface][overload][regression]") {
+    auto jit = gen_jit(R"SRC(
+module __iface_getter_setter_overload__;
+interface Reader {
+    const value() : const int&;
+}
+interface Writer : public Reader {
+    value(v: int) : void;
+}
+class Box : public Writer {
+    v: int;
+    Box(iv: int) : v(iv) {}
+    const value() : const int& { return v; }
+    value(nv: int) : void { v = nv; }
+}
+use_writer(w: Writer&) : int {
+    w.value(42);      // resolves the 1-arg setter declared in Writer
+    return w.value();  // must still resolve the 0-arg getter declared in Reader
+}
+test() : int {
+    b: Box(0);
+    return use_writer(b);
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+

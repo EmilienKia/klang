@@ -296,10 +296,178 @@ void record_generic_usage(
 // Substitute template params in base class raw names
 // ═══════════════════════════════════════════════════════════════════════════
 
+namespace {
+
+// Render a resolved template-argument type as the identifier text expected by
+// substitute_base_name's textual reassembly (e.g. a struct/enum's short name
+// rather than to_string()'s "struct:"/"enum " prefixed form).
+std::string render_subst_type_name(const std::shared_ptr<type>& t) {
+    // For struct types, use the aggregate's short name (e.g. "Point") rather than
+    // to_string() which returns "struct:Point" — the "struct:" prefix would prevent
+    // the downstream get_aggregate() lookup from finding the type in the namespace.
+    if (auto st = std::dynamic_pointer_cast<struct_type>(t)) {
+        if (auto agg = st->get_struct()) {
+            return agg->get_short_name();
+        }
+        // Fallback: strip "struct:" prefix
+        const auto ts = st->to_string();
+        const std::string prefix = "struct:";
+        return (ts.size() > prefix.size() && ts.substr(0, prefix.size()) == prefix)
+            ? ts.substr(prefix.size()) : ts;
+    }
+    // For enum types, use the enumeration's short name (e.g. "Color") rather than
+    // to_string() which returns "enum Color" — the "enum " prefix prevents lookup.
+    if (auto et = std::dynamic_pointer_cast<enum_type>(t)) {
+        if (auto e = et->get_enumeration()) {
+            return e->get_short_name();
+        }
+        // Fallback: strip "enum " prefix
+        const auto ts = et->to_string();
+        const std::string pfx = "enum ";
+        return (ts.size() > pfx.size() && ts.substr(0, pfx.size()) == pfx)
+            ? ts.substr(pfx.size()) : ts;
+    }
+    return t->to_string();
+}
+
+/**
+ * Split a template-argument list string (the content between the outer '<'
+ * and matching '>') by TOP-LEVEL commas, respecting nested angle-bracket
+ * depth — so `"Pair<int,int>"` (a single compound argument) is never split
+ * at the comma nested inside it. Each piece is trimmed of surrounding
+ * whitespace.
+ */
+std::vector<std::string> split_top_level_args(const std::string& args_str) {
+    std::vector<std::string> result;
+    size_t pos = 0;
+    while (pos < args_str.size()) {
+        int depth = 0;
+        size_t comma = std::string::npos;
+        for (size_t i = pos; i < args_str.size(); ++i) {
+            char c = args_str[i];
+            if (c == '<') ++depth;
+            else if (c == '>') --depth;
+            else if (c == ',' && depth == 0) { comma = i; break; }
+        }
+        std::string arg = (comma == std::string::npos)
+            ? args_str.substr(pos)
+            : args_str.substr(pos, comma - pos);
+        while (!arg.empty() && arg.front() == ' ') arg.erase(arg.begin());
+        while (!arg.empty() && arg.back() == ' ') arg.pop_back();
+        result.push_back(std::move(arg));
+        pos = (comma == std::string::npos) ? args_str.size() : comma + 1;
+    }
+    return result;
+}
+
+} // anonymous namespace
+
+std::shared_ptr<type> template_instantiator::resolve_base_type_name(
+    const std::string& name,
+    const type_substitution_map& subst,
+    const std::shared_ptr<ns>& parent_ns,
+    k::model::unit& unit_ref,
+    const std::shared_ptr<context>& ctx,
+    k::log::logger& logger)
+{
+    static const std::unordered_map<std::string, primitive_type::PRIMITIVE_TYPE> prim_map = {
+        {"bool", primitive_type::BOOL}, {"byte", primitive_type::BYTE},
+        {"char", primitive_type::CHAR}, {"short", primitive_type::SHORT},
+        {"int", primitive_type::INT}, {"long", primitive_type::LONG},
+        {"float", primitive_type::FLOAT}, {"double", primitive_type::DOUBLE},
+    };
+
+    auto lt_pos = name.find('<');
+    if (lt_pos == std::string::npos) {
+        // Plain (non-generic) name.
+        // Priority 1: arg_name is itself a template parameter name of the
+        // *enclosing* instantiation (e.g. "I"/"O" in TransformInputStream<I, O>).
+        // Must be checked before any name-based type lookup below, otherwise
+        // a template parameter named "I" can spuriously resolve to an unrelated
+        // user-defined type also named "I".
+        auto subst_it = subst.find(name);
+        if (subst_it != subst.end() && subst_it->second) return subst_it->second;
+        auto prim_it = prim_map.find(name);
+        if (prim_it != prim_map.end()) return ctx->from_type(prim_it->second);
+        // Try as user-defined struct/class/interface type
+        if (auto agg = parent_ns->get_aggregate(name)) {
+            if (agg->get_struct_type()) return agg->get_struct_type();
+        }
+        // Try as enum type or other named type via context lookup
+        if (auto resolved = ctx->from_string(name); resolved && type::is_resolved(resolved)) return resolved;
+        // Final fallback: reverse-map arg_name to the original type object via
+        // the substitution map. substitute_base_name uses type->to_string() for
+        // non-struct/non-enum types (e.g. "Object*" for pointer_type, "Object!"
+        // for owner_type), so matching name against each substituted value's
+        // to_string() recovers the correct type object.
+        for (const auto& [_, sv] : subst) {
+            if (sv && sv->to_string() == name) return sv;
+        }
+        return nullptr;
+    }
+
+    // Generic name: "Base<Arg1,Arg2,...>" — recurse into each top-level argument.
+    auto gt_pos = name.rfind('>');
+    if (gt_pos == std::string::npos || gt_pos <= lt_pos) return nullptr;
+    std::string tpl_base_name = name.substr(0, lt_pos);
+    std::string args_str = name.substr(lt_pos + 1, gt_pos - lt_pos - 1);
+
+    auto tpl_base_agg = parent_ns->get_aggregate(tpl_base_name);
+    if (!tpl_base_agg || !tpl_base_agg->is_template()) return nullptr;
+    auto* base_ti = tpl_base_agg->get_tpl_info();
+    if (!base_ti) return nullptr;
+
+    std::vector<template_argument> base_args;
+    for (const auto& arg_name : split_top_level_args(args_str)) {
+        auto arg_type = resolve_base_type_name(arg_name, subst, parent_ns, unit_ref, ctx, logger);
+        if (!arg_type || !type::is_resolved(arg_type)) return nullptr;
+        base_args.push_back(template_argument::make_type(arg_type));
+    }
+    if (base_args.empty()) return nullptr;
+
+    auto base_agg = template_instantiator::instantiate_aggregate(
+        *tpl_base_agg, base_args, parent_ns, unit_ref, ctx, logger);
+    if (!base_agg) return nullptr;
+
+    // Ensure the instantiated base has a struct_type that is UNIFIED through the
+    // unit instantiation registry, so it shares a single struct_type with any
+    // KDI-imported instantiation of the same template (e.g. an imported class
+    // deriving from the same base). Without this, struct_type identity
+    // comparisons (is_derived_from, pointer upcast) fail across the import
+    // boundary because two distinct struct_types would denote the same
+    // concrete instantiation.
+    if (!base_agg->get_struct_type()) {
+        std::string base_origin =
+            !base_ti->origin_module_ns_fq.empty()
+            ? base_ti->origin_module_ns_fq
+            : (parent_ns ? parent_ns->get_fq_name() : std::string{});
+        const std::string base_key =
+            k::model::unit::make_instantiation_registry_key(base_origin, base_agg->get_short_name());
+        auto st = unit_ref.find_instantiation_struct_type(base_key);
+        if (st) {
+            st->reassign_aggregate(base_agg->shared_as<aggregate>());
+        } else {
+            st = std::make_shared<struct_type>(base_agg->get_short_name(), base_agg->shared_as<aggregate>());
+            ctx->add_struct(st);
+            unit_ref.register_instantiation_struct_type(base_key, st);
+        }
+        base_agg->set_struct_type(st);
+    }
+    return base_agg->get_struct_type();
+}
+
 /**
  * Given a base class raw_name that may contain template arguments
  * (e.g. "Collection<T>"), substitute type parameter names using the
  * substitution map (e.g. T→int → "Collection<int>").
+ *
+ * Top-level template arguments are split respecting nested angle-bracket
+ * depth (so `Iter<Pair<K,V>>`'s single top-level argument is recognised as
+ * `Pair<K,V>`, not incorrectly split at the comma inside it). A top-level
+ * argument that is itself a compound generic (contains '<') is substituted
+ * by recursing into this same function, so that placeholders nested inside
+ * it (e.g. the 'K'/'V' inside `Pair<K,V>`) are substituted too — a bare
+ * top-level exact-match lookup would never fire for a compound argument.
  */
 std::string substitute_base_name(const std::string& raw_name,
                                   const type_substitution_map& subst) {
@@ -310,16 +478,25 @@ std::string substitute_base_name(const std::string& raw_name,
     if (gt_pos == std::string::npos || gt_pos <= lt_pos) return raw_name;
 
     std::string prefix = raw_name.substr(0, lt_pos + 1); // "Collection<"
-    std::string args_str = raw_name.substr(lt_pos + 1, gt_pos - lt_pos - 1); // "T" or "T,U"
+    std::string args_str = raw_name.substr(lt_pos + 1, gt_pos - lt_pos - 1); // "T" or "T,U" or "Pair<K,V>"
 
-    // Split by ',' and substitute each arg
+    // Split by top-level ',' (respecting nested '<'/'>' depth) and substitute each arg
     std::string result = prefix;
     size_t pos = 0;
     bool first = true;
     while (pos < args_str.size()) {
         if (!first) result += ",";
         first = false;
-        auto comma = args_str.find(',', pos);
+        // Find the next top-level comma: track bracket depth so a comma nested
+        // inside a compound argument (e.g. the one inside "Pair<K,V>") is skipped.
+        int depth = 0;
+        size_t comma = std::string::npos;
+        for (size_t i = pos; i < args_str.size(); ++i) {
+            char c = args_str[i];
+            if (c == '<') ++depth;
+            else if (c == '>') --depth;
+            else if (c == ',' && depth == 0) { comma = i; break; }
+        }
         std::string arg = (comma == std::string::npos)
             ? args_str.substr(pos)
             : args_str.substr(pos, comma - pos);
@@ -327,39 +504,19 @@ std::string substitute_base_name(const std::string& raw_name,
         while (!arg.empty() && arg.front() == ' ') arg.erase(arg.begin());
         while (!arg.empty() && arg.back() == ' ') arg.pop_back();
 
-        // Check if this arg name is a template parameter to substitute
-        auto it = subst.find(arg);
-        if (it != subst.end() && it->second) {
-            // For struct types, use the aggregate's short name (e.g. "Point") rather than
-            // to_string() which returns "struct:Point" — the "struct:" prefix would prevent
-            // the downstream get_aggregate() lookup from finding the type in the namespace.
-            if (auto st = std::dynamic_pointer_cast<struct_type>(it->second)) {
-                if (auto agg = st->get_struct()) {
-                    result += agg->get_short_name();
-                } else {
-                    // Fallback: strip "struct:" prefix
-                    const auto ts = st->to_string();
-                    const std::string prefix = "struct:";
-                    result += (ts.size() > prefix.size() && ts.substr(0, prefix.size()) == prefix)
-                              ? ts.substr(prefix.size()) : ts;
-                }
-            // For enum types, use the enumeration's short name (e.g. "Color") rather than
-            // to_string() which returns "enum Color" — the "enum " prefix prevents lookup.
-            } else if (auto et = std::dynamic_pointer_cast<enum_type>(it->second)) {
-                if (auto e = et->get_enumeration()) {
-                    result += e->get_short_name();
-                } else {
-                    // Fallback: strip "enum " prefix
-                    const auto ts = et->to_string();
-                    const std::string pfx = "enum ";
-                    result += (ts.size() > pfx.size() && ts.substr(0, pfx.size()) == pfx)
-                              ? ts.substr(pfx.size()) : ts;
-                }
-            } else {
-                result += it->second->to_string();
-            }
+        if (arg.find('<') != std::string::npos) {
+            // Compound generic argument (e.g. "Pair<K,V>"): recurse so any
+            // placeholder nested inside it is substituted too. A bare exact-match
+            // lookup below would never match a compound string against a param name.
+            result += substitute_base_name(arg, subst);
         } else {
-            result += arg;
+            // Check if this arg name is a template parameter to substitute
+            auto it = subst.find(arg);
+            if (it != subst.end() && it->second) {
+                result += render_subst_type_name(it->second);
+            } else {
+                result += arg;
+            }
         }
         pos = (comma == std::string::npos) ? args_str.size() : comma + 1;
     }
@@ -1070,6 +1227,10 @@ void template_instantiator::populate_function_from_template(
             new_param->set_varargs(param->is_varargs());
             new_param->_ast_node = param->get_ast_node(); // diagnostics
             new_param->_documentation = param->get_documentation();
+            // Preserve the default value expression (e.g. "flag: bool = true"),
+            // otherwise overload resolution on the instantiated function would
+            // require all arguments to be provided explicitly.
+            new_param->set_default_expr(param->get_default_expr());
         }
     }
 
@@ -1457,128 +1618,15 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
         if (bs.base) continue; // Already resolved
         auto lt_pos = bs.raw_name.find('<');
         if (lt_pos != std::string::npos) {
-            auto gt_pos = bs.raw_name.rfind('>');
-            if (gt_pos != std::string::npos && gt_pos > lt_pos) {
-                std::string tpl_base_name = bs.raw_name.substr(0, lt_pos);
-                std::string args_str = bs.raw_name.substr(lt_pos + 1, gt_pos - lt_pos - 1);
-
-                // Look up the template aggregate by name in parent namespace
-                std::shared_ptr<aggregate> tpl_base_agg;
-                if (auto found = parent_ns->get_aggregate(tpl_base_name)) {
-                    tpl_base_agg = found;
-                }
-
-                if (tpl_base_agg && tpl_base_agg->is_template()) {
-                    auto* base_ti = tpl_base_agg->get_tpl_info();
-                    if (base_ti) {
-                        // Parse comma-separated arg names and resolve to types
-                        std::vector<std::string> arg_names;
-                        {
-                            size_t pos = 0;
-                            while (pos < args_str.size()) {
-                                auto comma = args_str.find(',', pos);
-                                std::string arg = (comma == std::string::npos)
-                                    ? args_str.substr(pos)
-                                    : args_str.substr(pos, comma - pos);
-                                while (!arg.empty() && arg.front() == ' ') arg.erase(arg.begin());
-                                while (!arg.empty() && arg.back() == ' ') arg.pop_back();
-                                arg_names.push_back(arg);
-                                pos = (comma == std::string::npos) ? args_str.size() : comma + 1;
-                            }
-                        }
-
-                        // Resolve each arg name to a model type
-                        std::vector<template_argument> base_args;
-                        bool all_resolved = true;
-                        static const std::unordered_map<std::string, primitive_type::PRIMITIVE_TYPE> prim_map = {
-                            {"bool", primitive_type::BOOL}, {"byte", primitive_type::BYTE},
-                            {"char", primitive_type::CHAR}, {"short", primitive_type::SHORT},
-                            {"int", primitive_type::INT}, {"long", primitive_type::LONG},
-                            {"float", primitive_type::FLOAT}, {"double", primitive_type::DOUBLE},
-                        };
-                        for (const auto& arg_name : arg_names) {
-                            std::shared_ptr<type> arg_type;
-                            // Priority 1: arg_name is itself a template parameter name of the
-                            // *enclosing* instantiation (e.g. "I"/"O" in TransformInputStream<I, O>).
-                            // Must be checked before any name-based type lookup below, otherwise
-                            // a template parameter named "I" can spuriously resolve to an unrelated
-                            // user-defined type also named "I" if substitute_base_name() failed to
-                            // substitute it (see the TransformInputStream<I, O> base name resolution
-                            // regression: a program-level `class I { ... }` or `interface I { ... }`
-                            // would incorrectly become the template argument).
-                            auto subst_it = subst.find(arg_name);
-                            if (subst_it != subst.end() && subst_it->second) {
-                                arg_type = subst_it->second;
-                            }
-                            auto prim_it = prim_map.find(arg_name);
-                            if (!arg_type && prim_it != prim_map.end()) {
-                                arg_type = ctx->from_type(prim_it->second);
-                            }
-                            if (!arg_type) {
-                                // Try as user-defined struct/class/interface type
-                                auto agg = parent_ns->get_aggregate(arg_name);
-                                if (agg && agg->get_struct_type()) {
-                                    arg_type = agg->get_struct_type();
-                                }
-                                // Try as enum type or other named type via context lookup
-                                if (!arg_type) {
-                                    arg_type = ctx->from_string(arg_name);
-                                }
-                                // Final fallback: reverse-map arg_name to the original type
-                                // object via the substitution map. substitute_base_name uses
-                                // type->to_string() for non-struct/non-enum types (e.g.
-                                // "Object*" for pointer_type, "Object!" for owner_type), so
-                                // matching arg_name against each substituted value's
-                                // to_string() recovers the correct type object.
-                                if (!arg_type || !type::is_resolved(arg_type)) {
-                                    for (const auto& [_, sv] : subst) {
-                                        if (sv && sv->to_string() == arg_name) {
-                                            arg_type = sv;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            if (arg_type && type::is_resolved(arg_type)) {
-                                base_args.push_back(template_argument::make_type(arg_type));
-                            } else {
-                                all_resolved = false;
-                                break;
-                            }
-                        }
-
-                        if (all_resolved && !base_args.empty()) {
-                            bs.base = instantiate_aggregate(
-                                *tpl_base_agg, base_args, parent_ns, unit, ctx, logger);
-                            // Ensure the instantiated base has a struct_type that is
-                            // UNIFIED through the unit instantiation registry, so it
-                            // shares a single struct_type with any KDI-imported
-                            // instantiation of the same template (e.g. an imported class
-                            // deriving from the same base). Without this, struct_type
-                            // identity comparisons (is_derived_from, pointer upcast)
-                            // fail across the import boundary because two distinct
-                            // struct_types would denote the same concrete instantiation.
-                            if (bs.base && !bs.base->get_struct_type()) {
-                                std::string base_origin =
-                                    (base_ti && !base_ti->origin_module_ns_fq.empty())
-                                    ? base_ti->origin_module_ns_fq
-                                    : (parent_ns ? parent_ns->get_fq_name() : std::string{});
-                                const std::string base_key =
-                                    unit::make_instantiation_registry_key(
-                                        base_origin, bs.base->get_short_name());
-                                auto st = unit.find_instantiation_struct_type(base_key);
-                                if (st) {
-                                    st->reassign_aggregate(bs.base->shared_as<aggregate>());
-                                } else {
-                                    st = std::make_shared<struct_type>(
-                                        bs.base->get_short_name(),
-                                        bs.base->shared_as<aggregate>());
-                                    ctx->add_struct(st);
-                                    unit.register_instantiation_struct_type(base_key, st);
-                                }
-                                bs.base->set_struct_type(st);
-                            }
-                        }
+            // resolve_base_type_name() recurses into nested generic arguments
+            // (e.g. the "Pair<int,int>" inside "Iter<Pair<int,int>>"), instantiating
+            // them as needed — a plain top-level split-and-lookup (as this used to
+            // do inline) can never resolve a compound nested argument, leaving
+            // bs.base permanently unresolved for multi-level generic bases.
+            if (auto resolved = resolve_base_type_name(bs.raw_name, subst, parent_ns, unit, ctx, logger)) {
+                if (auto st = std::dynamic_pointer_cast<struct_type>(resolved)) {
+                    if (auto agg = st->get_struct()) {
+                        bs.base = agg;
                     }
                 }
             }

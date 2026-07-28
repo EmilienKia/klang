@@ -1165,13 +1165,27 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                 // Try resolving it further through the resolver
                 if (arg_type) {
                     if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
+                        // Nested template instantiation (e.g. 'Box<K>' used as a template
+                        // argument, where 'K' is itself an enclosing template parameter that
+                        // still needs substitution). Recurse so the inner placeholder(s) go
+                        // through the very same substitution-map machinery used below for a
+                        // bare placeholder -- otherwise only the base name ('Box') would be
+                        // looked up (ignoring its own template arguments) and resolution
+                        // would spuriously fail or match the uninstantiated template itself.
+                        if (unres_arg->has_template_args()) {
+                            auto nested = try_instantiate_template_type(unres_arg, context_elem);
+                            if (nested && type::is_resolved(nested)) {
+                                arg_type = nested;
+                            }
+                        }
                         // A bare template-parameter placeholder (e.g. 'I'/'O'/'T' used
                         // inside the defining template's own body) must NOT be resolved
                         // via a global/namespace name lookup — an unrelated user type
                         // that happens to share the same short name (e.g. `interface I`)
                         // would be spuriously matched. Only the substitution-map
                         // recovery paths below may legitimately resolve it.
-                        if (!unres_arg->is_template_param_placeholder()
+                        if (!type::is_resolved(arg_type)
+                            && !unres_arg->is_template_param_placeholder()
                             && !is_enclosing_template_param_name(context_elem, unres_arg->type_id().to_string())) {
                             auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
                             if (resolved && type::is_resolved(resolved)) {
