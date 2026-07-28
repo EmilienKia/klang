@@ -89,6 +89,20 @@ interface MutableOrderedSet : public OrderedSet<T>, public MutableSet<T> {
 }
 
 /**
+ * SortedSet<T> — abstract interface for a collection of unique elements that maintains sorted order.
+ */
+template<typename T>
+interface SortedSet : public OrderedSet<T> {
+}
+
+/**
+ * MutableSortedSet<T> — abstract interface for a mutable collection of unique elements that maintains sorted order.
+ */
+template<typename T>
+interface MutableSortedSet : public MutableOrderedSet<T>, public MutableSet<T> {
+}
+
+/**
  * ListSet<T> — a concrete implementation of a mutable non-ordered set using a list.
  * Non-ordered collection of unique objects. The only guarantee is all the objects are different according to ==/!= operator.
  * Insertion and searching could be O(n).
@@ -106,7 +120,7 @@ interface MutableOrderedSet : public OrderedSet<T>, public MutableSet<T> {
  *   s.remove(1);
  */
 template<typename T>
-class ListSet : public MutableSet<T>, public MutableReversibleSequence<T> {
+class ListSet : public MutableOrderedSet<T>, public MutableReversibleSequence<T> {
     private:
     _list : DoubleLinkedList<T>;
 
@@ -250,7 +264,7 @@ struct TreeSetNode {
  *   s.last();      // 5
  */
 template<typename T>
-class TreeSet : public MutableOrderedSet<T>, public MutableReversibleSequence<T> {
+class TreeSet : public MutableSortedSet<T>, public MutableReversibleSequence<T> {
     private:
     _root : TreeSetNode<T>! = null;
     _size : unsigned int = 0;

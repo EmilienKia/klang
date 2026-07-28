@@ -44,13 +44,39 @@ TEST_CASE("ListSet<int> — empty set", "[libk][set][listset]") {
         module __lset_empty__;
         test() : bool {
             s : ListSet<int>;
-            return s.isEmpty() && s.size() == 0;
+            return s.isEmpty() && s.size() == 0 && !s.first().hasValue() && !s.last().hasValue();
         }
     )SRC");
     REQUIRE(j);
     auto fn = j->lookup_symbol<bool(*)()>("test");
     REQUIRE(fn);
     CHECK(fn());
+}
+
+TEST_CASE("ListSet<int> — first/last reflect insertion order", "[libk][set][listset]") {
+    auto j = jit_k(R"SRC(
+        module __lset_order__;
+        test() : int {
+            s : ListSet<int>;
+            s.add(3);
+            s.add(1);
+            s.add(2);
+            result : int = 0;
+            if (s.first().get() == 3) result = result + 1;
+            if (s.last().get() == 2) result = result + 10;
+            if (!s.add(1)) result = result + 100;             // duplicate: no reorder
+            if (s.first().get() == 3) result = result + 1000;
+            if (s.last().get() == 2) result = result + 10000;
+            s.remove(3);
+            if (s.first().get() == 1) result = result + 100000;   // oldest remaining
+            if (s.last().get() == 2) result = result + 1000000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111111);
 }
 
 TEST_CASE("ListSet<int> — add rejects duplicates", "[libk][set][listset]") {

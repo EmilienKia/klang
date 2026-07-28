@@ -1,4 +1,4 @@
-# Sets — `Set<T>`, `MutableSet<T>`, `OrderedSet<T>`, `MutableOrderedSet<T>`, `ListSet<T>`, `TreeSet<T>`, `HashSet<T>`
+# Sets — `Set<T>`, `MutableSet<T>`, `OrderedSet<T>`, `MutableOrderedSet<T>`, `SortedSet<T>`, `MutableSortedSet<T>`, `ListSet<T>`, `TreeSet<T>`, `HashSet<T>`
 
 > **Module:** `k`
 > **Source:** `libk/libk/src/set.k`
@@ -8,18 +8,26 @@
 
 ## Overview
 
-The K standard library provides a generic set framework built on four
+The K standard library provides a generic set framework built on six
 abstract interfaces and three concrete implementations. A *set* is a
 `Collection<T>` that guarantees every contained element is unique.
+
+`OrderedSet<T>` only guarantees that iteration order is stable and
+well-defined — it does not say *what* that order is (it may, for
+instance, be insertion order). `SortedSet<T>` narrows that guarantee:
+the order is a genuine sort order (elements are arranged according to
+the `<` operator).
 
 | Type | Description | Backing |
 |------|-------------|---------|
 | `Set<T>` | Common read-only interface for all sets | (abstract) |
 | `MutableSet<T>` | Adds `add`/`remove` mutation | (abstract) |
-| `OrderedSet<T>` | A `Set<T>` that also exposes `first()`/`last()` | (abstract) |
+| `OrderedSet<T>` | A `Set<T>` with a well-defined (but unspecified) iteration order and `first()`/`last()` | (abstract) |
 | `MutableOrderedSet<T>` | Combination of `MutableSet<T>` and `OrderedSet<T>` | (abstract) |
-| `ListSet<T>` | Unordered set, uniqueness enforced by linear scan | `DoubleLinkedList<T>` |
-| `TreeSet<T>` | Ordered set (sorted by `<`) | AVL self-balancing binary search tree |
+| `SortedSet<T>` | An `OrderedSet<T>` whose order is a sort order (by `<`) | (abstract) |
+| `MutableSortedSet<T>` | Combination of `MutableOrderedSet<T>` and `SortedSet<T>` | (abstract) |
+| `ListSet<T>` | Ordered set (insertion order), uniqueness enforced by linear scan | `DoubleLinkedList<T>` |
+| `TreeSet<T>` | Sorted set (sorted by `<`) | AVL self-balancing binary search tree |
 | `HashSet<T>` | Unordered set, uniqueness enforced by hashing | Separate-chaining hash table |
 
 All three concrete sets store elements **by value**, implement
@@ -90,8 +98,13 @@ Adds, from `OrderedCollection<T>`:
 
 | Method | Description |
 |--------|-------------|
-| `first() : OptionalConstRef<T>` | Read-only reference to the smallest/first element, or empty if the set is empty. |
-| `last() : OptionalConstRef<T>` | Read-only reference to the largest/last element, or empty if the set is empty. |
+| `first() : OptionalConstRef<T>` | Read-only reference to the first element in the set's iteration order, or empty if the set is empty. |
+| `last() : OptionalConstRef<T>` | Read-only reference to the last element in the set's iteration order, or empty if the set is empty. |
+
+`OrderedSet<T>` only promises that the iteration/`first()`/`last()` order is
+stable and well-defined; it says nothing about *what* that order is. It may,
+for example, be insertion order. Use `SortedSet<T>` when the order must
+specifically be a sort order (by `<`).
 
 ## `MutableOrderedSet<T>` — Interface
 
@@ -102,7 +115,33 @@ interface MutableOrderedSet : public OrderedSet<T>, public MutableSet<T> {
 ```
 
 Combines `add`/`remove`/`clear` (from `MutableSet<T>`) with
-`first()`/`last()` (from `OrderedSet<T>`). Implemented by `TreeSet<T>`.
+`first()`/`last()` (from `OrderedSet<T>`). Implemented by `ListSet<T>`
+(insertion order).
+
+## `SortedSet<T>` — Interface
+
+```k
+template<typename T>
+interface SortedSet : public OrderedSet<T> {
+}
+```
+
+A `SortedSet<T>` is an `OrderedSet<T>` whose iteration order is specifically
+a sort order: elements are arranged according to the `<` operator, so
+`first()`/`last()` return the smallest/largest element and iteration visits
+elements in ascending order.
+
+## `MutableSortedSet<T>` — Interface
+
+```k
+template<typename T>
+interface MutableSortedSet : public MutableOrderedSet<T>, public MutableSet<T> {
+}
+```
+
+Combines `add`/`remove`/`clear` (from `MutableSet<T>`) with the sorted
+`first()`/`last()`/iteration contract (from `SortedSet<T>`, via
+`MutableOrderedSet<T>`). Implemented by `TreeSet<T>`.
 
 ---
 
@@ -110,15 +149,20 @@ Combines `add`/`remove`/`clear` (from `MutableSet<T>`) with
 
 ```k
 template<typename T>
-class ListSet : public MutableSet<T>, public MutableReversibleSequence<T> { ... }
+class ListSet : public MutableOrderedSet<T>, public MutableReversibleSequence<T> { ... }
 ```
 
 ### Description
 
-An unordered set backed by a `DoubleLinkedList<T>`. Uniqueness is enforced by
-a linear scan (`==` operator) before every insertion, so `add`, `remove` and
-`contains` are all O(n). Simplest and lowest-overhead set — a good default for
-small sets or sets whose element type does not implement `hash()`.
+An ordered set backed by a `DoubleLinkedList<T>`, maintaining **insertion
+order**: `first()` returns the oldest (first inserted, still-present)
+element and `last()` returns the most recently inserted element.
+Re-inserting an already-present value is a no-op (duplicates are rejected,
+`add` returns `false`) and does not move it. Uniqueness is enforced by a
+linear scan (`==` operator) before every insertion, so `add`, `remove` and
+`contains` are all O(n). Simplest and lowest-overhead ordered set — a good
+default for small sets or sets whose element type does not implement
+`hash()`.
 
 Iterators (forward, reverse, const and mutable) simply delegate to the
 backing `DoubleLinkedList<T>`'s own iterators — iteration order is insertion
@@ -131,6 +175,7 @@ order.
 | `add` | O(n) |
 | `remove` | O(n) |
 | `contains` | O(n) |
+| `first`/`last` | O(1) |
 | `size`/`isEmpty` | O(1) |
 | `clear` | O(n) |
 | Iteration (full) | O(n) |
@@ -143,6 +188,8 @@ s.add(1);
 s.add(2);
 s.add(1);            // false, 1 already present
 s.contains(2);        // true
+s.first();            // 1 (first inserted)
+s.last();             // 2 (last inserted)
 s.remove(1);
 ```
 
@@ -152,12 +199,12 @@ s.remove(1);
 
 ```k
 template<typename T>
-class TreeSet : public MutableOrderedSet<T>, public MutableReversibleSequence<T> { ... }
+class TreeSet : public MutableSortedSet<T>, public MutableReversibleSequence<T> { ... }
 ```
 
 ### Description
 
-An ordered set implemented as an AVL self-balancing binary search tree,
+A sorted set implemented as an AVL self-balancing binary search tree,
 ordered by the `<` operator (elements must support `<` and `==`/`!=`). Every
 insertion and removal rebalances the tree so its height stays O(log n),
 bounding `add`, `remove` and `contains` to O(log n).
@@ -317,7 +364,8 @@ tracking.
 
 | Need | Best choice |
 |------|-------------|
-| Sorted iteration / `first()`/`last()` | `TreeSet<T>` |
+| Sorted iteration / smallest-largest `first()`/`last()` | `TreeSet<T>` |
+| Insertion-order iteration / oldest-newest `first()`/`last()` | `ListSet<T>` |
 | Fastest average-case `add`/`remove`/`contains` | `HashSet<T>` (requires `hash()`) |
 | Element type has no `hash()` and is small/rarely searched | `ListSet<T>` |
 | Guaranteed O(log n) worst case (no hash collisions to worry about) | `TreeSet<T>` |
