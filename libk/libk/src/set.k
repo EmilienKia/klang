@@ -181,6 +181,24 @@ class ListSet : public MutableOrderedSet<T>, public MutableReversibleSequence<T>
         _list.clear();
     }
 
+    /** Return a read-only reference to the oldest inserted element, or empty if the set is empty. */
+    first() : OptionalConstRef<T> {
+        result : OptionalConstRef<T>;
+        if (!_list.isEmpty()) {
+            result.set(_list.first());
+        }
+        return result;
+    }
+
+    /** Return a read-only reference to the most recently inserted element, or empty if the set is empty. */
+    last() : OptionalConstRef<T> {
+        result : OptionalConstRef<T>;
+        if (!_list.isEmpty()) {
+            result.set(_list.last());
+        }
+        return result;
+    }
+
     /** Return a read-only iterator over the elements of the set. */
     const constIterator() : ConstIterator<T>! {
         return _list.constIterator();

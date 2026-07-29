@@ -135,8 +135,8 @@ std::unique_ptr<jit> jit::create(std::shared_ptr<compiler> compiler) {
 }
 
 void jit::add_module(llvm::orc::ThreadSafeModule module) {
-    if (_lljit->addIRModule(std::move(module))) {
-        std::cerr << "Cannot register module in JIT instance." << std::endl;
+    if (auto err = _lljit->addIRModule(std::move(module))) {
+        std::cerr << "Cannot register module in JIT instance: " << llvm::toString(std::move(err)) << std::endl;
     }
 }
 

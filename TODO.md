@@ -436,6 +436,84 @@
       `build_value_substitution_map()` only accepts `int`, `long`, `float`, `double`,
       `bool`, `char`, `string` and `nullptr` values; no enum constants, no
       compile-time-constant expressions, no aggregates.
+- [x] **FIXED — `ListSet<T>` never implemented the abstract `first()`/`last()`
+      inherited from `OrderedCollection<T>`, so any call silently failed at JIT-link
+      time instead of at compile time.** Found while validating the Map<K,V> stdlib
+      work (full `libk-tests` regression run): `ListSet<int> — empty set` and
+      `ListSet<int> — first/last reflect insertion order` in
+      `libk/libk/tests/test-set.cpp` failed with `REQUIRE(fn)` → `nullptr`, i.e.
+      `jit->lookup_symbol<...>("test")` returned null even though `nm` on the
+      compiled object confirmed the `test()` entry point itself was present and
+      correctly mangled.
+      - **Root cause**: a genuine `libk` bug, not a compiler/JIT bug.
+        `ListSet<T>` (`libk/libk/src/set.k`) implements `MutableOrderedSet<T>`
+        (which extends `OrderedCollection<T>`, declaring abstract
+        `first() : OptionalConstRef<T>` / `last() : OptionalConstRef<T>`) but never
+        provided its own overrides — unlike `TreeSet<T>`, which does. The compiler's
+        abstract-method-implementation check did **not** catch this gap for
+        `ListSet<T>`, so the class compiled as if concrete; every call to
+        `.first()`/`.last()` on a `ListSet<T>` resolved statically to the abstract
+        interface method, which has no body. This produced a dangling declaration
+        (`_KFMN...17OrderedCollectionIiE5firstEv` / `...4lastEv`) with no
+        definition anywhere in the module. The JIT's lazy per-module materialization
+        then failed *all* symbols in that module (including the unrelated `test()`
+        entry point) as soon as any one of them turned out to be undefined, which is
+        why the failure surfaced as `lookup_symbol("test") == nullptr` rather than a
+        clearer "undefined reference" at the two actually-missing symbols. Confirmed
+        via `git stash` to reproduce identically on a compiler build predating this
+        session's five template/overload-resolution fixes, so it is unrelated to
+        them.
+      - **Fix applied**: added the missing `first()` / `last()` overrides to
+        `ListSet<T>` (`libk/libk/src/set.k`), delegating to the underlying
+        `DoubleLinkedList<T>` (`_list`) and guarding on `_list.isEmpty()` to return
+        an empty `OptionalConstRef<T>` for an empty set, mirroring `TreeSet<T>`'s
+        style.
+      - **Still open (separate, smaller issue)**: the compiler's abstract-method
+        check should have rejected `ListSet<T>` at compile time (missing
+        `first()`/`last()` implementation) instead of silently compiling an
+        incomplete concrete class. Root-caused as a **diamond-inheritance gap** in
+        the abstract-method checker — see the new entry below — and left open
+        (out of scope for the Map<K,V> work).
+      - Regression coverage: the existing `[libk][set][listset]` tests in
+        `libk/libk/tests/test-set.cpp` now pass and exercise this path directly; no
+        new test needed since these two pre-existing tests already cover it.
+- [ ] **Abstract-method-implementation check misses methods reached only through a
+      diamond-inherited interface, silently letting an incomplete class compile
+      and deferring the failure to JIT/link time.** Found while root-causing the
+      `ListSet<T>` bug above. Minimal repro (`klangc -c`, compiles with **exit 0
+      and no diagnostics**, yet `first()` has no definition anywhere in the
+      object):
+      ```
+      template<typename T> interface Collection { size() : unsigned int; }
+      template<typename T> interface OrderedCollection : public Collection<T> { first() : int; }
+      template<typename T> interface MutableCollection : public Collection<T> { addOne(v: T) : bool; }
+      template<typename T> interface Set : public Collection<T> { contains(v: T) : bool; }
+      template<typename T> interface MutableSet : public Set<T>, public MutableCollection<T> {}
+      template<typename T> interface OrderedSet : public Set<T>, public OrderedCollection<T> {}
+      template<typename T> interface MutableOrderedSet : public OrderedSet<T>, public MutableSet<T> {}
+
+      class Impl : public MutableOrderedSet<int> {
+          size() : unsigned int { return 0; }
+          contains(v: int) : bool { return false; }
+          addOne(v: int) : bool { return true; }
+          // first() intentionally NOT implemented — should be a compile error.
+      }
+      ```
+      `Impl` reaches `Set<T>` through **two** paths (`OrderedSet<T>` and
+      `MutableSet<T>`) — a diamond — and `OrderedCollection<T>::first()` is only
+      reachable through one branch of it. A simpler 2-level, non-diamond hierarchy
+      (`interface Base { foo(): int; } interface Mid : Base { bar(): int; } class
+      Impl : Mid { bar()... }`, omitting `foo()`) **is** correctly rejected with
+      `codegen_diag::ERR...0174` ("inherits unimplemented abstract method 'foo'
+      from 'Base' but is not declared 'abstract'"), so the checker's basic logic
+      is sound — the gap is specific to diamond-shaped interface graphs, most
+      likely in however it collects/deduplicates the set of abstract methods to
+      verify across repeated/shared ancestor interfaces. Not root-caused down to
+      the exact function; worth investigating the abstract-method collection walk
+      (likely near the `ERR_...0174` check in the aggregate/class resolution
+      code, `klang/src/gen/resolvers_aggregate.cpp` or `gen/gen_class.cpp`).
+      Flagged here for future investigation; no fix attempted (out of scope for
+      the Map<K,V> work).
 
 ### Auxiliary Tools (libkdi / kditool)
 
