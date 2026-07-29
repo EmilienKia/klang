@@ -21,6 +21,7 @@
 
 #include "../model.hpp"
 #include "../type.hpp"
+#include "../aggregate_value.hpp"
 
 #include <unordered_map>
 #include "../template.hpp"
@@ -1400,6 +1401,10 @@ kdi::kdi_template_origin kdi_builder::build_template_origin(
                     return v ? "true" : "false";
                 } else if constexpr (std::is_same_v<T, std::string>) {
                     return "\"" + v + "\"";
+                } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
+                    // For now, export aggregate values as their debug dump (not ideal, but placeholder)
+                    // Full implementation would need to export structured field values
+                    return v ? v->dump() : "<?null>";
                 } else {
                     return std::to_string(v);
                 }
@@ -1727,6 +1732,8 @@ kdi::kdi_template_def kdi_builder::build_template_def(
                     return v ? "true" : "false";
                 } else if constexpr (std::is_same_v<T, std::string>) {
                     return "\"" + v + "\"";
+                } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
+                    return v ? v->dump() : "<?null>";
                 } else {
                     return std::to_string(v);
                 }

@@ -23,6 +23,11 @@
 #include <string>
 #include <vector>
 #include <variant>
+#include <memory>
+
+namespace k::model {
+    class aggregate_value;  // Forward declaration for k::model::aggregate_value
+}
 
 namespace k {
 
@@ -123,6 +128,9 @@ public:
 
 /**
  * Facility for holding some value.
+ *
+ * Holds either a primitive value (monostate, nullptr, bool, numeric type, string)
+ * or a compile-time constant aggregate value (see k::model::aggregate_value).
  */
 typedef std::variant<std::monostate,
         std::nullptr_t, bool,
@@ -132,7 +140,8 @@ typedef std::variant<std::monostate,
         long, unsigned long,
         long long, unsigned long long,
         float, double,
-        std::string> value_type;
+        std::string,
+        std::shared_ptr<k::model::aggregate_value>> value_type;
 
 
 

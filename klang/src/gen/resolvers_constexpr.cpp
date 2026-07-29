@@ -20,6 +20,7 @@
 #include "resolvers_common.hpp"
 
 #include "../model/model.hpp"
+#include "../model/aggregate_value.hpp"
 #include "../model/type.hpp"
 #include "../model/template.hpp"
 #include "../parse/ast.hpp"
@@ -27,6 +28,8 @@
 
 #include <cmath>
 #include <cstring>
+#include <map>
+#include <unordered_map>
 
 namespace k::model::gen {
 
@@ -39,6 +42,8 @@ using k::parse::ast::unary_prefix_expr;
 using k::parse::ast::binary_operator_expr;
 using k::parse::ast::conditional_expr;
 using k::parse::ast::cast_expr;
+using k::parse::ast::brace_init_list;
+using k::parse::ast::designated_init_element;
 
 /** Intermediate evaluation result: a scalar value plus, when it directly
  *  denotes an enum entry, the enumeration it belongs to (used to validate
@@ -80,12 +85,15 @@ struct eval_outcome {
 };
 
 /** Extract a generic numeric view (int64_t + double, tagged is_float) from a k::value_type.
- *  Returns false for monostate/nullptr/string (non-numeric). */
+ *  Returns false for monostate/nullptr/string/aggregate_value (non-numeric). */
 bool as_numeric(const k::value_type& v, bool& is_float, int64_t& ival, double& fval) {
     return std::visit([&](auto&& x) -> bool {
         using T = std::decay_t<decltype(x)>;
         if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>
                       || std::is_same_v<T, std::string>) {
+            return false;
+        } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
+            // Aggregate values are not numeric
             return false;
         } else if constexpr (std::is_floating_point_v<T>) {
             is_float = true;
@@ -500,6 +508,121 @@ eval_outcome eval_cast(const cast_expr& ce,
                                       : narrow_int_to_primitive(iv, prim->get_type()));
 }
 
+/** Evaluate a brace-initialized expression as a compile-time aggregate value.
+ *
+ * Requires an expected aggregate type and designated member initializers.
+ * Positional braces are intentionally deferred here (member order ambiguity).
+ */
+eval_outcome eval_aggregate_init(const brace_init_list& bil,
+                                  const element& context_elem,
+                                  const std::shared_ptr<context>& ctx,
+                                  const std::shared_ptr<type>& expected_type,
+                                  unit* unit_ptr) {
+    if (!expected_type || !ctx) {
+        return eval_outcome::defer();
+    }
+
+    auto resolved_expected = expected_type;
+    if (!type::is_resolved(resolved_expected)) {
+        auto rt = ctx->resolve_type(resolved_expected);
+        if (!rt || !type::is_resolved(rt)) return eval_outcome::defer();
+        resolved_expected = rt;
+    }
+
+    auto expected_struct = std::dynamic_pointer_cast<struct_type>(type::remove_const(resolved_expected));
+    if (!expected_struct || !expected_struct->get_struct()) {
+        return eval_outcome::defer();
+    }
+    auto agg = expected_struct->get_struct();
+
+    if (!bil.is_designated) {
+        return eval_outcome::error(
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
+            "aggregate template value arguments must use designated brace initialization");
+    }
+
+    std::unordered_map<std::string, std::shared_ptr<member_variable_definition>> members;
+    for (const auto& [name, var] : agg->variables()) {
+        auto m = std::dynamic_pointer_cast<member_variable_definition>(var);
+        if (!m) continue;
+        // Skip synthetic internals (e.g. __parent__).
+        if (name.rfind("__", 0) == 0) continue;
+        members[name] = m;
+    }
+
+    std::map<std::string, k::value_type> field_values;
+    for (const auto& elem : bil.elements) {
+        auto desig = std::dynamic_pointer_cast<designated_init_element>(elem);
+        if (!desig) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
+                "aggregate template value argument must use designated members (.field = value)");
+        }
+
+        if (desig->is_call_form) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+                "designated constructor-form member initializers are not supported in template value arguments");
+        }
+        if (!desig->qualifier.empty()) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+                "qualified designated member initializers are not supported in template value arguments");
+        }
+        if (!desig->value) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+                "designated member initializer is missing a value expression");
+        }
+
+        const std::string member_name{desig->member_name.content};
+        auto it_member = members.find(member_name);
+        if (it_member == members.end()) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
+                "unknown designated member '" + member_name + "' for aggregate '" + agg->get_short_name() + "'");
+        }
+        if (field_values.count(member_name) != 0) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
+                "duplicate designated member initializer for '" + member_name + "'");
+        }
+
+        auto member_type = it_member->second->get_type();
+        if (member_type && !type::is_resolved(member_type)) {
+            auto resolved_member = ctx->resolve_type(member_type);
+            if (resolved_member && type::is_resolved(resolved_member)) {
+                member_type = resolved_member;
+            }
+        }
+
+        auto member_eval = evaluate_template_value_arg(
+            desig->value.get(), context_elem, ctx, member_type, unit_ptr);
+        if (member_eval.is_error()) {
+            return eval_outcome::error(member_eval.error_code, member_eval.message, member_eval.message_args);
+        }
+        if (!member_eval.ok()) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+                "designated member '" + member_name + "' is not a compile-time constant");
+        }
+
+        field_values.emplace(member_name, *member_eval.value);
+    }
+
+    for (const auto& [member_name, _] : members) {
+        if (field_values.count(member_name) == 0) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
+                "missing designated initializer for member '" + member_name + "'");
+        }
+    }
+
+    return eval_outcome::success(k::value_type{
+        std::make_shared<k::model::aggregate_value>(agg, std::move(field_values))
+    });
+}
+
 eval_outcome eval_raw(const expression* expr,
                        const element& context_elem,
                        const std::shared_ptr<context>& ctx,
@@ -512,6 +635,8 @@ eval_outcome eval_raw(const expression* expr,
     if (auto be = dynamic_cast<const binary_operator_expr*>(expr)) return eval_binary(*be, context_elem, ctx, unit_ptr);
     if (auto ce = dynamic_cast<const conditional_expr*>(expr)) return eval_conditional(*ce, context_elem, ctx, unit_ptr);
     if (auto cs = dynamic_cast<const cast_expr*>(expr)) return eval_cast(*cs, context_elem, ctx, unit_ptr);
+    if (auto bil = dynamic_cast<const brace_init_list*>(expr))
+        return eval_aggregate_init(*bil, context_elem, ctx, nullptr, unit_ptr);
 
     // Anything else (function calls, member access on runtime objects, 'new', ...)
     // is not a supported compile-time constant form: defer, no diagnostic here.
@@ -529,6 +654,23 @@ constexpr_eval_result evaluate_template_value_arg(
 
     constexpr_eval_result out;
     if (!expr) return out;
+
+    // Special-case aggregate brace-init when the expected type is an aggregate.
+    if (auto bil = dynamic_cast<const brace_init_list*>(expr)) {
+        auto agg_eval = eval_aggregate_init(*bil, context_elem, ctx, expected_type, unit_ptr);
+        if (agg_eval.ok) {
+            out.status = constexpr_eval_status::OK;
+            out.value = agg_eval.result.value;
+            return out;
+        }
+        if (agg_eval.is_hard_error()) {
+            out.status = constexpr_eval_status::ERROR;
+            out.error_code = agg_eval.error_code;
+            out.message = agg_eval.message;
+            out.message_args = agg_eval.message_args;
+            return out;
+        }
+    }
 
     auto raw = eval_raw(expr, context_elem, ctx, unit_ptr);
     if (!raw.ok) {
@@ -570,6 +712,20 @@ constexpr_eval_result evaluate_template_value_arg(
         out.status = constexpr_eval_status::OK;
         out.value = isf ? narrow_double_to_primitive(fv, exp_prim->get_type())
                          : narrow_int_to_primitive(iv, exp_prim->get_type());
+        return out;
+    }
+
+    if (auto exp_struct = std::dynamic_pointer_cast<struct_type>(type::remove_const(expected_type))) {
+        auto target_agg = exp_struct->get_struct();
+        auto agg_val = std::get_if<std::shared_ptr<k::model::aggregate_value>>(&raw.result.value);
+        if (!agg_val || !*agg_val || !target_agg || (*agg_val)->get_type() != target_agg) {
+            out.status = constexpr_eval_status::ERROR;
+            out.error_code = static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH);
+            out.message = "template value argument is not compatible with the declared aggregate parameter type";
+            return out;
+        }
+        out.status = constexpr_eval_status::OK;
+        out.value = raw.result.value;
         return out;
     }
 

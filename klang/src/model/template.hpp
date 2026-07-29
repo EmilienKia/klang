@@ -29,6 +29,10 @@
 #include <variant>
 #include <vector>
 
+namespace k::parse::ast {
+struct expression;
+}
+
 namespace k::model {
 
 class type;
@@ -95,6 +99,13 @@ struct template_param_descriptor {
      * Only meaningful when kind == VALUE.
      */
     std::optional<k::value_type> default_value;
+
+    /**
+     * For value parameters: raw AST default expression.
+     * Used when compile-time evaluation must be deferred until the value type
+     * becomes fully resolvable (e.g. aggregate defaults captured before type passes).
+     */
+    std::shared_ptr<k::parse::ast::expression> default_value_expr;
 
     /** True if this is a type parameter. */
     bool is_type_param() const {
@@ -344,4 +355,3 @@ std::pair<unsigned int, std::string> format_constraint_error(
 
 } // namespace k::model
 #endif // KLANG_TEMPLATE_HPP
-

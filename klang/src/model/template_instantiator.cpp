@@ -22,6 +22,7 @@
 #include "statements.hpp"
 #include "expressions.hpp"
 #include "imported.hpp"
+#include "aggregate_value.hpp"
 #include "../errors.hpp"
 
 #include <sstream>
@@ -129,6 +130,32 @@ std::string nested_type_name(const aggregate& owner, const std::string& union_na
     return base + "::" + union_name;
 }
 
+/**
+ * Build a cache key from template arguments for instantiation deduplication.
+ *
+ * This key ensures that different template arguments produce different instantiations
+ * and that identical arguments reuse the same cached instantiation.
+ *
+ * Encoding scheme:
+ *   - Type arguments:     type display name (e.g., "int", "MyStruct", "int*")
+ *   - Pack arguments:     "{type1,type2,...}" (wrapped in braces to distinguish from individual args)
+ *   - Value arguments:
+ *     * void / null:      literals "void" / "null"
+ *     * bool:             "true" / "false"
+ *     * numeric:          decimal representation (e.g., "42", "-3.14")
+ *     * string:           quoted representation (e.g., "\"hello\"")
+ *     * aggregate:        "AV:" + dump() representation (e.g., "AV:Point{x=1, y=2}")
+ *
+ * Aggregate value encoding:
+ *   The "AV:" prefix ensures aggregate values never collide with other value types.
+ *   The dump() representation includes the type name and all fields, making each
+ *   distinct aggregate value produce a unique key. Example:
+ *     - Point{x=1, y=2} ≠ Point{x=1, y=3}  → different keys
+ *     - Point{x=0, y=0} = Point{x=0, y=0}  → same key (deduplication)
+ *
+ * The entire key is wrapped in "<...>" to visually separate argument boundaries
+ * and avoid confusion with nested type syntax.
+ */
 std::string build_instantiation_key(const std::vector<template_argument>& args) {
     std::ostringstream oss;
     oss << "<";
@@ -155,6 +182,13 @@ std::string build_instantiation_key(const std::vector<template_argument>& args) 
                     oss << (v ? "true" : "false");
                 } else if constexpr (std::is_same_v<T, std::string>) {
                     oss << "\"" << v << "\"";
+                } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
+                    // Encode aggregate value by its dump representation for cache key uniqueness
+                    if (v) {
+                        oss << "AV:" << v->dump();
+                    } else {
+                        oss << "AV:null";
+                    }
                 } else {
                     oss << v;
                 }
@@ -255,6 +289,13 @@ std::string build_instantiated_name(const std::string& base_name,
                     oss << "_V" << escape_name_component(v);
                 } else if constexpr (std::is_same_v<T, char>) {
                     oss << escape_name_component(std::to_string(static_cast<int>(v)));
+                } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
+                    // Encode aggregate value by its type and dumped representation
+                    if (v) {
+                        oss << "_A" << escape_name_component(v->dump());
+                    } else {
+                        oss << "_Anull";
+                    }
                 } else {
                     oss << escape_name_component(std::to_string(v));
                 }
@@ -563,7 +604,18 @@ value_substitution_map template_instantiator::build_value_substitution_map(
     size_t count = std::min(ti.params.size(), args.size());
     for (size_t i = 0; i < count; ++i) {
         if (args[i].is_value() && args[i].value_arg.has_value()) {
-            result[ti.params[i].name] = value_param_binding{*args[i].value_arg, ti.params[i].value_type};
+            std::shared_ptr<type> declared_type = ti.params[i].value_type;
+            if (auto agg_val = std::get_if<std::shared_ptr<k::model::aggregate_value>>(&*args[i].value_arg)) {
+                if (*agg_val && (*agg_val)->get_type() && (*agg_val)->get_type()->get_struct_type()) {
+                    declared_type = (*agg_val)->get_type()->get_struct_type();
+                }
+            } else if (declared_type && !type::is_resolved(declared_type)) {
+                // Keep unresolved declared types out of value substitutions.
+                // Scalar arguments can be inferred safely from the concrete value,
+                // while aggregate arguments are explicitly retyped above.
+                declared_type.reset();
+            }
+            result[ti.params[i].name] = value_param_binding{*args[i].value_arg, declared_type};
         }
     }
     return result;
@@ -719,6 +771,36 @@ void template_instantiator::substitute_value_params(
 {
     if (!expr || val_subst.empty()) return;
 
+    auto make_value_expr = [](const k::value_type& value,
+                              const std::shared_ptr<type>& declared_type = nullptr) -> std::shared_ptr<expression> {
+        auto out = std::visit([](auto&& v) -> std::shared_ptr<expression> {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, std::monostate>) {
+                return value_expression::from_value<int>(0);
+            } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                return value_expression::from_value<int>(0);
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                return value_expression::from_value(v);
+            } else {
+                return value_expression::from_value<T>(v);
+            }
+        }, value);
+
+        if (declared_type) {
+            out->set_type(declared_type);
+            return out;
+        }
+
+        // Keep aggregate value carriers typed so chained substitutions
+        // (e.g. P.inner.x) can be recognized before regular type resolution.
+        if (auto agg_val = std::get_if<std::shared_ptr<k::model::aggregate_value>>(&value)) {
+            if (*agg_val && (*agg_val)->get_type() && (*agg_val)->get_type()->get_struct_type()) {
+                out->set_type((*agg_val)->get_type()->get_struct_type());
+            }
+        }
+        return out;
+    };
+
     // Check if this expression itself is a symbol matching a value parameter
     if (auto sym = std::dynamic_pointer_cast<symbol_expression>(expr)) {
         if (!sym->is_resolved()) {
@@ -726,27 +808,8 @@ void template_instantiator::substitute_value_params(
             if (nm.size() == 1 && !nm.has_root_prefix()) {
                 auto it = val_subst.find(nm.front());
                 if (it != val_subst.end()) {
-                    // Replace with a value_expression holding the concrete value
-                    // using the actual type from the value_type variant.
                     const auto& binding = it->second;
-                    expr = std::visit([](auto&& v) -> std::shared_ptr<expression> {
-                        using T = std::decay_t<decltype(v)>;
-                        if constexpr (std::is_same_v<T, std::monostate>) {
-                            return value_expression::from_value<int>(0);
-                        } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
-                            return value_expression::from_value<int>(0);
-                        } else if constexpr (std::is_same_v<T, std::string>) {
-                            return value_expression::from_value(v);
-                        } else {
-                            return value_expression::from_value<T>(v);
-                        }
-                    }, binding.value);
-                    // Preserve strong typing (e.g. enum) declared on the value
-                    // parameter, rather than leaving the raw underlying
-                    // primitive type on the substituted expression.
-                    if (binding.declared_type && std::dynamic_pointer_cast<enum_type>(binding.declared_type)) {
-                        expr->set_type(binding.declared_type);
-                    }
+                    expr = make_value_expr(binding.value, binding.declared_type);
                     return;
                 }
             }
@@ -761,11 +824,55 @@ void template_instantiator::substitute_value_params(
         substitute_value_params(r, val_subst);
         if (l != be->left()) be->assign_left(l);
         if (r != be->right()) be->assign_right(r);
+    } else if (auto mem_obj = std::dynamic_pointer_cast<member_of_object_expression>(expr)) {
+        auto sub = std::const_pointer_cast<expression>(mem_obj->sub_expr());
+        substitute_value_params(sub, val_subst);
+        if (sub != mem_obj->sub_expr()) {
+            mem_obj->sub_expr() = sub;
+            if (sub) sub->set_parent_expression(mem_obj);
+        }
+
+        auto sub_val = std::dynamic_pointer_cast<value_expression>(sub);
+        if (!sub_val) return;
+
+        auto agg = std::get_if<std::shared_ptr<k::model::aggregate_value>>(&sub_val->get_value());
+        if (!agg || !*agg) return;
+
+        const auto& sym_name = mem_obj->symbol().get_name();
+        const std::string member_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
+        auto field_value = (*agg)->get_field(member_name);
+        if (!field_value.has_value()) return;
+
+        std::shared_ptr<type> field_declared_type;
+        if (auto agg_type = (*agg)->get_type()) {
+            if (auto field = agg_type->get_variable(member_name)) {
+                field_declared_type = field->get_type();
+            }
+        }
+
+        expr = make_value_expr(*field_value, field_declared_type);
+        return;
+    } else if (auto mem_ptr = std::dynamic_pointer_cast<member_of_pointer_expression>(expr)) {
+        auto sub = std::const_pointer_cast<expression>(mem_ptr->sub_expr());
+        substitute_value_params(sub, val_subst);
+        if (sub != mem_ptr->sub_expr()) {
+            mem_ptr->sub_expr() = sub;
+            if (sub) sub->set_parent_expression(mem_ptr);
+        }
     } else if (auto ue = std::dynamic_pointer_cast<unary_expression>(expr)) {
         auto s = std::const_pointer_cast<expression>(ue->sub_expr());
         substitute_value_params(s, val_subst);
         if (s != ue->sub_expr()) ue->assign(s);
     } else if (auto fie = std::dynamic_pointer_cast<function_invocation_expression>(expr)) {
+        auto callee_expr = std::const_pointer_cast<expression>(fie->callee_expr());
+        substitute_value_params(callee_expr, val_subst);
+        if (callee_expr != fie->callee_expr()) {
+            std::vector<std::shared_ptr<expression>> args;
+            for (const auto& a : fie->arguments()) {
+                args.push_back(std::const_pointer_cast<expression>(a));
+            }
+            fie->assign(callee_expr, args);
+        }
         for (size_t i = 0; i < fie->arguments().size(); ++i) {
             auto arg = std::const_pointer_cast<expression>(fie->arguments()[i]);
             substitute_value_params(arg, val_subst);
@@ -781,6 +888,40 @@ void template_instantiator::substitute_value_params(
         auto s = std::const_pointer_cast<expression>(ce->sub_expr());
         substitute_value_params(s, val_subst);
         if (s != ce->sub_expr()) ce->assign(s);
+    } else if (auto aie = std::dynamic_pointer_cast<array_init_expression>(expr)) {
+        for (size_t i = 0; i < aie->elements().size(); ++i) {
+            auto arg = std::const_pointer_cast<expression>(aie->elements()[i]);
+            substitute_value_params(arg, val_subst);
+            if (arg != aie->elements()[i]) aie->assign_element(i, arg);
+        }
+    } else if (auto dsie = std::dynamic_pointer_cast<designated_struct_init_expression>(expr)) {
+        auto& members = dsie->members_mutable();
+        for (auto& member : members) {
+            if (member.value) {
+                substitute_value_params(member.value, val_subst);
+            }
+            for (auto& arg : member.args) {
+                substitute_value_params(arg, val_subst);
+            }
+        }
+    } else if (auto tce = std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
+        for (size_t i = 0; i < tce->arguments().size(); ++i) {
+            auto arg = std::const_pointer_cast<expression>(tce->arguments()[i]);
+            substitute_value_params(arg, val_subst);
+            if (arg != tce->arguments()[i]) tce->assign_argument(i, arg);
+        }
+    } else if (auto ne = std::dynamic_pointer_cast<new_expression>(expr)) {
+        for (size_t i = 0; i < ne->arguments().size(); ++i) {
+            auto arg = std::const_pointer_cast<expression>(ne->arguments()[i]);
+            substitute_value_params(arg, val_subst);
+            if (arg != ne->arguments()[i]) ne->assign_argument(i, arg);
+        }
+        auto array_size_expr = std::const_pointer_cast<expression>(ne->array_size_expr());
+        substitute_value_params(array_size_expr, val_subst);
+    } else if (auto de = std::dynamic_pointer_cast<delete_expression>(expr)) {
+        auto sub = std::const_pointer_cast<expression>(de->sub_expr());
+        substitute_value_params(sub, val_subst);
+        if (sub != de->sub_expr()) de->assign(sub);
     }
 }
 
@@ -2665,5 +2806,3 @@ std::shared_ptr<union_type_def> template_instantiator::instantiate_union(
 }
 
 } // namespace k::model
-
-

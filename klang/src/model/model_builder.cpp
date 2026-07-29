@@ -25,6 +25,7 @@
 
 #include "../common/common.hpp"
 #include "../common/operator_names.hpp"
+#include "../gen/resolvers_constexpr.hpp"
 #include <random>
 #include <sstream>
 #include <iomanip>
@@ -463,20 +464,16 @@ namespace k::model {
                     if (tp->value_type) {
                         desc.value_type = _context->from_type_specifier(*tp->value_type);
                     }
-                    // Extract default value from literal expression if present
+                    // Evaluate default value expression if present.
                     if (tp->default_expr) {
-                        if (auto lit = dynamic_cast<parse::ast::literal_expr*>(tp->default_expr.get())) {
-                            auto val = lit->literal.value().value();
-                            std::visit([&desc](auto&& v) {
-                                using T = std::decay_t<decltype(v)>;
-                                if constexpr (std::is_same_v<T, std::monostate>) {
-                                    // no-op: monostate is not a valid default
-                                } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
-                                    // no-op: nullptr is not a valid default for value params
-                                } else {
-                                    desc.default_value = k::value_type{v};
-                                }
-                            }, val);
+                        desc.default_value_expr = tp->default_expr;
+                        auto eval = k::model::gen::evaluate_template_value_arg(
+                            tp->default_expr.get(), *agg, _context, desc.value_type, &_unit);
+                        if (eval.is_error()) {
+                            throw_error(eval.error_code, tp->name, eval.message, eval.message_args);
+                        }
+                        if (eval.ok()) {
+                            desc.default_value = *eval.value;
                         }
                     }
                 }
@@ -607,16 +604,14 @@ namespace k::model {
                         desc.value_type = _context->from_type_specifier(*tp->value_type);
                     }
                     if (tp->default_expr) {
-                        if (auto lit = dynamic_cast<parse::ast::literal_expr*>(tp->default_expr.get())) {
-                            auto val = lit->literal.value().value();
-                            std::visit([&desc](auto&& v) {
-                                using T = std::decay_t<decltype(v)>;
-                                if constexpr (std::is_same_v<T, std::monostate>) {
-                                } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
-                                } else {
-                                    desc.default_value = k::value_type{v};
-                                }
-                            }, val);
+                        desc.default_value_expr = tp->default_expr;
+                        auto eval = k::model::gen::evaluate_template_value_arg(
+                            tp->default_expr.get(), *un, _context, desc.value_type, &_unit);
+                        if (eval.is_error()) {
+                            throw_error(eval.error_code, tp->name, eval.message, eval.message_args);
+                        }
+                        if (eval.ok()) {
+                            desc.default_value = *eval.value;
                         }
                     }
                 }
@@ -1089,20 +1084,16 @@ namespace k::model {
                     if (tp->value_type) {
                         desc.value_type = _context->from_type_specifier(*tp->value_type);
                     }
-                    // Extract default value from literal expression if present
+                    // Evaluate default value expression if present.
                     if (tp->default_expr) {
-                        if (auto lit = dynamic_cast<parse::ast::literal_expr*>(tp->default_expr.get())) {
-                            auto val = lit->literal.value().value();
-                            std::visit([&desc](auto&& v) {
-                                using T = std::decay_t<decltype(v)>;
-                                if constexpr (std::is_same_v<T, std::monostate>) {
-                                    // no-op
-                                } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
-                                    // no-op
-                                } else {
-                                    desc.default_value = k::value_type{v};
-                                }
-                            }, val);
+                        desc.default_value_expr = tp->default_expr;
+                        auto eval = k::model::gen::evaluate_template_value_arg(
+                            tp->default_expr.get(), *function, _context, desc.value_type, &_unit);
+                        if (eval.is_error()) {
+                            throw_error(eval.error_code, tp->name, eval.message, eval.message_args);
+                        }
+                        if (eval.ok()) {
+                            desc.default_value = *eval.value;
                         }
                     }
                 }

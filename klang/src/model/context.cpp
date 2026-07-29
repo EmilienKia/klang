@@ -24,6 +24,7 @@
 #include "expressions.hpp"
 #include "model.hpp"
 #include "imported.hpp"
+#include "aggregate_value.hpp"
 #include "template_instantiator.hpp"
 #include "../errors.hpp"
 #include "../common/unicode.hpp"
@@ -510,11 +511,101 @@ llvm::Constant* context::get_llvm_constant_from_value(const k::value_type &value
 }
 
 llvm::Constant* context::get_llvm_constant_from_value_expression(const value_expression& value) {
-    llvm::Constant* c;
+    auto materialize_value = [&](const auto& self,
+                                 const k::value_type& raw,
+                                 const std::shared_ptr<type>& expected_type) -> llvm::Constant* {
+        auto expected_nc = type::remove_const(expected_type);
+
+        if (auto agg_ptr = std::get_if<std::shared_ptr<aggregate_value>>(&raw)) {
+            if (*agg_ptr) {
+                auto st_type = std::dynamic_pointer_cast<struct_type>(expected_nc);
+                if (!st_type && (*agg_ptr)->get_type()) {
+                    st_type = (*agg_ptr)->get_type()->get_struct_type();
+                }
+                if (!st_type) return nullptr;
+                if (!st_type->is_resolved()) {
+                    auto resolved = std::dynamic_pointer_cast<struct_type>(resolve_type(st_type));
+                    if (!resolved || !resolved->is_resolved()) return nullptr;
+                    st_type = resolved;
+                }
+
+                auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(st_type->get_llvm_type());
+                if (!llvm_st) return nullptr;
+
+                std::vector<llvm::Constant*> fields;
+                fields.reserve(st_type->fields_size());
+
+                size_t idx = 0;
+                for (auto it = st_type->fields_begin(); it != st_type->fields_end(); ++it, ++idx) {
+                    auto field_type = it->field_type.lock();
+                    llvm::Constant* field_const = nullptr;
+
+                    auto field_value = (*agg_ptr)->get_field(it->name);
+                    if (field_value.has_value()) {
+                        field_const = self(self, *field_value, field_type);
+                    }
+
+                    if (!field_const && field_type) {
+                        field_const = field_type->generate_default_value_initializer();
+                    }
+                    if (!field_const) {
+                        field_const = llvm::Constant::getNullValue(
+                            llvm_st->getElementType(static_cast<unsigned int>(idx)));
+                    }
+
+                    auto* expected_elem = llvm_st->getElementType(static_cast<unsigned int>(idx));
+                    if (field_const->getType() != expected_elem) {
+                        if (auto* ci = llvm::dyn_cast<llvm::ConstantInt>(field_const);
+                            ci && expected_elem->isIntegerTy()) {
+                            field_const = llvm::ConstantInt::get(
+                                expected_elem,
+                                ci->getValue().sextOrTrunc(expected_elem->getIntegerBitWidth()));
+                        } else if (field_const->isNullValue()) {
+                            field_const = llvm::Constant::getNullValue(expected_elem);
+                        } else {
+                            return nullptr;
+                        }
+                    }
+
+                    fields.push_back(field_const);
+                }
+
+                return llvm::ConstantStruct::get(llvm_st, fields);
+            }
+        }
+
+        llvm::Constant* cst = get_llvm_constant_from_value(raw);
+        if (!cst || !expected_nc) return cst;
+
+        llvm::Type* target = nullptr;
+        if (auto enum_t = std::dynamic_pointer_cast<enum_type>(expected_nc)) {
+            target = enum_t->get_llvm_type();
+        } else {
+            target = expected_nc->get_llvm_type();
+        }
+        if (!target) return cst;
+
+        if (target->isIntegerTy() && cst->getType()->isIntegerTy() && cst->getType() != target) {
+            if (auto* ci = llvm::dyn_cast<llvm::ConstantInt>(cst)) {
+                return llvm::ConstantInt::get(target, ci->getValue().sextOrTrunc(target->getIntegerBitWidth()));
+            }
+        }
+        if (target->isPointerTy() && cst->isNullValue() && cst->getType() != target) {
+            return llvm::Constant::getNullValue(target);
+        }
+
+        return cst;
+    };
+
+    llvm::Constant* c = nullptr;
     if (value.is_literal()) {
         c = get_llvm_constant_from_literal(value.any_literal());
     } else {
-        c = get_llvm_constant_from_value(value.get_value());
+        std::shared_ptr<type> expected_type;
+        if (auto vt = value.get_type()) {
+            expected_type = std::const_pointer_cast<type>(vt);
+        }
+        c = materialize_value(materialize_value, value.get_value(), expected_type);
     }
 
     // The raw variant value may be wider than the expression's declared type.

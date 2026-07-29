@@ -55,6 +55,26 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
         auto type = _context->from_literal(expr.any_literal());
         expr.set_type(type);
     } else {
+        if (expr.get_type()) {
+            auto current = expr.get_type();
+            if (!type::is_resolved(current)) {
+                auto resolved = _context->resolve_type(current);
+                if (resolved && type::is_resolved(resolved)) {
+                    expr.set_type(resolved);
+                    return;
+                }
+            } else {
+                if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(current)) {
+                    if (unresolved->get_resolved()) {
+                        expr.set_type(unresolved->get_resolved());
+                    }
+                }
+                // Keep the declared type assigned during template substitution
+                // (e.g. enum/aggregate value parameters).
+                return;
+            }
+        }
+
         // Non-literal value expression (e.g. template value parameter substitution).
         // Infer type from the k::value_type variant.
         auto& val = expr.get_value();

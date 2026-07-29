@@ -236,6 +236,33 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
     }
 
+    auto materialize_value_default = [&](template_param_descriptor& param,
+                                         const std::shared_ptr<function>& tpl_func) -> bool {
+        if (!param.is_value_param() || param.default_value.has_value() || !param.default_value_expr) {
+            return param.default_value.has_value();
+        }
+
+        auto expected = param.value_type;
+        if (expected && !type::is_resolved(expected)) {
+            auto resolved = _context->resolve_type(expected);
+            if (resolved && type::is_resolved(resolved)) {
+                param.value_type = resolved;
+                expected = resolved;
+            }
+        }
+
+        auto eval = evaluate_template_value_arg(
+            param.default_value_expr.get(), *tpl_func, _context, expected, &_unit);
+        if (eval.is_error()) {
+            throw_error(eval.error_code, expr.first_lexeme(), eval.message, eval.message_args);
+        }
+        if (!eval.ok()) {
+            return false;
+        }
+        param.default_value = *eval.value;
+        return true;
+    };
+
     // Step 2: If callee is a member-of-object: resolve member call (member + unified call syntax)
     // ── Pre-process: ptr->method(args) → (*ptr).method(args) ─────────────────
     // When the callee is a member_of_pointer_expression (ptr->method), transform it
@@ -574,7 +601,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             if (def && type::is_resolved(def)) {
                                 model_args.push_back(template_argument::make_type(def));
                             } else { args_ok = false; }
-                        } else if (param.is_value_param() && param.default_value.has_value()) {
+                        } else if (param.is_value_param()) {
+                            if (!param.default_value.has_value()) {
+                                if (!materialize_value_default(param, tpl_func)) {
+                                    args_ok = false;
+                                    continue;
+                                }
+                            }
                             model_args.push_back(template_argument::make_value(*param.default_value));
                         } else if (!param.is_pack) { args_ok = false; }
                     }
@@ -670,6 +703,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     for (auto& tpl_func : tpl_candidates) {
                         auto* ti = tpl_func->get_tpl_info();
                         if (!ti) continue;
+                        for (auto& param : ti->params) {
+                            if (param.is_value_param() && !param.default_value.has_value() && param.default_value_expr) {
+                                (void)materialize_value_default(param, tpl_func);
+                            }
+                        }
                         auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), arg_types);
                         if (!deduction.success) continue;
                         size_t err_idx;
@@ -1224,7 +1262,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             if (def && type::is_resolved(def)) {
                                 model_args.push_back(template_argument::make_type(def));
                             } else { args_ok = false; }
-                        } else if (param.is_value_param() && param.default_value.has_value()) {
+                        } else if (param.is_value_param()) {
+                            if (!param.default_value.has_value()) {
+                                if (!materialize_value_default(param, tpl_func)) {
+                                    args_ok = false;
+                                    continue;
+                                }
+                            }
                             model_args.push_back(template_argument::make_value(*param.default_value));
                         } else if (!param.is_pack) { args_ok = false; }
                     }
@@ -1324,6 +1368,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     for (auto& tpl_func : tpl_candidates) {
                         auto* ti = tpl_func->get_tpl_info();
                         if (!ti) continue;
+                        for (auto& param : ti->params) {
+                            if (param.is_value_param() && !param.default_value.has_value() && param.default_value_expr) {
+                                (void)materialize_value_default(param, tpl_func);
+                            }
+                        }
 
                         auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), arg_types);
                         if (!deduction.success) continue;

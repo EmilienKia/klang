@@ -22,6 +22,7 @@
 #include "model.hpp"
 #include "template.hpp"
 #include "type.hpp"
+#include "aggregate_value.hpp"
 
 #include "../common/operator_names.hpp"
 #include "../errors.hpp"
@@ -114,6 +115,21 @@
 
 
 namespace k::model {
+
+namespace {
+
+std::string hex_encode_bytes(const std::string& input) {
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(input.size() * 2);
+    for (unsigned char c : input) {
+        out.push_back(hex[(c >> 4) & 0x0F]);
+        out.push_back(hex[c & 0x0F]);
+    }
+    return out;
+}
+
+} // anonymous namespace
 
 std::string mangler::mangle_short_name(const std::string& short_name) {
     // Operator names (__operator_XX_) are mangled as raw 2-letter Itanium codes
@@ -211,6 +227,15 @@ std::string mangler::mangle_template_args(const std::vector<template_argument>& 
                     uint64_t bits;
                     std::memcpy(&bits, &v, sizeof(bits));
                     s << "Ld" << std::hex << bits << std::dec << "E";
+                } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
+                    // Aggregate constant value: length-prefixed hex payload of its
+                    // canonical dump representation to preserve injectivity.
+                    if (!v) {
+                        s << "LA0_E";
+                    } else {
+                        const std::string repr = v->dump();
+                        s << "LA" << repr.size() << "_" << hex_encode_bytes(repr) << "E";
+                    }
                 } else {
                     // Fallback: treat as int 0
                     s << "Li0E";

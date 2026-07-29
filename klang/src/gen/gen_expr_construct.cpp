@@ -496,9 +496,11 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 auto arg_type = expr.argument(0)->get_type();
                 llvm::Type* llvm_struct_ty = _context->get_llvm_type(st_type);
                 llvm::Value* src_val = _value;
-                // If the argument is a reference (lvalue) OR a bare struct type
-                // (rvalue materialized into an alloca), load the aggregate from the pointer.
-                if (type::is_reference(arg_type) || type::is_struct(arg_type)) {
+                // Load only when the source is actually addressable.
+                // Some struct-valued arguments (e.g. template aggregate-value substitutions)
+                // are emitted as immediate LLVM constants, not pointers.
+                if (type::is_reference(arg_type)
+                    || (type::is_struct(arg_type) && _value->getType()->isPointerTy())) {
                     src_val = _builder->CreateLoad(llvm_struct_ty, _value, "copy_load");
                 }
                 // src_val is now the aggregate value; store into the destination alloca

@@ -90,6 +90,8 @@ add_library(klang
         src/model/template_instantiator.cpp
         src/model/template_deduction.cpp
         src/model/template.cpp
+        src/model/aggregate_value.hpp
+        src/model/aggregate_value.cpp
 )
 
 target_include_directories(klang PRIVATE
@@ -287,6 +289,7 @@ klang_gen_test(klang-tests-gen-templates 120
         tests/test-gen-template-func-calls.cpp
         tests/test-gen-template-constraints.cpp
         tests/test-gen-template-value-params.cpp
+        tests/test-gen-template-aggregate-values.cpp
         tests/test-gen-template-comprehensive.cpp
         tests/test-gen-generic.cpp
         tests/test-gen-template-packs.cpp
