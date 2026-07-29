@@ -428,28 +428,6 @@ virtual_dispatch_info compute_operator_dispatch_info(
 // ── Shared static helpers ──────────────────────────────────────────────────
 
 /**
- * Extract a concrete k::value_type from an AST expression node.
- * Only literal expressions are supported (compile-time constants).
- */
-inline bool extract_value_from_ast_expr(
-    const k::parse::ast::expression* expr,
-    k::value_type& out_value)
-{
-    auto lit = dynamic_cast<const k::parse::ast::literal_expr*>(expr);
-    if (!lit) return false;
-    auto val = lit->literal.value().value();
-    return std::visit([&out_value](auto&& v) -> bool {
-        using T = std::decay_t<decltype(v)>;
-        if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
-            return false;
-        } else {
-            out_value = k::value_type{v};
-            return true;
-        }
-    }, val);
-}
-
-/**
  * Ensure an LLVM global reference for an enum's object-backing table.
  */
 inline llvm::GlobalVariable* ensure_enum_object_table_reference(

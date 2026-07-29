@@ -108,7 +108,7 @@ ast::expr_ptr parser::parse_conditional_expr() {
     }
 
     auto lcolon = _lexer.get();
-    if (lqm != lex::operator_::COLON) {
+    if (lcolon != lex::operator_::COLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_COND_EXPECT_COLON), _lexer.pick_current(), "Conditional expression is expecting a colon ':' operator after the first sub expression");
     }
 

@@ -563,7 +563,7 @@ value_substitution_map template_instantiator::build_value_substitution_map(
     size_t count = std::min(ti.params.size(), args.size());
     for (size_t i = 0; i < count; ++i) {
         if (args[i].is_value() && args[i].value_arg.has_value()) {
-            result[ti.params[i].name] = *args[i].value_arg;
+            result[ti.params[i].name] = value_param_binding{*args[i].value_arg, ti.params[i].value_type};
         }
     }
     return result;
@@ -728,6 +728,7 @@ void template_instantiator::substitute_value_params(
                 if (it != val_subst.end()) {
                     // Replace with a value_expression holding the concrete value
                     // using the actual type from the value_type variant.
+                    const auto& binding = it->second;
                     expr = std::visit([](auto&& v) -> std::shared_ptr<expression> {
                         using T = std::decay_t<decltype(v)>;
                         if constexpr (std::is_same_v<T, std::monostate>) {
@@ -739,7 +740,13 @@ void template_instantiator::substitute_value_params(
                         } else {
                             return value_expression::from_value<T>(v);
                         }
-                    }, it->second);
+                    }, binding.value);
+                    // Preserve strong typing (e.g. enum) declared on the value
+                    // parameter, rather than leaving the raw underlying
+                    // primitive type on the substituted expression.
+                    if (binding.declared_type && std::dynamic_pointer_cast<enum_type>(binding.declared_type)) {
+                        expr->set_type(binding.declared_type);
+                    }
                     return;
                 }
             }

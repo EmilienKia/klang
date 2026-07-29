@@ -519,6 +519,32 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     bool args_ok = true;
                     for (size_t i = 0; i < ast_args.size(); ++i) {
                         const auto& ast_arg = ast_args[i];
+                        // Resolve the value parameter's declared type once, up-front, so
+                        // enum-typed value params (unresolved at model_builder time) are
+                        // properly validated by the evaluator below.
+                        std::shared_ptr<type> expected_value_type;
+                        if (i < ti->params.size()) {
+                            expected_value_type = ti->params[i].value_type;
+                            if (expected_value_type && !type::is_resolved(expected_value_type)) {
+                                auto resolved_vt = _context->resolve_type(expected_value_type);
+                                if (resolved_vt && type::is_resolved(resolved_vt)) expected_value_type = resolved_vt;
+                            }
+                        }
+                        if (i < ti->params.size() && ti->params[i].is_value_param() && ast_arg->is_type()) {
+                            // Bare qualified name always parses as a type-specifier arg;
+                            // this parameter position is a VALUE parameter, so
+                            // reinterpret it as a constant expression.
+                            auto eval = evaluate_template_value_arg_from_type_spec(
+                                ast_arg->type_arg.get(), expr, _context, expected_value_type, &_unit);
+                            if (eval.is_error()) {
+                                throw_error(eval.error_code, expr.first_lexeme(), eval.message, eval.message_args);
+                            }
+                            if (!eval.ok()) {
+                                args_ok = false; break;
+                            }
+                            model_args.push_back(template_argument::make_value(*eval.value));
+                            continue;
+                        }
                         if (ast_arg->is_type()) {
                             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
                             arg_type = _context->resolve_type(arg_type);
@@ -527,11 +553,14 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             }
                             model_args.push_back(template_argument::make_type(arg_type));
                         } else if (ast_arg->is_value()) {
-                            k::value_type val;
-                            if (!extract_value_from_ast_expr(ast_arg->value_arg.get(), val)) {
+                            auto eval = evaluate_template_value_arg(ast_arg->value_arg.get(), expr, _context, expected_value_type, &_unit);
+                            if (eval.is_error()) {
+                                throw_error(eval.error_code, expr.first_lexeme(), eval.message, eval.message_args);
+                            }
+                            if (!eval.ok()) {
                                 args_ok = false; break;
                             }
-                            model_args.push_back(template_argument::make_value(val));
+                            model_args.push_back(template_argument::make_value(*eval.value));
                         } else {
                             args_ok = false; break;
                         }
@@ -539,7 +568,6 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     // Fill defaults for trailing non-pack params
                     for (size_t i = ast_args.size(); i < ti->params.size() && args_ok; ++i) {
                         auto& param = ti->params[i];
-                        if (param.is_pack) continue;
                         if (param.is_type_param() && param.default_type) {
                             auto def = param.default_type;
                             if (!type::is_resolved(def)) def = _context->resolve_type(def);
@@ -1135,6 +1163,32 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     bool args_ok = true;
                     for (size_t i = 0; i < ast_args.size(); ++i) {
                         const auto& ast_arg = ast_args[i];
+                        // Resolve the value parameter's declared type once, up-front, so
+                        // enum-typed value params (unresolved at model_builder time) are
+                        // properly validated by the evaluator below.
+                        std::shared_ptr<type> expected_value_type;
+                        if (i < ti->params.size()) {
+                            expected_value_type = ti->params[i].value_type;
+                            if (expected_value_type && !type::is_resolved(expected_value_type)) {
+                                auto resolved_vt = _context->resolve_type(expected_value_type);
+                                if (resolved_vt && type::is_resolved(resolved_vt)) expected_value_type = resolved_vt;
+                            }
+                        }
+                        if (i < ti->params.size() && ti->params[i].is_value_param() && ast_arg->is_type()) {
+                            // Bare qualified name always parses as a type-specifier arg;
+                            // this parameter position is a VALUE parameter, so
+                            // reinterpret it as a constant expression.
+                            auto eval = evaluate_template_value_arg_from_type_spec(
+                                ast_arg->type_arg.get(), expr, _context, expected_value_type, &_unit);
+                            if (eval.is_error()) {
+                                throw_error(eval.error_code, expr.first_lexeme(), eval.message, eval.message_args);
+                            }
+                            if (!eval.ok()) {
+                                args_ok = false; break;
+                            }
+                            model_args.push_back(template_argument::make_value(*eval.value));
+                            continue;
+                        }
                         if (ast_arg->is_type()) {
                             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
                             arg_type = resolve_explicit_template_arg_type(resolve_explicit_template_arg_type, arg_type);
@@ -1144,12 +1198,15 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             }
                             model_args.push_back(template_argument::make_type(arg_type));
                         } else if (ast_arg->is_value()) {
-                            // Value template argument — extract compile-time constant literal
-                            k::value_type val;
-                            if (!extract_value_from_ast_expr(ast_arg->value_arg.get(), val)) {
+                            // Value template argument — evaluate as a compile-time constant expression
+                            auto eval = evaluate_template_value_arg(ast_arg->value_arg.get(), expr, _context, expected_value_type, &_unit);
+                            if (eval.is_error()) {
+                                throw_error(eval.error_code, expr.first_lexeme(), eval.message, eval.message_args);
+                            }
+                            if (!eval.ok()) {
                                 args_ok = false; break;
                             }
-                            model_args.push_back(template_argument::make_value(val));
+                            model_args.push_back(template_argument::make_value(*eval.value));
                         } else {
                             args_ok = false; break;
                         }

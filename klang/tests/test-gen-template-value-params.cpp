@@ -30,6 +30,22 @@
  *  [H] Template struct with value param used in member init.
  *  [I] Negative value template argument.
  *  [J] Name mangling encodes value args correctly (Li<n>E).
+ *
+ * Tests below cover the constexpr template value-argument evaluator
+ * (enum constants, dependent value-param propagation, constexpr
+ * arithmetic/logical/cast/ternary expressions -- see TODO.md gap on
+ * "Value template arguments are limited to primitive types"):
+ *  [S] Real negative literal value template argument (unary minus).
+ *  [T] Parenthesized constexpr arithmetic expression as value arg.
+ *  [U] Ternary (conditional) expression as value arg.
+ *  [V] Enum constant as a value template argument.
+ *  [W] Enum type mismatch between value arg and value param is rejected.
+ *  [X] Dependent value parameter propagated to a nested template instantiation.
+ *  [Y] Division-by-zero in a constexpr value arg is rejected (not constant).
+ *  [Z] Non-constant (runtime-only local) value arg is rejected.
+ *  [.] Known-limitation (SKIPped): runtime ternary expression has no
+ *      model/codegen support at all (separate, larger pre-existing gap
+ *      uncovered while fixing the ternary parser bug for [U]).
  */
 
 #include <catch2/catch_all.hpp>
@@ -222,9 +238,9 @@ TEST_CASE("[H] M11: template struct value param in member init via method",
 //  [I] Negative value template argument
 // ════════════════════════════════════════════════════════════════════════════
 
-// NOTE: Negative literals may not be parsed directly as template args
-// (parser uses parse_primary_expr which does not handle unary minus).
-// This test uses 0 as a safe boundary value instead.
+// This test uses 0 as a safe boundary value.
+// See [S] below for a real negative literal template argument, now
+// supported via parse_template_arg_value_expr() + the constexpr evaluator.
 TEST_CASE("[I] M11: zero value template argument",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
@@ -453,5 +469,206 @@ TEST_CASE("[R] M11: value param used in conditional",
     auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_r__4testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 10);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [S] Real negative literal value template argument (unary minus)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[S] M11: negative literal value template argument",
+          "[milestone11][template][value-param][constexpr][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_s__;
+        template<int N>
+        get_n() : int { return N; }
+
+        test() : int {
+            return get_n<-5>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_s__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == -5);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [T] Parenthesized constexpr arithmetic expression as value arg
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[T] M11: parenthesized constexpr arithmetic value arg",
+          "[milestone11][template][value-param][constexpr][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_t__;
+        template<int N>
+        get_n() : int { return N; }
+
+        test() : int {
+            return get_n<((2 + 3) * 4)>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_t__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 20);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [U] Ternary (conditional) expression as value arg
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[U] M11: ternary constexpr expression as value arg",
+          "[milestone11][template][value-param][constexpr][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_u__;
+        template<int N>
+        get_n() : int { return N; }
+
+        test() : int {
+            return get_n<(1 == 1 ? 10 : 20)>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_u__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 10);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [V] Enum constant as a value template argument
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[V] M11: enum constant as value template argument",
+          "[milestone11][template][value-param][constexpr][enum][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_v__;
+        enum Color { Red; Green; Blue; }
+
+        template<Color C>
+        get_c() : int { return C; }
+
+        test() : int {
+            return get_c<Color::Blue>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_v__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 2);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [W] Enum-typed value param mismatch is rejected at resolution time
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[W] M11: enum type mismatch in value template argument rejected",
+          "[milestone11][template][value-param][constexpr][enum][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __m11_w__;
+        enum Color { Red; Green; Blue; }
+        enum Fruit { Apple; Banana; }
+
+        template<Color C>
+        get_c() : int { return C; }
+
+        test() : int {
+            return get_c<Fruit::Apple>();
+        }
+    )SRC"), k::model::gen::resolution_error);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [X] Dependent value parameter propagated to a nested template instantiation
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[X] M11: dependent value param propagated to nested template",
+          "[milestone11][template][value-param][constexpr][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_x__;
+        template<int N>
+        struct Inner {
+            getVal() : int { return N * 2; }
+        }
+
+        template<int N>
+        struct Outer {
+            inner: Inner<N>;
+            getInnerVal() : int { return inner.getVal(); }
+        }
+
+        test() : int {
+            o : Outer<5>;
+            return o.getInnerVal();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_x__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 10);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [Y] Division-by-zero in a constexpr value arg is rejected
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[Y] M11: division by zero in constexpr value arg rejected",
+          "[milestone11][template][value-param][constexpr][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __m11_y__;
+        template<int N>
+        get_n() : int { return N; }
+
+        test() : int {
+            return get_n<(1 / 0)>();
+        }
+    )SRC"), k::model::gen::resolution_error);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [Z] Non-constant (runtime-only) expression as value arg is rejected
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[Z] M11: non-constant value arg referencing a local is rejected",
+          "[milestone11][template][value-param][constexpr][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __m11_z__;
+        template<int N>
+        get_n() : int { return N; }
+
+        test() : int {
+            x : int = 5;
+            return get_n<x>();
+        }
+    )SRC"), k::log::compiler_error);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AA] Standalone (non-template) ternary expression regression test
+// ════════════════════════════════════════════════════════════════════════════
+
+// While implementing constexpr template value args, a pre-existing parser
+// bug was found and fixed: parse_conditional_expr() compared the wrong
+// captured token when checking for ':', so `a ? b : c` never parsed into a
+// correct AST anywhere in the language. That parser fix is what allows the
+// constexpr evaluator to accept ternary expressions in template value args
+// (see [U] above), because the evaluator works directly on the raw AST node
+// and never goes through model_builder.
+//
+// However, fixing the parser exposed a SEPARATE, larger, pre-existing gap:
+// `model_builder::visit_conditional_expr()` is an empty stub (see
+// model/model_builder.cpp) -- there is no `model::expression` class for the
+// ternary operator and no codegen support for it at all. So a *runtime*
+// (non-constexpr) ternary expression still cannot be used anywhere in K
+// today; it silently produces a malformed LLVM module (return type
+// mismatch). This is out of scope for the template-value-argument gap and
+// is tracked as its own TODO.md entry.
+TEST_CASE("Known-limitation: runtime ternary expression has no codegen support",
+          "[.][expression][ternary][known-limitation]") {
+    // LIMITATION: model_builder::visit_conditional_expr() is an empty stub;
+    // there is no model::expression class nor LLVM codegen for `a ? b : c`
+    // used as a normal (non-constexpr-template-arg) runtime expression.
+    // Tracked in TODO.md.
+    SKIP("Runtime ternary expression (`a ? b : c`) has no model/codegen support; "
+         "only constexpr template value args can use it (see [U]).");
 }
 

@@ -191,6 +191,19 @@ public:
     ast::template_arg_list parse_template_arg_list(bool* was_explicit = nullptr);
 
     /**
+     * TemplateArgValueExpr = [ '+' | '-' | '!' | '~' ] , TemplateArgValueExpr
+     *                      | PrimaryExpr ;
+     * Parses a template *value* argument (or value-parameter default) expression.
+     * Value template arguments are grammatically restricted to primary
+     * expressions (literals, identifiers, parenthesised full expressions) with
+     * an optional leading non-ambiguous unary prefix operator (+, -, !, ~).
+     * Addresser/pointer-like unary operators (*, &, #, ++, --) are deliberately
+     * excluded here since they are not meaningful on compile-time constants and
+     * would be ambiguous with the surrounding '<' '>' template-argument syntax.
+     */
+    ast::expr_ptr parse_template_arg_value_expr();
+
+    /**
      * AggregateDecl = { AnnotationDef } , { Specifier } ,
      *                 ( 'struct' | 'class' | 'interface' | 'annotation' ) ,
      *                 Identifier , [ ':' , BaseClause ] ,

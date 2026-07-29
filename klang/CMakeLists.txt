@@ -33,6 +33,7 @@ add_library(klang
         src/gen/resolvers_type_ref.cpp
         src/gen/resolvers_init_order.cpp
         src/gen/resolvers_generic.cpp
+        src/gen/resolvers_constexpr.cpp
         src/gen/generators.cpp
         src/gen/debug_info.hpp
         src/gen/debug_info.cpp

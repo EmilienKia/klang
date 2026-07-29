@@ -19,9 +19,11 @@
   - [ ] Template constructors (independent of aggregate template)
   - [ ] SFINAE-like overload filtering based on template constraints
   - [ ] Variable templates (`template<typename T> const size : int = ...`)
-  - [ ] Non-primitive value template arguments (enum constants, compile-time constant
-        expressions, aggregates) — currently limited to `int`/`long`/`float`/`double`/
-        `bool`/`char`/`string`/`nullptr`
+  - [x] Non-primitive value template arguments — **Phase 1+2 done**: enum constants,
+        dependent value-param propagation, compile-time-constant expressions (arithmetic,
+        logical, ternary, casts). **Phase 3 still open**: aggregate-typed value params
+        (e.g. `template<Point P>`). See detailed entry under "Current bugs and gaps to
+        fix" below.
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
 - Add unions, typed unions (discriminated/tagged unions à la std::variant)
     - [ ] Enum-based discriminant interrogation (`u.type()` → enum)
@@ -432,10 +434,62 @@
         `template_diag::ERR_TPL_INSTANTIATION_DEPTH_EXCEEDED` (0x0187) instead of crashing.
       - Regression test: `[template][instantiation][recursion-guard]` in
         `klang/tests/test-gen-template-recursion-guard.cpp`.
-- [ ] **Value template arguments are limited to primitive types.**
-      `build_value_substitution_map()` only accepts `int`, `long`, `float`, `double`,
-      `bool`, `char`, `string` and `nullptr` values; no enum constants, no
+- [x] **PARTIALLY FIXED (Phase 1+2) — Value template arguments were limited to primitive
+      types.** `build_value_substitution_map()` only accepted `int`, `long`, `float`,
+      `double`, `bool`, `char`, `string` and `nullptr` values; no enum constants, no
       compile-time-constant expressions, no aggregates.
+      - **Fix applied**: new constexpr AST evaluator
+        (`klang/src/gen/resolvers_constexpr.hpp/.cpp`, `evaluate_template_value_arg()` /
+        `evaluate_template_value_arg_from_type_spec()`) wired into all 4 call sites
+        (`resolvers_aggregate.cpp`, `resolvers_type_ref.cpp`, `gen_expr_invocation.cpp` ×2).
+        Now supports: enum constants (`get_c<Color::Blue>()`), dependent value-parameter
+        propagation to nested template instantiations (`Outer<N>` containing `Inner<N>`),
+        and compile-time-constant expressions (unary/binary arithmetic & logical operators,
+        ternary, primitive casts, parenthesized expressions, negative literals).
+        `ERR_TPL_VALUE_ARG_NOT_CONSTANT` (0x0185) and `ERR_TPL_VALUE_ARG_TYPE_MISMATCH`
+        (0x0186) are now actually thrown (division-by-zero, enum type mismatch, etc.).
+      - **Side fixes required** (tightly coupled, not template-specific):
+        1. Grammar ambiguity: a bare qualified name in a template-argument position
+           (e.g. `Color::Blue` or a dependent value-param name `N`) is always parsed as a
+           type-specifier by `parse_template_arg_list()`; disambiguation now happens at
+           resolution time using `template_param_descriptor::kind`
+           (`evaluate_template_value_arg_from_type_spec()`).
+        2. `template_param_descriptor::value_type` was resolved once at `model_builder`
+           time and never re-resolved, so enum-typed value params kept an
+           `unresolved_type` placeholder forever; now re-resolved via
+           `context::resolve_type()` at each call site before use.
+        3. Parser: added `parse_template_arg_value_expr()` to accept a leading unary
+           `+ - ! ~` before a template value argument (previously only
+           `parse_primary_expr()` was tried, so negative literals like `get_n<-5>()`
+           could never parse).
+        4. Fixed a pre-existing, unrelated parser bug in `parse_conditional_expr()`
+           (`parser_expressions.cpp`): compared the wrong captured token (`lqm` instead of
+           `lcolon`) when checking for `:`, so ternary (`a ? b : c`) never parsed
+           correctly anywhere in the language. This was required to support ternary
+           expressions inside constexpr template value args.
+      - **New gap uncovered by fix #4 above** (out of scope for this fix, tracked below):
+        runtime (non-constexpr) ternary expressions still have zero codegen support —
+        see the new "Ternary expression has no codegen support" entry below.
+      - Regression tests: `[milestone11]` tests `[S]`–`[Z]` in
+        `klang/tests/test-gen-template-value-params.cpp`.
+      - **Still open (Phase 3, deferred)**: aggregate-typed value template parameters
+        (e.g. `template<Point P>` where `Point` is a struct/class) are not supported.
+        Also, `template_param_descriptor::default_value` (in `model_builder.cpp`, 3 call
+        sites) still uses literal-only extraction — defaults can't yet be enum constants
+        or constexpr expressions.
+- [ ] **Runtime ternary expression (`a ? b : c`) has no codegen support at all.**
+      `model_builder::visit_conditional_expr()` is an empty stub — there is no
+      `model::expression` subclass and no LLVM codegen path for the ternary operator used
+      as a normal runtime expression. Using it as such (i.e. outside a constexpr template
+      value argument, where the constexpr evaluator works directly on the raw AST and
+      bypasses `model_builder` entirely) produces a malformed LLVM module (return-type
+      mismatch) instead of a diagnostic or working codegen.
+      - Discovered while fixing the `parse_conditional_expr()` parser bug above.
+      - Needs: a `model::conditional_expression` class, symbol/type resolution
+        (`type_reference_resolver`), and LLVM codegen (branch to two blocks, phi-merge
+        the result, or emit as `select` when both branches have no side effects).
+      - Tracked test: `[.][expression][ternary][known-limitation]` (SKIPped) in
+        `klang/tests/test-gen-template-value-params.cpp`.
 - [x] **FIXED — `ListSet<T>` never implemented the abstract `first()`/`last()`
       inherited from `OrderedCollection<T>`, so any call silently failed at JIT-link
       time instead of at compile time.** Found while validating the Map<K,V> stdlib

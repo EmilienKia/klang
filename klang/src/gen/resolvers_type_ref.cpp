@@ -19,6 +19,7 @@
 #include "resolvers_aggregate.hpp"
 #include "resolvers_signature.hpp"
 #include "resolvers_scope_lookup.hpp"
+#include "resolvers_constexpr.hpp"
 #include "gen_helpers.hpp"
 #include "gen_intrinsics.hpp"
 #include "../model/imported.hpp"
@@ -1151,6 +1152,32 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     const auto& model_targs = unres->get_model_template_args();
     for (size_t i = 0; i < ast_args.size(); ++i) {
         const auto& ast_arg = ast_args[i];
+        // Resolve the value parameter's declared type once, up-front, so that
+        // enum-typed value params (still an unresolved_type placeholder at
+        // model_builder time) are properly validated by the evaluator below.
+        std::shared_ptr<type> expected_value_type;
+        if (i < ti->params.size()) {
+            expected_value_type = ti->params[i].value_type;
+            if (expected_value_type && !type::is_resolved(expected_value_type)) {
+                auto resolved_vt = _context->resolve_type(expected_value_type);
+                if (resolved_vt && type::is_resolved(resolved_vt)) expected_value_type = resolved_vt;
+            }
+        }
+        if (i < ti->params.size() && ti->params[i].is_value_param() && ast_arg->is_type()) {
+            // Bare qualified name always parses as a type-specifier arg; since
+            // this parameter position is a VALUE parameter, reinterpret it as
+            // a constant expression (enum constant, dependent value param, ...).
+            auto eval = evaluate_template_value_arg_from_type_spec(
+                ast_arg->type_arg.get(), context_elem, _context, expected_value_type, &_unit);
+            if (eval.is_error()) {
+                throw_error(eval.error_code, lex::opt_any_lexeme{}, eval.message, eval.message_args);
+            }
+            if (eval.ok()) {
+                model_args.push_back(template_argument::make_value(*eval.value));
+                continue;
+            }
+            return {};
+        }
         if (ast_arg->is_type()) {
             // Prefer a pre-resolved model-level template argument when present.
             if (i < model_targs.size() && model_targs[i]
@@ -1267,10 +1294,15 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             if (!arg_type || !type::is_resolved(arg_type)) return {};
             model_args.push_back(template_argument::make_type(arg_type));
         } else if (ast_arg->is_value()) {
-            // Value template argument — extract compile-time constant literal
-            k::value_type val;
-            if (!extract_value_from_ast_expr(ast_arg->value_arg.get(), val)) return {};
-            model_args.push_back(template_argument::make_value(val));
+            // Value template argument — evaluate as a compile-time constant
+            // expression (literal, enum constant, dependent value parameter,
+            // or an arithmetic/logical/cast combination thereof).
+            auto eval = evaluate_template_value_arg(ast_arg->value_arg.get(), context_elem, _context, expected_value_type, &_unit);
+            if (eval.is_error()) {
+                throw_error(eval.error_code, lex::opt_any_lexeme{}, eval.message, eval.message_args);
+            }
+            if (!eval.ok()) return {};
+            model_args.push_back(template_argument::make_value(*eval.value));
         } else {
             return {};
         }

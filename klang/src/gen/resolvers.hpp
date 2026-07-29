@@ -28,4 +28,5 @@
 #include "resolvers_type_ref.hpp"
 #include "resolvers_init_order.hpp"
 #include "resolvers_generic.hpp"
+#include "resolvers_constexpr.hpp"
 #endif //KLANG_RESOLVERS_HPP

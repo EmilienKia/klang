@@ -892,7 +892,7 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
         lex::lex_holder eq_holder(_lexer);
         auto maybe_eq = _lexer.get();
         if (maybe_eq == lex::operator_::EQUAL) {
-            default_expr = parse_primary_expr();
+            default_expr = parse_template_arg_value_expr();
             if (!default_expr) {
                 throw_error(0x10047, _lexer.pick_current(), "Expected expression after '=' in template value parameter default");
             }
@@ -902,6 +902,27 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
     }
 
     return std::make_shared<ast::template_parameter>(std::move(value_type), param_name, std::move(default_expr));
+}
+
+ast::expr_ptr parser::parse_template_arg_value_expr()
+{
+    lex::lex_holder holder(_lexer);
+    if (auto lop = _lexer.get();
+            lex::is_one_of<
+                lex::operator_::PLUS,
+                lex::operator_::MINUS,
+                lex::operator_::EXCLAMATION_MARK,
+                lex::operator_::TILDE>(lop)) {
+        ast::expr_ptr sub_expr = parse_template_arg_value_expr();
+        if (sub_expr) {
+            holder.sync();
+            return std::make_shared<ast::unary_prefix_expr>(lex::as<lex::operator_>(lop), sub_expr);
+        }
+        holder.rollback();
+        return nullptr;
+    }
+    holder.rollback();
+    return parse_primary_expr();
 }
 
 ast::template_arg_list parser::parse_template_arg_list(bool* was_explicit)
@@ -942,10 +963,11 @@ ast::template_arg_list parser::parse_template_arg_list(bool* was_explicit)
             args.push_back(std::make_shared<ast::template_arg>(std::move(type_spec)));
         } else {
             // Try as a value expression.
-            // Use parse_primary_expr() to avoid consuming '>' or ',' as
-            // binary operators — template value args are restricted to simple
-            // expressions (literals, identifiers, parenthesised expressions).
-            auto expr = parse_primary_expr();
+            // Use parse_template_arg_value_expr() to avoid consuming '>' or ','
+            // as binary operators — template value args are restricted to simple
+            // expressions (literals, identifiers, parenthesised expressions),
+            // with an optional leading unary +/-/!/~ prefix.
+            auto expr = parse_template_arg_value_expr();
             if (expr) {
                 args.push_back(std::make_shared<ast::template_arg>(std::move(expr)));
             } else {
@@ -965,7 +987,7 @@ ast::template_arg_list parser::parse_template_arg_list(bool* was_explicit)
                 if (type_spec2) {
                     args.push_back(std::make_shared<ast::template_arg>(std::move(type_spec2)));
                 } else {
-                    auto expr2 = parse_primary_expr();
+                    auto expr2 = parse_template_arg_value_expr();
                     if (expr2) {
                         args.push_back(std::make_shared<ast::template_arg>(std::move(expr2)));
                     } else {

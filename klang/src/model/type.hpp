@@ -1146,8 +1146,22 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
 /** Map from template parameter name to concrete type. */
 using type_substitution_map = std::unordered_map<std::string, std::shared_ptr<type>>;
 
-/** Map from template value parameter name to concrete primitive value. */
-using value_substitution_map = std::unordered_map<std::string, k::value_type>;
+/**
+ * A bound template value argument: the concrete underlying primitive value,
+ * plus the value parameter's originally declared type (used to preserve
+ * strong typing — e.g. an enum type — on the `value_expression` created
+ * when substituting the value parameter into the template body).
+ * `declared_type` may be null when the declared type is not available/needed
+ * (in which case the substituted expression keeps the raw primitive type of
+ * the underlying value).
+ */
+struct value_param_binding {
+    k::value_type value;
+    std::shared_ptr<type> declared_type;
+};
+
+/** Map from template value parameter name to its bound concrete value. */
+using value_substitution_map = std::unordered_map<std::string, value_param_binding>;
 
 /** Map from template pack parameter name to a list of concrete types. */
 using pack_substitution_map = std::unordered_map<std::string, std::vector<std::shared_ptr<type>>>;
