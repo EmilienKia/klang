@@ -150,6 +150,13 @@ enum class codegen_diag : unsigned int {
     ERR_KDI_TYPE_LAYOUT_CONFLICT                   = 0x0203,
 
     /**
+     * A non-trivial lvalue copy reached code generation without any available copy
+     * constructor. Bytewise copying such a type would duplicate owned resources and
+     * can cause double frees or use-after-free.
+     */
+    ERR_TYPE_NOT_COPYABLE                          = 0x0204,
+
+    /**
      * `mangler::mangle_type()` was given a type it cannot encode. `mangle_type()` is
      * total by contract: returning an empty string here would silently collapse distinct
      * symbols.

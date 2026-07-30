@@ -257,13 +257,11 @@
       When wiring the remaining lvalue *copy* paths for sites 2–4, extend these tests with
       by-value argument / return-by-value of an **lvalue** `Vector<T>` asserting deep-copy
       independence (mutating one copy must not affect the other).
-- [ ] **`type-not-copyable` diagnostic — not implemented (deferred from IN-PROGRESS phase F6).**
-      In `emit_value_copy_or_move()` the non-trivial *lvalue* copy path falls back to a
-      shallow `memcpy` when the type has no copy constructor (see the `TODO` comment near
-      `gen/gen_operators_assign.cpp:147`). This is unsafe for owning types. Add a dedicated
-      `type-not-copyable` diagnostic in `errors_gen.hpp` (`codegen_diag`) and raise it here
-      instead of the silent memcpy fallback, so copying an owning aggregate that has no copy
-      constructor becomes a compile-time error. Add a `compile_should_fail` regression test.
+- [x] **`type-not-copyable` diagnostic — fixed.**
+      `emit_value_copy_or_move()` now raises `codegen_diag::ERR_TYPE_NOT_COPYABLE` instead of
+      silently byte-copying a non-trivial lvalue when no copy constructor is available. The
+      assignment and temporary-construction call sites pass source locations through, and
+      `klang/tests/test-gen-lifecycle.cpp` now covers the regression with a compile-fail case.
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts — workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
 - [ ] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases; extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
 - [x] **FIXED — `DataStream round-trip long` failed on a negative value round-trip.**

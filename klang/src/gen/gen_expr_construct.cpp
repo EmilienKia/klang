@@ -934,7 +934,8 @@ void implementation_generator::visit_temporary_construction_expression(temporary
                 // since both temporaries are registered for destruction, cause a
                 // double free.
                 emit_value_copy_or_move(temp_alloca, _value, st_type,
-                                        /*destroy_dest_first=*/false);
+                                        /*destroy_dest_first=*/false,
+                                        expr.first_lexeme(), "temporary construction");
             } else {
                 // Already a loaded scalar/aggregate value: store directly.
                 _builder->CreateStore(_value, temp_alloca);

@@ -1412,4 +1412,32 @@ TEST_CASE("Lifecycle Cat8: prvalue temporary returned by value is moved, not dou
     CHECK(get_dtors() == 1);
 }
 
+TEST_CASE("Lifecycle Cat8: lvalue copy of non-copyable struct is rejected",
+          "[gen][lifecycle][cat8][value-semantics][error]") {
+    test_logger logger;
+    bool ok = compile_collect_diagnostics(R"SRC(
+        module __lc8_not_copyable__;
+
+        struct Box {
+            payload : int!;
+        }
+
+        test() : void {
+            a : Box;
+            b : Box;
+            b = a;
+        }
+    )SRC", nullptr, logger);
+
+    CHECK_FALSE(ok);
+
+    bool has_type_not_copyable = false;
+    for (const auto& diag : logger.diagnostics) {
+        if (diag.code == 0x0204) {
+            has_type_not_copyable = true;
+            break;
+        }
+    }
+    CHECK(has_type_not_copyable);
+}
 

@@ -753,6 +753,20 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
 
     auto op_func = expr.get_operator_func();
 
+    if (op_func && op_func->is_compiler_generated() && op_func->is_operator()
+        && op_func->get_short_name() == "__operator_aS_") {
+        auto left_type = expr.left() ? expr.left()->get_type() : nullptr;
+        auto left_ref = std::dynamic_pointer_cast<reference_type>(left_type);
+        auto target_type = left_ref ? left_ref->get_subtype() : nullptr;
+        auto st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(target_type));
+        auto agg = st_type ? st_type->get_struct() : nullptr;
+        if (agg && !is_trivially_copyable(target_type) && !agg->get_copy_constructor()) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE), expr.first_lexeme(),
+                "Type '{}' is not copyable: assignment requires a copy constructor",
+                {st_type ? st_type->to_string() : "?"});
+        }
+    }
+
     // Find the LLVM function (may be null for abstract or external virtual operators)
     auto it = _context->_functions.find(op_func);
     if (it == _context->_functions.end()) {

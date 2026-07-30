@@ -701,13 +701,15 @@ public:
      *     prvalue temporary             -> MOVE: memcpy + cancel the source's
      *                                      scheduled destruction (F4);
      *   - non-trivial, src is an lvalue  -> COPY via the copy constructor when
-     *                                      available, else fall back to memcpy.
+     *                                      available, else raise a diagnostic.
      * When `destroy_dest_first` is true (assignment onto an existing object with
      * a destructor), the old contents of `dest` are destroyed before the copy.
      */
     void emit_value_copy_or_move(llvm::Value* dest, llvm::Value* src,
                                  const std::shared_ptr<type>& t,
-                                 bool destroy_dest_first);
+                                 bool destroy_dest_first,
+                                 const lex::opt_any_lexeme& lexeme,
+                                 const char* copy_context);
 
     /**
      * Emit cleanup (destructor / owner free) for a single condition variable.

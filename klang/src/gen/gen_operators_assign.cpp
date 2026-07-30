@@ -92,7 +92,9 @@ bool implementation_generator::is_expression_temporary(llvm::Value* ptr) const {
 
 void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::Value* src,
                                                        const std::shared_ptr<type>& t,
-                                                       bool destroy_dest_first) {
+                                                       bool destroy_dest_first,
+                                                       const lex::opt_any_lexeme& lexeme,
+                                                       const char* copy_context) {
     auto nt = type::remove_const(t);
     llvm::Type* struct_llvm = _context->get_llvm_type(nt);
     if (!struct_llvm || struct_llvm->isPointerTy()) {
@@ -153,14 +155,16 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
                 _builder->CreateCall(cc_it->second, {dest, src});
                 return;
             }
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), lexeme,
+                "Internal error: LLVM declaration not found for copy constructor of type '{}'; "
+                "the declaration pass must register every emitted constructor",
+                {nt ? nt->to_string() : "?"});
         }
     }
 
-    // Fallback: shallow copy. This is unsafe for owning types without a copy
-    // constructor; a dedicated "type-not-copyable" diagnostic (phase F6) will be
-    // raised here once the lvalue-copy contract is enforced.
-    _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
-                           _builder->getInt64(sz));
+    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE), lexeme,
+        "Type '{}' is not copyable during {}: a non-trivial lvalue copy requires a copy constructor",
+        {nt ? nt->to_string() : "?", copy_context ? copy_context : "copy"});
 }
 
 void type_reference_resolver::visit_assignation_expression(assignation_expression &expr) {
@@ -1063,7 +1067,8 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     if (target_type && type::is_struct(target_type) && right->getType()->isPointerTy()) {
         auto* struct_llvm = _context->get_llvm_type(type::remove_const(target_type));
         if (struct_llvm && !struct_llvm->isPointerTy()) {
-            emit_value_copy_or_move(left, right, target_type, /*destroy_dest_first=*/true);
+            emit_value_copy_or_move(left, right, target_type, /*destroy_dest_first=*/true,
+                                    expr.first_lexeme(), "assignment");
             _value = left;
             return;
         }
