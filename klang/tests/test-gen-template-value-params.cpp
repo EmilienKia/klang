@@ -43,6 +43,7 @@
  *  [X] Dependent value parameter propagated to a nested template instantiation.
  *  [Y] Division-by-zero in a constexpr value arg is rejected (not constant).
  *  [Z] Non-constant (runtime-only local) value arg is rejected.
+ *  [AB] Enum constant as a default value parameter.
  *  [.] Known-limitation (SKIPped): runtime ternary expression has no
  *      model/codegen support at all (separate, larger pre-existing gap
  *      uncovered while fixing the ternary parser bug for [U]).
@@ -643,6 +644,29 @@ TEST_CASE("[Z] M11: non-constant value arg referencing a local is rejected",
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  [AB] Enum constant as a default value parameter
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AB] M11: enum constant as default value template parameter",
+          "[milestone11][template][value-param][constexpr][enum][default][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_ab__;
+        enum Color { Red; Green; Blue; }
+
+        template<Color C = Color::Blue>
+        get_c() : int { return C; }
+
+        test() : int {
+            return get_c<>() + get_c();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN10__m11_ab__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 4);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 //  [AA] Standalone (non-template) ternary expression regression test
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -671,4 +695,3 @@ TEST_CASE("Known-limitation: runtime ternary expression has no codegen support",
     SKIP("Runtime ternary expression (`a ? b : c`) has no model/codegen support; "
          "only constexpr template value args can use it (see [U]).");
 }
-

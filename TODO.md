@@ -472,11 +472,41 @@
         see the new "Ternary expression has no codegen support" entry below.
       - Regression tests: `[milestone11]` tests `[S]`–`[Z]` in
         `klang/tests/test-gen-template-value-params.cpp`.
-      - **Still open (Phase 3, deferred)**: aggregate-typed value template parameters
-        (e.g. `template<Point P>` where `Point` is a struct/class) are not supported.
-        Also, `template_param_descriptor::default_value` (in `model_builder.cpp`, 3 call
-        sites) still uses literal-only extraction — defaults can't yet be enum constants
-        or constexpr expressions.
+      - **Status update (2026-07)**: aggregate-typed value template parameters are now
+        supported end-to-end (`template<Point P>`, nested aggregates, member projection,
+        defaults, and direct runtime usage). See `[milestone12]` in
+        `klang/tests/test-gen-template-aggregate-values.cpp`.
+      - `template_param_descriptor::default_value` is no longer literal-only:
+        `model_builder.cpp` stores `default_value_expr` and evaluates via
+        `evaluate_template_value_arg()`, with lazy materialization in
+        `gen_expr_invocation.cpp` when full type resolution is needed.
+      - **FIXED (2026-07)**: enum-typed value parameter defaults in declaration context
+        now work (`template<Color C = Color::Blue>`). Root cause was eager evaluation in
+        `model_builder` before local enums had resolved entries; constexpr evaluation now
+        defers unresolved enum-entry lookup and materializes later in invocation
+        resolution when enum values are available.
+      - Regression test: `[AB]` in `klang/tests/test-gen-template-value-params.cpp`
+        (`template<Color C = Color::Blue>` exercised through both `get_c<>()` and `get_c()`).
+      - Parser/default-expression caveat moved to a dedicated TODO entry below
+        (part of a broader compile-time constant-expression workstream).
+- [ ] **Broaden compile-time constant-expression support for template values and
+      compile-time configuration values.**
+      Current behavior still has a parser/evaluator gap in template value-argument
+      contexts: unparenthesized binary defaults such as `template<int N = 1 + 2>`
+      are rejected because `parse_template_arg_value_expr()` currently accepts only
+      unary-prefix + primary forms. Workaround today: `template<int N = (1 + 2)>`.
+      This should be addressed as part of a larger compile-time constant-expression
+      initiative, not as an isolated parser tweak.
+      - Scope expected for this workstream:
+        1. Full expression parsing in template value-arg/default contexts
+           (without breaking `<...>` disambiguation).
+        2. Shared/centralized constexpr evaluation usable beyond template args
+           (e.g. global initialization/instantiation optimization opportunities).
+        3. First-class compile-time parameter values exposed by the compiler
+           (for example target/platform-dependent constants).
+      - Goal: make compile-time values a coherent subsystem that can drive both
+        semantic correctness and optimization decisions (including global
+        instantiation paths).
 - [ ] **Runtime ternary expression (`a ? b : c`) has no codegen support at all.**
       `model_builder::visit_conditional_expr()` is an empty stub — there is no
       `model::expression` subclass and no LLVM codegen path for the ternary operator used

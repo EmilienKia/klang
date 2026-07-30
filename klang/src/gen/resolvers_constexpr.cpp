@@ -293,6 +293,12 @@ eval_outcome eval_identifier(const identifier_expr& id,
         const std::string entry_name = q[q.size() - 1];
         auto entry = en->get_entry_by_name(entry_name);
         if (!entry.has_value()) {
+            // During model_builder, local enums exist but their entries are still in
+            // raw form until symbol_resolver::resolve_enumeration(). Defer so that
+            // default-value materialization can retry later in a fully-resolved context.
+            if (!en->is_resolved()) {
+                return eval_outcome::defer();
+            }
             return eval_outcome::error(
                 static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
                 "enum '" + en->get_short_name() + "' has no entry named '" + entry_name + "'",
