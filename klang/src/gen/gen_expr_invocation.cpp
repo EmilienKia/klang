@@ -906,6 +906,48 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         const bool is_qualified_call = (callee->get_name().size() > 1);
 
         std::vector<std::shared_ptr<function>> all_candidates;
+        auto append_unique_candidate = [&](const std::shared_ptr<function>& fn) {
+            if (!fn) return;
+            if (std::find(all_candidates.begin(), all_candidates.end(), fn) == all_candidates.end()) {
+                all_candidates.push_back(fn);
+            }
+        };
+        auto parse_fq_name = [](const std::string& fq) -> k::name {
+            const std::string normalized = (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':')
+                ? fq.substr(2)
+                : fq;
+            std::vector<std::string> parts;
+            std::size_t start = 0;
+            while (start <= normalized.size()) {
+                auto pos = normalized.find("::", start);
+                if (pos == std::string::npos) {
+                    auto tail = normalized.substr(start);
+                    if (!tail.empty()) parts.push_back(std::move(tail));
+                    break;
+                }
+                parts.push_back(normalized.substr(start, pos - start));
+                start = pos + 2;
+            }
+            return k::name{false, std::move(parts)};
+        };
+        auto append_imported_overloads_from_bound_symbol = [&]() {
+            if (!callee || !callee->is_function()) return;
+            auto bound_fn = callee->get_function();
+            auto imported_bound = std::dynamic_pointer_cast<imported_function>(bound_fn);
+            if (!imported_bound) return;
+
+            k::name lookup_name = callee->get_name();
+            if (auto* kdi_fn = imported_bound->get_kdi_function()) {
+                if (!kdi_fn->fq_name.empty()) {
+                    auto fq_name = parse_fq_name(kdi_fn->fq_name);
+                    if (!fq_name.empty()) lookup_name = std::move(fq_name);
+                }
+            }
+            for (auto* kdi_fn : _unit.find_imported_functions(lookup_name)) {
+                append_unique_candidate(_unit.get_or_create_imported_function(kdi_fn, _context));
+            }
+        };
+
         if (is_qualified_call && callee->has_qualifier_template_args()) {
             const auto qualifier_name = callee->get_name().without_back();
 
@@ -933,7 +975,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         if (auto owner_struct = st_type->get_struct()) {
                             for (auto& fn : owner_struct->functions()) {
                                 if (fn && fn->get_short_name() == func_name) {
-                                    all_candidates.push_back(fn);
+                                    append_unique_candidate(fn);
                                 }
                             }
                         }
@@ -955,19 +997,20 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     if (auto fh = dynamic_cast<function_holder*>(owner.get())) {
                         for (auto& fn : fh->functions()) {
                             if (fn && fn->get_short_name() == func_name) {
-                                all_candidates.push_back(fn);
+                                append_unique_candidate(fn);
                             }
                         }
                     }
                 }
                 // Fallback: only the resolved function
                 if (all_candidates.empty()) {
-                    all_candidates.push_back(resolved_fn);
+                    append_unique_candidate(resolved_fn);
                 }
             }
         } else if (!is_qualified_call) {
             all_candidates = scope_lookup::lookup_functions(callee, func_name);
         }
+        append_imported_overloads_from_bound_symbol();
 
         std::shared_ptr<expression> this_candidate;
         std::vector<std::shared_ptr<expression>> rest_args;

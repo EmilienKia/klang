@@ -309,6 +309,14 @@ public:
     find_imported_function(const k::name& name);
 
     /**
+     * Find all global/namespace-level overloads matching @p name in loaded imports.
+     * @param name  Qualified name of the function (without root prefix).
+     * @return All matching KDI function entries, de-duplicated by mangled name.
+     */
+    std::vector<const kdi::kdi_function*>
+    find_imported_functions(const k::name& name);
+
+    /**
      * Find a global/static variable in any loaded import.
      * @param name  Qualified name of the variable (without root prefix).
      * @return Pointer into the kdi_file's kdi_variable entry, or nullptr.

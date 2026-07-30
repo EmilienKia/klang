@@ -24,7 +24,7 @@
  *   - imported_function, imported_constructor, imported_destructor,
  *     imported_method, imported_aggregate (+ imported_structure/klass/interface),
  *     imported_variable
- *   - unit::find_imported_function / find_imported_variable / find_imported_type
+ *   - unit::find_imported_function / find_imported_functions / find_imported_variable / find_imported_type
  *   - unit::get_or_create_imported_function / get_or_create_imported_variable
  *     / get_or_create_imported_aggregate
  *   - Internal helpers: search_in_kdi, navigate_ns, fq_to_abs_kname,
@@ -43,6 +43,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
+#include <unordered_set>
 
 namespace k::model {
 
@@ -387,6 +388,73 @@ search_in_kdi(const kdi::kdi_file& kdi, const k::name& name)
     return try_find_from_root(0);
 }
 
+std::vector<const kdi::kdi_function*>
+search_functions_in_kdi(const kdi::kdi_file& kdi, const k::name& name)
+{
+    std::vector<const kdi::kdi_function*> matches;
+    if (name.empty()) return matches;
+
+    const auto& parts = name.parts();
+    std::vector<std::string> mod_parts;
+    {
+        const std::string& mod = kdi.header.module_name;
+        std::size_t start = 0;
+        while (true) {
+            auto pos = mod.find("::", start);
+            if (pos == std::string::npos) {
+                mod_parts.push_back(mod.substr(start));
+                break;
+            }
+            mod_parts.push_back(mod.substr(start, pos - start));
+            start = pos + 2;
+        }
+    }
+
+    std::unordered_set<std::string> seen_mangled;
+    auto append_unique = [&](const kdi::kdi_function* fn) {
+        if (!fn) return;
+        if (seen_mangled.insert(fn->mangled_name).second) {
+            matches.push_back(fn);
+        }
+    };
+
+    auto try_collect_from_root = [&](std::size_t skip) {
+        if (skip >= parts.size()) return;
+
+        const kdi::kdi_namespace* ns_ptr = &kdi.unit.root_ns;
+        for (std::size_t i = skip; i + 1 < parts.size(); ++i) {
+            const kdi::kdi_namespace* child = nullptr;
+            for (const auto& c : ns_ptr->namespaces) {
+                if (c.name == parts[i]) { child = &c; break; }
+            }
+            if (!child) return;
+            ns_ptr = child;
+        }
+
+        const std::string& sym = parts.back();
+        for (const auto& f : ns_ptr->functions) {
+            if (f.name == sym) append_unique(&f);
+        }
+    };
+
+    if (parts.size() > mod_parts.size()) {
+        bool prefix_match = true;
+        for (std::size_t i = 0; i < mod_parts.size(); ++i) {
+            if (parts[i] != mod_parts[i]) { prefix_match = false; break; }
+        }
+        if (prefix_match) {
+            try_collect_from_root(mod_parts.size());
+        }
+    }
+
+    if (!mod_parts.empty() && !parts.empty() && parts[0] == mod_parts.back()) {
+        try_collect_from_root(1);
+    }
+
+    try_collect_from_root(0);
+    return matches;
+}
+
 } // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -409,6 +477,34 @@ const kdi::kdi_function* unit::find_imported_function(const k::name& name) {
         if (res.func) return res.func;
     }
     return nullptr;
+}
+
+std::vector<const kdi::kdi_function*>
+unit::find_imported_functions(const k::name& name) {
+    std::vector<const kdi::kdi_function*> result;
+    std::unordered_set<std::string> seen_mangled;
+
+    auto append_unique = [&](const kdi::kdi_function* fn) {
+        if (!fn) return;
+        if (seen_mangled.insert(fn->mangled_name).second) {
+            result.push_back(fn);
+        }
+    };
+
+    for (auto& imp : _imported_modules) {
+        if (!imp.kdi) continue;
+        auto matches = search_functions_in_kdi(*imp.kdi, name);
+        if (!matches.empty()) imp.used = true;
+        for (const auto* fn : matches) append_unique(fn);
+    }
+
+    for (const auto& tdep : _transitive_kdis) {
+        if (!tdep) continue;
+        auto matches = search_functions_in_kdi(*tdep, name);
+        for (const auto* fn : matches) append_unique(fn);
+    }
+
+    return result;
 }
 
 const kdi::kdi_variable* unit::find_imported_variable(const k::name& name) {

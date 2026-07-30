@@ -349,19 +349,16 @@
         qualified by the enclosing instantiation (`Outer__long::Inner`), and the resolvers
         assign matching fully-qualified K names. `libk.kdi` no longer contains a single
         `.N`-suffixed LLVM type name.
-- [ ] **Unqualified calls to imported functions bypass overload resolution.**
-      A library exporting two overloads `f(x: ErrA)` / `f(x: ErrB)` (or any two overloads
-      differing only in an imported parameter type) is called from a consumer module as
-      `f(ovllib::ErrB::b1)`; the call is bound by `symbol_resolver` to the **first**
-      matching imported function and never reaches
-      `type_reference_resolver::get_best_matching_function` (verified: no
-      `[get_best_matching_function] selected …` trace is emitted for the call, and the
-      emitted IR calls the `ErrA` overload with the `ErrB` argument value).
-      Distinct from the mangling gap that used to mask it: since `mangle_type()` was made
-      exhaustive the two overloads now have distinct symbols and are both declared in the
-      consumer, but the wrong one is still selected.
-      Fix direction: route imported-function call sites through the same overload-resolution
-      path as local ones instead of binding eagerly during symbol resolution.
+- [x] **FIXED — Unqualified calls to imported functions no longer bypass overload resolution.**
+      Imported functions are still pre-bound by `symbol_resolver`, but
+      `type_reference_resolver::visit_function_invocation_expression` now expands that
+      pre-bound imported symbol into the full imported overload set (via
+      `unit::find_imported_functions`) before selection, and then routes the call through
+      `get_best_matching_function` like local calls. This removes the old "first imported
+      function wins" behaviour for both unqualified (`f(...)`) and qualified
+      (`ovllib::f(...)`) imported calls.
+      - Regression coverage: `[gen][using][import][overload][regression]` in
+        `klang/tests/test-gen-using.cpp`.
 - [x] **FIXED — `compute_cast_weight()` had no enumeration identity rule.** Unrelated
       enumerations sharing an underlying integer type scored identically, so overload
       resolution silently picked the first candidate. Derived → base enum conversion stays

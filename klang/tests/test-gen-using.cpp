@@ -559,6 +559,54 @@ TEST_CASE("Using namespace — imported module with multiple members", "[gen][us
     REQUIRE(result.exit_code == 42);
 }
 
+TEST_CASE("Imported overload resolution — unqualified call uses best imported overload",
+          "[gen][using][import][overload][regression]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module ovllib;
+            enum ErrA { a1; }
+            enum ErrB { b1; }
+            f(x: ErrA) : int { return 11; }
+            f(x: ErrB) : int { return 42; }
+        )K",
+        R"K(
+            module consumer;
+            import ovllib;
+            main() : int {
+                return f(ovllib::ErrB::b1);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("Imported overload resolution — qualified call uses best imported overload",
+          "[gen][using][import][overload][regression]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module ovllib;
+            enum ErrA { a1; }
+            enum ErrB { b1; }
+            f(x: ErrA) : int { return 11; }
+            f(x: ErrB) : int { return 42; }
+        )K",
+        R"K(
+            module consumer;
+            import ovllib;
+            main() : int {
+                return ovllib::f(ovllib::ErrB::b1);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE(result.exit_code == 42);
+}
+
 TEST_CASE("Using inside function body — imported module function", "[gen][using][import]") {
     auto result = build_exec_with_lib(
         R"K(
