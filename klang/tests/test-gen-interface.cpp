@@ -832,3 +832,110 @@ test() : int {
     CHECK(fn() == 42);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  Diamond-inheritance abstract-method completeness checks
+//  Regression for: "Abstract-method-implementation check misses methods
+//  reached only through a diamond-inherited interface"
+// ════════════════════════════════════════════════════════════════════════════
+
+//  [P1] Exact minimal repro from the TODO: 7-level diamond, first() missing.
+//       The class reaches OrderedCollection<T>::first() only through the
+//       OrderedSet<T>→OrderedCollection<T> secondary branch; without the fix
+//       the compiler silently accepted an incomplete class and deferred the
+//       failure to JIT/link time.
+TEST_CASE("[P1] Diamond: concrete class missing secondary-branch abstract method must be rejected",
+          "[interface][abstract][diamond][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module __diamond_abstract_p1__;
+template<typename T> interface Collection { size() : unsigned int; }
+template<typename T> interface OrderedCollection : public Collection<T> { first() : int; }
+template<typename T> interface MutableCollection : public Collection<T> { addOne(v: T) : bool; }
+template<typename T> interface Set : public Collection<T> { contains(v: T) : bool; }
+template<typename T> interface MutableSet : public Set<T>, public MutableCollection<T> {}
+template<typename T> interface OrderedSet : public Set<T>, public OrderedCollection<T> {}
+template<typename T> interface MutableOrderedSet : public OrderedSet<T>, public MutableSet<T> {}
+class Impl : public MutableOrderedSet<int> {
+    size()          : unsigned int { return 0; }
+    contains(v: int): bool         { return false; }
+    addOne(v: int)  : bool         { return true; }
+    // first() intentionally NOT implemented — must be a compile error
+}
+)SRC"));
+}
+
+//  [P2] Same diamond hierarchy, all methods implemented — must compile and
+//       dispatch correctly.
+TEST_CASE("[P2] Diamond: concrete class implementing all methods (incl. secondary branch) compiles and dispatches",
+          "[interface][abstract][diamond]") {
+    auto jit = gen_jit(R"SRC(
+module __diamond_abstract_p2__;
+template<typename T> interface Collection { size() : unsigned int; }
+template<typename T> interface OrderedCollection : public Collection<T> { first() : int; }
+template<typename T> interface MutableCollection : public Collection<T> { addOne(v: T) : bool; }
+template<typename T> interface Set : public Collection<T> { contains(v: T) : bool; }
+template<typename T> interface MutableSet : public Set<T>, public MutableCollection<T> {}
+template<typename T> interface OrderedSet : public Set<T>, public OrderedCollection<T> {}
+template<typename T> interface MutableOrderedSet : public OrderedSet<T>, public MutableSet<T> {}
+class Impl : public MutableOrderedSet<int> {
+    size()          : unsigned int { return 3; }
+    contains(v: int): bool         { return false; }
+    addOne(v: int)  : bool         { return true; }
+    first()         : int          { return 42; }
+}
+test() : int {
+    impl: Impl;
+    ref: OrderedCollection<int>& = impl;
+    return ref.first();
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+//  [P3] An abstract middle class may leave the secondary-branch method
+//       abstract; the final concrete subclass must provide it.
+TEST_CASE("[P3] Diamond: abstract middle class leaving secondary method abstract; subclass provides it",
+          "[interface][abstract][diamond]") {
+    auto jit = gen_jit(R"SRC(
+module __diamond_abstract_p3__;
+template<typename T> interface Collection { size() : unsigned int; }
+template<typename T> interface OrderedCollection : public Collection<T> { first() : int; }
+template<typename T> interface Set : public Collection<T> { contains(v: T) : bool; }
+template<typename T> interface OrderedSet : public Set<T>, public OrderedCollection<T> {}
+abstract class PartialImpl : public OrderedSet<int> {
+    size()           : unsigned int { return 1; }
+    contains(v: int) : bool         { return false; }
+    // first() left abstract — class is abstract, so this is allowed
+}
+class FullImpl : public PartialImpl {
+    first() : int { return 7; }
+}
+test() : int {
+    impl: FullImpl;
+    ref: OrderedCollection<int>& = impl;
+    return ref.first();
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 7);
+}
+
+//  [P4] Non-diamond regression guard: simple linear hierarchy where one
+//       method is missing must still be rejected (check 2, not check 3).
+TEST_CASE("[P4] Non-diamond: concrete class missing primary-chain abstract method still rejected",
+          "[interface][abstract][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module __diamond_abstract_p4__;
+interface Base { foo() : int; }
+interface Mid : public Base { bar() : int; }
+class Concrete : public Mid {
+    bar() : int { return 1; }
+    // foo() missing — must be rejected even without a diamond
+}
+)SRC"));
+}
+

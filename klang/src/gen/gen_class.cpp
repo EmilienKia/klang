@@ -1345,7 +1345,76 @@ void symbol_resolver::visit_klass(klass& klass) {
             throw resolution_error(std::move(diag));
         }
     }
+    // 3. Diamond secondary-base abstract sweep.
+    // Check 2 only iterates vt->entries (the primary vtable). In a diamond-shaped interface
+    // graph an abstract method introduced exclusively via a non-primary base branch is never
+    // added to the primary vtable and is therefore invisible to check 2. BFS all bases and
+    // verify every abstract slot has a concrete counterpart in this class's primary vtable.
+    // Check 2 fires (and throws) before we reach here for any primary-vtable abstract slot,
+    // so there is no risk of double-reporting.
+    if (!klass.is_abstract()) {
+        // Returns true if vt->entries contains a concrete entry matching sig's virtual signature.
+        auto has_concrete_in_vtable = [&](const function& sig) -> bool {
+            for (auto& e : vt->entries) {
+                if (!e.func || e.func->is_abstract_func()) continue;
+                if (e.introducing_func && have_same_virtual_signature(sig, *e.introducing_func))
+                    return true;
+                if (have_same_virtual_signature(sig, *e.func))
+                    return true;
+            }
+            return false;
+        };
+        // Build a deduplication key from the virtual signature to avoid reporting the same
+        // abstract method multiple times when it is reachable via several secondary paths.
+        auto make_sig_key = [](const function& f) -> std::string {
+            std::string key = f.get_short_name();
+            key += f.is_const_member() ? "|c|" : "||";
+            for (size_t i = 0; i < f.get_parameter_size(); ++i) {
+                auto t = f.get_parameter(i)->get_type();
+                key += (t ? t->to_string() : "?") + ",";
+            }
+            return key;
+        };
 
+        std::unordered_set<std::string> reported;
+        auto report_diamond_missing = [&](const function& sig) {
+            if (!reported.insert(make_sig_key(sig)).second) return;
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::structure_diag::ERR_INHERITED_ABSTRACT_NOT_IMPL),
+                "class '{}' inherits unimplemented abstract method '{}' from '{}' "
+                "(reachable only through a secondary base in a diamond-inheritance graph) "
+                "but is not declared 'abstract'; "
+                "either override '{}' with a concrete implementation or add 'abstract' to the class declaration",
+                {klass.get_short_name(), sig.get_short_name(),
+                 sig.get_owner() ? sig.get_owner()->get_short_name() : "?",
+                 sig.get_short_name()});
+            if (klass_lexeme) diag.at(*klass_lexeme);
+            logger_relay::report(diag);
+            throw resolution_error(std::move(diag));
+        };
+
+        for (auto& base : collect_virtual_bases_bfs(klass)) {
+            if (auto pk = std::dynamic_pointer_cast<model::klass>(base)) {
+                if (!pk->has_vtable()) continue;
+                for (auto& sec_entry : pk->get_vtable()->entries) {
+                    if (!sec_entry.func || !sec_entry.func->is_abstract_func()) continue;
+                    const function& sig = sec_entry.introducing_func
+                        ? *sec_entry.introducing_func : *sec_entry.func;
+                    if (!has_concrete_in_vtable(sig))
+                        report_diamond_missing(sig);
+                }
+            } else if (auto imp = std::dynamic_pointer_cast<imported_aggregate>(base)) {
+                if (!imp->has_vtable()) continue;
+                for (auto& imp_entry : imp->get_vtable()->entries) {
+                    if (!imp_entry.func || !imp_entry.func->is_abstract_func()) continue;
+                    const function& sig = imp_entry.introducing_func
+                        ? *imp_entry.introducing_func : *imp_entry.func;
+                    if (!has_concrete_in_vtable(sig))
+                        report_diamond_missing(sig);
+                }
+            }
+        }
+    }
 
     if (!vt->entries.empty()) {
         klass.set_vtable(vt);

@@ -29,7 +29,61 @@
 #include <unordered_set>
 #include <functional>
 #include "../errors.hpp"
+
 namespace k::model::gen {
+
+namespace {
+
+// Collect all direct and transitive bases of st in BFS order, deduplicated by pointer.
+std::vector<std::shared_ptr<aggregate>>
+vbases_bfs(const aggregate& st) {
+    std::vector<std::shared_ptr<aggregate>> result;
+    std::unordered_set<const aggregate*> seen;
+    std::queue<std::shared_ptr<aggregate>> q;
+    for (auto& bs : st.get_bases()) {
+        if (bs.base && !seen.count(bs.base.get())) {
+            seen.insert(bs.base.get());
+            q.push(bs.base);
+            result.push_back(bs.base);
+        }
+    }
+    while (!q.empty()) {
+        auto cur = q.front(); q.pop();
+        for (auto& bs : cur->get_bases()) {
+            if (bs.base && !seen.count(bs.base.get())) {
+                seen.insert(bs.base.get());
+                q.push(bs.base);
+                result.push_back(bs.base);
+            }
+        }
+    }
+    return result;
+}
+
+// True if two non-static member functions share the same virtual signature.
+bool mat_same_virtual_sig(const function& a, const function& b) {
+    if (a.get_short_name() != b.get_short_name()) return false;
+    if (a.is_const_member() != b.is_const_member()) return false;
+    if (a.get_parameter_size() != b.get_parameter_size()) return false;
+    auto type_match = [](const std::shared_ptr<type>& x,
+                         const std::shared_ptr<type>& y) -> bool {
+        if (type::are_equal(x, y)) return true;
+        return x && y && x->to_string() == y->to_string();
+    };
+    for (size_t i = 0; i < a.get_parameter_size(); ++i) {
+        auto ta = std::const_pointer_cast<type>(a.get_parameter(i)->get_type());
+        auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
+        if (!type_match(ta, tb)) return false;
+    }
+    auto ra = std::const_pointer_cast<type>(a.get_return_type());
+    auto rb = std::const_pointer_cast<type>(b.get_return_type());
+    if (bool(ra) != bool(rb)) return false;
+    if (ra && rb && !type_match(ra, rb)) return false;
+    return true;
+}
+
+} // anonymous namespace
+
 // model_materializer
 
 
@@ -85,6 +139,9 @@ bool model_materializer::validate_vtable(klass& kl) {
     auto vt = kl.get_vtable();
     if (!vt) return true;
 
+    lex::opt_any_lexeme kl_lexeme;
+    if (auto ast = kl.get_ast_aggregate_decl()) kl_lexeme = lex::any_lexeme{ast->name};
+
     bool ok = true;
     for (auto& entry : vt->entries) {
         if (!entry.func) continue;
@@ -92,7 +149,8 @@ bool model_materializer::validate_vtable(klass& kl) {
         // that is a compilation error (should have been caught by symbol_resolver, but we
         // double-check here as a defensive measure).
         if (entry.func->is_abstract_func() && !kl.is_abstract()) {
-            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_DUPLICATE_BASE_CLASS), kl.get_ast_aggregate_decl() ? lex::opt_any_lexeme{lex::any_lexeme{kl.get_ast_aggregate_decl()->name}} : lex::opt_any_lexeme{},
+            throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_INHERITED_ABSTRACT_NOT_IMPL),
+                kl_lexeme,
                 "class '{}' must implement abstract method '{}' (introduced in '{}') "
                 "or be declared 'abstract'",
                 {kl.get_short_name(),
@@ -103,6 +161,73 @@ bool model_materializer::validate_vtable(klass& kl) {
             ok = false;
         }
     }
+
+    // Mirror the diamond secondary-base sweep from symbol_resolver::visit_klass.
+    // This defensive pass catches abstract methods reachable only through secondary bases
+    // in a diamond-shaped interface graph — they are never in vt->entries so the loop
+    // above cannot see them.
+    if (ok && !kl.is_abstract()) {
+        auto has_concrete = [&](const function& sig) -> bool {
+            for (auto& e : vt->entries) {
+                if (!e.func || e.func->is_abstract_func()) continue;
+                if (e.introducing_func && mat_same_virtual_sig(sig, *e.introducing_func))
+                    return true;
+                if (mat_same_virtual_sig(sig, *e.func))
+                    return true;
+            }
+            return false;
+        };
+
+        auto make_key = [](const function& f) -> std::string {
+            std::string key = f.get_short_name();
+            key += f.is_const_member() ? "|c|" : "||";
+            for (size_t i = 0; i < f.get_parameter_size(); ++i) {
+                auto t = f.get_parameter(i)->get_type();
+                key += (t ? t->to_string() : "?") + ",";
+            }
+            return key;
+        };
+
+        std::unordered_set<std::string> reported;
+        for (auto& base : vbases_bfs(kl)) {
+            if (auto pk = std::dynamic_pointer_cast<klass>(base)) {
+                if (!pk->has_vtable()) continue;
+                for (auto& sec_entry : pk->get_vtable()->entries) {
+                    if (!sec_entry.func || !sec_entry.func->is_abstract_func()) continue;
+                    const function& sig = sec_entry.introducing_func
+                        ? *sec_entry.introducing_func : *sec_entry.func;
+                    if (has_concrete(sig)) continue;
+                    if (!reported.insert(make_key(sig)).second) continue;
+                    throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_INHERITED_ABSTRACT_NOT_IMPL),
+                        kl_lexeme,
+                        "class '{}' inherits unimplemented abstract method '{}' from '{}' "
+                        "(reachable only through a secondary base in a diamond-inheritance graph) "
+                        "but is not declared 'abstract'",
+                        {kl.get_short_name(), sig.get_short_name(),
+                         sig.get_owner() ? sig.get_owner()->get_short_name() : "?"});
+                    ok = false;
+                }
+            } else if (auto imp = std::dynamic_pointer_cast<imported_aggregate>(base)) {
+                if (!imp->has_vtable()) continue;
+                for (auto& imp_entry : imp->get_vtable()->entries) {
+                    if (!imp_entry.func || !imp_entry.func->is_abstract_func()) continue;
+                    const function& sig = imp_entry.introducing_func
+                        ? *imp_entry.introducing_func : *imp_entry.func;
+                    if (has_concrete(sig)) continue;
+                    if (!reported.insert(make_key(sig)).second) continue;
+                    throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_INHERITED_ABSTRACT_NOT_IMPL),
+                        kl_lexeme,
+                        "class '{}' inherits unimplemented abstract method '{}' from '{}' "
+                        "(reachable only through a secondary base in a diamond-inheritance graph) "
+                        "but is not declared 'abstract'",
+                        {kl.get_short_name(), sig.get_short_name(),
+                         sig.get_owner() ? sig.get_owner()->get_short_name() : "?"});
+                    ok = false;
+                }
+            }
+        }
+    }
+
     return ok;
 }
 
@@ -163,31 +288,9 @@ void model_materializer::compute_secondary_vtable_specs(klass& kl) {
     };
 
     // Helper: do two non-static member functions share the same virtual signature?
-    // Used as a fallback when the explicit overrides chain does not link a derived
-    // method to a base slot — this happens when the base slot is introduced by a
-    // secondary base of an intermediate base (e.g. `interface C : A, B` where B is
-    // C's secondary base): a class deriving from C creates a fresh vtable slot for
-    // its B-method override without an overrides link back to B's slot, because the
-    // primary-vtable inheritance only propagates the primary base's slots.
-    auto same_virtual_sig = [&](const function& a, const function& b) -> bool {
-        if (a.get_short_name() != b.get_short_name()) return false;
-        if (a.is_const_member() != b.is_const_member()) return false;
-        if (a.get_parameter_size() != b.get_parameter_size()) return false;
-        auto type_match = [](const std::shared_ptr<type>& x,
-                             const std::shared_ptr<type>& y) -> bool {
-            if (type::are_equal(x, y)) return true;
-            return x && y && x->to_string() == y->to_string();
-        };
-        for (size_t i = 0; i < a.get_parameter_size(); ++i) {
-            auto ta = std::const_pointer_cast<type>(a.get_parameter(i)->get_type());
-            auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
-            if (!type_match(ta, tb)) return false;
-        }
-        auto ra = std::const_pointer_cast<type>(a.get_return_type());
-        auto rb = std::const_pointer_cast<type>(b.get_return_type());
-        if (bool(ra) != bool(rb)) return false;
-        if (ra && rb && !type_match(ra, rb)) return false;
-        return true;
+    // Delegates to the file-scope mat_same_virtual_sig helper.
+    auto same_virtual_sig = [](const function& a, const function& b) -> bool {
+        return mat_same_virtual_sig(a, b);
     };
 
     // Helper: build a secondary_vtable_spec for base_klass at byte_offset in kl

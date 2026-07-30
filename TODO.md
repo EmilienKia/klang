@@ -531,7 +531,7 @@
       - Regression coverage: the existing `[libk][set][listset]` tests in
         `libk/libk/tests/test-set.cpp` now pass and exercise this path directly; no
         new test needed since these two pre-existing tests already cover it.
-- [ ] **Abstract-method-implementation check misses methods reached only through a
+- [x] **Abstract-method-implementation check misses methods reached only through a
       diamond-inherited interface, silently letting an incomplete class compile
       and deferring the failure to JIT/link time.** Found while root-causing the
       `ListSet<T>` bug above. Minimal repro (`klangc -c`, compiles with **exit 0
@@ -553,21 +553,19 @@
           // first() intentionally NOT implemented — should be a compile error.
       }
       ```
-      `Impl` reaches `Set<T>` through **two** paths (`OrderedSet<T>` and
-      `MutableSet<T>`) — a diamond — and `OrderedCollection<T>::first()` is only
-      reachable through one branch of it. A simpler 2-level, non-diamond hierarchy
-      (`interface Base { foo(): int; } interface Mid : Base { bar(): int; } class
-      Impl : Mid { bar()... }`, omitting `foo()`) **is** correctly rejected with
-      `codegen_diag::ERR...0174` ("inherits unimplemented abstract method 'foo'
-      from 'Base' but is not declared 'abstract'"), so the checker's basic logic
-      is sound — the gap is specific to diamond-shaped interface graphs, most
-      likely in however it collects/deduplicates the set of abstract methods to
-      verify across repeated/shared ancestor interfaces. Not root-caused down to
-      the exact function; worth investigating the abstract-method collection walk
-      (likely near the `ERR_...0174` check in the aggregate/class resolution
-      code, `klang/src/gen/resolvers_aggregate.cpp` or `gen/gen_class.cpp`).
-      Flagged here for future investigation; no fix attempted (out of scope for
-      the Map<K,V> work).
+      **Fixed.** Root cause: `symbol_resolver::visit_klass()` in `gen/gen_class.cpp`
+      built only the primary vtable and checked only its entries for abstract slots.
+      Abstract methods introduced exclusively by a non-primary-path base (i.e. the
+      `OrderedCollection<T>::first()` slot, which never entered any primary vtable
+      because no class along the primary chain declared it) were invisible to both
+      check 1 and check 2. Fix: added a third check (BFS over all bases via
+      `collect_virtual_bases_bfs`) that verifies every abstract entry in every base
+      vtable has a corresponding concrete entry in the derived class's primary vtable;
+      same sweep added defensively to `model_materializer::validate_vtable()` in
+      `resolvers_materializer.cpp`. Wrong error code in `validate_vtable`
+      (`ERR_DUPLICATE_BASE_CLASS` → `ERR_INHERITED_ABSTRACT_NOT_IMPL`) also fixed.
+      Regression coverage: tests `[P1]`–`[P4]` in
+      `klang/tests/test-gen-interface.cpp` (tagged `[interface][abstract][diamond]`).
 
 ### Auxiliary Tools (libkdi / kditool)
 
