@@ -277,6 +277,13 @@ void logical_not_expression::accept(model_visitor &visitor) {
 }
 
 //
+// Conditional expression
+//
+void conditional_expression::accept(model_visitor &visitor) {
+    visitor.visit_conditional_expression(*this);
+}
+
+//
 // Comparison expression
 //
 void comparison_expression::accept(model_visitor &visitor) {

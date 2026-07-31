@@ -257,10 +257,57 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
     }
 
     auto st_type = std::dynamic_pointer_cast<struct_type>(expr.constructed_type());
-    if (!st_type || !st_type->get_struct()) {
+    if (!st_type) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_EXPECT_STRUCT_OR_PRIM), expr.first_lexeme(),
             "Temporary construction expression requires a struct type, but '{}' was provided",
             {expr.constructed_type() ? expr.constructed_type()->to_string() : "?"});
+    }
+
+    // Union temporary construction (struct_type with no owning aggregate):
+    // allow U() and U(x) where x matches one alternative.
+    if (!st_type->get_struct()) {
+        if (expr.empty()) {
+            expr.set_type(st_type->get_reference());
+            return;
+        }
+        if (expr.size() != 1) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_CTOR_ARG_MISMATCH), expr.first_lexeme(),
+                "Union temporary construction of '{}' accepts at most one argument, but {} were provided",
+                {st_type->to_string(), std::to_string(expr.size())});
+        }
+
+        auto union_def = find_union_by_struct_type(_unit.get_root_namespace(), st_type);
+        if (!union_def) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
+                "Internal error: union temporary '{}' has no union definition metadata",
+                {st_type->to_string()});
+        }
+
+        auto src = expr.argument(0);
+        std::shared_ptr<expression> best_expr;
+        cast_weight best_weight = CAST_IMPOSSIBLE;
+        for (const auto* alt : union_def->all_alternatives_ptrs()) {
+            if (!alt || !alt->resolved_type) continue;
+            auto w = compute_cast_weight(src, alt->resolved_type);
+            if (w == CAST_IMPOSSIBLE) continue;
+            auto adapted = (w == CAST_NONE) ? src : adapt_type(src, alt->resolved_type);
+            if (!adapted) continue;
+            if (!best_expr || w < best_weight) {
+                best_expr = adapted;
+                best_weight = w;
+            }
+        }
+        if (!best_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_CTOR_ARG_MISMATCH), expr.first_lexeme(),
+                "No union alternative in '{}' can be constructed from argument type '{}'",
+                {st_type->to_string(), src && src->get_type() ? src->get_type()->to_string() : "?"});
+        }
+
+        if (best_expr != src) {
+            expr.assign_argument(0, best_expr);
+        }
+        expr.set_type(st_type->get_reference());
+        return;
     }
 
     auto st = st_type->get_struct();
@@ -902,7 +949,7 @@ void implementation_generator::visit_temporary_construction_expression(temporary
     }
 
     auto st_type = std::dynamic_pointer_cast<struct_type>(expr.constructed_type());
-    if (!st_type || !st_type->get_struct()) {
+    if (!st_type) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
             "Internal error: temporary construction expression has no resolved struct type");
     }
@@ -910,11 +957,93 @@ void implementation_generator::visit_temporary_construction_expression(temporary
     auto st = st_type->get_struct();
     llvm::Type* llvm_struct_ty = _context->get_llvm_type(st_type);
 
-    // Create a stack alloca in the entry block for the temporary
-    llvm::Function* current_fn = _builder->GetInsertBlock()->getParent();
-    llvm::IRBuilder<> entry_builder(&current_fn->getEntryBlock(),
-                                     current_fn->getEntryBlock().begin());
-    auto* temp_alloca = entry_builder.CreateAlloca(llvm_struct_ty, nullptr, "tmp_ctor");
+    // Check if an sret destination has been provided (e.g., by ternary operator or variable_statement).
+    // If so, use it WITHOUT consuming it (so it remains available for other uses).
+    // Otherwise create a new temporary alloca.
+    llvm::Value* temp_alloca;
+    if (_sret_destination) {
+        temp_alloca = _sret_destination;
+    } else {
+        // Create a stack alloca in the entry block for the temporary
+        llvm::Function* current_fn = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&current_fn->getEntryBlock(),
+                                         current_fn->getEntryBlock().begin());
+        temp_alloca = entry_builder.CreateAlloca(llvm_struct_ty, nullptr, "tmp_ctor");
+    }
+
+    // Union temporary construction (struct_type with no owning aggregate).
+    if (!st) {
+        auto* union_llvm_ty = llvm::dyn_cast<llvm::StructType>(llvm_struct_ty);
+        if (!union_llvm_ty) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
+                "Internal error: union temporary '{}' has no LLVM struct type",
+                {st_type->to_string()});
+        }
+
+        // Default union temporary: discriminant/storage zeroed.
+        _builder->CreateStore(llvm::ConstantAggregateZero::get(union_llvm_ty), temp_alloca);
+
+        if (expr.size() == 1) {
+            auto union_def = find_union_by_struct_type(_unit.get_root_namespace(), st_type);
+            if (!union_def) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
+                    "Internal error: union temporary '{}' has no union definition metadata",
+                    {st_type->to_string()});
+            }
+
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            llvm::Value* init_val = _value;
+            if (!init_val) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F030), expr.first_lexeme(),
+                    "Internal error: union temporary '{}' argument produced no LLVM value",
+                    {st_type->to_string()});
+            }
+
+            auto arg_type = expr.argument(0)->get_type();
+            bool arg_is_ref = type::is_reference(arg_type) || type::is_drain(arg_type);
+            auto arg_nc = type::remove_const(arg_type);
+            if (type::is_reference(arg_nc) || type::is_drain(arg_nc)) {
+                arg_nc = type::remove_const(arg_nc->get_subtype());
+            }
+
+            const union_alternative* selected_alt = nullptr;
+            for (const auto* alt : union_def->all_alternatives_ptrs()) {
+                if (!alt || !alt->resolved_type) continue;
+                if (type::remove_const(alt->resolved_type) == arg_nc) {
+                    selected_alt = alt;
+                    break;
+                }
+            }
+            if (!selected_alt || !selected_alt->resolved_type) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
+                    "Internal error: no union alternative of '{}' matches argument type '{}'",
+                    {st_type->to_string(), arg_type ? arg_type->to_string() : "?"});
+            }
+
+            auto* disc_ptr = _builder->CreateStructGEP(union_llvm_ty, temp_alloca, 0, "union_disc");
+            _builder->CreateStore(
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()),
+                    static_cast<uint32_t>(selected_alt->index)),
+                disc_ptr);
+
+            auto* storage_ptr = _builder->CreateStructGEP(union_llvm_ty, temp_alloca, 1, "union_storage");
+            llvm::Type* alt_llvm_type = _context->get_llvm_type(selected_alt->resolved_type);
+            if (arg_is_ref || init_val->getType()->isPointerTy()) {
+                init_val = _builder->CreateLoad(alt_llvm_type, init_val, "union_tmp_init_load");
+            }
+            auto* typed_storage_ptr = _builder->CreateBitCast(storage_ptr, alt_llvm_type->getPointerTo(),
+                "union_storage_typed");
+            _builder->CreateStore(init_val, typed_storage_ptr);
+        } else if (!expr.empty()) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_CTOR_ARG_MISMATCH), expr.first_lexeme(),
+                "Union temporary construction of '{}' accepts at most one argument, but {} were provided",
+                {st_type->to_string(), std::to_string(expr.size())});
+        }
+
+        _value = temp_alloca;
+        return;
+    }
 
     auto ctor = expr.get_constructor();
 
@@ -971,13 +1100,18 @@ void implementation_generator::visit_temporary_construction_expression(temporary
         create_call_or_invoke(llvm_ctor->getFunctionType(), llvm_ctor, args, "");
     }
 
-    // Register the temporary for destructor cleanup at full-expression boundary
-    auto dtor = st->get_destructor();
-    if (dtor) {
-        auto dtor_fn = dtor->shared_as<k::model::function>();
-        auto dtor_it = _context->_functions.find(dtor_fn);
-        if (dtor_it != _context->_functions.end()) {
-            _expression_temporaries.push_back({temp_alloca, dtor_it->second, nullptr});
+    // Register the temporary for destructor cleanup at full-expression boundary,
+    // but ONLY if this alloca is NOT from an external _sret_destination (those are managed by the caller).
+    if (!_sret_destination || temp_alloca != _sret_destination) {
+        auto dtor = st->get_destructor();
+        if (dtor) {
+            auto dtor_fn = dtor->shared_as<k::model::function>();
+            auto dtor_it = _context->_functions.find(dtor_fn);
+            if (dtor_it != _context->_functions.end()) {
+                if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(temp_alloca)) {
+                    _expression_temporaries.push_back({alloca, dtor_it->second, nullptr});
+                }
+            }
         }
     }
 

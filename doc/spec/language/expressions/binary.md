@@ -206,17 +206,34 @@ if (p || q) { ... }   // at least one non-null
 ```
 ---
 ## 6. Conditional (ternary) operator
-The conditional expression `cond ? then : else` evaluates `cond` and yields `then` if true, `else` otherwise.
+The conditional expression `cond ? then : else` evaluates `cond` and yields
+`then` if true, `else` otherwise.
+
 ### Grammar
 ```
 ConditionalExpr:
     LogicalOrExpr '?' ConditionalExpr ':' ConditionalExpr
 ```
-Both branches must have compatible types.
+
+### Semantics
+
+1. `cond` is implicitly converted to `bool` (same conversion rules as `if`/`while` conditions).
+2. Exactly one branch is evaluated:
+   - if `cond` is `true`, only `then` is evaluated;
+   - if `cond` is `false`, only `else` is evaluated.
+3. The two branches are type-unified:
+   - if both branches already have the same type, that type is used;
+   - otherwise, implicit conversions are attempted and the best common target is selected;
+   - if no common type can be formed, compilation fails.
+4. The resulting type can be primitive, enum, union, aggregate, reference, pointer/link/view, or owner, as long as the branch conversions are valid.
+
+For aggregate-by-value results, normal temporary materialization and full-expression
+cleanup rules apply (same lifetime rules as other expression temporaries).
+
 ```k
 max : int = (a > b) ? a : b;
 label : char* = (x > 0) ? "positive" : "non-positive";
+selected : int& = choose_left ? left : right;
 ```
 ---
 *See also:* [Unary Operators](unary.md) · [Assignment Operators](assignment.md) · [Expressions](expressions.md) · [Operator Overloading](../functions/operators.md)
-*See also:* [Unary Operators](unary.md) · [Assignment Operators](assignment.md) · [Expressions](expressions.md)

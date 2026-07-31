@@ -502,19 +502,14 @@
       - Goal: make compile-time values a coherent subsystem that can drive both
         semantic correctness and optimization decisions (including global
         instantiation paths).
-- [ ] **Runtime ternary expression (`a ? b : c`) has no codegen support at all.**
-      `model_builder::visit_conditional_expr()` is an empty stub — there is no
-      `model::expression` subclass and no LLVM codegen path for the ternary operator used
-      as a normal runtime expression. Using it as such (i.e. outside a constexpr template
-      value argument, where the constexpr evaluator works directly on the raw AST and
-      bypasses `model_builder` entirely) produces a malformed LLVM module (return-type
-      mismatch) instead of a diagnostic or working codegen.
-      - Discovered while fixing the `parse_conditional_expr()` parser bug above.
-      - Needs: a `model::conditional_expression` class, symbol/type resolution
-        (`type_reference_resolver`), and LLVM codegen (branch to two blocks, phi-merge
-        the result, or emit as `select` when both branches have no side effects).
-      - Tracked test: `[.][expression][ternary][known-limitation]` (SKIPped) in
-        `klang/tests/test-gen-template-value-params.cpp`.
+- [x] **Runtime ternary expression (`a ? b : c`) is now implemented end-to-end.**
+      Runtime ternary support now includes:
+      - model expression + visitor plumbing (`conditional_expression`),
+      - symbol/type resolution and branch type unification,
+      - LLVM codegen with control-flow merge,
+      - coverage for primitives, enums, unions, aggregates, references/pointers,
+        and usage contexts (sub-expressions, assignments, call arguments, returns).
+      - Regression suite: `klang/tests/test-gen-ternary-comprehensive.cpp`.
 - [x] **FIXED — `ListSet<T>` never implemented the abstract `first()`/`last()`
       inherited from `OrderedCollection<T>`, so any call silently failed at JIT-link
       time instead of at compile time.** Found while validating the Map<K,V> stdlib

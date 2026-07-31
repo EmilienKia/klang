@@ -111,6 +111,27 @@ test() : int {
     CHECK(test_fn() == 30);
 }
 
+TEST_CASE("Temporary brace init: ternary aggregate result", "[gen][temporary_brace_init][ternary]") {
+    auto jit = gen_jit(R"SRC(
+module __test_tmp_brace_ternary__;
+
+struct Point {
+    x : int;
+    y : int;
+}
+
+test() : int {
+    a : Point = 1 == 1 ? Point{.x = 1, .y = 2} : Point{.x = 3, .y = 4};
+    b : Point = 1 == 0 ? Point{.x = 1, .y = 2} : Point{.x = 3, .y = 4};
+    return a.x + a.y * 10 + b.x * 100 + b.y * 1000;
+}
+)SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn);
+    CHECK(test_fn() == 4321);
+}
+
 TEST_CASE("Temporary brace init: partial init, remaining defaults to zero", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
 module __test_tmp_brace_partial__;

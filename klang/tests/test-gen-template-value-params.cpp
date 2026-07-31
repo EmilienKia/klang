@@ -44,9 +44,7 @@
  *  [Y] Division-by-zero in a constexpr value arg is rejected (not constant).
  *  [Z] Non-constant (runtime-only local) value arg is rejected.
  *  [AB] Enum constant as a default value parameter.
- *  [.] Known-limitation (SKIPped): runtime ternary expression has no
- *      model/codegen support at all (separate, larger pre-existing gap
- *      uncovered while fixing the ternary parser bug for [U]).
+ *  [AA] Runtime ternary expression regression (non-template context).
  */
 
 #include <catch2/catch_all.hpp>
@@ -670,28 +668,17 @@ TEST_CASE("[AB] M11: enum constant as default value template parameter",
 //  [AA] Standalone (non-template) ternary expression regression test
 // ════════════════════════════════════════════════════════════════════════════
 
-// While implementing constexpr template value args, a pre-existing parser
-// bug was found and fixed: parse_conditional_expr() compared the wrong
-// captured token when checking for ':', so `a ? b : c` never parsed into a
-// correct AST anywhere in the language. That parser fix is what allows the
-// constexpr evaluator to accept ternary expressions in template value args
-// (see [U] above), because the evaluator works directly on the raw AST node
-// and never goes through model_builder.
-//
-// However, fixing the parser exposed a SEPARATE, larger, pre-existing gap:
-// `model_builder::visit_conditional_expr()` is an empty stub (see
-// model/model_builder.cpp) -- there is no `model::expression` class for the
-// ternary operator and no codegen support for it at all. So a *runtime*
-// (non-constexpr) ternary expression still cannot be used anywhere in K
-// today; it silently produces a malformed LLVM module (return type
-// mismatch). This is out of scope for the template-value-argument gap and
-// is tracked as its own TODO.md entry.
-TEST_CASE("Known-limitation: runtime ternary expression has no codegen support",
-          "[.][expression][ternary][known-limitation]") {
-    // LIMITATION: model_builder::visit_conditional_expr() is an empty stub;
-    // there is no model::expression class nor LLVM codegen for `a ? b : c`
-    // used as a normal (non-constexpr-template-arg) runtime expression.
-    // Tracked in TODO.md.
-    SKIP("Runtime ternary expression (`a ? b : c`) has no model/codegen support; "
-         "only constexpr template value args can use it (see [U]).");
+TEST_CASE("[AA] M11: runtime ternary expression compiles and runs",
+          "[milestone11][expression][ternary][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_aa__;
+
+        test() : int {
+            return (1 == 1 ? 10 : 20) + (1 == 0 ? 30 : 40);
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 50);
 }

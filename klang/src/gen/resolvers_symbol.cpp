@@ -355,6 +355,12 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
                     return std::const_pointer_cast<parameter>(param);
                 }
             }
+        } else if (auto target_block = elem.ancestor<block>()) {
+            if (auto func = target_block->get_direct_function()) {
+                if (auto param = func->get_parameter(name.to_string())) {
+                    return std::const_pointer_cast<parameter>(param);
+                }
+            }
         }
     }
 

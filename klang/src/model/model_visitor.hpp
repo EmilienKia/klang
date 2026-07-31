@@ -134,6 +134,7 @@ public:
     virtual void visit_logical_and_expression(logical_and_expression&) =0;
     virtual void visit_logical_or_expression(logical_or_expression&) =0;
     virtual void visit_logical_not_expression(logical_not_expression&) =0;
+    virtual void visit_conditional_expression(conditional_expression&) =0;
 
     virtual void visit_load_value_expression(load_value_expression&) =0;
     virtual void visit_owner_move_expression(owner_move_expression&) =0;
@@ -257,6 +258,7 @@ public:
     void visit_logical_and_expression(logical_and_expression&) override;
     void visit_logical_or_expression(logical_or_expression&) override;
     void visit_logical_not_expression(logical_not_expression&) override;
+    void visit_conditional_expression(conditional_expression&) override;
     void visit_member_of_expression(member_of_expression&) override;
     void visit_member_of_object_expression(member_of_object_expression&) override;
     void visit_member_of_pointer_expression(member_of_pointer_expression&) override;

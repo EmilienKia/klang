@@ -997,6 +997,18 @@ type_reference_resolver::adapt_primitive_or_struct_type(
                 if (src_st.get() == tgt_st.get()) return expr;
             }
         }
+        // Value construction through a temporary for struct/union targets:
+        // target T, source x  =>  load( T(x) ).
+        if (auto tgt_st = std::dynamic_pointer_cast<struct_type>(type_nc)) {
+            auto temp = temporary_construction_expression::make_shared(tgt_st, {expr});
+            temp->accept(*this);
+            auto temp_ref_type = temp->get_type();
+            if (temp_ref_type && type::is_reference(temp_ref_type)) {
+                auto loaded = load_value_expression::make_shared(temp);
+                loaded->set_type(tgt_st);
+                return loaded;
+            }
+        }
         return {};
     }
 
@@ -1013,4 +1025,3 @@ type_reference_resolver::adapt_primitive_or_struct_type(
 
 
 } // namespace k::model::gen
-

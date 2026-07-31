@@ -464,7 +464,9 @@ An **unprefixed** literal defaults to `char[]` (UTF-32). When it is passed as a 
   - Address comparison for `T*`, `T+`, `T?`, `T!` (`==`/`!=` only). `T&` compares values.
 - **Three-way comparison**: `<=>` → signed integer or floating-point primitive (negative/zero/positive for less/equal/greater). Also overloadable on aggregates; used as a comparison-operator fallback source (see [operators.md](functions/operators.md#9-comparison-operator-fallback-synthesis)).
 - **Logical**: `&&`, `||` — short-circuit evaluation (and-then / or-else).
-- **Ternary**: `cond ? then : else`.
+- **Ternary**: `cond ? then : else` — condition converted to `bool`, only the
+  selected branch is evaluated, and branch types must unify via implicit
+  conversion to a common result type.
 
 ### 8.5 Assignment Operators
 

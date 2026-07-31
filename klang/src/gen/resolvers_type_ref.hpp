@@ -411,6 +411,7 @@ protected:
     void visit_symbol_expression(symbol_expression&) override;
     void visit_unary_expression(unary_expression&) override;
     void visit_binary_expression(binary_expression&) override;
+    void visit_conditional_expression(conditional_expression&) override;
 
     void process_arithmetic(binary_expression&);
 
@@ -760,4 +761,3 @@ protected:
 } // namespace k::model::gen
 
 #endif //KLANG_RESOLVERS_TYPE_REF_HPP
-

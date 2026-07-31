@@ -2797,6 +2797,18 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     }
                 }
             }
+        } else {
+            // Union value construction: allow U(x) when x is convertible to one
+            // union alternative type.
+            if (auto union_def = find_union_by_struct_type(_unit.get_root_namespace(), st_tgt)) {
+                for (const auto* alt : union_def->all_alternatives_ptrs()) {
+                    if (!alt || !alt->resolved_type) continue;
+                    auto w = compute_cast_weight(expr, alt->resolved_type);
+                    if (w != CAST_IMPOSSIBLE) {
+                        return CAST_CONSTRUCT;
+                    }
+                }
+            }
         }
     }
 

@@ -300,7 +300,14 @@ klang_gen_test(klang-tests-gen-templates 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 10 — KDI import, production libraries, multi-source
+# Group 10 — Advanced expressions: ternary operator with all type combinations
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-expressions 300
+        tests/test-gen-ternary-comprehensive.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 11 — KDI import, production libraries, multi-source
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-import 90
         tests/test-import.cpp

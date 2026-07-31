@@ -77,6 +77,7 @@ protected:
 
     friend class unary_expression;
     friend class binary_expression;
+    friend class ternary_expression;
     friend class member_of_expression;
     friend class function_invocation_expression;
     friend class constructor_invocation_expression;

@@ -25,6 +25,10 @@
 #include "../errors.hpp"
 #include "gen_operators_helpers.hpp"
 
+#include <algorithm>
+#include <optional>
+#include <tuple>
+
 namespace k::model::gen {
 
 
@@ -424,6 +428,319 @@ void implementation_generator::visit_logical_not_expression(logical_not_expressi
     }
 
     _value = _builder->CreateNot(value);
+}
+
+void symbol_resolver::visit_conditional_expression(conditional_expression& expr)
+{
+    auto& cond = expr.lexpr();
+    auto& then_expr = expr.mexpr();
+    auto& else_expr = expr.rexpr();
+
+    if (!cond || !then_expr || !else_expr) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
+            "Internal error: ternary expression has a null condition, then-expression, or else-expression; "
+            "this indicates a malformed AST or a compiler bug");
+    }
+
+    cond->accept(*this);
+    then_expr->accept(*this);
+    else_expr->accept(*this);
+}
+
+void type_reference_resolver::visit_conditional_expression(conditional_expression& expr)
+{
+    auto& cond = expr.lexpr();
+    auto& then_expr = expr.mexpr();
+    auto& else_expr = expr.rexpr();
+
+    if (!cond || !then_expr || !else_expr) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
+            "Internal error: ternary expression has a null condition, then-expression, or else-expression; "
+            "this indicates a malformed AST or a compiler bug");
+    }
+
+    _replacement_expr = nullptr;
+    cond->accept(*this);
+    if (_replacement_expr) {
+        expr.lexpr() = _replacement_expr;
+        _replacement_expr = nullptr;
+    }
+
+    _replacement_expr = nullptr;
+    then_expr->accept(*this);
+    if (_replacement_expr) {
+        expr.mexpr() = _replacement_expr;
+        _replacement_expr = nullptr;
+    }
+
+    _replacement_expr = nullptr;
+    else_expr->accept(*this);
+    if (_replacement_expr) {
+        expr.rexpr() = _replacement_expr;
+        _replacement_expr = nullptr;
+    }
+
+    auto cond_type = expr.lexpr()->get_type();
+    if (!type::is_resolved(cond_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F005), expr.first_lexeme(),
+            "Internal error: the condition of a ternary expression could not be type-resolved; "
+            "the condition must be known before the ternary expression can be typed");
+    }
+
+    auto bool_type = _context->from_type(primitive_type::BOOL);
+    auto cast_cond = adapt_type(expr.lexpr(), bool_type);
+    if (!cast_cond) {
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), expr.first_lexeme(),
+            "The condition of a ternary expression must be convertible to bool");
+    } else if (cast_cond != expr.lexpr()) {
+        expr.lexpr() = cast_cond;
+    }
+
+    auto then_type = expr.mexpr()->get_type();
+    auto else_type = expr.rexpr()->get_type();
+    if (!type::is_resolved(then_type) || !type::is_resolved(else_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F008), expr.first_lexeme(),
+            "Internal error: one branch of a ternary expression could not be type-resolved; "
+            "both branches must be known before the ternary expression can be typed");
+    }
+
+    struct candidate {
+        std::shared_ptr<type> target;
+        std::shared_ptr<expression> then_expr;
+        std::shared_ptr<expression> else_expr;
+        unsigned int max_weight = 0;
+        unsigned int sum_weight = 0;
+        unsigned int exact_count = 0;
+    };
+
+    auto build_candidate = [&](const std::shared_ptr<type>& target) -> std::optional<candidate> {
+        if (!target) return std::nullopt;
+        auto then_weight = compute_cast_weight(expr.mexpr(), target);
+        auto else_weight = compute_cast_weight(expr.rexpr(), target);
+        if (then_weight == CAST_IMPOSSIBLE || else_weight == CAST_IMPOSSIBLE) {
+            return std::nullopt;
+        }
+        auto then_cast = adapt_type(expr.mexpr(), target);
+        auto else_cast = adapt_type(expr.rexpr(), target);
+        if (!then_cast || !else_cast) {
+            return std::nullopt;
+        }
+        candidate c;
+        c.target = target;
+        c.then_expr = then_cast;
+        c.else_expr = else_cast;
+        c.max_weight = std::max(static_cast<unsigned int>(then_weight), static_cast<unsigned int>(else_weight));
+        c.sum_weight = static_cast<unsigned int>(then_weight) + static_cast<unsigned int>(else_weight);
+        c.exact_count = (then_weight == CAST_NONE ? 1U : 0U) + (else_weight == CAST_NONE ? 1U : 0U);
+        return c;
+    };
+
+    auto best = build_candidate(then_type);
+    auto other = build_candidate(else_type);
+    auto best_score = [&](const candidate& c) {
+        return std::tuple<unsigned int, unsigned int, unsigned int>{c.max_weight, c.sum_weight, 2U - c.exact_count};
+    };
+
+    if (other) {
+        if (!best || best_score(*other) < best_score(*best)) {
+            best = std::move(other);
+        }
+    }
+
+    if (!best) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH), expr.first_lexeme(),
+            "The two branches of a ternary expression cannot be implicitly converted to a common type: "
+            "found '{}' and '{}'",
+            {then_type ? then_type->to_string() : "?", else_type ? else_type->to_string() : "?"});
+    }
+
+    if (best->then_expr != expr.mexpr()) {
+        expr.mexpr() = best->then_expr;
+    }
+    if (best->else_expr != expr.rexpr()) {
+        expr.rexpr() = best->else_expr;
+    }
+    expr.set_type(best->target);
+}
+
+void implementation_generator::visit_conditional_expression(conditional_expression& expr)
+{
+    set_debug_location(expr.first_lexeme());
+
+    auto cond_expr = expr.lexpr();
+    auto then_expr = expr.mexpr();
+    auto else_expr = expr.rexpr();
+    if (!cond_expr || !then_expr || !else_expr) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
+            "Internal error: ternary expression has a null condition, then-expression, or else-expression; "
+            "this indicates a malformed AST or a compiler bug");
+    }
+
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* then_bb = llvm::BasicBlock::Create(**_context, "ternary-then", func);
+    llvm::BasicBlock* else_bb = llvm::BasicBlock::Create(**_context, "ternary-else", func);
+    llvm::BasicBlock* merge_bb = llvm::BasicBlock::Create(**_context, "ternary-merge");
+    auto result_type = expr.get_type();
+    if (!result_type) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
+            "Internal error: ternary expression has no resolved result type; "
+            "this indicates a compiler bug");
+    }
+    llvm::Type* result_llvm_type = _context->get_llvm_type(result_type);
+    if (!result_llvm_type) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
+            "Internal error: ternary expression result type could not be converted to LLVM IR; "
+            "this indicates a compiler bug");
+    }
+
+    auto saved_sret_destination = _sret_destination;
+    _sret_destination = nullptr;
+
+    auto cleanup_temporaries_since = [&](size_t start_index, const lex::opt_any_lexeme& anchor) {
+        if (_expression_temporaries.size() <= start_index) return;
+        auto previous_debug_loc = _builder->getCurrentDebugLocation();
+        if (anchor) {
+            set_debug_location(anchor);
+        }
+        for (size_t i = _expression_temporaries.size(); i > start_index; --i) {
+            auto& tmp = _expression_temporaries[i - 1];
+            if (tmp.array_type) {
+                emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                    tmp.alloca, tmp.array_type);
+            } else if (tmp.destructor) {
+                _builder->CreateCall(tmp.destructor, {tmp.alloca});
+            }
+        }
+        _expression_temporaries.resize(start_index);
+        _builder->SetCurrentDebugLocation(previous_debug_loc);
+    };
+
+    // Evaluate the condition first; temporary cleanup must happen before branching.
+    size_t cond_temp_start = _expression_temporaries.size();
+    _value = nullptr;
+    cond_expr->accept(*this);
+    llvm::Value* cond_value = _value;
+    if (!cond_value) {
+        _sret_destination = saved_sret_destination;
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
+            "Internal error: the condition of a ternary expression produced no LLVM value during code generation; "
+            "this indicates a compiler bug");
+    }
+    if (cond_expr->get_type() && (type::is_reference(cond_expr->get_type()) || type::is_drain(cond_expr->get_type()))) {
+        cond_value = _builder->CreateLoad(_context->get_llvm_type(cond_expr->get_type()), cond_value, "ternary_cond_load");
+    }
+    cleanup_temporaries_since(cond_temp_start, expr.first_lexeme());
+
+    auto ret_type_nc = type::remove_const(result_type);
+    const bool result_is_reference_like = type::is_reference(result_type) || type::is_drain(result_type);
+    bool use_sret = needs_sret_return(result_type);
+    
+    llvm::AllocaInst* result_alloca = nullptr;
+    std::vector<llvm::Value*> phi_values; // For non-sret types
+    std::vector<llvm::BasicBlock*> phi_blocks;
+
+    if (use_sret) {
+        // For sret aggregates: use caller-provided _sret_destination if available,
+        // otherwise allocate a dedicated destination for the ternary result
+        if (_sret_destination) {
+            // Caller provided a destination (e.g., from variable_statement or return statement)
+            result_alloca = llvm::dyn_cast<llvm::AllocaInst>(_sret_destination);
+            if (!result_alloca) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
+                    "Internal error: _sret_destination is not an AllocaInst; "
+                    "this indicates a compiler bug");
+            }
+            // Don't register for cleanup - the caller owns it
+        } else {
+            // No caller-provided destination: allocate our own
+            llvm::IRBuilder<> entry_builder(&func->getEntryBlock(), func->getEntryBlock().begin());
+            result_alloca = entry_builder.CreateAlloca(result_llvm_type, nullptr, "ternary_result");
+            
+            // Track for cleanup (we own this temporary)
+            auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
+            if (ret_st && ret_st->get_struct()) {
+                auto dtor = ret_st->get_struct()->get_destructor();
+                if (dtor) {
+                    auto dtor_fn = dtor->shared_as<k::model::function>();
+                    auto dtor_it = _context->_functions.find(dtor_fn);
+                    if (dtor_it != _context->_functions.end()) {
+                        _expression_temporaries.push_back({result_alloca, dtor_it->second, nullptr});
+                    }
+                }
+            } else if (auto arr_type = std::dynamic_pointer_cast<sized_array_type>(ret_type_nc)) {
+                _expression_temporaries.push_back({result_alloca, nullptr, arr_type});
+            }
+        }
+    }
+
+    _builder->CreateCondBr(cond_value, then_bb, else_bb);
+
+    auto eval_branch = [&](const std::shared_ptr<expression>& branch_expr, llvm::BasicBlock* branch_bb) {
+        _builder->SetInsertPoint(branch_bb);
+        auto branch_temp_start = _expression_temporaries.size();
+        auto saved_branch_sret = _sret_destination;
+        // For sret types, set _sret_destination to our ternary result_alloca
+        // so that both branches write their results to the same place
+        if (use_sret) {
+            _sret_destination = result_alloca;
+        }
+        // For non-sret types, leave _sret_destination as-is (don't override external settings)
+        _value = nullptr;
+        branch_expr->accept(*this);
+        llvm::Value* branch_value = _value;
+        // Restore the original _sret_destination (don't let branch modifications leak out)
+        _sret_destination = saved_branch_sret;
+        if (!branch_value) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
+                "Internal error: a ternary branch produced no LLVM value during code generation; "
+                "this indicates a compiler bug");
+        }
+        
+        // For value-result ternaries, load reference/drain branches to values.
+        // For reference-result ternaries, keep branch pointers intact.
+        if (!result_is_reference_like
+            && branch_expr->get_type()
+            && (type::is_reference(branch_expr->get_type()) || type::is_drain(branch_expr->get_type()))) {
+            branch_value = _builder->CreateLoad(_context->get_llvm_type(branch_expr->get_type()), branch_value, "ternary_branch_load");
+        }
+        
+        // For sret types: branch_value IS result_alloca (written by sret mechanism via temporary_construction)
+        // For non-sret types: collect branch_value for PHI node
+        if (!use_sret) {
+            phi_values.push_back(branch_value);
+            phi_blocks.push_back(_builder->GetInsertBlock());
+        }
+        
+        cleanup_temporaries_since(branch_temp_start, expr.first_lexeme());
+        if (!_builder->GetInsertBlock()->getTerminator()) {
+            _builder->CreateBr(merge_bb);
+        }
+    };
+
+    eval_branch(then_expr, then_bb);
+    eval_branch(else_expr, else_bb);
+
+    func->insert(func->end(), merge_bb);
+    _builder->SetInsertPoint(merge_bb);
+    _sret_destination = saved_sret_destination;
+    
+    if (use_sret) {
+        // For sret: result is in result_alloca (written by both branches)
+        // Return it as a pointer so the caller can handle it (or store it if needed)
+        _value = result_alloca;
+    } else {
+        // For non-sret: use PHI node to merge the two branch values
+        if (phi_values.size() == 2 && phi_blocks.size() == 2) {
+            auto* phi = _builder->CreatePHI(result_llvm_type, 2, "ternary_result");
+            phi->addIncoming(phi_values[0], phi_blocks[0]);
+            phi->addIncoming(phi_values[1], phi_blocks[1]);
+            _value = phi;
+        } else {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F006), expr.first_lexeme(),
+                "Internal error: ternary expression phi node setup failed; "
+                "this indicates a compiler bug");
+        }
+    }
 }
 
 //

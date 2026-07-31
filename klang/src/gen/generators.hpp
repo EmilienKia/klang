@@ -634,6 +634,7 @@ public:
     void visit_member_of_object_expression(member_of_object_expression&) override;
     void visit_member_of_pointer_expression(member_of_pointer_expression&) override;
     void visit_pm_expression(pm_expression&) override;
+    void visit_conditional_expression(conditional_expression&) override;
 
     void visit_equal_expression(equal_expression&) override;
     void visit_different_expression(different_expression&) override;

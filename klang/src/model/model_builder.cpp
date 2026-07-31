@@ -2060,8 +2060,25 @@ namespace k::model {
 
     }
 
-    void model_builder::visit_conditional_expr(parse::ast::conditional_expr &) {
+    void model_builder::visit_conditional_expr(parse::ast::conditional_expr& expr) {
+        _expr = nullptr;
 
+        // Condition
+        expr.lexpr()->visit(*this);
+        std::shared_ptr<model::expression> cond = _expr;
+
+        // Then branch
+        expr.mexpr()->visit(*this);
+        std::shared_ptr<model::expression> then_expr = _expr;
+
+        // Else branch
+        expr.rexpr()->visit(*this);
+        std::shared_ptr<model::expression> else_expr = _expr;
+
+        _expr = model::conditional_expression::make_shared(cond, then_expr, else_expr);
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::conditional_expr>());
+        }
     }
 
     void model_builder::visit_binary_operator_expr(parse::ast::binary_operator_expr & expr) {

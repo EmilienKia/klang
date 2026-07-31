@@ -57,6 +57,8 @@
  * | | +- logical_and_expression
  * | | +- logical_or_expression
  * | | +- logical_not_expression
+ * | +- ternary_expression
+ * | | +- conditional_expression
  * | +- comparison_expression
  * | | +- equal_expression
  * | | +- different_expression
@@ -706,6 +708,66 @@ public:
         c->_type = _type;
         c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
+    }
+};
+
+class ternary_expression : public expression {
+protected:
+    std::shared_ptr<expression> _lexpr;
+    std::shared_ptr<expression> _mexpr;
+    std::shared_ptr<expression> _rexpr;
+
+public:
+    const std::shared_ptr<expression>& lexpr() const { return _lexpr; }
+    std::shared_ptr<expression>& lexpr() { return _lexpr; }
+
+    const std::shared_ptr<expression>& mexpr() const { return _mexpr; }
+    std::shared_ptr<expression>& mexpr() { return _mexpr; }
+
+    const std::shared_ptr<expression>& rexpr() const { return _rexpr; }
+    std::shared_ptr<expression>& rexpr() { return _rexpr; }
+
+    void assign(std::shared_ptr<expression> lexpr, std::shared_ptr<expression> mexpr, std::shared_ptr<expression> rexpr) {
+        _lexpr = lexpr;
+        _mexpr = mexpr;
+        _rexpr = rexpr;
+        _lexpr->set_parent_expression(shared_as<expression>());
+        _mexpr->set_parent_expression(shared_as<expression>());
+        _rexpr->set_parent_expression(shared_as<expression>());
+    }
+
+protected:
+    ternary_expression() = default;
+    ternary_expression(const ternary_expression&) = default;
+    ternary_expression(ternary_expression&&) = default;
+    ternary_expression(std::shared_ptr<expression> lexpr, std::shared_ptr<expression> mexpr, std::shared_ptr<expression> rexpr)
+        : _lexpr(lexpr), _mexpr(mexpr), _rexpr(rexpr) {
+        _lexpr->set_parent_expression(shared_as<expression>());
+        _mexpr->set_parent_expression(shared_as<expression>());
+        _rexpr->set_parent_expression(shared_as<expression>());
+    }
+};
+
+class conditional_expression : public ternary_expression {
+protected:
+    conditional_expression() = default;
+public:
+    void accept(model_visitor &visitor) override;
+    static std::shared_ptr<expression> make_shared(
+        const std::shared_ptr<expression>& condition,
+        const std::shared_ptr<expression>& then_expr,
+        const std::shared_ptr<expression>& else_expr)
+    {
+        std::shared_ptr<conditional_expression> expr{new conditional_expression()};
+        expr->assign(condition, then_expr, else_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<conditional_expression> c{new conditional_expression()};
+        c->_type = _type;
+        c->_ast_node = _ast_node;
+        if (_lexpr && _mexpr && _rexpr) c->assign(_lexpr->clone(), _mexpr->clone(), _rexpr->clone());
         return c;
     }
 };
