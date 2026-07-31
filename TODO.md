@@ -226,37 +226,78 @@
       "casting between non-primitive types is not yet supported" for an imported class.
       Affects the ergonomic read path of `StringBuilder`'s `CharRef` proxy (use
       `charAt(i)` to read; `sb[i] = c` to write).
-- [ ] **Value semantics for owning aggregates — incomplete wiring (deferred from IN-PROGRESS phase F).**
+- [x] **Value semantics for owning aggregates — wiring completed.**
       The unified copy/move routine `implementation_generator::emit_value_copy_or_move()`
       (`gen/gen_operators_assign.cpp`, declared in `gen/generators.hpp`) correctly handles
       value semantics for owning aggregates such as `Vector<T>` / `MultiSlot<T>`:
       trivially-copyable → `memcpy`; non-trivial prvalue temporary → **MOVE** (`memcpy` +
       `cancel_temporary_cleanup()` so the source is not double-freed); non-trivial lvalue →
-      **COPY** via the copy constructor when present. It is currently wired at only **2 of
-      the 4** value-semantics sites:
+      **COPY** via the copy constructor when present. All 4 value-semantics sites are now wired:
       - [x] Site 1 — assignment `a = b` (`gen_operators_assign.cpp`,
             `visit_simple_assignation_expression`)
       - [x] Root-cause site — temporary construction `S(expr)` /
             `emit(transform(value))` (`gen_expr_construct.cpp`,
             `visit_temporary_construction_expression`)
-      - [ ] Site 2 — variable initialisation `x : T = expr`
-            (`gen/gen_variable_definition.cpp`)
-      - [ ] Site 3 — by-value argument passing (`gen/gen_expr_invocation.cpp`)
-      - [ ] Site 4 — return by value (sret / NRVO) (`gen/gen_function.cpp`); keep NRVO
-            elision where the returned object is a named local.
-      Consequence: outside the scenarios exercised by `[libk][io][transform]`, sites 2–4 can
-      still perform a *shallow* `memcpy` of an owning aggregate, aliasing its heap buffer and
-      risking a double free / use-after-free.
-      Regression coverage (added — migrated from the `/tmp` `vbyval.k` / `vsret.k` repros):
+      - [x] Site 2 — variable initialisation `x : T = expr` (lvalue copy path) now routed
+            through `emit_value_copy_or_move()` in `gen/gen_variable_definition.cpp` and
+            `gen/gen_expr_construct.cpp` (direct-copy detection).
+      - [x] Site 3 — by-value argument passing: `implementation_generator::visit_load_value_expression`
+            (`gen/gen_expr_unary.cpp`) now stages a copy-constructor call into a fresh alloca
+            when loading a struct by value from a genuine lvalue reference (not a prvalue
+            temporary), instead of aliasing the source memory.
+      - [x] Site 4 — return by value (sret / NRVO): already worked correctly via the
+            sret + Site-3 interplay; verified with dedicated regression tests. NRVO elision
+            is preserved for named-local returns.
+      Additional fixes required to make the wiring safe end-to-end:
+      - `_sret_destination` (the sret elision slot passed down from a variable-init/return
+        context) was incorrectly visible while evaluating the **receiver** of a chained call
+        (`make(1).transform(41)`) or a **binary/cast operator overload operand**
+        (`a + b + c`, parsed as `(a + b) + c`). A nested sret-returning receiver/operand call
+        could consume the outer destination directly, leaving its own temporary untracked and
+        never destroyed (a leak masked as a double-free that happened to keep the destructor
+        *count* superficially matching in the old, buggy code). Fixed by saving/clearing
+        `_sret_destination` around receiver evaluation in
+        `implementation_generator::visit_function_invocation_expression`
+        (`gen/gen_expr_invocation.cpp`) and around operand evaluation in
+        `generate_binary_operator_overload()` / the cast-operator overload path
+        (`gen/gen_operators_overload.cpp`).
+      - The compiler's auto-generated default copy constructor (`gen/gen_struct.cpp`,
+        `symbol_resolver::visit_aggregate`) unconditionally did a raw `memcpy`, even for
+        structs that are not trivially copyable (e.g. `Vector<T>`, whose `_slot : MultiSlot<T>`
+        member is a struct with no owner-typed field but a raw pointer member and its own
+        destructor). This masked the "no copy constructor → reject" safety net entirely,
+        since a (broken) copy constructor already existed. Fixed by gating auto-generation on
+        `aggregate_type_is_trivially_copyable()` (`gen/gen_helpers.hpp`) — non-trivially-copyable
+        structs are left without an auto-generated copy constructor, so the copy-site checks
+        (`aggregate_type_has_resource_field()`) correctly reject an unsafe shallow copy at
+        compile time (`ERR_TYPE_NOT_COPYABLE`) instead of silently double-freeing at runtime.
+      - `libk/libk/src/vector.k`: added an explicit deep-copy `Vector(other: const Vector<T>&)`
+        constructor (allocates its own buffer and copy-constructs each element), since Vector
+        manages its heap buffer manually (no `owner`-typed field) and therefore needs a
+        user-provided copy constructor now that the compiler no longer silently memcpy's it.
+      Regression coverage:
       - `[gen][lifecycle][cat8][value-semantics]` in `klang/tests/test-gen-lifecycle.cpp` —
-        prvalue `struct` (ctor/dtor counters) passed and returned by value is moved, not
-        double-destroyed.
-      - `[libk][vector][value-semantics]` in `libk/libk/tests/test-vector.cpp` — the same two
-        move scenarios strengthened to a real owning `Vector<int>` (heap-buffer integrity, plus
-        an `[run]` e2e variant that would crash on a shallow-copy double free).
-      When wiring the remaining lvalue *copy* paths for sites 2–4, extend these tests with
-      by-value argument / return-by-value of an **lvalue** `Vector<T>` asserting deep-copy
-      independence (mutating one copy must not affect the other).
+        all 4 sites, using a `struct` with ctor/dtor counters.
+      - `[libk][vector][value-semantics]` in `libk/libk/tests/test-vector.cpp` — the same
+        scenarios strengthened to a real owning `Vector<int>` (heap-buffer integrity: lvalue
+        copies at sites 2-4 deep-copy the buffer; mutating one copy does not affect the other).
+      - `[gen][rvo][rvo5]` / `[gen][rvo][rvo8]` in `klang/tests/test-gen-rvo.cpp` — chained
+        member call (`make(1).transform(41)`) and chained operator overload (`a + b + c`)
+        receiver/operand temporaries are destroyed exactly once (previously masked by a
+        double-free that happened to keep the naive destructor count "correct").
+      Known pre-existing, unrelated issue surfaced incidentally while validating this fix:
+      `ListMap<K,V>::put()` "update value in place" corrupts the heap (`libk/libk/tests/test-map.cpp`,
+      `"ListMap<int,int> — put updates value in place without moving order"` and the adjacent
+      `size()`-mismatch case) — reproduced identically on the pre-fix baseline via `git stash`,
+      so it is **not** a regression from this change; left unfixed as out of scope for this TODO
+      item, tracked separately below.
+- [ ] **`ListMap<K,V>::put()` corrupts the heap when updating an existing key's value in place.**
+      `libk/libk/tests/test-map.cpp`: `"ListMap<int,int> — put/get/containsKey/containsValue"`
+      and `"ListMap<int,int> — put updates value in place without moving order"` fail
+      (wrong result / `free(): invalid pointer` abort). Reproduces identically before and after
+      the value-semantics wiring fix above (confirmed via `git stash`), so it predates that
+      work. Needs its own investigation of `ListMap::put()` /
+      `DoubleLinkedList<MapEntry<K,V>>::get()` mutation path.
 - [x] **`type-not-copyable` diagnostic — fixed.**
       `emit_value_copy_or_move()` now raises `codegen_diag::ERR_TYPE_NOT_COPYABLE` instead of
       silently byte-copying a non-trivial lvalue when no copy constructor is available. The

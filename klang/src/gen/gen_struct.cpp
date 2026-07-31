@@ -23,6 +23,7 @@
 
 #include "resolvers.hpp"
 #include "generators.hpp"
+#include "gen_helpers.hpp"
 #include "../common/operator_names.hpp"
 
 #include "../model/imported.hpp"
@@ -678,6 +679,19 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                 if (type::is_struct(mv->get_type())) { needs_copy_ctor = true; break; }
             }
         }
+    }
+    // A memberwise bytewise (memcpy) default copy constructor is only safe to
+    // auto-generate when the struct is trivially copyable (no destructor and no
+    // copy constructor anywhere in its layout, recursively). For a struct that
+    // manages a resource (e.g. has its own destructor, such as Vector<T> owning a
+    // heap buffer), silently synthesizing a memcpy-based copy constructor would
+    // alias the resource between the original and the copy — a double-free
+    // waiting to happen. Leave get_copy_constructor() null in that case so the
+    // programmer must supply an explicit deep-copy constructor; callers that
+    // attempt to copy such a type without one are rejected at the copy site
+    // (see aggregate_type_has_resource_field() in gen_helpers.hpp).
+    if (needs_copy_ctor && st_type && !aggregate_type_is_trivially_copyable(st_type)) {
+        needs_copy_ctor = false;
     }
     if (needs_copy_ctor && !st.get_copy_constructor()) {
         warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_IMPLICIT_COPY_CTOR_GENERATED), st_lexeme,

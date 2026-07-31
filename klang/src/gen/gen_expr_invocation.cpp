@@ -1939,8 +1939,18 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 "this should have been rejected during type resolution");
         }
 
-        // First argument is the object pointer (this)
+        // First argument is the object pointer (this).
+        // The receiver expression is NOT the call result: an outer
+        // _sret_destination (set by the enclosing variable-init/return for
+        // *this* invocation's own result) must not leak into the receiver's
+        // evaluation, or a nested sret-returning receiver call (e.g. the
+        // `make(1)` in `make(1).transform(41)`) would wrongly consume it and
+        // write its temporary directly into the outer destination — leaving
+        // that receiver temporary untracked and never destroyed.
+        llvm::Value* saved_sret_destination_for_receiver = _sret_destination;
+        _sret_destination = nullptr;
         member_callee->sub_expr()->accept(*this);
+        _sret_destination = saved_sret_destination_for_receiver;
         if(!_value) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F028), expr.first_lexeme(),
                 "Internal error: failed to generate the 'this' argument for member function call '{}'; "

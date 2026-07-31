@@ -280,6 +280,39 @@ void implementation_generator::visit_load_value_expression(load_value_expression
     }
     if (load_type) {
         llvm::Value* src_ptr = _value;
+
+        // ── Lvalue struct copy (Site 3): if the source is a non-temporary lvalue
+        //    of a non-trivially copyable struct type with a copy constructor, call
+        //    the copy constructor into a staging alloca so the callee receives a
+        //    proper copy (not a bitwise alias of the original object).
+        auto st_type_nc = std::dynamic_pointer_cast<struct_type>(type::remove_const(load_type));
+        if (st_type_nc) {
+            auto sub_type = expr.sub_expr()->get_type();
+            bool src_is_lvalue_ref = type::is_reference(sub_type);
+            bool src_is_prvalue_temp = std::dynamic_pointer_cast<temporary_construction_expression>(expr.sub_expr())
+                                       && is_expression_temporary(src_ptr);
+            if (src_is_lvalue_ref && !src_is_prvalue_temp) {
+                auto agg = st_type_nc->get_struct();
+                if (agg && agg->get_copy_constructor()) {
+                    // Call copy constructor: dest = new staging alloca, src = lvalue ptr
+                    llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
+                    llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+                    llvm::IRBuilder<> entry_bld(&cur_fn->getEntryBlock(),
+                                                cur_fn->getEntryBlock().begin());
+                    auto* staging = entry_bld.CreateAlloca(llvm_st, nullptr, "lval_copy");
+                    emit_value_copy_or_move(staging, src_ptr, st_type_nc,
+                        /*destroy_dest_first=*/false, expr.first_lexeme(), "by-value copy");
+                    // Load the struct value from staging so it can be passed by value.
+                    // Note: staging is intentionally NOT registered as an expression
+                    // temporary — the callee takes sole ownership of the copy via its
+                    // own stack slot and destructor call. A TODO remains to also emit a
+                    // cleanup for staging in the caller for owner-holding structs.
+                    _value = _builder->CreateLoad(llvm_st, staging, "lval_copy_load");
+                    return;
+                }
+            }
+        }
+
         _value = _builder->CreateLoad(_context->get_llvm_type(load_type), src_ptr);
         // Value semantics: when a whole struct aggregate is loaded by value directly out
         // of a materialised prvalue temporary (e.g. `return Res();` or `consume(Res())`,

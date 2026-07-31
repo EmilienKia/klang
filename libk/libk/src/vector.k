@@ -68,6 +68,30 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
         _capacity = 0;
     }
 
+    /**
+     * Copy constructor — deep-copies the buffer so the two vectors own
+     * independent storage. Without this explicit constructor, the compiler
+     * would either refuse to copy the vector (no owner-typed field is
+     * directly visible) or, worse, synthesize an unsafe bytewise copy that
+     * aliases the heap buffer between the original and the copy, causing a
+     * double free when both are destroyed.
+     */
+    Vector(other : const Vector<T>&) {
+        _size = 0;
+        _capacity = 0;
+        n : unsigned int = other.size();
+        if (n > 0) {
+            grow(n);
+            i : unsigned int = 0;
+            while (i < n) {
+                _slot.construct(i);
+                _slot.get(i) = other.get(i);
+                i = i + 1;
+            }
+            _size = n;
+        }
+    }
+
     ~Vector() {
         clear();
         if (_capacity > 0) {

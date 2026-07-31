@@ -1441,3 +1441,193 @@ TEST_CASE("Lifecycle Cat8: lvalue copy of non-copyable struct is rejected",
     CHECK(has_type_not_copyable);
 }
 
+// =============================================================================
+// Category 8 (continued): lvalue copy paths — Sites 2, 3, 4
+//
+// A non-trivial lvalue (an existing named variable) passed/initialised/returned
+// by value must invoke the copy constructor, not perform a shallow byte-copy.
+// Before Sites 2-4 are wired, these cases silently alias the heap buffer and
+// cause a double-free or use-after-free when the destructor runs twice on the
+// same pointer.
+// =============================================================================
+
+TEST_CASE("Lifecycle Cat8: lvalue copied into variable initialisation (site 2)",
+          "[gen][lifecycle][cat8][value-semantics]") {
+    auto jit = gen_jit(R"SRC(
+        module __lc8_varinit_copy__;
+
+        g_ctors  : int = 0;
+        g_copies : int = 0;
+        g_dtors  : int = 0;
+
+        struct Tracked {
+            Tracked()               { g_ctors  = g_ctors  + 1; }
+            Tracked(other: Tracked&){ g_copies = g_copies + 1; }
+            ~Tracked()              { g_dtors  = g_dtors  + 1; }
+        }
+
+        // Initialise a new variable from an existing lvalue.
+        run() : int {
+            orig : Tracked;
+            copy : Tracked = orig;
+            return 0;
+        }
+
+        test()      : int { run(); return 0; }
+        get_ctors() : int { return g_ctors;  }
+        get_copies(): int { return g_copies; }
+        get_dtors() : int { return g_dtors;  }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test       = jit->lookup_symbol<int(*)()>("test");
+    auto get_ctors  = jit->lookup_symbol<int(*)()>("get_ctors");
+    auto get_copies = jit->lookup_symbol<int(*)()>("get_copies");
+    auto get_dtors  = jit->lookup_symbol<int(*)()>("get_dtors");
+    REQUIRE(test       != nullptr);
+    REQUIRE(get_ctors  != nullptr);
+    REQUIRE(get_copies != nullptr);
+    REQUIRE(get_dtors  != nullptr);
+
+    test();
+
+    // One default construction (orig), one copy construction (copy),
+    // two destructions (orig and copy at end of run()).
+    CHECK(get_ctors()  == 1);
+    CHECK(get_copies() == 1);
+    CHECK(get_dtors()  == 2);
+}
+
+TEST_CASE("Lifecycle Cat8: lvalue passed by value to function (site 3)",
+          "[gen][lifecycle][cat8][value-semantics]") {
+    auto jit = gen_jit(R"SRC(
+        module __lc8_byval_lval_copy__;
+
+        g_ctors  : int = 0;
+        g_copies : int = 0;
+        g_dtors  : int = 0;
+
+        struct Tracked {
+            Tracked()               { g_ctors  = g_ctors  + 1; }
+            Tracked(other: Tracked&){ g_copies = g_copies + 1; }
+            ~Tracked()              { g_dtors  = g_dtors  + 1; }
+        }
+
+        // The by-value parameter is a copy of the caller's lvalue.
+        consume(t: Tracked) : int { return 0; }
+
+        run() : int {
+            orig : Tracked;
+            consume(orig);   // lvalue passed by value — must copy, not alias
+            return 0;
+        }
+
+        test()      : int { run(); return 0; }
+        get_ctors() : int { return g_ctors;  }
+        get_copies(): int { return g_copies; }
+        get_dtors() : int { return g_dtors;  }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test       = jit->lookup_symbol<int(*)()>("test");
+    auto get_ctors  = jit->lookup_symbol<int(*)()>("get_ctors");
+    auto get_copies = jit->lookup_symbol<int(*)()>("get_copies");
+    auto get_dtors  = jit->lookup_symbol<int(*)()>("get_dtors");
+    REQUIRE(test       != nullptr);
+    REQUIRE(get_ctors  != nullptr);
+    REQUIRE(get_copies != nullptr);
+    REQUIRE(get_dtors  != nullptr);
+
+    test();
+
+    // One default ctor (orig), one copy ctor (callee's param), two dtors.
+    CHECK(get_ctors()  == 1);
+    CHECK(get_copies() == 1);
+    CHECK(get_dtors()  == 2);
+}
+
+TEST_CASE("Lifecycle Cat8: lvalue returned by value from function (site 4)",
+          "[gen][lifecycle][cat8][value-semantics]") {
+    auto jit = gen_jit(R"SRC(
+        module __lc8_retval_lval_copy__;
+
+        g_ctors  : int = 0;
+        g_copies : int = 0;
+        g_dtors  : int = 0;
+
+        struct Tracked {
+            Tracked()               { g_ctors  = g_ctors  + 1; }
+            Tracked(other: Tracked&){ g_copies = g_copies + 1; }
+            ~Tracked()              { g_dtors  = g_dtors  + 1; }
+        }
+
+        // Return one of two locals — the returned one is not the NRVO candidate,
+        // so the compiler cannot elide the copy.
+        make(flag: int) : Tracked {
+            a : Tracked;
+            b : Tracked;
+            if (flag != 0) {
+                return a;
+            }
+            return b;
+        }
+
+        run() : int {
+            t : Tracked = make(1);
+            return 0;
+        }
+
+        test()      : int { run(); return 0; }
+        get_ctors() : int { return g_ctors;  }
+        get_copies(): int { return g_copies; }
+        get_dtors() : int { return g_dtors;  }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test       = jit->lookup_symbol<int(*)()>("test");
+    auto get_ctors  = jit->lookup_symbol<int(*)()>("get_ctors");
+    auto get_copies = jit->lookup_symbol<int(*)()>("get_copies");
+    auto get_dtors  = jit->lookup_symbol<int(*)()>("get_dtors");
+    REQUIRE(test       != nullptr);
+    REQUIRE(get_ctors  != nullptr);
+    REQUIRE(get_copies != nullptr);
+    REQUIRE(get_dtors  != nullptr);
+
+    test();
+
+    // make() constructs 2 locals (a and b), copies 'a' into the caller's sret slot (t),
+    // destroys both a and b at make() exit, then destroys t at run() exit.
+    // Total: ctors=2, copies=1, dtors=3.
+    CHECK(get_ctors()  == 2);
+    CHECK(get_copies() == 1);
+    CHECK(get_dtors()  == 3);
+}
+
+TEST_CASE("Lifecycle Cat8: lvalue init of non-copyable struct is rejected (site 2)",
+          "[gen][lifecycle][cat8][value-semantics][error]") {
+    test_logger logger;
+    bool ok = compile_collect_diagnostics(R"SRC(
+        module __lc8_nocopy_init__;
+
+        struct Box {
+            payload : int!;
+        }
+
+        test() : void {
+            a : Box;
+            b : Box = a;
+        }
+    )SRC", nullptr, logger);
+
+    CHECK_FALSE(ok);
+
+    bool has_type_not_copyable = false;
+    for (const auto& diag : logger.diagnostics) {
+        if (diag.code == 0x0204) {
+            has_type_not_copyable = true;
+            break;
+        }
+    }
+    CHECK(has_type_not_copyable);
+}
+

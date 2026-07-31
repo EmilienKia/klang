@@ -855,6 +855,16 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
     // Build arguments
     std::vector<llvm::Value*> args;
 
+    // The outer _sret_destination (if any) is meant for THIS operator call's own
+    // result, not for evaluating its operands. A chained call like `a + b + c`
+    // parses as `(a + b) + c`, where the left operand `a + b` is itself an
+    // sret-returning operator invocation: if the outer destination leaked into
+    // its evaluation, that nested temporary would be written directly into the
+    // final destination and never tracked for destruction (a leak masked as a
+    // spurious NRVO elision).
+    llvm::Value* saved_sret_destination_for_operands = _sret_destination;
+    _sret_destination = nullptr;
+
     if (op_func->is_member()) {
         // Member operator: 'this' is the left operand (a reference/pointer to the struct)
         expr.left()->accept(*this);
@@ -889,6 +899,10 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         }
         args.push_back(_value);
     }
+
+    // Restore the outer _sret_destination now that operands are fully evaluated —
+    // it applies to this operator call's own result (via prepare_sret_for_op below).
+    _sret_destination = saved_sret_destination_for_operands;
 
     // Check for virtual dispatch
     if (expr.has_operator_dispatch_info()) {
@@ -1257,6 +1271,14 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
     // Build arguments: only 'this' (the source object being cast)
     std::vector<llvm::Value*> args;
 
+    // The outer _sret_destination (if any) is for this cast call's own result,
+    // not for evaluating the source operand — see the analogous guard in
+    // generate_binary_operator_overload for the reasoning (avoids a leaked
+    // receiver temporary when the source operand is itself an sret-returning
+    // expression, e.g. a chained cast on a call result).
+    llvm::Value* saved_sret_destination_for_cast_operand = _sret_destination;
+    _sret_destination = nullptr;
+
     // Step 2: Resolve the operator_cast function on the source aggregate type
     // Member casting operator: 'this' is the source operand (a reference/pointer to the struct)
     expr.sub_expr()->accept(*this);
@@ -1265,6 +1287,10 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
             "Internal error: source operand for casting operator overload produced no LLVM value");
     }
     args.push_back(_value);
+
+    // Restore the outer _sret_destination now that the source operand is fully
+    // evaluated — it applies to this cast call's own result (via prepare_sret_for_cast).
+    _sret_destination = saved_sret_destination_for_cast_operand;
 
     // Step 3: Call the casting operator with 'this' pointer
     // Check for virtual dispatch

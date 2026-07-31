@@ -26,6 +26,7 @@
 //
 
 #include "resolvers.hpp"
+#include "gen_helpers.hpp"
 
 #include "../model/imported.hpp"
 #include "../model/statements.hpp"
@@ -544,6 +545,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
         auto arg_type = ctor_args[0]->get_type();
         auto arg_type_nc = type::remove_const(arg_type);
         bool is_direct_copy = false;
+        bool is_lvalue_copy = false;
         // Check bare struct type (rvalue from function return)
         if (arg_type_nc == st_type) {
             is_direct_copy = true;
@@ -553,10 +555,24 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
             auto ref_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype());
             if (ref_sub == st_type) {
                 is_direct_copy = true;
+                is_lvalue_copy = true;
             }
         }
         if (is_direct_copy) {
-            // Direct copy: null constructor signals aggregate store in impl_gen
+            // For lvalue copies: reject non-trivial structs that have no copy constructor.
+            if (is_lvalue_copy && struct_model) {
+                bool has_cc = struct_model->get_copy_constructor() != nullptr;
+                // Check for a resource-referencing field (owner/pointer/link/view,
+                // recursively through nested struct members) — such a field makes
+                // shallow copy unsafe even without a direct owner-typed field.
+                if (!has_cc && aggregate_type_has_resource_field(st_type)) {
+                    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                        ctx.var_lexeme,
+                        "Type '{}' is not copyable: variable initialisation from a lvalue requires a copy constructor",
+                        {st_type->to_string()});
+                }
+            }
+            // Direct copy: null constructor signals value copy in impl_gen (emit_value_copy_or_move)
             ctx.var.set_var_constructor(nullptr);
             if (ctx.init_expr) {
                 ctx.init_expr->set_constructor(nullptr);

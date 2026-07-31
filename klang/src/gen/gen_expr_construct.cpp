@@ -185,7 +185,8 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             auto arg_type = ctor_args[0]->get_type();
             auto arg_type_nc = type::remove_const(arg_type);
             bool is_direct_copy = false;
-            // Check bare struct type (rvalue from function return)
+            bool is_lvalue_copy = false; // source is a ref<struct> (lvalue)
+            // Check bare struct type (rvalue from function return or temporary)
             if (arg_type_nc == st_type) {
                 is_direct_copy = true;
             }
@@ -194,9 +195,23 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                 auto ref_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype());
                 if (ref_sub == st_type) {
                     is_direct_copy = true;
+                    is_lvalue_copy = true;
                 }
             }
             if (is_direct_copy) {
+                // For lvalue copies: reject non-trivial structs that have no copy constructor.
+                if (is_lvalue_copy && st) {
+                    bool has_cc    = st->get_copy_constructor() != nullptr;
+                    // Check for a resource-referencing field (owner/pointer/link/view,
+                    // recursively through nested struct members) — such a field makes
+                    // shallow copy unsafe even without a direct owner-typed field.
+                    if (!has_cc && aggregate_type_has_resource_field(st_type)) {
+                        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                            expr.first_lexeme(),
+                            "Type '{}' is not copyable: variable initialisation from a lvalue requires a copy constructor",
+                            {st_type->to_string()});
+                    }
+                }
                 // Direct copy: null constructor signals aggregate store in impl_gen
                 expr.set_constructor(nullptr);
                 expr.arguments(ctor_args);
@@ -527,32 +542,31 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             return;
         }
 
-        // ── Direct struct copy (no constructor): aggregate load+store ──
+        // ── Direct struct copy (no constructor): use emit_value_copy_or_move ──
         // Variable initialisation `x : T = expr;` where the resolver selected a direct
-        // aggregate copy (no constructor). NOTE: this path is intentionally a plain
-        // aggregate copy and is NOT routed through emit_value_copy_or_move — the move
-        // (cancel-source) semantics are applied earlier, at the load of a prvalue
-        // temporary (see visit_load_value_expression), so that chained-call elision
-        // patterns such as `r : T = make().transform()` keep their expected object
-        // lifetimes. Owning-aggregate move/copy for the initialisation site remains a
-        // documented follow-up (TODO: value semantics, site 2).
+        // aggregate copy (no constructor). For rvalue temporaries, emit_value_copy_or_move
+        // performs a move (memcpy + cancel cleanup). For lvalue references, it calls the
+        // copy constructor (if any) or falls back to memcpy for trivially copyable types.
         if (!function && expr.size() == 1) {
             _value = nullptr;
             expr.argument(0)->accept(*this);
-            if (_value) {
+            if (_value && _value != object_ref) {
                 auto arg_type = expr.argument(0)->get_type();
-                llvm::Type* llvm_struct_ty = _context->get_llvm_type(st_type);
-                llvm::Value* src_val = _value;
-                // Load only when the source is actually addressable.
-                // Some struct-valued arguments (e.g. template aggregate-value substitutions)
-                // are emitted as immediate LLVM constants, not pointers.
-                if (type::is_reference(arg_type)
-                    || (type::is_struct(arg_type) && _value->getType()->isPointerTy())) {
-                    src_val = _builder->CreateLoad(llvm_struct_ty, _value, "copy_load");
+                bool src_is_pointer = type::is_reference(arg_type) || _value->getType()->isPointerTy();
+                if (src_is_pointer) {
+                    // Source is addressable (alloca, reference): use emit_value_copy_or_move.
+                    // This handles lvalue copy-ctor calls and prvalue move (cancel cleanup).
+                    emit_value_copy_or_move(object_ref, _value, st_type, /*destroy_dest_first=*/false,
+                        expr.first_lexeme(), "variable initialisation");
+                } else {
+                    // Source is an immediate aggregate value (e.g. template aggregate constant):
+                    // store directly without going through memcpy.
+                    _builder->CreateStore(_value, object_ref);
                 }
-                // src_val is now the aggregate value; store into the destination alloca
-                _builder->CreateStore(src_val, object_ref);
             }
+            // If _value == object_ref the inner expression (e.g. an sret call whose
+            // destination was pre-wired to object_ref) already wrote into the slot,
+            // so no further action is required.
             _value = object_ref;
             return;
         }

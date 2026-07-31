@@ -33,43 +33,7 @@ namespace k::model::gen {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool implementation_generator::is_trivially_copyable(const std::shared_ptr<type>& t) {
-    auto nt = type::remove_const(t);
-    if (!nt) return true;
-
-    // An owner directly owns heap memory — never bytewise copyable.
-    if (std::dynamic_pointer_cast<owner_type>(nt)) return false;
-
-    // A sized array is trivially copyable iff its element type is.
-    if (auto arr = std::dynamic_pointer_cast<sized_array_type>(nt)) {
-        return is_trivially_copyable(arr->get_subtype());
-    }
-
-    auto st_type = std::dynamic_pointer_cast<struct_type>(nt);
-    if (!st_type) return true; // primitives, pointers, references, ...
-
-    auto st = st_type->get_struct();
-    if (!st) return true; // union / unresolved struct type: handled elsewhere
-
-    // A user or intrinsic destructor, or a copy constructor, signals that the
-    // type manages its own resources and must not be copied bytewise.
-    if (st->get_destructor()) return false;
-    if (st->get_copy_constructor()) return false;
-
-    // Recurse into base sub-objects.
-    for (auto& bs : st->get_bases()) {
-        if (bs.base && bs.base->get_struct_type()) {
-            if (!is_trivially_copyable(bs.base->get_struct_type())) return false;
-        }
-    }
-
-    // Recurse into member variables.
-    for (auto& entry : st->variables()) {
-        auto mv = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
-        if (!mv) continue;
-        if (!is_trivially_copyable(mv->get_type())) return false;
-    }
-
-    return true;
+    return aggregate_type_is_trivially_copyable(t);
 }
 
 bool implementation_generator::cancel_temporary_cleanup(llvm::Value* ptr) {
@@ -160,11 +124,23 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
                 "the declaration pass must register every emitted constructor",
                 {nt ? nt->to_string() : "?"});
         }
+        // No copy constructor: only reject if the struct holds a resource-referencing
+        // field (owner/pointer/link/view, recursively through nested struct members),
+        // which cannot be safely shallow-copied.  A struct with a destructor but no
+        // such field is copyable via a plain bitwise memcpy — the programmer chose not
+        // to provide a copy constructor, implying shallow copy is safe for their
+        // semantics (e.g. a destructor that merely updates a counter).
+        if (aggregate_type_has_resource_field(nt)) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE), lexeme,
+                "Type '{}' is not copyable during {}: a non-trivial lvalue copy requires a copy constructor",
+                {nt ? nt->to_string() : "?", copy_context ? copy_context : "copy"});
+        }
+        // Fall through to memcpy for non-owner non-trivial structs (destructor exists but
+        // shallow copy is safe: no owned heap resources).
     }
-
-    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE), lexeme,
-        "Type '{}' is not copyable during {}: a non-trivial lvalue copy requires a copy constructor",
-        {nt ? nt->to_string() : "?", copy_context ? copy_context : "copy"});
+    // Shallow bitwise copy for structs with no copy constructor and no resource fields.
+    _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
+                           _builder->getInt64(sz));
 }
 
 void type_reference_resolver::visit_assignation_expression(assignation_expression &expr) {

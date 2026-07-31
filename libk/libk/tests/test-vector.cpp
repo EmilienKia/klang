@@ -1210,3 +1210,152 @@ TEST_CASE("Vector<int> — diamond dispatch: same instance through two independe
     REQUIRE(fn);
     CHECK(fn() == 111);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  8 (continued): lvalue copy paths — Sites 2, 3, 4
+//
+//  A non-trivial lvalue Vector<int> (owns a heap buffer) initialised, passed, or
+//  returned by value must invoke the copy constructor so the two copies hold
+//  independent buffers.  Without the fix, a shallow byte-copy aliases the heap
+//  buffer: mutating one copy corrupts the other, and the double free crashes on
+//  scope exit.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — lvalue init deep copies buffer (site 2)",
+          "[libk][vector][value-semantics]") {
+    auto j = jit_k(R"SRC(
+        module __vec_lval_init__;
+
+        test() : int {
+            v1 : Vector<int>;
+            v1.append(1);
+            v1.append(2);
+            v1.append(3);
+
+            v2 : Vector<int> = v1;    // lvalue copy — must be deep
+            v2.append(99);            // mutate copy; must NOT affect v1
+
+            // v1 must still have exactly [1, 2, 3]
+            ok : int = 1;
+            if (v1.size() != 3)          ok = 0;
+            if (v1[0] != 1)              ok = 0;
+            if (v1[1] != 2)              ok = 0;
+            if (v1[2] != 3)              ok = 0;
+            // v2 must have [1, 2, 3, 99]
+            if (v2.size() != 4)          ok = 0;
+            if (v2[3] != 99)             ok = 0;
+            return ok;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("Vector<int> — lvalue passed by value deep copies buffer (site 3)",
+          "[libk][vector][value-semantics]") {
+    auto j = jit_k(R"SRC(
+        module __vec_lval_byval__;
+
+        // Mutates the local copy; caller's original must be unaffected.
+        mutAndSum(v: Vector<int>) : int {
+            v.append(99);
+            s : int = 0;
+            i : unsigned int = 0;
+            while (i < v.size()) {
+                s = s + v[i];
+                i = i + 1;
+            }
+            return s;    // 1+2+3+99 = 105
+        }
+
+        test() : int {
+            orig : Vector<int>;
+            orig.append(1);
+            orig.append(2);
+            orig.append(3);
+
+            r : int = mutAndSum(orig);   // lvalue by-value — must copy
+
+            ok : int = 1;
+            if (r != 105)          ok = 0;   // callee got a full copy
+            if (orig.size() != 3)  ok = 0;   // original unchanged
+            if (orig[0] != 1)      ok = 0;
+            if (orig[1] != 2)      ok = 0;
+            if (orig[2] != 3)      ok = 0;
+            return ok;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("Vector<int> — lvalue returned by value deep copies buffer (site 4)",
+          "[libk][vector][value-semantics]") {
+    auto j = jit_k(R"SRC(
+        module __vec_lval_retval__;
+
+        // Returns one of two local vectors depending on flag — neither is the
+        // NRVO candidate, so the compiler must copy into the caller's sret slot.
+        pick(flag: int) : Vector<int> {
+            a : Vector<int>;
+            a.append(10);
+            a.append(20);
+            b : Vector<int>;
+            b.append(100);
+            b.append(200);
+            if (flag != 0) {
+                return a;   // non-NRVO copy of 'a'
+            }
+            return b;       // non-NRVO copy of 'b'
+        }
+
+        test() : int {
+            r : Vector<int> = pick(1);  // should deep-copy 'a'
+            ok : int = 1;
+            if (r.size() != 2)  ok = 0;
+            if (r[0] != 10)     ok = 0;
+            if (r[1] != 20)     ok = 0;
+            return ok;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("Vector<int> — lvalue copy deep copy e2e build and exec (site 2-3-4)",
+          "[libk][vector][value-semantics][run]") {
+    auto result = build_and_exec(R"SRC(
+        module __vec_lval_copy_e2e__;
+
+        mutAndSum(v: Vector<int>) : int {
+            v.append(999);
+            s : int = 0;
+            i : unsigned int = 0;
+            while (i < v.size()) { s = s + v[i]; i = i + 1; }
+            return s;
+        }
+
+        main() : int {
+            orig : Vector<int>;
+            orig.append(1);
+            orig.append(2);
+            orig.append(3);
+
+            copy : Vector<int> = orig;  // site 2
+            r : int = mutAndSum(orig);  // site 3 — pass orig by value
+
+            // orig must be untouched (size==3), copy must be independent (size==3)
+            if (orig.size() != 3) return 1;
+            if (copy.size() != 3) return 2;
+            if (r != 1005) return 3;    // 1+2+3+999
+            return 0;
+        }
+    )SRC");
+    REQUIRE(result.exit_code == 0);
+}

@@ -406,6 +406,100 @@ inline void emit_sized_array_elements_cleanup(
     }
 }
 
+/**
+ * Return true if a value of type `t` can be safely duplicated with a raw
+ * bytewise copy (memcpy): no destructor and no user copy constructor exist
+ * anywhere in its layout (recursively through base classes, member variables,
+ * and sized-array elements). An owner type is never trivially copyable.
+ *
+ * Shared between the aggregate resolver (which decides whether to auto-
+ * generate a memcpy-based default copy constructor) and the code generator
+ * (which decides whether a plain memcpy is a safe fallback for a struct
+ * copy that has no copy constructor at all).
+ */
+inline bool aggregate_type_is_trivially_copyable(const std::shared_ptr<type>& t) {
+    auto nt = type::remove_const(t);
+    if (!nt) return true;
+
+    // An owner directly owns heap memory — never bytewise copyable.
+    if (std::dynamic_pointer_cast<owner_type>(nt)) return false;
+
+    // A sized array is trivially copyable iff its element type is.
+    if (auto arr = std::dynamic_pointer_cast<sized_array_type>(nt)) {
+        return aggregate_type_is_trivially_copyable(arr->get_subtype());
+    }
+
+    auto st_type = std::dynamic_pointer_cast<struct_type>(nt);
+    if (!st_type) return true; // primitives, pointers, references, ...
+
+    auto st = st_type->get_struct();
+    if (!st) return true; // union / unresolved struct type: handled elsewhere
+
+    // A user or intrinsic destructor, or a copy constructor, signals that the
+    // type manages its own resources and must not be copied bytewise.
+    if (st->get_destructor()) return false;
+    if (st->get_copy_constructor()) return false;
+
+    // Recurse into base sub-objects.
+    for (auto& bs : st->get_bases()) {
+        if (bs.base && bs.base->get_struct_type()) {
+            if (!aggregate_type_is_trivially_copyable(bs.base->get_struct_type())) return false;
+        }
+    }
+
+    // Recurse into member variables.
+    for (auto& entry : st->variables()) {
+        auto mv = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+        if (!mv) continue;
+        if (!aggregate_type_is_trivially_copyable(mv->get_type())) return false;
+    }
+
+    return true;
+}
+
+/**
+ * Return true if a value of type `t` holds (recursively, through base
+ * classes and member variables) a field that references or owns an external
+ * resource: an owner, pointer, link or view addresser, or a nested struct
+ * that itself has such a field. Such a field makes a bytewise copy unsafe
+ * (aliasing / double-free risk) even when the struct has no owner-typed
+ * field directly and even when it only has a destructor with no otherwise
+ * unsafe field (e.g. a destructor that merely updates a counter is safe to
+ * bytewise-copy; a destructor that frees a raw pointer member is not).
+ */
+inline bool aggregate_type_has_resource_field(const std::shared_ptr<type>& t) {
+    auto nt = type::remove_const(t);
+    if (!nt) return false;
+
+    if (type::is_owner(nt) || type::is_pointer(nt) || type::is_link(nt) || type::is_view(nt)) {
+        return true;
+    }
+
+    if (auto arr = std::dynamic_pointer_cast<sized_array_type>(nt)) {
+        return aggregate_type_has_resource_field(arr->get_subtype());
+    }
+
+    auto st_type = std::dynamic_pointer_cast<struct_type>(nt);
+    if (!st_type) return false;
+
+    auto st = st_type->get_struct();
+    if (!st) return false;
+
+    for (auto& bs : st->get_bases()) {
+        if (bs.base && bs.base->get_struct_type()) {
+            if (aggregate_type_has_resource_field(bs.base->get_struct_type())) return true;
+        }
+    }
+
+    for (auto& entry : st->variables()) {
+        auto mv = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+        if (!mv) continue;
+        if (aggregate_type_has_resource_field(mv->get_type())) return true;
+    }
+
+    return false;
+}
+
 } // namespace k::model::gen
 
 namespace k::model::gen {
