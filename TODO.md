@@ -285,19 +285,38 @@
         member call (`make(1).transform(41)`) and chained operator overload (`a + b + c`)
         receiver/operand temporaries are destroyed exactly once (previously masked by a
         double-free that happened to keep the naive destructor count "correct").
-      Known pre-existing, unrelated issue surfaced incidentally while validating this fix:
-      `ListMap<K,V>::put()` "update value in place" corrupts the heap (`libk/libk/tests/test-map.cpp`,
-      `"ListMap<int,int> — put updates value in place without moving order"` and the adjacent
-      `size()`-mismatch case) — reproduced identically on the pre-fix baseline via `git stash`,
-      so it is **not** a regression from this change; left unfixed as out of scope for this TODO
-      item, tracked separately below.
-- [ ] **`ListMap<K,V>::put()` corrupts the heap when updating an existing key's value in place.**
-      `libk/libk/tests/test-map.cpp`: `"ListMap<int,int> — put/get/containsKey/containsValue"`
-      and `"ListMap<int,int> — put updates value in place without moving order"` fail
-      (wrong result / `free(): invalid pointer` abort). Reproduces identically before and after
-      the value-semantics wiring fix above (confirmed via `git stash`), so it predates that
-      work. Needs its own investigation of `ListMap::put()` /
-      `DoubleLinkedList<MapEntry<K,V>>::get()` mutation path.
+      A `ListMap<K,V>::put()`/`get()` heap-corruption symptom was surfaced incidentally while
+      validating this fix; it turned out to be a separate, pre-existing `_sret_destination`
+      aliasing bug, now root-caused and fixed — see the entry immediately below.
+- [x] **`_sret_destination` leaked into constructor-invocation argument evaluation — fixed.**
+      Root cause: `implementation_generator::visit_constructor_invocation_expression` and
+      `visit_temporary_construction_expression` (`gen/gen_expr_construct.cpp`) evaluated their
+      own constructor arguments *without* saving/clearing the outer `_sret_destination` first —
+      the same bug class already fixed this session for call receivers
+      (`gen/gen_expr_invocation.cpp`) and operator operands (`gen/gen_operators_overload.cpp`),
+      but present here as a third, previously unfixed site. Symptom: for a struct-typed variable
+      declaration with a converting-constructor initializer whose *argument* is itself a
+      different-struct-typed sret-returning call (e.g. `g : Box = wrap(inner());` where
+      `inner()` returns `Inner` and `Box` has `Box(other: const Inner&)`), the outer variable's
+      `_sret_destination` leaked into the constructor's argument-evaluation loop, causing
+      `inner()`'s sret result to be written *directly* into `g`'s storage instead of a fresh
+      temporary. The converting constructor was then invoked with `this == other` (aliased),
+      and since every K constructor zero-initializes its `this` at entry before running its
+      body, the zero-init silently wiped out `other`'s data before it could be read — producing
+      a default/zeroed value instead of the converted one, with no compiler error or crash.
+      This exact pattern is what `ListMap<K,V>::get()` hit via
+      `OptionalConstRef<V>(other: const OptionalRef<V>&)`, explaining the
+      `libk/libk/tests/test-map.cpp` `ListMap<int,int>` failures
+      (`"put/get/containsKey/containsValue"` and `"put updates value in place without moving
+      order"`) — both now pass; the bug was unrelated to `Map`/`List`/diamond-inheritance
+      specifics, reproducible with zero classes/interfaces/templates involved.
+      Fix: both argument-evaluation loops now save the outer `_sret_destination`, clear it
+      before evaluating each argument (so a nested sret call gets its own temporary), and
+      restore the saved value afterward — mirroring the pattern already used in
+      `visit_function_invocation_expression`.
+      Regression coverage: `[gen][rvo][rvo17][sret]` in `klang/tests/test-gen-rvo.cpp` —
+      minimal repro using a converting constructor and a different-typed sret-returning
+      argument call; confirmed to fail on the pre-fix baseline and pass after the fix.
 - [x] **`type-not-copyable` diagnostic — fixed.**
       `emit_value_copy_or_move()` now raises `codegen_diag::ERR_TYPE_NOT_COPYABLE` instead of
       silently byte-copying a non-trivial lvalue when no copy constructor is available. The

@@ -2032,3 +2032,51 @@ TEST_CASE("RVO-16: Recursive factory — correct value through recursive sret ch
     CHECK(get_ctors() >= 4);
 }
 
+TEST_CASE("RVO-17: Converting-constructor variable init from a different-typed sret call — no _sret_destination aliasing",
+          "[gen][rvo][rvo17][sret]") {
+    // Regression test for a bug where `_sret_destination` (the outer variable's
+    // storage, set up by visit_variable_statement for a struct-typed declaration
+    // with a converting-constructor initializer) leaked into evaluation of the
+    // constructor's OWN arguments. When one of those arguments is itself a
+    // different-struct-typed sret-returning call (e.g. `g : Box = wrap(inner());`
+    // where inner() returns Inner and Box has a converting constructor
+    // `Box(other: const Inner&)`), the leaked destination caused the nested call's
+    // sret result to be written directly into the outer variable's storage. Since
+    // every constructor zero-initializes its 'this' before running its body, this
+    // aliased 'this' with 'other' and wiped out 'other' before the converting
+    // constructor could read it — silently producing a default/zeroed value.
+    //
+    // This exact pattern was found via a real-world ListMap<K,V>::get() bug
+    // (libk/libk/src/map.k), where `OptionalConstRef<V> get()` internally built an
+    // `OptionalRef<V>` result and converted it via
+    // `OptionalConstRef(other: const OptionalRef<V>&)`.
+    auto jit = gen_jit(R"SRC(
+        module __rvo17_ctor_arg_sret_alias__;
+
+        struct Inner {
+            val : int;
+        }
+
+        struct Box {
+            val : int;
+            Box(other: const Inner&) : val(other.val) { }
+        }
+
+        inner() : Inner {
+            result : Inner;
+            result.val = 42;
+            return result;
+        }
+
+        test() : int {
+            g : Box = inner();
+            return g.val;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 42);
+}
+

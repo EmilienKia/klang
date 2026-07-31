@@ -571,12 +571,24 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             return;
         }
 
+        // The outer _sret_destination (if any) is meant for the object being constructed
+        // by THIS constructor invocation (already bound to object_ref above) — it must
+        // not leak into evaluation of the constructor's OWN arguments. Otherwise a nested
+        // sret-returning argument call (e.g. `g : OptionalConstRef<int> = get();` where
+        // get() returns a *different* struct type OptionalRef<int>, requiring a converting
+        // constructor OptionalConstRef(other: const OptionalRef<int>&)) would wrongly write
+        // its result directly into object_ref, aliasing 'other' with 'this' at the call
+        // site — the constructor then zero-initializes 'this' on entry before reading
+        // 'other', wiping out the very value it was supposed to convert.
         std::vector<llvm::Value*> args;
         args.push_back(object_ref);
+        llvm::Value* saved_sret_destination_for_ctor_args = _sret_destination;
+        _sret_destination = nullptr;
         for(auto arg : expr.arguments()) {
             _value = nullptr;
             arg->accept(*this);
             if(!_value) {
+                _sret_destination = saved_sret_destination_for_ctor_args;
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F030), expr.first_lexeme(),
                     "Internal error: a constructor argument for type '{}' produced no LLVM value; "
                     "this indicates a code-generation bug",
@@ -584,6 +596,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             }
             args.push_back(_value);
         }
+        _sret_destination = saved_sret_destination_for_ctor_args;
         auto it = _context->_functions.find(function);
         if(it==_context->_functions.end()) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), expr.first_lexeme(),
@@ -1085,19 +1098,29 @@ void implementation_generator::visit_temporary_construction_expression(temporary
             }
         }
     } else if (ctor) {
-        // Constructor call: evaluate arguments and call the constructor
+        // Constructor call: evaluate arguments and call the constructor.
+        // `temp_alloca` may alias the outer `_sret_destination` (reused above without
+        // consuming it) — it must not leak into evaluation of the constructor's OWN
+        // arguments, or a nested sret-returning argument call of a *different* struct
+        // type would wrongly write its result directly into temp_alloca, aliasing
+        // 'other' with 'this' at the call site (see visit_constructor_invocation_expression
+        // for the same fix and full rationale).
         std::vector<llvm::Value*> args;
         args.push_back(temp_alloca); // 'this' pointer
+        llvm::Value* saved_sret_destination_for_ctor_args = _sret_destination;
+        _sret_destination = nullptr;
         for (auto& arg : expr.arguments()) {
             _value = nullptr;
             arg->accept(*this);
             if (!_value) {
+                _sret_destination = saved_sret_destination_for_ctor_args;
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F030), expr.first_lexeme(),
                     "Internal error: a constructor argument for temporary '{}' produced no LLVM value",
                     {st_type->to_string()});
             }
             args.push_back(_value);
         }
+        _sret_destination = saved_sret_destination_for_ctor_args;
         auto ctor_fn = ctor->shared_as<k::model::function>();
         auto it = _context->_functions.find(ctor_fn);
         if (it == _context->_functions.end()) {
