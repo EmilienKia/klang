@@ -40,6 +40,8 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
+    # ── Phase 2: futures ──────────────────────────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/future.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -169,8 +171,39 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile future runtime (Phase 2) ─────────────────────────────────────
+set(FUTURE_STATE_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/future_state.c)
+set(FUTURE_STATE_OBJ ${LIBK_OUTPUT_DIR}/future_state.o)
+
+add_custom_command(
+    OUTPUT  ${FUTURE_STATE_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${FUTURE_STATE_OBJ} ${FUTURE_STATE_C}
+    DEPENDS ${FUTURE_STATE_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/future_state.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
+    COMMENT "Compiling K runtime future substrate (future_state.c)"
+    VERBATIM
+)
+
+set(FUTURE_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/future_ffi.c)
+set(FUTURE_FFI_OBJ ${LIBK_OUTPUT_DIR}/future_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${FUTURE_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${FUTURE_FFI_OBJ} ${FUTURE_FFI_C}
+    DEPENDS ${FUTURE_FFI_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/future_state.h
+    COMMENT "Compiling K runtime future FFI wrappers (future_ffi.c)"
+    VERBATIM
+)
+
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
-                   ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ})
+                   ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
+                   ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -269,6 +302,8 @@ add_executable(libk-tests
     tests/test-map.cpp
     # ── Phase 1: time and threading ───────────────────────────────────────
     tests/test-thread-basic.cpp
+    # ── Phase 2: futures ──────────────────────────────────────────────────
+    tests/test-future.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)

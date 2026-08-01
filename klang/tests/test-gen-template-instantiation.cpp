@@ -660,3 +660,50 @@ TEST_CASE("Instantiated name qualifies a namespaced type argument",
     // '::' is encoded as "_N" by the injective identifier escaper.
     CHECK(box_name.find("a_NItem") != std::string::npos);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Statement cloning coverage — `throw` / `try` / `catch` inside a template
+//  method.  Regression: template_instantiator::clone_statement had no case for
+//  throw_statement nor try_catch_statement, so those statements were silently
+//  dropped and the instantiated method ended up with an empty body.
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Template method body preserves throw / try / catch statements",
+          "[gen][template][instantiation][exceptions]") {
+    auto jit = gen_jit(R"SRC(
+        module __tpl_throw__;
+
+        class Boom : public Exception {
+            Boom() : Exception(9) {}
+        }
+
+        template<typename T>
+        struct Checked {
+            public _v : T;
+
+            Checked() : _v(0) {}
+
+            raise() : void throws Boom {
+                throw Boom();
+            }
+
+            probe() : int {
+                try {
+                    raise();
+                    return 1;
+                } catch (e: Boom&) {
+                    return 2;
+                }
+            }
+        }
+
+        test() : int {
+            c : Checked<int>;
+            return c.probe();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 2);
+}

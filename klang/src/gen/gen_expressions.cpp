@@ -335,6 +335,19 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             }
         }
 
+        // Late resolution of imported globals inside template-instantiated bodies.
+        // symbol_resolver never runs over a body cloned by template_instantiator,
+        // and the lightweight pass that instantiator performs only binds locals,
+        // parameters and members.  A reference to a global variable or constant
+        // imported from another module therefore arrives here unresolved.
+        if (!symbol.is_resolved()) {
+            if (auto* kdi_var = _unit.find_imported_variable(symbol.get_name())) {
+                if (auto imported = _unit.get_or_create_imported_variable(kdi_var, _context)) {
+                    symbol.set_target(imported);
+                }
+            }
+        }
+
         if (!symbol.is_resolved()) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003), symbol.first_lexeme(),
                 "Internal error: symbol '{}' reached type-resolution phase without being resolved; "

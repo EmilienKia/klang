@@ -1112,6 +1112,68 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
         return new_fs;
     }
 
+    // Throw statement
+    if (auto ts = dynamic_cast<const throw_statement*>(&src)) {
+        auto new_ts = std::make_shared<throw_statement>(parent_stmt);
+        new_ts->_ast_node = ts->get_ast_node();
+        new_ts->_documentation = ts->get_documentation();
+        if (ts->get_expression()) {
+            new_ts->set_expression(clone_and_substitute_expr(
+                std::const_pointer_cast<expression>(ts->get_expression()), subst, val_subst));
+        }
+        return new_ts;
+    }
+
+    // Try-catch statement
+    if (auto tcs = dynamic_cast<const try_catch_statement*>(&src)) {
+        auto new_tcs = std::make_shared<try_catch_statement>(parent_stmt);
+        new_tcs->_ast_node = tcs->get_ast_node();
+        new_tcs->_documentation = tcs->get_documentation();
+
+        auto clone_body = [&](const std::shared_ptr<const block>& src_body,
+                              const std::shared_ptr<statement>& owner)
+                -> std::shared_ptr<block> {
+            if (!src_body) return {};
+            auto new_body = std::make_shared<block>(owner);
+            new_body->_ast_node = src_body->get_ast_node();
+            new_body->_documentation = src_body->get_documentation();
+            clone_block_contents(*src_body, new_body, subst, val_subst);
+            return new_body;
+        };
+
+        new_tcs->set_try_body(clone_body(tcs->get_try_body(), new_tcs));
+
+        for (const auto& cc : tcs->get_catch_clauses()) {
+            if (!cc) continue;
+            auto new_cc = std::make_shared<catch_clause>(
+                std::static_pointer_cast<statement>(new_tcs));
+            new_cc->_ast_node = cc->get_ast_node();
+            new_cc->_documentation = cc->get_documentation();
+            new_cc->set_const(cc->is_const());
+
+            // The caught-exception variable belongs to the catch clause's own
+            // variable holder, not to the enclosing block, so it is cloned here
+            // and registered directly instead of going through clone_statement().
+            if (auto ev = cc->get_exception_var()) {
+                auto new_ev = variable_statement::make_shared(
+                    std::static_pointer_cast<statement>(new_cc), ev->get_short_name());
+                new_ev->_ast_node = ev->get_ast_node();
+                new_ev->_documentation = ev->get_documentation();
+                new_ev->set_type(substitute_type(
+                    std::const_pointer_cast<type>(ev->get_type()), subst));
+                new_ev->set_const(ev->is_const());
+                new_cc->set_exception_var(new_ev);
+                new_cc->_vars[ev->get_short_name()] = new_ev;
+            }
+
+            new_cc->set_body(clone_body(cc->get_body(), new_cc));
+            new_tcs->add_catch_clause(new_cc);
+        }
+
+        new_tcs->set_finally_body(clone_body(tcs->get_finally_body(), new_tcs));
+        return new_tcs;
+    }
+
     // Fallback: unknown statement type — return empty
     return nullptr;
 }
@@ -2240,6 +2302,19 @@ static void resolve_symbols_in_stmt(const std::shared_ptr<statement>& stmt) {
             resolve_symbols_in_expr(
                 std::const_pointer_cast<expression>(fs->get_step_expr()));
         resolve_symbols_in_stmt(fs->get_nested_stmt());
+    } else if (auto ts = std::dynamic_pointer_cast<throw_statement>(stmt)) {
+        if (ts->get_expression())
+            resolve_symbols_in_expr(ts->get_expression());
+    } else if (auto tcs = std::dynamic_pointer_cast<try_catch_statement>(stmt)) {
+        resolve_symbols_in_stmt(tcs->get_try_body());
+        for (auto& cc : tcs->get_catch_clauses()) {
+            if (!cc) continue;
+            if (auto ev = cc->get_exception_var()) {
+                resolve_symbols_in_stmt(std::static_pointer_cast<statement>(ev));
+            }
+            resolve_symbols_in_stmt(cc->get_body());
+        }
+        resolve_symbols_in_stmt(tcs->get_finally_body());
     } else if (auto blk = std::dynamic_pointer_cast<block>(stmt)) {
         for (auto& s : blk->get_statements()) {
             resolve_symbols_in_stmt(s);

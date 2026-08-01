@@ -278,6 +278,9 @@ Code generation and resolution passes. All live in `namespace k::model::gen`.
 | `libk/libk/src/time.k` / `time.c` | `Duration`, `Instant` value structs + monotonic/real-time clock FFI |
 | `libk/libk/src/thread.k` | `Runnable` interface, `Thread` class, `__k_invoke_runnable` trampoline |
 | `libk/libk/src/thread_exceptions.k` | `ThreadInterruptionException`, `TimeoutException`, `CancellationException`, `ExecutionException` |
+| `libk/libk/src/future.k` | `Future<T>` / `Promise<T>` templates, `FutureBox<T>` payload, `FUTURE_*` state constants |
+| `libk/libk/src/runtime/future_state.h` / `.c` | C future substrate: atomic completion word, refcount, chain mutex, interruptible/timed futex wait |
+| `libk/libk/src/runtime/future_ffi.c` | C↔K bridge (`__k_future_*`) used by `future.k` |
 | `libk/libk/src/runtime/runtime_thread.h` / `.c` | C threading substrate: thread lifecycle, futex park/unpark, sleep, interrupt, join |
 | `libk/libk/src/runtime/thread_ffi.c` | C↔K bridge (`__k_thread_*`) used by `thread.k` |
 | `libk/libk/src/rtti.c` | RTTI runtime helpers **and** the per-thread exception dispatch slots (`__k_thrown_typeinfo_chain_addr()`, `__k_thrown_typeinfo_addr()`) |
@@ -325,6 +328,33 @@ For example, `type_reference_resolver` visitor bodies live in:
 ### Tentative Parsing
 The lexer supports `lex_holder` for save/restore of the token stream position.
 Parser methods use it to implement backtracking without throwing.
+
+### Template body cloning invariants
+
+`template_instantiator::clone_statement()` runs **after** `symbol_resolver`, so every
+statement and expression kind used inside a template body must have an explicit clone case.
+A missing case used to fall through to `return nullptr`, which silently produced an *empty*
+instantiated method body — add a case (and the matching walk in `resolve_symbols_in_stmt`)
+whenever a new statement kind is introduced.
+
+Because the clone is resolved against the *importing* unit, symbols that come from the
+template's own module are only reachable as `imported_*` nodes. Two fallbacks cover this:
+`gen_expr_invocation.cpp` retries imported free functions and imported static methods, and
+`gen_expressions.cpp` retries imported global variables. Note that `private` module-level
+constants are not exported to KDI and are therefore invisible to cross-module instantiations.
+
+### Indirection cast invariants
+
+The indirection-upcast path in `gen/gen_expr_cast.cpp` must handle **every** addresser on the
+source side (`*`, `&`, `+`, `?`, `!`, `#`). When a source addresser is missing from
+`get_indir_pointed()` / the `effective_source` unwrap, the cast falls through as a no-op and
+the *address of the variable slot* is stored instead of the pointer it holds — silent memory
+corruption on the first member access or virtual dispatch through the result.
+
+Exception throwing has a related constraint: the thrown value is copied into the
+`__cxa_allocate_exception` block by value, so a pointer-shaped throw (`throw new MyError()`)
+stores only the pointer. Cause chaining is therefore restricted to by-value throws
+(`throw MyError()`), which is the idiom used throughout `libk`.
 
 ### Naming and mangling invariants
 
@@ -467,8 +497,11 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Add linking logic | `compiler_linker.cpp` |
 | Add a diagnostic message | `compiler_diagnostic.cpp` |
 | Understand template instantiation | `model/template_instantiator.cpp`, called from `resolvers_aggregate.cpp` |
+| Fix a template body that lost statements or symbols | `model/template_instantiator.cpp` (`clone_statement`, `resolve_symbols_in_stmt`), `gen/gen_expr_invocation.cpp` + `gen/gen_expressions.cpp` (imported-symbol fallbacks), tests `klang/tests/test-gen-template-instantiation.cpp`, `klang/tests/test-import.cpp` `[import-template-symbols]` |
+| Fix an upcast through an addresser (`!`, `#`, `*`, `+`, `?`) | `gen/gen_expr_cast.cpp` (`get_indir_pointed`, `effective_source` unwrap), tests `klang/tests/test-gen-class-upcast.cpp` `[upcast][owner]` |
 | Fix an exception dispatch / catch bug | `gen/gen_statements.cpp` (throw + landing pad), `gen/gen_intrinsics.cpp` (intrinsic throws), `gen/gen_helpers.hpp` (`get_or_declare_typeinfo_global`), `libk/libk/src/rtti.c` + `fatal.c` (runtime slots) |
 | Work on threading / time in libk | `libk/libk/src/thread.k`, `time.k`, `thread_exceptions.k`, `runtime/`, tests in `libk/libk/tests/test-thread-basic.cpp`, spec `doc/spec/stdlib/threading.md` |
+| Work on futures / promises in libk | `libk/libk/src/future.k`, `runtime/future_state.c`, `runtime/future_ffi.c`, tests in `libk/libk/tests/test-future.cpp`, spec `doc/spec/stdlib/futures.md` |
 | Understand name mangling | `model/mangler.cpp` (symbol names), `model/template_instantiator.cpp` `build_instantiated_name()` / `escape_name_component()` / `nested_type_name()` (K-level and LLVM type names) |
 | Debug a symbol collision / wrong overload at link time | `compiler.cpp` `verify_mangled_names()`, `model/mangler.cpp` `mangle_type()`, `gen/gen_helpers.hpp` `apply_instantiation_linkage()` |
 | Understand import system | `model/tools/kdi_importer.cpp`, `model/imported.hpp` |

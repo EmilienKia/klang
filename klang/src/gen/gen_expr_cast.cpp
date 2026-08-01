@@ -743,6 +743,10 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 return std::dynamic_pointer_cast<struct_type>(type::remove_const(view_var->get_viewed_type()));
             if (auto ptr = std::dynamic_pointer_cast<pointer_type>(t))
                 return std::dynamic_pointer_cast<struct_type>(type::remove_const(ptr->get_pointed_type()));
+            if (auto own = std::dynamic_pointer_cast<owner_type>(t))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(own->get_owned_type()));
+            if (auto drn = std::dynamic_pointer_cast<drain_type>(t))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(drn->get_drained_type()));
             return nullptr;
         };
 
@@ -750,13 +754,16 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         auto effective_source = source_type;
         if (type::is_reference(source_type)) {
             auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
-            if (type::is_link(inner) || type::is_view(inner) || type::is_pointer(inner)) {
+            if (type::is_link(inner) || type::is_view(inner) || type::is_pointer(inner)
+                || type::is_owner(inner) || type::is_drain(inner)) {
                 effective_source = inner;
                 src_needs_load = true;
             }
         }
 
-        bool src_is_indir = type::is_link(effective_source) || type::is_view(effective_source) || type::is_pointer(effective_source);
+        bool src_is_indir = type::is_link(effective_source) || type::is_view(effective_source)
+            || type::is_pointer(effective_source) || type::is_owner(effective_source)
+            || type::is_drain(effective_source);
         bool tgt_is_indir = type::is_link(target_type) || type::is_view(target_type) || type::is_pointer(target_type);
 
         // ref<Derived> → view/link/ptr<Base>: the ref is already an address; GEP to base sub-object

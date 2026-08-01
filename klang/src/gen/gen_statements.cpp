@@ -1218,8 +1218,14 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     //    same global — pointer equality is all that matters.
     //    Peel addresser wrappers (reference, pointer, const) to get the inner type.
     auto inner_type = obj_type;
+    // Every addresser (pointer, reference, owner, link, view, drain) and const
+    // wrapper must be peeled: `throw new MyError()` yields a `MyError!` owner,
+    // and leaving the wrapper in place would name a `_KTI_<type>` placeholder
+    // that no catch clause can ever match.
     while (inner_type && inner_type->get_subtype() &&
            (type::is_pointer(inner_type) || type::is_reference(inner_type) ||
+            type::is_owner(inner_type) || type::is_link(inner_type) ||
+            type::is_view(inner_type) || type::is_drain(inner_type) ||
             type::is_const(inner_type))) {
         inner_type = inner_type->get_subtype();
     }
@@ -1361,7 +1367,13 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     auto* current_func = _builder->GetInsertBlock()->getParent();
     llvm::Value* dtor_fn_val = llvm::ConstantPointerNull::get(ptr_ty);
 
-    if (thrown_agg) {
+    // Exception chaining writes the cause fields directly into the exception
+    // storage, which is only the object itself when the thrown value was copied
+    // in by value.  A pointer-shaped throw (`throw new MyError()`) stores just
+    // the pointer, so the cause offsets would land outside the allocation.
+    const bool exception_stored_by_value = llvm_exc_type->isAggregateType();
+
+    if (thrown_agg && exception_stored_by_value) {
         // Find the Throwable aggregate (local or imported)
         std::shared_ptr<aggregate> throwable_class;
         auto root_ns = _unit.get_root_namespace();
@@ -1709,6 +1721,8 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         auto inner_type = var_type;
         while (inner_type && inner_type->get_subtype() &&
                (type::is_pointer(inner_type) || type::is_reference(inner_type) ||
+                type::is_owner(inner_type) || type::is_link(inner_type) ||
+                type::is_view(inner_type) || type::is_drain(inner_type) ||
                 type::is_const(inner_type))) {
             inner_type = inner_type->get_subtype();
         }

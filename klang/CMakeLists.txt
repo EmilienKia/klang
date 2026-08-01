@@ -309,7 +309,7 @@ klang_gen_test(klang-tests-gen-expressions 300
 # ---------------------------------------------------------------------------
 # Group 11 — KDI import, production libraries, multi-source
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-import 90
+klang_gen_test(klang-tests-import 180
         tests/test-import.cpp
         tests/test-prod-lib.cpp
         tests/test-import-template-reparse-diagnostic.cpp

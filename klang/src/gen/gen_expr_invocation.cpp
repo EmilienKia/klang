@@ -1012,6 +1012,33 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
         append_imported_overloads_from_bound_symbol();
 
+        // ── Imported-module fallback ──────────────────────────────────────────
+        // scope_lookup only walks the model's own function holders, and the
+        // symbol_resolver pass never runs over a template body cloned by
+        // template_instantiator (its hand-rolled resolution only binds
+        // variables).  A call to an imported free function or to a static
+        // method of an imported aggregate made from inside a template body
+        // therefore reaches this point completely unresolved.  Recover it here
+        // exactly the way symbol_resolver would have.
+        if (all_candidates.empty()) {
+            for (auto* kdi_fn : _unit.find_imported_functions(callee->get_name())) {
+                append_unique_candidate(_unit.get_or_create_imported_function(kdi_fn, _context));
+            }
+            if (all_candidates.empty() && callee->get_name().size() >= 2) {
+                auto agg_name = callee->get_name().without_back();
+                if (auto imp_agg = _unit.get_or_create_imported_aggregate(agg_name, _context)) {
+                    for (auto& fn : imp_agg->functions()) {
+                        if (fn && fn->get_short_name() == func_name) {
+                            append_unique_candidate(fn);
+                        }
+                    }
+                }
+            }
+            if (!all_candidates.empty() && all_candidates.size() == 1) {
+                callee->set_target(all_candidates.front());
+            }
+        }
+
         std::shared_ptr<expression> this_candidate;
         std::vector<std::shared_ptr<expression>> rest_args;
 

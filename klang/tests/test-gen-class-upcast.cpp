@@ -555,3 +555,85 @@ TEST_CASE("Class upcast: ptr<Base class> assigned from pin<Derived class>", "[ge
     REQUIRE(fn() == 66);
 }
 
+
+// =============================================================================
+// Owner (T!) sources — regression: the indirection-upcast path used to ignore
+// owner and drain sources, so `b : Base* = d;` (with `d : Derived!`) stored the
+// address of the owner slot instead of the owned pointer.  Any subsequent
+// member access or virtual dispatch through `b` then corrupted memory.
+// =============================================================================
+
+TEST_CASE("Class upcast: ptr<Base class> initialised from owner<Derived class>", "[gen][upcast][class][ptr][owner]") {
+    auto jit = gen_jit(R"SRC(
+        module __cu_ptr_from_owner__;
+
+        class Base {
+            public val : int;
+            Base(v : int) : val(v) {}
+        }
+        class Derived : public Base {
+            public extra : int;
+            Derived(v : int) : Base(v), extra(1) {}
+        }
+
+        test() : int {
+            d : Derived! = new Derived(77);
+            b : Base* = d;       // ptr<Base> from owner<Derived>
+            return b->val;       // must see 77
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 77);
+}
+
+TEST_CASE("Class upcast: virtual call through ptr<interface> initialised from owner<class>", "[gen][upcast][interface][ptr][owner][virtual]") {
+    auto jit = gen_jit(R"SRC(
+        module __cu_iface_from_owner__;
+
+        interface Task {
+            run() : void;
+        }
+        class Job : public Task {
+            public outcome : int;
+            Job() : outcome(0) {}
+            override run() : void { outcome = 42; }
+        }
+
+        test() : int {
+            j : Job! = new Job();
+            t : Task* = j;       // ptr<interface> from owner<class>
+            t->run();            // virtual dispatch through the upcast pointer
+            return j->outcome;   // must see 42
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("Class upcast: lien<Base class> initialised from owner<Derived class>", "[gen][upcast][class][lien][owner]") {
+    auto jit = gen_jit(R"SRC(
+        module __cu_lien_from_owner__;
+
+        class Base {
+            public val : int;
+            Base(v : int) : val(v) {}
+        }
+        class Derived : public Base {
+            Derived(v : int) : Base(v) {}
+        }
+
+        test() : int {
+            d : Derived! = new Derived(88);
+            b : Base+ = d;       // lien<Base> from owner<Derived>
+            return b->val;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 88);
+}

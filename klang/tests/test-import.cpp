@@ -3898,3 +3898,53 @@ TEST_CASE("import exception — exception thrown in a library is caught by the e
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE( result.exit_code == 11 );   // 5 + 6
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// [import-template-symbols] A template defined in a library and instantiated in
+// the importing module must still resolve the symbols its body references from
+// the library: free functions, static methods and module-level constants.
+//
+// Regression: template bodies are cloned by template_instantiator *after* the
+// symbol_resolver pass, so the clone was resolved against the importing unit
+// only, where those library symbols exist as `imported_*` nodes that neither
+// scope_lookup::lookup_functions nor the symbol resolver ever consulted.
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("import template — instantiated body resolves imported functions and constants",
+          "[import][e2e][import-template-symbols]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tplsym;
+
+            public const BONUS : int = 5;
+
+            public triple(v : int) : int { return v * 3; }
+
+            public struct Helper {
+                public static offset() : int { return 2; }
+            }
+
+            template<typename T>
+            public struct Calc {
+                public compute(v : int) : int {
+                    // imported free function + imported static method + imported constant
+                    return triple(v) + Helper::offset() + BONUS;
+                }
+            }
+        )K",
+        R"K(
+            module main;
+            import tplsym;
+            using tplsym;
+
+            main() : int {
+                c : Calc<int>;
+                return c.compute(5);   // 15 + 2 + 5 = 22
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 22 );
+}

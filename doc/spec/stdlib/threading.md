@@ -248,6 +248,7 @@ are internal to `libk` and are not part of the stable interface.
 
 ## See Also
 
+- [Futures and Promises](futures.md)
 - [Exception Types](exceptions.md)
 - [Object](object.md)
 - [Standard Library Index](index.md)
