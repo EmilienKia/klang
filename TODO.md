@@ -158,6 +158,38 @@
 
 #### Current bugs and gaps to fix
 
+- [x] **FIXED — a struct member whose type is an addresser to an *imported* aggregate
+      was silently left unresolved.** Declaring `public struct S { p : String*; }` in a
+      module that imports `k` and then writing `s->p->size()` failed with
+      `Error 000F4 : ... the left-hand side is a reference to '<<unresolved:String>>'
+      which is not a struct`, even though `String*` is perfectly usable as a function
+      parameter type in the same module. Root cause in `context::resolve_struct_type`
+      (`model/context.cpp`): for a pointer/reference/owner/link/view/drain member whose
+      chain still contained an `unresolved_type`, the code called `resolve_type()` and
+      accepted whatever came back — including a chain that was *still* unresolved,
+      because imported names are only bound by `aggregate_type_resolver` in the later
+      Pass B. It then recorded that stale type in the `struct_type` field list and set
+      the LLVM body; on the Pass B re-run the early-return at the top of
+      `resolve_struct_type` (`is_resolved() && !isOpaque() && fields_size() > 0`) fired,
+      so the field record was never refreshed. Member accesses read their type from that
+      field record, hence the diagnostic. The bug was invisible whenever the struct also
+      had a *by-value* member of an unresolved aggregate type, since that member made the
+      first attempt bail out early and the struct got rebuilt correctly in Pass B.
+      - Fix applied: the addresser branch now defers the whole struct (`return;`) when the
+        re-resolved chain still contains an unresolved type, mirroring what the by-value
+        branch already did. A later `context::resolve_types()` pass rebuilds it once the
+        pointee name is bound.
+      - Regression test: `[import][e2e][import-struct-indirect-member]` in
+        `klang/tests/test-import.cpp`, covering both the indirect-only and the
+        mixed by-value/indirect struct shapes.
+- [ ] **A struct member declared as a reference to an aggregate (`m : T&`) cannot be used
+      for member access.** `public struct S { r : CountDownLatch&; }` + `s->r.countDown()`
+      reports `Error 000F4 : ... a reference to 'struct:k::CountDownLatch&' which is not a
+      struct` — the member access yields a reference-to-reference instead of peeling the
+      member's own addresser. Pointer (`*`), link (`+`) and owner (`!`) members work.
+      Workaround: use `*`, `+` or `!` for aggregate members. Found while implementing the
+      libk synchronisation layer (Phase 3).
+
 - [x] **FIXED — ARRAY-variant `foreach` re-evaluated its source expression on every
       iteration instead of exactly once.** `type_reference_resolver::visit_foreach_statement`
       (`gen/gen_statements.cpp`) built the `.size` test expression and the

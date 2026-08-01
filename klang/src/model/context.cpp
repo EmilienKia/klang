@@ -964,18 +964,25 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
                 // The pointer/reference chain contains stale unresolved_type
                 // wrappers.  Re-resolve the entire type to get a clean chain.
                 auto res_type = resolve_type(type);
-                if (res_type) {
-                    var->set_type(res_type);
-                    effective_type = res_type;
-                    // If the resolved type's leaf is a struct_type, resolve it.
-                    auto walk = res_type;
-                    while (walk) {
-                        if (auto dep_st = std::dynamic_pointer_cast<struct_type>(walk)) {
-                            resolve_dep_struct(dep_st, res_type, var_name);
-                            break;
-                        }
-                        walk = walk->get_subtype();
+                if (!res_type || type::contains_unresolved(res_type)) {
+                    // The pointee name is not known yet (e.g. an imported
+                    // aggregate only bound by aggregate_type_resolver in a later
+                    // pass). Defer the whole struct rather than recording a
+                    // field whose type stays unresolved forever: once the LLVM
+                    // body is set, resolve_struct_type early-returns and the
+                    // stale field would never be refreshed.
+                    return;
+                }
+                var->set_type(res_type);
+                effective_type = res_type;
+                // If the resolved type's leaf is a struct_type, resolve it.
+                auto walk = res_type;
+                while (walk) {
+                    if (auto dep_st = std::dynamic_pointer_cast<struct_type>(walk)) {
+                        resolve_dep_struct(dep_st, res_type, var_name);
+                        break;
                     }
+                    walk = walk->get_subtype();
                 }
             } else {
                 auto sub = type->get_subtype();

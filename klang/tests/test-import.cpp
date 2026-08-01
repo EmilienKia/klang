@@ -3948,3 +3948,76 @@ TEST_CASE("import template — instantiated body resolves imported functions and
 
     REQUIRE( result.exit_code == 22 );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// [import-struct-indirect-member] A struct member whose type is a pointer (or
+// any other addresser) to an *imported* aggregate must be fully resolved.
+//
+// Regression: context::resolve_struct_type used to record the field with its
+// still-unresolved pointee when the imported name was not yet bound (that only
+// happens in the later aggregate_type_resolver pass). Because the LLVM body was
+// set during that first attempt, the early-return at the top of
+// resolve_struct_type then kept the stale field record forever, and any member
+// access through it failed with "the left-hand side is a reference to
+// '<<unresolved:X>>' which is not a struct".
+//
+// The bug only showed up when *no* by-value member of an imported aggregate was
+// present: such a member made the first attempt bail out, so the struct was
+// rebuilt later with correct field types — which is why the two shapes below
+// are both exercised.
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("import struct — indirect members targeting an imported aggregate resolve",
+          "[import][e2e][import-struct-indirect-member]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module boxlib;
+
+            public struct Payload {
+                public value : int;
+                public get() : int { return value; }
+            }
+
+            public struct Marker {
+                public tag : int;
+            }
+        )K",
+        R"K(
+            module main;
+            import boxlib;
+            using boxlib;
+
+            // Only indirect members: nothing forces an early re-resolution pass.
+            public struct OnlyIndirect {
+                p : Payload*;
+            }
+
+            // Mixed shape: a by-value imported member alongside indirect ones.
+            public struct Mixed {
+                m : Marker;
+                p : Payload*;
+            }
+
+            readOnly(s: OnlyIndirect*) : int { return s->p->get(); }
+            readMixed(s: Mixed*) : int { return s->p->get() + s->m.tag; }
+
+            main() : int {
+                payload : Payload;
+                payload.value = 20;
+
+                a : OnlyIndirect;
+                a.p = &payload;
+
+                b : Mixed;
+                b.m.tag = 2;
+                b.p = &payload;
+
+                return readOnly(&a) + readMixed(&b);   // 20 + (20 + 2) = 42
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 42 );
+}

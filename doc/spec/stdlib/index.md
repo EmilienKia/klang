@@ -38,6 +38,7 @@ Contents:
 | [`I/O Streams`](io.md) | Byte-oriented I/O stream abstractions: `InputStream`, `OutputStream`, `ByteArray*Stream`, `Filter*Stream`, `Buffered*Stream`, `DataInput`/`DataOutput`, `Data*Stream`. | `src/io/` |
 | [`Threading and Time`](threading.md) | Portable runtime threading layer: `Duration`, `Instant`, `Runnable`, `Thread`, and the `ThreadInterruptionException` / `TimeoutException` / `CancellationException` / `ExecutionException` hierarchy. | `src/time.k`, `src/thread.k`, `src/thread_exceptions.k` |
 | [`Futures and Promises`](futures.md) | One-shot asynchronous results: `Future<T>` (read side, interruptible and timed `get()`, cancellation) and `Promise<T>` (write-once producer side). | `src/future.k` |
+| [`Synchronisation Primitives`](synchronization.md) | Mutual exclusion and coordination: `Lock`, `Mutex`, `ReentrantLock`, `Condition`, `Semaphore`, `CountDownLatch`, `CyclicBarrier`, `ReadWriteLock`, plus `IllegalMonitorStateException` / `BrokenBarrierException`. | `src/sync/` |
 | [`k::math::Math`](math.md) | Static utility class for integer and long mathematical operations (`abs`, `min`, `max`, `clamp`, …). | `src/math/math.k` |
 
 *(More types and namespaces will be added as the language evolves.)*

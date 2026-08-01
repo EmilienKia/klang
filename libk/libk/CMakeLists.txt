@@ -42,6 +42,11 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
     # ── Phase 2: futures ──────────────────────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/future.k
+    # ── Phase 3: synchronisation ──────────────────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/sync/mutex.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/sync/semaphore.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/sync/latch.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/sync/rwlock.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -201,9 +206,40 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile synchronisation runtime (Phase 3) ────────────────────────────
+set(SYNC_PRIMITIVES_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/sync_primitives.c)
+set(SYNC_PRIMITIVES_OBJ ${LIBK_OUTPUT_DIR}/sync_primitives.o)
+
+add_custom_command(
+    OUTPUT  ${SYNC_PRIMITIVES_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${SYNC_PRIMITIVES_OBJ} ${SYNC_PRIMITIVES_C}
+    DEPENDS ${SYNC_PRIMITIVES_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/sync_primitives.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
+    COMMENT "Compiling K runtime synchronisation substrate (sync_primitives.c)"
+    VERBATIM
+)
+
+set(SYNC_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/sync_ffi.c)
+set(SYNC_FFI_OBJ ${LIBK_OUTPUT_DIR}/sync_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${SYNC_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${SYNC_FFI_OBJ} ${SYNC_FFI_C}
+    DEPENDS ${SYNC_FFI_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/sync_primitives.h
+    COMMENT "Compiling K runtime synchronisation FFI wrappers (sync_ffi.c)"
+    VERBATIM
+)
+
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
                    ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
-                   ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ})
+                   ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
+                   ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -304,6 +340,12 @@ add_executable(libk-tests
     tests/test-thread-basic.cpp
     # ── Phase 2: futures ──────────────────────────────────────────────────
     tests/test-future.cpp
+    # ── Phase 3: synchronisation ──────────────────────────────────────────
+    tests/test-sync-mutex.cpp
+    tests/test-sync-condition.cpp
+    tests/test-sync-semaphore.cpp
+    tests/test-sync-latch.cpp
+    tests/test-sync-rwlock.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)

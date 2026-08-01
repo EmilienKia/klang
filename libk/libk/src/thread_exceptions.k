@@ -124,3 +124,49 @@ public:
      */
     ExecutionException(cause: Throwable?) : Exception(104, cause) {}
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// IllegalMonitorStateException
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * IllegalMonitorStateException — a monitor operation was attempted by a thread
+ * that does not hold the monitor.
+ *
+ * Thrown by Mutex.unlock(), ReadWriteLock.*Unlock() and by every Condition
+ * method when the calling thread does not own the associated lock.
+ */
+public class IllegalMonitorStateException : public IllegalStateException {
+public:
+    /** Construct with default error code 105. */
+    IllegalMonitorStateException() : IllegalStateException(105) {}
+
+    /**
+     * Construct with a custom error code.
+     * @param code Application-defined subcode.
+     */
+    IllegalMonitorStateException(code: int) : IllegalStateException(code) {}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BrokenBarrierException
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * BrokenBarrierException — a CyclicBarrier generation was broken while this
+ * thread was waiting on it.
+ *
+ * A generation breaks when any waiting party leaves through interruption or
+ * timeout, or when reset() is called while parties are waiting.
+ */
+public class BrokenBarrierException : public Exception {
+public:
+    /** Construct with default error code 106. */
+    BrokenBarrierException() : Exception(106) {}
+
+    /**
+     * Construct with a custom error code.
+     * @param code Application-defined subcode.
+     */
+    BrokenBarrierException(code: int) : Exception(code) {}
+}

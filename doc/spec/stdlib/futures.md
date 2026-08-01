@@ -202,6 +202,8 @@ internal to `libk` and are not part of the stable interface.
 
 ## See Also
 
+- [Synchronisation Primitives](synchronization.md)
+
 - [Threading and Time](threading.md)
 - [Exception Types](exceptions.md)
 - [Standard Library Index](index.md)

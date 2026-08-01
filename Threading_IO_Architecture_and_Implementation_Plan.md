@@ -1207,7 +1207,7 @@ Composant interne non exposé publiquement dans cette version. Gère :
 
 ---
 
-### Phase 3 — Primitives de synchronisation (Layer 2A sync)
+### Phase 3 — Primitives de synchronisation (Layer 2A sync) — ✅ TERMINÉE
 
 **Objectif :** `Mutex`, `ReentrantLock`, `Condition`, `Semaphore`, `CountDownLatch`.
 
