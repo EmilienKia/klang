@@ -3780,3 +3780,121 @@ TEST_CASE("Known-limitation: cross-module overload selection on an imported enum
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE( result.exit_code == 0 );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CROSS-MODULE VIRTUAL / EXCEPTION REGRESSIONS
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-virtual-void] Overriding a void-returning virtual method declared in
+// an imported interface / class.
+//
+// build_vtable_layout() runs before `void` return types are normalised to
+// nullptr, so a locally-declared `: void` method carried an unresolved_type
+// named "void" while its imported counterpart carried nullptr. The signatures
+// were reported as different and the override was rejected with error 00177.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import virtual — local class overrides a void-returning imported virtual",
+          "[import][e2e][import-class][import-virtual-void]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module voidvirt_lib;
+
+            public interface Sink {
+                accept(v: int) : void;
+            }
+
+            public class Emitter {
+            public:
+                Emitter() {}
+                reset() : void {}
+                emit(s: Sink+, v: int) : void { s->accept(v); }
+            }
+        )K",
+        R"K(
+            module exec_voidvirt;
+            import voidvirt_lib;
+
+            total : int = 0;
+
+            class Collector : public voidvirt_lib::Sink {
+            public:
+                Collector() {}
+                override accept(v: int) : void { total = total + v; }
+            }
+
+            class ResetCounter : public voidvirt_lib::Emitter {
+            public:
+                ResetCounter() {}
+                override reset() : void { total = total + 100; }
+            }
+
+            main() : int {
+                c : Collector! = new Collector();
+                e : voidvirt_lib::Emitter;
+                e.emit(c, 7);
+                r : ResetCounter! = new ResetCounter();
+                r->reset();
+                return total;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 107 );   // 7 + 100
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-exception] An exception thrown inside a library must be catchable by
+// the importing module, including by one of its base classes.
+//
+// The RTTI global of an imported class used to be re-emitted in the importing
+// module as a `linkonce_odr` definition instead of an external declaration.
+// Exception dispatch matches typeinfo by pointer identity, so each module ended
+// up comparing its own copy of the symbol. It only ever worked because ELF
+// symbol interposition happened to collapse the copies back into one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import exception — exception thrown in a library is caught by the exe",
+          "[import][e2e][import-exception]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module exclib;
+
+            public class LibError : public Exception {
+            public:
+                LibError(code: int) : Exception(code) {}
+            }
+
+            public boom(code: int) : int throws LibError {
+                throw LibError(code);
+            }
+        )K",
+        R"K(
+            module exec_exc;
+            import exclib;
+
+            main() : int {
+                direct : int = 0;
+                try {
+                    exclib::boom(5);
+                } catch (e : exclib::LibError&) {
+                    direct = e.getCode();
+                }
+
+                base : int = 0;
+                try {
+                    exclib::boom(6);
+                } catch (e : Exception&) {
+                    base = e.getCode();
+                }
+
+                return direct + base;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 11 );   // 5 + 6
+}

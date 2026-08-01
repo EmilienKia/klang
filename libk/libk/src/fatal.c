@@ -71,23 +71,19 @@ extern char _KTRIN1k13NullCastErrorE;
 extern char _KTRIN1k21IndexOutOfBoundsErrorE;
 
 /* ══════════════════════════════════════════════════════════════════════════════
- * Typeinfo chain globals (weak — may already be emitted by the compiler)
- * ══════════════════════════════════════════════════════════════════════════════ */
-
-/*
- * _k_thrown_typeinfo_chain — pointer to the null-terminated typeinfo chain
- * of the most recently thrown exception in this thread/module.  The catch
- * dispatch code reads this to perform polymorphic type matching.
+ * Per-thread exception dispatch state
+ * ══════════════════════════════════════════════════════════════════════════════
  *
- * Each entry is { void* typeinfo, uint32_t byte_offset, uint32_t pad }
+ * The slots holding the typeinfo (and typeinfo chain) of the exception being
+ * thrown are owned by rtti.c and reached through these accessors.  Generated
+ * code uses the very same accessors, which is what lets an exception thrown
+ * here be caught by another module or by JIT-compiled code.
+ *
+ * Each chain entry is { void* typeinfo, uint32_t byte_offset, uint32_t pad }
  * (16 bytes on LP64).
  */
-__attribute__((weak))
-void* _k_thrown_typeinfo_chain = (void*)0;
-
-/* Primary (non-chain) typeinfo pointer */
-__attribute__((weak))
-void* _k_thrown_typeinfo = (void*)0;
+extern void** __k_thrown_typeinfo_chain_addr(void);
+extern void** __k_thrown_typeinfo_addr(void);
 
 /* ══════════════════════════════════════════════════════════════════════════════
  * Typeinfo chain entry layout
@@ -177,8 +173,8 @@ static const struct __k_ti_chain_entry __k_index_out_of_bounds_ti_chain[] = {
     do {                                                                  \
         void* exc_mem = __cxa_allocate_exception(size);                  \
         ctor_fn(exc_mem);                                                \
-        _k_thrown_typeinfo_chain = (void*)(ti_chain);                    \
-        _k_thrown_typeinfo = &(ti_symbol);                               \
+        *__k_thrown_typeinfo_chain_addr() = (void*)(ti_chain);           \
+        *__k_thrown_typeinfo_addr() = &(ti_symbol);                      \
         __cxa_throw(exc_mem, &(ti_symbol), (void(*)(void*))0);          \
     } while(0)
 

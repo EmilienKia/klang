@@ -915,12 +915,14 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
                 if (is_sret) {
                     auto* sret_tmp = prepare_sret_for_op(args, false);
                     emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[1],
-                        di.slot_index, fn_type, args, _context, "op_vcall");
+                        di.slot_index, fn_type, args, _context, "op_vcall",
+                    make_virtual_call_emitter());
                     _value = sret_tmp;
                     return true;
                 }
                 auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[0],
-                    di.slot_index, fn_type, args, _context, "op_vcall");
+                    di.slot_index, fn_type, args, _context, "op_vcall",
+                    make_virtual_call_emitter());
                 if (result) {
                     _value = result;
                     return true;

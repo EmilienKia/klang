@@ -870,7 +870,7 @@ void implementation_generator::emit_intrinsic_multislot_get(function& function, 
 //   <continue>
 // %lpad:
 //   landingpad catch-all
-//   load _k_thrown_typeinfo_chain
+//   load the per-thread thrown typeinfo chain
 //   walk chain entries: if any matches FatalError typeinfo → resume
 //   otherwise → allocate + throw ConstructionException
 // ─────────────────────────────────────────────────────────────────────────────
@@ -909,27 +909,14 @@ void implementation_generator::emit_ctor_invoke_with_construction_exception_wrap
     auto* exc_ptr = _builder->CreateExtractValue(lpad, 0, "ctor_exc_ptr");
 
     // Load the typeinfo chain of the thrown exception
-    auto* ti_chain_global = mod.getNamedGlobal("_k_thrown_typeinfo_chain");
-    if (!ti_chain_global) {
-        ti_chain_global = new llvm::GlobalVariable(
-            mod, ptr_ty, /*isConstant=*/false,
-            llvm::GlobalValue::ExternalLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty),
-            "_k_thrown_typeinfo_chain");
-    }
-    auto* thrown_chain_ptr = _builder->CreateLoad(ptr_ty, ti_chain_global, "thrown_chain");
+    auto* ti_chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+    auto* thrown_chain_ptr = _builder->CreateLoad(ptr_ty, ti_chain_slot, "thrown_chain");
 
     // Get or create the FatalError typeinfo global
     k::name fatal_error_name(false, {"k", "FatalError"});
     std::string fatal_ti_name = mangler::mangle_rtti(fatal_error_name);
-    auto* fatal_ti_gv = mod.getNamedGlobal(fatal_ti_name);
-    if (!fatal_ti_gv) {
-        fatal_ti_gv = new llvm::GlobalVariable(
-            mod, ptr_ty, /*isConstant=*/true,
-            llvm::GlobalValue::LinkOnceODRLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty),
-            fatal_ti_name);
-    }
+    auto* fatal_ti_gv = get_or_declare_typeinfo_global(mod, fatal_ti_name,
+        has_external_rtti_definition(_unit.get_or_create_imported_aggregate(fatal_error_name, _context)));
 
     // Walk the typeinfo chain: if any entry matches FatalError → resume
     // Chain entry struct: { ptr typeinfo, i32 offset }
@@ -988,14 +975,8 @@ void implementation_generator::emit_ctor_invoke_with_construction_exception_wrap
     // Get ConstructionException type info
     k::name ce_name(false, {"k", "ConstructionException"});
     std::string ce_ti_name = mangler::mangle_rtti(ce_name);
-    auto* ce_ti_gv = mod.getNamedGlobal(ce_ti_name);
-    if (!ce_ti_gv) {
-        ce_ti_gv = new llvm::GlobalVariable(
-            mod, ptr_ty, /*isConstant=*/true,
-            llvm::GlobalValue::LinkOnceODRLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty),
-            ce_ti_name);
-    }
+    auto* ce_ti_gv = get_or_declare_typeinfo_global(mod, ce_ti_name,
+        has_external_rtti_definition(_unit.get_or_create_imported_aggregate(ce_name, _context)));
 
     // Find ConstructionException in the model to get its LLVM type and constructor
     std::shared_ptr<aggregate> ce_agg;
@@ -1083,18 +1064,10 @@ void implementation_generator::emit_ctor_invoke_with_construction_exception_wrap
     std::string exc_ti_name = mangler::mangle_rtti(exc_name);
     std::string thr_ti_name = mangler::mangle_rtti(thr_name);
 
-    auto* exc_ti_gv = mod.getNamedGlobal(exc_ti_name);
-    if (!exc_ti_gv) {
-        exc_ti_gv = new llvm::GlobalVariable(mod, ptr_ty, true,
-            llvm::GlobalValue::LinkOnceODRLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty), exc_ti_name);
-    }
-    auto* thr_ti_gv = mod.getNamedGlobal(thr_ti_name);
-    if (!thr_ti_gv) {
-        thr_ti_gv = new llvm::GlobalVariable(mod, ptr_ty, true,
-            llvm::GlobalValue::LinkOnceODRLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty), thr_ti_name);
-    }
+    auto* exc_ti_gv = get_or_declare_typeinfo_global(mod, exc_ti_name,
+        has_external_rtti_definition(_unit.get_or_create_imported_aggregate(exc_name, _context)));
+    auto* thr_ti_gv = get_or_declare_typeinfo_global(mod, thr_ti_name,
+        has_external_rtti_definition(_unit.get_or_create_imported_aggregate(thr_name, _context)));
 
     // Build chain constant array: [CE, Exception, Throwable, null-terminator]
     // Each entry is { ptr typeinfo, i32 offset }
@@ -1182,21 +1155,11 @@ void implementation_generator::emit_ctor_invoke_with_construction_exception_wrap
     }
 
     // Store typeinfo chain
-    auto* ti_chain_store = mod.getNamedGlobal("_k_thrown_typeinfo_chain");
-    if (!ti_chain_store) {
-        ti_chain_store = new llvm::GlobalVariable(
-            mod, ptr_ty, false, llvm::GlobalValue::ExternalLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty), "_k_thrown_typeinfo_chain");
-    }
+    auto* ti_chain_store = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
     _builder->CreateStore(chain_arr_gv, ti_chain_store);
 
     // Store primary typeinfo
-    auto* ti_global = mod.getNamedGlobal("_k_thrown_typeinfo");
-    if (!ti_global) {
-        ti_global = new llvm::GlobalVariable(
-            mod, ptr_ty, false, llvm::GlobalValue::ExternalLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty), "_k_thrown_typeinfo");
-    }
+    auto* ti_global = get_thrown_state_slot("__k_thrown_typeinfo_addr");
     _builder->CreateStore(ce_ti_gv, ti_global);
 
     // __cxa_throw

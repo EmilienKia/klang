@@ -509,10 +509,21 @@ namespace k::model::gen {
 /** Emit vptr store (defined in gen_class.cpp). */
 void emit_vptr_store(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr, std::shared_ptr<context> ctx);
 
+/**
+ * Emitter used to materialise the actual call instruction of a virtual dispatch.
+ * Callers that generate code inside a function with an active exception context
+ * must supply implementation_generator::create_call_or_invoke so that the
+ * indirect call becomes an `invoke` and exceptions thrown by the callee can be
+ * caught by the enclosing try block.
+ */
+using virtual_call_emitter = std::function<llvm::Value*(llvm::FunctionType*, llvm::Value*,
+    const std::vector<llvm::Value*>&, const std::string&)>;
+
 /** Emit virtual dispatch call (defined in gen_class.cpp). */
 llvm::Value* emit_virtual_dispatch_call(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr,
     int slot_index, llvm::FunctionType* fn_type, const std::vector<llvm::Value*>& args,
-    std::shared_ptr<context> ctx, const std::string& result_name);
+    std::shared_ptr<context> ctx, const std::string& result_name,
+    const virtual_call_emitter& emit_call = {});
 
 /** Compute operator dispatch info (defined in gen_operators.cpp). */
 virtual_dispatch_info compute_operator_dispatch_info(
@@ -688,6 +699,63 @@ inline std::shared_ptr<union_type_def> find_union_by_struct_type(
         }
     }
     return nullptr;
+}
+
+/**
+ * Tell whether an aggregate's RTTI global is defined by another module.
+ *
+ * Only aggregates carrying a vtable get an RTTI global emitted, so an imported
+ * aggregate without a vtable has no definition anywhere and must not be referred
+ * to through an external declaration.
+ */
+inline bool has_external_rtti_definition(const std::shared_ptr<aggregate>& agg)
+{
+    auto imp = std::dynamic_pointer_cast<imported_aggregate>(agg);
+    if (!imp) return false;
+    auto* kdi = imp->get_kdi_aggregate();
+    return kdi != nullptr && kdi->vtable.has_value();
+}
+
+/**
+ * Get, or lazily introduce, the RTTI (typeinfo) global for an aggregate.
+ *
+ * The declaration pass emits a full RTTI definition for every aggregate owned by
+ * the current unit, so if the global is already present in the module it is the
+ * real definition and is returned as-is.
+ *
+ * When it is absent the aggregate comes from another module (a KDI import): the
+ * global must then be introduced as a plain *external declaration* so that both
+ * AOT linking and the ORC JIT bind it to the single definition exported by the
+ * defining library. Emitting a `linkonce_odr null` definition instead would give
+ * the importing module its own copy of the symbol; exception dispatch compares
+ * typeinfo pointers by identity, so a duplicated copy silently breaks every
+ * `catch` of an imported exception type across the module boundary.
+ *
+ * @param mod             Module being generated.
+ * @param name            Mangled RTTI symbol name.
+ * @param external_if_absent  True only when another module is known to define the
+ *                        symbol (see has_external_rtti_definition). Synthetic
+ *                        `_KTI_<type>` placeholders and vtable-less aggregates
+ *                        are defined nowhere and keep a local weak definition so
+ *                        that they stay linkable.
+ */
+inline llvm::GlobalVariable* get_or_declare_typeinfo_global(
+    llvm::Module& mod, const std::string& name, bool external_if_absent)
+{
+    if (auto* existing = mod.getNamedGlobal(name)) {
+        return existing;
+    }
+    auto* ptr_ty = llvm::PointerType::get(mod.getContext(), 0);
+    if (external_if_absent) {
+        return new llvm::GlobalVariable(
+            mod, ptr_ty, /*isConstant=*/true,
+            llvm::GlobalValue::ExternalLinkage,
+            /*Initializer=*/nullptr, name);
+    }
+    return new llvm::GlobalVariable(
+        mod, ptr_ty, /*isConstant=*/true,
+        llvm::GlobalValue::LinkOnceODRLinkage,
+        llvm::ConstantPointerNull::get(ptr_ty), name);
 }
 
 } // namespace k::model::gen

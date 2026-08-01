@@ -1117,11 +1117,13 @@ llvm::Value* implementation_generator::call_comparison_source_operator(
             if (op_needs_sret) {
                 auto* sret_dest = prepare_sret();
                 emit_virtual_dispatch_call(*_builder, *dispatch_info.dispatch_class, args[1],
-                    dispatch_info.slot_index, fn_type, args, _context, "cmp_vcall");
+                    dispatch_info.slot_index, fn_type, args, _context, "cmp_vcall",
+                    make_virtual_call_emitter());
                 return sret_dest;
             }
             auto* result = emit_virtual_dispatch_call(*_builder, *dispatch_info.dispatch_class, args[0],
-                dispatch_info.slot_index, fn_type, args, _context, "cmp_vcall");
+                dispatch_info.slot_index, fn_type, args, _context, "cmp_vcall",
+                    make_virtual_call_emitter());
             if (result) return result;
             // Fallback: emit_virtual_dispatch_call returned nullptr (vtable not ready?) — fall
             // through to the direct-call path below.

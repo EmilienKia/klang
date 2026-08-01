@@ -275,6 +275,13 @@ Code generation and resolution passes. All live in `namespace k::model::gen`.
 | `libk/libk/src/string.k` | `CharHelpers`, `String`, `StringBuilder` |
 | `libk/libk/src/io/` | I/O stream abstractions (`InputStream`, `OutputStream`, buffered, data, filter streams) |
 | `libk/libk/src/io/io_helpers.c` | C runtime helpers (float/double bitcast for FFI) |
+| `libk/libk/src/time.k` / `time.c` | `Duration`, `Instant` value structs + monotonic/real-time clock FFI |
+| `libk/libk/src/thread.k` | `Runnable` interface, `Thread` class, `__k_invoke_runnable` trampoline |
+| `libk/libk/src/thread_exceptions.k` | `ThreadInterruptionException`, `TimeoutException`, `CancellationException`, `ExecutionException` |
+| `libk/libk/src/runtime/runtime_thread.h` / `.c` | C threading substrate: thread lifecycle, futex park/unpark, sleep, interrupt, join |
+| `libk/libk/src/runtime/thread_ffi.c` | C↔K bridge (`__k_thread_*`) used by `thread.k` |
+| `libk/libk/src/rtti.c` | RTTI runtime helpers **and** the per-thread exception dispatch slots (`__k_thrown_typeinfo_chain_addr()`, `__k_thrown_typeinfo_addr()`) |
+| `libk/libk/src/fatal.c` | `FatalError` throwers for null dereference, null assignation, out-of-bounds… (uses the same dispatch accessors) |
 | `libk/libkmath/src/math.k` | `abs`, `min`, `max` utility functions (module `k::math`) |
 
 ### `doc/`
@@ -284,7 +291,7 @@ Code generation and resolution passes. All live in `namespace k::model::gen`.
 | `doc/spec/language/grammar.ebnf` | **Authoritative EBNF grammar** for the K language |
 | `doc/spec/language/summary.md` | Summary of language rules |
 | `doc/spec/kdi/` | KDI file format specification (schema, CBOR layout) |
-| `doc/spec/stdlib/` | Public K standard library reference (Object, String, I/O…) |
+| `doc/spec/stdlib/` | Public K standard library reference (Object, String, I/O, threading…) |
 | `doc/man/klangc.md` | `klangc` man page (options, imports, library naming, transitive deps) |
 | `doc/man/kdi.md` | `kditool` man page |
 
@@ -359,6 +366,35 @@ throw_error(static_cast<unsigned int>(k::diag::some_diag::ERR_CODE),
 Diagnostic codes live in `errors.hpp` (and sub-headers). Codes are hexadecimal
 unsigned ints; each category has its own `enum class` in `namespace k::diag`.
 
+### Exception ABI
+
+K does its own type matching in the landing pad instead of relying on the C++
+type tables: the landing pad installs a catch-all clause and walks a
+null-terminated *typeinfo chain* describing the thrown object and each of its
+bases. Three invariants keep this working across module and JIT boundaries.
+
+- **The dispatch state is per-thread and process-unique.** The "typeinfo chain
+  being thrown" and "typeinfo being thrown" slots are `static __thread`
+  variables in `libk/libk/src/rtti.c`, reached through
+  `__k_thrown_typeinfo_chain_addr()` / `__k_thrown_typeinfo_addr()`. Generated
+  code (`get_thrown_state_slot()` in `gen/gen_statements.cpp`) and libk's own C
+  throwers (`fatal.c`) must both go through these accessors — never through a
+  module-level global, which would give each module its own copy, and never
+  through a `thread_local` LLVM global, whose TLS relocations the ORC JIT
+  cannot resolve against a shared library.
+- **Typeinfo is matched by pointer identity, so each RTTI global must have
+  exactly one definition.** `get_or_declare_typeinfo_global()`
+  (`gen/gen_helpers.hpp`) emits an *external declaration* when
+  `has_external_rtti_definition()` says the aggregate is imported and carries a
+  vtable, and only falls back to a local `linkonce_odr` definition for
+  synthetic `_KTI_<type>` placeholders and vtable-less aggregates, which no
+  module ever defines.
+- **Every call that may throw needs an unwind edge.** Use
+  `create_call_or_invoke()`, and pass `make_virtual_call_emitter()` to
+  `emit_virtual_dispatch_call()` so indirect vtable calls appear in the
+  enclosing function's LSDA call-site table. A plain `CreateCall` silently
+  bypasses every enclosing `try`.
+
 ### KDI (K Description Interface)
 The `.kdi` file format describes the public interface of a compiled K library
 (like a C header). When importing a module, the compiler loads its `.kdi` file
@@ -431,6 +467,8 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Add linking logic | `compiler_linker.cpp` |
 | Add a diagnostic message | `compiler_diagnostic.cpp` |
 | Understand template instantiation | `model/template_instantiator.cpp`, called from `resolvers_aggregate.cpp` |
+| Fix an exception dispatch / catch bug | `gen/gen_statements.cpp` (throw + landing pad), `gen/gen_intrinsics.cpp` (intrinsic throws), `gen/gen_helpers.hpp` (`get_or_declare_typeinfo_global`), `libk/libk/src/rtti.c` + `fatal.c` (runtime slots) |
+| Work on threading / time in libk | `libk/libk/src/thread.k`, `time.k`, `thread_exceptions.k`, `runtime/`, tests in `libk/libk/tests/test-thread-basic.cpp`, spec `doc/spec/stdlib/threading.md` |
 | Understand name mangling | `model/mangler.cpp` (symbol names), `model/template_instantiator.cpp` `build_instantiated_name()` / `escape_name_component()` / `nested_type_name()` (K-level and LLVM type names) |
 | Debug a symbol collision / wrong overload at link time | `compiler.cpp` `verify_mangled_names()`, `model/mangler.cpp` `mangle_type()`, `gen/gen_helpers.hpp` `apply_instantiation_linkage()` |
 | Understand import system | `model/tools/kdi_importer.cpp`, `model/imported.hpp` |

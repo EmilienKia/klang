@@ -49,6 +49,14 @@ class DIScope;
 
 namespace k::model::gen {
 
+/**
+ * Emitter used to materialise the actual call instruction of a virtual dispatch.
+ * Declared identically in gen_helpers.hpp (redundant alias declarations of the
+ * same type are well-formed).
+ */
+using virtual_call_emitter = std::function<llvm::Value*(llvm::FunctionType*, llvm::Value*,
+    const std::vector<llvm::Value*>&, const std::string&)>;
+
 class jit;
 /**
  * Returns true if a return type requires sret (structure-return) ABI:
@@ -343,6 +351,42 @@ protected:
     llvm::Value* create_call_or_invoke(llvm::FunctionCallee callee,
                                        llvm::ArrayRef<llvm::Value*> args,
                                        const llvm::Twine& name = "");
+
+    /**
+     * Return a pointer to the calling thread's exception-dispatch slot.
+     *
+     * The typeinfo chain and primary typeinfo of the exception currently being
+     * thrown used to live in a plain module-level global. That was wrong twice
+     * over: every K module emitted its own definition (so a throw performed in
+     * libk.so and a catch performed in JIT-compiled code used two different
+     * variables), and the state was shared by all threads (so two threads
+     * throwing concurrently corrupted each other).
+     *
+     * The state now lives in a single thread-local variable owned by the libk C
+     * runtime, reached through an accessor function. Going through a call rather
+     * than a `thread_local` LLVM global keeps the generated code free of TLS
+     * relocations, which the ORC JIT does not support for symbols imported from
+     * a shared library.
+     *
+     * @param accessor_name  "__k_thrown_typeinfo_chain_addr" or
+     *                       "__k_thrown_typeinfo_addr".
+     * @return The address of the slot, as an LLVM value.
+     */
+    llvm::Value* get_thrown_state_slot(const char* accessor_name);
+
+    /**
+     * Build the call emitter to hand to emit_virtual_dispatch_call so that the
+     * indirect vtable call is emitted as an `invoke` whenever an exception
+     * context is active. Without it the virtual call gets no unwind edge and
+     * exceptions thrown by the callee escape the enclosing try block.
+     */
+    virtual_call_emitter make_virtual_call_emitter() {
+        return [this](llvm::FunctionType* ft, llvm::Value* callee,
+                      const std::vector<llvm::Value*>& args,
+                      const std::string& name) -> llvm::Value* {
+            return create_call_or_invoke(ft, callee, args, name);
+        };
+    }
 
     /**
      * Return the current innermost unwind destination (cleanup or catch landing pad),

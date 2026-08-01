@@ -122,3 +122,43 @@ void* __k_class_get_constructors(void* rtti) {
     return fields[12];
 }
 
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Per-thread exception dispatch state
+ * ────────────────────────────────────────────────────────────────────────────
+ *
+ * While an exception is propagating, the generated code needs to know the
+ * typeinfo chain of the exception being thrown so that each catch clause can
+ * decide whether it matches (K performs its own type matching in the landing
+ * pad rather than relying on the C++ type tables).
+ *
+ * This state MUST be per-thread: two threads throwing concurrently would
+ * otherwise overwrite each other's chain.  It must also live in exactly ONE
+ * place for the whole process: when the throw happens in libk.so and the catch
+ * in another module (or in JIT-compiled code) both sides have to observe the
+ * same slot.
+ *
+ * The slots are therefore defined here, once, and reached through accessor
+ * functions.  Generated code calls the accessor instead of referencing a
+ * `thread_local` symbol directly, which keeps it free of TLS relocations — the
+ * ORC JIT cannot resolve those against a shared library.
+ */
+
+static __thread void* k_thrown_typeinfo_chain_slot = (void*)0;
+static __thread void* k_thrown_typeinfo_slot       = (void*)0;
+
+/**
+ * @return Address of the calling thread's "typeinfo chain of the exception
+ *         being thrown" slot.  Never null.
+ */
+void** __k_thrown_typeinfo_chain_addr(void) {
+    return &k_thrown_typeinfo_chain_slot;
+}
+
+/**
+ * @return Address of the calling thread's "typeinfo of the exception being
+ *         thrown" slot.  Never null.
+ */
+void** __k_thrown_typeinfo_addr(void) {
+    return &k_thrown_typeinfo_slot;
+}

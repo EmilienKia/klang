@@ -31,6 +31,24 @@ using namespace k::model;
 // Exception-aware call/invoke helper
 // ═══════════════════════════════════════════════════════════════════════════════
 
+llvm::Value* implementation_generator::get_thrown_state_slot(const char* accessor_name) {
+    llvm::Module& mod = get_module();
+    auto& llvm_ctx = mod.getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* fn_ty = llvm::FunctionType::get(ptr_ty, false);
+
+    llvm::Function* accessor = mod.getFunction(accessor_name);
+    if (!accessor) {
+        accessor = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage, accessor_name, mod);
+        // The accessor only returns the address of a thread-local slot: it cannot
+        // throw and always returns.
+        accessor->addFnAttr(llvm::Attribute::NoUnwind);
+        accessor->addFnAttr(llvm::Attribute::WillReturn);
+    }
+    // Always a plain call: the accessor is nounwind, it must never become an invoke.
+    return _builder->CreateCall(fn_ty, accessor, {}, "thrown_state_slot");
+}
+
 llvm::Value* implementation_generator::create_call_or_invoke(
     llvm::FunctionType* fn_type, llvm::Value* callee,
     llvm::ArrayRef<llvm::Value*> args, const llvm::Twine& name)
@@ -1217,21 +1235,15 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     } else {
         typeinfo_name = "_KTI_" + (inner_type ? inner_type->to_string() : expr_type->to_string());
     }
-    auto* typeinfo_gv = mod.getNamedGlobal(typeinfo_name);
-    if (!typeinfo_gv) {
-        typeinfo_gv = new llvm::GlobalVariable(
-            mod, ptr_ty, /*isConstant=*/true,
-            llvm::GlobalValue::LinkOnceODRLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty),
-            typeinfo_name);
-    }
+    auto* typeinfo_gv = get_or_declare_typeinfo_global(
+        mod, typeinfo_name, has_external_rtti_definition(thrown_agg));
 
     // 4. Build the typeinfo chain: [{ti, offset}, {ti, offset}, ..., {null, 0}]
     //    This supports polymorphic catch (catching by base class).
     //    Each entry contains the typeinfo pointer and the byte offset of the corresponding
     //    base sub-object within the thrown object's memory layout.
     //    Store the chain in a module-level constant array, then store its pointer
-    //    in _k_thrown_typeinfo_chain global.
+    //    in the thread-local exception-dispatch slot.
     auto* i32_type = llvm::Type::getInt32Ty(llvm_ctx);
     auto* chain_entry_ty = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_type});
 
@@ -1301,14 +1313,8 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
                 uint32_t base_offset = cumulative_offset + field_offset;
 
                 std::string base_ti_name = mangler::mangle_rtti(base_agg->get_name());
-                auto* base_ti = mod.getNamedGlobal(base_ti_name);
-                if (!base_ti) {
-                    base_ti = new llvm::GlobalVariable(
-                        mod, ptr_ty, /*isConstant=*/true,
-                        llvm::GlobalValue::LinkOnceODRLinkage,
-                        llvm::ConstantPointerNull::get(ptr_ty),
-                        base_ti_name);
-                }
+                auto* base_ti = get_or_declare_typeinfo_global(
+                    mod, base_ti_name, has_external_rtti_definition(base_agg));
                 chain_data.push_back({base_ti, base_offset});
                 add_bases(base_agg, base_offset); // Recursive
             }
@@ -1339,27 +1345,14 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
             chain_global_name);
     }
 
-    // 5. Store the chain pointer in _k_thrown_typeinfo_chain. This global holds
-    //    a pointer to the null-terminated typeinfo array for the current exception.
-    auto* ti_chain_global = mod.getNamedGlobal("_k_thrown_typeinfo_chain");
-    if (!ti_chain_global) {
-        ti_chain_global = new llvm::GlobalVariable(
-            mod, ptr_ty, /*isConstant=*/false,
-            llvm::GlobalValue::ExternalLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty),
-            "_k_thrown_typeinfo_chain");
-    }
+    // 5. Store the chain pointer in the calling thread's exception-dispatch slot.
+    //    The slot holds a pointer to the null-terminated typeinfo array of the
+    //    exception currently being thrown by this thread.
+    auto* ti_chain_global = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
     _builder->CreateStore(chain_arr_gv, ti_chain_global);
 
     // Also store the primary typeinfo for backward compatibility
-    auto* ti_global = mod.getNamedGlobal("_k_thrown_typeinfo");
-    if (!ti_global) {
-        ti_global = new llvm::GlobalVariable(
-            mod, ptr_ty, /*isConstant=*/false,
-            llvm::GlobalValue::ExternalLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty),
-            "_k_thrown_typeinfo");
-    }
+    auto* ti_global = get_thrown_state_slot("__k_thrown_typeinfo_addr");
     _builder->CreateStore(typeinfo_gv, ti_global);
 
     // 5. Exception chaining: if the thrown type derives from Throwable,
@@ -1721,9 +1714,11 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         }
 
         std::string typeinfo_name;
+        bool typeinfo_is_external = false;
         if (auto st = std::dynamic_pointer_cast<struct_type>(inner_type)) {
             if (auto agg = st->get_struct()) {
                 typeinfo_name = mangler::mangle_rtti(agg->get_name());
+                typeinfo_is_external = has_external_rtti_definition(agg);
             } else {
                 typeinfo_name = "_KTI_" + st->name();
             }
@@ -1731,14 +1726,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
             typeinfo_name = "_KTI_" + (inner_type ? inner_type->to_string() : "unknown");
         }
 
-        auto* ti_gv = mod.getNamedGlobal(typeinfo_name);
-        if (!ti_gv) {
-            ti_gv = new llvm::GlobalVariable(
-                mod, ptr_ty, /*isConstant=*/true,
-                llvm::GlobalValue::LinkOnceODRLinkage,
-                llvm::ConstantPointerNull::get(ptr_ty),
-                typeinfo_name);
-        }
+        auto* ti_gv = get_or_declare_typeinfo_global(mod, typeinfo_name, typeinfo_is_external);
         typeinfos.push_back(ti_gv);
     }
 
@@ -1761,14 +1749,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
 
     // Read the typeinfo chain of the thrown exception from the global variable.
     // The chain is a null-terminated array of typeinfo pointers [self, base1, ..., null].
-    auto* ti_chain_global = mod.getNamedGlobal("_k_thrown_typeinfo_chain");
-    if (!ti_chain_global) {
-        ti_chain_global = new llvm::GlobalVariable(
-            mod, ptr_ty, /*isConstant=*/false,
-            llvm::GlobalValue::ExternalLinkage,
-            llvm::ConstantPointerNull::get(ptr_ty),
-            "_k_thrown_typeinfo_chain");
-    }
+    auto* ti_chain_global = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
     auto* thrown_chain_ptr = _builder->CreateLoad(ptr_ty, ti_chain_global, "thrown_chain");
 
     // Initialize the offset alloca to 0

@@ -2244,10 +2244,12 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             if (call_uses_sret) {
                 llvm::Value* sret_alloca = get_sret_ptr_for_call();
                 args.insert(args.begin(), sret_alloca);
-                _value = emit_virtual_dispatch_call(*_builder, *kl, args[1], di.slot_index, fn_type, args, _context, "");
+                _value = emit_virtual_dispatch_call(*_builder, *kl, args[1], di.slot_index, fn_type, args, _context, "",
+                    make_virtual_call_emitter());
                 handle_sret_result(sret_alloca);
             } else {
-                _value = emit_virtual_dispatch_call(*_builder, *kl, args[0], di.slot_index, fn_type, args, _context, "");
+                _value = emit_virtual_dispatch_call(*_builder, *kl, args[0], di.slot_index, fn_type, args, _context, "",
+                    make_virtual_call_emitter());
             }
             return;
         }

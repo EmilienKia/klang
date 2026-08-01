@@ -2885,3 +2885,134 @@ TEST_CASE("Exception unwinding: early return in block with destructible vars",
     // Destructor called twice (once per call)
     REQUIRE(res.exit_code == 2);
 }
+
+// =============================================================================
+// Regression: exceptions escaping a virtual call
+//
+// emit_virtual_dispatch_call() used to emit a plain `call` for the indirect
+// vtable dispatch, so the call site was absent from the enclosing function's
+// LSDA call-site table. An exception thrown by the overriding implementation
+// therefore bypassed every enclosing `try` and terminated the process instead
+// of being caught. Only calls through *imported* aggregates went through
+// create_call_or_invoke and were unaffected, which is why the bug stayed
+// hidden for locally-defined interfaces and classes.
+// =============================================================================
+
+TEST_CASE("Exception: throw through a virtual call on a local interface is catchable",
+          "[gen][exceptions][virtual]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_virtual_iface__;
+
+        interface Task {
+            perform() : int;
+        }
+
+        class Failing : public Task {
+        public:
+            override perform() : int throws Exception {
+                throw Exception(7);
+            }
+        }
+
+        run_task(t: Task*) : int {
+            try {
+                return t->perform();
+            } catch (e : Exception&) {
+                return e.getCode();
+            }
+        }
+
+        test() : int {
+            f : Failing! = new Failing();
+            return run_task(f);
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 7);
+}
+
+TEST_CASE("Exception: throw through a virtual call on a local class is catchable",
+          "[gen][exceptions][virtual]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_virtual_class__;
+
+        class Base {
+        public:
+            Base() {}
+            perform() : int { return 1; }
+        }
+        class Derived : public Base {
+        public:
+            Derived() {}
+            override perform() : int throws Exception {
+                throw Exception(9);
+            }
+        }
+
+        run_task(b: Base*) : int {
+            try {
+                return b->perform();
+            } catch (e : Exception&) {
+                return e.getCode();
+            }
+        }
+
+        test() : int {
+            d : Derived! = new Derived();
+            return run_task(d);
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 9);
+}
+
+TEST_CASE("Exception: virtual call unwinding runs destructors of live locals",
+          "[gen][exceptions][virtual][unwinding]") {
+    // The unwind edge added to the virtual call must reach the cleanup landing
+    // pad, so destructible locals alive at the call site are destroyed exactly
+    // once while the exception propagates.
+    auto res = build_and_exec(R"(
+        module __test_exc_virtual_cleanup__;
+
+        dtor_count : int = 0;
+
+        struct Tracked {
+            _v : int;
+            Tracked() : _v(0) {}
+            ~Tracked() { dtor_count = dtor_count + 1; }
+        }
+
+        interface Task {
+            perform() : int;
+        }
+
+        class Failing : public Task {
+        public:
+            override perform() : int throws Exception {
+                throw Exception(3);
+            }
+        }
+
+        run_task(t: Task*) : int {
+            guard : Tracked;
+            return t->perform();
+        }
+
+        main() : int {
+            f : Failing! = new Failing();
+            try {
+                run_task(f);
+                return 100;
+            } catch (e : Exception&) {
+                return dtor_count + e.getCode();
+            }
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    REQUIRE(res.exit_code == 4);
+}

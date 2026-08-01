@@ -145,10 +145,26 @@ bool have_same_virtual_signature(const function& a, const function& b) {
         auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
         if (!type_match(ta, tb)) return false;
     }
+    // Normalise the 'void' return type before comparing.
+    // A void return is modelled as a NULL type, but that normalisation only
+    // happens later, in signature_resolver/type_reference_resolver::visit_function.
+    // build_vtable_layout() runs earlier (symbol_resolver, pass A), so a LOCAL
+    // function declared ': void' still carries an unresolved_type spelled "void"
+    // while an IMPORTED one (materialised from a KDI, where void is already
+    // encoded as "no return type") carries a null type. Without this
+    // normalisation the two never match and a local class can never override a
+    // void-returning virtual method inherited from an imported base.
+    auto is_void_return = [](const std::shared_ptr<type>& t) -> bool {
+        if (!t) return true;
+        auto unres = std::dynamic_pointer_cast<unresolved_type>(t);
+        return unres && unres->type_id().to_string() == "void";
+    };
     auto ra = std::const_pointer_cast<type>(a.get_return_type());
     auto rb = std::const_pointer_cast<type>(b.get_return_type());
-    if (bool(ra) != bool(rb)) return false;
-    if (ra && rb && !type_match(ra, rb)) {
+    const bool a_void = is_void_return(ra);
+    const bool b_void = is_void_return(rb);
+    if (a_void || b_void) return a_void == b_void;
+    if (!type_match(ra, rb)) {
         return false;
     }
     return true;
@@ -1148,7 +1164,8 @@ llvm::Value* emit_virtual_dispatch_call(
     llvm::FunctionType* fn_type,
     const std::vector<llvm::Value*>& args,
     std::shared_ptr<context> ctx,
-    const std::string& result_name) {
+    const std::string& result_name,
+    const virtual_call_emitter& emit_call) {
 
     if (!st.has_vtable() || !st.get_vtable()->llvm_type) return nullptr;
 
@@ -1172,6 +1189,7 @@ llvm::Value* emit_virtual_dispatch_call(
 
     // Void calls (including sret) cannot have a name in LLVM IR.
     std::string call_name = fn_type->getReturnType()->isVoidTy() ? "" : result_name;
+    if (emit_call) return emit_call(fn_type, fn_ptr, args, call_name);
     return builder.CreateCall(fn_type, fn_ptr, args, call_name);
 }
 

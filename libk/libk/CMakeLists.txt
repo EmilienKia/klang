@@ -36,6 +36,10 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stdio.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/math/math.k
+    # ── Phase 1: time, threading ──────────────────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -54,7 +58,10 @@ set(LIBK_HTML_DOC_STAMP ${LIBK_HTML_DOC_ROOT}/.docgen-html.stamp)
 set(FATAL_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/fatal.c)
 set(FATAL_OBJ ${LIBK_OUTPUT_DIR}/fatal.o)
 
-set(FATAL_C_FLAGS -c -fPIC)
+# -fexceptions: K exceptions may unwind through these C frames (in particular
+# the thread trampoline, which calls back into K to run a Runnable). Without
+# unwind information the unwinder cannot find handlers located below them.
+set(FATAL_C_FLAGS -c -fPIC -fexceptions -fasynchronous-unwind-tables)
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     list(APPEND FATAL_C_FLAGS -DNDEBUG)
 endif()
@@ -120,7 +127,50 @@ add_custom_command(
     VERBATIM
 )
 
-set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ})
+# ── Compile time helpers (Phase 1) ───────────────────────────────────────
+set(TIME_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/time.c)
+set(TIME_OBJ ${LIBK_OUTPUT_DIR}/time.o)
+
+add_custom_command(
+    OUTPUT  ${TIME_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${TIME_OBJ} ${TIME_C}
+    DEPENDS ${TIME_C}
+    COMMENT "Compiling K runtime time helpers (time.c)"
+    VERBATIM
+)
+
+# ── Compile thread runtime (Phase 1) ─────────────────────────────────────
+set(RUNTIME_THREAD_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.c)
+set(RUNTIME_THREAD_OBJ ${LIBK_OUTPUT_DIR}/runtime_thread.o)
+
+add_custom_command(
+    OUTPUT  ${RUNTIME_THREAD_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${RUNTIME_THREAD_OBJ} ${RUNTIME_THREAD_C}
+    DEPENDS ${RUNTIME_THREAD_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
+    COMMENT "Compiling K runtime thread substrate (runtime_thread.c)"
+    VERBATIM
+)
+
+set(THREAD_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/thread_ffi.c)
+set(THREAD_FFI_OBJ ${LIBK_OUTPUT_DIR}/thread_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${THREAD_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${THREAD_FFI_OBJ} ${THREAD_FFI_C}
+    DEPENDS ${THREAD_FFI_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
+    COMMENT "Compiling K runtime thread FFI wrappers (thread_ffi.c)"
+    VERBATIM
+)
+
+set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
+                   ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -217,6 +267,8 @@ add_executable(libk-tests
     tests/test-vector.cpp
     tests/test-set.cpp
     tests/test-map.cpp
+    # ── Phase 1: time and threading ───────────────────────────────────────
+    tests/test-thread-basic.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)
