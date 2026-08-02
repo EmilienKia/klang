@@ -1327,6 +1327,7 @@ asynchrones sont nommés `AsyncFile*Stream` afin de coexister avec les
 | 5.8 | Tests complémentaires (`localhost` nominal, write après close) | `libk/tests/test-io-socket.cpp` |
 | 5.9 | Support UDP de base (`DatagramSocket`, bind/sendTo/receive/connect) | `io/socket.k`, `runtime/network_ffi.c` |
 | 5.10 | Test UDP loopback | `libk/tests/test-io-datagram.cpp` |
+| 5.11 | Tests UDP étendus (mode connecté, timeout receive, interruption receive) | `libk/tests/test-io-datagram.cpp` |
 
 *Écarts temporaires :* backend io_uring sockets et UDP/datagramme non implémentés à ce stade;
 ces points restent dans la suite de la phase 5.

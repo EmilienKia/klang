@@ -101,3 +101,148 @@ TEST_CASE("DatagramSocket: UDP loopback sendTo/receive", "[libk][io][socket][udp
     REQUIRE(fn() == 3);
 }
 
+TEST_CASE("DatagramSocket: connected mode send/receive", "[libk][io][socket][udp]") {
+    auto jit = jit_k(R"SRC(
+        module __dgram_connected__;
+
+        class Receiver : public k::Runnable {
+            _sock : k::io::DatagramSocket*;
+            _ok   : int;
+        public:
+            Receiver(sock: k::io::DatagramSocket*) : _sock(sock), _ok(0) {}
+            override run() : void {
+                b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
+                n : int = _sock->receive(b, 2000000000L);
+                if (n == 3) {
+                    b->flip();
+                    if (b->get(0u) == (byte) 65 && b->get(2u) == (byte) 67) {
+                        _ok = 1;
+                    }
+                }
+                delete b;
+            }
+            const ok() : int { return _ok; }
+        }
+
+        test() : int {
+            aAddr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            bAddr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            a : k::io::DatagramSocket! = k::io::DatagramSocket::bind(aAddr);
+            b : k::io::DatagramSocket! = k::io::DatagramSocket::bind(bAddr);
+            aPort : int = a->localPort();
+            bPort : int = b->localPort();
+
+            aPeer : k::io::NetworkAddress! = k::io::NetworkAddress::loopback(bPort);
+            bPeer : k::io::NetworkAddress! = k::io::NetworkAddress::loopback(aPort);
+            a->connect(aPeer, 2000000000L);
+            b->connect(bPeer, 2000000000L);
+
+            recvWorker : Receiver! = new Receiver(b);
+            recvThread : k::Thread! = new k::Thread(recvWorker);
+            recvThread->start();
+
+            out : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(3u);
+            out->put((byte) 65);
+            out->put((byte) 66);
+            out->put((byte) 67);
+            out->flip();
+            sent : int = a->send(out, 2000000000L);
+
+            recvThread->join();
+            res : int = 0;
+            if (sent == 3) { res = res + 1; }
+            if (recvWorker->ok() == 1) { res = res + 2; }
+
+            delete out;
+            delete recvThread;
+            delete recvWorker;
+            delete aPeer;
+            delete bPeer;
+            a->close();
+            b->close();
+            delete a;
+            delete b;
+            delete aAddr;
+            delete bAddr;
+            return res;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 3);
+}
+
+TEST_CASE("DatagramSocket: receive timeout raises TimeoutException",
+          "[libk][io][socket][udp]") {
+    auto jit = jit_k(R"SRC(
+        module __dgram_timeout__;
+
+        test() : int {
+            addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            s : k::io::DatagramSocket! = k::io::DatagramSocket::bind(addr);
+            b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(16u);
+            res : int = 0;
+            try {
+                s->receive(b, 50000000L);
+            } catch (e: k::TimeoutException&) {
+                res = 1;
+            }
+            s->close();
+            delete b;
+            delete s;
+            delete addr;
+            return res;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("DatagramSocket: receive is interruptible", "[libk][io][socket][udp][interruption]") {
+    auto jit = jit_k(R"SRC(
+        module __dgram_interrupt__;
+
+        class Receiver : public k::Runnable {
+            _sock : k::io::DatagramSocket*;
+            _res  : int;
+        public:
+            Receiver(sock: k::io::DatagramSocket*) : _sock(sock), _res(0) {}
+            override run() : void {
+                b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
+                try {
+                    _sock->receive(b);
+                    _res = 0;
+                } catch (e: k::ThreadInterruptionException&) {
+                    _res = 1;
+                }
+                delete b;
+            }
+            const res() : int { return _res; }
+        }
+
+        test() : int {
+            addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            s : k::io::DatagramSocket! = k::io::DatagramSocket::bind(addr);
+            r : Receiver! = new Receiver(s);
+            t : k::Thread! = new k::Thread(r);
+            t->start();
+            k::Thread::sleep(k::Duration::ofMillis(60L));
+            t->interrupt();
+            t->join();
+            res : int = r->res();
+            s->close();
+            delete t;
+            delete r;
+            delete s;
+            delete addr;
+            return res;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
