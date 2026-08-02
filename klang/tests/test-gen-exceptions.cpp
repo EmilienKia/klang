@@ -3016,3 +3016,61 @@ TEST_CASE("Exception: virtual call unwinding runs destructors of live locals",
     if (!res.err.empty()) INFO("stderr: " << res.err);
     REQUIRE(res.exit_code == 4);
 }
+
+TEST_CASE("exceptions: a landing pad reached before an owner declaration must not free it",
+          "[gen][exceptions][owner][unwinding]") {
+    // Regression: local owner slots were only null-initialised at their
+    // declaration point. A cleanup landing pad reached *before* that point
+    // still walked the whole scope, so it read the uninitialised alloca —
+    // typically stale stack data such as a live `this` pointer — and freed it,
+    // corrupting unrelated memory. The slot must be neutral from function
+    // entry, so unwinding before the declaration frees nothing.
+    auto res = build_and_exec(R"(
+        module __test_exc_owner_before_decl__;
+
+        freed : int = 0;
+
+        struct Payload {
+            _v : int;
+            Payload() : _v(0) {}
+            ~Payload() { freed = freed + 1; }
+        }
+
+        class Holder {
+            _tag : int;
+        public:
+            Holder() : _tag(42) {}
+            const tag() : int { return _tag; }
+
+            // The throw happens before `p` exists; unwinding must not treat the
+            // still-uninitialised owner slot as a live allocation.
+            work(fail: bool) : int throws Exception {
+                if (fail) {
+                    throw Exception(7);
+                }
+                p : Payload! = new Payload();
+                delete p;
+                return 1;
+            }
+        }
+
+        main() : int {
+            h : Holder! = new Holder();
+            code : int = 0;
+            try {
+                h->work(true);
+            } catch (e : Exception&) {
+                code = e.getCode();
+            }
+            // The holder must still be intact and destroyable.
+            if (h->tag() != 42) {
+                return 90;
+            }
+            delete h;
+            return code + freed;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    REQUIRE(res.exit_code == 7);
+}

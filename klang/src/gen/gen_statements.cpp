@@ -3715,12 +3715,27 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     alloca = build.CreateAlloca(type, nullptr, var.get_short_name());
     _context->_variables.insert({var.shared_as<variable_statement>(), alloca});
 
+    // Neutralise the slot from function entry, before any code can run.
+    // A cleanup landing pad reached *before* this declaration still walks the
+    // whole scope, so a slot left uninitialised would be mistaken for a live
+    // owner and freed, corrupting unrelated memory.
+    if (k::model::type::is_owner(var_type)
+        || k::model::type::is_pointer(var_type)
+        || k::model::type::is_link(var_type)
+        || k::model::type::is_view(var_type)) {
+        build.CreateStore(
+            llvm::ConstantPointerNull::get(llvm::PointerType::get(build.getContext(), 0)),
+            alloca);
+    }
+
     // Create construction flag for struct-with-dtor variables (for exception unwinding safety)
     bool has_dtor_flag = false;
     if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
             auto* i1_ty = llvm::Type::getInt1Ty(build.getContext());
             auto* flag_alloca = build.CreateAlloca(i1_ty, nullptr, var.get_short_name() + ".constructed");
+            // Cleared in the entry block for the same reason as owner slots above.
+            build.CreateStore(llvm::ConstantInt::getFalse(build.getContext()), flag_alloca);
             _builder->CreateStore(llvm::ConstantInt::getFalse(build.getContext()), flag_alloca);
             _dtor_flags[var.shared_as<variable_statement>()] = flag_alloca;
             has_dtor_flag = true;
