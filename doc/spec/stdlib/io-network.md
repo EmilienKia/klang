@@ -31,3 +31,13 @@ Phase 5 currently targets IPv4 and supports numeric addresses and
 
 - TCP (`Socket*`, `ServerSocket`) on interruptible/timeout-aware waits.
 - UDP (`DatagramSocket`) for loopback-style datagram send/receive.
+
+## Phase 6 foundation
+
+A minimal `EventLoop` is available (`k::io::EventLoop`) with:
+
+- `submit(Runnable*)`
+- `scheduleAfter(Duration, Runnable*)`
+- `run()` / `stop()`
+
+This is the base for upcoming selector/reactor APIs.

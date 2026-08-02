@@ -1362,6 +1362,13 @@ ces points restent dans la suite de la phase 5.
 | 6.6 | `SocketChannel` intégration Selector | extension de `io/socket.k` |
 | 6.7 | Tests | `libk/tests/test-io-event-loop.cpp`, `test-io-selector.cpp` |
 
+**Réalisation effective (incrément 1) :**
+
+| # | Statut | Détail |
+|---|--------|--------|
+| 6.1 | Tentative reportée | Une implémentation K de `EventLoop` (`io/event_loop.k` + `test-io-event-loop.cpp`) existe mais n’est pas activée dans la build de référence tant que le bug compilateur sur ce chemin n’est pas corrigé proprement. |
+| 6.2 | Prochaine étape | Corriger le bug compilateur lié aux accès membres dans ce scénario, puis réactiver `io/event_loop.k` et `test-io-event-loop.cpp` dans CMake. |
+
 **Tests Phase 6 :**
 - `EventLoop.run()` exécute des tâches soumises
 - `EventLoop.scheduleAfter(delay)` déclenche après le délai

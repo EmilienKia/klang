@@ -246,3 +246,49 @@ TEST_CASE("DatagramSocket: receive is interruptible", "[libk][io][socket][udp][i
     REQUIRE(fn);
     REQUIRE(fn() == 1);
 }
+
+TEST_CASE("DatagramSocket: close during blocking receive raises ClosedChannelException",
+          "[libk][io][socket][udp][close]") {
+    auto jit = jit_k(R"SRC(
+        module __dgram_close_during_receive__;
+
+        class Receiver : public k::Runnable {
+            _sock : k::io::DatagramSocket*;
+            _res  : int;
+        public:
+            Receiver(sock: k::io::DatagramSocket*) : _sock(sock), _res(0) {}
+            override run() : void {
+                b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
+                try {
+                    _sock->receive(b);
+                    _res = 0;
+                } catch (e: k::io::ClosedChannelException&) {
+                    _res = 1;
+                }
+                delete b;
+            }
+            const res() : int { return _res; }
+        }
+
+        test() : int {
+            addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            s : k::io::DatagramSocket! = k::io::DatagramSocket::bind(addr);
+            r : Receiver! = new Receiver(s);
+            t : k::Thread! = new k::Thread(r);
+            t->start();
+            k::Thread::sleep(k::Duration::ofMillis(60L));
+            s->close();
+            t->join();
+            res : int = r->res();
+            delete t;
+            delete r;
+            delete s;
+            delete addr;
+            return res;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
