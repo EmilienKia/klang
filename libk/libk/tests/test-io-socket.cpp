@@ -385,3 +385,121 @@ TEST_CASE("SocketChannel: close from another thread aborts blocked read",
     REQUIRE(fn);
     REQUIRE(fn() == 1);
 }
+
+TEST_CASE("Socket: resolves localhost hostnames", "[libk][io][socket]") {
+    auto jit = jit_k(R"SRC(
+        module __socket_localhost_name__;
+
+        class EchoServer : public k::Runnable {
+            _server : k::io::ServerSocket*;
+            _ok     : int;
+        public:
+            EchoServer(server: k::io::ServerSocket*) : _server(server), _ok(0) {}
+            override run() : void {
+                c : k::io::SocketChannel! = _server->accept(2000000000L);
+                b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(1u);
+                if (c->read(b, 2000000000L) == 1) {
+                    b->flip();
+                    c->writeFully(b, 2000000000L);
+                    _ok = 1;
+                }
+                c->close();
+                delete c;
+                delete b;
+            }
+            const ok() : int { return _ok; }
+        }
+
+        test() : int {
+            anyAddr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            srv : k::io::ServerSocket! = k::io::ServerSocket::bind(anyAddr);
+            port : int = srv->localPort();
+
+            worker : EchoServer! = new EchoServer(srv);
+            t : k::Thread! = new k::Thread(worker);
+            t->start();
+
+            named : k::io::NetworkAddress! = k::io::NetworkAddress::of("localhost", port);
+            cli : k::io::SocketChannel! = k::io::SocketChannel::connect(named, 2000000000L);
+
+            out : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(1u);
+            out->put((byte) 90);
+            out->flip();
+            cli->writeFully(out, 2000000000L);
+
+            in : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(1u);
+            cli->read(in, 2000000000L);
+            in->flip();
+
+            res : int = 0;
+            if (in->remaining() == 1u) { res = res + 1; }
+            if (in->get(0u) == (byte) 90) { res = res + 2; }
+
+            t->join();
+            if (worker->ok() == 1) { res = res + 4; }
+
+            cli->close();
+            srv->close();
+            delete in; delete out; delete cli; delete named;
+            delete t; delete worker; delete srv; delete anyAddr;
+            return res;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 7);
+}
+
+TEST_CASE("SocketChannel: writing after close raises ClosedChannelException",
+          "[libk][io][socket]") {
+    auto jit = jit_k(R"SRC(
+        module __socket_write_after_close__;
+
+        class SinkServer : public k::Runnable {
+            _server : k::io::ServerSocket*;
+        public:
+            SinkServer(server: k::io::ServerSocket*) : _server(server) {}
+            override run() : void {
+                c : k::io::SocketChannel! = _server->accept(2000000000L);
+                k::Thread::sleep(k::Duration::ofMillis(150L));
+                c->close();
+                delete c;
+            }
+        }
+
+        test() : int {
+            addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
+            port : int = srv->localPort();
+
+            sink : SinkServer! = new SinkServer(srv);
+            t : k::Thread! = new k::Thread(sink);
+            t->start();
+
+            peer : k::io::NetworkAddress! = k::io::NetworkAddress::loopback(port);
+            cli : k::io::SocketChannel! = k::io::SocketChannel::connect(peer, 2000000000L);
+            cli->close();
+
+            b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(1u);
+            b->put((byte) 1);
+            b->flip();
+            res : int = 0;
+            try {
+                cli->write(b);
+            } catch (e: k::io::ClosedChannelException&) {
+                res = 1;
+            }
+
+            t->join();
+            srv->close();
+            delete b; delete cli; delete peer;
+            delete t; delete sink; delete srv; delete addr;
+            return res;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}

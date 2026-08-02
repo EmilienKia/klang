@@ -22,9 +22,11 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -197,10 +199,40 @@ static int sockaddr_from_host_port(const uint32_t* host_utf32, int port,
         out->sin_addr.s_addr = htonl(INADDR_ANY);
         return 0;
     }
-    if (inet_pton(AF_INET, host, &out->sin_addr) != 1) {
+    if (inet_pton(AF_INET, host, &out->sin_addr) == 1) {
+        return 0;
+    }
+
+    if (for_bind) {
         return EINVAL;
     }
-    return 0;
+
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char service[16];
+    snprintf(service, sizeof(service), "%d", port);
+
+    struct addrinfo* result = NULL;
+    int gai_rc = getaddrinfo(host, service, &hints, &result);
+    if (gai_rc != 0 || result == NULL) {
+        return EINVAL;
+    }
+    int resolved = EINVAL;
+    for (struct addrinfo* it = result; it != NULL; it = it->ai_next) {
+        if (it->ai_family != AF_INET || it->ai_addr == NULL ||
+            it->ai_addrlen < sizeof(struct sockaddr_in)) {
+            continue;
+        }
+        memcpy(out, it->ai_addr, sizeof(struct sockaddr_in));
+        out->sin_family = AF_INET;
+        resolved = 0;
+        break;
+    }
+    freeaddrinfo(result);
+    return resolved;
 }
 
 long long __k_net_connect(const uint32_t* host, int port, long long timeout_nanos) {
