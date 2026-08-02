@@ -1186,6 +1186,14 @@ void context::rebuild_instantiation_layouts() {
         to_rebuild.push_back(st);
     }
     for (auto& st : to_rebuild) {
+        // Release the current LLVM type's name so the fresh type can claim it
+        // without LLVM appending a ".N" suffix.  A released StructType is
+        // anonymous but still valid; the model struct_type immediately gets a
+        // new LLVM type bound below, so there is no window where the old type
+        // is referenced again.
+        if (auto* cur = llvm::dyn_cast_or_null<llvm::StructType>(st->get_llvm_type())) {
+            cur->setName("");   // make it anonymous, freeing the name in *_context
+        }
         auto* fresh = llvm::StructType::create(llvm_context(), st->name());
         st->set_llvm_type({}, fresh, nullptr);
     }
