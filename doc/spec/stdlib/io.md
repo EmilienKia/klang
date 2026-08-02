@@ -15,6 +15,10 @@ file, buffered, data and print streams are specialised for `byte`.  All types
 are part of the base standard library module `k` and are auto-imported — no
 explicit `import` statement is needed.
 
+For interruptible, cancellable file I/O built on io_uring, see
+[Asynchronous I/O](io-async.md), which adds `ByteBuffer`, `Path`, `FileChannel`
+and the `AsyncFileInputStream` / `AsyncFileOutputStream` adapters.
+
 The hierarchy:
 
 ```

@@ -12,6 +12,11 @@ library: the time value types (`Duration`, `Instant`), the thread abstraction
 All these types live directly at the root of the standard library namespace
 (`::k`), so they are usable without any qualification or `using` directive.
 
+Related documents: [Futures and Promises](futures.md),
+[Synchronisation Primitives](synchronization.md) and
+[Asynchronous I/O](io-async.md), whose blocking operations all honour the same
+interruption and timeout contract described here.
+
 ---
 
 ## 1. Overview

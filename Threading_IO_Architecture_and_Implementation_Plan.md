@@ -1238,7 +1238,7 @@ Composant interne non exposé publiquement dans cette version. Gère :
 
 ---
 
-### Phase 4 — I/O fichier asynchrone (Layer 1A + Layer 2B fichiers)
+### Phase 4 — I/O fichier asynchrone (Layer 1A + Layer 2B fichiers) — ✅ TERMINÉE
 
 **Objectif :** `FileInputStream`, `FileOutputStream`, `FileChannel` via io_uring.
 
@@ -1258,6 +1258,31 @@ Composant interne non exposé publiquement dans cette version. Gère :
 | 4.10 | `FileChannel` | `io/file_channel.k` |
 | 4.11 | `file_io_async.c` helpers FFI | `io/file_io_async.c` |
 | 4.12 | Tests | `libk/tests/test-io-file-async.cpp`, `test-io-file-channel.cpp`, `test-io-file-interrupt.cpp` |
+
+**Réalisation effective :**
+
+| # | Composant livré | Fichiers |
+|---|-----------------|---------|
+| 4.1 | Backend io_uring (open/read/write/fsync/close/truncate) + repli POSIX synchrone | `runtime/async_io.h` / `.c` |
+| 4.2 | Registre d'opérations sans ABA, machine à états de handle (OPEN→CLOSING→CLOSED) avec cancel-all + drain | `runtime/async_io.c` |
+| 4.3 | Park lot interruptible extrait de `sync_primitives.c` et partagé | `runtime/park_lot.h` / `.c` |
+| 4.4 | Annulation sur interruption / deadline / close, avec reap non interruptible | `runtime/async_io.c` |
+| 4.5 | Exceptions I/O (200–204) | `io/io_exceptions.k` |
+| 4.6 | `ByteBuffer` complet | `io/byte_buffer.k` |
+| 4.7 | `Channel`, `ReadableChannel`, `WritableChannel` | `io/channel.k` |
+| 4.8 | `Path` + FFI d'inspection | `io/path.k` |
+| 4.9 | `AsyncFileInputStream`, `AsyncFileOutputStream` | `io/file_stream.k` |
+| 4.10 | `FileChannel` (positionnel + séquentiel, `readFully`/`writeFully`, `size`, `truncate`, `force`) | `io/file_channel.k` |
+| 4.11 | Pont FFI `__k_async_*` (encodage de résultat, drapeaux d'ouverture portables, transcodage UTF-32→UTF-8) | `runtime/async_ffi.c` |
+| 4.12 | Tests (29 cas) | `libk/tests/test-io-byte-buffer.cpp`, `test-io-path.cpp`, `test-io-file-channel.cpp`, `test-io-file-stream.cpp` |
+
+*Écarts par rapport au plan initial :* `BufferLease`/`BufferPool` et
+`CancellationToken`/`CancellationScope` n'ont pas été nécessaires — l'annulation est
+portée par la machine à états du handle et par le park lot par opération. Les flux
+asynchrones sont nommés `AsyncFile*Stream` afin de coexister avec les
+`File*Stream` synchrones déjà présents dans `io/file.k`.
+
+*Documentation :* `doc/spec/stdlib/io-async.md`.
 
 **Tests Phase 4 :**
 - `FileInputStream.read()` lit correctement un fichier existant

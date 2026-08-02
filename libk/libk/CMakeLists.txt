@@ -47,6 +47,13 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sync/semaphore.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sync/latch.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sync/rwlock.k
+    # ── Phase 4: asynchronous I/O ─────────────────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/io_exceptions.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/byte_buffer.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/channel.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/path.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file_channel.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file_stream.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -236,10 +243,72 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile asynchronous I/O runtime (Phase 4) ───────────────────────────
+if(KLANG_HAVE_LIBURING)
+    set(ASYNC_C_FLAGS -DK_ASYNC_HAVE_URING=1)
+    foreach(_dir ${LIBURING_INCLUDE_DIRS})
+        list(APPEND ASYNC_C_FLAGS -I${_dir})
+    endforeach()
+    # Forwarded to klangc so that libk.so records a DT_NEEDED on liburing.
+    set(LIBK_EXTRA_LINK_ARGS)
+    foreach(_dir ${LIBURING_LIBRARY_DIRS})
+        list(APPEND LIBK_EXTRA_LINK_ARGS -L ${_dir})
+    endforeach()
+    list(APPEND LIBK_EXTRA_LINK_ARGS -l uring)
+else()
+    set(ASYNC_C_FLAGS -DK_ASYNC_HAVE_URING=0)
+    set(LIBK_EXTRA_LINK_ARGS)
+endif()
+
+set(PARK_LOT_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/park_lot.c)
+set(PARK_LOT_OBJ ${LIBK_OUTPUT_DIR}/park_lot.o)
+
+add_custom_command(
+    OUTPUT  ${PARK_LOT_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${PARK_LOT_OBJ} ${PARK_LOT_C}
+    DEPENDS ${PARK_LOT_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/park_lot.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
+    COMMENT "Compiling K runtime park lot (park_lot.c)"
+    VERBATIM
+)
+
+set(ASYNC_IO_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_io.c)
+set(ASYNC_IO_OBJ ${LIBK_OUTPUT_DIR}/async_io.o)
+
+add_custom_command(
+    OUTPUT  ${ASYNC_IO_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${ASYNC_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${ASYNC_IO_OBJ} ${ASYNC_IO_C}
+    DEPENDS ${ASYNC_IO_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_io.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/park_lot.h
+    COMMENT "Compiling K runtime asynchronous I/O substrate (async_io.c)"
+    VERBATIM
+)
+
+set(ASYNC_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_ffi.c)
+set(ASYNC_FFI_OBJ ${LIBK_OUTPUT_DIR}/async_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${ASYNC_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${ASYNC_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${ASYNC_FFI_OBJ} ${ASYNC_FFI_C}
+    DEPENDS ${ASYNC_FFI_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_io.h
+    COMMENT "Compiling K runtime asynchronous I/O FFI wrappers (async_ffi.c)"
+    VERBATIM
+)
+
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
                    ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
-                   ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ})
+                   ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
+                   ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -247,6 +316,7 @@ add_custom_command(
     COMMAND $<TARGET_FILE:klangc>
             --dyn-lib --static-lib
             --module-name k
+            ${LIBK_EXTRA_LINK_ARGS}
             ${LIBK_SOURCES}
             ${C_RUNTIME_OBJS}
     DEPENDS klangc ${LIBK_SOURCES} ${C_RUNTIME_OBJS}
@@ -346,6 +416,10 @@ add_executable(libk-tests
     tests/test-sync-semaphore.cpp
     tests/test-sync-latch.cpp
     tests/test-sync-rwlock.cpp
+    tests/test-io-byte-buffer.cpp
+    tests/test-io-path.cpp
+    tests/test-io-file-channel.cpp
+    tests/test-io-file-stream.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)

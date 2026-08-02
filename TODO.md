@@ -158,6 +158,42 @@
 
 #### Current bugs and gaps to fix
 
+- [x] **FIXED — a local owner/pointer/link/view could be freed before it was even
+      declared.** When a `try`/cleanup landing pad was reached at a point *before* a
+      local addresser declaration in the same scope, the unwinding path still walked the
+      whole scope's variable list and ran `emit_owner_cleanup_if_nonnull` on every slot,
+      including the not-yet-declared one. Its alloca lives in the function entry block
+      but its `store null` was emitted at the *declaration point*, so the cleanup read
+      stale stack data — in the observed case a live `this` pointer — and called
+      `free()` on it, producing a SIGSEGV or heap corruption. Reproduced by
+      `AsyncFileOutputStream::write(byte)` throwing `ClosedChannelException` on a closed
+      stream. Fix in `gen/gen_statements.cpp::visit_variable_statement`: the null store
+      for owner/pointer/link/view slots and the clearing of the struct-with-destructor
+      "constructed" flag are now *also* emitted in the function entry block, right after
+      the alloca (the declaration-point store is kept so the slot is re-nulled on each
+      loop iteration). Regression coverage: "exceptions: a landing pad reached before an
+      owner declaration must not free it" in `klang/tests/test-gen-exceptions.cpp`
+      (`[gen][exceptions][owner][unwinding]`).
+
+- [x] **FIXED — `klangc`'s `-L` / `-l` options were parsed but never used.** The
+      documented extra library-directory and extra-library options were declared in
+      `klang.cpp` but their values never reached the link command, so linking against a
+      non-stdlib native library (here `liburing`) was impossible. Added
+      `compiler::set_extra_library_dirs()` / `set_extra_libraries()` and
+      `build_extra_link_args()` in `compiler_linker.cpp`, wired from `klang.cpp`.
+
+- [ ] **A class declared in one module cannot implement a template interface imported
+      from another module.** A class in module `X` deriving `k::io::OutputStream<byte>`
+      is rejected with `Error 00174` (method `write` not implemented) and `Error 00177`
+      (method does not override anything) even when the signatures are byte-identical to
+      the base declaration. The same class compiles fine when declared *inside* module
+      `k`. The instantiated template interface reconstructed by the KDI importer is
+      apparently not identified with the one the derived class's vtable check looks up.
+      Impact: user modules cannot implement `k::io::InputStream<T>` / `OutputStream<T>`
+      or any other imported template interface — a significant limitation of the I/O
+      extension model. Workaround: put the implementation in module `k`, or derive from
+      a non-template interface.
+
 - [x] **FIXED — a struct member whose type is an addresser to an *imported* aggregate
       was silently left unresolved.** Declaring `public struct S { p : String*; }` in a
       module that imports `k` and then writing `s->p->size()` failed with
@@ -709,7 +745,8 @@
   - log facade
   - filesystem
   - process
-  - threading
+  - [x] threading and synchronisation (`Thread`, `Mutex`, `Semaphore`, `Future<T>`, …)
+  - [x] asynchronous file I/O (`FileChannel`, `AsyncFile*Stream`, io_uring backend)
   - networking
 - Add sub libraries for:
   - security (crypto, authn, authz)
