@@ -439,6 +439,8 @@ add_executable(libk-tests
     tests/test-io-file-channel.cpp
     tests/test-io-file-stream.cpp
     tests/test-io-socket.cpp
+    tests/test-io-server-socket.cpp
+    tests/test-io-socket-interrupt.cpp
     tests/test-io-datagram.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
