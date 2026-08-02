@@ -47,6 +47,9 @@ interruption and timeout contract described here.
   `throws ThreadInterruptionException` (plus `TimeoutException` when bounded),
   so callers must acknowledge these outcomes.
 
+Validation coverage now includes repeated start/join cycles, interruption
+storms, and repeated JIT teardown to guard shutdown paths under load.
+
 ---
 
 ## 2. `Duration`

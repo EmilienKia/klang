@@ -41,6 +41,9 @@ Interruption and timeout are honoured by submitting an asynchronous cancel and
 then waiting **uninterruptibly** for the real completion, so the kernel never
 writes into a buffer the caller has already released.
 
+Phase 7 stress coverage exercises concurrent positional reads, repeated
+cancellation, and runtime teardown while async channels are active.
+
 ---
 
 ## 2. `ByteBuffer`

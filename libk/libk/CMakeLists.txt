@@ -447,6 +447,10 @@ add_executable(libk-tests
     tests/test-io-datagram.cpp
     tests/test-io-event-loop.cpp
     tests/test-io-selector.cpp
+    tests/test-thread-stress.cpp
+    tests/test-io-stress.cpp
+    tests/test-cancellation-storm.cpp
+    tests/test-runtime-shutdown.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)
