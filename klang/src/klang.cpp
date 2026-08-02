@@ -443,6 +443,14 @@ int main(int argc, const char** argv) {
             compiler->set_extra_object_files(object_input_files);
         }
 
+        // ── Extra binary library search dirs / libraries (-L / -l) ──────────
+        if (!lib_dirs.empty()) {
+            compiler->set_extra_library_dirs(lib_dirs);
+        }
+        if (!lib_files.empty()) {
+            compiler->set_extra_libraries(lib_files);
+        }
+
         // Pre-resolve IR file names from the expected output path so that
         // process_generation() (called inside parse_source) can use them.
         if (ir_opts.emit_raw_ir || ir_opts.emit_opt_ir) {

@@ -132,6 +132,8 @@ protected:
     /** Extra object files (.o) to include in the final link step.
      *  These are passed as-is to clang (or ar) alongside the K-generated .o. */
     std::vector<std::string> _extra_object_files;
+    std::vector<std::string> _extra_library_dirs;
+    std::vector<std::string> _extra_libraries;
 
     void process_generation(bool optimize = true, bool dump = true);
 
@@ -253,6 +255,19 @@ public:
     void set_extra_object_files(std::vector<std::string> paths);
 
     /**
+     * Set additional binary library search directories, as passed with -L.
+     * They are forwarded verbatim to the linker as -L<dir> flags.
+     */
+    void set_extra_library_dirs(std::vector<std::string> dirs);
+
+    /**
+     * Set additional binary libraries to link against, as passed with -l.
+     * A value containing a path separator or ending in .so/.a is forwarded
+     * as-is; any other value is forwarded as -l<value>.
+     */
+    void set_extra_libraries(std::vector<std::string> libs);
+
+    /**
      * Set the global log-level threshold.
      * Messages with severity below this level are silently discarded.
      * Default: info (trace and debug messages are suppressed).
@@ -319,6 +334,12 @@ public:
      * gen_libraries() just before invoking clang.
      */
     std::vector<std::string> build_import_link_args() const;
+
+    /**
+     * Build the -L/-l flags requested explicitly on the command line
+     * (--lib-path / --lib).
+     */
+    std::vector<std::string> build_extra_link_args() const;
 
     /** Resolve a lexical token to source file/line/column, if available. */
     std::optional<SourceLocation> get_source_location(const lex::any_lexeme& lexeme) const;

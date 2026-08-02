@@ -544,6 +544,14 @@ void compiler::set_extra_object_files(std::vector<std::string> paths) {
     _extra_object_files = std::move(paths);
 }
 
+void compiler::set_extra_library_dirs(std::vector<std::string> dirs) {
+    _extra_library_dirs = std::move(dirs);
+}
+
+void compiler::set_extra_libraries(std::vector<std::string> libs) {
+    _extra_libraries = std::move(libs);
+}
+
 void compiler::set_log_level(log::diagnostic::severity level) {
     _log_level = level;
 }

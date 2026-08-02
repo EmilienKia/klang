@@ -92,6 +92,8 @@ bool compiler::gen_executable(const std::string& output_file) {
         // Append -L/-l flags for used imports
         auto import_args = build_import_link_args();
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
+        auto extra_args = build_extra_link_args();
+        clang_args.insert(clang_args.end(), extra_args.begin(), extra_args.end());
         // Use clang++ (not clang) so the C++ ABI runtime (exceptions, RTTI)
         // is linked automatically — K exceptions use the Itanium C++ ABI.
         exec_res = tools::lookup_run_process("clang++", clang_args);
@@ -130,6 +132,27 @@ std::string compiler::get_lib_base_name() const {
 // ---------------------------------------------------------------------------
 // Import link args
 // ---------------------------------------------------------------------------
+
+std::vector<std::string> compiler::build_extra_link_args() const {
+    std::vector<std::string> args;
+    args.reserve(_extra_library_dirs.size() + _extra_libraries.size());
+    for (const auto& dir : _extra_library_dirs) {
+        args.push_back("-L" + dir);
+    }
+    for (const auto& lib : _extra_libraries) {
+        // A value that looks like a path (contains a separator) or that names a
+        // library file explicitly is forwarded as-is; anything else is a short
+        // name and becomes -l<name>.
+        std::filesystem::path p(lib);
+        const std::string ext = p.extension().string();
+        if (lib.find('/') != std::string::npos || ext == ".so" || ext == ".a") {
+            args.push_back(lib);
+        } else {
+            args.push_back("-l" + lib);
+        }
+    }
+    return args;
+}
 
 std::vector<std::string> compiler::build_import_link_args() const {
     std::vector<std::string> args;
@@ -253,6 +276,8 @@ bool compiler::gen_shared_library(const std::string& output_file) {
         clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         auto import_args = build_import_link_args();
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
+        auto extra_args = build_extra_link_args();
+        clang_args.insert(clang_args.end(), extra_args.begin(), extra_args.end());
         exec_res = tools::lookup_run_process("clang++", clang_args);
     } catch (const tools::tool_not_found& e) {
         error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_TOOL_NOT_FOUND_LINK_SHARED_LIB),
@@ -332,6 +357,8 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
         clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         auto import_args = build_import_link_args();
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
+        auto extra_args = build_extra_link_args();
+        clang_args.insert(clang_args.end(), extra_args.begin(), extra_args.end());
         so_res = tools::lookup_run_process("clang++", clang_args);
     } catch (const tools::tool_not_found& e) {
         error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_TOOL_NOT_FOUND_LINK_SHARED_LIB),
