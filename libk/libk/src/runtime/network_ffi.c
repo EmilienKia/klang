@@ -22,8 +22,10 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <sys/un.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -233,6 +235,29 @@ static int sockaddr_from_host_port(const uint32_t* host_utf32, int port,
     }
     freeaddrinfo(result);
     return resolved;
+}
+
+static int sockaddr_un_from_path(const uint32_t* path_utf32,
+                                 struct sockaddr_un* out,
+                                 socklen_t* len_out) {
+    if (out == NULL || len_out == NULL) {
+        return EINVAL;
+    }
+    memset(out, 0, sizeof(*out));
+    out->sun_family = AF_UNIX;
+
+    char path[K_PATH_BUF];
+    k_utf32_to_utf8(path_utf32, path, sizeof(path));
+    size_t path_len = strlen(path);
+    if (path_len == 0u) {
+        return EINVAL;
+    }
+    if (path_len >= sizeof(out->sun_path)) {
+        return ENAMETOOLONG;
+    }
+    memcpy(out->sun_path, path, path_len + 1u);
+    *len_out = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + path_len + 1u);
+    return 0;
 }
 
 long long __k_net_connect(const uint32_t* host, int port, long long timeout_nanos) {
@@ -554,6 +579,218 @@ long long __k_net_dgram_sendto(int fd, const uint32_t* host, int port,
         }
         ssize_t sent = sendto(fd, buf, (size_t)len, MSG_DONTWAIT | MSG_NOSIGNAL,
                               (const struct sockaddr*)&addr, sizeof(addr));
+        if (sent >= 0) {
+            return (long long)sent;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            continue;
+        }
+        if (errno == EBADF) {
+            return K_RES_CLOSED;
+        }
+        return encode_errno(errno);
+    }
+}
+
+long long __k_net_unix_connect(const uint32_t* path, long long timeout_nanos) {
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return encode_errno(errno);
+    }
+    int rc = set_cloexec(fd);
+    if (rc != 0) {
+        close(fd);
+        return encode_errno(rc);
+    }
+    rc = set_nonblocking(fd);
+    if (rc != 0) {
+        close(fd);
+        return encode_errno(rc);
+    }
+
+    struct sockaddr_un addr;
+    socklen_t addr_len = 0;
+    rc = sockaddr_un_from_path(path, &addr, &addr_len);
+    if (rc != 0) {
+        close(fd);
+        return encode_errno(rc);
+    }
+
+    if (connect(fd, (const struct sockaddr*)&addr, addr_len) == 0) {
+        return (long long)fd;
+    }
+    if (errno != EINPROGRESS) {
+        rc = errno;
+        close(fd);
+        return encode_errno(rc);
+    }
+
+    int64_t deadline = make_deadline((int64_t)timeout_nanos);
+    long long wr = wait_fd_ready(fd, POLLOUT, deadline);
+    if (wr != 0) {
+        close(fd);
+        return wr;
+    }
+
+    int so_err = 0;
+    socklen_t so_len = (socklen_t)sizeof(so_err);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &so_len) < 0) {
+        rc = errno;
+        close(fd);
+        return encode_errno(rc);
+    }
+    if (so_err != 0) {
+        close(fd);
+        return encode_errno(so_err);
+    }
+    return (long long)fd;
+}
+
+int __k_net_unix_bind_listen(const uint32_t* path, int backlog, int reuse_addr) {
+    (void)reuse_addr;
+    char pbuf[K_PATH_BUF];
+    k_utf32_to_utf8(path, pbuf, sizeof(pbuf));
+    if (unlink(pbuf) < 0 && errno != ENOENT) {
+        return (int)encode_errno(errno);
+    }
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return (int)encode_errno(errno);
+    }
+    int rc = set_cloexec(fd);
+    if (rc != 0) {
+        close(fd);
+        return (int)encode_errno(rc);
+    }
+    rc = set_nonblocking(fd);
+    if (rc != 0) {
+        close(fd);
+        return (int)encode_errno(rc);
+    }
+
+    struct sockaddr_un addr;
+    socklen_t addr_len = 0;
+    rc = sockaddr_un_from_path(path, &addr, &addr_len);
+    if (rc != 0) {
+        close(fd);
+        return (int)encode_errno(rc);
+    }
+
+    if (bind(fd, (const struct sockaddr*)&addr, addr_len) < 0) {
+        rc = errno;
+        close(fd);
+        return (int)encode_errno(rc);
+    }
+    if (listen(fd, backlog > 0 ? backlog : 16) < 0) {
+        rc = errno;
+        close(fd);
+        return (int)encode_errno(rc);
+    }
+    return fd;
+}
+
+long long __k_net_unix_accept(int server_fd, long long timeout_nanos) {
+    return __k_net_accept(server_fd, timeout_nanos);
+}
+
+int __k_net_unix_dgram_bind(const uint32_t* path, int reuse_addr) {
+    (void)reuse_addr;
+    char pbuf[K_PATH_BUF];
+    k_utf32_to_utf8(path, pbuf, sizeof(pbuf));
+    if (unlink(pbuf) < 0 && errno != ENOENT) {
+        return (int)encode_errno(errno);
+    }
+
+    int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        return (int)encode_errno(errno);
+    }
+    int rc = set_cloexec(fd);
+    if (rc != 0) {
+        close(fd);
+        return (int)encode_errno(rc);
+    }
+    rc = set_nonblocking(fd);
+    if (rc != 0) {
+        close(fd);
+        return (int)encode_errno(rc);
+    }
+
+    struct sockaddr_un addr;
+    socklen_t addr_len = 0;
+    rc = sockaddr_un_from_path(path, &addr, &addr_len);
+    if (rc != 0) {
+        close(fd);
+        return (int)encode_errno(rc);
+    }
+
+    if (bind(fd, (const struct sockaddr*)&addr, addr_len) < 0) {
+        rc = errno;
+        close(fd);
+        return (int)encode_errno(rc);
+    }
+    return fd;
+}
+
+long long __k_net_unix_dgram_connect(int fd, const uint32_t* path, long long timeout_nanos) {
+    if (fd < 0) {
+        return K_RES_CLOSED;
+    }
+    struct sockaddr_un addr;
+    socklen_t addr_len = 0;
+    int rc = sockaddr_un_from_path(path, &addr, &addr_len);
+    if (rc != 0) {
+        return encode_errno(rc);
+    }
+    if (connect(fd, (const struct sockaddr*)&addr, addr_len) == 0) {
+        return 0;
+    }
+    if (errno != EINPROGRESS) {
+        return encode_errno(errno);
+    }
+    int64_t deadline = make_deadline((int64_t)timeout_nanos);
+    long long wr = wait_fd_ready(fd, POLLOUT, deadline);
+    if (wr != 0) {
+        return wr;
+    }
+    int so_err = 0;
+    socklen_t so_len = (socklen_t)sizeof(so_err);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &so_len) < 0) {
+        return encode_errno(errno);
+    }
+    if (so_err != 0) {
+        return encode_errno(so_err);
+    }
+    return 0;
+}
+
+long long __k_net_unix_dgram_sendto(int fd, const uint32_t* path,
+                                    const void* buf, int len,
+                                    long long timeout_nanos) {
+    if (fd < 0) {
+        return K_RES_CLOSED;
+    }
+    if (buf == NULL || len < 0) {
+        return encode_errno(EINVAL);
+    }
+    if (len == 0) {
+        return 0;
+    }
+    struct sockaddr_un addr;
+    socklen_t addr_len = 0;
+    int rc = sockaddr_un_from_path(path, &addr, &addr_len);
+    if (rc != 0) {
+        return encode_errno(rc);
+    }
+    int64_t deadline = make_deadline((int64_t)timeout_nanos);
+    for (;;) {
+        long long wr = wait_fd_ready(fd, POLLOUT, deadline);
+        if (wr != 0) {
+            return wr;
+        }
+        ssize_t sent = sendto(fd, buf, (size_t)len, MSG_DONTWAIT | MSG_NOSIGNAL,
+                              (const struct sockaddr*)&addr, addr_len);
         if (sent >= 0) {
             return (long long)sent;
         }

@@ -445,6 +445,7 @@ add_executable(libk-tests
     tests/test-io-server-socket.cpp
     tests/test-io-socket-interrupt.cpp
     tests/test-io-datagram.cpp
+    tests/test-io-unix-socket-native.cpp
     tests/test-io-event-loop.cpp
     tests/test-io-selector.cpp
     tests/test-thread-stress.cpp

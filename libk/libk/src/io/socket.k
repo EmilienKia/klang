@@ -31,6 +31,12 @@ namespace io {
 @ffi::Extern("C") __k_net_dgram_bind(host: const char*, port: int, reuseAddr: int) : int;
 @ffi::Extern("C") __k_net_dgram_connect(fd: int, host: const char*, port: int, timeoutNanos: long) : long;
 @ffi::Extern("C") __k_net_dgram_sendto(fd: int, host: const char*, port: int, buf: const byte*, len: int, timeoutNanos: long) : long;
+@ffi::Extern("C") __k_net_unix_connect(path: const char*, timeoutNanos: long) : long;
+@ffi::Extern("C") __k_net_unix_bind_listen(path: const char*, backlog: int, reuseAddr: int) : int;
+@ffi::Extern("C") __k_net_unix_accept(serverFd: int, timeoutNanos: long) : long;
+@ffi::Extern("C") __k_net_unix_dgram_bind(path: const char*, reuseAddr: int) : int;
+@ffi::Extern("C") __k_net_unix_dgram_connect(fd: int, path: const char*, timeoutNanos: long) : long;
+@ffi::Extern("C") __k_net_unix_dgram_sendto(fd: int, path: const char*, buf: const byte*, len: int, timeoutNanos: long) : long;
 
 /**
  * TCP byte channel.
@@ -53,8 +59,34 @@ public:
         throw IOException(0);
     }
 
+    static connect(path: const Path&, timeoutNanos: long) : SocketChannel! {
+        fd: long = __k_net_unix_connect(path.nativePath(), timeoutNanos);
+        if (fd >= 0L) {
+            return new SocketChannel((int) fd);
+        }
+        SocketChannel::checkResult(fd, 0L);
+        throw IOException(0);
+    }
+
+    static connect(path: const char[], timeoutNanos: long) : SocketChannel! {
+        fd: long = __k_net_unix_connect(&path[0], timeoutNanos);
+        if (fd >= 0L) {
+            return new SocketChannel((int) fd);
+        }
+        SocketChannel::checkResult(fd, 0L);
+        throw IOException(0);
+    }
+
     static connect(addr: const NetworkAddress&) : SocketChannel! {
         return connect(addr, IO_NO_TIMEOUT);
+    }
+
+    static connect(path: const Path&) : SocketChannel! {
+        return connect(path, IO_NO_TIMEOUT);
+    }
+
+    static connect(path: const char[]) : SocketChannel! {
+        return connect(path, IO_NO_TIMEOUT);
     }
 
     override const isOpen() : bool {
@@ -169,8 +201,34 @@ public:
         throw IOException(0);
     }
 
+    static connect(path: const Path&, timeoutNanos: long) : Socket! {
+        fd: long = __k_net_unix_connect(path.nativePath(), timeoutNanos);
+        if (fd >= 0L) {
+            return new Socket((int) fd);
+        }
+        SocketChannel::checkResult(fd, 0L);
+        throw IOException(0);
+    }
+
+    static connect(path: const char[], timeoutNanos: long) : Socket! {
+        fd: long = __k_net_unix_connect(&path[0], timeoutNanos);
+        if (fd >= 0L) {
+            return new Socket((int) fd);
+        }
+        SocketChannel::checkResult(fd, 0L);
+        throw IOException(0);
+    }
+
     static connect(addr: const NetworkAddress&) : Socket! {
         return connect(addr, IO_NO_TIMEOUT);
+    }
+
+    static connect(path: const Path&) : Socket! {
+        return connect(path, IO_NO_TIMEOUT);
+    }
+
+    static connect(path: const char[]) : Socket! {
+        return connect(path, IO_NO_TIMEOUT);
     }
 }
 
@@ -193,8 +251,32 @@ public:
         throw IOException((int) (IO_ERROR_BASE - (long) fd));
     }
 
+    static bind(path: const Path&, backlog: int) : ServerSocket! {
+        fd : int = __k_net_unix_bind_listen(path.nativePath(), backlog, 1);
+        if (fd >= 0) {
+            return new ServerSocket(fd);
+        }
+        throw IOException((int) (IO_ERROR_BASE - (long) fd));
+    }
+
+    static bind(path: const char[], backlog: int) : ServerSocket! {
+        fd : int = __k_net_unix_bind_listen(&path[0], backlog, 1);
+        if (fd >= 0) {
+            return new ServerSocket(fd);
+        }
+        throw IOException((int) (IO_ERROR_BASE - (long) fd));
+    }
+
     static bind(addr: const NetworkAddress&) : ServerSocket! {
         return bind(addr, 64);
+    }
+
+    static bind(path: const Path&) : ServerSocket! {
+        return bind(path, 64);
+    }
+
+    static bind(path: const char[]) : ServerSocket! {
+        return bind(path, 64);
     }
 
     const localPort() : int {
@@ -261,6 +343,22 @@ public:
         throw IOException((int) (IO_ERROR_BASE - (long) fd));
     }
 
+    static bind(path: const Path&) : DatagramSocket! {
+        fd : int = __k_net_unix_dgram_bind(path.nativePath(), 1);
+        if (fd >= 0) {
+            return new DatagramSocket(fd);
+        }
+        throw IOException((int) (IO_ERROR_BASE - (long) fd));
+    }
+
+    static bind(path: const char[]) : DatagramSocket! {
+        fd : int = __k_net_unix_dgram_bind(&path[0], 1);
+        if (fd >= 0) {
+            return new DatagramSocket(fd);
+        }
+        throw IOException((int) (IO_ERROR_BASE - (long) fd));
+    }
+
     static open() : DatagramSocket! {
         any : NetworkAddress! = NetworkAddress::any(0);
         s : DatagramSocket! = DatagramSocket::bind(any);
@@ -276,7 +374,31 @@ public:
         SocketChannel::checkResult(rc, 0L);
     }
 
+    connect(remote: const Path&, timeoutNanos: long) : void {
+        if (_fd < 0) {
+            throw ClosedChannelException();
+        }
+        rc : long = __k_net_unix_dgram_connect(_fd, remote.nativePath(), timeoutNanos);
+        SocketChannel::checkResult(rc, 0L);
+    }
+
+    connect(remote: const char[], timeoutNanos: long) : void {
+        if (_fd < 0) {
+            throw ClosedChannelException();
+        }
+        rc : long = __k_net_unix_dgram_connect(_fd, &remote[0], timeoutNanos);
+        SocketChannel::checkResult(rc, 0L);
+    }
+
     connect(remote: const NetworkAddress&) : void {
+        connect(remote, IO_NO_TIMEOUT);
+    }
+
+    connect(remote: const Path&) : void {
+        connect(remote, IO_NO_TIMEOUT);
+    }
+
+    connect(remote: const char[]) : void {
         connect(remote, IO_NO_TIMEOUT);
     }
 
@@ -335,7 +457,49 @@ public:
         return n;
     }
 
+    sendTo(src: ByteBuffer+, remote: const Path&, timeoutNanos: long) : int {
+        if (_fd < 0) {
+            throw ClosedChannelException();
+        }
+        len : unsigned int = src->remaining();
+        if (len == 0u) {
+            return 0;
+        }
+        rc : long = __k_net_unix_dgram_sendto(_fd, remote.nativePath(),
+                                              src->dataAt(src->position()), (int) len,
+                                              timeoutNanos);
+        SocketChannel::checkResult(rc, 0L);
+        n : int = (int) rc;
+        src->position(src->position() + (unsigned int) n);
+        return n;
+    }
+
+    sendTo(src: ByteBuffer+, remote: const char[], timeoutNanos: long) : int {
+        if (_fd < 0) {
+            throw ClosedChannelException();
+        }
+        len : unsigned int = src->remaining();
+        if (len == 0u) {
+            return 0;
+        }
+        rc : long = __k_net_unix_dgram_sendto(_fd, &remote[0],
+                                              src->dataAt(src->position()), (int) len,
+                                              timeoutNanos);
+        SocketChannel::checkResult(rc, 0L);
+        n : int = (int) rc;
+        src->position(src->position() + (unsigned int) n);
+        return n;
+    }
+
     sendTo(src: ByteBuffer+, remote: const NetworkAddress&) : int {
+        return sendTo(src, remote, IO_NO_TIMEOUT);
+    }
+
+    sendTo(src: ByteBuffer+, remote: const Path&) : int {
+        return sendTo(src, remote, IO_NO_TIMEOUT);
+    }
+
+    sendTo(src: ByteBuffer+, remote: const char[]) : int {
         return sendTo(src, remote, IO_NO_TIMEOUT);
     }
 

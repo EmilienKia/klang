@@ -18,8 +18,9 @@ explicit `import` statement is needed.
 For interruptible, cancellable file I/O built on io_uring, see
 [Asynchronous I/O](io-async.md), which adds `ByteBuffer`, `Path`, `FileChannel`
 and the `AsyncFileInputStream` / `AsyncFileOutputStream` adapters.
-For interruptible TCP networking (`NetworkAddress`, `SocketChannel`,
-`ServerSocket`), see [Asynchronous Network I/O](io-network.md).
+For interruptible TCP and Unix-domain networking (`NetworkAddress`,
+`SocketChannel`, `ServerSocket`, `DatagramSocket`), see
+[Asynchronous Network I/O](io-network.md).
 
 The hierarchy:
 
@@ -567,7 +568,6 @@ main() : int {
     return 0;
 }
 ```
-
 
 
 

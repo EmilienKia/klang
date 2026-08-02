@@ -32,6 +32,12 @@ Phase 5 currently targets IPv4 and supports numeric addresses and
 - TCP (`Socket*`, `ServerSocket`) on interruptible/timeout-aware waits.
 - UDP (`DatagramSocket`) for loopback-style datagram send/receive.
 
+Unix-domain sockets are also available for local IPC, addressed by `Path`
+values (or equivalent socket-path strings in native code), with:
+
+- stream sockets via `SocketChannel` / `Socket` and `ServerSocket`
+- datagram sockets via `DatagramSocket`
+
 ## Phase 6 foundation
 
 A minimal `EventLoop` is available (`k::io::EventLoop`) with:
