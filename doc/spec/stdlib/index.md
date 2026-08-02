@@ -40,6 +40,7 @@ Contents:
 | [`Futures and Promises`](futures.md) | One-shot asynchronous results: `Future<T>` (read side, interruptible and timed `get()`, cancellation) and `Promise<T>` (write-once producer side). | `src/future.k` |
 | [`Synchronisation Primitives`](synchronization.md) | Mutual exclusion and coordination: `Lock`, `Mutex`, `ReentrantLock`, `Condition`, `Semaphore`, `CountDownLatch`, `CyclicBarrier`, `ReadWriteLock`, plus `IllegalMonitorStateException` / `BrokenBarrierException`. | `src/sync/` |
 | [`Asynchronous I/O`](io-async.md) | Interruptible, cancellable file I/O: `ByteBuffer`, `Path`, `Channel`/`ReadableChannel`/`WritableChannel`, `FileChannel`, `AsyncFileInputStream`/`AsyncFileOutputStream`, and the `IOException` hierarchy. Backed by io_uring with a portable POSIX fallback. | `src/io/` |
+| [`Asynchronous Network I/O`](io-network.md) | Interruptible TCP networking: `NetworkAddress`, `SocketChannel`, `Socket`, `ServerSocket`, with timeout/interruption semantics aligned with other blocking APIs. | `src/io/` |
 | [`k::math::Math`](math.md) | Static utility class for integer and long mathematical operations (`abs`, `min`, `max`, `clamp`, …). | `src/math/math.k` |
 
 *(More types and namespaces will be added as the language evolves.)*
@@ -84,4 +85,3 @@ K language:
 - [Module System](../language/basic/modules.md)
 - [Libraries — Export and Import](../language/basic/libraries.md)
 - [Types — Indirection Types](../language/basic/types.md)
-

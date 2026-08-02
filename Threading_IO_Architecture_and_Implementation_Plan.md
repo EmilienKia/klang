@@ -1298,7 +1298,7 @@ asynchrones sont nommés `AsyncFile*Stream` afin de coexister avec les
 
 ---
 
-### Phase 5 — I/O réseau asynchrone (Layer 1A + Layer 2B sockets)
+### Phase 5 — I/O réseau asynchrone (Layer 1A + Layer 2B sockets) — 🟡 EN COURS
 
 **Objectif :** `Socket`, `ServerSocket`, `SocketChannel`, `NetworkAddress`.
 
@@ -1312,6 +1312,18 @@ asynchrones sont nommés `AsyncFile*Stream` afin de coexister avec les
 | 5.4 | `ServerSocket` | `io/socket.k` |
 | 5.5 | `SocketChannel` | `io/socket.k` |
 | 5.6 | Tests | `libk/tests/test-io-socket.cpp`, `test-io-server-socket.cpp`, `test-io-socket-interrupt.cpp` |
+
+**Réalisation effective (incrément 1) :**
+
+| # | Composant livré | Fichiers |
+|---|-----------------|---------|
+| 5.1 | Backend réseau TCP interruptible basé sur `poll` (timeouts + interruption de thread + close) | `runtime/network_ffi.c` |
+| 5.2 | `NetworkAddress` (IPv4 numérique, `localhost`, `*`) | `io/network_address.k` |
+| 5.3 | `SocketChannel`, `Socket`, `ServerSocket` | `io/socket.k` |
+| 5.4 | Tests initiaux (loopback, timeout `accept`, interruption `accept`) | `libk/tests/test-io-socket.cpp` |
+
+*Écarts temporaires :* backend io_uring sockets et UDP/datagramme non implémentés à ce stade;
+ces points restent dans la suite de la phase 5.
 
 **Tests Phase 5 :**
 - TCP client/server loopback : connect, send, recv, close

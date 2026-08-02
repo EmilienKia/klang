@@ -14,7 +14,8 @@ All these types live directly at the root of the standard library namespace
 
 Related documents: [Futures and Promises](futures.md),
 [Synchronisation Primitives](synchronization.md) and
-[Asynchronous I/O](io-async.md), whose blocking operations all honour the same
+[Asynchronous I/O](io-async.md), [Asynchronous Network I/O](io-network.md),
+whose blocking operations all honour the same
 interruption and timeout contract described here.
 
 ---

@@ -292,10 +292,13 @@ Code generation and resolution passes. All live in `namespace k::model::gen`.
 | `libk/libk/src/io/channel.k` | `Channel`, `ReadableChannel`, `WritableChannel` interfaces |
 | `libk/libk/src/io/file_channel.k` | `FileChannel`, `NativeAsyncHandle`, `OPEN_*` / `IO_*` constants, async FFI declarations, result decoding (`checkResult`) |
 | `libk/libk/src/io/file_stream.k` | `AsyncFileInputStream` / `AsyncFileOutputStream` — interruptible stream adapters owning a `FileChannel!` |
+| `libk/libk/src/io/network_address.k` | `NetworkAddress` endpoint value class for TCP sockets |
+| `libk/libk/src/io/socket.k` | `SocketChannel`, `Socket`, `ServerSocket` (interruptible TCP APIs) |
 | `libk/libk/src/io/io_exceptions.k` | `IOException` (200), `FileNotFoundException` (201), `ClosedChannelException` (202), `EndOfStreamException` (203), `InterruptedIOException` (204) |
 | `libk/libk/src/runtime/park_lot.h` / `.c` | Interruptible park lot (`KParkLot`, `k_park_until`, `k_monotonic_nanos`) shared by the sync and async-I/O substrates |
 | `libk/libk/src/runtime/async_io.h` / `.c` | Async I/O substrate: shared io_uring instance + reaper thread, ABA-safe op registry, cancel-on-interrupt, handle state machine, synchronous POSIX fallback |
 | `libk/libk/src/runtime/async_ffi.c` | C↔K bridge (`__k_async_*`); encodes results, decodes portable open flags, transcodes UTF-32 K paths to UTF-8 |
+| `libk/libk/src/runtime/network_ffi.c` | C↔K bridge (`__k_net_*`) for interruptible TCP connect/accept/read/write |
 | `libk/libk/src/runtime/runtime_thread.h` / `.c` | C threading substrate: thread lifecycle, futex park/unpark, sleep, interrupt, join |
 | `libk/libk/src/runtime/thread_ffi.c` | C↔K bridge (`__k_thread_*`) used by `thread.k` |
 | `libk/libk/src/rtti.c` | RTTI runtime helpers **and** the per-thread exception dispatch slots (`__k_thrown_typeinfo_chain_addr()`, `__k_thrown_typeinfo_addr()`) |
@@ -517,6 +520,7 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Fix an exception dispatch / catch bug | `gen/gen_statements.cpp` (throw + landing pad), `gen/gen_intrinsics.cpp` (intrinsic throws), `gen/gen_helpers.hpp` (`get_or_declare_typeinfo_global`), `libk/libk/src/rtti.c` + `fatal.c` (runtime slots) |
 | Work on threading / time in libk | `libk/libk/src/thread.k`, `time.k`, `thread_exceptions.k`, `runtime/`, tests in `libk/libk/tests/test-thread-basic.cpp`, spec `doc/spec/stdlib/threading.md` |
 | Work on asynchronous file I/O in libk | `libk/libk/src/io/{byte_buffer,path,channel,file_channel,file_stream,io_exceptions}.k`, `runtime/async_io.c`, `runtime/async_ffi.c`, `runtime/park_lot.c`, tests in `libk/libk/tests/test-io-{byte-buffer,path,file-channel,file-stream}.cpp`, spec `doc/spec/stdlib/io-async.md` |
+| Work on asynchronous network I/O in libk | `libk/libk/src/io/{network_address,socket}.k`, `runtime/network_ffi.c`, tests in `libk/libk/tests/test-io-socket.cpp`, spec `doc/spec/stdlib/io-network.md` |
 | Debug an owner freed before its declaration / spurious `free` while unwinding | `gen/gen_statements.cpp` `visit_variable_statement` — owner/pointer/link/view slots **and** struct-dtor "constructed" flags must be cleared in the **function entry block**, not only at the declaration point, because a landing pad reached earlier walks the whole scope |
 | Work on synchronisation in libk | `libk/libk/src/sync/*.k`, `runtime/sync_primitives.c`, `runtime/sync_ffi.c`, tests in `libk/libk/tests/test-sync-*.cpp`, spec `doc/spec/stdlib/synchronization.md` |
 | Work on futures / promises in libk | `libk/libk/src/future.k`, `runtime/future_state.c`, `runtime/future_ffi.c`, tests in `libk/libk/tests/test-future.cpp`, spec `doc/spec/stdlib/futures.md` |
@@ -742,7 +746,6 @@ The following files are intentional stubs pointing to their split counterparts:
 | `gen/gen_operators.cpp` | `gen_operators_overload.cpp`, `gen_operators_arithmetic.cpp`, `gen_operators_assign.cpp`, `gen_operators_unary.cpp`, `gen_operators_logical.cpp` |
 
 **Do not add code to stub files** — they exist only for documentation.
-
 
 
 

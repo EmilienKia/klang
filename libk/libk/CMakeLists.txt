@@ -54,6 +54,9 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/path.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file_channel.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file_stream.k
+    # ── Phase 5: asynchronous network I/O ─────────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/network_address.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/socket.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -304,11 +307,26 @@ add_custom_command(
     VERBATIM
 )
 
+set(NETWORK_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/network_ffi.c)
+set(NETWORK_FFI_OBJ ${LIBK_OUTPUT_DIR}/network_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${NETWORK_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${NETWORK_FFI_OBJ} ${NETWORK_FFI_C}
+    DEPENDS ${NETWORK_FFI_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
+    COMMENT "Compiling K runtime network I/O FFI wrappers (network_ffi.c)"
+    VERBATIM
+)
+
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
                    ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
-                   ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ})
+                   ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}
+                   ${NETWORK_FFI_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -420,6 +438,7 @@ add_executable(libk-tests
     tests/test-io-path.cpp
     tests/test-io-file-channel.cpp
     tests/test-io-file-stream.cpp
+    tests/test-io-socket.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)
