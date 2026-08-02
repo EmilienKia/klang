@@ -544,6 +544,48 @@ TEST_CASE("import — imported struct member methods are accessible", "[import][
     REQUIRE( found );
 }
 
+TEST_CASE("import — constructor member call on imported owner field compiles",
+          "[import][e2e][regression][member-context]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module locklib;
+
+            class Lock {
+                newCondition() : int {
+                    return 7;
+                }
+            }
+        )K",
+        R"K(
+            module app;
+            import locklib;
+
+            class Holder {
+                _lock : locklib::Lock!;
+                _value : int;
+            public:
+                Holder() {
+                    _lock = null;
+                    _value = 0;
+                    _lock = new locklib::Lock();
+                    _value = _lock->newCondition();
+                }
+
+                get() : int {
+                    return _value;
+                }
+            }
+
+            main() : int {
+                h : Holder;
+                return h.get();
+            }
+        )K"
+    );
+
+    REQUIRE(result.exit_code == 7);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 7 — End-to-end integration: lib + executable linked and run
 //

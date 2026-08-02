@@ -192,7 +192,6 @@ protected:
 
     /** Stack of active cleanup BasicBlocks, one per block with destructible local variables. */
     std::stack<llvm::BasicBlock*> _cleanup_blocks;
-
     /** Parallel stack: for each cleanup block, the list of variable_statements to destroy (declaration order). */
     std::stack<std::vector<std::shared_ptr<variable_statement>>> _cleanup_vars_stack;
 

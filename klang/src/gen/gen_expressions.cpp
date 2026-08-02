@@ -499,6 +499,14 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
             auto func = enclosing_stmt
                 ? std::dynamic_pointer_cast<function>(enclosing_stmt->get_function())
                 : nullptr;
+            auto member_owner = member_var->parent<aggregate>();
+            if (!func) {
+                auto candidate = symbol.ancestor<function>();
+                auto candidate_owner = candidate ? candidate->parent<aggregate>() : nullptr;
+                if (candidate_owner && member_owner && candidate_owner == member_owner) {
+                    func = candidate;
+                }
+            }
             if(!func) {
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), symbol.first_lexeme(),
                     "Internal error: cannot find enclosing function context for member variable '{}' access; "
@@ -523,7 +531,6 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
 
             // Determine if the member belongs to the current struct or an ancestor struct.
             // Build the chain of structs from the current (innermost) up to the owning struct.
-            auto member_owner = member_var->parent<aggregate>();
             auto current_struct = _struct_stack.top();
 
             // Walk the __parent__ chain to reach the owning struct
