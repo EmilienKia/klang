@@ -115,3 +115,66 @@ TEST_CASE("ServerSocket: connect then accept succeeds", "[libk][io][server-socke
     REQUIRE(fn() == 1);
 }
 
+TEST_CASE("ServerSocket: close from another thread aborts blocking accept",
+          "[libk][io][server-socket][interrupt]") {
+    auto jit = jit_k(R"SRC(
+        module __server_socket_close_abort_accept__;
+
+        class Acceptor : public k::Runnable {
+            _srv : k::io::ServerSocket*;
+            _res : int;
+        public:
+            Acceptor(srv: k::io::ServerSocket*) : _srv(srv), _res(0) {}
+            override run() : void {
+                try {
+                    c : k::io::SocketChannel! = _srv->accept();
+                    c->close();
+                    delete c;
+                    _res = 0;
+                } catch (e: k::io::ClosedChannelException&) {
+                    _res = 1;
+                } catch (e2: Exception&) {
+                    _res = 2;
+                }
+            }
+            const res() : int { return _res; }
+        }
+
+        class Closer : public k::Runnable {
+            _srv : k::io::ServerSocket*;
+        public:
+            Closer(srv: k::io::ServerSocket*) : _srv(srv) {}
+            override run() : void {
+                k::Thread::sleep(k::Duration::ofMillis(60L));
+                _srv->close();
+            }
+        }
+
+        test() : int {
+            addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
+
+            acc : Acceptor! = new Acceptor(srv);
+            closeTask : Closer! = new Closer(srv);
+            tAcc : k::Thread! = new k::Thread(acc);
+            tClose : k::Thread! = new k::Thread(closeTask);
+            tAcc->start();
+            tClose->start();
+            tAcc->join();
+            tClose->join();
+
+            r : int = acc->res();
+            delete tClose;
+            delete tAcc;
+            delete closeTask;
+            delete acc;
+            delete srv;
+            delete addr;
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
