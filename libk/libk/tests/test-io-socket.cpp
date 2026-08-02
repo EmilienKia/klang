@@ -180,3 +180,208 @@ TEST_CASE("ServerSocket: accept is interruptible", "[libk][io][socket][interrupt
     REQUIRE(fn() == 1);
 }
 
+TEST_CASE("SocketChannel: peer close is reported as EOF", "[libk][io][socket]") {
+    auto jit = jit_k(R"SRC(
+        module __socket_eof__;
+
+        class OneShotCloser : public k::Runnable {
+            _srv : k::io::ServerSocket*;
+        public:
+            OneShotCloser(srv: k::io::ServerSocket*) : _srv(srv) {}
+            override run() : void {
+                c : k::io::SocketChannel! = _srv->accept(2000000000L);
+                c->close();
+                delete c;
+            }
+        }
+
+        test() : int {
+            addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
+            port : int = srv->localPort();
+
+            worker : OneShotCloser! = new OneShotCloser(srv);
+            t : k::Thread! = new k::Thread(worker);
+            t->start();
+
+            peerAddr : k::io::NetworkAddress! = k::io::NetworkAddress::loopback(port);
+            cli : k::io::SocketChannel! = k::io::SocketChannel::connect(peerAddr, 2000000000L);
+            b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
+            n : int = cli->read(b, 2000000000L);
+
+            t->join();
+            cli->close();
+            srv->close();
+
+            delete b;
+            delete cli;
+            delete peerAddr;
+            delete t;
+            delete worker;
+            delete srv;
+            delete addr;
+            return n == 0 ? 1 : 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("SocketChannel: blocking read is interruptible", "[libk][io][socket][interruption]") {
+    auto jit = jit_k(R"SRC(
+        module __socket_read_interrupt__;
+
+        class IdleServer : public k::Runnable {
+            _srv : k::io::ServerSocket*;
+        public:
+            IdleServer(srv: k::io::ServerSocket*) : _srv(srv) {}
+            override run() : void {
+                c : k::io::SocketChannel! = _srv->accept(2000000000L);
+                k::Thread::sleep(k::Duration::ofMillis(300L));
+                c->close();
+                delete c;
+            }
+        }
+
+        class Reader : public k::Runnable {
+            _sock : k::io::SocketChannel*;
+            _res  : int;
+        public:
+            Reader(sock: k::io::SocketChannel*) : _sock(sock), _res(0) {}
+            override run() : void {
+                b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(16u);
+                try {
+                    _sock->read(b);
+                    _res = 0;
+                } catch (e: k::ThreadInterruptionException&) {
+                    _res = 1;
+                } catch (e2: k::io::ClosedChannelException&) {
+                    _res = 2;
+                }
+                delete b;
+            }
+            const res() : int { return _res; }
+        }
+
+        test() : int {
+            addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
+            port : int = srv->localPort();
+
+            idle : IdleServer! = new IdleServer(srv);
+            tSrv : k::Thread! = new k::Thread(idle);
+            tSrv->start();
+
+            peerAddr : k::io::NetworkAddress! = k::io::NetworkAddress::loopback(port);
+            cli : k::io::SocketChannel! = k::io::SocketChannel::connect(peerAddr, 2000000000L);
+
+            r : Reader! = new Reader(cli);
+            tRead : k::Thread! = new k::Thread(r);
+            tRead->start();
+            k::Thread::sleep(k::Duration::ofMillis(60L));
+            tRead->interrupt();
+            tRead->join();
+            tSrv->join();
+
+            res : int = r->res();
+
+            cli->close();
+            srv->close();
+            delete tRead; delete r; delete cli; delete peerAddr;
+            delete tSrv; delete idle; delete srv; delete addr;
+            return res;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("SocketChannel: close from another thread aborts blocked read",
+          "[libk][io][socket][interruption]") {
+    auto jit = jit_k(R"SRC(
+        module __socket_close_during_read__;
+
+        class IdleServer : public k::Runnable {
+            _srv : k::io::ServerSocket*;
+        public:
+            IdleServer(srv: k::io::ServerSocket*) : _srv(srv) {}
+            override run() : void {
+                c : k::io::SocketChannel! = _srv->accept(2000000000L);
+                k::Thread::sleep(k::Duration::ofMillis(300L));
+                c->close();
+                delete c;
+            }
+        }
+
+        class Reader : public k::Runnable {
+            _sock : k::io::SocketChannel*;
+            _res  : int;
+        public:
+            Reader(sock: k::io::SocketChannel*) : _sock(sock), _res(0) {}
+            override run() : void {
+                b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(16u);
+                try {
+                    _sock->read(b);
+                    _res = 0;
+                } catch (e: k::io::ClosedChannelException&) {
+                    _res = 1;
+                } catch (e2: Exception&) {
+                    _res = 2;
+                }
+                delete b;
+            }
+            const res() : int { return _res; }
+        }
+
+        class Closer : public k::Runnable {
+            _sock : k::io::SocketChannel*;
+        public:
+            Closer(sock: k::io::SocketChannel*) : _sock(sock) {}
+            override run() : void {
+                k::Thread::sleep(k::Duration::ofMillis(60L));
+                _sock->close();
+            }
+        }
+
+        test() : int {
+            addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
+            srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
+            port : int = srv->localPort();
+
+            idle : IdleServer! = new IdleServer(srv);
+            tSrv : k::Thread! = new k::Thread(idle);
+            tSrv->start();
+
+            peerAddr : k::io::NetworkAddress! = k::io::NetworkAddress::loopback(port);
+            cli : k::io::SocketChannel! = k::io::SocketChannel::connect(peerAddr, 2000000000L);
+
+            reader : Reader! = new Reader(cli);
+            closer : Closer! = new Closer(cli);
+            tRead : k::Thread! = new k::Thread(reader);
+            tClose : k::Thread! = new k::Thread(closer);
+            tRead->start();
+            tClose->start();
+            tRead->join();
+            tClose->join();
+            tSrv->join();
+
+            res : int = reader->res();
+            srv->close();
+
+            delete tClose; delete closer;
+            delete tRead; delete reader;
+            delete cli; delete peerAddr;
+            delete tSrv; delete idle;
+            delete srv; delete addr;
+            return res;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}

@@ -1321,6 +1321,8 @@ asynchrones sont nommés `AsyncFile*Stream` afin de coexister avec les
 | 5.2 | `NetworkAddress` (IPv4 numérique, `localhost`, `*`) | `io/network_address.k` |
 | 5.3 | `SocketChannel`, `Socket`, `ServerSocket` | `io/socket.k` |
 | 5.4 | Tests initiaux (loopback, timeout `accept`, interruption `accept`) | `libk/tests/test-io-socket.cpp` |
+| 5.5 | Ajustements runtime: délais absolus (pas de réarmement illimité) et `EBADF`→`Closed` pour recv/send/accept | `runtime/network_ffi.c` |
+| 5.6 | Tests étendus (`EOF` sur fermeture pair, interruption de `read`, close concurrent sur `read`) | `libk/tests/test-io-socket.cpp` |
 
 *Écarts temporaires :* backend io_uring sockets et UDP/datagramme non implémentés à ce stade;
 ces points restent dans la suite de la phase 5.

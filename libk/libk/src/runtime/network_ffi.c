@@ -111,16 +111,25 @@ static int set_cloexec(int fd) {
 }
 
 /* Wait until fd becomes ready for `events` (POLLIN/POLLOUT), or interruption/timeout. */
-static long long wait_fd_ready(int fd, short events, int64_t timeout_nanos) {
+static int64_t make_deadline(int64_t timeout_nanos) {
+    if (timeout_nanos < 0) {
+        return -1;
+    }
+    return monotonic_nanos() + timeout_nanos;
+}
+
+static int64_t remaining_to_deadline(int64_t deadline_nanos) {
+    if (deadline_nanos < 0) {
+        return -1;
+    }
+    return deadline_nanos - monotonic_nanos();
+}
+
+static long long wait_fd_ready(int fd, short events, int64_t deadline_nanos) {
     struct pollfd pfd;
     pfd.fd = fd;
     pfd.events = events;
     pfd.revents = 0;
-
-    int64_t deadline = -1;
-    if (timeout_nanos >= 0) {
-        deadline = monotonic_nanos() + timeout_nanos;
-    }
 
     for (;;) {
         if (is_interrupted()) {
@@ -128,8 +137,8 @@ static long long wait_fd_ready(int fd, short events, int64_t timeout_nanos) {
         }
 
         int timeout_ms = 20;
-        if (deadline >= 0) {
-            int64_t remaining_ns = deadline - monotonic_nanos();
+        if (deadline_nanos >= 0) {
+            int64_t remaining_ns = remaining_to_deadline(deadline_nanos);
             if (remaining_ns <= 0) {
                 return K_RES_TIMEOUT;
             }
@@ -151,7 +160,7 @@ static long long wait_fd_ready(int fd, short events, int64_t timeout_nanos) {
             continue;
         }
         if (rc == 0) {
-            if (deadline >= 0 && monotonic_nanos() >= deadline) {
+            if (deadline_nanos >= 0 && remaining_to_deadline(deadline_nanos) <= 0) {
                 return K_RES_TIMEOUT;
             }
             continue;
@@ -226,7 +235,8 @@ long long __k_net_connect(const uint32_t* host, int port, long long timeout_nano
         return encode_errno(rc);
     }
 
-    long long wr = wait_fd_ready(fd, POLLOUT, (int64_t)timeout_nanos);
+    int64_t deadline = make_deadline((int64_t)timeout_nanos);
+    long long wr = wait_fd_ready(fd, POLLOUT, deadline);
     if (wr != 0) {
         close(fd);
         return wr;
@@ -306,8 +316,9 @@ long long __k_net_accept(int server_fd, long long timeout_nanos) {
     if (server_fd < 0) {
         return K_RES_CLOSED;
     }
+    int64_t deadline = make_deadline((int64_t)timeout_nanos);
     for (;;) {
-        long long rd = wait_fd_ready(server_fd, POLLIN, (int64_t)timeout_nanos);
+        long long rd = wait_fd_ready(server_fd, POLLIN, deadline);
         if (rd != 0) {
             return rd;
         }
@@ -334,6 +345,9 @@ long long __k_net_accept(int server_fd, long long timeout_nanos) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
             continue;
         }
+        if (errno == EBADF) {
+            return K_RES_CLOSED;
+        }
         return encode_errno(errno);
     }
 }
@@ -348,8 +362,9 @@ long long __k_net_recv(int fd, void* buf, int len, long long timeout_nanos) {
     if (len == 0) {
         return 0;
     }
+    int64_t deadline = make_deadline((int64_t)timeout_nanos);
     for (;;) {
-        long long rd = wait_fd_ready(fd, POLLIN, (int64_t)timeout_nanos);
+        long long rd = wait_fd_ready(fd, POLLIN, deadline);
         if (rd != 0) {
             return rd;
         }
@@ -359,6 +374,9 @@ long long __k_net_recv(int fd, void* buf, int len, long long timeout_nanos) {
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
             continue;
+        }
+        if (errno == EBADF) {
+            return K_RES_CLOSED;
         }
         return encode_errno(errno);
     }
@@ -374,8 +392,9 @@ long long __k_net_send(int fd, const void* buf, int len, long long timeout_nanos
     if (len == 0) {
         return 0;
     }
+    int64_t deadline = make_deadline((int64_t)timeout_nanos);
     for (;;) {
-        long long wr = wait_fd_ready(fd, POLLOUT, (int64_t)timeout_nanos);
+        long long wr = wait_fd_ready(fd, POLLOUT, deadline);
         if (wr != 0) {
             return wr;
         }
@@ -385,6 +404,9 @@ long long __k_net_send(int fd, const void* buf, int len, long long timeout_nanos
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
             continue;
+        }
+        if (errno == EBADF) {
+            return K_RES_CLOSED;
         }
         return encode_errno(errno);
     }
@@ -407,4 +429,3 @@ int __k_net_close(int fd) {
     }
     return errno;
 }
-
