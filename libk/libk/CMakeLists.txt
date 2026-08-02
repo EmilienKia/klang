@@ -57,6 +57,7 @@ set(LIBK_SOURCES
     # ── Phase 5: asynchronous network I/O ─────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/network_address.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/socket.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/selector.k
     # ── Phase 6: event loop / reactor foundation ──────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/event_loop.k
 )
@@ -445,6 +446,7 @@ add_executable(libk-tests
     tests/test-io-socket-interrupt.cpp
     tests/test-io-datagram.cpp
     tests/test-io-event-loop.cpp
+    tests/test-io-selector.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)
