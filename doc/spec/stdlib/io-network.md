@@ -10,6 +10,8 @@ thread interruption model used by `FileChannel`.
 - `SocketChannel`: readable/writable TCP byte channel.
 - `Socket`: convenience subtype of `SocketChannel`.
 - `ServerSocket`: listening endpoint (`bind`, `accept`, `localPort`).
+- `DatagramSocket`: UDP endpoint with `bind`, `sendTo`, `receive`, and
+  optional connected mode (`connect` + `send`).
 
 ## Blocking semantics
 
@@ -24,5 +26,8 @@ Operations that block (`connect`, `accept`, `read`, `write`) support:
 
 ## Current scope
 
-Phase 5 currently targets TCP over IPv4 and supports numeric addresses and
-`localhost`.
+Phase 5 currently targets IPv4 and supports numeric addresses and
+`localhost`, with:
+
+- TCP (`Socket*`, `ServerSocket`) on interruptible/timeout-aware waits.
+- UDP (`DatagramSocket`) for loopback-style datagram send/receive.

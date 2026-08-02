@@ -28,6 +28,9 @@ namespace io {
 @ffi::Extern("C") __k_net_send(fd: int, buf: const byte*, len: int, timeoutNanos: long) : long;
 @ffi::Extern("C") __k_net_is_open(fd: int) : int;
 @ffi::Extern("C") __k_net_close(fd: int) : int;
+@ffi::Extern("C") __k_net_dgram_bind(host: const char*, port: int, reuseAddr: int) : int;
+@ffi::Extern("C") __k_net_dgram_connect(fd: int, host: const char*, port: int, timeoutNanos: long) : long;
+@ffi::Extern("C") __k_net_dgram_sendto(fd: int, host: const char*, port: int, buf: const byte*, len: int, timeoutNanos: long) : long;
 
 /**
  * TCP byte channel.
@@ -219,6 +222,132 @@ public:
 
     accept() : SocketChannel! {
         return accept(IO_NO_TIMEOUT);
+    }
+
+    override const isOpen() : bool {
+        if (_fd < 0) {
+            return false;
+        }
+        return __k_net_is_open(_fd) != 0;
+    }
+
+    override close() : void {
+        if (_fd >= 0) {
+            __k_net_close(_fd);
+            _fd = -1;
+        }
+    }
+}
+
+/**
+ * UDP datagram socket.
+ *
+ * Supports both connected mode (`connect`) and one-shot destination sends
+ * (`sendTo`).
+ */
+public class DatagramSocket : public Channel {
+    _fd : int;
+
+public:
+    DatagramSocket() : _fd(-1) {}
+
+    DatagramSocket(fd: int) : _fd(fd) {}
+
+    static bind(addr: const NetworkAddress&) : DatagramSocket! {
+        fd : int = __k_net_dgram_bind(addr.nativeHost(), addr.port(), 1);
+        if (fd >= 0) {
+            return new DatagramSocket(fd);
+        }
+        throw IOException((int) (IO_ERROR_BASE - (long) fd));
+    }
+
+    static open() : DatagramSocket! {
+        any : NetworkAddress! = NetworkAddress::any(0);
+        s : DatagramSocket! = DatagramSocket::bind(any);
+        delete any;
+        return s;
+    }
+
+    connect(remote: const NetworkAddress&, timeoutNanos: long) : void {
+        if (_fd < 0) {
+            throw ClosedChannelException();
+        }
+        rc : long = __k_net_dgram_connect(_fd, remote.nativeHost(), remote.port(), timeoutNanos);
+        SocketChannel::checkResult(rc, 0L);
+    }
+
+    connect(remote: const NetworkAddress&) : void {
+        connect(remote, IO_NO_TIMEOUT);
+    }
+
+    receive(dst: ByteBuffer+, timeoutNanos: long) : int {
+        if (_fd < 0) {
+            throw ClosedChannelException();
+        }
+        len : unsigned int = dst->remaining();
+        if (len == 0u) {
+            return 0;
+        }
+        rc : long = __k_net_recv(_fd, dst->dataAt(dst->position()), (int) len, timeoutNanos);
+        SocketChannel::checkResult(rc, 0L);
+        n : int = (int) rc;
+        dst->position(dst->position() + (unsigned int) n);
+        return n;
+    }
+
+    receive(dst: ByteBuffer+) : int {
+        return receive(dst, IO_NO_TIMEOUT);
+    }
+
+    send(src: ByteBuffer+, timeoutNanos: long) : int {
+        if (_fd < 0) {
+            throw ClosedChannelException();
+        }
+        len : unsigned int = src->remaining();
+        if (len == 0u) {
+            return 0;
+        }
+        rc : long = __k_net_send(_fd, src->dataAt(src->position()), (int) len, timeoutNanos);
+        SocketChannel::checkResult(rc, 0L);
+        n : int = (int) rc;
+        src->position(src->position() + (unsigned int) n);
+        return n;
+    }
+
+    send(src: ByteBuffer+) : int {
+        return send(src, IO_NO_TIMEOUT);
+    }
+
+    sendTo(src: ByteBuffer+, remote: const NetworkAddress&, timeoutNanos: long) : int {
+        if (_fd < 0) {
+            throw ClosedChannelException();
+        }
+        len : unsigned int = src->remaining();
+        if (len == 0u) {
+            return 0;
+        }
+        rc : long = __k_net_dgram_sendto(_fd, remote.nativeHost(), remote.port(),
+                                         src->dataAt(src->position()), (int) len,
+                                         timeoutNanos);
+        SocketChannel::checkResult(rc, 0L);
+        n : int = (int) rc;
+        src->position(src->position() + (unsigned int) n);
+        return n;
+    }
+
+    sendTo(src: ByteBuffer+, remote: const NetworkAddress&) : int {
+        return sendTo(src, remote, IO_NO_TIMEOUT);
+    }
+
+    const localPort() : int {
+        if (_fd < 0) {
+            throw ClosedChannelException();
+        }
+        p : long = __k_net_local_port(_fd);
+        if (p < 0L) {
+            throw IOException(0);
+        }
+        return (int) p;
     }
 
     override const isOpen() : bool {
