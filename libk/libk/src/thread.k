@@ -241,7 +241,7 @@ public:
 
     /**
      * Throw ThreadInterruptionException if the calling thread is interrupted.
-     * Does NOT clear the flag.
+     * Clears the flag if it was set.
      *
      * @throws ThreadInterruptionException if interrupted.
      */

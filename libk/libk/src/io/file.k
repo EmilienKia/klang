@@ -246,10 +246,11 @@ public:
         }
          n : int = __k_io_file_fread(_fp, &buf[off], (int) len);
          if (n < 0) {
-             // TODO: IO error should be thrown as an exception, not returned via Expected
-             // For now, treat it as closed stream temporarily
-             err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::Closed;
-             return Expected<unsigned int, ::k::io::StreamOutOfData>::error(err);
+              // Propagate backend failures through the stream error channel.
+              // The byte-stream API currently exposes closed/broken as the only
+              // recoverable failure mode here.
+              err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::Closed;
+              return Expected<unsigned int, ::k::io::StreamOutOfData>::error(err);
          }
         actual : unsigned int = (unsigned int) n;
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(actual);

@@ -25,7 +25,7 @@ interruption and timeout contract described here.
 | Type | Kind | Description |
 |------|------|-------------|
 | [`Duration`](#2-duration) | `struct` | Immutable, signed, nanosecond-resolution time span. |
-| [`Instant`](#3-instant) | `struct` | Immutable point on the wall-clock timeline, in nanoseconds since the Unix epoch. |
+| [`Instant`](#3-instant) | `struct` | Immutable point on the monotonic timeline, in nanoseconds since an unspecified epoch. |
 | [`Runnable`](#4-runnable) | `interface` | Unit of work that a thread executes. |
 | [`Thread`](#5-thread) | `class` | Handle on a platform thread. |
 | [`ThreadInterruptionException`](#6-exceptions) | `class` | A blocking operation was interrupted. |
@@ -39,8 +39,8 @@ interruption and timeout contract described here.
   holding a single `long`; they are copied freely and never allocate.
 - **Monotonic waiting.** Every timed wait is expressed as a `Duration` and is
   measured against a monotonic clock, so it is immune to wall-clock changes.
-  `Instant`, in contrast, reads the real-time clock and is only meant for
-  timestamps.
+  `Instant` uses the same monotonic source and is suitable for elapsed-time
+  calculations and deadlines.
 - **Interruption is cooperative.** Interrupting a thread sets a flag and wakes
   it up from any blocking point of the runtime. It never kills a thread.
 - **Blocking operations are checked.** Every method that can block declares
@@ -98,14 +98,14 @@ if (d > Duration::ofSeconds(1L)) {
 
 ## 3. `Instant`
 
-A point on the wall-clock timeline, stored as a `long` count of nanoseconds
-since the Unix epoch (1970-01-01T00:00:00Z).
+A point on the monotonic timeline, stored as a `long` count of nanoseconds
+since an unspecified epoch.
 
 | Signature | Description |
 |-----------|-------------|
 | `Instant()` | The epoch itself. |
 | `Instant(epochNanos: long)` | Explicit epoch offset. |
-| `static now() : Instant` | Current real-time clock reading. |
+| `static now() : Instant` | Current monotonic clock reading. |
 | `const plus(d: const Duration&) : Instant` | This instant shifted forward by `d`. |
 | `const minus(other: const Instant&) : Duration` | Span from `other` to this instant. |
 | `const isBefore(other: const Instant&) : bool` | Chronological comparison. |
@@ -114,9 +114,9 @@ since the Unix epoch (1970-01-01T00:00:00Z).
 
 `Instant` also supports `==`, `!=`, `<`, `>`, `<=` and `>=`.
 
-> `Instant` reads the **real-time** clock and can therefore jump backwards when
-> the system clock is adjusted. Never use it to implement a timeout — use a
-> `Duration` and the timed variants of the blocking methods instead.
+> `Instant` reads the **monotonic** clock and therefore never jumps backwards.
+> Use it for elapsed-time calculations and deadline comparisons, not for
+> calendar timestamps.
 
 ---
 

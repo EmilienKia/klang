@@ -37,6 +37,9 @@ exact same API is provided by a synchronous POSIX fallback (`pread`/`pwrite`
 /`fsync`). `FileChannel` behaves identically either way; only latency under
 load differs.
 
+The `FileChannel::isAsyncBackendActive()` helper reports which backend is
+currently active. It is useful for diagnostics only.
+
 Interruption and timeout are honoured by submitting an asynchronous cancel and
 then waiting **uninterruptibly** for the real completion, so the kernel never
 writes into a buffer the caller has already released.
