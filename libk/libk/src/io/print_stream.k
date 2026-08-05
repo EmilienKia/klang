@@ -18,15 +18,6 @@
 
 module k;
 
-// ── FFI declarations for number-to-string conversion helpers ─────────────
-@ffi::Extern("C") __k_io_int_to_str(v: int, buf: byte*, bufLen: int) : int;
-@ffi::Extern("C") __k_io_long_to_str(v: long, buf: byte*, bufLen: int) : int;
-@ffi::Extern("C") __k_io_uint_to_str(v: unsigned int, buf: byte*, bufLen: int) : int;
-@ffi::Extern("C") __k_io_ulong_to_str(v: unsigned long, buf: byte*, bufLen: int) : int;
-@ffi::Extern("C") __k_io_float_to_str(v: float, buf: byte*, bufLen: int) : int;
-@ffi::Extern("C") __k_io_double_to_str(v: double, buf: byte*, bufLen: int) : int;
-@ffi::Extern("C") __k_io_chars_to_bytes(src: const char*, dst: byte*, len: int) : int;
-
 namespace io {
 
 /**
@@ -36,6 +27,14 @@ namespace io {
  * and string-like values and supports fluent chaining.
  */
 public class PrintStream : public FilterOutputStream<byte> {
+private:
+    @ffi::Extern("C") private static __k_io_int_to_str(v: int, buf: byte*, bufLen: int) : int;
+    @ffi::Extern("C") private static __k_io_long_to_str(v: long, buf: byte*, bufLen: int) : int;
+    @ffi::Extern("C") private static __k_io_uint_to_str(v: unsigned int, buf: byte*, bufLen: int) : int;
+    @ffi::Extern("C") private static __k_io_ulong_to_str(v: unsigned long, buf: byte*, bufLen: int) : int;
+    @ffi::Extern("C") private static __k_io_float_to_str(v: float, buf: byte*, bufLen: int) : int;
+    @ffi::Extern("C") private static __k_io_double_to_str(v: double, buf: byte*, bufLen: int) : int;
+    @ffi::Extern("C") private static __k_io_chars_to_bytes(src: const char*, dst: byte*, len: int) : int;
 
 public:
     /**
@@ -264,8 +263,6 @@ public:
 }
 
 } // namespace io
-
-
 
 
 

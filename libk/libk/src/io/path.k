@@ -20,14 +20,6 @@ module k;
 
 namespace io {
 
-// ── FFI declarations for path inspection ────────────────────────────────
-@ffi::Extern("C") __k_async_path_exists(path: const char*) : int;
-@ffi::Extern("C") __k_async_path_is_file(path: const char*) : int;
-@ffi::Extern("C") __k_async_path_is_directory(path: const char*) : int;
-@ffi::Extern("C") __k_async_path_size(path: const char*) : long;
-@ffi::Extern("C") __k_async_path_delete(path: const char*) : int;
-@ffi::Extern("C") __k_async_path_mkdir(path: const char*) : int;
-
 /**
  * Path — an immutable filesystem location.
  *
@@ -41,6 +33,12 @@ namespace io {
 public class Path {
     _path : char[]!;
     _len  : int;
+    @ffi::Extern("C") private static __k_async_path_exists(path: const char*) : int;
+    @ffi::Extern("C") private static __k_async_path_is_file(path: const char*) : int;
+    @ffi::Extern("C") private static __k_async_path_is_directory(path: const char*) : int;
+    @ffi::Extern("C") private static __k_async_path_size(path: const char*) : long;
+    @ffi::Extern("C") private static __k_async_path_delete(path: const char*) : int;
+    @ffi::Extern("C") private static __k_async_path_mkdir(path: const char*) : int;
 
 public:
     /** Construct an empty path. */

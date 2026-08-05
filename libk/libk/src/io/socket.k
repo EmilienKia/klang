@@ -20,23 +20,23 @@ module k;
 
 namespace io {
 
-@ffi::Extern("C") __k_net_connect(host: const char*, port: int, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_net_bind_listen(host: const char*, port: int, backlog: int, reuseAddr: int) : int;
-@ffi::Extern("C") __k_net_local_port(fd: int) : long;
-@ffi::Extern("C") __k_net_accept(serverFd: int, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_net_recv(fd: int, buf: byte*, len: int, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_net_send(fd: int, buf: const byte*, len: int, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_net_is_open(fd: int) : int;
-@ffi::Extern("C") __k_net_close(fd: int) : int;
-@ffi::Extern("C") __k_net_dgram_bind(host: const char*, port: int, reuseAddr: int) : int;
-@ffi::Extern("C") __k_net_dgram_connect(fd: int, host: const char*, port: int, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_net_dgram_sendto(fd: int, host: const char*, port: int, buf: const byte*, len: int, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_net_unix_connect(path: const char*, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_net_unix_bind_listen(path: const char*, backlog: int, reuseAddr: int) : int;
-@ffi::Extern("C") __k_net_unix_accept(serverFd: int, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_net_unix_dgram_bind(path: const char*, reuseAddr: int) : int;
-@ffi::Extern("C") __k_net_unix_dgram_connect(fd: int, path: const char*, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_net_unix_dgram_sendto(fd: int, path: const char*, buf: const byte*, len: int, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_connect(host: const char*, port: int, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_bind_listen(host: const char*, port: int, backlog: int, reuseAddr: int) : int;
+@ffi::Extern("C") private __k_net_local_port(fd: int) : long;
+@ffi::Extern("C") private __k_net_accept(serverFd: int, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_recv(fd: int, buf: byte*, len: int, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_send(fd: int, buf: const byte*, len: int, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_is_open(fd: int) : int;
+@ffi::Extern("C") private __k_net_close(fd: int) : int;
+@ffi::Extern("C") private __k_net_dgram_bind(host: const char*, port: int, reuseAddr: int) : int;
+@ffi::Extern("C") private __k_net_dgram_connect(fd: int, host: const char*, port: int, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_dgram_sendto(fd: int, host: const char*, port: int, buf: const byte*, len: int, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_unix_connect(path: const char*, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_unix_bind_listen(path: const char*, backlog: int, reuseAddr: int) : int;
+@ffi::Extern("C") private __k_net_unix_accept(serverFd: int, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_unix_dgram_bind(path: const char*, reuseAddr: int) : int;
+@ffi::Extern("C") private __k_net_unix_dgram_connect(fd: int, path: const char*, timeoutNanos: long) : long;
+@ffi::Extern("C") private __k_net_unix_dgram_sendto(fd: int, path: const char*, buf: const byte*, len: int, timeoutNanos: long) : long;
 
 /**
  * TCP byte channel.

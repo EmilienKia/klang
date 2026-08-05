@@ -26,21 +26,6 @@ namespace io {
 public struct NativeAsyncHandle {
 }
 
-// ── FFI declarations for the asynchronous I/O substrate ──────────────────
-@ffi::Extern("C") __k_async_is_uring() : int;
-@ffi::Extern("C") __k_async_open(path: const char*, flags: int, mode: int) : NativeAsyncHandle*;
-@ffi::Extern("C") __k_async_last_errno() : int;
-@ffi::Extern("C") __k_async_retain(h: NativeAsyncHandle*) : void;
-@ffi::Extern("C") __k_async_release(h: NativeAsyncHandle*) : void;
-@ffi::Extern("C") __k_async_close(h: NativeAsyncHandle*) : int;
-@ffi::Extern("C") __k_async_is_open(h: const NativeAsyncHandle*) : int;
-@ffi::Extern("C") __k_async_fd(h: const NativeAsyncHandle*) : int;
-@ffi::Extern("C") __k_async_read_bytes(h: NativeAsyncHandle*, buf: byte*, len: int, offset: long, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_async_write_bytes(h: NativeAsyncHandle*, buf: const byte*, len: int, offset: long, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_async_fsync(h: NativeAsyncHandle*, timeoutNanos: long) : long;
-@ffi::Extern("C") __k_async_size(h: const NativeAsyncHandle*) : long;
-@ffi::Extern("C") __k_async_truncate(h: NativeAsyncHandle*, size: long) : int;
-
 // ── Open options ─────────────────────────────────────────────────────────
 
 /** Open for reading. */
@@ -90,6 +75,19 @@ public const IO_NO_TIMEOUT : long = -1L;
 public class FileChannel : public ReadableChannel, public WritableChannel {
     _native   : NativeAsyncHandle*;
     _position : long;
+    @ffi::Extern("C") private static __k_async_is_uring() : int;
+    @ffi::Extern("C") private static __k_async_open(path: const char*, flags: int, mode: int) : NativeAsyncHandle*;
+    @ffi::Extern("C") private static __k_async_last_errno() : int;
+    @ffi::Extern("C") private static __k_async_retain(h: NativeAsyncHandle*) : void;
+    @ffi::Extern("C") private static __k_async_release(h: NativeAsyncHandle*) : void;
+    @ffi::Extern("C") private static __k_async_close(h: NativeAsyncHandle*) : int;
+    @ffi::Extern("C") private static __k_async_is_open(h: const NativeAsyncHandle*) : int;
+    @ffi::Extern("C") private static __k_async_fd(h: const NativeAsyncHandle*) : int;
+    @ffi::Extern("C") private static __k_async_read_bytes(h: NativeAsyncHandle*, buf: byte*, len: int, offset: long, timeoutNanos: long) : long;
+    @ffi::Extern("C") private static __k_async_write_bytes(h: NativeAsyncHandle*, buf: const byte*, len: int, offset: long, timeoutNanos: long) : long;
+    @ffi::Extern("C") private static __k_async_fsync(h: NativeAsyncHandle*, timeoutNanos: long) : long;
+    @ffi::Extern("C") private static __k_async_size(h: const NativeAsyncHandle*) : long;
+    @ffi::Extern("C") private static __k_async_truncate(h: NativeAsyncHandle*, size: long) : int;
 
 public:
     /** Construct a closed channel. */

@@ -31,22 +31,6 @@ public struct NativeMutex {
 public struct NativeCondition {
 }
 
-// ── FFI declarations ─────────────────────────────────────────────────────────
-@ffi::Extern("C") __k_mutex_create(reentrant: int) : NativeMutex*;
-@ffi::Extern("C") __k_mutex_destroy(m: NativeMutex*) : void;
-@ffi::Extern("C") __k_mutex_lock(m: NativeMutex*) : void;
-@ffi::Extern("C") __k_mutex_lock_interruptibly(m: NativeMutex*, timeout_nanos: long) : int;
-@ffi::Extern("C") __k_mutex_try_lock(m: NativeMutex*) : int;
-@ffi::Extern("C") __k_mutex_unlock(m: NativeMutex*) : int;
-@ffi::Extern("C") __k_mutex_is_held(m: const NativeMutex*) : int;
-@ffi::Extern("C") __k_mutex_hold_count(m: const NativeMutex*) : int;
-
-@ffi::Extern("C") __k_cond_create(m: NativeMutex*) : NativeCondition*;
-@ffi::Extern("C") __k_cond_destroy(c: NativeCondition*) : void;
-@ffi::Extern("C") __k_cond_await(c: NativeCondition*, timeout_nanos: long, interruptible: int) : int;
-@ffi::Extern("C") __k_cond_signal(c: NativeCondition*) : int;
-@ffi::Extern("C") __k_cond_signal_all(c: NativeCondition*) : int;
-
 // ═════════════════════════════════════════════════════════════════════════════
 // Wait outcome codes shared by every synchronisation primitive.
 // They mirror the K_SYNC_* constants of runtime/sync_primitives.h.
@@ -121,6 +105,14 @@ public interface Lock {
 public class Mutex : public Lock {
     protected:
     _native : NativeMutex*;
+    @ffi::Extern("C") private static __k_mutex_create(reentrant: int) : NativeMutex*;
+    @ffi::Extern("C") private static __k_mutex_destroy(m: NativeMutex*) : void;
+    @ffi::Extern("C") private static __k_mutex_lock(m: NativeMutex*) : void;
+    @ffi::Extern("C") private static __k_mutex_lock_interruptibly(m: NativeMutex*, timeout_nanos: long) : int;
+    @ffi::Extern("C") private static __k_mutex_try_lock(m: NativeMutex*) : int;
+    @ffi::Extern("C") private static __k_mutex_unlock(m: NativeMutex*) : int;
+    @ffi::Extern("C") private static __k_mutex_is_held(m: const NativeMutex*) : int;
+    @ffi::Extern("C") private static __k_mutex_hold_count(m: const NativeMutex*) : int;
 
     /**
      * Construct a lock with an explicit reentrancy mode.
@@ -271,6 +263,11 @@ public class ReentrantLock : public Mutex {
 public class Condition {
     private:
     _native : NativeCondition*;
+    @ffi::Extern("C") private static __k_cond_create(m: NativeMutex*) : NativeCondition*;
+    @ffi::Extern("C") private static __k_cond_destroy(c: NativeCondition*) : void;
+    @ffi::Extern("C") private static __k_cond_await(c: NativeCondition*, timeout_nanos: long, interruptible: int) : int;
+    @ffi::Extern("C") private static __k_cond_signal(c: NativeCondition*) : int;
+    @ffi::Extern("C") private static __k_cond_signal_all(c: NativeCondition*) : int;
 
     public:
     /**

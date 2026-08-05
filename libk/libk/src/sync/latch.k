@@ -30,21 +30,6 @@ public struct NativeLatch {
 public struct NativeBarrier {
 }
 
-// ── FFI declarations ─────────────────────────────────────────────────────────
-@ffi::Extern("C") __k_latch_create(count: long) : NativeLatch*;
-@ffi::Extern("C") __k_latch_destroy(l: NativeLatch*) : void;
-@ffi::Extern("C") __k_latch_await(l: NativeLatch*, timeout_nanos: long) : int;
-@ffi::Extern("C") __k_latch_count_down(l: NativeLatch*) : void;
-@ffi::Extern("C") __k_latch_count(l: const NativeLatch*) : long;
-
-@ffi::Extern("C") __k_barrier_create(parties: int) : NativeBarrier*;
-@ffi::Extern("C") __k_barrier_destroy(b: NativeBarrier*) : void;
-@ffi::Extern("C") __k_barrier_await(b: NativeBarrier*, timeout_nanos: long) : int;
-@ffi::Extern("C") __k_barrier_reset(b: NativeBarrier*) : void;
-@ffi::Extern("C") __k_barrier_parties(b: const NativeBarrier*) : int;
-@ffi::Extern("C") __k_barrier_waiting(b: const NativeBarrier*) : int;
-@ffi::Extern("C") __k_barrier_is_broken(b: const NativeBarrier*) : int;
-
 // ═════════════════════════════════════════════════════════════════════════════
 // CountDownLatch — one-shot countdown gate.
 // ═════════════════════════════════════════════════════════════════════════════
@@ -67,6 +52,11 @@ public struct NativeBarrier {
 public class CountDownLatch {
     private:
     _native : NativeLatch*;
+    @ffi::Extern("C") private static __k_latch_create(count: long) : NativeLatch*;
+    @ffi::Extern("C") private static __k_latch_destroy(l: NativeLatch*) : void;
+    @ffi::Extern("C") private static __k_latch_await(l: NativeLatch*, timeout_nanos: long) : int;
+    @ffi::Extern("C") private static __k_latch_count_down(l: NativeLatch*) : void;
+    @ffi::Extern("C") private static __k_latch_count(l: const NativeLatch*) : long;
 
     public:
     /**
@@ -158,6 +148,13 @@ public class CountDownLatch {
 public class CyclicBarrier {
     private:
     _native : NativeBarrier*;
+    @ffi::Extern("C") private static __k_barrier_create(parties: int) : NativeBarrier*;
+    @ffi::Extern("C") private static __k_barrier_destroy(b: NativeBarrier*) : void;
+    @ffi::Extern("C") private static __k_barrier_await(b: NativeBarrier*, timeout_nanos: long) : int;
+    @ffi::Extern("C") private static __k_barrier_reset(b: NativeBarrier*) : void;
+    @ffi::Extern("C") private static __k_barrier_parties(b: const NativeBarrier*) : int;
+    @ffi::Extern("C") private static __k_barrier_waiting(b: const NativeBarrier*) : int;
+    @ffi::Extern("C") private static __k_barrier_is_broken(b: const NativeBarrier*) : int;
 
     public:
     /**

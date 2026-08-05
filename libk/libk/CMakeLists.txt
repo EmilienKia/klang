@@ -398,10 +398,9 @@ set(KLANG_STDLIB_KDI_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
 set(KLANG_STDLIB_LIB_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
     "Directory containing libk.so / libk.a (K base stdlib binaries)")
 
-# ── libk tests ───────────────────────────────────────────────────────────────
-# Tests that exercise the K standard library features (String, StringBuilder,
-# etc.) via JIT compilation.  The test K source uses `import k;` to reference
-# the real stdlib types — no class definitions are duplicated.
+# ── libk functional tests ─────────────────────────────────────────────────────
+# Pure single-threaded tests: no spawned threads, no network, no async I/O.
+# Fast and safe to run on low-resource hosts.
 # ─────────────────────────────────────────────────────────────────────────────
 add_executable(libk-tests
     tests/test-exceptions.cpp
@@ -418,7 +417,6 @@ add_executable(libk-tests
     tests/test-io-transform-streams.cpp
     tests/test-io-buffered-streams.cpp
     tests/test-io-data-streams.cpp
-    tests/test-io-file.cpp
     tests/test-io-print-stream.cpp
     tests/test-io-stdio.cpp
     tests/test-math.cpp
@@ -427,31 +425,9 @@ add_executable(libk-tests
     tests/test-vector.cpp
     tests/test-set.cpp
     tests/test-map.cpp
-    # ── Phase 1: time and threading ───────────────────────────────────────
-    tests/test-thread-basic.cpp
-    # ── Phase 2: futures ──────────────────────────────────────────────────
-    tests/test-future.cpp
-    # ── Phase 3: synchronisation ──────────────────────────────────────────
-    tests/test-sync-mutex.cpp
-    tests/test-sync-condition.cpp
-    tests/test-sync-semaphore.cpp
-    tests/test-sync-latch.cpp
-    tests/test-sync-rwlock.cpp
     tests/test-io-byte-buffer.cpp
     tests/test-io-path.cpp
-    tests/test-io-file-channel.cpp
-    tests/test-io-file-stream.cpp
-    tests/test-io-socket.cpp
-    tests/test-io-server-socket.cpp
-    tests/test-io-socket-interrupt.cpp
-    tests/test-io-datagram.cpp
-    tests/test-io-unix-socket-native.cpp
-    tests/test-io-event-loop.cpp
-    tests/test-io-selector.cpp
-    tests/test-thread-stress.cpp
-    tests/test-io-stress.cpp
-    tests/test-cancellation-storm.cpp
-    tests/test-runtime-shutdown.cpp
+    tests/test-shared.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)
@@ -459,5 +435,65 @@ target_compile_definitions(libk-tests PRIVATE
     LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
     LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
 )
-
 add_test(NAME libk-tests COMMAND libk-tests)
+
+# ── libk threading and I/O tests ──────────────────────────────────────────────
+# Functional correctness tests that involve real threads, futures, sync
+# primitives, file I/O, and network sockets.  Heavier than libk-tests but
+# still required for full functional coverage; registered unconditionally.
+# ─────────────────────────────────────────────────────────────────────────────
+add_executable(libk-thread-io-tests
+    # ── Time, threads, futures ────────────────────────────────────────────
+    tests/test-thread-basic.cpp
+    tests/test-future.cpp
+    # ── Synchronisation ───────────────────────────────────────────────────
+    tests/test-sync-mutex.cpp
+    tests/test-sync-condition.cpp
+    tests/test-sync-semaphore.cpp
+    tests/test-sync-latch.cpp
+    tests/test-sync-rwlock.cpp
+    # ── Async file I/O ────────────────────────────────────────────────────
+    tests/test-io-file.cpp
+    tests/test-io-file-channel.cpp
+    tests/test-io-file-stream.cpp
+    # ── Network and socket I/O ────────────────────────────────────────────
+    tests/test-io-socket.cpp
+    tests/test-io-server-socket.cpp
+    tests/test-io-socket-interrupt.cpp
+    tests/test-io-datagram.cpp
+    tests/test-io-unix-socket-native.cpp
+    tests/test-io-event-loop.cpp
+    tests/test-io-selector.cpp
+)
+target_link_libraries(libk-thread-io-tests klang-test-helpers Catch2::Catch2WithMain dl)
+add_dependencies(libk-thread-io-tests libk_stdlib)
+target_compile_definitions(libk-thread-io-tests PRIVATE
+    LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
+    LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
+)
+add_test(NAME libk-thread-io-tests COMMAND libk-thread-io-tests)
+
+# ── libk performance / stress tests ──────────────────────────────────────────
+# Extremely resource-intensive (thread storms, I/O saturation, cancellation
+# floods).  Excluded from the default CTest run to avoid overwhelming low-spec
+# hosts.  Enable with -DLIBK_PERF_TESTS=ON, then run with:
+#   ctest -R libk-perf-tests
+# ─────────────────────────────────────────────────────────────────────────────
+option(LIBK_PERF_TESTS "Build and register the libk performance/stress tests" OFF)
+
+add_executable(libk-perf-tests
+    tests/test-thread-stress.cpp
+    tests/test-io-stress.cpp
+    tests/test-cancellation-storm.cpp
+    tests/test-runtime-shutdown.cpp
+)
+target_link_libraries(libk-perf-tests klang-test-helpers Catch2::Catch2WithMain dl)
+add_dependencies(libk-perf-tests libk_stdlib)
+target_compile_definitions(libk-perf-tests PRIVATE
+    LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
+    LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
+)
+
+if(LIBK_PERF_TESTS)
+    add_test(NAME libk-perf-tests COMMAND libk-perf-tests)
+endif()

@@ -24,15 +24,6 @@ module k;
 public struct NativeSemaphore {
 }
 
-// ── FFI declarations ─────────────────────────────────────────────────────────
-@ffi::Extern("C") __k_sem_create(permits: int) : NativeSemaphore*;
-@ffi::Extern("C") __k_sem_destroy(s: NativeSemaphore*) : void;
-@ffi::Extern("C") __k_sem_acquire(s: NativeSemaphore*, permits: int, timeout_nanos: long) : int;
-@ffi::Extern("C") __k_sem_try_acquire(s: NativeSemaphore*, permits: int) : int;
-@ffi::Extern("C") __k_sem_release(s: NativeSemaphore*, permits: int) : void;
-@ffi::Extern("C") __k_sem_available(s: const NativeSemaphore*) : int;
-@ffi::Extern("C") __k_sem_drain(s: NativeSemaphore*) : int;
-
 /**
  * Semaphore — a counting permit dispenser.
  *
@@ -57,6 +48,13 @@ public struct NativeSemaphore {
 public class Semaphore {
     private:
     _native : NativeSemaphore*;
+    @ffi::Extern("C") private static __k_sem_create(permits: int) : NativeSemaphore*;
+    @ffi::Extern("C") private static __k_sem_destroy(s: NativeSemaphore*) : void;
+    @ffi::Extern("C") private static __k_sem_acquire(s: NativeSemaphore*, permits: int, timeout_nanos: long) : int;
+    @ffi::Extern("C") private static __k_sem_try_acquire(s: NativeSemaphore*, permits: int) : int;
+    @ffi::Extern("C") private static __k_sem_release(s: NativeSemaphore*, permits: int) : void;
+    @ffi::Extern("C") private static __k_sem_available(s: const NativeSemaphore*) : int;
+    @ffi::Extern("C") private static __k_sem_drain(s: NativeSemaphore*) : int;
 
     public:
     /**

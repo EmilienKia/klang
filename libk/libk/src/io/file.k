@@ -27,26 +27,26 @@ public struct CFile {
 }
 
 // ── FFI declarations for file I/O C wrappers ────────────────────────────
-@ffi::Extern("C") __k_io_file_fopen(path: const char*, mode: const char*) : CFile*;
-@ffi::Extern("C") __k_io_file_fclose(fp: CFile*) : int;
-@ffi::Extern("C") __k_io_file_fread_byte(fp: CFile*) : int;
-@ffi::Extern("C") __k_io_file_fwrite_byte(fp: CFile*, b: int) : int;
-@ffi::Extern("C") __k_io_file_fread(fp: CFile*, buf: byte*, len: int) : int;
-@ffi::Extern("C") __k_io_file_fwrite(fp: CFile*, buf: const byte*, len: int) : int;
-@ffi::Extern("C") __k_io_file_fflush(fp: CFile*) : int;
-@ffi::Extern("C") __k_io_file_fileno(fp: CFile*) : int;
-@ffi::Extern("C") __k_io_file_exists(path: const char*) : int;
-@ffi::Extern("C") __k_io_file_is_file(path: const char*) : int;
-@ffi::Extern("C") __k_io_file_is_directory(path: const char*) : int;
-@ffi::Extern("C") __k_io_file_length(path: const char*) : long;
-@ffi::Extern("C") __k_io_file_delete(path: const char*) : int;
-@ffi::Extern("C") __k_io_file_create_new(path: const char*) : int;
-@ffi::Extern("C") __k_io_file_last_separator(path: const char*) : int;
+@ffi::Extern("C") private __k_io_file_fopen(path: const char*, mode: const char*) : CFile*;
+@ffi::Extern("C") private __k_io_file_fclose(fp: CFile*) : int;
+@ffi::Extern("C") private __k_io_file_fread_byte(fp: CFile*) : int;
+@ffi::Extern("C") private __k_io_file_fwrite_byte(fp: CFile*, b: int) : int;
+@ffi::Extern("C") private __k_io_file_fread(fp: CFile*, buf: byte*, len: int) : int;
+@ffi::Extern("C") private __k_io_file_fwrite(fp: CFile*, buf: const byte*, len: int) : int;
+@ffi::Extern("C") private __k_io_file_fflush(fp: CFile*) : int;
+@ffi::Extern("C") private __k_io_file_fileno(fp: CFile*) : int;
+@ffi::Extern("C") private __k_io_file_exists(path: const char*) : int;
+@ffi::Extern("C") private __k_io_file_is_file(path: const char*) : int;
+@ffi::Extern("C") private __k_io_file_is_directory(path: const char*) : int;
+@ffi::Extern("C") private __k_io_file_length(path: const char*) : long;
+@ffi::Extern("C") private __k_io_file_delete(path: const char*) : int;
+@ffi::Extern("C") private __k_io_file_create_new(path: const char*) : int;
+@ffi::Extern("C") private __k_io_file_last_separator(path: const char*) : int;
 
 // ── FFI declarations for standard stream handles ────────────────────────
-@ffi::Extern("C") __k_io_file_get_stdin() : CFile*;
-@ffi::Extern("C") __k_io_file_get_stdout() : CFile*;
-@ffi::Extern("C") __k_io_file_get_stderr() : CFile*;
+@ffi::Extern("C") private __k_io_file_get_stdin() : CFile*;
+@ffi::Extern("C") private __k_io_file_get_stdout() : CFile*;
+@ffi::Extern("C") private __k_io_file_get_stderr() : CFile*;
 
 
 /**
@@ -395,4 +395,3 @@ public:
 }
 
 } // namespace io
-

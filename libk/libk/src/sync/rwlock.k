@@ -24,18 +24,6 @@ module k;
 public struct NativeRwLock {
 }
 
-// ── FFI declarations ─────────────────────────────────────────────────────────
-@ffi::Extern("C") __k_rwlock_create() : NativeRwLock*;
-@ffi::Extern("C") __k_rwlock_destroy(l: NativeRwLock*) : void;
-@ffi::Extern("C") __k_rwlock_read_lock(l: NativeRwLock*, timeout_nanos: long, interruptible: int) : int;
-@ffi::Extern("C") __k_rwlock_try_read_lock(l: NativeRwLock*) : int;
-@ffi::Extern("C") __k_rwlock_read_unlock(l: NativeRwLock*) : int;
-@ffi::Extern("C") __k_rwlock_write_lock(l: NativeRwLock*, timeout_nanos: long, interruptible: int) : int;
-@ffi::Extern("C") __k_rwlock_try_write_lock(l: NativeRwLock*) : int;
-@ffi::Extern("C") __k_rwlock_write_unlock(l: NativeRwLock*) : int;
-@ffi::Extern("C") __k_rwlock_read_count(l: const NativeRwLock*) : int;
-@ffi::Extern("C") __k_rwlock_is_write_locked(l: const NativeRwLock*) : int;
-
 /**
  * ReadWriteLock — a lock with a shared read mode and an exclusive write mode.
  *
@@ -66,6 +54,16 @@ public struct NativeRwLock {
 public class ReadWriteLock {
     private:
     _native : NativeRwLock*;
+    @ffi::Extern("C") private static __k_rwlock_create() : NativeRwLock*;
+    @ffi::Extern("C") private static __k_rwlock_destroy(l: NativeRwLock*) : void;
+    @ffi::Extern("C") private static __k_rwlock_read_lock(l: NativeRwLock*, timeout_nanos: long, interruptible: int) : int;
+    @ffi::Extern("C") private static __k_rwlock_try_read_lock(l: NativeRwLock*) : int;
+    @ffi::Extern("C") private static __k_rwlock_read_unlock(l: NativeRwLock*) : int;
+    @ffi::Extern("C") private static __k_rwlock_write_lock(l: NativeRwLock*, timeout_nanos: long, interruptible: int) : int;
+    @ffi::Extern("C") private static __k_rwlock_try_write_lock(l: NativeRwLock*) : int;
+    @ffi::Extern("C") private static __k_rwlock_write_unlock(l: NativeRwLock*) : int;
+    @ffi::Extern("C") private static __k_rwlock_read_count(l: const NativeRwLock*) : int;
+    @ffi::Extern("C") private static __k_rwlock_is_write_locked(l: const NativeRwLock*) : int;
 
     public:
     /** Construct a free read/write lock. */

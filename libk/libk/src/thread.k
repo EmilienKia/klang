@@ -25,20 +25,6 @@ module k;
 public struct NativeThread {
 }
 
-// ── FFI declarations ─────────────────────────────────────────────────────────
-@ffi::Extern("C") __k_thread_create(runnable: Runnable*, invoke: *(Runnable*)) : NativeThread*;
-@ffi::Extern("C") __k_thread_start(native: NativeThread*) : int;
-@ffi::Extern("C") __k_thread_join(native: NativeThread*) : int;
-@ffi::Extern("C") __k_thread_join_timed(native: NativeThread*, timeout_nanos: long) : int;
-@ffi::Extern("C") __k_thread_interrupt(native: NativeThread*) : void;
-@ffi::Extern("C") __k_thread_is_interrupted(native: const NativeThread*) : bool;
-@ffi::Extern("C") __k_thread_interrupted_and_clear() : bool;
-@ffi::Extern("C") __k_thread_sleep_nanos(nanos: long) : int;
-@ffi::Extern("C") __k_thread_yield() : void;
-@ffi::Extern("C") __k_thread_current_native() : NativeThread*;
-@ffi::Extern("C") __k_thread_destroy(native: NativeThread*) : void;
-@ffi::Extern("C") __k_thread_register_main() : NativeThread*;
-
 // ═════════════════════════════════════════════════════════════════════════════
 // Runnable — interface for tasks that can be executed by a Thread.
 // ═════════════════════════════════════════════════════════════════════════════
@@ -118,6 +104,22 @@ public class Thread {
 private:
     _native : NativeThread*;    // opaque KRuntimeThread*
     _owned  : bool;             // true = destructor must free native; false = borrowed
+
+
+    // ── FFI declarations ─────────────────────────────────────────────────────────
+    @ffi::Extern("C") private static __k_thread_create(runnable: Runnable*, invoke: *(Runnable*)) : NativeThread*;
+    @ffi::Extern("C") private static __k_thread_start(native: NativeThread*) : int;
+    @ffi::Extern("C") private static __k_thread_join(native: NativeThread*) : int;
+    @ffi::Extern("C") private static __k_thread_join_timed(native: NativeThread*, timeout_nanos: long) : int;
+    @ffi::Extern("C") private static __k_thread_interrupt(native: NativeThread*) : void;
+    @ffi::Extern("C") private static __k_thread_is_interrupted(native: const NativeThread*) : bool;
+    @ffi::Extern("C") private static __k_thread_yield() : void;
+    @ffi::Extern("C") private static __k_thread_interrupted_and_clear() : bool;
+    @ffi::Extern("C") private static __k_thread_sleep_nanos(nanos: long) : int;
+    @ffi::Extern("C") private static __k_thread_current_native() : NativeThread*;
+
+    @ffi::Extern("C") private static __k_thread_destroy(native: NativeThread*) : void;
+    @ffi::Extern("C") private static __k_thread_register_main() : NativeThread*;
 
 public:
     // ── Construction ─────────────────────────────────────────────────────────

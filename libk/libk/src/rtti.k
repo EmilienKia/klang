@@ -272,6 +272,7 @@ final const class Interface : public AggregateType {
     enclosing : const TypeInfo?;
     flags : unsigned int;
     annotations : const Annotation?[]?;
+    @ffi::Extern("C") private static __k_iface_get_functions(rtti : const Interface&) : const Function?[]?;
 
     /**
      * Internal bit-flag layout for the 'flags' field.
@@ -371,6 +372,8 @@ final const class Class : public AggregateType {
     enclosing : const TypeInfo?;
     flags : unsigned int;
     annotations : const Annotation?[]?;
+    @ffi::Extern("C") private static __k_class_get_functions(rtti : const Class&) : const Function?[]?;
+    @ffi::Extern("C") private static __k_class_get_constructors(rtti : const Class&) : const Constructor?[]?;
 
     /**
      * Internal bit-flag layout for the 'flags' field.
@@ -591,31 +594,6 @@ final const class Unit {
  * Implemented in rtti.c. Takes the annotation pointer (void*) and returns
  * the AnnotationType pointer from vtable slot 0.
  */
-@ffi::Extern("C") __k_annotation_get_type(ann : const Annotation&) : const AnnotationType&;
-
-/**
- * C runtime helper: extract the functions array from a Class RTTI global.
- * Implemented in rtti.c. Reads field index 10 of the RTTI struct.
- * Takes a Class& directly (not AggregateType&) to avoid base-class pointer
- * adjustment that would shift the pointer away from the struct start.
- */
-@ffi::Extern("C") __k_class_get_functions(rtti : const Class&) : const Function?[]?;
-
-/**
- * C runtime helper: extract the functions array from an Interface RTTI global.
- * Implemented in rtti.c. Same logic as __k_class_get_functions, but takes
- * Interface& directly to avoid base-class pointer adjustment.
- */
-@ffi::Extern("C") __k_iface_get_functions(rtti : const Interface&) : const Function?[]?;
-
-/**
- * C runtime helper: extract the constructors array from a Class RTTI global.
- * Implemented in rtti.c. Reads field index 11 of the RTTI struct.
- * Takes a Class& directly (not AggregateType&) to avoid base-class pointer
- * adjustment that would shift the pointer away from the struct start.
- */
-@ffi::Extern("C") __k_class_get_constructors(rtti : const Class&) : const Constructor?[]?;
-
 /**
  * Annotation — root base class for all K annotation instances.
  *
@@ -625,6 +603,8 @@ final const class Unit {
  * is used for type resolution.
  */
 const class Annotation {
+private:
+    @ffi::Extern("C") private static __k_annotation_get_type(ann : const Annotation&) : const AnnotationType&;
 public:
     /**
      * Return the ::k::AnnotationType object describing the concrete annotation type.

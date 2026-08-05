@@ -21,27 +21,27 @@ module k;
 /**
  * Runtime helper: convert float values to raw integer bit patterns.
  */
-@ffi::Extern("C") __k_io_float_to_bits(f: float) : int;
+@ffi::Extern("C") private __k_io_float_to_bits(f: float) : int;
 /**
  * Runtime helper: convert raw integer bit patterns to float values.
  */
-@ffi::Extern("C") __k_io_bits_to_float(bits: int) : float;
+@ffi::Extern("C") private __k_io_bits_to_float(bits: int) : float;
 /**
  * Runtime helper: convert double values to raw integer bit patterns.
  */
-@ffi::Extern("C") __k_io_double_to_bits(d: double) : long;
+@ffi::Extern("C") private __k_io_double_to_bits(d: double) : long;
 /**
  * Runtime helper: convert raw integer bit patterns to double values.
  */
-@ffi::Extern("C") __k_io_bits_to_double(bits: long) : double;
+@ffi::Extern("C") private __k_io_bits_to_double(bits: long) : double;
 
-@ffi::Extern("C") __k_io_native_bytes_to_short(buf: const byte*) : int;
-@ffi::Extern("C") __k_io_native_bytes_to_int(buf: const byte*) : int;
-@ffi::Extern("C") __k_io_native_bytes_to_long(buf: const byte*) : long;
+@ffi::Extern("C") private __k_io_native_bytes_to_short(buf: const byte*) : int;
+@ffi::Extern("C") private __k_io_native_bytes_to_int(buf: const byte*) : int;
+@ffi::Extern("C") private __k_io_native_bytes_to_long(buf: const byte*) : long;
 
-@ffi::Extern("C") __k_io_short_to_native_bytes(v: int, buf: byte*);
-@ffi::Extern("C") __k_io_int_to_native_bytes(v: int, buf: byte*);
-@ffi::Extern("C") __k_io_long_to_native_bytes(v: long, buf: byte*);
+@ffi::Extern("C") private __k_io_short_to_native_bytes(v: int, buf: byte*);
+@ffi::Extern("C") private __k_io_int_to_native_bytes(v: int, buf: byte*);
+@ffi::Extern("C") private __k_io_long_to_native_bytes(v: long, buf: byte*);
 
 namespace io {
 
@@ -433,7 +433,6 @@ public:
 }
 
 } // namespace io
-
 
 
 

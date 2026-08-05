@@ -19,8 +19,7 @@
 module k;
 
 // ── FFI declarations for time helpers ───────────────────────────────────────
-@ffi::Extern("C") __k_time_monotonic_nanos() : long;
-@ffi::Extern("C") __k_time_realtime_nanos() : long;
+@ffi::Extern("C") private __k_time_realtime_nanos() : long;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Duration — a signed time span expressed as nanoseconds.
@@ -170,6 +169,7 @@ public:
 public struct Instant {
 private:
     _epochNanos : long;  // nanoseconds since an unspecified monotonic epoch
+    @ffi::Extern("C") private static __k_time_monotonic_nanos() : long;
 
 public:
     // ── Construction ─────────────────────────────────────────────────────────

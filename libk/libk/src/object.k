@@ -23,8 +23,6 @@ module k;
  * Implemented in rtti.c. Takes the object pointer (void*) and returns
  * the Class pointer from vtable slot 0.
  */
-@ffi::Extern("C") __k_object_get_class(obj : const Object&) : const Class&;
-
 /**
  * Object — root base class for all K objects.
  *
@@ -33,6 +31,8 @@ module k;
  * K program or library.
  */
 const class Object {
+private:
+    @ffi::Extern("C") private static __k_object_get_class(obj : const Object&) : const Class&;
 public:
     /**
      * Virtual destructor.
@@ -75,4 +75,3 @@ public:
         return __k_object_get_class(this);
     }
 }
-
