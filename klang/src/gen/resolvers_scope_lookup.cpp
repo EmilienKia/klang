@@ -50,11 +50,16 @@ bool scope_lookup::is_inside_member_function_of_or_ancestor(const element& acces
     auto cur = access_site.shared_as<const element>();
     while (cur) {
         if (auto fn = std::dynamic_pointer_cast<const function>(cur)) {
-            if (fn->is_member() && !fn->is_static()) {
+            if (fn->is_member()) {
                 auto check_st = fn->get_owner();
-                while (check_st) {
-                    if (check_st.get() == &st) return true;
-                    check_st = check_st->get_enclosing_aggregate();
+                if (fn->is_static()) {
+                    // Static members only grant access to their own declaring class.
+                    if (check_st && check_st.get() == &st) return true;
+                } else {
+                    while (check_st) {
+                        if (check_st.get() == &st) return true;
+                        check_st = check_st->get_enclosing_aggregate();
+                    }
                 }
             }
         }
@@ -88,17 +93,31 @@ bool scope_lookup::is_struct_member_accessible(
 
     for (auto it = function_stack.rbegin(); it != function_stack.rend(); ++it) {
         const auto& fn = *it;
-        if (!fn->is_member() || fn->is_static()) continue;
+        if (!fn->is_member()) continue;
 
         auto check_st = fn->get_owner();
-        while (check_st) {
-            if (vis == PRIVATE) {
-                if (check_st.get() == &owner_st) return true;
-            } else {
-                if (check_st.get() == &owner_st) return true;
-                if (owner_st_shared && check_st->is_derived_from(owner_st_shared)) return true;
+        if (fn->is_static()) {
+            // Static member functions can only access members of exactly their
+            // own class (no implicit upcast via 'this', so no protected-through-
+            // derived-class rule applies).
+            if (check_st) {
+                if (vis == PRIVATE) {
+                    if (check_st.get() == &owner_st) return true;
+                } else { // PROTECTED
+                    if (check_st.get() == &owner_st) return true;
+                    if (owner_st_shared && check_st->is_derived_from(owner_st_shared)) return true;
+                }
             }
-            check_st = check_st->get_enclosing_aggregate();
+        } else {
+            while (check_st) {
+                if (vis == PRIVATE) {
+                    if (check_st.get() == &owner_st) return true;
+                } else {
+                    if (check_st.get() == &owner_st) return true;
+                    if (owner_st_shared && check_st->is_derived_from(owner_st_shared)) return true;
+                }
+                check_st = check_st->get_enclosing_aggregate();
+            }
         }
     }
     return false;

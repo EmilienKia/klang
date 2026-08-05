@@ -407,3 +407,37 @@ test() : int {
     CHECK(fn() == 150);
 }
 
+TEST_CASE("static method can call private static member", "[gen][class][static][visibility]") {
+    // Regression: is_struct_member_accessible used to skip static member
+    // functions entirely, so a private static helper was inaccessible even
+    // from another static method of the same class.
+    auto jit = gen_jit(R"SRC(
+module test;
+class Counter {
+private:
+    static impl_add(a: int, b: int) : int { return a + b; }
+public:
+    static add(a: int, b: int) : int { return impl_add(a, b); }
+}
+test() : int { return Counter::add(21, 21); }
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN4test4testEv");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("static method cannot access private member of another class", "[gen][class][static][visibility]") {
+    // A static method of a *different* class must still be rejected.
+    REQUIRE(compile_should_fail(R"SRC(
+module test;
+class A {
+private:
+    static secret() : int { return 1; }
+}
+class B {
+public:
+    static steal() : int { return A::secret(); }
+}
+)SRC", nullptr));
+}
