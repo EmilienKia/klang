@@ -1651,22 +1651,32 @@ void aggregate_type_resolver::visit_member_variable_definition(member_variable_d
 /**
  * Visit and resolve the type of a global variable during Phase 1.a.
  *
- * Handles unresolved_function_ref_type by resolving parameter types.
+ * Handles unresolved_callable_type by resolving parameter types.
  * For other types, delegates to resolve_one_type.
  * Does NOT visit init expressions (Phase 1.b handles those).
  */
 void aggregate_type_resolver::visit_global_variable_definition(global_variable_definition& var) {
     if (!var.get_type()) return; // No type yet (e.g. unprocessed static member)
     if (!type::is_resolved(var.get_type())) {
-        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var.get_type())) {
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(var.get_type())) {
             // Function reference type for a global variable: resolve it using the variable's scope.
-            // We need a type_reference_resolver to call resolve_function_ref_type, but
+            // We need a type_reference_resolver to call resolve_callable_type, but
             // aggregate_type_resolver is an earlier pass. We can do a best-effort resolution:
             // parameter types that are primitive/identified are already resolved by context::from_type_specifier.
-            // Build the function_reference_type directly from the already-resolved param types.
-            function_reference_type_builder builder(_context);
-            builder.ref_kind(ufrt->get_ref_kind());
+            // Build the callable_type directly from the already-resolved param types.
+            callable_type_builder builder(_context);
+            builder.addresser(ufrt->get_addresser());
             bool all_resolved = true;
+            // Unbound member function reference global (e.g. Counter::*(int):int)
+            if (!ufrt->owner_name().empty()) {
+                std::shared_ptr<aggregate> owner_agg = resolve_struct_from(var, ufrt->owner_name());
+                if (!owner_agg) {
+                    auto root_ns = _unit.get_root_namespace();
+                    if (root_ns) owner_agg = resolve_struct_from(*root_ns, ufrt->owner_name());
+                }
+                if (owner_agg) builder.member_of(owner_agg);
+                else all_resolved = false;
+            }
             for (const auto& pt : ufrt->parameter_types()) {
                 if (!type::is_resolved(pt)) {
                     // Try to resolve via name
@@ -1679,8 +1689,19 @@ void aggregate_type_resolver::visit_global_variable_definition(global_variable_d
                     builder.append_parameter_type(pt);
                 }
             }
+            if (all_resolved && ufrt->get_return_type()) {
+                auto rt = ufrt->get_return_type();
+                if (!type::is_resolved(rt)) {
+                    if (auto u = std::dynamic_pointer_cast<unresolved_type>(rt)) {
+                        rt = resolve_type_by_name(u->type_id(), var);
+                    } else {
+                        rt = nullptr;
+                    }
+                }
+                if (rt && type::is_resolved(rt)) builder.return_type(rt);
+                else all_resolved = false;
+            }
             if (all_resolved) {
-                // No return type known yet (no init expression resolved), leave null for now
                 auto resolved = builder.build();
                 if (resolved) {
                     var.set_type(resolved);
@@ -1701,7 +1722,7 @@ void aggregate_type_resolver::visit_global_variable_definition(global_variable_d
  * Resolve the type of a function parameter during Phase 1.a (signatures only).
  *
  * Steps:
- *   1. Handle unresolved_function_ref_type: resolve parameter types and optional owner.
+ *   1. Handle unresolved_callable_type: resolve parameter types and optional owner.
  *   2. For other types: try context->resolve_type, then peel composite wrappers to find
  *      the inner unresolved_type, resolve it by name, and re-apply wrappers.
  *
@@ -1711,13 +1732,13 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
     // Some synthesized/template-only params can be temporarily typeless during early resolution.
     if (!param.get_type()) return;
 
-    // Step 1: Handle unresolved_function_ref_type: resolve parameter types and optional owner
+    // Step 1: Handle unresolved_callable_type: resolve parameter types and optional owner
     // Resolve the type only (no default expressions — those are handled by type_reference_resolver)
     if (!type::is_resolved(param.get_type())) {
-        // Handle unresolved_function_ref_type (function pointer/pin/link parameter type)
-        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(param.get_type())) {
-            function_reference_type_builder builder(_context);
-            builder.ref_kind(ufrt->get_ref_kind());
+        // Handle unresolved_callable_type (function pointer/pin/link parameter type)
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(param.get_type())) {
+            callable_type_builder builder(_context);
+            builder.addresser(ufrt->get_addresser());
             bool all_resolved = true;
             auto owner_func = param.parent<function>();
             // Resolve owner for member function reference parameters (e.g. Counter::*(int))
@@ -1746,6 +1767,20 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
                 } else {
                     builder.append_parameter_type(pt);
                 }
+            }
+            if (all_resolved && ufrt->get_return_type()) {
+                auto rt = ufrt->get_return_type();
+                if (!type::is_resolved(rt)) {
+                    if (auto u = std::dynamic_pointer_cast<unresolved_type>(rt)) {
+                        rt.reset();
+                        if (owner_func) rt = resolve_type_by_name(u->type_id(), *owner_func);
+                        if (!rt || !type::is_resolved(rt)) rt = _context->from_string(u->type_id());
+                    } else {
+                        rt = nullptr;
+                    }
+                }
+                if (rt && type::is_resolved(rt)) builder.return_type(rt);
+                else all_resolved = false;
             }
             if (all_resolved) {
                 auto resolved = builder.build();
@@ -1840,11 +1875,21 @@ void aggregate_type_resolver::visit_function(function& fn) {
     // Step 3: Resolve return type (including function pointer return types)
     // Resolve return type
     if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
-        // Handle unresolved_function_ref_type (function pointer return type)
-        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(fn.get_return_type())) {
-            function_reference_type_builder builder(_context);
-            builder.ref_kind(ufrt->get_ref_kind());
+        // Handle unresolved_callable_type (function pointer return type)
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(fn.get_return_type())) {
+            callable_type_builder builder(_context);
+            builder.addresser(ufrt->get_addresser());
             bool all_resolved = true;
+            // Unbound member function reference return type (e.g. Counter::*(int):int)
+            if (!ufrt->owner_name().empty()) {
+                std::shared_ptr<aggregate> owner_agg = resolve_struct_from(fn, ufrt->owner_name());
+                if (!owner_agg) {
+                    auto root_ns = _unit.get_root_namespace();
+                    if (root_ns) owner_agg = resolve_struct_from(*root_ns, ufrt->owner_name());
+                }
+                if (owner_agg) builder.member_of(owner_agg);
+                else all_resolved = false;
+            }
             for (const auto& pt : ufrt->parameter_types()) {
                 if (!type::is_resolved(pt)) {
                     if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
@@ -1855,6 +1900,18 @@ void aggregate_type_resolver::visit_function(function& fn) {
                 } else {
                     builder.append_parameter_type(pt);
                 }
+            }
+            if (all_resolved && ufrt->get_return_type()) {
+                auto rt = ufrt->get_return_type();
+                if (!type::is_resolved(rt)) {
+                    if (auto u = std::dynamic_pointer_cast<unresolved_type>(rt)) {
+                        rt = resolve_type_by_name(u->type_id(), fn);
+                    } else {
+                        rt = nullptr;
+                    }
+                }
+                if (rt && type::is_resolved(rt)) builder.return_type(rt);
+                else all_resolved = false;
             }
             if (all_resolved) {
                 auto resolved = builder.build();
@@ -1885,7 +1942,7 @@ void aggregate_type_resolver::visit_function(function& fn) {
             if (type::is_resolved(resolved2)) fn.set_return_type(resolved2);
         }
         } // end else (placeholder return type)
-        } // end else (not unresolved_function_ref_type)
+        } // end else (not unresolved_callable_type)
     }
 
     // NOTE: the block / body is NOT visited here.

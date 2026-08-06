@@ -73,7 +73,7 @@ class const_type;
 class sized_array_type;
 class array_type;
 class struct_type;
-class function_reference_type;
+class callable_type;
 class enum_type;
 class enumeration;
 class alias_type;
@@ -156,7 +156,8 @@ public:
     inline static bool is_immutable_indirection(const std::shared_ptr<type>& type);
     inline static bool is_sized_array(const std::shared_ptr<type>& type);
     inline static bool is_array(const std::shared_ptr<type>& type);
-    inline static bool is_function_reference(const std::shared_ptr<type>& type);
+    inline static bool is_callable(const std::shared_ptr<type>& type);
+    inline static bool is_fat_callable(const std::shared_ptr<type>& type);
     /** True if the type is an enum type (optionally stripping const). */
     inline static bool is_enum(const std::shared_ptr<type>& type);
     /** True if the type is a strong alias (typedef) type (optionally stripping const). */
@@ -853,39 +854,43 @@ inline bool type::is_struct(const std::shared_ptr<type>& t) {
 
 
 /**
- * Function reference type.
+ * Callable type — a first-class "something invocable with a fixed prototype".
  *
- * Represents the type of a reference (pointer *, view ?, or link +) to a free or
- * static function.  The "ref_kind" field records which of the three reference
- * flavours was declared; however all three share the same LLVM representation
- * (an opaque function pointer).
+ * Runtime representation is a fat reference `%__k.callable = type { ptr, ptr }`:
+ *   * field 0 `fn`  — address of the function to invoke;
+ *   * field 1 `ctx` — the invocation context (`this`), or null for a free/static target.
  *
- * A symbol that resolves to a function (without the call parentheses) has a type
- * that is always a reference_type wrapping a function_reference_type — because a
- * function address is non-null and immutable, which matches the semantics of a
- * reference (& in K).  It can be assigned at construction to a view (?) or link (+)
- * variable, and at construction and re-assignment to a pointer (*) variable.
+ * The addresser is a compile-time-only property (nullability / rebindability),
+ * exactly like `T&` vs `T*`:
+ *   * `none`      — bare prototype `(int):long`; not instantiable as a value type;
+ *   * `pointer`   — `*(int):long`, nullable and rebindable;
+ *   * `view`      — `?(int):long`, nullable, not rebindable;
+ *   * `link`      — `+(int):long`, non-null, rebindable;
+ *   * `reference` — `&(int):long`, non-null, not rebindable.
  */
-class function_reference_type : public type {
+class callable_type : public type {
 public:
-    /** The reference qualifier declared in source (*, ?, +) — informational only for LLVM. */
-    enum class ref_kind { pointer, view, link };
+    /** Addresser applied to the prototype. `none` = bare prototype (not instantiable). */
+    enum class addresser { none, pointer, view, link, reference };
 
 protected:
     friend class type;
-    friend class function_reference_type_builder;
+    friend class callable_type_builder;
     friend class context;
 
+    /** Declared return type; nullptr means void. */
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<type>> _parameter_types;
-    ref_kind _ref_kind = ref_kind::pointer;
+    /** Declared checked-exception set. Empty == throws nothing. */
+    std::vector<std::shared_ptr<type>> _throws;
+    addresser _addresser = addresser::pointer;
 
-    function_reference_type() : type(nullptr) {}
-    function_reference_type(const std::shared_ptr<type>& return_type,
-                            const std::vector<std::shared_ptr<type>>& parameter_types,
-                            ref_kind rk,
-                            llvm::Type* llvm_type):
-        type(llvm_type), _return_type(return_type), _parameter_types(parameter_types), _ref_kind(rk) {}
+    callable_type() : type(nullptr) {}
+    callable_type(const std::shared_ptr<type>& return_type,
+                  const std::vector<std::shared_ptr<type>>& parameter_types,
+                  addresser rk,
+                  llvm::Type* llvm_type):
+        type(llvm_type), _return_type(return_type), _parameter_types(parameter_types), _addresser(rk) {}
 
 public:
     bool is_resolved() const override;
@@ -896,10 +901,36 @@ public:
     const std::shared_ptr<type>& get_return_type() const { return _return_type; }
     void set_return_type(const std::shared_ptr<type>& rt) { _return_type = rt; }
     const std::vector<std::shared_ptr<type>>& get_parameter_types() const { return _parameter_types; }
-    ref_kind get_ref_kind() const { return _ref_kind; }
+    const std::vector<std::shared_ptr<type>>& get_throws() const { return _throws; }
+    void set_throws(const std::vector<std::shared_ptr<type>>& t) { _throws = t; }
+    addresser get_addresser() const { return _addresser; }
 
-    /** Structural equality: same return type, same parameter types, same ref_kind. */
-    bool structurally_equal(const function_reference_type& other) const;
+    /** A bare prototype has no addresser: it denotes a signature, not a value type. */
+    bool is_prototype() const { return _addresser == addresser::none; }
+    /** Only `*` and `?` callables may hold a null target. */
+    bool is_nullable() const { return _addresser == addresser::pointer
+                                   || _addresser == addresser::view; }
+    /** Only `*` and `+` callables may be re-assigned after initialisation. */
+    bool is_rebindable() const { return _addresser == addresser::pointer
+                                     || _addresser == addresser::link; }
+    /** An unbound member function reference (`T::*(int)`) is not a fat callable. */
+    virtual bool is_unbound_member() const { return false; }
+
+    /**
+     * Build a callable that shares @p proto's addresser and LLVM representation but
+     * carries the given prototype components. Used by template type substitution,
+     * which has no `context` at hand; the resulting type is *not* interned.
+     */
+    static std::shared_ptr<callable_type> make_like(
+        const callable_type& proto,
+        const std::shared_ptr<type>& ret,
+        const std::vector<std::shared_ptr<type>>& params,
+        const std::vector<std::shared_ptr<type>>& throws);
+
+    /** Nominal: same return type, parameter types and throws set (addresser ignored). */
+    bool signature_equal(const callable_type& other) const;
+    /** signature_equal() plus the same addresser. */
+    bool structurally_equal(const callable_type& other) const;
 };
 
 /**
@@ -908,27 +939,30 @@ public:
  * Represents the type of a reference to a non-static member function.
  * The binding (which object to call it on) is done at the call site, following
  * the unified calling convention of K (implicit or explicit this).
- * LLVM representation: same as function_reference_type but with an implicit
- * first parameter of type "reference to owner struct".
+ * Unlike a plain callable, this is NOT a fat reference: its LLVM representation is a
+ * bare function pointer whose first parameter is a reference to the owner aggregate.
  */
-class member_function_reference_type : public function_reference_type {
+class member_function_reference_type : public callable_type {
 protected:
-    friend class function_reference_type_builder;
+    friend class callable_type_builder;
     friend class context;
+    friend class callable_type;
 
     std::shared_ptr<aggregate> _member_of;
 
     member_function_reference_type(const std::shared_ptr<aggregate>& member_of,
                                    const std::shared_ptr<type>& return_type,
                                    const std::vector<std::shared_ptr<type>>& parameter_types,
-                                   ref_kind rk,
+                                   addresser rk,
                                    llvm::Type* llvm_type):
-        function_reference_type(return_type, parameter_types, rk, llvm_type),
+        callable_type(return_type, parameter_types, rk, llvm_type),
         _member_of(member_of) {}
 
 public:
     llvm::Type* get_llvm_type() const override;
+    llvm::Constant* generate_default_value_initializer() const override;
     std::string to_string() const override;
+    bool is_unbound_member() const override { return true; }
 
     const std::shared_ptr<aggregate>& get_member_of() const { return _member_of; }
 
@@ -937,60 +971,85 @@ public:
 };
 
 
-class function_reference_type_builder {
+class callable_type_builder {
 protected:
     std::shared_ptr<context> _context;
     std::shared_ptr<aggregate> _member_of;
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<type>> _parameter_types;
-    function_reference_type::ref_kind _ref_kind = function_reference_type::ref_kind::pointer;
+    std::vector<std::shared_ptr<type>> _throws;
+    callable_type::addresser _addresser = callable_type::addresser::pointer;
 public:
-    explicit function_reference_type_builder(const std::shared_ptr<context>& context);
+    explicit callable_type_builder(const std::shared_ptr<context>& context);
     void member_of(const std::shared_ptr<structure>& st) { _member_of = std::static_pointer_cast<aggregate>(st); }
     /** Accept any aggregate (structure or klass) as member owner. */
     void member_of(const std::shared_ptr<aggregate>& agg) { _member_of = agg; }
     void return_type(const std::shared_ptr<type>& return_type) { _return_type = return_type; }
     void append_parameter_type(const std::shared_ptr<type>& param_type) { _parameter_types.push_back(param_type); }
-    void ref_kind(function_reference_type::ref_kind rk) { _ref_kind = rk; }
-    std::shared_ptr<function_reference_type> build() const;
+    void addresser(callable_type::addresser rk) { _addresser = rk; }
+    void throws(const std::vector<std::shared_ptr<type>>& t) { _throws = t; }
+    std::shared_ptr<callable_type> build() const;
 };
 
 
-inline bool type::is_function_reference(const std::shared_ptr<type>& type) {
-    return std::dynamic_pointer_cast<function_reference_type>(type) != nullptr;
+inline bool type::is_callable(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<callable_type>(type) != nullptr;
+}
+
+/** True when @p t is a fat callable (excludes unbound member function references). */
+inline bool type::is_fat_callable(const std::shared_ptr<type>& t) {
+    auto c = std::dynamic_pointer_cast<callable_type>(remove_const(t));
+    return c && !c->is_unbound_member();
 }
 
 /**
  * Unresolved function reference type.
  *
  * Placeholder created by context::from_type_specifier() when parsing a
- * function_ref_type_specifier.  Carries the raw parameter types (which may
+ * callable_type_specifier.  Carries the raw parameter types (which may
  * themselves contain unresolved_type entries) and the optional owner name
- * (for member function pointers).  Resolved to function_reference_type or
+ * (for member function pointers).  Resolved to callable_type or
  * member_function_reference_type by type_reference_resolver.
  */
-class unresolved_function_ref_type : public type {
+class unresolved_callable_type : public type {
 protected:
     friend class context;
     friend class gen::type_reference_resolver;
 
     k::name _owner_name;        ///< Empty for free functions.
-    function_reference_type::ref_kind _ref_kind;
+    callable_type::addresser _addresser;
     std::vector<std::shared_ptr<type>> _parameter_types;
+    /** Declared return type (may itself be unresolved); nullptr means void. */
+    std::shared_ptr<type> _return_type;
+    /** Declared checked-exception set (may contain unresolved entries). */
+    std::vector<std::shared_ptr<type>> _throws;
     std::shared_ptr<type> _resolved;
 
-    unresolved_function_ref_type(
+    unresolved_callable_type(
         const k::name& owner_name,
-        function_reference_type::ref_kind rk,
-        const std::vector<std::shared_ptr<type>>& param_types)
-        : _owner_name(owner_name), _ref_kind(rk), _parameter_types(param_types) {}
+        callable_type::addresser rk,
+        const std::vector<std::shared_ptr<type>>& param_types,
+        const std::shared_ptr<type>& return_type = nullptr,
+        const std::vector<std::shared_ptr<type>>& throws = {})
+        : _owner_name(owner_name), _addresser(rk), _parameter_types(param_types),
+          _return_type(return_type), _throws(throws) {}
 
     void resolve(std::shared_ptr<type> res_type) { _resolved = res_type; }
 
 public:
+    /** Build a fresh unresolved callable placeholder (used by template substitution). */
+    static std::shared_ptr<unresolved_callable_type> make_shared(
+        const k::name& owner_name,
+        callable_type::addresser addr,
+        const std::vector<std::shared_ptr<type>>& param_types,
+        const std::shared_ptr<type>& return_type,
+        const std::vector<std::shared_ptr<type>>& throws);
+
     const k::name& owner_name() const { return _owner_name; }
-    function_reference_type::ref_kind get_ref_kind() const { return _ref_kind; }
+    callable_type::addresser get_addresser() const { return _addresser; }
     const std::vector<std::shared_ptr<type>>& parameter_types() const { return _parameter_types; }
+    const std::shared_ptr<type>& get_return_type() const { return _return_type; }
+    const std::vector<std::shared_ptr<type>>& get_throws() const { return _throws; }
 
     bool is_resolved() const override { return !!_resolved; }
     std::shared_ptr<type> get_resolved() const { return _resolved; }
@@ -1206,8 +1265,8 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
         }
         return false;
     }
-    if (auto f1 = std::dynamic_pointer_cast<function_reference_type>(type1)) {
-        if (auto f2 = std::dynamic_pointer_cast<function_reference_type>(type2)) {
+    if (auto f1 = std::dynamic_pointer_cast<callable_type>(type1)) {
+        if (auto f2 = std::dynamic_pointer_cast<callable_type>(type2)) {
             if (std::dynamic_pointer_cast<member_function_reference_type>(type2)) return false;
             return f1->structurally_equal(*f2);
         }

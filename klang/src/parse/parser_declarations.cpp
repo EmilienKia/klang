@@ -175,13 +175,15 @@ std::string encode_type_specifier(const std::shared_ptr<ast::type_specifier>& ts
         result += "]";
         return result;
     }
-    if (auto frt = std::dynamic_pointer_cast<ast::function_ref_type_specifier>(ts)) {
+    if (auto frt = std::dynamic_pointer_cast<ast::callable_type_specifier>(ts)) {
         std::string result;
         if (frt->owner.has_value()) {
             result += encode_qualified_identifier(*frt->owner);
             result += "::";
         }
-        result += frt->ref_op.content;
+        if (frt->addresser.has_value()) {
+            result += frt->addresser->content;
+        }
         result += "(";
         for (size_t i = 0; i < frt->param_types.size(); ++i) {
             if (i > 0) {
@@ -190,6 +192,10 @@ std::string encode_type_specifier(const std::shared_ptr<ast::type_specifier>& ts
             result += encode_type_specifier(frt->param_types[i]);
         }
         result += ")";
+        if (frt->return_type) {
+            result += " : ";
+            result += encode_type_specifier(frt->return_type);
+        }
         return result;
     }
     if (auto owner = std::dynamic_pointer_cast<ast::owner_type_specifier>(ts)) {

@@ -482,17 +482,19 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             expr.assign_right(right);
         }
         return; // code generation handled in visit_simple_assignation_expression
-    } else if (type::is_function_reference(target_type)) {
+    } else if (type::is_callable(target_type)) {
         // Assigning a function address (or another frt variable) to a function-pointer variable.
-        // target_type is a function_reference_type; source should be ref<frt> (function symbol)
+        // target_type is a callable_type; source should be ref<frt> (function symbol)
         // or frt itself (another variable). The ref wrapper is stripped below if present.
         //
-        // Check: only pointer (*) frt is rebindable; view (?) and link (+) are immutable.
-        auto frt_target = std::dynamic_pointer_cast<function_reference_type>(target_type);
-        if (frt_target && frt_target->get_ref_kind() != function_reference_type::ref_kind::pointer) {
-            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_PM_EXPR_BAD_TYPE), expr.first_lexeme(),
-                "Cannot assign to an immutable function reference (type '{}'): "
-                "only pointer (*) function references are rebindable",
+        // Check: only mutable addressers are rebindable. `*` and `+` may be rebound;
+        // `?` (view) and `&` (reference) are immutable bindings, and a bare prototype
+        // is not an instantiable value type at all.
+        auto frt_target = std::dynamic_pointer_cast<callable_type>(target_type);
+        if (frt_target && !frt_target->is_rebindable()) {
+            throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_NOT_REBINDABLE), expr.first_lexeme(),
+                "Cannot assign to an immutable callable (type '{}'): "
+                "only pointer (*) and link (+) callables are rebindable",
                 {target_type ? target_type->to_string() : "?"});
         }
         // Unwrap ref<frt> on the source side if needed.
@@ -500,7 +502,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         // no load needed. For a frt variable, impl_gen returns the alloca address — needs a load.
         if (type::is_reference(source_type)) {
             auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
-            if (type::is_function_reference(inner)) {
+            if (type::is_callable(inner)) {
                 auto rhs_sym = std::dynamic_pointer_cast<symbol_expression>(right);
                 if (!rhs_sym || !rhs_sym->is_function()) {
                     // Variable of frt type: load the stored function pointer from the alloca

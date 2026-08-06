@@ -1154,7 +1154,7 @@ void implementation_generator::visit_global_variable_definition(global_variable_
         constInitValue = type->generate_default_value_initializer();
     }
 
-    // Final fallback: if the type is an opaque pointer (e.g. function_reference_type),
+    // Final fallback: if the type is an opaque pointer (e.g. callable_type),
     // use ConstantPointerNull; otherwise zeroinitializer.
     if (!constInitValue && llvm_type) {
         if (auto* ptr_ty = llvm::dyn_cast<llvm::PointerType>(llvm_type)) {

@@ -71,6 +71,12 @@
 // LM<class>F<params>E  : link (+)
 #define SYMBOL_MODIFIER_FN_REF     "F"
 #define SYMBOL_MODIFIER_MEM_FN     "M"
+/** Bare callable prototype (no addresser). */
+#define SYMBOL_MODIFIER_PROTO      "N"
+/** Introduces the return type of a callable type. */
+#define SYMBOL_MODIFIER_RETURN     "Y"
+/** Introduces one entry of a callable type checked exception set. */
+#define SYMBOL_MODIFIER_THROWS     "X"
 
 #define SYMBOL_STATIC_CONSTRUCTOR_NAME "C"
 #define SYMBOL_STATIC_DESTRUCTOR_NAME  "D"
@@ -671,18 +677,26 @@ std::string mangler::mangle_type(const type& ty) const {
         // compiler::verify_mangled_names().
         const std::string id = unres->type_id();
         return TYPE_UNRESOLVED + std::to_string(id.size()) + id;
-    } else if (auto unres_fn = dynamic_cast<const unresolved_function_ref_type*>(&ty)) {
+    } else if (auto unres_fn = dynamic_cast<const unresolved_callable_type*>(&ty)) {
         // Function-reference types (`*(int)`, `Counter::*(int)`) are deliberately left
         // unresolved by signature_resolver and only resolved by type_reference_resolver.
         // Emit a provisional but structurally distinct placeholder in the meantime.
         std::ostringstream s;
-        s << TYPE_UNRESOLVED << static_cast<int>(unres_fn->get_ref_kind())
+        s << TYPE_UNRESOLVED << static_cast<int>(unres_fn->get_addresser())
           << SYMBOL_MODIFIER_FN_REF;
         if (!unres_fn->owner_name().parts().empty()) {
             s << SYMBOL_MODIFIER_MEM_FN << mangle_fq_name(unres_fn->owner_name(), false);
         }
         for (const auto& p : unres_fn->parameter_types()) {
             s << (p ? mangle_type(*p) : std::string{TYPE_VOID});
+        }
+        // The return type and the checked exception set are part of a callable's
+        // identity: omitting them would let two distinct callable types collide.
+        s << SYMBOL_MODIFIER_RETURN
+          << (unres_fn->get_return_type() ? mangle_type(*unres_fn->get_return_type())
+                                          : std::string{TYPE_VOID});
+        for (const auto& t : unres_fn->get_throws()) {
+            if (t) s << SYMBOL_MODIFIER_THROWS << mangle_type(*t);
         }
         s << SYMBOL_QUALIFIED_SUFFIX;
         return s.str();
@@ -708,11 +722,13 @@ std::string mangler::mangle_type(const type& ty) const {
         return s.str();
     } else if (auto mem_fn_ty = dynamic_cast<const member_function_reference_type*>(&ty)) {
         std::ostringstream s;
-        // ref_kind modifier
-        switch (mem_fn_ty->get_ref_kind()) {
-            case function_reference_type::ref_kind::pointer: s << SYMBOL_MODIFIER_PTR;    break;
-            case function_reference_type::ref_kind::view:    s << SYMBOL_MODIFIER_VIEW;   break;
-            case function_reference_type::ref_kind::link:    s << SYMBOL_MODIFIER_LINK;   break;
+        // addresser modifier
+        switch (mem_fn_ty->get_addresser()) {
+            case callable_type::addresser::none:      s << SYMBOL_MODIFIER_PROTO;   break;
+            case callable_type::addresser::pointer:   s << SYMBOL_MODIFIER_PTR;     break;
+            case callable_type::addresser::view:      s << SYMBOL_MODIFIER_VIEW;    break;
+            case callable_type::addresser::link:      s << SYMBOL_MODIFIER_LINK;    break;
+            case callable_type::addresser::reference: s << SYMBOL_MODIFIER_REF;     break;
         }
         s << SYMBOL_MODIFIER_FN_REF SYMBOL_MODIFIER_MEM_FN;
         // owner struct
@@ -732,14 +748,22 @@ std::string mangler::mangle_type(const type& ty) const {
                 s << mangle_type(*p);
             }
         }
+        s << SYMBOL_MODIFIER_RETURN
+          << (mem_fn_ty->get_return_type() ? mangle_type(*mem_fn_ty->get_return_type())
+                                           : std::string{TYPE_VOID});
+        for (const auto& t : mem_fn_ty->get_throws()) {
+            if (t) s << SYMBOL_MODIFIER_THROWS << mangle_type(*t);
+        }
         s << SYMBOL_QUALIFIED_SUFFIX;
         return s.str();
-    } else if (auto fn_ty = dynamic_cast<const function_reference_type*>(&ty)) {
+    } else if (auto fn_ty = dynamic_cast<const callable_type*>(&ty)) {
         std::ostringstream s;
-        switch (fn_ty->get_ref_kind()) {
-            case function_reference_type::ref_kind::pointer: s << SYMBOL_MODIFIER_PTR;    break;
-            case function_reference_type::ref_kind::view:    s << SYMBOL_MODIFIER_VIEW;   break;
-            case function_reference_type::ref_kind::link:    s << SYMBOL_MODIFIER_LINK;   break;
+        switch (fn_ty->get_addresser()) {
+            case callable_type::addresser::none:      s << SYMBOL_MODIFIER_PROTO;   break;
+            case callable_type::addresser::pointer:   s << SYMBOL_MODIFIER_PTR;     break;
+            case callable_type::addresser::view:      s << SYMBOL_MODIFIER_VIEW;    break;
+            case callable_type::addresser::link:      s << SYMBOL_MODIFIER_LINK;    break;
+            case callable_type::addresser::reference: s << SYMBOL_MODIFIER_REF;     break;
         }
         s << SYMBOL_MODIFIER_FN_REF;
         if (fn_ty->get_parameter_types().empty()) {
@@ -748,6 +772,12 @@ std::string mangler::mangle_type(const type& ty) const {
             for (const auto& p : fn_ty->get_parameter_types()) {
                 s << mangle_type(*p);
             }
+        }
+        s << SYMBOL_MODIFIER_RETURN
+          << (fn_ty->get_return_type() ? mangle_type(*fn_ty->get_return_type())
+                                       : std::string{TYPE_VOID});
+        for (const auto& t : fn_ty->get_throws()) {
+            if (t) s << SYMBOL_MODIFIER_THROWS << mangle_type(*t);
         }
         s << SYMBOL_QUALIFIED_SUFFIX;
         return s.str();

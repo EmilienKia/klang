@@ -481,6 +481,44 @@ std::shared_ptr<delete_expression> delete_expression::make_shared(const std::sha
 }
 
 //
+// Callable bind expression
+//
+
+void callable_bind_expression::accept(model_visitor& visitor) {
+    visitor.visit_callable_bind_expression(*this);
+}
+
+std::shared_ptr<callable_bind_expression> callable_bind_expression::make_shared(
+    callable_bind_expression::kind k,
+    const std::shared_ptr<function>& target,
+    const std::shared_ptr<expression>& context)
+{
+    std::shared_ptr<callable_bind_expression> expr{new callable_bind_expression()};
+    expr->_kind = k;
+    expr->_target = target;
+    if (context) expr->set_context(context);
+    return expr;
+}
+
+//
+// Callable invocation expression
+//
+
+void callable_invocation_expression::accept(model_visitor& visitor) {
+    visitor.visit_callable_invocation_expression(*this);
+}
+
+std::shared_ptr<callable_invocation_expression> callable_invocation_expression::make_shared(
+    const std::shared_ptr<expression>& callee,
+    const std::vector<std::shared_ptr<expression>>& args)
+{
+    std::shared_ptr<callable_invocation_expression> expr{new callable_invocation_expression()};
+    expr->set_callee(callee);
+    expr->assign_arguments(args);
+    return expr;
+}
+
+//
 // Owner move expression
 //
 

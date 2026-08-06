@@ -71,6 +71,7 @@ add_library(klang
         src/gen/gen_intrinsics.cpp
         src/gen/gen_variable_definition.cpp
         src/gen/gen_adapt_type.cpp
+        src/gen/gen_callable.cpp
         src/compiler.hpp
         src/compiler.cpp
         src/compiler_linker.cpp
@@ -184,6 +185,7 @@ klang_gen_test(klang-tests-gen-core 300
         tests/test-gen-varargs.cpp
         tests/test-gen-extern.cpp
         tests/test-gen-func-ref.cpp
+        tests/test-gen-callable-basic.cpp
         tests/test-gen-intrinsic.cpp
         tests/test-gen-string-literal.cpp
         tests/test-gen-variable-init.cpp

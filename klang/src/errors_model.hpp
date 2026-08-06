@@ -316,6 +316,20 @@ enum class alias_diag : unsigned int {
     ERR_ALIAS_TEMPLATE_TARGET_UNRESOLVED          = 0x021E,
 };
 
+
+/**
+ * Model-level diagnostics for callables (function references, functors, lambdas).
+ * Range 0x0250 — 0x025F.
+ */
+enum class callable_model_diag : unsigned int {
+    /** A non-null callable (`+` or `&`) was declared without an initialiser. */
+    ERR_CALLABLE_NONNULL_UNINITIALIZED            = 0x0250,
+    /** The source callable may throw exceptions that the target callable does not declare. */
+    ERR_CALLABLE_THROWS_NOT_SUBSET                = 0x0251,
+    /** A member function was bound to a callable through a null receiver. */
+    ERR_CALLABLE_NULL_RECEIVER_BIND               = 0x0252,
+};
+
 } // namespace k::diag
 
 #endif // KLANG_ERRORS_MODEL_HPP

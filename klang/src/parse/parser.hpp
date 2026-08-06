@@ -301,6 +301,11 @@ public:
      *        Used by the 'new' expression handler to parse base types separately from array sizes.
      */
     std::shared_ptr<ast::type_specifier> parse_type_spec(bool stop_before_bracket = false);
+    /**
+     * Look ahead (from just after a consumed '(') to decide whether the parenthesised
+     * region is a bare callable prototype. Does not consume anything.
+     */
+    bool is_callable_prototype_ahead();
 
     /**
      * FundamentalTypeSpec = [ 'unsigned' ] , ( 'byte' | 'char' | 'short' | 'int'

@@ -18,6 +18,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_callable_helpers.hpp"
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
 #include "../model/operators.hpp"
@@ -193,7 +194,8 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
         // ── Case: indirection/null source → bool target ───────────────────────
         else if ((type::is_pointer(effective_source) || type::is_link(effective_source) ||
                   type::is_view(effective_source) || type::is_owner(effective_source) ||
-                  type::is_null(effective_source)) && type::is_prim_bool(target_type)) {
+                  type::is_null(effective_source) || type::is_fat_callable(effective_source))
+                 && type::is_prim_bool(target_type)) {
             // Indirection-to-bool or null-to-bool: valid (null check). No model transformation needed.
         }
 
@@ -1015,12 +1017,15 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     }
 
     // ── Indirection → bool: emit ICmpNE(ptr, null) ─────────────────────────
+    // A callable converts to bool through its target address; the context is irrelevant.
     if((type::is_pointer(source_type) || type::is_link(source_type) ||
-        type::is_view(source_type) || type::is_owner(source_type)) &&
+        type::is_view(source_type) || type::is_owner(source_type) ||
+        type::is_fat_callable(source_type)) &&
        type::is_prim_bool(target_type)) {
         _value = nullptr;
         expr.sub_expr()->accept(*this);
         if (!_value) return;
+        if (type::is_fat_callable(source_type)) _value = extract_fn(*_builder, _value);
         auto null_ptr = llvm::ConstantPointerNull::get(
             llvm::PointerType::get(_builder->getContext(), 0));
         _value = _builder->CreateICmpNE(_value, null_ptr, "ind_to_bool");

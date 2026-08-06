@@ -80,6 +80,14 @@ protected:
     /** Nominal types of strong aliases, interned per alias_definition. */
     std::map<const alias_definition*, std::shared_ptr<alias_type>> _alias_types;
     std::vector<std::shared_ptr<unresolved_type>> _unresolved;
+    /** The unique `%__k.callable = type { ptr, ptr }` named struct of this context. */
+    llvm::StructType* _callable_llvm_type = nullptr;
+    /**
+     * Interning pool of fat callable types, keyed on the *nominal* identity of the
+     * component types (shared_ptr identity — canonical() is deliberately NOT applied,
+     * so a typedef stays a distinct component) plus the addresser.
+     */
+    std::map<std::string, std::shared_ptr<callable_type>> _callable_types;
 
     // Entities:
     std::map<std::shared_ptr<global_variable_definition>, llvm::GlobalVariable*> _global_vars;
@@ -192,6 +200,43 @@ public:
     void rebuild_instantiation_layouts();
 
     std::shared_ptr<type> resolve_type(const std::shared_ptr<type>& type);
+
+    /**
+     * Return (creating it on first call) the unique `%__k.callable = type { ptr, ptr }`
+     * named LLVM struct of this context. Never build a callable LLVM type inline: a
+     * second anonymous/auto-uniquified struct would break cross-module type identity.
+     */
+    llvm::StructType* get_or_create_callable_llvm_type();
+
+    /**
+     * Return (creating and interning on first request) the fat callable type with the
+     * given prototype and addresser.
+     *
+     * The interning key uses the *nominal* identity of @p ret, @p params and @p throws
+     * (raw pointer identity, no canonical() stripping) so that two callables differing
+     * only by a typedef component stay distinct types.
+     */
+    std::shared_ptr<callable_type> get_callable_type(
+        const std::shared_ptr<type>& ret,
+        const std::vector<std::shared_ptr<type>>& params,
+        callable_type::addresser addr,
+        const std::vector<std::shared_ptr<type>>& throws = {});
+
+    /** Return the same callable prototype carrying a different addresser. */
+    std::shared_ptr<callable_type> readdress(
+        const std::shared_ptr<callable_type>& callable,
+        callable_type::addresser addr);
+
+    /**
+     * Apply a `* ? + &` type suffix to a callable type by re-addressing it in place
+     * (a callable is already an indirection, so it is never wrapped).
+     * @return nullptr when @p subtype is not a callable.
+     */
+    std::shared_ptr<type> readdress_callable_suffix(const std::shared_ptr<type>& subtype,
+                                                    const lex::operator_& op);
+
+    /** Reject `!`, `#` and `[]` applied to a callable type. */
+    static void reject_callable_addresser(const std::shared_ptr<type>& subtype, const char* suffix);
 
     /**
      * Build (once) the nominal alias_type of a strong alias (typedef).

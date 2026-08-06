@@ -971,8 +971,8 @@ void type_reference_resolver::visit_pm_expression(pm_expression& expr) {
     }
     auto mfrt = std::dynamic_pointer_cast<member_function_reference_type>(mfp_type);
     if (!mfrt) {
-        // Also accept plain function_reference_type (for free-function pointers used in pm context)
-        if (!std::dynamic_pointer_cast<function_reference_type>(mfp_type)) {
+        // Also accept plain callable_type (for free-function pointers used in pm context)
+        if (!std::dynamic_pointer_cast<callable_type>(mfp_type)) {
             throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_PM_EXPR_INCOMPATIBLE), expr.first_lexeme(),
                 "The '{}' operator requires a member function reference type on the RHS, "
                 "but got '{}'",
@@ -983,7 +983,7 @@ void type_reference_resolver::visit_pm_expression(pm_expression& expr) {
     // Step 2: Validate that the RHS is a member_function_reference_type
     // Step 3: Set result type to the return type of the member function reference
     // ── Result type: return type of the member function reference ────────────
-    auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
+    auto frt = std::dynamic_pointer_cast<callable_type>(mfp_type);
     expr.set_type(frt ? frt->get_return_type() : nullptr);
 }
 
@@ -1007,7 +1007,7 @@ void implementation_generator::visit_pm_expression(pm_expression& expr) {
     if (auto ref = std::dynamic_pointer_cast<reference_type>(mfp_type)) {
         mfp_type = ref->get_subtype();
     }
-    if (auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type)) {
+    if (auto frt = std::dynamic_pointer_cast<callable_type>(mfp_type)) {
         auto* llvm_fn_type = frt->get_llvm_type();
         if (llvm_fn_type) {
             _value = _builder->CreateLoad(llvm_fn_type, fn_alloca, "mfp_load");

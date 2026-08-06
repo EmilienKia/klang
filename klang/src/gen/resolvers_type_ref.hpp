@@ -63,7 +63,7 @@ protected:
     std::vector<catch_scope> _catch_clause_stack;
 
     /**
-     * Keeps function_reference_type objects alive for the duration of type resolution.
+     * Keeps callable_type objects alive for the duration of type resolution.
      * A frt created in visit_symbol_expression is a temporary shared_ptr; the only
      * strong reference to it is through fn_ref_type->reference (the cached ref_type).
      * If fn_ref_type goes out of scope, the reference_type's weak_ptr<subtype> expires
@@ -119,11 +119,11 @@ protected:
     std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
 
     /**
-     * Resolve an unresolved_function_ref_type to a concrete function_reference_type
+     * Resolve an unresolved_callable_type to a concrete callable_type
      * or member_function_reference_type.  The context_elem is used for scope lookup.
      */
-    std::shared_ptr<type> resolve_function_ref_type(
-        const std::shared_ptr<unresolved_function_ref_type>& ufrt,
+    std::shared_ptr<type> resolve_callable_type(
+        const std::shared_ptr<unresolved_callable_type>& ufrt,
         const element& context_elem);
 
     /**
@@ -503,6 +503,8 @@ protected:
     void visit_temporary_construction_expression(temporary_construction_expression &) override;
     void visit_new_expression(new_expression &) override;
     void visit_delete_expression(delete_expression &) override;
+    void visit_callable_bind_expression(callable_bind_expression &) override;
+    void visit_callable_invocation_expression(callable_invocation_expression &) override;
     void visit_owner_move_expression(owner_move_expression &) override;
     void visit_array_init_expression(array_init_expression &) override;
     void visit_designated_struct_init_expression(designated_struct_init_expression &) override;
@@ -614,7 +616,7 @@ protected:
     // ── adapt_type per-category helpers (defined in gen_adapt_type.cpp) ──────
 
     /** Adapt function reference types (frt → frt, ref<frt> → frt, etc.). Returns nullptr if not a frt case. */
-    std::shared_ptr<expression> adapt_function_ref_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    std::shared_ptr<expression> adapt_callable_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
     /** Adapt when source is a pointer type (ptr<T> → ptr/lnk/ref). */
     std::shared_ptr<expression> adapt_from_pointer(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
     /** Adapt when source is a link type (lnk<T> → lnk/ptr/view/ref). */

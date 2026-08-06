@@ -134,9 +134,9 @@ TEST_CASE("Parse function pointer type spec *(int)", "[parser][type][function_re
     auto spec = parser.parse_type_spec();
     REQUIRE(spec);
 
-    auto frt = std::dynamic_pointer_cast<ast::function_ref_type_specifier>(spec);
+    auto frt = std::dynamic_pointer_cast<ast::callable_type_specifier>(spec);
     REQUIRE(frt);
-    REQUIRE(frt->ref_op.type == k::lex::operator_::STAR);
+    REQUIRE(frt->addresser->type == k::lex::operator_::STAR);
     REQUIRE(!frt->owner.has_value());
     REQUIRE(frt->param_types.size() == 1);
     auto pt = std::dynamic_pointer_cast<ast::keyword_type_specifier>(frt->param_types[0]);
@@ -151,9 +151,9 @@ TEST_CASE("Parse function view type spec ?(int, double+)", "[parser][type][funct
     auto spec = parser.parse_type_spec();
     REQUIRE(spec);
 
-    auto frt = std::dynamic_pointer_cast<ast::function_ref_type_specifier>(spec);
+    auto frt = std::dynamic_pointer_cast<ast::callable_type_specifier>(spec);
     REQUIRE(frt);
-    REQUIRE(frt->ref_op.type == k::lex::operator_::QUESTION_MARK);
+    REQUIRE(frt->addresser->type == k::lex::operator_::QUESTION_MARK);
     REQUIRE(!frt->owner.has_value());
     REQUIRE(frt->param_types.size() == 2);
 }
@@ -165,9 +165,9 @@ TEST_CASE("Parse function link type spec +()", "[parser][type][function_ref_type
     auto spec = parser.parse_type_spec();
     REQUIRE(spec);
 
-    auto frt = std::dynamic_pointer_cast<ast::function_ref_type_specifier>(spec);
+    auto frt = std::dynamic_pointer_cast<ast::callable_type_specifier>(spec);
     REQUIRE(frt);
-    REQUIRE(frt->ref_op.type == k::lex::operator_::PLUS);
+    REQUIRE(frt->addresser->type == k::lex::operator_::PLUS);
     REQUIRE(!frt->owner.has_value());
     REQUIRE(frt->param_types.empty());
 }
@@ -179,9 +179,9 @@ TEST_CASE("Parse member function pointer type spec MyClass::*(int)", "[parser][t
     auto spec = parser.parse_type_spec();
     REQUIRE(spec);
 
-    auto frt = std::dynamic_pointer_cast<ast::function_ref_type_specifier>(spec);
+    auto frt = std::dynamic_pointer_cast<ast::callable_type_specifier>(spec);
     REQUIRE(frt);
-    REQUIRE(frt->ref_op.type == k::lex::operator_::STAR);
+    REQUIRE(frt->addresser->type == k::lex::operator_::STAR);
     REQUIRE(frt->owner.has_value());
     REQUIRE(frt->owner->names.size() == 1);
     REQUIRE(std::string{frt->owner->names[0].content} == "MyClass");
@@ -194,8 +194,8 @@ TEST_CASE("Parse * type spec does NOT parse as function ref when not followed by
     k::parse::parser parser(log, src);
     auto spec = parser.parse_type_spec();
     REQUIRE(spec);
-    // Should be a pointer_type_specifier, NOT a function_ref_type_specifier
-    auto frt = std::dynamic_pointer_cast<ast::function_ref_type_specifier>(spec);
+    // Should be a pointer_type_specifier, NOT a callable_type_specifier
+    auto frt = std::dynamic_pointer_cast<ast::callable_type_specifier>(spec);
     REQUIRE(!frt);
     auto ptr = std::dynamic_pointer_cast<ast::pointer_type_specifier>(spec);
     REQUIRE(ptr);

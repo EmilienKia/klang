@@ -101,6 +101,8 @@ protected:
     friend class array_init_expression;
     friend class designated_struct_init_expression;
     friend class temporary_construction_expression;
+    friend class callable_bind_expression;
+    friend class callable_invocation_expression;
 
     void set_parent_expression(const std::shared_ptr<expression> &expression) {
         set_parent(expression);

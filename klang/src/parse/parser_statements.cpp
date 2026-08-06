@@ -863,24 +863,75 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
     return std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr, is_constructor, is_brace_init);
 }
 
+/**
+ * Look ahead from just after a '(' to decide whether the parenthesised region is a
+ * *bare* callable prototype (no addresser) rather than a parenthesised expression.
+ *
+ * The lexer position is restored before returning in every case.
+ *
+ * A bare prototype is only accepted when the token that follows the matching ')' is
+ * ':' (explicit return type), ';' or '='. Any other follower — most importantly ')'
+ * and ',' — keeps the region available to the tentative cast-expression parser.
+ */
+bool parser::is_callable_prototype_ahead()
+{
+    lex::lex_holder holder(_lexer);
+    unsigned int depth = 1;
+    bool matched = false;
+    // Bound the scan so a malformed source cannot spin forever.
+    for (unsigned int guard = 0; guard < 4096u; ++guard) {
+        auto tok = _lexer.get();
+        if (!tok) break;
+        if (tok == lex::punctuator::PARENTHESIS_OPEN) {
+            ++depth;
+        } else if (tok == lex::punctuator::PARENTHESIS_CLOSE) {
+            if (--depth == 0) { matched = true; break; }
+        } else if (tok == lex::punctuator::BRACE_OPEN || tok == lex::punctuator::SEMICOLON) {
+            break; // certainly not a type list
+        }
+    }
+    bool result = false;
+    if (matched) {
+        auto next = _lexer.get();
+        result = next == lex::operator_::COLON
+              || next == lex::punctuator::SEMICOLON
+              || next == lex::operator_::EQUAL;
+    }
+    holder.rollback();
+    return result;
+}
+
 std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_bracket)
 {
-    // ── Try function-reference type first (standalone or member) ──────────────
-    // Syntax: [ QualId '::' ] ('*'|'^'|'~') '(' [ TypeSpec {',' TypeSpec} ] ')'
-    // A RefKind immediately followed by '(' (when there is no preceding base type)
-    // is a function reference type, not a dereference/unary op.
+    // ── Try a callable type first (prototype, addressed, or unbound member) ───
+    // Syntax: [ 'const' ] [ QualId '::' ] [ '*'|'?'|'+'|'&' ] '(' [ TypeList ] ')'
+    //         [ ':' TypeSpec ]
+    // An addresser immediately followed by '(' (when there is no preceding base type)
+    // is a callable type, not a dereference/unary operator.
+    //
+    // A *bare* prototype (no addresser) is only recognised when the token following
+    // the matching ')' is ':' , ';' or '=' — otherwise '(' would steal parenthesised
+    // expressions from the tentative cast-expression parser.
     {
         lex::lex_holder fn_holder(_lexer);
 
+        // Optional leading 'const': qualifies the callable value, not its components.
+        std::optional<lex::keyword> callable_const_kw;
+        if (auto lconst = _lexer.get(); lconst == lex::keyword::CONST) {
+            callable_const_kw = lex::as<lex::keyword>(lconst);
+        } else {
+            _lexer.unget();
+        }
+
         // Attempt to parse an optional owner prefix of the form "Ident (:: Ident)* ::"
-        // followed by a ref-kind operator and '('.
+        // followed by an addresser and '('.
         // We MUST NOT call parse_qualified_identifier() here because it throws when
         // the token after '::' is not an identifier (e.g. when it is '*').
         std::optional<ast::qualified_identifier> owner_opt;
 
-        // Peek ahead: is there a "Ident ... :: RefKind (" sequence?
+        // Peek ahead: is there a "Ident ... :: Addresser (" sequence?
         // Strategy: collect identifiers separated by "::", stopping when we see
-        //   ":: RefKind(" (found owner), or a non-identifier/non-"::" (no owner).
+        //   ":: Addresser(" (found owner), or a non-identifier/non-"::" (no owner).
         bool is_function_ref = false;
         {
             lex::lex_holder peek_holder(_lexer);
@@ -890,24 +941,24 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
             auto t = _lexer.get();
             if (lex::is<lex::identifier>(t)) {
                 names.push_back(lex::as<lex::identifier>(t));
-                // Try additional ":: Ident" parts — stop on ":: RefKind("
+                // Try additional ":: Ident" parts — stop on ":: Addresser("
                 while (true) {
                     lex::lex_holder seg(_lexer);
                     auto dc = _lexer.get();
                     if (dc != lex::punctuator::DOUBLE_COLON) {
                         _lexer.unget();
                         // No more ::, names is a qualified identifier WITHOUT the "::" owner suffix.
-                        // This means no owner — just a plain identifier, not a function ref prefix.
+                        // This means no owner — just a plain identifier, not a callable prefix.
                         break;
                     }
                     auto next = _lexer.get();
                     if (next == lex::operator_::STAR || next == lex::operator_::QUESTION_MARK || next == lex::operator_::PLUS) {
-                        // ":: RefKind" — check for '('
+                        // ":: Addresser" — check for '('
                         auto par = _lexer.get();
                         if (par == lex::punctuator::PARENTHESIS_OPEN) {
-                            // Found "names :: RefKind (" → owner = names, function ref found
+                            // Found "names :: Addresser (" → owner = names, callable found
                             _lexer.unget(); // unget '('
-                            _lexer.unget(); // unget RefKind
+                            _lexer.unget(); // unget Addresser
                             // :: is consumed — that's intentional (we're past it)
                             owner_opt = ast::qualified_identifier(std::nullopt, names);
                             seg.sync();
@@ -915,7 +966,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                             break;
                         } else {
                             _lexer.unget(); // unget par
-                            _lexer.unget(); // unget RefKind
+                            _lexer.unget(); // unget Addresser
                             _lexer.unget(); // unget ::
                             break;
                         }
@@ -938,47 +989,95 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
             }
         }
 
-        // Now try to read the ref-kind operator (with or without owner)
-        auto ref_tok = _lexer.get();
-        if (ref_tok == lex::operator_::STAR ||
-            ref_tok == lex::operator_::QUESTION_MARK ||
-            ref_tok == lex::operator_::PLUS) {
-            // Must be immediately followed by '(' to be a function ref type
-            auto par_tok = _lexer.get();
-            if (par_tok == lex::punctuator::PARENTHESIS_OPEN) {
-                lex::operator_ ref_op = lex::as<lex::operator_>(ref_tok);
-                std::vector<std::shared_ptr<ast::type_specifier>> params;
+        // Now try to read the addresser (with or without owner), or a bare '('.
+        std::optional<lex::operator_> addresser_op;
+        bool callable_open = false;
+        {
+            auto addr_tok = _lexer.get();
+            if (addr_tok == lex::operator_::STAR ||
+                addr_tok == lex::operator_::QUESTION_MARK ||
+                addr_tok == lex::operator_::PLUS ||
+                addr_tok == lex::operator_::AMPERSAND) {
+                // Must be immediately followed by '(' to be a callable type
+                auto par_tok = _lexer.get();
+                if (par_tok == lex::punctuator::PARENTHESIS_OPEN) {
+                    addresser_op = lex::as<lex::operator_>(addr_tok);
+                    callable_open = true;
+                } else {
+                    _lexer.unget(); // unget par_tok
+                    _lexer.unget(); // unget addr_tok
+                }
+            } else if (addr_tok == lex::punctuator::PARENTHESIS_OPEN && !owner_opt.has_value()) {
+                // Bare prototype candidate — only accept it when what follows the
+                // matching ')' cannot be the continuation of an expression.
+                if (is_callable_prototype_ahead()) {
+                    callable_open = true;
+                } else {
+                    _lexer.unget();
+                }
+            } else {
+                _lexer.unget(); // unget addr_tok
+            }
+        }
 
-                // Parse parameter type list (may be empty)
-                auto close_par = _lexer.get();
-                if (close_par != lex::punctuator::PARENTHESIS_CLOSE) {
-                    _lexer.unget(); // put back first token of first type
-                    while (true) {
-                        auto pt = parse_type_spec();
-                        if (!pt) {
-                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BRACE_INIT_NESTED_ERROR), _lexer.pick_current(),
-                                "Expected a type specifier in function reference type parameter list");
-                        }
-                        params.push_back(pt);
-                        auto sep = _lexer.get();
-                        if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
-                            break; // end of param list
-                        } else if (sep == lex::punctuator::COMMA) {
-                            continue; // next param
-                        } else {
-                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BRACE_INIT_SEP_ERROR), sep,
-                                "Expected ',' or ')' in function reference type parameter list");
-                        }
+        if (callable_open) {
+            const bool tentative = !addresser_op.has_value();
+            std::vector<std::shared_ptr<ast::type_specifier>> params;
+            bool failed = false;
+
+            // Parse parameter type list (may be empty)
+            auto close_par = _lexer.get();
+            if (close_par != lex::punctuator::PARENTHESIS_CLOSE) {
+                _lexer.unget(); // put back first token of first type
+                while (true) {
+                    auto pt = parse_type_spec();
+                    if (!pt) {
+                        if (tentative) { failed = true; break; }
+                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BRACE_INIT_NESTED_ERROR), _lexer.pick_current(),
+                            "Expected a type specifier in callable type parameter list");
+                    }
+                    params.push_back(pt);
+                    auto sep = _lexer.get();
+                    if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                        break; // end of param list
+                    } else if (sep == lex::punctuator::COMMA) {
+                        continue; // next param
+                    } else {
+                        if (tentative) { failed = true; break; }
+                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BRACE_INIT_SEP_ERROR), sep,
+                            "Expected ',' or ')' in callable type parameter list");
                     }
                 }
-                fn_holder.sync();
-                return std::make_shared<ast::function_ref_type_specifier>(ref_op, owner_opt, params);
-            } else {
-                _lexer.unget(); // unget par_tok
-                _lexer.unget(); // unget ref_tok
             }
-        } else {
-            _lexer.unget(); // unget ref_tok
+
+            if (!failed) {
+                // Greedy return type: a ':' right after the closing ')' always
+                // introduces the callable return type. K has no 'void' keyword —
+                // an omitted ': TypeSpec' *is* the void return.
+                std::shared_ptr<ast::type_specifier> ret_type;
+                if (auto lcolon = _lexer.get(); lcolon == lex::operator_::COLON) {
+                    ret_type = parse_type_spec(stop_before_bracket);
+                    if (!ret_type) {
+                        if (tentative) { failed = true; }
+                        else {
+                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BRACE_INIT_NESTED_ERROR), _lexer.pick_current(),
+                                "Expected a type specifier as callable return type after ':'");
+                        }
+                    }
+                } else {
+                    _lexer.unget();
+                }
+
+                if (!failed) {
+                    fn_holder.sync();
+                    std::shared_ptr<ast::type_specifier> result =
+                        std::make_shared<ast::callable_type_specifier>(addresser_op, owner_opt, params, ret_type);
+                    if (callable_const_kw.has_value()) {
+                        result = std::make_shared<ast::const_type_specifier>(*callable_const_kw, result);
+                    }
+                    return result;
+                }
+            }
         }
         fn_holder.rollback();
     }

@@ -499,5 +499,136 @@ public:
     }
 };
 
+/**
+ * Callable bind expression — materialises a `%__k.callable = { fn, ctx }` value from
+ * a binding source (A.5 of the callable design).
+ *
+ * `_context` is the invocation context (`this`) and is null for a free function, a
+ * static method or a capture-free lambda. `_target` names the bound function; when
+ * the target is resolved through a vtable, `_target` is null and `_vtable_slot`
+ * (relative to `_dispatch_base`) carries the slot index instead.
+ */
+class callable_bind_expression : public expression {
+public:
+    enum class kind {
+        free_function,
+        static_method,
+        bound_method,
+        virtual_method,
+        functor,
+        functional_interface,
+        lambda
+    };
+
+protected:
+    friend class gen::type_reference_resolver;
+    friend class gen::implementation_generator;
+
+    /** Invocation context expression; null for free/static/capture-free targets. */
+    std::shared_ptr<expression> _context;
+    /** Bound target function; null when `_vtable_slot` is used instead. */
+    std::shared_ptr<function> _target;
+    /** Vtable slot index for a virtual target, or -1 when `_target` is used. */
+    int _vtable_slot = -1;
+    /** Aggregate whose vtable `_vtable_slot` indexes. */
+    std::shared_ptr<aggregate> _dispatch_base;
+    kind _kind = kind::free_function;
+
+    callable_bind_expression() = default;
+    callable_bind_expression(const callable_bind_expression&) = delete;
+
+public:
+    void accept(model_visitor& visitor) override;
+
+    static std::shared_ptr<callable_bind_expression> make_shared(
+        kind k,
+        const std::shared_ptr<function>& target,
+        const std::shared_ptr<expression>& context = nullptr);
+
+    const std::shared_ptr<expression>& get_context() const { return _context; }
+    void set_context(const std::shared_ptr<expression>& ctx) {
+        _context = ctx;
+        if (_context) _context->set_parent_expression(shared_as<expression>());
+    }
+
+    const std::shared_ptr<function>& get_target() const { return _target; }
+    void set_target(const std::shared_ptr<function>& target) { _target = target; }
+
+    int get_vtable_slot() const { return _vtable_slot; }
+    void set_vtable_slot(int slot) { _vtable_slot = slot; }
+
+    const std::shared_ptr<aggregate>& get_dispatch_base() const { return _dispatch_base; }
+    void set_dispatch_base(const std::shared_ptr<aggregate>& base) { _dispatch_base = base; }
+
+    kind get_kind() const { return _kind; }
+    void set_kind(kind k) { _kind = k; }
+
+    /** True when the bind produces a `{fn, null}` value (no invocation context). */
+    bool is_context_free() const { return !_context; }
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<callable_bind_expression> c{new callable_bind_expression()};
+        c->_type = _type;
+        c->_target = _target;
+        c->_vtable_slot = _vtable_slot;
+        c->_dispatch_base = _dispatch_base;
+        c->_kind = _kind;
+        if (_context) c->set_context(_context->clone());
+        return c;
+    }
+};
+
+
+/**
+ * Callable invocation expression — a call through a callable value.
+ *
+ * Lowered by branching on the `ctx` field: a null context calls `fn(args…)`, a
+ * non-null one calls `fn(ctx, args…)` (with the sret pointer inserted first in
+ * both branches when the return type is returned indirectly).
+ */
+class callable_invocation_expression : public expression {
+protected:
+    friend class gen::type_reference_resolver;
+    friend class gen::implementation_generator;
+
+    /** Expression producing the callable value. */
+    std::shared_ptr<expression> _callee;
+    std::vector<std::shared_ptr<expression>> _arguments;
+
+    callable_invocation_expression() = default;
+    callable_invocation_expression(const callable_invocation_expression&) = delete;
+
+public:
+    void accept(model_visitor& visitor) override;
+
+    static std::shared_ptr<callable_invocation_expression> make_shared(
+        const std::shared_ptr<expression>& callee,
+        const std::vector<std::shared_ptr<expression>>& args);
+
+    const std::shared_ptr<expression>& get_callee() const { return _callee; }
+    void set_callee(const std::shared_ptr<expression>& callee) {
+        _callee = callee;
+        if (_callee) _callee->set_parent_expression(shared_as<expression>());
+    }
+
+    const std::vector<std::shared_ptr<expression>>& arguments() const { return _arguments; }
+    void assign_arguments(const std::vector<std::shared_ptr<expression>>& args) {
+        _arguments = args;
+        for (auto& a : _arguments) {
+            if (a) a->set_parent_expression(shared_as<expression>());
+        }
+    }
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<callable_invocation_expression> c{new callable_invocation_expression()};
+        c->_type = _type;
+        if (_callee) c->set_callee(_callee->clone());
+        std::vector<std::shared_ptr<expression>> args;
+        for (auto& a : _arguments) args.push_back(a ? a->clone() : nullptr);
+        c->assign_arguments(args);
+        return c;
+    }
+};
+
 } // namespace k::model
 #endif //KLANG_MODEL_EXPRESSIONS_INVOCATION_HPP

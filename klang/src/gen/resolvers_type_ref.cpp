@@ -794,24 +794,23 @@ void type_reference_resolver::check_constructor_overload_collisions(aggregate& s
 
 std::shared_ptr<type>
 /**
- * Resolve an unresolved_function_ref_type to a concrete function_reference_type.
+ * Resolve an unresolved_callable_type to a concrete callable_type.
  *
  * Steps:
  *   1. Resolve each parameter type via resolve_type_by_name / from_string.
  *   2. If member function reference: resolve the owner aggregate.
- *   3. Build using function_reference_type_builder.
+ *   3. Build using callable_type_builder.
  *   4. Cache the resolved type into the unresolved placeholder.
  */
-type_reference_resolver::resolve_function_ref_type(
-    const std::shared_ptr<unresolved_function_ref_type>& ufrt,
+type_reference_resolver::resolve_callable_type(
+    const std::shared_ptr<unresolved_callable_type>& ufrt,
     const element& context_elem)
 {
     if (!ufrt) return {};
 
     // Step 1: Resolve each parameter type via resolve_type_by_name / from_string
-    // Resolve parameter types
-    std::vector<std::shared_ptr<type>> resolved_params;
-    for (const auto& pt : ufrt->parameter_types()) {
+    const auto resolve_component = [&](const std::shared_ptr<type>& pt,
+                                       const char* what) -> std::shared_ptr<type> {
         std::shared_ptr<type> resolved;
         if (type::is_resolved(pt)) {
             resolved = pt;
@@ -820,19 +819,38 @@ type_reference_resolver::resolve_function_ref_type(
             if (!resolved || !type::is_resolved(resolved)) {
                 resolved = _context->from_string(u->type_id());
             }
+        } else if (auto nested = std::dynamic_pointer_cast<unresolved_callable_type>(pt)) {
+            resolved = resolve_callable_type(nested, context_elem);
         } else {
             resolved = _context->resolve_type(pt);
         }
         if (!resolved || !type::is_resolved(resolved)) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SIGNATURE_STRUCT_NOT_FOUND), std::nullopt,
-                "Cannot resolve parameter type in function reference type",
-                {});
+                "Cannot resolve {} in callable type", {what});
         }
-        resolved_params.push_back(resolved);
+        return resolved;
+    };
+
+    std::vector<std::shared_ptr<type>> resolved_params;
+    for (const auto& pt : ufrt->parameter_types()) {
+        resolved_params.push_back(resolve_component(pt, "parameter type"));
     }
 
-    function_reference_type_builder builder(_context);
-    builder.ref_kind(ufrt->get_ref_kind());
+    // Declared return type: absent means void.
+    std::shared_ptr<type> resolved_return;
+    if (ufrt->get_return_type()) {
+        resolved_return = resolve_component(ufrt->get_return_type(), "return type");
+    }
+
+    std::vector<std::shared_ptr<type>> resolved_throws;
+    for (const auto& th : ufrt->get_throws()) {
+        resolved_throws.push_back(resolve_component(th, "exception type"));
+    }
+
+    callable_type_builder builder(_context);
+    builder.addresser(ufrt->get_addresser());
+    if (resolved_return) builder.return_type(resolved_return);
+    builder.throws(resolved_throws);
     for (const auto& rp : resolved_params) {
         builder.append_parameter_type(rp);
     }
@@ -861,11 +879,11 @@ type_reference_resolver::resolve_function_ref_type(
         builder.member_of(owner_agg);
     }
 
-    // Step 3: Build using function_reference_type_builder
+    // Step 3: Build using callable_type_builder
     auto resolved_type = builder.build();
     // Step 4: Cache the resolved type into the unresolved placeholder
     // Cache the resolved type into the unresolved placeholder
-    const_cast<unresolved_function_ref_type*>(ufrt.get())->resolve(resolved_type);
+    const_cast<unresolved_callable_type*>(ufrt.get())->resolve(resolved_type);
     return resolved_type;
 }
 
@@ -2021,7 +2039,7 @@ std::shared_ptr<type> type_reference_resolver::strip_ref_array(const std::shared
  *   1. Extract AST lexeme for error reporting.
  *   2. Phase 1: resolve the unresolved type (resolve_variable_type).
  *   3. Resolve init expressions via visitor.
- *   4. For function_reference_type: propagate return type from init symbol.
+ *   4. For callable_type: propagate return type from init symbol.
  *   5. Phase 2: dispatch to per-type-category validation.
  */
 void type_reference_resolver::visit_variable_definition(variable_definition& var)
@@ -2049,27 +2067,11 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         init_expr_base->accept(*this);
     }
 
-    // Step 4: For function_reference_type: propagate return type from init symbol
+    // Step 4: nothing to infer for a callable type — the declared type is complete.
+    // (A callable type is interned and shared by every declaration with the same
+    //  signature, so it must never be mutated in place to adopt an initialiser's
+    //  return type; the return type is part of the declaration syntax.)
     auto init_expr = std::dynamic_pointer_cast<constructor_invocation_expression>(init_expr_base);
-
-    // If the variable has a function_reference_type with no return type yet (e.g. 'fp : *(int) = add_one'),
-    // propagate the return type from the initializer's function symbol into the existing frt in-place.
-    // IMPORTANT: we must NOT replace the frt object (var.set_type(new_frt)) because any reference_type
-    // wrapping it (ref<frt>) holds a weak_ptr to frt -- replacing frt would expire those weak_ptrs and
-    // cause use-after-free crashes in is_resolved() checks.  Mutating the existing object is safe.
-    if (auto frt = std::dynamic_pointer_cast<function_reference_type>(var.get_type())) {
-        if (!frt->get_return_type() && init_expr && !init_expr->empty()) {
-            if (auto sym = std::dynamic_pointer_cast<symbol_expression>(init_expr->argument(0))) {
-                if (sym->is_function() && sym->get_function()) {
-                    auto fn_ret = sym->get_function()->get_return_type();
-                    if (fn_ret) {
-                        // Mutate in place -- preserves all existing weak_ptr references to frt
-                        frt->set_return_type(fn_ret);
-                    }
-                }
-            }
-        }
-    }
 
     // Step 5: Phase 2: dispatch to per-type-category validation
     // Phase 2: validate init expression per type category
@@ -2097,6 +2099,20 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         validate_owner_variable(ctx);
     } else if (type::is_sized_array(var_type)) {
         validate_sized_array_variable(ctx);
+    } else if (auto ct = std::dynamic_pointer_cast<callable_type>(var_type)) {
+        if (ct->is_prototype()) {
+            throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_PROTOTYPE_NOT_INSTANTIABLE),
+                var_lexeme,
+                "A bare callable prototype '{}' denotes a signature, not a value type; "
+                "add an addresser ('*', '?', '+' or '&') to declare a variable",
+                {var_type->to_string()});
+        }
+        if (!ct->is_nullable() && !ctx.has_single_init_arg()) {
+            throw_error(static_cast<unsigned int>(k::diag::callable_model_diag::ERR_CALLABLE_NONNULL_UNINITIALIZED),
+                var_lexeme,
+                "A non-null callable of type '{}' must be explicitly initialised",
+                {var_type->to_string()});
+        }
     } else {
         // Unsupported construction for other types for now
         // TODO Support construction for other types (array, etc.)
@@ -2197,15 +2213,15 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
 
     // Step 1: Function reference type cases
     // ── Function reference type cases ─────────────────────────────────────────
-    // frt → frt (any ref_kind combination): free conversion (same LLVM type).
+    // frt → frt (any addresser combination): free conversion (same LLVM type).
     // ref<frt> → frt: allowed (load from variable / direct function address).
-    if (auto tgt_frt = std::dynamic_pointer_cast<function_reference_type>(tgt_nc)) {
-        if (std::dynamic_pointer_cast<function_reference_type>(type_src)) {
+    if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(tgt_nc)) {
+        if (std::dynamic_pointer_cast<callable_type>(type_src)) {
             return CAST_NONE;
         }
         if (type::is_reference(type_src)) {
             auto src_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
-            if (std::dynamic_pointer_cast<function_reference_type>(src_inner)) {
+            if (std::dynamic_pointer_cast<callable_type>(src_inner)) {
                 return CAST_REF_CONV; // ref<frt> → frt: load needed
             }
         }
@@ -2214,11 +2230,11 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // ref<frt> → ref<frt>: pass through.
     if (type::is_reference(tgt_nc)) {
         auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
-        if (std::dynamic_pointer_cast<function_reference_type>(tgt_sub_nc)) {
+        if (std::dynamic_pointer_cast<callable_type>(tgt_sub_nc)) {
             if (type_src == tgt_nc || type_src == tgt) return CAST_NONE;
             if (type::is_reference(type_src)) {
                 auto src_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
-                if (std::dynamic_pointer_cast<function_reference_type>(src_sub)) return CAST_NONE;
+                if (std::dynamic_pointer_cast<callable_type>(src_sub)) return CAST_NONE;
             }
             return CAST_IMPOSSIBLE;
         }
@@ -3787,23 +3803,23 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     }
 
     // ── Function reference types ────────────────────────────────────────────────
-    if (std::dynamic_pointer_cast<function_reference_type>(type_nc) ||
-        std::dynamic_pointer_cast<function_reference_type>(type_src)) {
-        auto result = adapt_function_ref_type(expr, type_src, type_nc);
+    if (std::dynamic_pointer_cast<callable_type>(type_nc) ||
+        std::dynamic_pointer_cast<callable_type>(type_src)) {
+        auto result = adapt_callable_type(expr, type_src, type_nc);
         if (result) return result;
-        if (std::dynamic_pointer_cast<function_reference_type>(type_nc)) return {};
+        if (std::dynamic_pointer_cast<callable_type>(type_nc)) return {};
     }
     if (type::is_reference(type_nc)) {
         auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
-        if (std::dynamic_pointer_cast<function_reference_type>(tgt_sub_nc)) {
-            auto result = adapt_function_ref_type(expr, type_src, type_nc);
+        if (std::dynamic_pointer_cast<callable_type>(tgt_sub_nc)) {
+            auto result = adapt_callable_type(expr, type_src, type_nc);
             if (result) return result;
         }
     }
     if (type::is_reference(type_src)) {
         auto src_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
-        if (std::dynamic_pointer_cast<function_reference_type>(src_inner)) {
-            auto result = adapt_function_ref_type(expr, type_src, type_nc);
+        if (std::dynamic_pointer_cast<callable_type>(src_inner)) {
+            auto result = adapt_callable_type(expr, type_src, type_nc);
             if (result) return result;
         }
     }

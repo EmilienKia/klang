@@ -18,6 +18,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_callable_helpers.hpp"
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
 #include "../model/operators.hpp"
@@ -289,7 +290,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         if (auto ref = std::dynamic_pointer_cast<reference_type>(mfp_type)) {
             mfp_type = ref->get_subtype();
         }
-        auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
+        auto frt = std::dynamic_pointer_cast<callable_type>(mfp_type);
         if (!frt) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DYNAMIC_CAST_BAD_TYPE), expr.first_lexeme(),
                 "The '{}' call requires a member function reference type, but got '{}'",
@@ -312,7 +313,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // Adapt arguments against the frt's parameter types.
         // NOTE: for member_function_reference_type, get_parameter_types() returns ONLY the
         // explicit parameters — the implicit 'this' pointer is NOT in _parameter_types
-        // (it appears only in the LLVM FunctionType built by function_reference_type_builder).
+        // (it appears only in the LLVM FunctionType built by callable_type_builder).
         // Therefore param_offset is always 0 here.
         const auto& frt_params = frt->get_parameter_types();
         const auto& call_args = expr.arguments();
@@ -821,7 +822,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     // Case 1.5 : indirect call via a function-reference variable "fp(args)"
     //   callee may be unresolved (symbol_resolver deferred it as a potential function call).
     //   Try to resolve it as a variable by walking the scope chain manually.
-    //   If a variable with a function_reference_type is found, treat this as indirect.
+    //   If a variable with a callable_type is found, treat this as indirect.
     // ----------------------------------------------------------------
     if (callee && !callee->is_resolved()) {
         // Walk up the scope chain from the callee expression to find a variable with this name.
@@ -852,8 +853,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                    type::is_pointer(inner_type) || type::is_view(inner_type))) {
                 inner_type = inner_type->get_subtype();
             }
-            // Also unwrap an unresolved_function_ref_type that has been resolved
-            if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(inner_type)) {
+            // Also unwrap an unresolved_callable_type that has been resolved
+            if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(inner_type)) {
                 if (ufrt->is_resolved()) {
                     inner_type = ufrt->get_resolved();
                     while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
@@ -862,8 +863,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     }
                 }
             }
-            // If the inner type is a function_reference_type, this is an indirect call
-            auto frt = std::dynamic_pointer_cast<function_reference_type>(inner_type);
+            // If the inner type is a callable_type, this is an indirect call
+            auto frt = std::dynamic_pointer_cast<callable_type>(inner_type);
             if (frt) {
                 // Set the return type of the call expression.
                 // If the frt has no return type yet (e.g. parameter with no init expression),
@@ -878,7 +879,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     }
                 }
                 expr.set_type(ret_type);
-                // Type-adapt arguments against the function_reference_type's parameter types
+                // Type-adapt arguments against the callable_type's parameter types
                 const auto& params = frt->get_parameter_types();
                 for (size_t n = 0; n < expr.arguments().size() && n < params.size(); ++n) {
                     auto arg = expr.arguments().at(n);
@@ -1850,7 +1851,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         if (auto ref = std::dynamic_pointer_cast<reference_type>(mfp_type)) {
             mfp_type = ref->get_subtype();
         }
-        auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
+        auto frt = std::dynamic_pointer_cast<callable_type>(mfp_type);
         if (!frt || !mfp_alloca) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F049), expr.first_lexeme(),
                 "Internal error: INDIRECT_MEMBER call: could not obtain function pointer");
@@ -1892,69 +1893,53 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         return;
     }
 
-    // ── INDIRECT call via function-reference variable ─────────────────────────
+    // ── INDIRECT call through a callable value ────────────────────────────────
     if (expr.has_dispatch_info() &&
         expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::INDIRECT) {
-        // callee is a symbol_expression that holds a variable of function_reference_type.
-        // We already visited the callee in type_reference_resolver, so its type is set.
-        // In impl_gen, visiting a variable symbol gives us the *address* of the variable (alloca).
-        // For function-reference variables, we must load the function pointer from that address.
+        // The callee denotes a callable-typed variable (or a callable rvalue).
+        // Visiting a variable symbol yields the *address* of its slot, so the fat
+        // callable value must be loaded from it; an rvalue is used as-is.
+        auto callee_type = callee ? callee->get_type() : nullptr;
+        auto ct = peel_to_callable(callee_type);
+        if (!ct) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05D), expr.first_lexeme(),
+                "Internal error: indirect call without a callable type annotation");
+        }
+
+        llvm::Value* saved_sret_dest = _sret_destination;
+        _sret_destination = nullptr;
+
         _value = nullptr;
         if (callee) callee->accept(*this);
-        llvm::Value* var_addr = _value;
-        if (!var_addr) {
-            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F044), expr.first_lexeme(),
-                "Internal error: indirect call through function reference produced no LLVM value");
+        llvm::Value* callable_val = _value;
+        if (!callable_val) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05D), expr.first_lexeme(),
+                "Internal error: indirect call through a callable produced no LLVM value");
+        }
+        if (callable_val->getType()->isPointerTy()) {
+            // Address of the callable slot: load the { fn, ctx } pair.
+            callable_val = _builder->CreateLoad(
+                _context->get_or_create_callable_llvm_type(), callable_val, "callable_load");
         }
 
-        // Build the LLVM function type from the function_reference_type in the call expression.
-        auto callee_type = callee ? callee->get_type() : nullptr;
-        auto inner_type = callee_type;
-        while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
-                               type::is_pointer(inner_type) || type::is_view(inner_type))) {
-            inner_type = inner_type->get_subtype();
-        }
-        auto frt = std::dynamic_pointer_cast<function_reference_type>(inner_type);
-        if (!frt) {
-            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F045), expr.first_lexeme(),
-                "Internal error: indirect call without a function_reference_type annotation");
-        }
-
-        // The function_reference_type has a ptr (opaque pointer) as its LLVM type.
-        // Load the actual function pointer from the variable's address.
-        llvm::Type* frt_llvm = _context->get_llvm_type(inner_type); // = opaque ptr
-        llvm::Value* fn_ptr = _builder->CreateLoad(frt_llvm, var_addr, "fn_ptr_load");
-
-        // Build LLVM parameter types from the function_reference_type
-        std::vector<llvm::Type*> param_llvm_types;
-        for (const auto& pt : frt->get_parameter_types()) {
-            auto llt = _context->get_llvm_type(pt);
-            if (!llt) {
-                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F046), expr.first_lexeme(),
-                    "Internal error: could not map K parameter type to LLVM type for indirect call");
-            }
-            param_llvm_types.push_back(llt);
-        }
-        llvm::Type* ret_llvm_type = frt->get_return_type()
-            ? _context->get_llvm_type(frt->get_return_type())
-            : llvm::Type::getVoidTy(**_context);
-        auto llvm_fn_type = llvm::FunctionType::get(ret_llvm_type, param_llvm_types, false);
-
-        // Generate arguments
         std::vector<llvm::Value*> call_args;
         for (auto& arg : expr.arguments()) {
             _value = nullptr;
             arg->accept(*this);
             if (!_value) {
-                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F047), expr.first_lexeme(),
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05F), expr.first_lexeme(),
                     "Internal error: an argument for an indirect call produced no LLVM value");
             }
             call_args.push_back(_value);
         }
 
-        auto* sret_result = emit_sret_call(llvm_fn_type, fn_ptr, call_args, "ind_call");
-        if (sret_result) {
-            handle_sret_result(sret_result);
+        _sret_destination = saved_sret_dest;
+        emit_callable_invocation(ct, callable_val, call_args,
+                                 ct->get_return_type(), expr.first_lexeme());
+        // When we allocated the sret slot ourselves it is a temporary and may need
+        // destruction; when the caller supplied one, the destination owns the value.
+        if (_value && !saved_sret_dest && needs_sret_return(ct->get_return_type())) {
+            handle_sret_result(_value);
         }
         return;
     }

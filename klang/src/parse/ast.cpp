@@ -93,8 +93,8 @@ void ast::const_type_specifier::visit(ast_visitor &visitor) {
     visitor.visit_const_type_specifier(*this);
 }
 
-void ast::function_ref_type_specifier::visit(ast_visitor &visitor) {
-    visitor.visit_function_ref_type_specifier(*this);
+void ast::callable_type_specifier::visit(ast_visitor &visitor) {
+    visitor.visit_callable_type_specifier(*this);
 }
 
 void ast::owner_type_specifier::visit(ast_visitor &visitor) {
@@ -301,7 +301,7 @@ void default_ast_visitor::visit_const_type_specifier(ast::const_type_specifier &
 
 }
 
-void default_ast_visitor::visit_function_ref_type_specifier(ast::function_ref_type_specifier &) {
+void default_ast_visitor::visit_callable_type_specifier(ast::callable_type_specifier &) {
 
 }
 

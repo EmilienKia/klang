@@ -930,12 +930,12 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             size_field_ptr);
         // Field 1 (data) is now zeroed — primitives are ready.
         // TODO: call default constructors for struct element types.
-    } else if (type::is_function_reference(var_type)) {
+    } else if (type::is_callable(var_type)) {
         // Function-reference variable (*(T), ^(T), ~(T)): store the function pointer value.
         // The variable is an alloca of type ptr (opaque pointer).
         // After visiting the argument, _value is already the raw function pointer (ptr):
         // - if the arg is a symbol_expression resolving to a function, impl_gen sets _value=llvm_func directly.
-        // - if the arg is a symbol_expression resolving to a function_reference_type variable,
+        // - if the arg is a symbol_expression resolving to a callable_type variable,
         //   our modified visit_symbol_expression already loads the value from the alloca.
         if (!expr.empty()) {
             _value = nullptr;

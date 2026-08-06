@@ -181,8 +181,8 @@ void signature_resolver::visit_parameter(parameter& param) {
     if (!param.get_type()) return;
 
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
-        // Handle unresolved_function_ref_type (function pointer/pin/link type)
-        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var_type)) {
+        // Handle unresolved_callable_type (function pointer/pin/link type)
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(var_type)) {
             // Function ref type resolution requires scope lookup and function matching.
             // Leave it for the full type_reference_resolver pass.
             return;
@@ -245,9 +245,9 @@ void type_reference_resolver::visit_parameter(parameter& param) {
         if (auto ast_ps = param.get_ast_parameter_spec(); ast_ps && ast_ps->name) {
             param_lexeme = lex::any_lexeme{*ast_ps->name};
         }
-        // Handle unresolved_function_ref_type (function pointer/pin/link type)
-        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var_type)) {
-            auto resolved = resolve_function_ref_type(ufrt, param);
+        // Handle unresolved_callable_type (function pointer/pin/link type)
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(var_type)) {
+            auto resolved = resolve_callable_type(ufrt, param);
             if (resolved && type::is_resolved(resolved)) {
                 param.set_type(resolved);
             } else {
@@ -316,7 +316,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                 {param.get_short_name()});
         }
         param.set_type(res_type);
-        } // end else (not unresolved_function_ref_type)
+        } // end else (not unresolved_callable_type)
     }
 
     if(auto expr = param.get_init_expr()) {

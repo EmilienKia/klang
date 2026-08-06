@@ -300,14 +300,27 @@ llvm::Constant* null_type::generate_default_value_initializer() const {
 // Unresolved function reference type
 //
 
-std::string unresolved_function_ref_type::to_string() const {
+std::shared_ptr<unresolved_callable_type> unresolved_callable_type::make_shared(
+    const k::name& owner_name,
+    callable_type::addresser addr,
+    const std::vector<std::shared_ptr<type>>& param_types,
+    const std::shared_ptr<type>& return_type,
+    const std::vector<std::shared_ptr<type>>& throws)
+{
+    return std::shared_ptr<unresolved_callable_type>(
+        new unresolved_callable_type(owner_name, addr, param_types, return_type, throws));
+}
+
+std::string unresolved_callable_type::to_string() const {
     std::ostringstream stm;
     stm << "<<unresolved_fn_ref:";
     if (!_owner_name.empty()) stm << _owner_name.to_string() << "::";
-    switch (_ref_kind) {
-        case function_reference_type::ref_kind::pointer: stm << "*("; break;
-        case function_reference_type::ref_kind::view:    stm << "?("; break;
-        case function_reference_type::ref_kind::link:    stm << "+("; break;
+    switch (_addresser) {
+        case callable_type::addresser::none:      stm << "("; break;
+        case callable_type::addresser::pointer:   stm << "*("; break;
+        case callable_type::addresser::view:      stm << "?("; break;
+        case callable_type::addresser::link:      stm << "+("; break;
+        case callable_type::addresser::reference: stm << "&("; break;
     }
     for (size_t i = 0; i < _parameter_types.size(); ++i) {
         if (i > 0) stm << ", ";
@@ -809,61 +822,106 @@ llvm::Constant* struct_type::generate_default_value_initializer() const {
 //
 // Function reference type
 //
-bool function_reference_type::is_resolved() const {
+bool callable_type::is_resolved() const {
     if (_return_type && !_return_type->is_resolved()) return false;
     for (const auto& p : _parameter_types) {
         if (p && !p->is_resolved()) return false;
     }
+    for (const auto& t : _throws) {
+        if (t && !t->is_resolved()) return false;
+    }
     return true;
 }
 
-llvm::Type* function_reference_type::get_llvm_type() const {
-    if (_llvm_type) return _llvm_type;
-    // Build lazily: should have been built by the builder.
-    return nullptr;
+llvm::Type* callable_type::get_llvm_type() const {
+    // A fat callable is always %__k.callable = { ptr, ptr }; the named struct is
+    // interned in the context and installed at build time.
+    return _llvm_type;
 }
 
-llvm::Constant* function_reference_type::generate_default_value_initializer() const {
-    // A function reference variable is an opaque pointer; default to null pointer.
-    if (!_llvm_type) return nullptr;
-    if (auto* ptr_ty = llvm::dyn_cast<llvm::PointerType>(_llvm_type)) {
-        return llvm::ConstantPointerNull::get(ptr_ty);
-    }
-    return nullptr;
+llvm::Constant* callable_type::generate_default_value_initializer() const {
+    // Only nullable addressers (* and ?) have a default value: { null, null }.
+    // A + or & callable must be explicitly initialised.
+    if (!is_nullable()) return nullptr;
+    auto* st = llvm::dyn_cast_or_null<llvm::StructType>(_llvm_type);
+    if (!st) return nullptr;
+    return llvm::ConstantAggregateZero::get(st);
 }
 
-std::string function_reference_type::to_string() const {
+std::string callable_type::to_string() const {
     std::ostringstream stm;
-    switch (_ref_kind) {
-        case ref_kind::pointer: stm << "*("; break;
-        case ref_kind::view:    stm << "?("; break;
-        case ref_kind::link:    stm << "+("; break;
+    switch (_addresser) {
+        case addresser::none:      break;
+        case addresser::pointer:   stm << "*"; break;
+        case addresser::view:      stm << "?"; break;
+        case addresser::link:      stm << "+"; break;
+        case addresser::reference: stm << "&"; break;
     }
+    stm << "(";
     for (size_t n = 0; n < _parameter_types.size(); ++n) {
         if (n > 0) stm << ", ";
-        stm << _parameter_types[n]->to_string();
+        stm << (_parameter_types[n] ? _parameter_types[n]->to_string() : "<null>");
     }
     stm << ")";
+    if (_return_type) stm << ":" << _return_type->to_string();
+    if (!_throws.empty()) {
+        stm << " throws ";
+        for (size_t n = 0; n < _throws.size(); ++n) {
+            if (n > 0) stm << ", ";
+            stm << (_throws[n] ? _throws[n]->to_string() : "<null>");
+        }
+    }
     return stm.str();
 }
 
-bool function_reference_type::structurally_equal(const function_reference_type& other) const {
-    if (_ref_kind != other._ref_kind) return false;
-    if (_parameter_types.size() != other._parameter_types.size()) return false;
-    // Compare return types
-    if (_return_type != other._return_type) {
-        if (!_return_type || !other._return_type) return false;
-        // Simple pointer equality for now (types are cached)
-        if (_return_type.get() != other._return_type.get()) return false;
+std::shared_ptr<callable_type> callable_type::make_like(
+    const callable_type& proto,
+    const std::shared_ptr<type>& ret,
+    const std::vector<std::shared_ptr<type>>& params,
+    const std::vector<std::shared_ptr<type>>& throws)
+{
+    if (auto mem = dynamic_cast<const member_function_reference_type*>(&proto)) {
+        auto res = std::shared_ptr<member_function_reference_type>(
+            new member_function_reference_type(mem->get_member_of(), ret, params,
+                                               proto._addresser, proto._llvm_type));
+        res->set_throws(throws);
+        return res;
     }
+    auto res = std::shared_ptr<callable_type>(
+        new callable_type(ret, params, proto._addresser, proto._llvm_type));
+    res->set_throws(throws);
+    return res;
+}
+
+bool callable_type::signature_equal(const callable_type& other) const {
+    if (_parameter_types.size() != other._parameter_types.size()) return false;
+    if (_throws.size() != other._throws.size()) return false;
+    if (!!_return_type != !!other._return_type) return false;
+    if (_return_type && !type::are_equal(_return_type, other._return_type)) return false;
     for (size_t i = 0; i < _parameter_types.size(); ++i) {
-        if (_parameter_types[i].get() != other._parameter_types[i].get()) return false;
+        if (!type::are_equal(_parameter_types[i], other._parameter_types[i])) return false;
+    }
+    for (size_t i = 0; i < _throws.size(); ++i) {
+        if (!type::are_equal(_throws[i], other._throws[i])) return false;
     }
     return true;
+}
+
+bool callable_type::structurally_equal(const callable_type& other) const {
+    if (_addresser != other._addresser) return false;
+    return signature_equal(other);
 }
 
 llvm::Type* member_function_reference_type::get_llvm_type() const {
     if (_llvm_type) return _llvm_type;
+    return nullptr;
+}
+
+llvm::Constant* member_function_reference_type::generate_default_value_initializer() const {
+    // An unbound member function reference stays a bare opaque function pointer.
+    if (auto* ptr_ty = llvm::dyn_cast_or_null<llvm::PointerType>(_llvm_type)) {
+        return llvm::ConstantPointerNull::get(ptr_ty);
+    }
     return nullptr;
 }
 
@@ -872,56 +930,57 @@ std::string member_function_reference_type::to_string() const {
     if (_member_of) {
         stm << _member_of->get_short_name() << "::";
     }
-    switch (_ref_kind) {
-        case ref_kind::pointer: stm << "*("; break;
-        case ref_kind::view:    stm << "?("; break;
-        case ref_kind::link:    stm << "+("; break;
+    switch (_addresser) {
+        case addresser::none:      break;
+        case addresser::pointer:   stm << "*"; break;
+        case addresser::view:      stm << "?"; break;
+        case addresser::link:      stm << "+"; break;
+        case addresser::reference: stm << "&"; break;
     }
+    stm << "(";
     for (size_t n = 0; n < _parameter_types.size(); ++n) {
         if (n > 0) stm << ", ";
         stm << _parameter_types[n]->to_string();
     }
     stm << ")";
+    if (_return_type) stm << ":" << _return_type->to_string();
     return stm.str();
 }
 
 bool member_function_reference_type::structurally_equal(const member_function_reference_type& other) const {
     if (_member_of.get() != other._member_of.get()) return false;
-    return function_reference_type::structurally_equal(other);
+    return callable_type::structurally_equal(other);
 }
 
 //
 // Function reference type builder
 //
-function_reference_type_builder::function_reference_type_builder(const std::shared_ptr<context> &context):
+callable_type_builder::callable_type_builder(const std::shared_ptr<context> &context):
     _context(context)
 {}
 
-std::shared_ptr<function_reference_type> function_reference_type_builder::build() const {
-    std::vector<llvm::Type*> params;
+std::shared_ptr<callable_type> callable_type_builder::build() const {
     if (_member_of) {
-        // First parameter is an implicit reference to the owner struct (the 'this' pointer).
+        // An unbound member function reference keeps the historical bare function
+        // pointer representation: the owner reference is its implicit first parameter.
+        std::vector<llvm::Type*> params;
         params.push_back(_member_of->get_struct_type()->get_reference()->get_llvm_type());
-    }
-    for (auto& param : _parameter_types) {
-        params.push_back(_context->get_llvm_type(param));
-    }
-    llvm::Type* ret_type = _return_type
-        ? _context->get_llvm_type(_return_type)
-        : llvm::Type::getVoidTy(**_context);
-    llvm::FunctionType* fn_type = llvm::FunctionType::get(ret_type, params, false);
-
-    llvm::Type* ptr_type = llvm::PointerType::get(fn_type->getContext(), 0);
-
-    if (_member_of) {
+        for (auto& param : _parameter_types) {
+            params.push_back(_context->get_llvm_type(param));
+        }
+        llvm::Type* ret_type = _return_type
+            ? _context->get_llvm_type(_return_type)
+            : llvm::Type::getVoidTy(**_context);
+        llvm::FunctionType* fn_type = llvm::FunctionType::get(ret_type, params, false);
+        llvm::Type* ptr_type = llvm::PointerType::get(fn_type->getContext(), 0);
         auto fn_ref = std::shared_ptr<member_function_reference_type>(
-            new member_function_reference_type(_member_of, _return_type, _parameter_types, _ref_kind, ptr_type));
-        return fn_ref;
-    } else {
-        auto fn_ref = std::shared_ptr<function_reference_type>(
-            new function_reference_type(_return_type, _parameter_types, _ref_kind, ptr_type));
+            new member_function_reference_type(_member_of, _return_type, _parameter_types, _addresser, ptr_type));
+        fn_ref->set_throws(_throws);
         return fn_ref;
     }
+    // A fat callable is always %__k.callable = { ptr, ptr } and is interned on the
+    // nominal identity of its components.
+    return _context->get_callable_type(_return_type, _parameter_types, _addresser, _throws);
 }
 
 //
@@ -1015,6 +1074,53 @@ std::shared_ptr<type> substitute_type(
         }
 
         return t; // not a template param, keep as-is
+    }
+
+    // Callable types: substitute the return type, every parameter type and every
+    // declared exception type. A callable is not a plain wrapper, so it must be
+    // handled before the generic get_subtype() path.
+    if (auto ct = std::dynamic_pointer_cast<callable_type>(t)) {
+        bool changed = false;
+        auto new_ret = substitute_type(ct->get_return_type(), subst);
+        if (new_ret != ct->get_return_type()) changed = true;
+        std::vector<std::shared_ptr<type>> new_params;
+        new_params.reserve(ct->get_parameter_types().size());
+        for (const auto& p : ct->get_parameter_types()) {
+            auto np = substitute_type(p, subst);
+            if (np != p) changed = true;
+            new_params.push_back(np);
+        }
+        std::vector<std::shared_ptr<type>> new_throws;
+        new_throws.reserve(ct->get_throws().size());
+        for (const auto& th : ct->get_throws()) {
+            auto nt = substitute_type(th, subst);
+            if (nt != th) changed = true;
+            new_throws.push_back(nt);
+        }
+        if (!changed) return t;
+        return callable_type::make_like(*ct, new_ret, new_params, new_throws);
+    }
+    if (auto uct = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        bool changed = false;
+        auto new_ret = substitute_type(uct->get_return_type(), subst);
+        if (new_ret != uct->get_return_type()) changed = true;
+        std::vector<std::shared_ptr<type>> new_params;
+        new_params.reserve(uct->parameter_types().size());
+        for (const auto& p : uct->parameter_types()) {
+            auto np = substitute_type(p, subst);
+            if (np != p) changed = true;
+            new_params.push_back(np);
+        }
+        std::vector<std::shared_ptr<type>> new_throws;
+        new_throws.reserve(uct->get_throws().size());
+        for (const auto& th : uct->get_throws()) {
+            auto nt = substitute_type(th, subst);
+            if (nt != th) changed = true;
+            new_throws.push_back(nt);
+        }
+        if (!changed) return t;
+        return unresolved_callable_type::make_shared(
+            uct->owner_name(), uct->get_addresser(), new_params, new_ret, new_throws);
     }
 
     // Wrapper types: substitute inner type and rebuild wrapper if changed

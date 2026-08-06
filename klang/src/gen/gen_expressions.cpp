@@ -261,7 +261,7 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
  * Steps:
  *   1. Handle enum-qualified names (MyEnum::entry): resolve enum type and entry value.
  *   2. For variables: set type as reference to the variable's type.
- *   3. For functions: set type as function_reference_type.
+ *   3. For functions: set type as callable_type.
  *   4. Check visibility of the resolved symbol.
  */
 void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
@@ -395,14 +395,14 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
     } else if (symbol.is_function()) {
         // Step 4: Check visibility of the resolved symbol
         // A symbol resolved to a function (without call parentheses) yields the address
-        // of the function.  The type is a function_reference_type with ref_kind::link
+        // of the function.  The type is a callable_type with addresser::link
         // (non-null, immutable — same semantics as a reference in K).
         // It can be freely assigned to a pointer (*), pin (^) or link (+) variable.
         auto func = symbol.get_function();
         if (func) {
-            // Build the function_reference_type for this function.
-            function_reference_type_builder builder(_context);
-            builder.ref_kind(function_reference_type::ref_kind::link);
+            // Build the callable_type for this function.
+            callable_type_builder builder(_context);
+            builder.addresser(callable_type::addresser::link);
             // Return type
             auto ret_type = func->get_return_type();
             if (ret_type) builder.return_type(ret_type);
@@ -757,7 +757,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                 _value = _builder->CreateLoad(type, ptr, name + "_ref");
             } else {
                 // Value of a symbol (as a reference) is always its address.
-                // This includes function_reference_type variables: the caller that needs
+                // This includes callable_type variables: the caller that needs
                 // the actual function pointer (e.g. indirect call) must load from this address.
                 _value = ptr;
             }

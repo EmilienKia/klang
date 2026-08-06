@@ -199,6 +199,14 @@ void default_model_visitor::visit_delete_expression(delete_expression& expr) {
     visit_unary_expression(expr);
 }
 
+void default_model_visitor::visit_callable_bind_expression(callable_bind_expression& expr) {
+    visit_expression(expr);
+}
+
+void default_model_visitor::visit_callable_invocation_expression(callable_invocation_expression& expr) {
+    visit_expression(expr);
+}
+
 void default_model_visitor::visit_array_init_expression(array_init_expression& expr) {
     visit_expression(expr);
 }

@@ -63,42 +63,55 @@ bool is_generic_erasure_pair(const std::shared_ptr<type>& a, const std::shared_p
 } // anonymous namespace
 
 
-// ── adapt_function_ref_type ──────────────────────────────────────────────────
+// ── adapt_callable_type ──────────────────────────────────────────────────
 
 std::shared_ptr<expression>
 /**
  * Adapt function reference types (frt → frt, ref<frt> → frt, etc.).
  *
  * Steps:
- *   1. frt → frt with different ref_kind: cast_expression to reinterpret.
+ *   1. frt → frt with different addresser: cast_expression to reinterpret.
  *   2. ref<frt> → frt: load_value_expression to dereference.
  *   3. frt → ref<frt>: no direct conversion possible.
  *
  * @return The adapted expression, or nullptr if not a function reference case.
  */
-type_reference_resolver::adapt_function_ref_type(
+type_reference_resolver::adapt_callable_type(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_src,
     const std::shared_ptr<type>& type_nc)
 {
-    // Step 1: frt → frt with different ref_kind: cast_expression to reinterpret
-    // Case 1: target is a bare function_reference_type
+    // Step 1: frt → frt with different addresser: cast_expression to reinterpret
+    // Case 1: target is a bare callable_type
     // Step 2: ref<frt> → frt: load_value_expression to dereference
-    if (auto tgt_frt = std::dynamic_pointer_cast<function_reference_type>(type_nc)) {
-        if (std::dynamic_pointer_cast<function_reference_type>(type_src)) {
+    if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(type_nc)) {
+        if (std::dynamic_pointer_cast<callable_type>(type_src)) {
             // Source is already a bare frt — no load needed.
             return expr;
         }
         if (type::is_reference(type_src)) {
             auto src_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
-            if (std::dynamic_pointer_cast<function_reference_type>(src_inner)) {
-                // Check if this is a direct function symbol (impl_gen returns Function* directly).
+            if (std::dynamic_pointer_cast<callable_type>(src_inner)) {
+                // Direct function symbol: bind it into a callable value.
                 auto sym = std::dynamic_pointer_cast<symbol_expression>(expr);
                 if (sym && sym->is_function()) {
-                    // Direct function address: no load needed, impl_gen produces the ptr directly.
-                    return expr;
+                    if (tgt_frt->is_unbound_member()) {
+                        // Unbound member function reference: keeps the historical bare
+                        // function-pointer representation, produced directly by impl_gen.
+                        return expr;
+                    }
+                    auto fn = sym->get_function();
+                    if (!fn) return expr;
+                    auto bind = callable_bind_expression::make_shared(
+                        fn->is_static() || !fn->parent<aggregate>()
+                            ? (fn->parent<aggregate>() ? callable_bind_expression::kind::static_method
+                                                       : callable_bind_expression::kind::free_function)
+                            : callable_bind_expression::kind::bound_method,
+                        fn);
+                    bind->set_type(tgt_frt);
+                    return bind;
                 }
-                // Variable holding a function pointer: load the stored function pointer from the alloca.
+                // Variable holding a callable: load the stored value from the alloca.
                 return adapt_reference_load_value(expr);
             }
         }
@@ -107,12 +120,12 @@ type_reference_resolver::adapt_function_ref_type(
     // Case 2: source is ref<frt> and target is also ref<frt> — pass through unchanged.
     if (type::is_reference(type_nc)) {
         auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
-        if (std::dynamic_pointer_cast<function_reference_type>(tgt_sub_nc)) {
+        if (std::dynamic_pointer_cast<callable_type>(tgt_sub_nc)) {
             if (type_src == type_nc) return expr;
             auto src_sub = type::is_reference(type_src)
                 ? std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype()
                 : type_src;
-            if (std::dynamic_pointer_cast<function_reference_type>(type::remove_const(src_sub))) {
+            if (std::dynamic_pointer_cast<callable_type>(type::remove_const(src_sub))) {
                 // Step 3: frt → ref<frt>: no direct conversion possible
                 return expr; // compatible frt ref
             }
@@ -825,10 +838,12 @@ type_reference_resolver::adapt_from_reference(
         }
     }
     // ref<indirection> → bool: load the pointer then compare to null.
+    // A callable behaves like an indirection here: it converts to `fn != null`.
     if (type::is_prim_bool(type_nc)) {
         if (type::is_pointer(ref_subtype) || type::is_link(ref_subtype) ||
             // Step 4: ref<ptr/lnk/view<T>> → ptr/lnk/view<U>: unwrap ref, then delegate
-            type::is_view(ref_subtype) || type::is_owner(ref_subtype)) {
+            type::is_view(ref_subtype) || type::is_owner(ref_subtype) ||
+            type::is_fat_callable(ref_subtype)) {
             // Step 6: ref<Struct> → value Struct: load
             auto loaded = adapt_reference_load_value(expr);
             if (!loaded) return {};

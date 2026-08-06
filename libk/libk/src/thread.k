@@ -54,7 +54,7 @@ public interface Runnable {
  * The OS-level thread created in C only knows raw pointers; it cannot perform
  * a K virtual dispatch on its own. Rather than hard-coding the vtable slot of
  * `run()` in C (which would silently break whenever ::k::Object or Runnable
- * gain a virtual method), Thread passes the address of this function to
+ * gain a virtual method), Thread passes a *callable* bound to this function to
  * `__k_thread_create()`, and the C trampoline calls it back with the Runnable
  * pointer it was given. The virtual dispatch therefore always happens in K.
  *

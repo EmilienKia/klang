@@ -114,7 +114,7 @@ namespace k::model {
         // Type resolution is handled by context::from_type_specifier; no model action needed here.
     }
 
-    void model_builder::visit_function_ref_type_specifier(parse::ast::function_ref_type_specifier &) {
+    void model_builder::visit_callable_type_specifier(parse::ast::callable_type_specifier &) {
         // Type resolution is handled by context::from_type_specifier; no model action needed here.
     }
 

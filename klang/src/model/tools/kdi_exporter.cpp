@@ -266,7 +266,7 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
         k.elem = std::make_shared<kdi::kdi_type>(to_kdi_type(at->get_subtype()));
         return kdi::kdi_type{std::move(k)};
     }
-    if (auto frt = std::dynamic_pointer_cast<function_reference_type>(t)) {
+    if (auto frt = std::dynamic_pointer_cast<callable_type>(t)) {
         kdi::kdi_fn_ref_type k;
         k.ret = std::make_shared<kdi::kdi_type>(to_kdi_type(frt->get_return_type()));
         for (auto& p : frt->get_parameter_types())
@@ -392,7 +392,7 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
         k.size = sat->get_size();
         return kdi::kdi_type{std::move(k)};
     }
-    if (auto frt = std::dynamic_pointer_cast<function_reference_type>(t)) {
+    if (auto frt = std::dynamic_pointer_cast<callable_type>(t)) {
         kdi::kdi_fn_ref_type k;
         k.ret = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(frt->get_return_type(), ti));
         for (auto& p : frt->get_parameter_types()) {

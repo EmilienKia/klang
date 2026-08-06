@@ -451,7 +451,7 @@ enum class codegen_diag : unsigned int {
      */
     INTERNAL_ERR_F044                             = 0xF044,
 
-    /// An indirect call lacks a function_reference_type annotation on its callee.
+    /// An indirect call lacks a callable_type annotation on its callee.
     INTERNAL_ERR_F045                             = 0xF045,
 
     /// Could not map a K parameter type to its LLVM type for an indirect call.
@@ -534,6 +534,21 @@ enum class codegen_diag : unsigned int {
 
     /// Foreach ITERATOR/SEQUENCE: expected method (next/iterator/constIterator) not found on the resolved aggregate.
     INTERNAL_ERR_F05A                             = 0xF05A,
+
+    /// Callable binding: no LLVM declaration was emitted for the bound target function.
+    INTERNAL_ERR_F05B                             = 0xF05B,
+
+    /// Callable binding: the requested binding source is not supported by this compiler phase.
+    INTERNAL_ERR_F05C                             = 0xF05C,
+
+    /// Callable invocation reached code generation without a resolved callable type or value.
+    INTERNAL_ERR_F05D                             = 0xF05D,
+
+    /// Callable invocation: a parameter or return type could not be mapped to an LLVM type.
+    INTERNAL_ERR_F05E                             = 0xF05E,
+
+    /// Callable invocation: an argument expression produced no LLVM value.
+    INTERNAL_ERR_F05F                             = 0xF05F,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -651,6 +666,46 @@ enum class exception_diag : unsigned int {
      * A bare 'throw;' (rethrow) statement appears outside a catch block.
      */
     ERR_RETHROW_OUTSIDE_CATCH                     = 0x01C9,
+};
+
+
+/**
+ * Code-generation diagnostics for callables (function references, functors, lambdas).
+ * Range 0x01D0 — 0x01DF.
+ */
+enum class callable_diag : unsigned int {
+    /** A bare prototype (no addresser) was used where a value type is required. */
+    ERR_CALLABLE_PROTOTYPE_NOT_INSTANTIABLE       = 0x01D0,
+    /** An addresser that a callable does not support (`!`, `#`, `[]`) was applied. */
+    ERR_CALLABLE_BAD_ADDRESSER                    = 0x01D1,
+    /** `null` was assigned to a non-null callable (`+` or `&`). */
+    ERR_CALLABLE_NULL_TO_NONNULL                  = 0x01D2,
+    /** A non-rebindable callable (`?` or `&`) was assigned after initialisation. */
+    ERR_CALLABLE_NOT_REBINDABLE                   = 0x01D3,
+    /** The bound target signature is not compatible with the callable prototype. */
+    ERR_CALLABLE_INCOMPATIBLE_SIGNATURE           = 0x01D4,
+    /** No overload of the named function matches the callable prototype. */
+    ERR_CALLABLE_NO_MATCHING_OVERLOAD             = 0x01D5,
+    /** Several overloads of the named function match the callable prototype. */
+    ERR_CALLABLE_AMBIGUOUS_OVERLOAD               = 0x01D6,
+    /** The target type is not a functional interface (exactly one abstract slot). */
+    ERR_CALLABLE_NOT_FUNCTIONAL_IFACE             = 0x01D7,
+    /** The functional interface method signature does not match the callable prototype. */
+    ERR_CALLABLE_IFACE_SIGNATURE_MISMATCH         = 0x01D8,
+    /** An operator that is not defined on callables was applied to one. */
+    ERR_CALLABLE_OP_FORBIDDEN                     = 0x01D9,
+    /** Binding a non-static member function requires a receiver object. */
+    ERR_CALLABLE_MEMBER_BIND_REQUIRES_OBJECT      = 0x01DA,
+    /** A co/contravariant binding would require a representation adjustment. */
+    ERR_CALLABLE_COVARIANCE_NEEDS_ADJUSTMENT      = 0x01DB,
+    /** Several `operator()` overloads match the call arguments. */
+    ERR_CALLABLE_AMBIGUOUS_OPERATOR_CALL          = 0x01DC,
+    /** The callee expression is not invocable. */
+    ERR_CALLABLE_NOT_INVOCABLE                    = 0x01DD,
+    /** The number of call arguments does not match the callable prototype. */
+    ERR_CALLABLE_ARG_COUNT_MISMATCH               = 0x01DE,
+    /** A callable may outlive the context object it is bound to. */
+    WARN_CALLABLE_DANGLING_CONTEXT                = 0x01DF,
 };
 
 

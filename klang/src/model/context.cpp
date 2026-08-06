@@ -17,6 +17,7 @@
  */
 
 #include "context.hpp"
+#include <sstream>
 
 #include <unordered_set>
 #include <string_view>
@@ -239,6 +240,82 @@ std::shared_ptr<type> context::from_keyword(const lex::keyword& kw, bool is_unsi
 }
 
 
+namespace {
+
+/** Map a K addresser token to the matching callable addresser. */
+std::optional<callable_type::addresser> callable_addresser_of(lex::operator_::type_t op) {
+    switch (op) {
+        case lex::operator_::STAR:          return callable_type::addresser::pointer;
+        case lex::operator_::QUESTION_MARK: return callable_type::addresser::view;
+        case lex::operator_::PLUS:          return callable_type::addresser::link;
+        case lex::operator_::AMPERSAND:     return callable_type::addresser::reference;
+        default:                            return std::nullopt;
+    }
+}
+
+} // anonymous namespace
+
+/**
+ * Apply a type suffix to a callable type.
+ *
+ * A callable is itself an indirection, so `* ? + &` re-address it in place instead of
+ * wrapping it. `!` (owner) and `#` (drain) are not valid callable addressers and are
+ * rejected here.
+ *
+ * @return The re-addressed callable, or nullptr when @p subtype is not a callable.
+ */
+std::shared_ptr<type> context::readdress_callable_suffix(const std::shared_ptr<type>& subtype,
+                                                         const lex::operator_& op)
+{
+    if (auto ures = std::dynamic_pointer_cast<unresolved_callable_type>(subtype)) {
+        auto addr = callable_addresser_of(op.type);
+        if (!addr) {
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_BAD_ADDRESSER),
+                "'{}' is not a valid callable addresser; use '*', '?', '+' or '&'",
+                {std::string{op.content}});
+            diag.at(op);
+            throw context_resolution_error(std::move(diag));
+        }
+        return unresolved_callable_type::make_shared(ures->owner_name(), *addr,
+                                                     ures->parameter_types(),
+                                                     ures->get_return_type(),
+                                                     ures->get_throws());
+    }
+    if (auto ct = std::dynamic_pointer_cast<callable_type>(type::canonical(subtype))) {
+        if (ct->is_unbound_member()) return nullptr;
+        auto addr = callable_addresser_of(op.type);
+        if (!addr) {
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_BAD_ADDRESSER),
+                "'{}' is not a valid callable addresser; use '*', '?', '+' or '&'",
+                {std::string{op.content}});
+            diag.at(op);
+            throw context_resolution_error(std::move(diag));
+        }
+        return readdress(ct, *addr);
+    }
+    return nullptr;
+}
+
+/**
+ * Reject a type suffix that is not a valid callable addresser (`!`, `#`, `[]`).
+ */
+void context::reject_callable_addresser(const std::shared_ptr<type>& subtype, const char* suffix)
+{
+    bool is_callable = std::dynamic_pointer_cast<unresolved_callable_type>(subtype) != nullptr;
+    if (!is_callable) {
+        if (auto ct = std::dynamic_pointer_cast<callable_type>(type::canonical(subtype))) {
+            is_callable = !ct->is_unbound_member();
+        }
+    }
+    if (!is_callable) return;
+    throw context_resolution_error(k::log::diagnostic::make_error(
+        static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_BAD_ADDRESSER),
+        "'{}' is not a valid callable addresser; use '*', '?', '+' or '&'",
+        {std::string{suffix}}));
+}
+
 std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_specifier& type_spec)
 {
     if(auto ct = dynamic_cast<const k::parse::ast::const_type_specifier*>(&type_spec)) {
@@ -261,6 +338,12 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
         return from_keyword(kw->keyword, kw->is_unsigned);
     } else if(auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*ptr->subtype);
+        // A suffix applied to a callable *re-addresses* it — a callable is already a
+        // reference, so `Fn*` means "the same signature, pointer addresser", never
+        // "pointer to a callable". `!` and `#` are not valid callable addressers.
+        if (auto readdressed = readdress_callable_suffix(subtype, ptr->pointer_type)) {
+            return readdressed;
+        }
         if(ptr->pointer_type==lex::operator_::AMPERSAND) {
             // int[] is canonicalized to reference(array(int)) for stack/parameter use.
             // An explicit int[]& must produce that very same single-level reference,
@@ -298,6 +381,7 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             return {}; // Shall not happen
     } else if(auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*own->subtype);
+        reject_callable_addresser(subtype, "!");
         // int[] is canonicalized to reference(array(int)) for stack/parameter use,
         // but for ownership (int[]!) we need owner(array(int)), not owner(ref(array(int))).
         // Unwrap the reference when it wraps an unsized array inside an owner.
@@ -311,6 +395,7 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
         return subtype->get_owner();
     } else if(auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*arr->subtype);
+        reject_callable_addresser(subtype, "[]");
         if(arr->lex_int) {
             return subtype->get_array(arr->lex_int->to_unsigned_int());
         } else {
@@ -318,13 +403,20 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             // Canonicalise immediately so that int[] and int[]& share the same type object.
             return subtype->get_array()->get_reference();
         }
-    } else if(auto frt = dynamic_cast<const k::parse::ast::function_ref_type_specifier*>(&type_spec)) {
-        // Determine ref kind from operator token
-        function_reference_type::ref_kind rk = function_reference_type::ref_kind::pointer;
-        if (frt->ref_op == lex::operator_::QUESTION_MARK) {
-            rk = function_reference_type::ref_kind::view;
-        } else if (frt->ref_op == lex::operator_::PLUS) {
-            rk = function_reference_type::ref_kind::link;
+    } else if(auto frt = dynamic_cast<const k::parse::ast::callable_type_specifier*>(&type_spec)) {
+        // Determine the addresser from the (optional) operator token.
+        // No addresser at all means a bare prototype: `(int):long`.
+        callable_type::addresser rk = callable_type::addresser::none;
+        if (frt->addresser.has_value()) {
+            if (*frt->addresser == lex::operator_::QUESTION_MARK) {
+                rk = callable_type::addresser::view;
+            } else if (*frt->addresser == lex::operator_::PLUS) {
+                rk = callable_type::addresser::link;
+            } else if (*frt->addresser == lex::operator_::AMPERSAND) {
+                rk = callable_type::addresser::reference;
+            } else {
+                rk = callable_type::addresser::pointer;
+            }
         }
 
         // Resolve parameter types (may produce unresolved types — resolved later)
@@ -335,13 +427,20 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             param_types.push_back(t);
         }
 
+        // Declared return type (absent == void).
+        std::shared_ptr<type> ret_type;
+        if (frt->return_type) {
+            ret_type = from_type_specifier(*frt->return_type);
+            if (!ret_type) return {};
+        }
+
         // Owner structure (for member function pointer): resolved lazily
         // We create an unresolved placeholder struct_type via create_unresolved if owner is set.
         // The real binding happens in type_reference_resolver.
-        std::shared_ptr<unresolved_function_ref_type> result{
-            new unresolved_function_ref_type(
+        std::shared_ptr<unresolved_callable_type> result{
+            new unresolved_callable_type(
                 frt->owner.has_value() ? frt->owner->to_name() : k::name{},
-                rk, param_types)};
+                rk, param_types, ret_type)};
         return result;
     } else {
         return {};
@@ -1350,6 +1449,60 @@ std::shared_ptr<alias_type> context::create_template_alias_type(const std::share
     auto at = std::shared_ptr<alias_type>(new alias_type(alias, underlying, display_name));
     alias->set_tpl_alias_type(args_key, at);
     return at;
+}
+
+
+llvm::StructType* context::get_or_create_callable_llvm_type() {
+    if (!_callable_llvm_type) {
+        _callable_llvm_type = llvm::StructType::create(**this, "__k.callable");
+        _callable_llvm_type->setBody({llvm::PointerType::get(**this, 0),
+                                      llvm::PointerType::get(**this, 0)}, /*isPacked=*/false);
+    }
+    return _callable_llvm_type;
+}
+
+namespace {
+/** Build the nominal interning key of a callable prototype. */
+std::string callable_intern_key(const std::shared_ptr<type>& ret,
+                                const std::vector<std::shared_ptr<type>>& params,
+                                callable_type::addresser addr,
+                                const std::vector<std::shared_ptr<type>>& throws) {
+    std::ostringstream stm;
+    stm << static_cast<int>(addr) << '#' << static_cast<const void*>(ret.get()) << '(';
+    for (const auto& p : params) stm << static_cast<const void*>(p.get()) << ',';
+    stm << ")T";
+    for (const auto& t : throws) stm << static_cast<const void*>(t.get()) << ',';
+    return stm.str();
+}
+} // anonymous namespace
+
+std::shared_ptr<callable_type> context::get_callable_type(
+    const std::shared_ptr<type>& ret,
+    const std::vector<std::shared_ptr<type>>& params,
+    callable_type::addresser addr,
+    const std::vector<std::shared_ptr<type>>& throws)
+{
+    const std::string key = callable_intern_key(ret, params, addr, throws);
+    auto it = _callable_types.find(key);
+    if (it != _callable_types.end()) return it->second;
+
+    auto ct = std::shared_ptr<callable_type>(
+        new callable_type(ret, params, addr, get_or_create_callable_llvm_type()));
+    ct->set_throws(throws);
+    _callable_types.emplace(key, ct);
+    return ct;
+}
+
+std::shared_ptr<callable_type> context::readdress(
+    const std::shared_ptr<callable_type>& callable,
+    callable_type::addresser addr)
+{
+    if (!callable) return {};
+    if (callable->get_addresser() == addr) return callable;
+    return get_callable_type(callable->get_return_type(),
+                             callable->get_parameter_types(),
+                             addr,
+                             callable->get_throws());
 }
 
 std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {

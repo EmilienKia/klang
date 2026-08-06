@@ -19,6 +19,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_callable_helpers.hpp"
 #include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
 
@@ -772,7 +773,8 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     // in address equality/inequality comparisons.
     auto is_address_comparable = [](const std::shared_ptr<type>& t) -> bool {
         return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
-            || type::is_owner(t)   || type::is_null(t);
+            || type::is_owner(t)   || type::is_null(t)
+            || type::is_fat_callable(t);
     };
 
     // Step 2: If either operand is a struct type: look for operator overload
@@ -807,6 +809,13 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         // Only == and != are valid for address comparison (not <, >, <=, >=).
         if (!dynamic_cast<equal_expression*>(&expr) &&
             !dynamic_cast<different_expression*>(&expr)) {
+            if (type::is_fat_callable(left_type) || type::is_fat_callable(right_type)) {
+                throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_OP_FORBIDDEN), expr.first_lexeme(),
+                    "Relational operators (<, >, <=, >=) are not defined on callables; "
+                    "only '==' and '!=' (against another callable or null) are allowed for '{}' and '{}'",
+                    {left_type ? left_type->to_string() : "?",
+                     right_type ? right_type->to_string() : "?"});
+            }
             throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED), expr.first_lexeme(),
                 "Only '==' and '!=' are valid for address comparison between indirections; "
                 "relational operators (<, >, <=, >=) are not supported for types '{}' and '{}'",
@@ -1292,10 +1301,14 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
     // ── Address comparison for indirection types ─────────────────────────────
     auto is_addr = [](const std::shared_ptr<type>& t) {
         return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
-            || type::is_owner(t)   || type::is_null(t);
+            || type::is_owner(t)   || type::is_null(t)
+            || type::is_fat_callable(t);
     };
     if (is_addr(left_type) || is_addr(right_type)) {
         auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        // A callable compares by its target address only; the context is irrelevant.
+        if (type::is_fat_callable(left_type)) left = extract_fn(*_builder, left);
+        if (type::is_fat_callable(right_type)) right = extract_fn(*_builder, right);
         if (left->getType() != ptr_ty) left = _builder->CreateBitCast(left, ptr_ty);
         if (right->getType() != ptr_ty) right = _builder->CreateBitCast(right, ptr_ty);
         _value = _builder->CreateICmpEQ(left, right);
@@ -1352,10 +1365,14 @@ void implementation_generator::visit_different_expression(different_expression& 
     // ── Address comparison for indirection types ─────────────────────────────
     auto is_addr = [](const std::shared_ptr<type>& t) {
         return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
-            || type::is_owner(t)   || type::is_null(t);
+            || type::is_owner(t)   || type::is_null(t)
+            || type::is_fat_callable(t);
     };
     if (is_addr(left_type) || is_addr(right_type)) {
         auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        // A callable compares by its target address only; the context is irrelevant.
+        if (type::is_fat_callable(left_type)) left = extract_fn(*_builder, left);
+        if (type::is_fat_callable(right_type)) right = extract_fn(*_builder, right);
         if (left->getType() != ptr_ty) left = _builder->CreateBitCast(left, ptr_ty);
         if (right->getType() != ptr_ty) right = _builder->CreateBitCast(right, ptr_ty);
         _value = _builder->CreateICmpNE(left, right);

@@ -188,7 +188,7 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
  * Resolve the type of a variable from its unresolved form to a concrete resolved type.
  *
  * Preconditions:
- *   - var has a non-null type that may be unresolved (unresolved_type, unresolved_function_ref_type,
+ *   - var has a non-null type that may be unresolved (unresolved_type, unresolved_callable_type,
  *     or a wrapper like pointer/link/view/owner/reference around an unresolved inner type).
  *   - var_lexeme is the source location for error reporting.
  *
@@ -198,7 +198,7 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
  *
  * Steps:
  *   1. If the type is already resolved, return immediately (no-op).
- *   2. Handle unresolved_function_ref_type: delegate to resolve_function_ref_type.
+ *   2. Handle unresolved_callable_type: delegate to resolve_callable_type.
  *   3. Handle owner<Unresolved>: resolve the inner type, strip ref-array wrapping, rebuild owner.
  *   4. Handle wrapper types (pointer/link/view/reference/drain) around an unresolved inner type:
  *      resolve the inner type then rewrap with the corresponding indirection.
@@ -215,16 +215,16 @@ void type_reference_resolver::resolve_variable_type(
     // Step 1: If the type is already resolved, return immediately (no-op)
     if (type::is_resolved(var.get_type())) return;
 
-    // Step 2: Handle unresolved_function_ref_type: delegate to resolve_function_ref_type
-    // Handle unresolved_function_ref_type (function pointer/pin/link type)
-    if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var.get_type())) {
+    // Step 2: Handle unresolved_callable_type: delegate to resolve_callable_type
+    // Handle unresolved_callable_type (function pointer/pin/link type)
+    if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(var.get_type())) {
         const element* var_elem = dynamic_cast<const element*>(&var);
         std::shared_ptr<type> resolved;
         if (var_elem) {
-            resolved = resolve_function_ref_type(ufrt, *var_elem);
+            resolved = resolve_callable_type(ufrt, *var_elem);
         } else {
             // Fallback: no scope context, resolve without name lookup (free functions only)
-            resolved = resolve_function_ref_type(ufrt, _unit);
+            resolved = resolve_callable_type(ufrt, _unit);
         }
         if (resolved && type::is_resolved(resolved)) {
             var.set_type(resolved);

@@ -745,6 +745,13 @@ void template_instantiator::substitute_expr_types(
             substitute_expr_types(std::const_pointer_cast<expression>(arg), subst);
         }
         substitute_expr_types(std::const_pointer_cast<expression>(ne->array_size_expr()), subst);
+    } else if (auto cbe = std::dynamic_pointer_cast<callable_bind_expression>(expr)) {
+        substitute_expr_types(std::const_pointer_cast<expression>(cbe->get_context()), subst);
+    } else if (auto cive = std::dynamic_pointer_cast<callable_invocation_expression>(expr)) {
+        substitute_expr_types(std::const_pointer_cast<expression>(cive->get_callee()), subst);
+        for (auto& arg : cive->arguments()) {
+            substitute_expr_types(std::const_pointer_cast<expression>(arg), subst);
+        }
     } else if (auto de = std::dynamic_pointer_cast<delete_expression>(expr)) {
         substitute_expr_types(std::const_pointer_cast<expression>(de->sub_expr()), subst);
     }
@@ -2270,6 +2277,18 @@ static void resolve_symbols_in_expr(const std::shared_ptr<expression>& expr) {
         for (auto& elem : aie->elements()) {
             resolve_symbols_in_expr(
                 std::const_pointer_cast<expression>(elem));
+        }
+    } else if (auto cbe =
+                   std::dynamic_pointer_cast<callable_bind_expression>(expr)) {
+        resolve_symbols_in_expr(
+            std::const_pointer_cast<expression>(cbe->get_context()));
+    } else if (auto cive =
+                   std::dynamic_pointer_cast<callable_invocation_expression>(expr)) {
+        resolve_symbols_in_expr(
+            std::const_pointer_cast<expression>(cive->get_callee()));
+        for (auto& arg : cive->arguments()) {
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(arg));
         }
     }
 }

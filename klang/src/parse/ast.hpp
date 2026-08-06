@@ -234,34 +234,44 @@ namespace k::parse {
         };
 
         /**
-         * Function reference type specifier.
+         * Callable type specifier.
          *
-         * Represents a reference (pointer *, view ?, or link +) to a function.
+         * Represents a callable prototype, optionally prefixed by an addresser.
          * Syntax:
-         *   RefKind '(' [ TypeSpec { ',' TypeSpec } ] ')'
-         *   QualifiedIdentifier '::' RefKind '(' [ TypeSpec { ',' TypeSpec } ] ')'
+         *   [ Addresser ] '(' [ TypeSpec { ',' TypeSpec } ] ')' [ ':' TypeSpec ]
+         *   QualifiedIdentifier '::' Addresser '(' [ TypeList ] ')' [ ':' TypeSpec ]
          *
          * Examples:
-         *   *(int, double+)          — pointer to free function (int, double+)
-         *   ?(int)                   — view to free function (int)
-         *   +()                      — link to free function with no params
-         *   MyClass::*(int&)         — pointer to member function of MyClass taking int&
+         *   (int, double)            — bare prototype, void return (not instantiable)
+         *   (int):long               — bare prototype returning long
+         *   *(int, double+):int      — pointer to a callable (nullable, rebindable)
+         *   ?(int)                   — view callable (nullable, not rebindable)
+         *   +()                      — link callable (non-null, rebindable)
+         *   &(int):int               — reference callable (non-null, not rebindable)
+         *   MyClass::*(int&):int     — unbound member function reference
          *
-         * No return type is specified (no overloading on return type in K).
+         * K has no `void` keyword: an omitted `: TypeSpec` *is* the void return.
          */
-        struct function_ref_type_specifier : public type_specifier {
-            /** The reference qualifier operator: STAR (*), QUESTION_MARK (?), or PLUS (+). */
-            lex::operator_ ref_op;
+        struct callable_type_specifier : public type_specifier {
+            /**
+             * The addresser operator: STAR (*), QUESTION_MARK (?), PLUS (+) or
+             * AMPERSAND (&). Absent means a bare prototype.
+             */
+            std::optional<lex::operator_> addresser;
             /** Optional qualifier for member function pointer: "MyClass::" part. */
             std::optional<qualified_identifier> owner;
             /** Types of function parameters. */
             std::vector<std::shared_ptr<type_specifier>> param_types;
+            /** Declared return type; null means void. */
+            std::shared_ptr<type_specifier> return_type;
 
-            function_ref_type_specifier(
-                const lex::operator_& ref_op,
+            callable_type_specifier(
+                const std::optional<lex::operator_>& addresser,
                 const std::optional<qualified_identifier>& owner,
-                const std::vector<std::shared_ptr<type_specifier>>& param_types)
-                : ref_op(ref_op), owner(owner), param_types(param_types) {}
+                const std::vector<std::shared_ptr<type_specifier>>& param_types,
+                const std::shared_ptr<type_specifier>& return_type = nullptr)
+                : addresser(addresser), owner(owner), param_types(param_types),
+                  return_type(return_type) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -1642,7 +1652,7 @@ namespace k::parse {
         virtual void visit_array_type_specifier(ast::array_type_specifier &) = 0;
         virtual void visit_pointer_type_specifier(ast::pointer_type_specifier &) = 0;
         virtual void visit_const_type_specifier(ast::const_type_specifier &) = 0;
-        virtual void visit_function_ref_type_specifier(ast::function_ref_type_specifier &) = 0;
+        virtual void visit_callable_type_specifier(ast::callable_type_specifier &) = 0;
         virtual void visit_owner_type_specifier(ast::owner_type_specifier &) = 0;
 
         virtual void visit_parameter_specifier(ast::parameter_spec &) = 0;
@@ -1716,7 +1726,7 @@ namespace k::parse {
         void visit_array_type_specifier(ast::array_type_specifier &) override;
         void visit_pointer_type_specifier(ast::pointer_type_specifier &) override;
         void visit_const_type_specifier(ast::const_type_specifier &) override;
-        void visit_function_ref_type_specifier(ast::function_ref_type_specifier &) override;
+        void visit_callable_type_specifier(ast::callable_type_specifier &) override;
         void visit_owner_type_specifier(ast::owner_type_specifier &) override;
 
         void visit_parameter_specifier(ast::parameter_spec &) override;

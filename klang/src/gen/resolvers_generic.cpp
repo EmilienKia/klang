@@ -54,7 +54,7 @@ std::string find_direct_generic_usage(const std::shared_ptr<type>& t,
         return find_direct_generic_usage(array_t->get_subtype(), pnames, behind_addresser);
     }
 
-    if (auto fn_ref_t = std::dynamic_pointer_cast<function_reference_type>(t)) {
+    if (auto fn_ref_t = std::dynamic_pointer_cast<callable_type>(t)) {
         auto ret_err = find_direct_generic_usage(fn_ref_t->get_return_type(), pnames, behind_addresser);
         if (ret_err.empty() == false) return ret_err;
         for (const auto& ptype : fn_ref_t->get_parameter_types()) {
@@ -64,7 +64,7 @@ std::string find_direct_generic_usage(const std::shared_ptr<type>& t,
         return "";
     }
 
-    if (auto unresolved_fn_ref_t = std::dynamic_pointer_cast<unresolved_function_ref_type>(t)) {
+    if (auto unresolved_fn_ref_t = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
         for (const auto& ptype : unresolved_fn_ref_t->parameter_types()) {
             auto p_err = find_direct_generic_usage(ptype, pnames, behind_addresser);
             if (p_err.empty() == false) return p_err;
@@ -121,7 +121,7 @@ std::string find_owner_constraint_violation(
         return find_owner_constraint_violation(array_t->get_subtype(), pnames, pdescs);
     }
 
-    if (auto fn_ref_t = std::dynamic_pointer_cast<function_reference_type>(t)) {
+    if (auto fn_ref_t = std::dynamic_pointer_cast<callable_type>(t)) {
         auto ret_err = find_owner_constraint_violation(fn_ref_t->get_return_type(), pnames, pdescs);
         if (ret_err.empty() == false) return ret_err;
         for (const auto& ptype : fn_ref_t->get_parameter_types()) {
@@ -131,7 +131,7 @@ std::string find_owner_constraint_violation(
         return "";
     }
 
-    if (auto unresolved_fn_ref_t = std::dynamic_pointer_cast<unresolved_function_ref_type>(t)) {
+    if (auto unresolved_fn_ref_t = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
         for (const auto& ptype : unresolved_fn_ref_t->parameter_types()) {
             auto p_err = find_owner_constraint_violation(ptype, pnames, pdescs);
             if (p_err.empty() == false) return p_err;

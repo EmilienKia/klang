@@ -179,7 +179,7 @@ void k_source_emitter::emit_type(const std::shared_ptr<type>& t) {
     }
 
     // Function reference type
-    if (auto frt = std::dynamic_pointer_cast<function_reference_type>(t)) {
+    if (auto frt = std::dynamic_pointer_cast<callable_type>(t)) {
         _os << "(";
         auto& params = frt->get_parameter_types();
         for (size_t i = 0; i < params.size(); ++i) {
@@ -187,10 +187,10 @@ void k_source_emitter::emit_type(const std::shared_ptr<type>& t) {
             emit_type(params[i]);
         }
         _os << ")";
-        switch (frt->get_ref_kind()) {
-            case function_reference_type::ref_kind::pointer: _os << "*"; break;
-            case function_reference_type::ref_kind::view:    _os << "?"; break;
-            case function_reference_type::ref_kind::link:    _os << "+"; break;
+        switch (frt->get_addresser()) {
+            case callable_type::addresser::pointer: _os << "*"; break;
+            case callable_type::addresser::view:    _os << "?"; break;
+            case callable_type::addresser::link:    _os << "+"; break;
         }
         _os << " -> ";
         emit_type(frt->get_return_type());

@@ -694,6 +694,27 @@ public:
     void visit_temporary_construction_expression(temporary_construction_expression&) override;
     void visit_new_expression(new_expression&) override;
     void visit_delete_expression(delete_expression&) override;
+    void visit_callable_bind_expression(callable_bind_expression&) override;
+    void visit_callable_invocation_expression(callable_invocation_expression&) override;
+
+    /**
+     * Build a `%__k.callable` value `{ @fn, ctx }` for the given target function.
+     * A null @p ctx_ptr yields a context-free callable (free function or static method).
+     */
+    llvm::Value* build_callable_from_function(const std::shared_ptr<function>& func,
+                                              llvm::Value* ctx_ptr,
+                                              const std::optional<k::lex::any_lexeme>& where);
+
+    /**
+     * Lower an indirect call through a callable value: branch on the context field,
+     * call `fn([sret], args…)` when it is null and `fn([sret], ctx, args…)` otherwise,
+     * then join. Stores the result (or the sret slot address) into `_value`.
+     */
+    void emit_callable_invocation(const std::shared_ptr<callable_type>& ct,
+                                  llvm::Value* callable_val,
+                                  const std::vector<llvm::Value*>& args,
+                                  const std::shared_ptr<type>& result_type,
+                                  const std::optional<k::lex::any_lexeme>& where);
     void visit_owner_move_expression(owner_move_expression&) override;
     void visit_array_init_expression(array_init_expression&) override;
     void visit_designated_struct_init_expression(designated_struct_init_expression&) override;
