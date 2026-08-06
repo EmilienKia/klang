@@ -1027,6 +1027,8 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path);
 cbor_item_t* encode_union(const kdi_union& u);
 kdi_union decode_union(cbor_item_t* item, const std::string& path);
 cbor_item_t* encode_alias(const kdi_alias& a);
+cbor_item_t* encode_template_param(const kdi_template_param& p);
+kdi_template_param decode_template_param(cbor_item_t* item, const std::string& path);
 kdi_alias decode_alias(cbor_item_t* item, const std::string& path);
 
 cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
@@ -1228,6 +1230,15 @@ cbor_item_t* encode_alias(const kdi_alias& a) {
         map_push(m, "target_type", encode_type(*a.target_type));
     if (a.target_fq_name.has_value())
         map_push(m, "target_fq_name", cbor_str(*a.target_fq_name));
+    if (a.is_template) {
+        map_push(m, "is_template", cbor_bool(true));
+        if (!a.source.empty()) map_push(m, "source", cbor_str(a.source));
+        if (!a.params.empty()) {
+            cbor_item_t* params = cbor_new_indefinite_array();
+            for (auto& p : a.params) cbor_array_push(params, cbor_move(encode_template_param(p)));
+            map_push(m, "params", params);
+        }
+    }
     if (a.doc) map_push(m, "doc", encode_doc_block(*a.doc));
     return m;
 }
@@ -1242,6 +1253,14 @@ kdi_alias decode_alias(cbor_item_t* item, const std::string& path) {
         a.target_type = decode_type(tt, path + ".target_type");
     if (auto* tn = map_get(item, "target_fq_name"); tn && cbor_isa_string(tn))
         a.target_fq_name = read_string(tn, path + ".target_fq_name");
+    a.is_template = opt_bool(item, "is_template");
+    if (auto* sr = map_get(item, "source"); sr && cbor_isa_string(sr))
+        a.source = read_string(sr, path + ".source");
+    if (auto* pa = map_get(item, "params"); pa && cbor_isa_array(pa)) {
+        for (std::size_t i = 0; i < cbor_array_size(pa); ++i)
+            a.params.push_back(decode_template_param(cbor_array_get(pa, i),
+                                                     path + ".params[" + std::to_string(i) + "]"));
+    }
     if (auto* d = map_get(item, "doc")) a.doc = decode_doc_block(d, path + ".doc");
     return a;
 }

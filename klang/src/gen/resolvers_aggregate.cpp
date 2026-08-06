@@ -399,6 +399,22 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     const auto& base_name = unres->type_id();
     const auto& ast_args = unres->get_ast_template_args();
 
+    // 0. A parameterised alias renames a family of types and is resolved by
+    // substituting the arguments into the renamed type, never by instantiating
+    // an entity of its own.
+    if (auto al = scope_lookup::lookup_alias(context_elem.shared_as<const element>(), base_name)) {
+        if (auto aliased = scope_lookup::resolve_alias_template(
+                al, unres, context_elem, _context,
+                [this](const std::shared_ptr<type>& t, const element& e) {
+                    return resolve_one_type(t, *this, e, _context);
+                },
+                [this, &al](unsigned int code, const std::string& msg, const std::vector<std::string>& args) {
+                    throw_error(code, al->get_decl_lexeme(), msg, args);
+                })) {
+            return aliased;
+        }
+    }
+
     // 1. Look up the template aggregate by base name (walking scope chain)
     std::shared_ptr<aggregate> tpl_agg;
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
@@ -564,6 +580,21 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     || std::dynamic_pointer_cast<struct_type>(model_targs[i]))) {
                 model_args.push_back(template_argument::make_type(model_targs[i]));
                 continue;
+            }
+            // A nested template reference produced by substitution (e.g. 'Box<T>'
+            // in 'Pair<Box<T>, int>') is itself an unresolved_type carrying
+            // substituted model arguments: resolve it recursively.
+            if (i < model_targs.size() && model_targs[i]) {
+                if (auto nested = std::dynamic_pointer_cast<unresolved_type>(model_targs[i])) {
+                    if (nested->has_model_template_args()) {
+                        if (auto nested_res = try_instantiate_template_type(nested, context_elem)) {
+                            if (type::is_resolved(nested_res)) {
+                                model_args.push_back(template_argument::make_type(nested_res));
+                                continue;
+                            }
+                        }
+                    }
+                }
             }
             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
             if (!arg_type || !type::is_resolved(arg_type)) {

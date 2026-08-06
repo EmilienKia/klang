@@ -4163,3 +4163,73 @@ TEST_CASE("imported soft alias is transparent", "[import][alias]") {
 
     REQUIRE( result.exit_code == 42 );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parameterised aliases (template<typename T> alias / typedef) across modules.
+//
+// A parameterised alias denotes no type by itself, so it is round-tripped
+// through KDI as source text and re-parsed by the importing compiler, exactly
+// like a template definition. The consumer then substitutes its own arguments.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module parameterised alias — soft alias of a template aggregate",
+          "[import][e2e][alias][template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tpl_alias_lib;
+
+            public:
+            template<typename T>
+            struct Box {
+                v : T;
+            }
+
+            template<typename T> alias BoxOf : Box<T>;
+            template<typename T> alias Ptr : T*;
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module tpl_alias_exe;
+            import tpl_alias_lib;
+
+            main() : int {
+                b : BoxOf<int>;
+                b.v = 40;
+                p : Ptr<int> = &b.v;
+                return *p + 2;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+TEST_CASE("cross-module parameterised alias — strong alias keeps its nominal identity",
+          "[import][e2e][typedef][template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tpl_typedef_lib;
+
+            public:
+            template<typename T> typedef Id : T;
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module tpl_typedef_exe;
+            import tpl_typedef_lib;
+
+            main() : int {
+                a : Id<int> = 40;
+                n : int = 2;
+                b : Id<int> = (Id<int>)n;
+                return (int)a + (int)b;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}

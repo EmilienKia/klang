@@ -153,6 +153,22 @@ protected:
         const element& context_elem);
 
     /**
+     * Resolve a use of a parameterised alias, e.g. 'Vec<int>' declared as
+     * 'template<typename T> alias Vec : Array<T, 16>;'.
+     *
+     * A parameterised alias is never instantiated into an entity of its own:
+     * the arguments are substituted into the target type, which is then
+     * resolved as usual. A soft alias yields the substituted type directly; a
+     * strong one yields a nominal alias_type, one per distinct argument list.
+     *
+     * Returns nullptr when the base name is not a parameterised alias, so the
+     * caller can fall through to the regular template-instantiation path.
+     */
+    std::shared_ptr<type> try_resolve_alias_template(
+        const std::shared_ptr<unresolved_type>& unres,
+        const element& context_elem);
+
+    /**
      * If @p ret_type is (or wraps, through a single owner/pointer/reference/link/
      * view/drain indirection, plus optional const) an unresolved template type
      * carrying template arguments, instantiate that inner type and rebuild the

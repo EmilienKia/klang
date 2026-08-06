@@ -18,6 +18,7 @@
 #ifndef KLANG_MODEL_ALIAS_HPP
 #define KLANG_MODEL_ALIAS_HPP
 #include "model_element.hpp"
+#include "template.hpp"
 namespace k::model {
 
 /**
@@ -96,6 +97,28 @@ protected:
     /** True while the target is being resolved — guards against alias cycles. */
     bool _resolving = false;
 
+    /**
+     * Template parameters of a parameterised alias; null for a plain one.
+     *
+     * A parameterised alias renames a whole family of types:
+     *
+     *     template<typename T> alias   Vec : Array<T, 16>;
+     *     template<typename T> typedef Id  : T;
+     *
+     * It is never instantiated into an entity of its own: a use such as
+     * 'Vec<int>' substitutes the arguments into the target type and resolves
+     * the result. Only the nominal identity of a strong parameterised alias is
+     * materialised, one alias_type per distinct argument list.
+     */
+    std::unique_ptr<tpl_info> _tpl_info;
+
+    /**
+     * Nominal types of a strong parameterised alias, keyed by the textual form
+     * of the substituted argument list (e.g. "int32"). Each distinct argument
+     * list yields a distinct nominal type, exactly like a distinct typedef.
+     */
+    std::map<std::string, std::shared_ptr<alias_type>> _tpl_alias_types;
+
     /** Declaration lexeme, kept for diagnostics (alias_decl cannot expose its ast_node). */
     lex::opt_any_lexeme _decl_lexeme;
 
@@ -109,6 +132,23 @@ public:
                                                          kind_t kind);
 
     void accept(model_visitor& visitor) override;
+
+    /** True when this alias is parameterised by a 'template<...>' clause. */
+    bool is_template() const { return _tpl_info != nullptr; }
+
+    tpl_info* get_tpl_info() const { return _tpl_info.get(); }
+    void set_tpl_info(std::unique_ptr<tpl_info> info) { _tpl_info = std::move(info); }
+
+    /** Look up the nominal type already built for an argument list, if any. */
+    std::shared_ptr<alias_type> get_tpl_alias_type(const std::string& args_key) const {
+        auto it = _tpl_alias_types.find(args_key);
+        return it != _tpl_alias_types.end() ? it->second : nullptr;
+    }
+
+    /** Register the nominal type built for an argument list. */
+    void set_tpl_alias_type(const std::string& args_key, std::shared_ptr<alias_type> t) {
+        _tpl_alias_types[args_key] = std::move(t);
+    }
 
     kind_t get_kind() const { return _kind; }
     bool is_soft() const { return _kind == kind_t::SOFT; }

@@ -990,12 +990,33 @@ type_reference_resolver::resolve_generic_call_return_type(
 
 // ── Template instantiation from type reference ──────────────────────────────
 
+std::shared_ptr<type> type_reference_resolver::try_resolve_alias_template(
+    const std::shared_ptr<unresolved_type>& unres,
+    const element& context_elem)
+{
+    auto al = scope_lookup::lookup_alias(context_elem.shared_as<const element>(), unres->type_id());
+    if (!al) return {};
+
+    return scope_lookup::resolve_alias_template(
+        al, unres, context_elem, _context,
+        [this](const std::shared_ptr<type>& t, const element& e) { return resolve_type_chain(t, &e); },
+        [this, &al](unsigned int code, const std::string& msg, const std::vector<std::string>& args) {
+            throw_error(code, al->get_decl_lexeme(), msg, args);
+        });
+}
+
 std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     const std::shared_ptr<unresolved_type>& unres,
     const element& context_elem)
 {
     const auto& base_name = unres->type_id();
     const auto& ast_args = unres->get_ast_template_args();
+
+    // 0. A parameterised alias renames a family of types and is resolved by
+    // substitution, never by instantiating an entity of its own.
+    if (auto aliased = try_resolve_alias_template(unres, context_elem)) {
+        return aliased;
+    }
 
     // 1. Look up the template aggregate by base name (walking scope chain)
     std::shared_ptr<aggregate> tpl_agg;
@@ -1202,6 +1223,21 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                     || std::dynamic_pointer_cast<struct_type>(model_targs[i]))) {
                 model_args.push_back(template_argument::make_type(model_targs[i]));
                 continue;
+            }
+            // A nested template reference produced by substitution (e.g. 'Box<T>'
+            // in 'Pair<Box<T>, int>') is itself an unresolved_type carrying
+            // substituted model arguments: resolve it recursively.
+            if (i < model_targs.size() && model_targs[i]) {
+                if (auto nested = std::dynamic_pointer_cast<unresolved_type>(model_targs[i])) {
+                    if (nested->has_model_template_args()) {
+                        if (auto nested_res = try_instantiate_template_type(nested, context_elem)) {
+                            if (type::is_resolved(nested_res)) {
+                                model_args.push_back(template_argument::make_type(nested_res));
+                                continue;
+                            }
+                        }
+                    }
+                }
             }
             // Resolve the type argument through the context (normal path)
             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
@@ -3614,6 +3650,10 @@ void type_reference_resolver::check_strong_alias_conversion(
 void type_reference_resolver::materialize_aliases(const alias_holder& holder, element& scope) {
     for (const auto& al : holder.get_aliases()) {
         if (!al || al->is_resolved()) continue;
+        // A parameterised alias has no type of its own: its target still holds
+        // the template parameter placeholders and is only resolved at a use
+        // site, once the arguments are known.
+        if (al->is_template()) continue;
         bool cycle = false;
         scope_lookup::materialize_alias_type(
             al, _context,

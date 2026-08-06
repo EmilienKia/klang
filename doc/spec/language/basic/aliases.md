@@ -25,8 +25,9 @@ fully resolved (alias-free and template-instantiated) type.
 6. [Expression locality](#6-expression-locality)
 7. [Overloading and mangling](#7-overloading-and-mangling)
 8. [Scope, visibility and export](#8-scope-visibility-and-export)
-9. [Restrictions](#9-restrictions)
-10. [Comparison with `using`](#10-comparison-with-using)
+9. [Parameterised aliases](#9-parameterised-aliases)
+10. [Restrictions](#10-restrictions)
+11. [Comparison with `using`](#11-comparison-with-using)
 
 ---
 
@@ -50,9 +51,12 @@ typedef Identifier : int;           // distinct semantic type over 'int'
 
 ```ebnf
 AliasDecl     = SoftAliasDecl | TypedefDecl ;
-SoftAliasDecl = "alias"   Identifier ":" ( TypeSpec | QualifiedIdentifier ) ";" ;
-TypedefDecl   = "typedef" Identifier ":" TypeSpec ";" ;
+SoftAliasDecl = [ TemplateDeclaration ] "alias"   Identifier ":" ( TypeSpec | QualifiedIdentifier ) ";" ;
+TypedefDecl   = [ TemplateDeclaration ] "typedef" Identifier ":" TypeSpec ";" ;
 ```
+
+The optional `template<...>` clause introduces a **parameterised** alias
+(see [§9](#9-parameterised-aliases)).
 
 An alias declaration may appear wherever a declaration may appear (module
 level, namespace, aggregate body) and also inside a statement block.
@@ -206,7 +210,74 @@ distinct type.
 
 ---
 
-## 9. Restrictions
+## 9. Parameterised aliases
+
+An alias declaration may be preceded by a `template<...>` clause, which makes it
+rename a *family* of types:
+
+```k
+template<typename T>
+struct Box { v : T; }
+
+template<typename T> alias   BoxOf : Box<T>;   // soft, parameterised
+template<typename T> alias   Ptr   : T*;       // any type expression
+template<typename T> typedef Id    : T;        // strong, parameterised
+```
+
+A parameterised alias **synthesises nothing**: it is neither a template
+definition nor an entity of its own. A use site such as `BoxOf<int>`
+substitutes the arguments into the renamed type and resolves the result, exactly
+as if `Box<int>` had been written. In particular:
+
+* The alias name alone (`BoxOf` without arguments) is **not** a type.
+* No instantiation, no mangled symbol and no code is produced for the alias.
+* Substitution is recursive: the renamed type may itself use other aliases and
+  other templates.
+
+### Parameters
+
+Only **type** parameters are accepted; a value parameter
+(`template<int N> alias Buf : byte[N];`) and a parameter pack are rejected,
+because a parameterised alias is resolved at its use site where such a value
+would have no meaning. Default type arguments are supported:
+
+```k
+template<typename T = int> alias BoxOf : Box<T>;
+b : BoxOf<>;      // Box<int>
+```
+
+Passing too many or too few arguments — or passing arguments to a
+non-parameterised alias — is a dedicated error.
+
+### Soft versus strong
+
+A parameterised `alias` is transparent: `BoxOf<int>` *is* `Box<int>`.
+
+A parameterised `typedef` keeps a nominal identity, one distinct type per
+distinct argument list: `Id<int>` and `Id<long>` are unrelated, and `Id<int>` is
+distinct from `int` under the conversion rules of [§5](#5-conversions).
+
+### Partial application
+
+Because substitution happens in the renamed type, a parameterised alias can fix
+part of another template's arguments:
+
+```k
+template<typename T, typename U> struct Pair { a : T; b : U; }
+template<typename U> alias IntPair : Pair<int, U>;
+
+p : IntPair<long>;   // Pair<int, long>
+```
+
+### Export
+
+A parameterised alias is exported through the `.kdi` like any other alias, but
+as raw source text (its renamed type contains parameter placeholders); the
+importing module re-parses it and substitutes its own arguments.
+
+---
+
+## 10. Restrictions
 
 * **A namespace cannot be aliased.** Use `using N = namespace X::Y;` instead;
   attempting `alias N : X::Y;` on a namespace is a dedicated error.
@@ -215,10 +286,12 @@ distinct type.
 * Alias declarations must not form a cycle.
 * Overloading on a `typedef` and on its underlying type is forbidden (see
   [§7](#7-overloading-and-mangling)).
+* A parameterised alias takes type parameters only: value parameters and
+  parameter packs are rejected.
 
 ---
 
-## 10. Comparison with `using`
+## 11. Comparison with `using`
 
 | | `using` | `alias` | `typedef` |
 |---|---|---|---|
@@ -228,6 +301,7 @@ distinct type.
 | Can rename a namespace | yes | no | no |
 | Can rename a function or a variable | yes | yes | no |
 | Distinct type | n/a | no | yes |
+| Can be parameterised (`template<...>`) | no | yes | yes |
 
 ---
 

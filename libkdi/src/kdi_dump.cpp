@@ -106,6 +106,31 @@ std::string params_str(const std::vector<kdi_param>& params) {
 // Forward declarations
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Render an alias declaration. A parameterised alias is round-tripped as source
+// text (its target contains template parameter placeholders), so it is printed
+// verbatim when available.
+static std::string alias_str(const kdi_alias& al) {
+    if (al.is_template) {
+        if (!al.source.empty()) return al.source;
+        std::string s = "template<";
+        for (std::size_t i = 0; i < al.params.size(); ++i) {
+            if (i) s += ", ";
+            s += al.params[i].kind.empty() ? "typename" : al.params[i].kind;
+            s += " ";
+            s += al.params[i].name;
+        }
+        s += "> ";
+        s += al.is_strong ? "typedef " : "alias ";
+        s += al.name;
+        s += " : ?;";
+        return s;
+    }
+    return std::string(al.is_strong ? "typedef " : "alias ") + al.name + " : "
+           + (al.target_type.has_value() ? type_str(*al.target_type)
+                                         : al.target_fq_name.value_or("?"))
+           + ";";
+}
+
 void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth);
 void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth);
 
@@ -258,11 +283,7 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
     }
     // nested
     for (auto& al : agg.aliases) {
-        out << indent(depth + 1) << vis_str(al.visibility) << " "
-            << (al.is_strong ? "typedef " : "alias ") << al.name << " : "
-            << (al.target_type.has_value() ? type_str(*al.target_type)
-                                           : al.target_fq_name.value_or("?"))
-            << ";\n";
+        out << indent(depth + 1) << vis_str(al.visibility) << " " << alias_str(al) << "\n";
     }
 
     for (auto& n : agg.nested) dump_aggregate(n, out, depth + 1);
@@ -279,11 +300,7 @@ void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth) {
 
     for (auto& al : ns.aliases) {
         int d = depth + (ns.name.empty() ? 0 : 1);
-        out << indent(d) << vis_str(al.visibility) << " "
-            << (al.is_strong ? "typedef " : "alias ") << al.name << " : "
-            << (al.target_type.has_value() ? type_str(*al.target_type)
-                                           : al.target_fq_name.value_or("?"))
-            << ";\n";
+        out << indent(d) << vis_str(al.visibility) << " " << alias_str(al) << "\n";
     }
 
     for (auto& e : ns.enums) {

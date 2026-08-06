@@ -233,11 +233,30 @@ std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_a
             model_args.push_back(nullptr);
             continue;
         }
-        // Only handle simple identified type specifiers (e.g. "R", "E") with no sub-args.
-        // More complex forms (e.g. Box<T>) are left for the normal AST resolution path.
         auto id_spec = dynamic_cast<const k::parse::ast::identified_type_specifier*>(
             ast_arg->type_arg.get());
-        if (!id_spec || id_spec->name.size() != 1 || id_spec->has_explicit_template_args) {
+        if (!id_spec) {
+            model_args.push_back(nullptr);
+            continue;
+        }
+        // A nested template reference (e.g. Box<T> in Pair<Box<T>, int>) is
+        // substituted recursively, so that the enclosing substitution reaches
+        // every parameter occurrence even where no instantiation scope makes
+        // the parameter names visible (parameterised aliases).
+        if (id_spec->has_explicit_template_args) {
+            auto nested = std::shared_ptr<unresolved_type>(
+                new unresolved_type(id_spec->name.to_name()));
+            nested->_ast_template_args = id_spec->template_args;
+            nested->_has_explicit_template_args = true;
+            if (auto substituted_nested = nested->clone_with_substituted_model_args(subst)) {
+                model_args.push_back(substituted_nested);
+                any_substituted = true;
+            } else {
+                model_args.push_back(nullptr);
+            }
+            continue;
+        }
+        if (id_spec->name.size() != 1) {
             model_args.push_back(nullptr);
             continue;
         }

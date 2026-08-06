@@ -114,6 +114,9 @@ Alias = {
   ?"is_strong"      : bool,    -- present and true only for 'typedef'
   ?"target_type"    : Type,    -- always present for a 'typedef'
   ?"target_fq_name" : text,    -- soft alias targeting a function or a variable
+  ?"is_template"    : bool,    -- present and true for a parameterised alias
+  ?"params"         : array[TemplateParam],  -- parameterised alias only
+  ?"source"         : text,    -- raw K source, parameterised alias only
   ?"doc"            : DocBlock
 }
 ```
@@ -121,6 +124,14 @@ Alias = {
 Block-local and `private` aliases are never exported. A `typedef` never changes
 the mangling of a symbol: mangled names always use the fully resolved
 (alias-free) type.
+
+A **parameterised** alias (`template<typename T> alias Vec : Array<T, 16>;`)
+renames a family of types. Its renamed type contains template parameter
+placeholders and therefore cannot be expressed as a resolved `Type`: it is
+round-tripped as raw K source text in `source`, exactly like a `TemplateDef`,
+and re-parsed by the importing compiler. `target_type` and `target_fq_name` are
+then absent; `params` is informative only (documentation tooling), the compiler
+rebuilds the parameters from `source`.
 
 ---
 

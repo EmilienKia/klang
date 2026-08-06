@@ -205,6 +205,20 @@ public:
                                                   const std::shared_ptr<type>& underlying);
 
     /**
+     * Build (or reuse) the nominal type of one instantiation of a parameterised
+     * strong alias.
+     *
+     * Unlike create_alias_type(), which interns a single type per declaration,
+     * a parameterised alias yields one distinct nominal type per argument list:
+     * 'Id<int>' and 'Id<long>' are as unrelated as two separate typedefs. The
+     * types are interned on the declaration itself, keyed by @p args_key.
+     */
+    std::shared_ptr<alias_type> create_template_alias_type(const std::shared_ptr<alias_definition>& alias,
+                                                           const std::shared_ptr<type>& underlying,
+                                                           const std::string& args_key,
+                                                           const std::string& display_name);
+
+    /**
      * Push a set of template parameter names onto the scope stack.
      * While a scope is active, create_unresolved() will mark matching
      * unresolved types as template parameter placeholders.

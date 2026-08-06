@@ -296,3 +296,48 @@ TEST_CASE("Alias and typedef are parsed inside a statement block", "[parser][ali
     REQUIRE(std::dynamic_pointer_cast<ast::alias_decl>(fn->content->statements[0]));
     REQUIRE(std::dynamic_pointer_cast<ast::alias_decl>(fn->content->statements[1]));
 }
+
+TEST_CASE("A parameterised alias is parsed", "[parser][alias][template]") {
+    test_logger log;
+    k::source src{R"(
+        module test;
+        template<typename T> alias Vec : Array<T, 16>;
+        template<typename T, typename U> typedef Pair : Tuple<T, U>;
+    )"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit);
+    REQUIRE(unit->declarations.size() == 2);
+
+    auto soft = std::dynamic_pointer_cast<ast::alias_decl>(unit->declarations[0]);
+    REQUIRE(soft);
+    CHECK_FALSE(soft->is_strong);
+    CHECK(soft->is_template());
+    REQUIRE(soft->template_params.size() == 1);
+    CHECK(soft->template_params[0]->name.content == "T");
+    CHECK_FALSE(soft->template_source_text.empty());
+
+    auto strong = std::dynamic_pointer_cast<ast::alias_decl>(unit->declarations[1]);
+    REQUIRE(strong);
+    CHECK(strong->is_strong);
+    CHECK(strong->is_template());
+    REQUIRE(strong->template_params.size() == 2);
+}
+
+TEST_CASE("A non-parameterised alias carries no template parameter", "[parser][alias][template]") {
+    test_logger log;
+    k::source src{R"(
+        module test;
+        alias Short : Long;
+    )"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit);
+    REQUIRE(unit->declarations.size() == 1);
+    auto al = std::dynamic_pointer_cast<ast::alias_decl>(unit->declarations[0]);
+    REQUIRE(al);
+    CHECK_FALSE(al->is_template());
+    CHECK(al->template_source_text.empty());
+}

@@ -1336,6 +1336,22 @@ std::shared_ptr<alias_type> context::create_alias_type(const std::shared_ptr<ali
     return at;
 }
 
+std::shared_ptr<alias_type> context::create_template_alias_type(const std::shared_ptr<alias_definition>& alias,
+                                                                 const std::shared_ptr<type>& underlying,
+                                                                 const std::string& args_key,
+                                                                 const std::string& display_name) {
+    if (!alias || !underlying) return nullptr;
+
+    if (auto existing = alias->get_tpl_alias_type(args_key)) {
+        existing->set_underlying(underlying);
+        return existing;
+    }
+
+    auto at = std::shared_ptr<alias_type>(new alias_type(alias, underlying, display_name));
+    alias->set_tpl_alias_type(args_key, at);
+    return at;
+}
+
 std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     if (type->is_resolved() && !type::contains_unresolved(type)) {
         return type;

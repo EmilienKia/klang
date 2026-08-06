@@ -120,6 +120,31 @@ public:
                            bool& cycle);
 
     /**
+     * Resolve a use of a parameterised alias, e.g. 'Vec<int>' declared as
+     * 'template<typename T> alias Vec : Array<T, 16>;'.
+     *
+     * A parameterised alias is never instantiated into an entity of its own:
+     * the template arguments are substituted into the renamed type, which is
+     * then resolved as usual. A soft alias yields the substituted type itself;
+     * a strong one yields a nominal alias_type, one per distinct argument list.
+     *
+     * @p resolve_chain is the caller's own type resolution routine (it must
+     * handle wrapper chains and nested template instantiations) and
+     * @p report_error is the caller's own diagnostic thrower, so that this
+     * helper can be shared by every resolution pass.
+     *
+     * Returns nullptr when @p alias is not parameterised, so that the caller
+     * can fall through to the regular template-instantiation path.
+     */
+    static std::shared_ptr<type> resolve_alias_template(
+        const std::shared_ptr<alias_definition>& alias,
+        const std::shared_ptr<unresolved_type>& unres,
+        const element& context_elem,
+        const std::shared_ptr<context>& ctx,
+        const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain,
+        const std::function<void(unsigned int, const std::string&, const std::vector<std::string>&)>& report_error);
+
+    /**
      * Look up a union_type_def by simple or qualified name, starting from elem
      * and walking up the scope chain.
      */

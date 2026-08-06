@@ -218,6 +218,20 @@ private:
                            std::shared_ptr<context> ctx);
 
     /**
+     * Materialise a parameterised alias by re-parsing the source text stored in
+     * the KDI, exactly as an imported template definition is re-parsed.
+     *
+     * A parameterised alias denotes no type by itself, so it cannot be rebuilt
+     * from a resolved kdi_type: its target carries template parameter
+     * placeholders that are substituted at each use site.
+     *
+     * @param parts the fully-qualified name split on '::' (last part is the name).
+     */
+    void materialise_template_alias(const kdi::kdi_alias& al,
+                                    const std::vector<std::string>& parts,
+                                    std::shared_ptr<context> ctx);
+
+    /**
      * Materialise a single discriminated union.
      * Creates a union_type_def in the target namespace with resolved alternatives.
      */

@@ -162,6 +162,9 @@ KdiAlias {
   target_type    : KdiType?        -- the renamed type; always set for a typedef
   target_fq_name : string?         -- renamed entity, as written; set for a soft
                                    --   alias targeting a function or a variable
+  is_template    : bool            -- true for a parameterised alias
+  params         : [KdiTemplateParam]  -- parameterised alias only (informative)
+  source         : string          -- raw K source of a parameterised alias
   doc            : KdiDocBlock?
 }
 ```
@@ -169,6 +172,12 @@ KdiAlias {
 Notes:
 * Block-local and `private` aliases are never exported.
 * A namespace cannot be aliased, so `target_fq_name` never names a namespace.
+* A **parameterised** alias (`template<typename T> alias Vec : Array<T, 16>;`)
+  denotes no type by itself: it is resolved at each use site by substituting the
+  arguments into the renamed type. Its target carries template parameter
+  placeholders, so it is round-tripped as raw K source text in `source` — like a
+  `KdiTemplateDef` — and re-parsed by the importing compiler. `target_type` and
+  `target_fq_name` are then unset.
 * A `typedef` never changes the mangling of a symbol: mangled names always use
   the fully resolved (alias-free) type.
 

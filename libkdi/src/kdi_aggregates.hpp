@@ -410,6 +410,19 @@ struct kdi_alias {
     /// Fully-qualified name of the aliased entity, as written in the source.
     /// Set for a soft alias targeting a function or a variable.
     std::optional<std::string>   target_fq_name;
+
+    /// True for a parameterised alias ('template<typename T> alias Vec : ...').
+    /// A parameterised alias denotes no type by itself: it is resolved at each
+    /// use site by substituting the arguments into the renamed type, so it is
+    /// round-tripped as source text rather than as a resolved kdi_type.
+    bool                         is_template = false;
+    /// Template parameter descriptors of a parameterised alias (documentation
+    /// tooling); the compiler rebuilds them by re-parsing @ref source.
+    std::vector<kdi_template_param> params;
+    /// Raw K source text of a parameterised alias, from the 'template' keyword
+    /// through the closing ';'. Re-parsed by an importing compiler.
+    std::string                  source;
+
     std::optional<kdi_doc_block> doc;
 };
 

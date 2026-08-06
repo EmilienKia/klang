@@ -884,14 +884,40 @@ void kdi_builder::export_aliases(const alias_holder& holder, std::vector<kdi::kd
         ka.visibility = to_kdi_vis(al->get_visibility());
         ka.is_strong  = al->is_strong();
 
-        // The aliased type is exported in its declared (still alias-bearing)
-        // form: an alias is exported exactly as written so an importing module
-        // sees the same declaration.
-        if (auto tgt = al->get_target_type()) {
-            ka.target_type = to_kdi_type(tgt);
-        }
-        if (!al->get_target_name().empty()) {
-            ka.target_fq_name = al->get_target_name().to_string();
+        if (al->is_template()) {
+            // A parameterised alias renames a family of types: its target
+            // carries template parameter placeholders and cannot be expressed
+            // as a resolved kdi_type. It is round-tripped as source text, like
+            // a template definition, and re-parsed by the importing compiler.
+            ka.is_template = true;
+            if (auto* ti = al->get_tpl_info()) {
+                ka.source = ti->source_text;
+                for (const auto& p : ti->params) {
+                    kdi::kdi_template_param kp;
+                    kp.name = p.name;
+                    switch (p.kind) {
+                        case template_param_kind::STRUCT:    kp.kind = "struct";    break;
+                        case template_param_kind::CLASS:     kp.kind = "class";     break;
+                        case template_param_kind::INTERFACE: kp.kind = "interface"; break;
+                        default:                             kp.kind = "typename";  break;
+                    }
+                    if (p.constraint_type && type::is_resolved(p.constraint_type))
+                        kp.constraint_type = to_kdi_type(p.constraint_type);
+                    if (p.default_type && type::is_resolved(p.default_type))
+                        kp.default_type = to_kdi_type(p.default_type);
+                    ka.params.push_back(std::move(kp));
+                }
+            }
+        } else {
+            // The aliased type is exported in its declared (still alias-bearing)
+            // form: an alias is exported exactly as written so an importing module
+            // sees the same declaration.
+            if (auto tgt = al->get_target_type()) {
+                ka.target_type = to_kdi_type(tgt);
+            }
+            if (!al->get_target_name().empty()) {
+                ka.target_fq_name = al->get_target_name().to_string();
+            }
         }
         out.push_back(std::move(ka));
     }

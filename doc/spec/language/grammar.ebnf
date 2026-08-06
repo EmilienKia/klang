@@ -426,12 +426,18 @@ AliasDecl
     ;
 
 SoftAliasDecl
-    = 'alias' , Identifier , ':' , QualifiedIdentifier , ';'
+    = [ TemplateDeclaration ] , 'alias' , Identifier , ':' , QualifiedIdentifier , ';'
     ;
 
 TypedefDecl
-    = 'typedef' , Identifier , ':' , TypeSpec , ';'
+    = [ TemplateDeclaration ] , 'typedef' , Identifier , ':' , TypeSpec , ';'
     ;
+    (* A TemplateDeclaration introduces a parameterised alias, which renames a whole
+       family of types, e.g. 'template<typename T> alias Vec : Array<T, 16>;'.
+       A parameterised alias is never a symbol of its own: 'Vec<int>' is
+       replaced by the target type with the arguments substituted. Only type
+       parameters are allowed; a parameterised alias may not rename a function
+       or a variable. *)
     (* Exported aliasing, as opposed to the scope-local UsingDecl: an AliasDecl
        declared at unit, namespace or aggregate level is exported through the
        KDI and is visible to importing modules.

@@ -13,9 +13,12 @@
   - [ ] Template template parameters (`template<template<typename> class C>`)
   - [ ] Variadic template parameters (parameter packs, fold expressions)
   - [ ] `extern template` (explicit instantiation declarations)
-  - [ ] Template aliases (`template<typename T> alias Vec : Array<T, 16>;`) — the
-        non-template forms `alias` and `typedef` are implemented (see
-        `doc/spec/language/basic/aliases.md`); a parameterised alias is still open.
+  - [ ] Value template parameters in parameterised aliases
+        (`template<int N> alias Buf : byte[N];`) — parameterised aliases over
+        *type* parameters are implemented (see
+        `doc/spec/language/basic/aliases.md` §9); a value parameter is rejected
+        because it would have to be evaluated at the use site, where it is not
+        in scope. Tests: `klang/tests/test-gen-alias-template.cpp`.
   - [ ] Concepts / type traits / static_if on template parameters
   - [ ] Standalone template enum declarations
   - [ ] Template constructors (independent of aggregate template)

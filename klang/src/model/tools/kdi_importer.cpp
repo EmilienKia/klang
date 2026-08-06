@@ -759,6 +759,15 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
     const std::string& alias_name = parts.back();
     if (target_ns->get_alias(alias_name)) return; // already materialised
 
+    if (al.is_template) {
+        // A parameterised alias is round-tripped as source text: re-parse the
+        // declaration so that the local model rebuilds its template parameters
+        // and its placeholder-bearing target type, exactly as if it had been
+        // declared here. Substitution then happens at each use site.
+        materialise_template_alias(al, parts, ctx);
+        return;
+    }
+
     auto kind = al.is_strong ? alias_definition::kind_t::STRONG
                              : alias_definition::kind_t::SOFT;
     auto adef = alias_definition::make_shared(target_ns, alias_name, kind);
@@ -798,6 +807,59 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
     }
 
     target_ns->add_alias(adef);
+}
+
+void kdi_importer::materialise_template_alias(const kdi::kdi_alias& al,
+                                              const std::vector<std::string>& parts,
+                                              std::shared_ptr<context> ctx)
+{
+    if (al.source.empty()) return;
+
+    // Namespace part of the fully-qualified name (everything but the last part).
+    std::string ns_fq;
+    for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
+        if (!ns_fq.empty()) ns_fq += "::";
+        ns_fq += parts[i];
+    }
+
+    try {
+        // Same module-rename trick as for template definitions: the re-parsed
+        // declaration is homed under the consumer's root namespace so that it
+        // stays reachable unqualified, like every other imported symbol.
+        std::string wrapped_src = ns_fq.empty() ? al.source
+                                                : ("module " + ns_fq + ";\n" + al.source);
+
+        // Keep the source alive: lexemes hold string_views into this buffer.
+        auto ksrc_ptr = std::make_unique<k::source>(std::string_view("lib.k"), std::string_view(wrapped_src));
+        auto& ksrc = *ksrc_ptr;
+        _unit._imported_template_sources.push_back(std::move(ksrc_ptr));
+
+        k::parse::parser parser(_logger, ksrc);
+        auto ast_unit = parser.parse_unit();
+        if (!ast_unit || ast_unit->declarations.empty()) {
+            _logger.error(
+                static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_TEMPLATE_REPARSE_FAILED),
+                "Failed to re-parse imported parameterised alias '{0}': the stored KDI "
+                "source produced no usable declaration",
+                {al.name});
+            return;
+        }
+
+        auto saved_name = _unit.get_unit_name();
+        k::model::model_builder::visit(_logger, ctx, *ast_unit, _unit);
+        _unit.set_unit_name(saved_name);
+
+        if (auto root = _unit.get_root_namespace()) {
+            if (auto adef = root->get_alias(al.name)) {
+                adef->set_visibility(al.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+            }
+        }
+    } catch (const std::exception& ex) {
+        _logger.error(
+            static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_TEMPLATE_REPARSE_FAILED),
+            "Failed to re-parse imported parameterised alias '{0}': {1}",
+            {al.name, std::string(ex.what())});
+    }
 }
 
 void kdi_importer::materialise_union(const kdi::kdi_union& un,

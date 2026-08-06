@@ -304,6 +304,16 @@ enum class alias_diag : unsigned int {
     ERR_TYPEDEF_OVERLOAD_FORBIDDEN                = 0x0218,
     /** A typedef-typed parameter or return was given a plain underlying-typed value. */
     WARN_TYPEDEF_BASE_TYPE_ARGUMENT               = 0x0219,
+    /** A parameterised alias was declared with a value (non-type) template parameter. */
+    ERR_ALIAS_TEMPLATE_VALUE_PARAM                = 0x021A,
+    /** A parameterised alias was declared with a template parameter pack. */
+    ERR_ALIAS_TEMPLATE_PACK_PARAM                 = 0x021B,
+    /** A parameterised alias was used without template arguments, or with a wrong count. */
+    ERR_ALIAS_TEMPLATE_ARG_MISMATCH               = 0x021C,
+    /** Template arguments were given to an alias that is not parameterised. */
+    ERR_ALIAS_NOT_A_TEMPLATE                      = 0x021D,
+    /** A parameterised alias target could not be resolved once its arguments were substituted. */
+    ERR_ALIAS_TEMPLATE_TARGET_UNRESOLVED          = 0x021E,
 };
 
 } // namespace k::diag

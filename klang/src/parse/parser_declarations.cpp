@@ -534,6 +534,11 @@ std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
 {
     lex::lex_holder holder(_lexer);
 
+    // Parse an optional template declaration: a parameterised alias renames a
+    // family of types (e.g. 'template<typename T> alias Vec : Array<T, 16>;').
+    const char* tpl_kw_start = nullptr;
+    ast::template_param_list template_params = parse_template_declaration(&tpl_kw_start);
+
     // Expect the 'alias' or 'typedef' keyword
     auto lalias = _lexer.get();
     if (lalias != lex::keyword::ALIAS && lalias != lex::keyword::TYPEDEF) {
@@ -577,17 +582,30 @@ std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
     }
 
     // Expect a semicolon
+    const char* src_end = nullptr;
     if (auto lsemicolon = _lexer.get(); lsemicolon != lex::punctuator::SEMICOLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ALIAS_MISSING_SEMICOLON), _lexer.pick_current(),
                     "Semicolon is missing at end of {} declaration", {is_strong ? "typedef" : "alias"});
+    } else {
+        auto semi = lex::as<lex::punctuator>(lsemicolon);
+        src_end = semi.content.data() + semi.content.size();
     }
 
-    return std::make_shared<ast::alias_decl>(
+    auto result = std::make_shared<ast::alias_decl>(
             lex::as<lex::keyword>(lalias),
             is_strong,
             lex::as<lex::identifier>(lname),
             std::move(qname),
-            std::move(type));
+            std::move(type),
+            std::move(template_params));
+
+    // Capture the source text of a parameterised alias for KDI export: from the
+    // 'template' keyword through the closing ';'.
+    if (result->is_template() && tpl_kw_start && src_end && src_end > tpl_kw_start) {
+        result->template_source_text = std::string(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
+    }
+
+    return result;
 }
 
 std::shared_ptr<ast::friend_decl> parser::parse_friend_decl()

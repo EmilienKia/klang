@@ -913,6 +913,15 @@ static json to_json(const kdi_alias& al) {
     };
     if (al.target_type.has_value())    obj["target_type"]    = to_json(*al.target_type);
     if (al.target_fq_name.has_value()) obj["target_fq_name"] = *al.target_fq_name;
+    if (al.is_template) {
+        obj["is_template"] = true;
+        if (!al.source.empty()) obj["source"] = al.source;
+        if (!al.params.empty()) {
+            json ps = json::array();
+            for (auto& p : al.params) ps.push_back(to_json(p));
+            obj["params"] = ps;
+        }
+    }
     if (al.doc) obj["doc"] = to_json(*al.doc);
     return obj;
 }
@@ -925,6 +934,10 @@ static kdi_alias from_json_alias(const json& j) {
     al.is_strong  = j.value("is_strong", false);
     if (j.contains("target_type"))    al.target_type    = from_json_type(j.at("target_type"));
     if (j.contains("target_fq_name")) al.target_fq_name = j.at("target_fq_name").get<std::string>();
+    al.is_template = j.value("is_template", false);
+    al.source      = j.value("source", std::string{});
+    for (auto& p : j.value("params", json::array()))
+        al.params.push_back(from_json_template_param(p));
     if (j.contains("doc")) al.doc = from_json_doc_block(j.at("doc"));
     return al;
 }

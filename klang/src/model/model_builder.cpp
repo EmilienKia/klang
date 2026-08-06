@@ -273,6 +273,52 @@ namespace k::model {
         auto alias = model::alias_definition::make_shared(parent_elem, alias_name, kind);
         alias->set_block_local(block_local);
         alias->set_decl_lexeme(decl.alias_kw);
+
+        // A parameterised alias renames a family of types. Its parameters are
+        // recorded here; the target type is then built with the parameter names
+        // pushed as placeholders so that 'T' stays unresolved until a use site
+        // substitutes it.
+        bool tpl_scope_pushed = false;
+        if (decl.is_template()) {
+            auto ti = std::make_unique<model::tpl_info>();
+            for (auto& tp : decl.template_params) {
+                if (!tp->is_type_param()) {
+                    throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_TEMPLATE_VALUE_PARAM), tp->name,
+                        "Value template parameter '{}' is not allowed in a parameterised {}: "
+                        "an alias renames a type and takes type parameters only",
+                        {std::string{tp->name.content}, decl.is_strong ? "typedef" : "alias"});
+                }
+                if (tp->is_pack) {
+                    throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_TEMPLATE_PACK_PARAM), tp->name,
+                        "Parameter pack '{}' is not supported in a parameterised {}",
+                        {std::string{tp->name.content}, decl.is_strong ? "typedef" : "alias"});
+                }
+                model::template_param_descriptor desc;
+                desc.name = std::string{tp->name.content};
+                if (tp->kind_kw->type == lex::keyword::STRUCT) {
+                    desc.kind = model::template_param_kind::STRUCT;
+                } else if (tp->kind_kw->type == lex::keyword::CLASS) {
+                    desc.kind = model::template_param_kind::CLASS;
+                } else if (tp->kind_kw->type == lex::keyword::INTERFACE) {
+                    desc.kind = model::template_param_kind::INTERFACE;
+                } else {
+                    desc.kind = model::template_param_kind::TYPENAME;
+                }
+                if (tp->constraint_type) {
+                    desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
+                }
+                if (tp->default_type_spec) {
+                    desc.default_type = _context->from_type_specifier(*tp->default_type_spec);
+                }
+                ti->params.push_back(std::move(desc));
+            }
+            std::unordered_set<std::string> param_names;
+            for (auto& p : ti->params) param_names.insert(p.name);
+            ti->source_text = decl.template_source_text;
+            alias->set_tpl_info(std::move(ti));
+            _context->push_template_param_scope(param_names);
+            tpl_scope_pushed = true;
+        }
         // Note: alias_decl has diamond inheritance (declaration + statement →
         // ast_node), so shared_from_this() is ambiguous, exactly as for
         // using_decl. The alias keyword token is enough for error reporting.
@@ -311,10 +357,17 @@ namespace k::model {
                  decl.is_strong ? "a type" : "a type or a symbol"});
         }
         alias->_target_type = _context->from_type_specifier(*decl.type);
+        if (tpl_scope_pushed) {
+            _context->pop_template_param_scope();
+        }
         if (decl.is_strong) {
             alias->_target_kind = model::alias_definition::target_kind_t::TYPE;
         }
-        if (decl.qname) {
+        // A parameterised alias always renames a type: its target is resolved by
+        // substitution at the use site, never as a plain symbol name.
+        if (decl.is_template()) {
+            alias->_target_kind = model::alias_definition::target_kind_t::TYPE;
+        } else if (decl.qname) {
             alias->set_target_name(decl.qname->to_name());
         } else if (auto ident = std::dynamic_pointer_cast<parse::ast::identified_type_specifier>(decl.type)) {
             alias->set_target_name(ident->name.to_name());

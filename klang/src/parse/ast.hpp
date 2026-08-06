@@ -1023,12 +1023,25 @@ namespace k::parse {
             /// Aliased type specification, for the 'typedef' form (null for 'alias').
             std::shared_ptr<type_specifier> type;
 
+            /// Template parameters of a parameterised alias, empty otherwise.
+            /// Set by a 'template<...>' clause preceding the alias declaration.
+            template_param_list template_params;
+            /// Raw source text of a parameterised alias, from the 'template'
+            /// keyword through the closing ';'. Round-tripped through KDI so an
+            /// importing module can re-parse the declaration.
+            std::string template_source_text;
+
+            /// True when the declaration is preceded by a 'template<...>' clause.
+            bool is_template() const { return !template_params.empty(); }
+
             alias_decl(const lex::keyword& alias_kw, bool is_strong,
                        const lex::identifier& name,
                        std::shared_ptr<qualified_identifier> qname,
-                       std::shared_ptr<type_specifier> type)
+                       std::shared_ptr<type_specifier> type,
+                       template_param_list template_params = {})
                 : alias_kw(alias_kw), is_strong(is_strong), name(name),
-                  qname(std::move(qname)), type(std::move(type)) {}
+                  qname(std::move(qname)), type(std::move(type)),
+                  template_params(std::move(template_params)) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

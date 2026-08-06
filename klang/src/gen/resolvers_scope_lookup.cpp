@@ -18,6 +18,7 @@
 #include "resolvers_scope_lookup.hpp"
 #include "resolvers_aggregate.hpp"
 #include "../model/imported.hpp"
+#include "../errors.hpp"
 
 namespace k::model::gen {
 
@@ -579,6 +580,11 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
     cycle = false;
     if (!alias) return {};
 
+    // A parameterised alias denotes no type by itself: 'Vec' alone is not a
+    // type, only 'Vec<int>' is. Resolution happens at the use site, through
+    // type_reference_resolver::try_resolve_alias_template().
+    if (alias->is_template()) return {};
+
     if (alias->_resolved) {
         return alias->get_declared_type();
     }
@@ -637,6 +643,127 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
     }
     alias->_resolved = true;
     return alias->get_declared_type();
+}
+
+std::shared_ptr<type> scope_lookup::resolve_alias_template(
+    const std::shared_ptr<alias_definition>& alias,
+    const std::shared_ptr<unresolved_type>& unres,
+    const element& context_elem,
+    const std::shared_ptr<context>& ctx,
+    const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain,
+    const std::function<void(unsigned int, const std::string&, const std::vector<std::string>&)>& report_error)
+{
+    if (!alias || !unres || !ctx) return {};
+
+    const std::string kind = alias->is_strong() ? "typedef" : "alias";
+
+    if (!alias->is_template()) {
+        // A plain alias given template arguments: 'Coord<int>' where 'Coord' is
+        // not parameterised. Reported here rather than as an unknown type name,
+        // which would be misleading.
+        if (unres->has_template_args()) {
+            report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_NOT_A_TEMPLATE),
+                         "'{}' is not a parameterised {}: it takes no template argument",
+                         {alias->get_short_name(), kind});
+        }
+        return {};
+    }
+
+    auto* ti = alias->get_tpl_info();
+    if (!ti) return {};
+
+    // A nested alias reference produced by substitution (e.g. 'A<T>' inside
+    // 'template<typename T> alias B : A<T>;') carries already-substituted model
+    // arguments; they take precedence over the AST arguments, which still name
+    // the enclosing alias's own parameters.
+    const auto& model_args = unres->get_model_template_args();
+    const bool use_model_args = unres->has_model_template_args();
+
+    const auto& ast_args = unres->get_ast_template_args();
+    const std::size_t given = use_model_args ? model_args.size() : ast_args.size();
+    if (given > ti->params.size()) {
+        report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH),
+                     "Parameterised {} '{}' takes {} template argument(s), {} given",
+                     {kind, alias->get_short_name(),
+                      std::to_string(ti->params.size()), std::to_string(given)});
+    }
+
+    // Resolve each argument, falling back on the parameter default when the
+    // argument list is shorter than the parameter list.
+    type_substitution_map subst;
+    std::string args_key;
+    std::string display_args;
+    for (std::size_t i = 0; i < ti->params.size(); ++i) {
+        const auto& param = ti->params[i];
+        std::shared_ptr<type> arg_type;
+
+        if (use_model_args) {
+            if (i < model_args.size()) arg_type = model_args[i];
+            else                       arg_type = param.default_type;
+            if (!arg_type) {
+                report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH),
+                             "Parameterised {} '{}' takes {} template argument(s), {} given",
+                             {kind, alias->get_short_name(),
+                              std::to_string(ti->params.size()), std::to_string(given)});
+            }
+        } else if (i < ast_args.size()) {
+            const auto& ast_arg = ast_args[i];
+            if (!ast_arg || !ast_arg->is_type() || !ast_arg->type_arg) {
+                report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_VALUE_PARAM),
+                             "Parameterised {} '{}' expects a type argument for parameter '{}'",
+                             {kind, alias->get_short_name(), param.name});
+            }
+            arg_type = ctx->from_type_specifier(*ast_arg->type_arg);
+        } else {
+            arg_type = param.default_type;
+            if (!arg_type) {
+                report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH),
+                             "Parameterised {} '{}' takes {} template argument(s), {} given",
+                             {kind, alias->get_short_name(),
+                              std::to_string(ti->params.size()), std::to_string(given)});
+            }
+        }
+
+        arg_type = resolve_chain(arg_type, context_elem);
+        if (!arg_type || !type::is_resolved(arg_type)) {
+            report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH),
+                         "Template argument for parameter '{}' of parameterised {} '{}' could not be resolved",
+                         {param.name, kind, alias->get_short_name()});
+        }
+
+        subst[param.name] = arg_type;
+        if (!args_key.empty()) { args_key += ","; display_args += ", "; }
+        args_key += arg_type->to_string();
+        display_args += arg_type->to_string();
+    }
+
+    // Substitute the arguments into the renamed type and resolve the result.
+    auto target = alias->get_target_type();
+    if (!target) {
+        report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_TARGET_UNRESOLVED),
+                     "Parameterised {} '{}' does not rename a type",
+                     {kind, alias->get_short_name()});
+    }
+
+    auto substituted = resolve_chain(substitute_type(target, subst), context_elem);
+    if (substituted && !type::is_resolved(substituted)) {
+        if (auto retry = ctx->resolve_type(substituted)) {
+            if (type::is_resolved(retry)) substituted = retry;
+        }
+    }
+    if (!substituted || !type::is_resolved(substituted)) {
+        report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_TARGET_UNRESOLVED),
+                     "The renamed type of parameterised {} '{}' could not be resolved with the given arguments",
+                     {kind, alias->get_short_name()});
+    }
+
+    // A soft alias is transparent: the substituted type is the answer. A strong
+    // one keeps a nominal identity, distinct for every argument list.
+    if (!alias->is_strong()) return substituted;
+
+    return ctx->create_template_alias_type(
+        alias, substituted, args_key,
+        alias->get_short_name() + "<" + display_args + ">");
 }
 
 bool scope_lookup::is_base_union_of(const union_type_def& candidate_base,
