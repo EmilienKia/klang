@@ -2113,6 +2113,15 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 "A non-null callable of type '{}' must be explicitly initialised",
                 {var_type->to_string()});
         }
+        // Adapt the initialiser to the declared callable type: this is where a
+        // function designation (`fn`, `obj.method`, a functor…) is rewritten into a
+        // callable_bind_expression against the destination prototype.
+        if (auto init_arg = ctx.get_single_init_arg()) {
+            auto adapted = adapt_type(init_arg, ct);
+            if (adapted && adapted != init_arg) {
+                ctx.assign_single_init_arg(adapted);
+            }
+        }
     } else {
         // Unsupported construction for other types for now
         // TODO Support construction for other types (array, etc.)

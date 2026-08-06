@@ -67,6 +67,17 @@ public:
         const std::shared_ptr<unresolved_type>& unres,
         const element& context_elem);
 
+    /**
+     * Best-effort early resolution of an unresolved callable type (`*(int):int`,
+     * `Counter::&(int)`, …) during phase 1.a, using @p scope for name lookup.
+     *
+     * @return The resolved callable_type, or nullptr when some component of the
+     *         signature cannot be resolved yet.
+     */
+    std::shared_ptr<type> resolve_unresolved_callable_type(
+        const std::shared_ptr<unresolved_callable_type>& ufrt,
+        const element& scope);
+
 protected:
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme,

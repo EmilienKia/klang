@@ -706,6 +706,22 @@ public:
                                               const std::optional<k::lex::any_lexeme>& where);
 
     /**
+     * Load the function address stored in the vtable slot @p slot_index of the
+     * vtable reachable from @p obj_ptr, which must be the *unadjusted* subobject
+     * pointer of @p dispatch_base (the same pointer stored as the callable context).
+     */
+    llvm::Value* load_vtable_slot(const std::shared_ptr<aggregate>& dispatch_base,
+                                  llvm::Value* obj_ptr,
+                                  int slot_index,
+                                  const std::optional<k::lex::any_lexeme>& where);
+
+    /**
+     * Build the `%__k.callable` value of a receiver-bound binding (direct or through
+     * a vtable slot), including the null-propagating branch when requested.
+     */
+    llvm::Value* build_bound_callable(callable_bind_expression& expr, llvm::Value* ctx_ptr);
+
+    /**
      * Lower an indirect call through a callable value: branch on the context field,
      * call `fn([sret], args…)` when it is null and `fn([sret], ctx, args…)` otherwise,
      * then join. Stores the result (or the sret slot address) into `_value`.

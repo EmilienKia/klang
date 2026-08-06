@@ -277,7 +277,7 @@ Code generation and resolution passes. All live in `namespace k::model::gen`.
 | `libk/libk/src/io/` | I/O stream abstractions (`InputStream`, `OutputStream`, buffered, data, filter streams) |
 | `libk/libk/src/io/io_helpers.c` | C runtime helpers (float/double bitcast for FFI) |
 | `libk/libk/src/time.k` / `time.c` | `Duration`, `Instant` value structs + monotonic/real-time clock FFI |
-| `libk/libk/src/thread.k` | `Runnable` interface, `Thread` class, `__k_invoke_runnable` trampoline |
+| `libk/libk/src/thread.k` | `Runnable` interface, `Thread` class, `Thread.runGuarded` bound-callable thread body |
 | `libk/libk/src/thread_exceptions.k` | `ThreadInterruptionException`, `TimeoutException`, `CancellationException`, `ExecutionException` |
 | `libk/libk/src/future.k` | `Future<T>` / `Promise<T>` templates, `FutureBox<T>` payload, `FUTURE_*` state constants |
 | `libk/libk/src/runtime/future_state.h` / `.c` | C future substrate: atomic completion word, refcount, chain mutex, interruptible/timed futex wait |

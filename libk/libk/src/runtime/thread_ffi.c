@@ -26,10 +26,10 @@
  *   KRuntimeThread so casts are explicit and type-safe within this file.
  *
  * Runnable invocation:
- *   __k_thread_create() captures the K Runnable object together with a K
- *   callable (the fat `{ fn, ctx }` reference), and invokes that callable from
- *   the OS thread via runnable_task_fn().  The virtual dispatch of run() is
- *   therefore performed in K, never by decoding the vtable from C.
+ *   __k_thread_create() captures a single K callable (the fat `{ fn, ctx }`
+ *   reference) and invokes it from the OS thread via runnable_task_fn().  The
+ *   virtual dispatch of run() is therefore performed in K, never by decoding
+ *   the vtable from C.
  */
 
 #define _GNU_SOURCE
@@ -49,8 +49,9 @@ typedef KRuntimeThread NativeThread;
  *   The OS thread trampoline cannot perform a K virtual dispatch by itself.
  *   Hard-coding the vtable slot of Runnable::run() here would be silently
  *   broken by any new virtual method added to ::k::Object or ::k::Runnable.
- *   Instead, Thread(Runnable*) passes a K *callable* alongside the object; the
- *   trampoline simply calls back into K, which performs the virtual dispatch.
+ *   Instead, Thread(Runnable*) passes a K *callable* bound to the Thread itself
+ *   (`this.runGuarded`); the trampoline simply calls it back, and K performs the
+ *   virtual dispatch of Runnable::run() — and catches anything escaping it.
  *
  *   A K callable is the fat reference `{ void* fn; void* ctx; }`.  A null ctx
  *   denotes a free function or a static method, called as `fn(args…)`; a
@@ -62,41 +63,35 @@ typedef struct {
     void* ctx;
 } KCallable;
 
-typedef void (*KRunnableInvokeFreeFn)(void* runnable);
-typedef void (*KRunnableInvokeBoundFn)(void* ctx, void* runnable);
-
-typedef struct {
-    void*     runnable_obj;  /* K Runnable* (caller keeps it alive) */
-    KCallable invoke;        /* K callable performing the dispatch */
-} ThreadTaskArg;
+typedef void (*KCallableFreeFn)(void);
+typedef void (*KCallableBoundFn)(void* ctx);
 
 static void runnable_task_fn(void* arg) {
-    ThreadTaskArg* ta = (ThreadTaskArg*)arg;
-    void*     obj    = ta->runnable_obj;
-    KCallable invoke = ta->invoke;
-    free(ta);
+    KCallable* stored = (KCallable*)arg;
+    KCallable  run    = *stored;
+    free(stored);
 
-    if (!obj || !invoke.fn) return;
-    if (invoke.ctx) {
-        ((KRunnableInvokeBoundFn)invoke.fn)(invoke.ctx, obj);
+    if (!run.fn) return;
+    if (run.ctx) {
+        ((KCallableBoundFn)run.fn)(run.ctx);
     } else {
-        ((KRunnableInvokeFreeFn)invoke.fn)(obj);
+        ((KCallableFreeFn)run.fn)();
     }
 }
 
 /* ── Public FFI functions ────────────────────────────────────────────────── */
 
 /**
- * Allocate a new KRuntimeThread for a K Runnable.
+ * Allocate a new KRuntimeThread for a K thread body.
  * Returns NativeThread* (== KRuntimeThread*) stored in Thread._native.
- * @param runnable_obj  Pointer to the K Runnable object (borrowed; caller keeps alive).
- * @param invoke        K callable { fn, ctx } that dispatches run().
+ * @param run  K callable { fn, ctx } that runs the thread body (Thread.runGuarded,
+ *             bound to the owning Thread, which performs the virtual dispatch of
+ *             Runnable::run() and swallows any escaping Throwable).
  */
-NativeThread* __k_thread_create(void* runnable_obj, KCallable invoke) {
-    ThreadTaskArg* ta = (ThreadTaskArg*)malloc(sizeof(ThreadTaskArg));
+NativeThread* __k_thread_create(KCallable run) {
+    KCallable* ta = (KCallable*)malloc(sizeof(KCallable));
     if (!ta) return NULL;
-    ta->runnable_obj = runnable_obj;
-    ta->invoke       = invoke;
+    *ta = run;
 
     KRuntimeThread* t = k_runtime_thread_create(runnable_task_fn, ta);
     if (!t) { free(ta); return NULL; }

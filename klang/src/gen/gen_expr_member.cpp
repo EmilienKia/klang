@@ -38,6 +38,17 @@
 namespace k::model::gen {
 // member_of_object, member_of_pointer, pm, subscript
 
+namespace {
+/** True when @p expr is the callee of its parent function invocation. */
+bool is_invocation_callee(const expression& expr) {
+    auto parent = expr.get_parent_expression();
+    if (auto inv = std::dynamic_pointer_cast<const function_invocation_expression>(parent)) {
+        return inv->callee_expr().get() == &expr;
+    }
+    return false;
+}
+} // anonymous namespace
+
 void symbol_resolver::visit_member_of_expression(member_of_expression& expr) {
     // Explicitly only resolve sub expression.
     // Symbol can only be resolved afterward, cause it will depend on the type of subexpression.
@@ -521,6 +532,21 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             // Step 5: For unified-call syntax: check free functions with first param = ref to struct
             // Type of member_of_object_expression for functions is the struct ref (for 'this')
             // — leave expr type unset; function_invocation_expression will handle it.
+
+            // ── Member function designated without call parentheses ──────────
+            // `obj.method` in a value position denotes a bindable callable. Give
+            // the expression a placeholder callable type so that adapt_type() can
+            // rewrite it into a callable_bind_expression against the destination
+            // prototype. Inside a call the type stays unset: the invocation
+            // resolver owns overload selection there.
+            if (!is_invocation_callee(expr)) {
+                if (auto owner_agg = hit.in_struct_type->get_struct()) {
+                    if (auto marker = build_member_callable_marker(owner_agg, simple_name)) {
+                        _ephemeral_types.push_back(marker);
+                        expr.set_type(marker->get_reference());
+                    }
+                }
+            }
         }
     } else {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_ACCESS_ON_RVALUE), expr.first_lexeme(),
@@ -810,7 +836,8 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
         }
         auto field_type = field->field_type.lock();
         expr.set_type(field_type ? field_type->get_reference() : nullptr);
-    } else if (struct_subtype->get_struct() && struct_subtype->get_struct()->get_function(name_str)) {
+    } else if (struct_subtype->get_struct()
+               && !collect_member_overloads(struct_subtype->get_struct(), name_str).empty()) {
         // Check visibility of the accessed method
         if (auto st_model = struct_subtype->get_struct()) {
             if (auto fn = st_model->get_function(name_str)) {
@@ -830,6 +857,17 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
             }
         }
         expr.set_type(pointed_type->get_reference());
+        // ── Member function designated without call parentheses ──────────────
+        // `ptr->method` in a value position denotes a bindable callable (see the
+        // '.' counterpart above).
+        if (!is_invocation_callee(expr)) {
+            if (auto owner_agg = struct_subtype->get_struct()) {
+                if (auto marker = build_member_callable_marker(owner_agg, name_str)) {
+                    _ephemeral_types.push_back(marker);
+                    expr.set_type(marker->get_reference());
+                }
+            }
+        }
     } else {
         throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_ARG_TYPE_MISMATCH), expr.first_lexeme(),
             "Struct '{}' has no member named '{}'",

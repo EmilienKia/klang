@@ -533,6 +533,13 @@ protected:
     /** Aggregate whose vtable `_vtable_slot` indexes. */
     std::shared_ptr<aggregate> _dispatch_base;
     kind _kind = kind::free_function;
+    /**
+     * True when the receiver is a nullable indirection (`*` or `?`) *and* the
+     * destination callable is itself nullable: a null receiver then yields the
+     * null callable `{null,null}` instead of trapping. When false, a nullable
+     * receiver is dereferenced normally and traps on null.
+     */
+    bool _null_propagating = false;
 
     callable_bind_expression() = default;
     callable_bind_expression(const callable_bind_expression&) = delete;
@@ -563,6 +570,10 @@ public:
     kind get_kind() const { return _kind; }
     void set_kind(kind k) { _kind = k; }
 
+    /** True when a null receiver must produce the null callable instead of trapping. */
+    bool is_null_propagating() const { return _null_propagating; }
+    void set_null_propagating(bool v) { _null_propagating = v; }
+
     /** True when the bind produces a `{fn, null}` value (no invocation context). */
     bool is_context_free() const { return !_context; }
 
@@ -573,6 +584,7 @@ public:
         c->_vtable_slot = _vtable_slot;
         c->_dispatch_base = _dispatch_base;
         c->_kind = _kind;
+        c->_null_propagating = _null_propagating;
         if (_context) c->set_context(_context->clone());
         return c;
     }

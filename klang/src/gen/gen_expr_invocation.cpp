@@ -518,6 +518,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
 
         if (candidates.empty()) {
+            // A callable-typed data member is invocable too: `h.fn(40)` where
+            // `fn : *(int):int;` — resolve the member access and call it indirectly.
+            if (member_callee && try_resolve_callable_member_invocation(expr, member_callee, func_short_name, st)) {
+                return;
+            }
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_NO_MATCHING_OVERLOAD), expr.first_lexeme(),
                 "No function named '{}' found in struct '{}' or its enclosing scopes; "
                 "check the spelling or verify that '{}' is declared as a method or free function",
@@ -1896,10 +1901,12 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     // ── INDIRECT call through a callable value ────────────────────────────────
     if (expr.has_dispatch_info() &&
         expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::INDIRECT) {
-        // The callee denotes a callable-typed variable (or a callable rvalue).
-        // Visiting a variable symbol yields the *address* of its slot, so the fat
-        // callable value must be loaded from it; an rvalue is used as-is.
-        auto callee_type = callee ? callee->get_type() : nullptr;
+        // The callee denotes a callable-typed variable, a callable-typed data member
+        // (`obj.fn(args)`) or a callable rvalue. Visiting a variable symbol or a member
+        // access yields the *address* of the slot, so the fat callable value must be
+        // loaded from it; an rvalue is used as-is.
+        auto callee_expr_node = expr.callee_expr();
+        auto callee_type = callee_expr_node ? callee_expr_node->get_type() : nullptr;
         auto ct = peel_to_callable(callee_type);
         if (!ct) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05D), expr.first_lexeme(),
@@ -1910,7 +1917,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         _sret_destination = nullptr;
 
         _value = nullptr;
-        if (callee) callee->accept(*this);
+        if (callee_expr_node) callee_expr_node->accept(*this);
         llvm::Value* callable_val = _value;
         if (!callable_val) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05D), expr.first_lexeme(),

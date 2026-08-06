@@ -48,32 +48,6 @@ public interface Runnable {
     run() : void throws Throwable;
 }
 
-/**
- * Trampoline used by the C thread substrate to invoke a Runnable.
- *
- * The OS-level thread created in C only knows raw pointers; it cannot perform
- * a K virtual dispatch on its own. Rather than hard-coding the vtable slot of
- * `run()` in C (which would silently break whenever ::k::Object or Runnable
- * gain a virtual method), Thread passes a *callable* bound to this function to
- * `__k_thread_create()`, and the C trampoline calls it back with the Runnable
- * pointer it was given. The virtual dispatch therefore always happens in K.
- *
- * Any Throwable escaping run() is swallowed here: unwinding out of this
- * function would propagate through the C trampoline frame, which is not
- * unwind-aware, and abort the whole process. Terminating just the offending
- * thread matches the interruption model, where a thread interrupted while
- * blocked is expected to unwind out of its run() body.
- *
- * @param r The runnable whose run() must be invoked.
- */
-private __k_invoke_runnable(r: Runnable*) : void {
-    try {
-        r->run();
-    } catch (e: Throwable&) {
-        // Uncaught in the thread body: terminate this thread only.
-    }
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
 // Thread — a language-level thread of execution.
 // ═════════════════════════════════════════════════════════════════════════════
@@ -104,10 +78,32 @@ public class Thread {
 private:
     _native : NativeThread*;    // opaque KRuntimeThread*
     _owned  : bool;             // true = destructor must free native; false = borrowed
+    _task   : Runnable*;        // borrowed task; null for a borrowed native handle
+
+    /**
+     * Thread body actually handed to the C substrate, as a callable bound to this
+     * Thread (`this.runGuarded`). The C trampoline only knows `{ fn, ctx }`: the
+     * virtual dispatch of Runnable::run() therefore always happens in K.
+     *
+     * Any Throwable escaping run() is swallowed here: unwinding out of this method
+     * would propagate through the C trampoline frame, which is not unwind-aware,
+     * and abort the whole process. Terminating just the offending thread matches
+     * the interruption model, where a thread interrupted while blocked is expected
+     * to unwind out of its run() body.
+     */
+    private runGuarded() : void {
+        try {
+            if (_task != null) {
+                _task->run();
+            }
+        } catch (e: Throwable&) {
+            // Uncaught in the thread body: terminate this thread only.
+        }
+    }
 
 
     // ── FFI declarations ─────────────────────────────────────────────────────────
-    @ffi::Extern("C") private static __k_thread_create(runnable: Runnable*, invoke: *(Runnable*)) : NativeThread*;
+    @ffi::Extern("C") private static __k_thread_create(run: *()) : NativeThread*;
     @ffi::Extern("C") private static __k_thread_start(native: NativeThread*) : int;
     @ffi::Extern("C") private static __k_thread_join(native: NativeThread*) : int;
     @ffi::Extern("C") private static __k_thread_join_timed(native: NativeThread*, timeout_nanos: long) : int;
@@ -131,7 +127,8 @@ public:
      * @param task The runnable task to execute.
      */
     Thread(task: Runnable*) {
-        _native = __k_thread_create(task, __k_invoke_runnable);
+        _task   = task;
+        _native = __k_thread_create(this.runGuarded);
         _owned  = true;
     }
 
@@ -142,6 +139,7 @@ public:
      * @param owned   Pass false when borrowing (e.g. current thread handle).
      */
     Thread(native: NativeThread*, owned: bool) {
+        _task   = null;
         _native = native;
         _owned  = owned;
     }

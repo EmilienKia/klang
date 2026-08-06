@@ -617,6 +617,57 @@ protected:
 
     /** Adapt function reference types (frt → frt, ref<frt> → frt, etc.). Returns nullptr if not a frt case. */
     std::shared_ptr<expression> adapt_callable_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+
+    // ── Callable binding (defined in gen_callable.cpp) ───────────────────────
+
+    /**
+     * Bind a member function designated *without* call parentheses to the callable
+     * type @p tgt. Handles `obj.method`, `ptr->method`, `this.method` and a bare
+     * `method` naming a member of the enclosing aggregate.
+     *
+     * @return The `callable_bind_expression`, or nullptr when @p expr does not
+     *         designate a member function.
+     */
+    std::shared_ptr<expression> try_bind_member_callable(
+        const std::shared_ptr<expression>& expr,
+        const std::shared_ptr<callable_type>& tgt);
+
+    /**
+     * Build the `callable_bind_expression` for @p fn bound to @p receiver.
+     * @p receiver is the object expression *as written* (it may be a nullable
+     * indirection); @p nullable_receiver tells whether it may be null.
+     */
+    std::shared_ptr<expression> make_member_bind(
+        const std::shared_ptr<function>& fn,
+        const std::shared_ptr<expression>& receiver,
+        const std::shared_ptr<callable_type>& tgt,
+        bool nullable_receiver,
+        const lex::opt_any_lexeme& where);
+
+    /** Collect every member function named @p name in @p agg and its bases. */
+    std::vector<std::shared_ptr<function>> collect_member_overloads(
+        const std::shared_ptr<aggregate>& agg, const std::string& name);
+
+    /**
+     * Build the placeholder callable type carried by a member-function designation
+     * written without call parentheses (`obj.method`). It only exists so that
+     * adapt_type() has a source type to work from; the real target is selected
+     * against the destination prototype by try_bind_member_callable().
+     */
+    std::shared_ptr<callable_type> build_member_callable_marker(
+        const std::shared_ptr<aggregate>& agg, const std::string& name);
+
+    /**
+     * Resolve `obj.member(args)` where `member` is a *callable-typed data member*
+     * rather than a method: the member access becomes the callee of an indirect call.
+     *
+     * @return true when the invocation has been resolved as an indirect call.
+     */
+    bool try_resolve_callable_member_invocation(
+        function_invocation_expression& expr,
+        const std::shared_ptr<member_of_object_expression>& member_callee,
+        const std::string& member_name,
+        const std::shared_ptr<aggregate>& agg);
     /** Adapt when source is a pointer type (ptr<T> → ptr/lnk/ref). */
     std::shared_ptr<expression> adapt_from_pointer(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
     /** Adapt when source is a link type (lnk<T> → lnk/ptr/view/ref). */

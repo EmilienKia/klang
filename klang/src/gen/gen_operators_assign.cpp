@@ -497,6 +497,15 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 "only pointer (*) and link (+) callables are rebindable",
                 {target_type ? target_type->to_string() : "?"});
         }
+        // A member function designated without call parentheses (`obj.method`) binds
+        // its receiver into a `{ fn, ctx }` callable value.
+        if (frt_target) {
+            if (auto bound = try_bind_member_callable(right, frt_target)) {
+                expr.assign_right(bound);
+                expr.set_type(ref_target_type);
+                return;
+            }
+        }
         // Unwrap ref<frt> on the source side if needed.
         // For a direct function symbol (is_function()), impl_gen returns the Function* directly —
         // no load needed. For a frt variable, impl_gen returns the alloca address — needs a load.

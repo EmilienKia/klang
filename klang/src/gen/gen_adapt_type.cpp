@@ -23,6 +23,7 @@
 //
 
 #include "resolvers.hpp"
+#include "gen_callable_helpers.hpp"
 
 #include "../model/expressions.hpp"
 #include "../errors.hpp"
@@ -84,6 +85,20 @@ type_reference_resolver::adapt_callable_type(
     // Step 1: frt → frt with different addresser: cast_expression to reinterpret
     // Case 1: target is a bare callable_type
     // Step 2: ref<frt> → frt: load_value_expression to dereference
+    // A member function designated without call parentheses (`obj.method`,
+    // `ptr->method`, a bare `method` inside a member function) binds its receiver.
+    // The destination may be the callable itself or a reference to it (assignment
+    // to a callable-typed variable or data member).
+    {
+        auto dest_ct = std::dynamic_pointer_cast<callable_type>(type_nc);
+        if (!dest_ct && type::is_reference(type_nc)) {
+            dest_ct = std::dynamic_pointer_cast<callable_type>(
+                type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype()));
+        }
+        if (dest_ct && !dest_ct->is_unbound_member() && !dest_ct->is_prototype()) {
+            if (auto bound = try_bind_member_callable(expr, dest_ct)) return bound;
+        }
+    }
     if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(type_nc)) {
         if (std::dynamic_pointer_cast<callable_type>(type_src)) {
             // Source is already a bare frt — no load needed.
@@ -102,6 +117,20 @@ type_reference_resolver::adapt_callable_type(
                     }
                     auto fn = sym->get_function();
                     if (!fn) return expr;
+                    // Symbol resolution picks the first declaration carrying that name,
+                    // which is declaration-order dependent: re-select the overload whose
+                    // parameter list matches the destination prototype.
+                    if (auto holder = fn->parent<element>()) {
+                        if (auto* fh = dynamic_cast<function_holder*>(holder.get())) {
+                            auto cands = fh->get_functions(fn->get_short_name());
+                            if (cands.size() > 1) {
+                                bool ambiguous = false;
+                                if (auto picked = select_overload_for_prototype(cands, *tgt_frt, &ambiguous)) {
+                                    fn = picked;
+                                }
+                            }
+                        }
+                    }
                     auto bind = callable_bind_expression::make_shared(
                         fn->is_static() || !fn->parent<aggregate>()
                             ? (fn->parent<aggregate>() ? callable_bind_expression::kind::static_method
