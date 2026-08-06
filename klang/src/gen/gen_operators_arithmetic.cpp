@@ -64,6 +64,20 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
         if (left) expr.assign_left(left);
     }
 
+    // ── Alias / typedef transparency ──
+    // Arithmetic is always performed on the canonical (alias-free) type, but the
+    // result keeps the alias identity: an expression is a sufficient locality for
+    // a typedef to survive, so no explicit cast is needed to feed the result back
+    // to something of the same alias type.
+    if (auto at = std::dynamic_pointer_cast<alias_type>(target_type)) {
+        expr.set_alias_taint(at->get_alias());
+        target_type = type::canonical(target_type);
+        if (auto adapted = adapt_type(left, target_type)) {
+            left = adapted;
+            expr.assign_left(left);
+        }
+    }
+
     // ── Operator overload for aggregate (struct/class/interface) references ──
     if(type::is_struct(target_type)) {
         auto st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(target_type));

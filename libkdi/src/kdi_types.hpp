@@ -134,6 +134,18 @@ struct kdi_enum_ref {
     std::string fq_name;      ///< e.g. "color::Color"
 };
 
+/**
+ * Reference to an exported alias / typedef by its fully-qualified K name.
+ *
+ * Only a strong alias (typedef) is referenced this way: it is nominally
+ * distinct from the type it renames, so the distinction has to survive the
+ * round trip through the KDI. A soft alias is fully transparent and is always
+ * exported as the type it renames.
+ */
+struct kdi_alias_ref {
+    std::string fq_name;      ///< e.g. "app::Identifier"
+};
+
 /** Reference to a template parameter by name inside a template signature. */
 struct kdi_template_param_ref {
     std::string name;         ///< e.g. "T"
@@ -181,6 +193,7 @@ using kdi_type_variant = std::variant<
     kdi_fn_ref_type,
     kdi_aggregate_ref,
     kdi_enum_ref,
+    kdi_alias_ref,
     kdi_template_param_ref,
     kdi_generic_ref_type
 >;
@@ -204,6 +217,9 @@ struct kdi_type {
     }
     static kdi_type make_enum(std::string fq_name) {
         return {kdi_enum_ref{std::move(fq_name)}};
+    }
+    static kdi_type make_alias(std::string fq_name) {
+        return {kdi_alias_ref{std::move(fq_name)}};
     }
     static kdi_type make_template_param(std::string name) {
         return {kdi_template_param_ref{std::move(name)}};

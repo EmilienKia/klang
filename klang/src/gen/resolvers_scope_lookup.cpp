@@ -517,6 +517,128 @@ scope_lookup::lookup_union(std::shared_ptr<element> elem, const std::string& nam
     return {};
 }
 
+namespace {
+
+/** Navigate from @p from through the leading parts of @p name (all but the last). */
+std::shared_ptr<const element> navigate_scope(const std::shared_ptr<const element>& from,
+                                              const k::name& name) {
+    std::shared_ptr<const element> current = from;
+    for (std::size_t i = 0; i + 1 < name.size() && current; ++i) {
+        std::shared_ptr<const element> next;
+        if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
+            next = nspc->get_child_namespace(name[i]);
+        }
+        if (!next) {
+            if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
+                next = ah->get_aggregate(name[i]);
+            }
+        }
+        current = next;
+    }
+    return current;
+}
+
+} // anonymous namespace
+
+std::shared_ptr<alias_definition>
+scope_lookup::lookup_alias(std::shared_ptr<const element> elem, const k::name& name) {
+    if (!elem || name.empty()) return {};
+
+    if (name.has_root_prefix()) {
+        auto root = root_namespace(*elem);
+        if (!root) return {};
+        auto scope = navigate_scope(std::static_pointer_cast<const element>(root),
+                                    name.without_root_prefix());
+        if (auto ah = std::dynamic_pointer_cast<const alias_holder>(scope)) {
+            return ah->get_alias(name.back());
+        }
+        return {};
+    }
+
+    for (auto current = elem; current; current = current->parent<const element>()) {
+        if (name.size() == 1) {
+            if (auto ah = std::dynamic_pointer_cast<const alias_holder>(current)) {
+                if (auto al = ah->get_alias(name.front())) return al;
+            }
+        } else {
+            if (auto scope = navigate_scope(current, name)) {
+                if (auto ah = std::dynamic_pointer_cast<const alias_holder>(scope)) {
+                    if (auto al = ah->get_alias(name.back())) return al;
+                }
+            }
+        }
+    }
+    return {};
+}
+
+std::shared_ptr<type>
+scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& alias,
+                                     const std::shared_ptr<context>& ctx,
+                                     const std::function<std::shared_ptr<type>(const k::name&, const element&)>& resolve_by_name,
+                                     bool& cycle) {
+    cycle = false;
+    if (!alias) return {};
+
+    if (alias->_resolved) {
+        return alias->get_declared_type();
+    }
+    if (alias->_resolving) {
+        cycle = true;
+        return {};
+    }
+
+    auto target = alias->_target_type;
+    auto scope = alias->parent<element>();
+
+    // A soft alias only carries the aliased name: try to read it as a type name.
+    if (!target && !alias->get_target_name().empty() && scope && resolve_by_name) {
+        alias->_resolving = true;
+        target = resolve_by_name(alias->get_target_name(), *scope);
+        alias->_resolving = false;
+        if (!target || !type::is_resolved(target)) {
+            // Not a type — the alias targets a function or a variable, resolved elsewhere.
+            return {};
+        }
+    }
+
+    if (!target) {
+        return {};
+    }
+
+    alias->_resolving = true;
+
+    // The alias body is resolved in the scope that declares it, never in the
+    // scope that uses it.
+
+    if (!type::is_resolved(target) && ctx) {
+        if (auto resolved = ctx->resolve_type(target)) {
+            if (type::is_resolved(resolved)) target = resolved;
+        }
+    }
+    if (!type::is_resolved(target) && scope && resolve_by_name) {
+        if (auto unres = std::dynamic_pointer_cast<unresolved_type>(target)) {
+            if (auto resolved = resolve_by_name(unres->type_id(), *scope)) {
+                if (type::is_resolved(resolved)) target = resolved;
+            }
+        }
+    }
+
+    alias->_resolving = false;
+
+    if (!type::is_resolved(target)) {
+        return {};
+    }
+
+    alias->_target_type = target;
+    alias->_target_kind = alias_definition::target_kind_t::TYPE;
+
+    if (alias->is_strong() && ctx) {
+        alias->_alias_type = ctx->create_alias_type(alias, target);
+    }
+    alias->_resolved = true;
+    return alias->get_declared_type();
+}
+
 bool scope_lookup::is_base_union_of(const union_type_def& candidate_base,
                                      const union_type_def& candidate_derived) {
     const union_type_def* cur = candidate_derived.get_base_union().get();

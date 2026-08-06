@@ -242,6 +242,12 @@ enum class parser_diag : unsigned int {
     ERR_FOREACH_EXPECT_INIT_EXPR                  = 0x01F3,
     ERR_FOREACH_EXPECT_CLOSE_OR_SEMICOLON         = 0x01F4,
     ERR_FOREACH_EXPECT_BODY                       = 0x01F5,
+    // Alias / typedef declaration parser errors (0x0200–0x020F)
+    ERR_ALIAS_EXPECT_NAME                         = 0x0200,
+    ERR_ALIAS_EXPECT_COLON                        = 0x0201,
+    ERR_ALIAS_EXPECT_QNAME                        = 0x0202,
+    ERR_ALIAS_EXPECT_TYPE                         = 0x0203,
+    ERR_ALIAS_MISSING_SEMICOLON                   = 0x0204,
 };
 
 } // namespace k::diag

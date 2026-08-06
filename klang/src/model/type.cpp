@@ -58,6 +58,48 @@ bool type::contains_unresolved(const std::shared_ptr<type>& t) {
     return contains_unresolved(t->get_subtype());
 }
 
+std::shared_ptr<type> type::canonical(const std::shared_ptr<type>& t) {
+    if (!t) return t;
+
+    // Strip alias layers at this level (an alias may rename another alias).
+    // The chain is bounded by the cycle detection performed at resolution time,
+    // but a depth guard keeps a malformed model from looping here.
+    std::shared_ptr<type> current = t;
+    for (unsigned int depth = 0; depth < 64; ++depth) {
+        auto alias = std::dynamic_pointer_cast<alias_type>(current);
+        if (!alias) break;
+        auto underlying = alias->get_underlying();
+        if (!underlying) return current;
+        current = underlying;
+    }
+
+    // A resolved unresolved_type may itself stand for an alias.
+    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(current)) {
+        if (unres->is_resolved()) {
+            auto resolved = canonical(unres->get_resolved());
+            if (resolved != unres->get_resolved()) return resolved;
+        }
+        return current;
+    }
+
+    // Descend through indirection wrappers: an alias may be nested inside one
+    // (e.g. 'identifier*'), and the wrapper must then be rebuilt over the
+    // canonicalised inner type.
+    auto sub = current->get_subtype();
+    if (!sub) return current;
+
+    auto canon_sub = canonical(sub);
+    if (canon_sub == sub) return current;
+
+    if (auto sized = std::dynamic_pointer_cast<sized_array_type>(current)) {
+        return canon_sub->get_array(sized->get_size());
+    }
+    if (auto wrapper = make_pinned_wrapper(current, canon_sub)) {
+        return wrapper;
+    }
+    return current;
+}
+
 std::shared_ptr<reference_type> type::get_reference()
 {
     if(!reference) {
@@ -897,6 +939,13 @@ llvm::Constant* enum_type::generate_default_value_initializer() const {
         return _underlying_type->generate_default_value_initializer();
     }
     return nullptr;
+}
+
+std::string alias_type::to_string() const {
+    if (auto al = _alias.lock()) {
+        return al->get_short_name();
+    }
+    return _fq_name.empty() ? "<alias>" : _fq_name;
 }
 
 std::string enum_type::to_string() const {

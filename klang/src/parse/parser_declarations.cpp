@@ -375,6 +375,11 @@ ast::decl_ptr parser::parse_declaration()
         return decl;
     }
 
+    // Look for an alias or typedef decl
+    if(auto decl = parse_alias_decl()) {
+        return decl;
+    }
+
     // Look for a friend decl
     if(auto decl = parse_friend_decl()) {
         return decl;
@@ -525,10 +530,69 @@ std::shared_ptr<ast::using_decl> parser::parse_using_decl()
             std::move(qname));
 }
 
-std::shared_ptr<ast::friend_decl> parser::parse_friend_decl()
+std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
 {
     lex::lex_holder holder(_lexer);
 
+    // Expect the 'alias' or 'typedef' keyword
+    auto lalias = _lexer.get();
+    if (lalias != lex::keyword::ALIAS && lalias != lex::keyword::TYPEDEF) {
+        holder.rollback();
+        return {};
+    }
+    bool is_strong = (lalias == lex::keyword::TYPEDEF);
+
+    // Expect the introduced name
+    auto lname = _lexer.get();
+    if (!lex::is<lex::identifier>(lname)) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ALIAS_EXPECT_NAME), _lexer.pick_current(),
+                    "{} declaration expects a name", {is_strong ? "Typedef" : "Alias"});
+    }
+
+    // Expect the ':' separator
+    if (auto lcolon = _lexer.get(); lcolon != lex::operator_::COLON) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ALIAS_EXPECT_COLON), _lexer.pick_current(),
+                    "Colon is missing after the {} name", {is_strong ? "typedef" : "alias"});
+    }
+
+    // Expect the aliased entity. A typedef always names a type. A soft alias may
+    // name any symbol, but a symbol name is syntactically a type specification
+    // too, so the same parser is used: when the specification turns out to be a
+    // bare qualified name, it is also kept as a symbol name, since only symbol
+    // resolution can tell a type from a function or a variable.
+    std::shared_ptr<ast::qualified_identifier> qname;
+    std::shared_ptr<ast::type_specifier> type = parse_type_spec();
+    if (!type) {
+        throw_error(static_cast<unsigned int>(is_strong ? k::diag::parser_diag::ERR_ALIAS_EXPECT_TYPE
+                                                        : k::diag::parser_diag::ERR_ALIAS_EXPECT_QNAME),
+                    _lexer.pick_current(),
+                    "{} declaration expects {} after ':'",
+                    {is_strong ? "Typedef" : "Alias",
+                     is_strong ? "a type specification" : "an aliased symbol or type"});
+    }
+    if (!is_strong) {
+        if (auto ident = std::dynamic_pointer_cast<ast::identified_type_specifier>(type)) {
+            qname = std::make_shared<ast::qualified_identifier>(ident->name);
+        }
+    }
+
+    // Expect a semicolon
+    if (auto lsemicolon = _lexer.get(); lsemicolon != lex::punctuator::SEMICOLON) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ALIAS_MISSING_SEMICOLON), _lexer.pick_current(),
+                    "Semicolon is missing at end of {} declaration", {is_strong ? "typedef" : "alias"});
+    }
+
+    return std::make_shared<ast::alias_decl>(
+            lex::as<lex::keyword>(lalias),
+            is_strong,
+            lex::as<lex::identifier>(lname),
+            std::move(qname),
+            std::move(type));
+}
+
+std::shared_ptr<ast::friend_decl> parser::parse_friend_decl()
+{
+    lex::lex_holder holder(_lexer);
     // Expect the 'friend' keyword
     auto lfriend = _lexer.get();
     if (lfriend != lex::keyword::FRIEND) {

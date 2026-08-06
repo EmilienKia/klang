@@ -743,6 +743,10 @@ std::shared_ptr<ast::statement> parser::parse_statement()
         return using_stmt;
     }
 
+    if(auto alias_stmt = parse_alias_decl()) {
+        return alias_stmt;
+    }
+
     if(auto var = parse_variable_decl()) {
         return var;
     }

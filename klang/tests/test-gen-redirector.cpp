@@ -310,9 +310,9 @@ TEST_CASE("Redirect — redirect with return type void", "[redirect][codegen]") 
         module test;
         g : int = 0;
         impl() { g = 77; }
-        alias() -> impl;
+        aliasFn() -> impl;
         main() : int {
-            alias();
+            aliasFn();
             return g;
         }
     )SRC");
@@ -326,10 +326,10 @@ TEST_CASE("Redirect — redirect with return type void", "[redirect][codegen]") 
 TEST_CASE("Redirect — forward reference (target defined after redirector)", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
         module test;
-        alias() : int -> impl;
+        aliasFn() : int -> impl;
         impl() : int { return 33; }
         main() : int {
-            return alias();
+            return aliasFn();
         }
     )SRC");
     CHECK(result.exit_code == 33);

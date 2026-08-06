@@ -149,6 +149,7 @@ add_executable(klang-tests-frontend
         tests/test-unicode.cpp
         tests/test-parser.cpp
         tests/test-parser-templates.cpp
+        tests/test-parse-alias.cpp
         tests/test-file-resolver.cpp
         tests/test-process.cpp
 )
@@ -226,6 +227,8 @@ klang_gen_test(klang-tests-gen-types 250
         tests/test-gen-annotation-meta.cpp
         tests/test-gen-designated-init.cpp
         tests/test-gen-redirector.cpp
+        tests/test-gen-alias-soft.cpp
+        tests/test-gen-typedef.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -251,7 +254,7 @@ klang_gen_test(klang-tests-gen-classes 120
 # ---------------------------------------------------------------------------
 # Group 7 — Memory model: ownership, indirection, arrays, drain
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-memory 90
+klang_gen_test(klang-tests-gen-memory 200
         tests/test-gen-owner.cpp
         tests/test-gen-drain.cpp
         tests/test-gen-indirection.cpp
@@ -269,7 +272,7 @@ klang_gen_test(klang-tests-gen-memory 90
 # ---------------------------------------------------------------------------
 # Group 8 — OOP semantics: lifecycle, RVO, temporaries, using, friend
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-oop 90
+klang_gen_test(klang-tests-gen-oop 240
         tests/test-gen-lifecycle.cpp
         tests/test-gen-rvo.cpp
         tests/test-gen-named-return.cpp

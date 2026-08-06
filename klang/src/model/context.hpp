@@ -77,6 +77,8 @@ protected:
     std::shared_ptr<null_type> _null_type;
     std::map<std::string, std::shared_ptr<struct_type>> _struct_types;
     std::map<std::string, std::shared_ptr<enum_type>> _enum_types;
+    /** Nominal types of strong aliases, interned per alias_definition. */
+    std::map<const alias_definition*, std::shared_ptr<alias_type>> _alias_types;
     std::vector<std::shared_ptr<unresolved_type>> _unresolved;
 
     // Entities:
@@ -190,6 +192,17 @@ public:
     void rebuild_instantiation_layouts();
 
     std::shared_ptr<type> resolve_type(const std::shared_ptr<type>& type);
+
+    /**
+     * Build (once) the nominal alias_type of a strong alias (typedef).
+     *
+     * The returned type is representation-identical to @p underlying — it
+     * forwards get_llvm_type() to it — but is a distinct type at the K level.
+     * Aliases are interned per declaration so that nominal identity can be
+     * tested by pointer or by alias_definition identity.
+     */
+    std::shared_ptr<alias_type> create_alias_type(const std::shared_ptr<alias_definition>& alias,
+                                                  const std::shared_ptr<type>& underlying);
 
     /**
      * Push a set of template parameter names onto the scope stack.

@@ -194,6 +194,7 @@ When the compiler encounters a name, it looks it up using the following rules (i
 4. **Members** of `this` (if inside a non-static member function) — implicit `this.member` lookup.
 5. **Enclosing struct members** (for inner/nested struct methods, outer struct members are accessible if there is an implicit `__parent__` reference).
 6. **Using directives** at the current scope level — names injected by `using` directives (see [Using Directives](using.md)).
+6b. **Alias declarations** visible at the current scope level — names introduced by `alias` / `typedef` declarations (see [Aliases and Typedefs](aliases.md)). Unlike a `using` directive, an alias declared at namespace or aggregate level is exported and is therefore also found through an import.
 7. **Declarations in the current namespace** (the module namespace).
 8. **Declarations in enclosing namespaces**, outward to the root namespace.
 9. **Imported modules** — a *qualified* name whose leading component matches an imported (or transitively imported) module is resolved against that module's exported namespace tree.
@@ -276,4 +277,4 @@ Outer::Inner         // type name of nested struct
 
 ---
 
-*See also:* [Lexical Conventions](lexical.md) · [Keywords](keywords.md) · [Types](types.md) · [Module System](modules.md) · [Using Directives](using.md) · [Libraries — Export and Import](libraries.md) · [Structures](../structs/structs.md#10-member-visibility)
+*See also:* [Lexical Conventions](lexical.md) · [Keywords](keywords.md) · [Types](types.md) · [Module System](modules.md) · [Using Directives](using.md) · [Aliases and Typedefs](aliases.md) · [Libraries — Export and Import](libraries.md) · [Structures](../structs/structs.md#10-member-visibility)

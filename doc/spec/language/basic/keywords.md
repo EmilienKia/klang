@@ -29,6 +29,8 @@ They may **not** be used as ordinary identifiers.
 | `module`    | Module (compilation unit) name declaration |
 | `import`    | Import declaration |
 | `using`     | Using directive: namespace injection, element injection, or alias |
+| `alias`     | Exported soft alias declaration: a transparent second name for a type, function or variable |
+| `typedef`   | Exported strong alias declaration: a nominally distinct type over an identical representation |
 | `static`    | Static storage / static member modifier |
 | `const`     | Constant qualifier: marks a variable or parameter as immutable after construction |
 | `public`    | Public visibility modifier |
@@ -54,6 +56,7 @@ Keyword: (one of)
     bool     byte     char     short    int      long
     float    double   unsigned
     struct   class    interface   annotation   namespace   module   import   using
+    alias    typedef
     static   const    abstract   final   override
     public   protected   private
     this     return

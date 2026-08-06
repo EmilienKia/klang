@@ -289,6 +289,19 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
         }
         return kdi::kdi_type::make_aggregate(std::move(fq));
     }
+    if (auto at = std::dynamic_pointer_cast<alias_type>(t)) {
+        // A strong alias (typedef) is nominally distinct from the type it
+        // renames, so the reference is exported as such. A soft alias never
+        // reaches this point: it resolves directly to the renamed type.
+        std::string fq = at->get_fq_name();
+        if (auto ad = at->get_alias()) {
+            if (!ad->get_fq_name().empty()) fq = ad->get_fq_name();
+        }
+        if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') fq = fq.substr(2);
+        if (!fq.empty()) return kdi::kdi_type::make_alias(std::move(fq));
+        // Fallback: export the renamed type when the alias cannot be named.
+        return to_kdi_type(at->get_underlying());
+    }
     if (auto et = std::dynamic_pointer_cast<enum_type>(t)) {
         auto en = et->get_enumeration();
         if (en) {
@@ -825,6 +838,8 @@ void kdi_builder::visit_aggregate_body(aggregate& agg, kdi::kdi_aggregate& kagg)
     // all deposit into kagg.
     _agg_stack.push_back(&kagg);
 
+    export_aliases(agg, kagg.aliases, agg.get_fq_name());
+
     for (auto& child : agg.get_children())
         child->accept(*this);
 
@@ -853,6 +868,35 @@ void kdi_builder::visit_unit(unit& u) {
         root->accept(*this);
 }
 
+void kdi_builder::export_aliases(const alias_holder& holder, std::vector<kdi::kdi_alias>& out,
+                                 const std::string& scope_fq_name) {
+    for (const auto& al : holder.get_aliases()) {
+        if (!al || !al->is_exported()) continue;
+
+        kdi::kdi_alias ka;
+        ka.name       = al->get_short_name();
+        // An alias_definition never gets an fq_name of its own (update_names()
+        // only fills it for root-prefixed names), so it is derived from the
+        // declaring scope.
+        std::string scope = scope_fq_name;
+        if (scope.size() >= 2 && scope[0] == ':' && scope[1] == ':') scope = scope.substr(2);
+        ka.fq_name = scope.empty() ? ka.name : (scope + "::" + ka.name);
+        ka.visibility = to_kdi_vis(al->get_visibility());
+        ka.is_strong  = al->is_strong();
+
+        // The aliased type is exported in its declared (still alias-bearing)
+        // form: an alias is exported exactly as written so an importing module
+        // sees the same declaration.
+        if (auto tgt = al->get_target_type()) {
+            ka.target_type = to_kdi_type(tgt);
+        }
+        if (!al->get_target_name().empty()) {
+            ka.target_fq_name = al->get_target_name().to_string();
+        }
+        out.push_back(std::move(ka));
+    }
+}
+
 void kdi_builder::visit_namespace(ns& n) {
     kdi::kdi_namespace kns;
     kns.name    = n.get_short_name();
@@ -861,6 +905,8 @@ void kdi_builder::visit_namespace(ns& n) {
 
     // Push the new namespace as the current output target
     _ns_stack.push_back(&kns);
+
+    export_aliases(n, kns.aliases, n.get_fq_name());
 
     for (auto& child : n.get_children())
         child->accept(*this);

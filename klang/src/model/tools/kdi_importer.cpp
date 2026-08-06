@@ -632,6 +632,13 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
         materialise_enum(en, ctx);
     }
 
+    // Pass 2a — exported aliases / typedefs in this namespace.
+    // Materialised after aggregates and enums so that a target aggregate type
+    // is already available.
+    for (const auto& al : ns.aliases) {
+        materialise_alias(al, ctx);
+    }
+
     // Pass 2b — unions in this namespace
     for (const auto& un : ns.unions) {
         materialise_union(un, ctx);
@@ -723,6 +730,74 @@ void kdi_importer::materialise_enum(const kdi::kdi_enum& en,
     }
 
     _unit.get_or_create_imported_enum(k::name{false, std::move(parts)}, ctx);
+}
+
+void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
+                                     std::shared_ptr<context> ctx)
+{
+    const std::string& fq = al.fq_name.empty() ? al.name : al.fq_name;
+    const std::string normalised = (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':')
+                                   ? fq.substr(2) : fq;
+
+    std::vector<std::string> parts;
+    std::size_t pos = 0;
+    while (true) {
+        auto sep = normalised.find("::", pos);
+        if (sep == std::string::npos) { parts.push_back(normalised.substr(pos)); break; }
+        parts.push_back(normalised.substr(pos, sep - pos));
+        pos = sep + 2;
+    }
+    if (parts.empty()) return;
+
+    // Navigate to the parent namespace (all parts except the last).
+    auto target_ns = _unit.get_root_namespace();
+    for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
+        target_ns = target_ns->get_child_namespace(parts[i]);
+    }
+    if (!target_ns) return;
+
+    const std::string& alias_name = parts.back();
+    if (target_ns->get_alias(alias_name)) return; // already materialised
+
+    auto kind = al.is_strong ? alias_definition::kind_t::STRONG
+                             : alias_definition::kind_t::SOFT;
+    auto adef = alias_definition::make_shared(target_ns, alias_name, kind);
+    if (!adef) return;
+    adef->set_visibility(al.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+
+    // Resolve the aliased type. Aliases whose target is a function or a
+    // variable carry no type; they are resolved lazily through target_fq_name.
+    if (al.target_type) {
+        if (auto t = kdi_type_to_model_type(*al.target_type, _unit, ctx)) {
+            adef->set_target_type(t);
+        }
+    }
+    if (al.target_fq_name) {
+        std::string tfq = *al.target_fq_name;
+        bool rooted = tfq.size() >= 2 && tfq[0] == ':' && tfq[1] == ':';
+        if (rooted) tfq = tfq.substr(2);
+        std::vector<std::string> tparts;
+        std::size_t tpos = 0;
+        while (true) {
+            auto sep = tfq.find("::", tpos);
+            if (sep == std::string::npos) { tparts.push_back(tfq.substr(tpos)); break; }
+            tparts.push_back(tfq.substr(tpos, sep - tpos));
+            tpos = sep + 2;
+        }
+        adef->set_target_name(k::name{rooted, std::move(tparts)});
+    }
+
+    // An imported alias is finalised eagerly: its target type comes fully
+    // resolved from the KDI, and an exported signature may reference it.
+    if (adef->_target_type && type::is_resolved(adef->_target_type)) {
+        adef->_target_kind = alias_definition::target_kind_t::TYPE;
+        if (adef->is_strong() && ctx) {
+            adef->_alias_type = ctx->create_alias_type(adef, adef->_target_type);
+        }
+        adef->_resolved = true;
+    }
+
+    target_ns->add_alias(adef);
 }
 
 void kdi_importer::materialise_union(const kdi::kdi_union& un,

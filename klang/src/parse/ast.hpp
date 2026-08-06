@@ -321,6 +321,7 @@ namespace k::parse {
         struct visibility_decl;
         struct namespace_decl;
         struct using_decl;
+        struct alias_decl;
         struct friend_decl;
         struct variable_decl;
         struct function_decl;
@@ -987,6 +988,52 @@ namespace k::parse {
         };
 
         /**
+         * Exported aliasing declaration: 'alias' (soft) or 'typedef' (strong).
+         *
+         * Syntax:
+         *   'alias'   IDENTIFIER ':' QUALIFIED_IDENTIFIER ';'
+         *   'typedef' IDENTIFIER ':' TYPE_SPECIFIER ';'
+         *
+         * Unlike using_decl, an alias/typedef declared at unit, namespace or
+         * aggregate level is exported through the KDI and is therefore visible
+         * to importing modules.  Declared inside a statement block, it is
+         * implicitly private and restricted to that block.
+         *
+         * 'alias' is a soft alias: a pure convenience renaming of any symbol
+         * (type, function, global/static variable).  Namespaces are excluded;
+         * 'using N = namespace X;' remains the only way to alias a namespace.
+         *
+         * 'typedef' is a strong alias: it names a type that is nominally
+         * distinct from its underlying type, even though both share the exact
+         * same representation.
+         */
+        struct alias_decl : public declaration, public statement {
+            /// The 'alias' or 'typedef' keyword token.
+            lex::keyword alias_kw;
+
+            /// True for 'typedef' (strong alias), false for 'alias' (soft alias).
+            bool is_strong = false;
+
+            /// The name introduced by this declaration.
+            lex::identifier name;
+
+            /// Aliased symbol, for the 'alias' form (null for 'typedef').
+            std::shared_ptr<qualified_identifier> qname;
+
+            /// Aliased type specification, for the 'typedef' form (null for 'alias').
+            std::shared_ptr<type_specifier> type;
+
+            alias_decl(const lex::keyword& alias_kw, bool is_strong,
+                       const lex::identifier& name,
+                       std::shared_ptr<qualified_identifier> qname,
+                       std::shared_ptr<type_specifier> type)
+                : alias_kw(alias_kw), is_strong(is_strong), name(name),
+                  qname(std::move(qname)), type(std::move(type)) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
+        /**
          * Friend declaration — grants another entity access to protected members.
          *
          * Syntax: 'friend' ['struct'|'interface'|'class']? qualified_identifier ';'
@@ -1592,6 +1639,7 @@ namespace k::parse {
         virtual void visit_visibility_decl(ast::visibility_decl &) = 0;
         virtual void visit_namespace_decl(ast::namespace_decl &) = 0;
         virtual void visit_using_decl(ast::using_decl &) = 0;
+        virtual void visit_alias_decl(ast::alias_decl &) = 0;
         virtual void visit_friend_decl(ast::friend_decl &) = 0;
         virtual void visit_aggregate_decl(ast::aggregate_decl &) = 0;
         virtual void visit_enum_decl(ast::enum_decl &) = 0;
@@ -1664,6 +1712,7 @@ namespace k::parse {
         void visit_visibility_decl(ast::visibility_decl &) override;
         void visit_namespace_decl(ast::namespace_decl &) override;
         void visit_using_decl(ast::using_decl &) override;
+        void visit_alias_decl(ast::alias_decl &) override;
         void visit_friend_decl(ast::friend_decl &) override;
         void visit_aggregate_decl(ast::aggregate_decl &) override;
         void visit_enum_decl(ast::enum_decl &) override;

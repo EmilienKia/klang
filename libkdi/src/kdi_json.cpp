@@ -78,6 +78,8 @@ static kdi_aggregate from_json_aggregate(const json&);
 
 static json      to_json(const kdi_enum&);
 static kdi_enum  from_json_enum(const json&);
+static json      to_json(const kdi_alias&);
+static kdi_alias from_json_alias(const json&);
 
 static json          to_json(const kdi_namespace&);
 static kdi_namespace from_json_namespace(const json&);
@@ -226,6 +228,8 @@ static json to_json(const kdi_type& t) {
             return {{"kind","aggregate"},{"fq_name",v.fq_name}};
         else if constexpr (std::is_same_v<T, kdi_enum_ref>)
             return {{"kind","enum"},{"fq_name",v.fq_name}};
+        else if constexpr (std::is_same_v<T, kdi_alias_ref>)
+            return {{"kind","alias"},{"fq_name",v.fq_name}};
         else if constexpr (std::is_same_v<T, kdi_template_param_ref>)
             return {{"kind","template_param"},{"name",v.name}};
         else if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
@@ -295,6 +299,8 @@ static kdi_type from_json_type(const json& j) {
         return kdi_type::make_aggregate(j.at("fq_name").get<std::string>());
     if (kind == "enum")
         return kdi_type::make_enum(j.at("fq_name").get<std::string>());
+    if (kind == "alias")
+        return kdi_type::make_alias(j.at("fq_name").get<std::string>());
     if (kind == "template_param")
         return kdi_type::make_template_param(j.at("name").get<std::string>());
     if (kind == "generic_ref") {
@@ -822,6 +828,11 @@ static json to_json(const kdi_aggregate& a) {
     if (a.destructor) obj["destructor"] = to_json(*a.destructor);
     if (a.vtable)     obj["vtable"]     = to_json(*a.vtable);
     if (a.template_origin) obj["template_origin"] = to_json(*a.template_origin);
+    if (!a.aliases.empty()) {
+        json als = json::array();
+        for (auto& al : a.aliases) als.push_back(to_json(al));
+        obj["aliases"] = als;
+    }
     if (a.doc) obj["doc"] = to_json(*a.doc);
     return obj;
 }
@@ -883,12 +894,41 @@ static kdi_aggregate from_json_aggregate(const json& j) {
     a.llvm_def = j.at("llvm_def");
     a.default_constructor_mangled_name = j.value("default_constructor_mangled_name", "");
     if (j.contains("template_origin")) a.template_origin = from_json_template_origin(j.at("template_origin"));
+    for (auto& al : j.value("aliases", json::array()))
+        a.aliases.push_back(from_json_alias(al));
     if (j.contains("doc")) a.doc = from_json_doc_block(j.at("doc"));
     return a;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // kdi_enum
+// ─────────────────────────────────────────────────────────────────────────────
+
+static json to_json(const kdi_alias& al) {
+    json obj = {
+        {"name",       al.name},
+        {"fq_name",    al.fq_name},
+        {"visibility", vis_to_str(al.visibility)},
+        {"is_strong",  al.is_strong},
+    };
+    if (al.target_type.has_value())    obj["target_type"]    = to_json(*al.target_type);
+    if (al.target_fq_name.has_value()) obj["target_fq_name"] = *al.target_fq_name;
+    if (al.doc) obj["doc"] = to_json(*al.doc);
+    return obj;
+}
+
+static kdi_alias from_json_alias(const json& j) {
+    kdi_alias al;
+    al.name       = j.at("name");
+    al.fq_name    = j.at("fq_name");
+    al.visibility = vis_from_str(j.value("visibility", "public"));
+    al.is_strong  = j.value("is_strong", false);
+    if (j.contains("target_type"))    al.target_type    = from_json_type(j.at("target_type"));
+    if (j.contains("target_fq_name")) al.target_fq_name = j.at("target_fq_name").get<std::string>();
+    if (j.contains("doc")) al.doc = from_json_doc_block(j.at("doc"));
+    return al;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 static json to_json(const kdi_enum& e) {
@@ -967,10 +1007,13 @@ static json to_json(const kdi_namespace& ns) {
     for (auto& v : ns.variables) vars.push_back(to_json(v));
     json tdefs = json::array();
     for (auto& td : ns.template_defs) tdefs.push_back(to_json(td));
+    json als = json::array();
+    for (auto& al : ns.aliases) als.push_back(to_json(al));
     json obj = {{"name",ns.name},{"fq_name",ns.fq_name},
             {"namespaces",sub},{"aggregates",aggs},{"enums",enums},
             {"functions",fns},{"variables",vars}};
     if (!tdefs.empty()) obj["template_defs"] = tdefs;
+    if (!als.empty()) obj["aliases"] = als;
     if (ns.doc) obj["doc"] = to_json(*ns.doc);
     return obj;
 }
@@ -991,6 +1034,8 @@ static kdi_namespace from_json_namespace(const json& j) {
         ns.variables.push_back(from_json_variable(v));
     for (auto& td : j.value("template_defs", json::array()))
         ns.template_defs.push_back(from_json_template_def(td));
+    for (auto& al : j.value("aliases", json::array()))
+        ns.aliases.push_back(from_json_alias(al));
     return ns;
 }
 

@@ -1184,6 +1184,23 @@ void template_instantiator::clone_block_contents(
     const type_substitution_map& subst,
     const value_substitution_map& val_subst)
 {
+    // Block-local alias/typedef declarations live in the block's alias_holder,
+    // not in its statement list: clone them before the statements so a lookup
+    // inside the instantiated body still finds them.
+    for (const auto& src_alias : src.get_aliases()) {
+        if (!src_alias) continue;
+        auto cloned_alias = alias_definition::make_shared(dst, src_alias->get_short_name(),
+                                                          src_alias->get_kind());
+        cloned_alias->set_block_local(true);
+        cloned_alias->set_visibility(PRIVATE);
+        cloned_alias->set_target_name(src_alias->get_target_name());
+        cloned_alias->set_decl_lexeme(src_alias->get_decl_lexeme());
+        if (auto tgt = src_alias->get_target_type()) {
+            cloned_alias->set_target_type(substitute_type(tgt, subst));
+        }
+        dst->add_alias(cloned_alias);
+    }
+
     for (auto& stmt : src.get_statements()) {
         if (!stmt) continue;
         auto cloned = clone_statement(*stmt, dst, subst, val_subst);

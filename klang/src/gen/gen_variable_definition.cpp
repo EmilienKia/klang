@@ -470,7 +470,7 @@ void type_reference_resolver::validate_primitive_variable(var_init_context& ctx)
  *      (get_best_matching_constructor), check visibility, and set it on the variable.
  */
 void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
-    auto st_type = std::dynamic_pointer_cast<struct_type>(ctx.var.get_type());
+    auto st_type = std::dynamic_pointer_cast<struct_type>(ctx.var_type);
 
     // Step 1: Check for designated struct init (delegated to visit_designated_struct_init_expression)
     // Check for designated struct init first
@@ -543,7 +543,9 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
     bool handled_as_direct_copy = false;
     if (ctor_args.size() == 1) {
         auto arg_type = ctor_args[0]->get_type();
-        auto arg_type_nc = type::remove_const(arg_type);
+        // Aliases are nominal only: a copy from an alias of the same struct is
+        // still a direct struct copy.
+        auto arg_type_nc = type::canonical(type::remove_const(arg_type));
         bool is_direct_copy = false;
         bool is_lvalue_copy = false;
         // Check bare struct type (rvalue from function return)
@@ -552,7 +554,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
         }
         // Check ref<struct> (lvalue variable)
         if (!is_direct_copy && type::is_reference(arg_type_nc)) {
-            auto ref_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype());
+            auto ref_sub = type::canonical(type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype()));
             if (ref_sub == st_type) {
                 is_direct_copy = true;
                 is_lvalue_copy = true;
@@ -630,7 +632,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
  *     4. Type compatibility check: exact match or inheritance cast (upcast/downcast).
  */
 void type_reference_resolver::validate_reference_variable(var_init_context& ctx) {
-    auto ref_var_type = std::dynamic_pointer_cast<reference_type>(ctx.var.get_type());
+    auto ref_var_type = std::dynamic_pointer_cast<reference_type>(ctx.var_type);
     auto ref_sub = ref_var_type->get_subtype();
 
     // ------------------------------------------------------------------
@@ -877,7 +879,7 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
     if (auto own_t = std::dynamic_pointer_cast<owner_type>(effective_arg)) {
         effective_arg = own_t->get_owned_type()->get_pointer();
     }
-    auto tgt_ptr = std::dynamic_pointer_cast<pointer_type>(ctx.var.get_type());
+    auto tgt_ptr = std::dynamic_pointer_cast<pointer_type>(ctx.var_type);
     std::shared_ptr<type> src_sub;
     if (auto src_ptr = std::dynamic_pointer_cast<pointer_type>(effective_arg)) {
         src_sub = src_ptr->get_subtype();
@@ -897,14 +899,14 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
             // Step 5: Check const-compatibility: mutable pointer from const source → error
             "Cannot initialise a pointer-to-mutable ('{}') from a pointer-to-const ('{}'): "
             "this would allow modification of a const object through the mutable pointer",
-            {ctx.var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
+            {ctx.var_type->to_string(), arg_type ? arg_type->to_string() : "?"});
     }
     auto src_sub_nc = type::remove_const(src_sub);
     auto tgt_sub_nc = type::remove_const(tgt_sub);
     if (!type::are_equal(src_sub_nc, tgt_sub_nc)) {
         // Step 6: Check type compatibility: exact match or inheritance cast (upcast/downcast)
         bool ok = check_and_insert_inheritance_cast(
-            src_sub_nc, tgt_sub_nc, arg, ctx.var.get_type(),
+            src_sub_nc, tgt_sub_nc, arg, ctx.var_type,
             [&](std::shared_ptr<expression> e) { ctx.assign_single_init_arg(e); },
             /*null_is_fatal=*/false);
         if (!ok) {
@@ -940,7 +942,7 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
  */
 void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
     // Link variable (~): validate const-compatibility of initializer (for rebind semantics).
-    auto link_var_type = std::dynamic_pointer_cast<link_type>(ctx.var.get_type());
+    auto link_var_type = std::dynamic_pointer_cast<link_type>(ctx.var_type);
 
     // Step 1: Require exactly one initialiser (links cannot be left unbound)
     if (!ctx.has_single_init_arg()) {
@@ -980,7 +982,7 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
             throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_ARG_TYPE_MISMATCH), ctx.var_lexeme,
                 "Cannot initialise link-to-mutable ('{}') from a const source (type '{}'): "
                 "this would allow modification of a const object",
-                {ctx.var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
+                {ctx.var_type->to_string(), arg_type ? arg_type->to_string() : "?"});
         }
     }
     // If initialising from a nullable indirection (view, pointer or owner), emit a warning:
@@ -1072,7 +1074,7 @@ void type_reference_resolver::validate_view_variable(var_init_context& ctx) {
         return;
     }
     if (!is_null_init && (type::is_any_indirection(arg_type) || type::is_owner(arg_type))) {
-        auto view_var_type = std::dynamic_pointer_cast<view_type>(ctx.var.get_type());
+        auto view_var_type = std::dynamic_pointer_cast<view_type>(ctx.var_type);
         auto view_sub_nc = type::remove_const(view_var_type->get_viewed_type());
 
         // Step 2: Accept null literal as a valid initialiser

@@ -59,6 +59,10 @@ void default_model_visitor::visit_enumeration(enumeration &en) {
     visit_element(en);
 }
 
+void default_model_visitor::visit_alias_definition(alias_definition &alias) {
+    visit_element(alias);
+}
+
 void default_model_visitor::visit_union(union_type_def &un) {
     visit_element(un);
 }

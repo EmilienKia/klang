@@ -23,6 +23,7 @@ Examples are included where they clarify the normative text.
 | [Types](basic/types.md) | Primitive types; the five indirection types (`&` `+` `?` `*` `!`); owner (`T!`) — move-only exclusive-ownership type; function reference types (`*(P)`, `T::*(P)`, …); array and struct types; static upcast; dynamic downcast (RTTI); owner upcast/downcast |
 | [Module System](basic/modules.md) | Module declarations, imports, transitive dependencies, using imported symbols |
 | [Using Directives](basic/using.md) | `using` declarations: namespace injection, specific element injection, aliasing, namespace aliases |
+| [Aliases and Typedefs](basic/aliases.md) | Exported aliasing: `alias` (soft) and `typedef` (strong); conversions, mangling, export |
 | [Libraries — Export and Import](basic/libraries.md) | Producing libraries, what is exported, importing and using symbols, cross-library inheritance, transitive deps |
 | [Main Function](basic/main.md) | Program entry point |
 

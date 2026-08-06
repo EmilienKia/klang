@@ -13,7 +13,9 @@
   - [ ] Template template parameters (`template<template<typename> class C>`)
   - [ ] Variadic template parameters (parameter packs, fold expressions)
   - [ ] `extern template` (explicit instantiation declarations)
-  - [ ] Template aliases (`template<typename T> using Vec = Array<T, 16>`)
+  - [ ] Template aliases (`template<typename T> alias Vec : Array<T, 16>;`) — the
+        non-template forms `alias` and `typedef` are implemented (see
+        `doc/spec/language/basic/aliases.md`); a parameterised alias is still open.
   - [ ] Concepts / type traits / static_if on template parameters
   - [ ] Standalone template enum declarations
   - [ ] Template constructors (independent of aggregate template)

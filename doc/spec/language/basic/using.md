@@ -7,6 +7,11 @@ declared in the enclosing scope.  It affects **name lookup only** — it does no
 create or materialise new symbols.  Exports, imports and mangled names always use
 the real (de-aliased) names.
 
+A `using` directive is always **scope-local**: it is never exported, so an
+importing module does not see it.  To publish a renaming through the module
+interface, use an [alias declaration](aliases.md) (`alias` or `typedef`)
+instead.
+
 ---
 
 ## Contents

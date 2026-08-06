@@ -631,6 +631,13 @@ std::string mangler::mangle_static_destructor(const static_destructor& sdtor) co
 
 
 std::string mangler::mangle_type(const type& ty) const {
+    // Aliases (soft and strong) are nominal at the K level only: they must never
+    // reach a mangled name. Strip the alias layer and mangle the renamed type.
+    if (auto alias_ty = dynamic_cast<const alias_type*>(&ty)) {
+        if (auto underlying = alias_ty->get_underlying()) {
+            return mangle_type(*underlying);
+        }
+    }
     if (auto const_ty = dynamic_cast<const const_type*>(&ty)) {
         return SYMBOL_MODIFIER_CONST + mangle_type(*const_ty->get_inner_type());
     } else if (auto prim = dynamic_cast<const primitive_type*>(&ty)) {

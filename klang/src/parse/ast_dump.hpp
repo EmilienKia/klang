@@ -215,6 +215,17 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             _stm << std::endl;
         }
 
+        void visit_alias_decl(ast::alias_decl& decl) override {
+            prefix() << (decl.is_strong ? "typedef " : "alias ")
+                     << std::string{decl.name.content} << " : ";
+            if (decl.qname) {
+                visit_qualified_identifier(*decl.qname);
+            } else if (decl.type) {
+                decl.type->visit(*this);
+            }
+            _stm << std::endl;
+        }
+
         void visit_friend_decl(ast::friend_decl& decl) override {
             prefix() << "friend ";
             if (decl.element_filter) {

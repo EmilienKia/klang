@@ -462,6 +462,9 @@ cbor_item_t* encode_type(const kdi_type& t) {
         } else if constexpr (std::is_same_v<T, kdi_enum_ref>) {
             map_push(m, "kind",    cbor_str("enum"));
             map_push(m, "fq_name", cbor_str(v.fq_name));
+        } else if constexpr (std::is_same_v<T, kdi_alias_ref>) {
+            map_push(m, "kind",    cbor_str("alias"));
+            map_push(m, "fq_name", cbor_str(v.fq_name));
         } else if constexpr (std::is_same_v<T, kdi_template_param_ref>) {
             map_push(m, "kind", cbor_str("template_param"));
             map_push(m, "name", cbor_str(v.name));
@@ -536,6 +539,9 @@ kdi_type decode_type(cbor_item_t* item, const std::string& path) {
     }
     if (kind == "enum") {
         return {kdi_enum_ref{req_string(item, "fq_name", path)}};
+    }
+    if (kind == "alias") {
+        return {kdi_alias_ref{req_string(item, "fq_name", path)}};
     }
     if (kind == "template_param") {
         return {kdi_template_param_ref{req_string(item, "name", path)}};
@@ -1020,6 +1026,8 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg);
 kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path);
 cbor_item_t* encode_union(const kdi_union& u);
 kdi_union decode_union(cbor_item_t* item, const std::string& path);
+cbor_item_t* encode_alias(const kdi_alias& a);
+kdi_alias decode_alias(cbor_item_t* item, const std::string& path);
 
 cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     cbor_item_t* m = cbor_new_indefinite_map();
@@ -1077,6 +1085,12 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     for (auto& n : agg.nested) cbor_array_push(nested, cbor_move(encode_aggregate(n)));
     map_push(m, "nested", nested);
 
+    // aliases
+    if (!agg.aliases.empty()) {
+        cbor_item_t* als = cbor_new_indefinite_array();
+        for (auto& al : agg.aliases) cbor_array_push(als, cbor_move(encode_alias(al)));
+        map_push(m, "aliases", als);
+    }
     // nested_unions
     if (!agg.nested_unions.empty()) {
         cbor_item_t* nested_uns = cbor_new_indefinite_array();
@@ -1166,6 +1180,12 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
             agg.nested.push_back(decode_aggregate(cbor_array_get(na, i),
                                                   path + ".nested[" + std::to_string(i) + "]"));
     }
+    if (auto* alz = map_get(item, "aliases"); alz && cbor_isa_array(alz)) {
+        size_t n = cbor_array_size(alz);
+        for (size_t i = 0; i < n; ++i)
+            agg.aliases.push_back(decode_alias(cbor_array_get(alz, i),
+                                               path + ".aliases[" + std::to_string(i) + "]"));
+    }
     auto* nua = map_get(item, "nested_unions");
     if (nua && cbor_isa_array(nua)) {
         size_t n = cbor_array_size(nua);
@@ -1196,6 +1216,34 @@ int64_t read_int64(cbor_item_t* item, const std::string& path) {
     if (cbor_isa_uint(item))   return static_cast<int64_t>(cbor_get_uint64(item));
     if (cbor_isa_negint(item)) return -static_cast<int64_t>(cbor_get_uint64(item)) - 1;
     throw kdi_parse_error("expected int at " + path);
+}
+
+cbor_item_t* encode_alias(const kdi_alias& a) {
+    cbor_item_t* m = cbor_new_indefinite_map();
+    map_push(m, "name",       cbor_str(a.name));
+    map_push(m, "fq_name",    cbor_str(a.fq_name));
+    map_push(m, "visibility", encode_visibility(a.visibility));
+    if (a.is_strong) map_push(m, "is_strong", cbor_bool(true));
+    if (a.target_type.has_value())
+        map_push(m, "target_type", encode_type(*a.target_type));
+    if (a.target_fq_name.has_value())
+        map_push(m, "target_fq_name", cbor_str(*a.target_fq_name));
+    if (a.doc) map_push(m, "doc", encode_doc_block(*a.doc));
+    return m;
+}
+
+kdi_alias decode_alias(cbor_item_t* item, const std::string& path) {
+    kdi_alias a;
+    a.name       = req_string(item, "name", path);
+    a.fq_name    = req_string(item, "fq_name", path);
+    a.visibility = decode_visibility(item, "visibility", path);
+    a.is_strong  = opt_bool(item, "is_strong");
+    if (auto* tt = map_get(item, "target_type"))
+        a.target_type = decode_type(tt, path + ".target_type");
+    if (auto* tn = map_get(item, "target_fq_name"); tn && cbor_isa_string(tn))
+        a.target_fq_name = read_string(tn, path + ".target_fq_name");
+    if (auto* d = map_get(item, "doc")) a.doc = decode_doc_block(d, path + ".doc");
+    return a;
 }
 
 cbor_item_t* encode_enum(const kdi_enum& e) {
@@ -1464,6 +1512,11 @@ cbor_item_t* encode_namespace(const kdi_namespace& ns) {
     cbor_item_t* enums = cbor_new_indefinite_array();
     for (auto& e : ns.enums) cbor_array_push(enums, cbor_move(encode_enum(e)));
     map_push(m, "enums", enums);
+    if (!ns.aliases.empty()) {
+        cbor_item_t* aliases = cbor_new_indefinite_array();
+        for (auto& al : ns.aliases) cbor_array_push(aliases, cbor_move(encode_alias(al)));
+        map_push(m, "aliases", aliases);
+    }
 
     if (!ns.unions.empty()) {
         cbor_item_t* unions = cbor_new_indefinite_array();
@@ -1504,6 +1557,12 @@ kdi_namespace decode_namespace(cbor_item_t* item, const std::string& path) {
         for (size_t i = 0; i < n; ++i)
             ns.aggregates.push_back(decode_aggregate(cbor_array_get(aa, i),
                                                      path + ".aggregates[" + std::to_string(i) + "]"));
+    }
+    if (auto* alz = map_get(item, "aliases"); alz && cbor_isa_array(alz)) {
+        size_t n = cbor_array_size(alz);
+        for (size_t i = 0; i < n; ++i)
+            ns.aliases.push_back(decode_alias(cbor_array_get(alz, i),
+                                              path + ".aliases[" + std::to_string(i) + "]"));
     }
     auto* ea = map_get(item, "enums");
     if (ea && cbor_isa_array(ea)) {

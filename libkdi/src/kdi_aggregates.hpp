@@ -389,6 +389,31 @@ struct kdi_base {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Alias / typedef
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * An exported aliasing declaration ('alias' or 'typedef').
+ *
+ * An alias declares nothing new: it is always replaced by the entity it
+ * renames. It is exported as written so an importing module can use the alias
+ * name, and — for a strong alias — keep its nominal identity.
+ */
+struct kdi_alias {
+    std::string                  name;        ///< short name
+    std::string                  fq_name;     ///< fully-qualified K name
+    kdi_visibility               visibility = kdi_visibility::public_;
+    /// true for 'typedef' (strong, nominally distinct), false for 'alias' (soft).
+    bool                         is_strong = false;
+    /// The aliased type. Set when the alias targets a type (always for a typedef).
+    std::optional<kdi_type>      target_type;
+    /// Fully-qualified name of the aliased entity, as written in the source.
+    /// Set for a soft alias targeting a function or a variable.
+    std::optional<std::string>   target_fq_name;
+    std::optional<kdi_doc_block> doc;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Aggregate
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -445,6 +470,9 @@ struct kdi_aggregate {
 
     // Nested unions (public/protected)
     std::vector<kdi_union>        nested_unions;
+
+    // Exported alias/typedef declarations
+    std::vector<kdi_alias>        aliases;
 
     /// LLVM IR struct type definition, e.g.
     /// "%struct.ns.Counter = type { i32*, i32 }".

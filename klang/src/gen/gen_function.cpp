@@ -599,6 +599,48 @@ void symbol_resolver::visit_function(function& fn) {
     _function_stack.pop_back();
 }
 
+/**
+ * Reject two overloads that differ only by a strong alias (typedef).
+ *
+ * A typedef is a nominal layer over an identical representation and mangles to
+ * its underlying type, so 'f(identifier)' and 'f(int)' would produce the same
+ * symbol. Rather than let them collide at link time, report a dedicated error.
+ */
+void signature_resolver::check_typedef_overload(function& fn) {
+    auto holder = std::dynamic_pointer_cast<function_holder>(fn.parent<element>());
+    if (!holder) return;
+
+    auto params_of = [](const function& f) {
+        std::vector<std::shared_ptr<type>> types;
+        for (const auto& p : const_cast<function&>(f).parameters()) {
+            types.push_back(p ? p->get_type() : nullptr);
+        }
+        return types;
+    };
+
+    const auto mine = params_of(fn);
+
+    for (const auto& other : holder->get_functions(fn.get_short_name())) {
+        if (!other || other.get() == &fn || other->is_template()) continue;
+        const auto theirs = params_of(*other);
+        if (theirs.size() != mine.size()) continue;
+
+        bool all_layout_equal = true;
+        bool any_nominal_diff = false;
+        for (size_t i = 0; i < mine.size(); ++i) {
+            if (!type::are_layout_equal(mine[i], theirs[i])) { all_layout_equal = false; break; }
+            if (!type::are_equal(mine[i], theirs[i])) any_nominal_diff = true;
+        }
+        if (all_layout_equal && any_nominal_diff) {
+            throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_TYPEDEF_OVERLOAD_FORBIDDEN),
+                        fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+                        "Overloads of '{}' differ only by a typedef: a typedef never distinguishes "
+                        "a signature, both declarations mangle to the same symbol",
+                        {fn.get_short_name()});
+        }
+    }
+}
+
 void signature_resolver::visit_function(function& fn) {
     // Skip template definitions — they are not instantiated yet.
     if (fn.is_template()) return;
@@ -647,6 +689,8 @@ void signature_resolver::visit_function(function& fn) {
     if (!fn.is_extern()) {
         fn.update_mangled_name();
     }
+
+    check_typedef_overload(fn);
 
     // Do NOT visit the function body — that is the job of type_reference_resolver.
 }

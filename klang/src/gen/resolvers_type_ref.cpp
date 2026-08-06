@@ -385,6 +385,23 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
         }
     }
 
+
+    // Step 2b: aliases and typedefs. An alias is looked up before aggregates and
+    // enums so that it can also shadow an outer type name, exactly like a using
+    // declaration would.
+    if (auto al = scope_lookup::lookup_alias(context_elem.shared_as<const element>(), type_name)) {
+        bool cycle = false;
+        auto aliased = scope_lookup::materialize_alias_type(
+            al, _context,
+            [this](const k::name& n, const element& e) { return resolve_type_by_name(n, e); },
+            cycle);
+        if (cycle) {
+            throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE), al->get_decl_lexeme(),
+                "Alias '{}' is defined in terms of itself", {al->get_fq_name()});
+        }
+        if (aliased) return aliased;
+    }
+
     // Step 3: Walk the scope chain: aggregates, enums, unions, using directives
     // Walk up the scope chain looking for the type
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
@@ -2020,7 +2037,10 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 
     // Step 5: Phase 2: dispatch to per-type-category validation
     // Phase 2: validate init expression per type category
-    auto var_type = var.get_type();
+    // The initialiser is validated against the canonical (alias-free) type: the
+    // declaration states the intended type immediately before the initialiser, so
+    // no explicit cast is required there even for a strong alias.
+    auto var_type = type::canonical(var.get_type());
     var_init_context ctx{var, var_lexeme, var_type, init_expr_base, init_expr};
 
     if (type::is_primitive(var_type)) {
@@ -2092,6 +2112,19 @@ type_reference_resolver::cast_weight
 type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& expr, const std::shared_ptr<k::model::type>& tgt) {
     if (!expr || !type::is_resolved(tgt) || !type::is_resolved(expr->get_type())) {
         return CAST_IMPOSSIBLE;
+    }
+
+    // Aliases (soft and strong) are nominal only: conversion weight is always
+    // computed on the real underlying types. The nominal distinction of a
+    // strong alias is enforced separately by check_strong_alias_conversion().
+    {
+        auto canon_tgt = type::canonical(tgt);
+        auto canon_src = type::canonical(expr->get_type());
+        if (canon_tgt != tgt || canon_src != expr->get_type()) {
+            auto stripped = cast_expression::make_shared(expr, canon_src);
+            stripped->set_type(canon_src);
+            return compute_cast_weight(stripped, canon_tgt);
+        }
     }
 
     auto type_src = expr->get_type();
@@ -3482,8 +3515,132 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
  *
  * @return The expression if compatible, a cast expression, or nullptr if impossible.
  */
-std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type) {
-    // Accept types that are either fully resolved (LLVM type present) or
+namespace {
+
+/** Innermost type under any indirection / const / array wrapper. */
+std::shared_ptr<type> innermost_type(std::shared_ptr<type> t) {
+    while (t) {
+        if (std::dynamic_pointer_cast<alias_type>(t)) return t;
+        auto sub = t->get_subtype();
+        if (!sub) return t;
+        t = sub;
+    }
+    return t;
+}
+
+/** The strong alias denoted by a type, if any (looking through indirections). */
+std::shared_ptr<alias_definition> denoted_strong_alias(const std::shared_ptr<type>& t) {
+    auto at = std::dynamic_pointer_cast<alias_type>(innermost_type(t));
+    if (!at) return {};
+    auto al = at->get_alias();
+    return (al && al->is_strong()) ? al : nullptr;
+}
+
+/**
+ * True when the expression derives from an operand of the given strong alias
+ * through type-preserving operations. Explicit casts and constructions break
+ * the chain, since they already state the intended type.
+ */
+bool carries_alias(const std::shared_ptr<expression>& e, const alias_definition* alias, unsigned int depth = 0) {
+    if (!e || depth > 32) return false;
+    if (auto al = denoted_strong_alias(e->get_type())) {
+        if (al.get() == alias) return true;
+    }
+    if (e->get_alias_taint().get() == alias) return true;
+    if (std::dynamic_pointer_cast<cast_expression>(e)) return false;
+    if (auto bin = std::dynamic_pointer_cast<binary_expression>(e)) {
+        return carries_alias(bin->left(), alias, depth + 1)
+            || carries_alias(bin->right(), alias, depth + 1);
+    }
+    if (auto un = std::dynamic_pointer_cast<unary_expression>(e)) {
+        return carries_alias(un->sub_expr(), alias, depth + 1);
+    }
+    return false;
+}
+
+/** True when the expression is a compile-time literal (possibly negated). */
+bool is_literal_expression(const std::shared_ptr<expression>& e, unsigned int depth = 0) {
+    if (!e || depth > 8) return false;
+    if (auto ve = std::dynamic_pointer_cast<value_expression>(e)) {
+        return ve->is_literal();
+    }
+    if (auto un = std::dynamic_pointer_cast<arithmetic_unary_expression>(e)) {
+        return is_literal_expression(un->sub_expr(), depth + 1);
+    }
+    return false;
+}
+
+} // anonymous namespace
+
+void type_reference_resolver::check_strong_alias_conversion(
+        const std::shared_ptr<expression>& expr,
+        const std::shared_ptr<type>& target,
+        alias_conv_site site,
+        const lex::opt_any_lexeme& lexeme)
+{
+    if (!expr || !target) return;
+
+    auto alias = denoted_strong_alias(target);
+    if (!alias) return;
+
+    // Same alias on both sides: nothing to convert.
+    auto src_alias = denoted_strong_alias(expr->get_type());
+    if (src_alias == alias) return;
+
+    // The expression is a compile-time constant, or it is tainted by the alias
+    // somewhere in its operand tree: no explicit cast is required.
+    if (is_literal_expression(expr)) return;
+    if (carries_alias(expr, alias.get())) return;
+
+    const std::string alias_name = alias->get_short_name();
+    const std::string src_name = expr->get_type() ? expr->get_type()->to_string() : "?";
+
+    if (site == alias_conv_site::ASSIGNMENT) {
+        throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_TYPEDEF_REQUIRES_EXPLICIT_CAST), lexeme,
+            "Cannot implicitly convert '{}' to the typedef '{}'; "
+            "a typedef is a distinct type: write an explicit cast '({}) expr'",
+            {src_name, alias_name, alias_name});
+    }
+
+    warn(static_cast<unsigned int>(k::diag::alias_diag::WARN_TYPEDEF_BASE_TYPE_ARGUMENT), lexeme,
+        "Passing '{}' where the typedef '{}' is expected; "
+        "the symbol is mangled with the underlying type so this cannot be enforced at link time. "
+        "Either cast explicitly to '{}', or declare the {} with the underlying type '{}'",
+        {src_name, alias_name, alias_name,
+         site == alias_conv_site::RETURN ? "return type" : "parameter",
+         type::canonical(target) ? type::canonical(target)->to_string() : "?"});
+}
+
+void type_reference_resolver::materialize_aliases(const alias_holder& holder, element& scope) {
+    for (const auto& al : holder.get_aliases()) {
+        if (!al || al->is_resolved()) continue;
+        bool cycle = false;
+        scope_lookup::materialize_alias_type(
+            al, _context,
+            [this](const k::name& n, const element& e) { return resolve_type_by_name(n, e); },
+            cycle);
+        if (cycle) {
+            throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE),
+                        al->get_decl_lexeme(),
+                        "Alias '{}' is defined in terms of itself", {al->get_fq_name()});
+        }
+    }
+}
+
+void type_reference_resolver::check_typedef_arguments(
+        function& fn,
+        const std::vector<std::shared_ptr<expression>>& args,
+        const lex::opt_any_lexeme& lexeme)
+{
+    const auto& params = fn.parameters();
+    for (size_t n = 0; n < args.size() && n < params.size(); ++n) {
+        if (!params[n]) continue;
+        check_strong_alias_conversion(args[n], params[n]->get_type(),
+                                      alias_conv_site::ARGUMENT, lexeme);
+    }
+}
+
+std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type) {    // Accept types that are either fully resolved (LLVM type present) or
     // semantically complete (no unresolved_type nodes remain).  struct_type
     // objects created during template instantiation may not have an LLVM type
     // yet — that is materialized later by context::resolve_types().
@@ -3533,6 +3690,48 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     auto type_src = expr->get_type();
     // For value-level adaptation, strip const from both sides.
     auto type_nc = type::remove_const(type);
+
+    // ── Alias / typedef transparency ────────────────────────────────────────────
+    // An alias layer is a pure renaming: it never changes the representation.
+    // Adaptation is therefore always performed on the canonical (alias-free)
+    // types, and the result is re-tagged with the requested type. The cast nodes
+    // introduced here are bitwise identity at IR level — they only carry the type
+    // annotation, exactly like the const-widening casts below.
+    //
+    // Whether an implicit base → typedef conversion is *allowed* is decided by
+    // check_strong_alias_conversion() at the few syntactic positions where it
+    // matters; adaptation itself stays purely mechanical.
+    {
+        auto canon_src = type::canonical(type_src);
+        auto canon_tgt = type::canonical(type_nc);
+        if (canon_src != type_src || canon_tgt != type_nc) {
+            auto src_expr = expr;
+            if (canon_src != type_src) {
+                auto strip = cast_expression::make_shared(expr, canon_src);
+                strip->set_type(canon_src);
+                // Stripping the alias layer is not an explicit cast: the alias
+                // identity is kept as a taint so the expression can still flow
+                // back into a destination of the same alias type.
+                if (auto al = std::dynamic_pointer_cast<alias_type>(innermost_type(type_src))) {
+                    strip->set_alias_taint(al->get_alias());
+                } else {
+                    strip->set_alias_taint(expr->get_alias_taint());
+                }
+                src_expr = strip;
+            }
+            auto adapted = adapt_type(src_expr, canon_tgt);
+            if (!adapted) return {};
+            if (canon_tgt != type_nc) {
+                // The cast node itself must stay alias-free: code generation only
+                // ever sees the canonical type, while the expression carries the
+                // aliased type for the remaining K-level checks.
+                auto retag = cast_expression::make_shared(adapted, canon_tgt);
+                retag->set_type(type_nc);
+                return retag;
+            }
+            return adapted;
+        }
+    }
 
     // ── Null literal → any nullable indirection type ────────────────────────────
     // The `null` literal has no intrinsic pointed-to type: it is valid wherever a

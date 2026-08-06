@@ -105,6 +105,30 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
         }
     }
 
+    // ── Alias / typedef casts ────────────────────────────────────────────────
+    // A cast to or from an alias is valid exactly when the same cast between the
+    // canonical (alias-free) types is valid: the alias layer is a pure renaming.
+    // The cast is therefore rewritten on the canonical types — which is also what
+    // code generation must see — while the expression keeps the declared type so
+    // that the nominal identity of a typedef survives for the K-level checks.
+    std::shared_ptr<type> declared_cast_type;
+    {
+        auto canon_tgt = type::canonical(target_type);
+        auto canon_src = type::canonical(source_type);
+        if (canon_tgt != target_type) {
+            declared_cast_type = target_type;
+            target_type = canon_tgt;
+            expr.set_cast_type(canon_tgt);
+        }
+        if (canon_src != source_type) {
+            auto strip = cast_expression::make_shared(sub_expr->shared_as<expression>(), canon_src);
+            strip->set_type(canon_src);
+            expr.assign(strip);
+            sub_expr = expr.sub_expr();
+            source_type = canon_src;
+        }
+    }
+
     if(source_type==target_type) {
         // TODO warn about useless casting
     } else {
@@ -242,7 +266,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                     }
 
                     // Step 6: Set the result type to the cast target type
-                    expr.set_type(target_type);
+                    expr.set_type(declared_cast_type ? declared_cast_type : target_type);
                     return;
                 }
             }
@@ -254,7 +278,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
         }
     }
 
-    expr.set_type(expr.get_cast_type());
+    expr.set_type(declared_cast_type ? declared_cast_type : expr.get_cast_type());
 }
 
 /**
@@ -286,6 +310,11 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
     auto source_type = expr.sub_expr()->get_type();
     auto target_type = expr.get_cast_type();
+
+    // Aliases never take part in code generation: they are pure renamings of the
+    // canonical type, which is the only thing that has a representation.
+    source_type = type::canonical(source_type);
+    target_type = type::canonical(target_type);
 
     if(!source_type->is_resolved() || !target_type->is_resolved()) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F033), expr.first_lexeme(),

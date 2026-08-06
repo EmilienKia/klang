@@ -75,7 +75,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     // on a previous recursive call. Accept pointer type and resolve the member type.
     if (type::is_pointer(type)) {
         auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type);
-        auto bare_subtype = type::remove_const(ptr_type->get_pointed_type());
+        auto bare_subtype = type::canonical(type::remove_const(ptr_type->get_pointed_type()));
         if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
             const auto& member_name = expr.symbol();
             const std::string& name_str = member_name.get_name().to_string();
@@ -93,7 +93,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         // Allow member access on struct-typed rvalues (temporaries).
         // The implementation generator will materialize the temporary into an alloca.
         if (type::is_struct(type)) {
-            auto bare_subtype = type::remove_const(type);
+            auto bare_subtype = type::canonical(type::remove_const(type));
             bool is_const_access = type::is_const(type);
             if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
                 const auto& member_name = expr.symbol();
@@ -124,6 +124,10 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     bool is_const_access = type::is_const(subtype);
     // Strip const to get the actual struct_type for member lookup
     auto bare_subtype = type::remove_const(subtype);
+
+    // An alias (soft or strong) is nominal only: member lookup always runs
+    // against the real underlying type it stands for.
+    bare_subtype = type::canonical(bare_subtype);
 
     // A variable of type owner<T> is used through a symbol expression of type
     // ref<owner<T>>. For member access with '.', unwrap the intermediate owner
@@ -550,7 +554,7 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
     // Handle vbptr path: sub_expr was cast to pointer<VirtualBase> by the type resolver
     if (type::is_pointer(type)) {
         auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type);
-        auto bare_subtype = type::remove_const(ptr_type->get_pointed_type());
+        auto bare_subtype = type::canonical(type::remove_const(ptr_type->get_pointed_type()));
         if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
             const auto& member_name = expr.symbol();
             if (auto field = struct_subtype->get_member(member_name.get_name()); field) {
@@ -564,7 +568,7 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
     // ── Bare struct rvalue (e.g. function return materialized into alloca) ──
     // _value is already a pointer (alloca) from struct return materialization.
     if (type::is_struct(type)) {
-        auto bare_subtype = type::remove_const(type);
+        auto bare_subtype = type::canonical(type::remove_const(type));
         if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
             const auto& member_name = expr.symbol();
             const k::name& sym_name = member_name.get_name();
@@ -584,7 +588,7 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
     }
 
     // Strip const from the subtype to get the bare struct_type for GEP/method lookup.
-    auto bare_subtype = type::remove_const(type->get_subtype());
+    auto bare_subtype = type::canonical(type::remove_const(type->get_subtype()));
 
     // Member access on an owner variable comes through a ref<owner<T>> symbol.
     // Load the owned object pointer from the owner slot, then continue as if we

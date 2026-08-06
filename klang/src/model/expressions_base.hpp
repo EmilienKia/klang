@@ -68,12 +68,27 @@ protected:
     /** Type of the expression. */
     std::shared_ptr<type> _type = nullptr;
 
+    /**
+     * Strong alias (typedef) this expression is tainted by, if any.
+     *
+     * An expression is tainted when it derives from an operand of that alias
+     * type through an operation whose result is the very same type. Within an
+     * expression the alias identity is therefore preserved even though the type
+     * itself is canonical, which is what allows a typedef-typed operand to flow
+     * back into a typedef-typed destination without an explicit cast: an
+     * expression is a sufficient locality for the intent to be unambiguous.
+     *
+     * This never reaches code generation: it only informs the K-level check of
+     * implicit conversions towards a strong alias.
+     */
+    std::weak_ptr<alias_definition> _alias_taint;
+
     virtual ~expression() = default;
 
     expression() = default;
     expression(std::shared_ptr<type> type) : _type(type) {}
     // Copy constructor: copies type and AST node, parent is NOT copied (clone is orphan).
-    expression(const expression& other) : _type(other._type) { _ast_node = other._ast_node; }
+    expression(const expression& other) : _type(other._type), _alias_taint(other._alias_taint) { _ast_node = other._ast_node; }
 
     friend class unary_expression;
     friend class binary_expression;
@@ -99,6 +114,10 @@ protected:
 
 public:
     void accept(model_visitor &visitor) override;
+
+    /** Strong alias tainting this expression, if any. See _alias_taint. */
+    std::shared_ptr<alias_definition> get_alias_taint() const { return _alias_taint.lock(); }
+    void set_alias_taint(std::weak_ptr<alias_definition> alias) { _alias_taint = std::move(alias); }
 
     std::shared_ptr<type> get_type() { return _type; }
     std::shared_ptr<const type> get_type() const { return _type; }

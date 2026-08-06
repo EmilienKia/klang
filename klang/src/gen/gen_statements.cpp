@@ -366,6 +366,8 @@ void implementation_generator::emit_finally_cleanup(size_t finally_count, const 
 
 void symbol_resolver::visit_block(block& block)
 {
+    check_alias_declarations(block, block);
+
     // Look at static/global var definitions
     for (auto var_entry : block.variables()) {
         if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_entry.second)) {
@@ -699,6 +701,14 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
                 }
             }
         }
+
+        // Returning a base-typed expression where a typedef is expected cannot be
+        // enforced at link time (the symbol is mangled with the canonical type),
+        // so it is only reported.
+        check_strong_alias_conversion(expr, ret_type, alias_conv_site::RETURN,
+                                      stmt.get_ast_return_statement()
+                                          ? lex::opt_any_lexeme{lex::any_lexeme{stmt.get_ast_return_statement()->ret}}
+                                          : lex::opt_any_lexeme{});
 
         auto cast = keep_temp_array_ref ? expr : adapt_type(expr, ret_type);
         if(!cast) {
@@ -3700,7 +3710,9 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     auto func = _context->_functions[var_func];
     llvm::IRBuilder<> build(&func->getEntryBlock(),func->getEntryBlock().begin());
 
-    std::shared_ptr<k::model::type> var_type = var.get_type();
+    // Aliases are pure renamings with no representation of their own: code
+    // generation always works on the canonical type.
+    std::shared_ptr<k::model::type> var_type = k::model::type::canonical(var.get_type());
     llvm::Type *  type = _context->get_llvm_type(var_type);
 
     // Step 1: Allocate stack space (alloca) for the variable

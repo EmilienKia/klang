@@ -76,6 +76,43 @@ convert_primitive(const kdi::kdi_float_type& t, std::shared_ptr<context> ctx)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Alias reference
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a reference to an imported alias / typedef.
+ *
+ * The alias declarations of a namespace are materialised before its functions
+ * and variables, so the alias_definition is already in place — and, because its
+ * target type comes fully resolved from the KDI, already finalised.
+ */
+static std::shared_ptr<type>
+convert_alias_ref(const kdi::kdi_alias_ref& ref, unit& owner,
+                  std::shared_ptr<context> ctx)
+{
+    std::vector<std::string> parts;
+    const std::string& fq = ref.fq_name;
+    std::size_t start = 0;
+    while (true) {
+        auto pos = fq.find("::", start);
+        if (pos == std::string::npos) { parts.push_back(fq.substr(start)); break; }
+        parts.push_back(fq.substr(start, pos - start));
+        start = pos + 2;
+    }
+    if (parts.empty()) return nullptr;
+
+    auto nspc = owner.get_root_namespace();
+    for (std::size_t i = 0; i + 1 < parts.size() && nspc; ++i) {
+        nspc = nspc->get_child_namespace(parts[i]);
+    }
+    if (!nspc) return nullptr;
+
+    auto adef = nspc->get_alias(parts.back());
+    if (!adef) return nullptr;
+    return adef->get_declared_type();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Aggregate reference
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -224,6 +261,9 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
             auto en = owner.get_or_create_imported_enum(kname, ctx);
             if (!en) return nullptr;
             return en->get_enum_type();
+        }
+        else if constexpr (std::is_same_v<T, kdi::kdi_alias_ref>) {
+            return convert_alias_ref(v, owner, ctx);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_template_param_ref>) {
             return ctx->from_string(v.name);

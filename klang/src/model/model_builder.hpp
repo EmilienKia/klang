@@ -141,6 +141,7 @@ protected:
     void visit_visibility_decl(parse::ast::visibility_decl &) override;
     void visit_namespace_decl(parse::ast::namespace_decl &) override;
     void visit_using_decl(parse::ast::using_decl &) override;
+    void visit_alias_decl(parse::ast::alias_decl &) override;
     void visit_friend_decl(parse::ast::friend_decl &) override;
     void visit_aggregate_decl(parse::ast::aggregate_decl &) override;
     void build_union_from_ast(parse::ast::aggregate_decl &);

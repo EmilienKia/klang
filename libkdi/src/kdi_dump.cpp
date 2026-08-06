@@ -75,6 +75,8 @@ std::string type_str(const kdi_type& t) {
             return v.fq_name;
         if constexpr (std::is_same_v<T, kdi_enum_ref>)
             return "enum " + v.fq_name;
+        if constexpr (std::is_same_v<T, kdi_alias_ref>)
+            return v.fq_name;
         if constexpr (std::is_same_v<T, kdi_template_param_ref>)
             return "$" + v.name;
         if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
@@ -255,6 +257,14 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
         out << type_str(v.type) << " " << v.name << ";  // " << v.mangled_name << "\n";
     }
     // nested
+    for (auto& al : agg.aliases) {
+        out << indent(depth + 1) << vis_str(al.visibility) << " "
+            << (al.is_strong ? "typedef " : "alias ") << al.name << " : "
+            << (al.target_type.has_value() ? type_str(*al.target_type)
+                                           : al.target_fq_name.value_or("?"))
+            << ";\n";
+    }
+
     for (auto& n : agg.nested) dump_aggregate(n, out, depth + 1);
 
     out << indent(depth) << "}\n";
@@ -266,6 +276,15 @@ void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth) {
     }
 
     for (auto& agg : ns.aggregates) dump_aggregate(agg, out, depth + (ns.name.empty() ? 0 : 1));
+
+    for (auto& al : ns.aliases) {
+        int d = depth + (ns.name.empty() ? 0 : 1);
+        out << indent(d) << vis_str(al.visibility) << " "
+            << (al.is_strong ? "typedef " : "alias ") << al.name << " : "
+            << (al.target_type.has_value() ? type_str(*al.target_type)
+                                           : al.target_fq_name.value_or("?"))
+            << ";\n";
+    }
 
     for (auto& e : ns.enums) {
         int d = depth + (ns.name.empty() ? 0 : 1);

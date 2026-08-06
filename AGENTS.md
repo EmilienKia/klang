@@ -176,6 +176,7 @@ The semantic model — all classes after parsing.
 | `model_element.hpp` | `element`, `named_element`, `variable_definition`, holder mixins (`variable_holder`, `function_holder`, `aggregate_holder`, `enum_holder`, `union_holder`, `using_holder`, `friend_holder`, `annotation_holder`) |
 | `model_enum.hpp` | `enum_entry_def`, `enum_raw_entry_def`, `enumeration` |
 | `model_union.hpp` | `union_alternative`, `union_type_def` — discriminated union model class |
+| `model_alias.hpp` | `alias_definition` (soft `alias` / strong `typedef`) and the `alias_holder` mixin |
 | `model_aggregate.hpp` | `member_variable_definition`, `base_spec`, `aggregate`, `structure`, `klass`, `interface`, `annotation_type` |
 | `model_function.hpp` | `parameter`, `function`, `constructor`, `destructor`, `static_constructor`, `static_destructor`, `init_item`, `global_tool_function`, `global_constructor/destructor/main_function` |
 | `model_ns.hpp` | `global_variable_definition`, `ns`, `unit` |
@@ -374,6 +375,24 @@ Exception throwing has a related constraint: the thrown value is copied into the
 stores only the pointer. Cause chaining is therefore restricted to by-value throws
 (`throw MyError()`), which is the idiom used throughout `libk`.
 
+### Alias canonicalisation invariant
+
+`alias_type` (built only for a strong alias, i.e. a `typedef`) is a *nominal* wrapper: it must
+**never** influence a layout, ABI or code-generation decision. It is not stripped by a
+model-mutating pass — the declared aliases must survive until KDI export, which runs *after*
+code generation — so `type::canonical()` is applied at a closed set of consumption points:
+`alias_type::get_llvm_type()`, `type::are_layout_equal()`, `adapt_type()`,
+`compute_cast_weight()`, `visit_cast_expression()`, `process_arithmetic()`, the
+variable-definition and construction validators, member access in `gen_expr_member.cpp`, and
+`mangler::mangle_type()`. `type::are_equal()` stays **nominal** for aliases — that is what
+makes a typedef a distinct type — and `kdi_type_converter` must *not* canonicalise, or
+nominality would be lost across module boundaries.
+
+Expression types always stay canonical (generators dispatch on `dynamic_pointer_cast<
+primitive_type>` and break otherwise); the alias an expression came from is carried instead by
+the `_alias_taint` weak pointer on `expression`, read through `carries_alias()`, and never
+reaches code generation.
+
 ### Naming and mangling invariants
 
 Two independent naming systems must both stay injective; a collision in either one is a
@@ -527,6 +546,7 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Understand name mangling | `model/mangler.cpp` (symbol names), `model/template_instantiator.cpp` `build_instantiated_name()` / `escape_name_component()` / `nested_type_name()` (K-level and LLVM type names) |
 | Debug a symbol collision / wrong overload at link time | `compiler.cpp` `verify_mangled_names()`, `model/mangler.cpp` `mangle_type()`, `gen/gen_helpers.hpp` `apply_instantiation_linkage()` |
 | Understand import system | `model/tools/kdi_importer.cpp`, `model/imported.hpp` |
+| Understand exported aliasing (`alias` / `typedef`) | `model/model_alias.hpp`, `model/type.hpp` (`alias_type`, `type::canonical()`), `gen/resolvers_scope_lookup.cpp` (`lookup_alias`, `materialize_alias_type`), `gen/resolvers_type_ref.cpp` (`check_strong_alias_conversion`, `check_typedef_arguments`, `materialize_aliases`), `gen/resolvers_symbol.cpp` (`check_alias_declarations`), `gen/gen_function.cpp` (`check_typedef_overload`), `model/tools/kdi_exporter.cpp` + `kdi_importer.cpp` + `kdi_type_converter.cpp`, tests `klang/tests/test-parse-alias.cpp`, `test-gen-alias-soft.cpp`, `test-gen-typedef.cpp`, `test-import.cpp` `[alias]`, spec `doc/spec/language/basic/aliases.md` |
 | Understand union types | `model/model_union.hpp`, `gen/gen_struct.cpp` (visit_union), `gen/gen_expr_member.cpp` (union access), `gen/gen_statements.cpp` (emit_union_cleanup) |
 | Understand union inheritance | `model/model_union.hpp` (base_union, reindex, all_alternatives_ptrs), `gen/gen_struct.cpp` (symbol_resolver::visit_union base resolution), `gen/gen_operators_assign.cpp` (upcast/downcast codegen), `gen/resolvers_scope_lookup.cpp` (is_base_union_of, lookup_union) |
 | Fix/extend comparison operator fallback (synthesis) | `model/operators.hpp` (`comparison_expression` synthesis descriptor + Phase 2 `_spaceship_zero_*` fields), `gen/gen_operators_overload.cpp` (`resolve_comparison_with_fallback` — the 7-tier priority algorithm: DIRECT, SPACESHIP, SPACESHIP_SWAP, NEGATE, SWAP, SWAP_NEGATE, COMPOSITE; `try_resolve_spaceship_zero_comparison` — Phase 2 aggregate-vs-0 lookup), `gen/gen_operators_logical.cpp` (`generate_comparison_operator`, `call_comparison_source_operator` — sret-aware synthesis codegen; `generate_spaceship_zero_comparison` — Phase 2; all six comparison visitors), `gen/gen_operators_spaceship.cpp` (`<=>` direct usage, `is_spaceship_return_shape_ok`, `compare_spaceship_result_to_zero`), `klang/tests/test-gen-comparison-fallback.cpp` + `klang/tests/test-gen-spaceship.cpp` (permanent test suites, incl. Phase 2 aggregate-return cases), spec: `doc/spec/language/functions/operators.md` §9 |

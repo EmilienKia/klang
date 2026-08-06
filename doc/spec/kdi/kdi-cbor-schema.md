@@ -91,12 +91,36 @@ Namespace = {
   ?"doc"       : DocBlock,
   "aggregates" : array[Aggregate],
   "enums"      : array[Enum],
+  ?"aliases"   : array[Alias],
   "functions"  : array[Function],
   "variables"  : array[Variable],
   "namespaces" : array[Namespace],
   ?"template_defs" : array[TemplateDef]
 }
 ```
+
+---
+
+## Alias
+
+An exported `alias` (soft) or `typedef` (strong) declaration. Emitted in both
+`Namespace` and `Aggregate` maps, and omitted when the scope declares none.
+
+```
+Alias = {
+  "name"            : text,
+  "fq_name"         : text,
+  "visibility"      : Visibility,
+  ?"is_strong"      : bool,    -- present and true only for 'typedef'
+  ?"target_type"    : Type,    -- always present for a 'typedef'
+  ?"target_fq_name" : text,    -- soft alias targeting a function or a variable
+  ?"doc"            : DocBlock
+}
+```
+
+Block-local and `private` aliases are never exported. A `typedef` never changes
+the mangling of a symbol: mangled names always use the fully resolved
+(alias-free) type.
 
 ---
 
@@ -140,9 +164,15 @@ Type =
 | { "kind": "fn_ref", "ret": Type, "params": array[Type] }
 | { "kind": "aggregate", "fq_name": text }
 | { "kind": "enum", "fq_name": text }
+| { "kind": "alias", "fq_name": text }
 | { "kind": "template_param", "name": text }
 | { "kind": "generic_ref", "name": text, "args": array[Type] }
 ```
+
+`alias` references an exported strong alias (`typedef`) by its fully-qualified
+K name. Only a strong alias is referenced this way: it is nominally distinct
+from the type it renames. A soft alias (`alias`) is fully transparent and is
+always encoded as the type it renames.
 
 `template_param` references a template parameter by name (e.g. `T`) as it
 appears inside an uninstantiated template's own declaration.
@@ -412,6 +442,7 @@ Aggregate = {
   "methods"        : array[Method],
   "static_vars"    : array[Variable],
   ?"vtable"        : Vtable,
+  ?"aliases"       : array[Alias],
   "nested"         : array[Aggregate],
   "llvm_def"       : text,          -- mandatory LLVM IR struct type definition,
                                     -- e.g. "%struct.ns.Counter = type { i32*, i32 }"

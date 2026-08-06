@@ -52,6 +52,7 @@ public:
     virtual void visit_interface(interface&) =0;
     virtual void visit_annotation_type(annotation_type&) =0;
     virtual void visit_enumeration(enumeration&) =0;
+    virtual void visit_alias_definition(alias_definition&) =0;
     virtual void visit_union(union_type_def&) =0;
     virtual void visit_function(function&) =0;
     virtual void visit_constructor(constructor&) =0;
@@ -175,6 +176,7 @@ public:
     void visit_interface(interface&) override;
     void visit_annotation_type(annotation_type&) override;
     void visit_enumeration(enumeration&) override;
+    void visit_alias_definition(alias_definition&) override;
     void visit_union(union_type_def&) override;
     void visit_function(function&) override;
     void visit_constructor(constructor&) override;

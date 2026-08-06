@@ -76,6 +76,8 @@ class struct_type;
 class function_reference_type;
 class enum_type;
 class enumeration;
+class alias_type;
+class alias_definition;
 
 /**
  * Base type class
@@ -157,6 +159,25 @@ public:
     inline static bool is_function_reference(const std::shared_ptr<type>& type);
     /** True if the type is an enum type (optionally stripping const). */
     inline static bool is_enum(const std::shared_ptr<type>& type);
+    /** True if the type is a strong alias (typedef) type (optionally stripping const). */
+    inline static bool is_alias(const std::shared_ptr<type>& type);
+    /**
+     * Strip every alias_type layer, recursively and through indirection
+     * wrappers, yielding the real underlying type an alias stands for.
+     * Returns the type itself when it contains no alias.
+     *
+     * This is the single primitive that keeps a strong alias from influencing
+     * any layout, ABI or code-generation decision: an alias_type is nominal at
+     * the K level only, and every consumer that reasons about representation
+     * must canonicalise first.
+     */
+    static std::shared_ptr<type> canonical(const std::shared_ptr<type>& type);
+    /**
+     * True when both types have the same representation, i.e. are equal once
+     * every alias layer has been stripped. Use this instead of are_equal()
+     * wherever the question is about layout rather than about nominal identity.
+     */
+    inline static bool are_layout_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2);
     /** True if the type is the null literal type. */
     inline static bool is_null(const std::shared_ptr<type>& type);
     /** True if the type chain contains any unresolved_type nodes. */
@@ -1026,10 +1047,95 @@ inline bool type::is_enum(const std::shared_ptr<type>& t) {
     return std::dynamic_pointer_cast<enum_type>(nc) != nullptr;
 }
 
+/**
+ * Strong alias (typedef) type.
+ *
+ * A typedef introduces a type that is nominally distinct from the type it
+ * renames, while sharing exactly the same representation: in LLVM IR an
+ * alias_type is indistinguishable from its underlying type, and it contributes
+ * nothing to name mangling.
+ *
+ * Its whole purpose is to add a semantic layer on top of the type system —
+ * for instance, expressing that two kinds of identifier are both 'int' but
+ * denote different things.
+ *
+ * Conversions:
+ *   - alias → underlying: implicit
+ *   - underlying → alias: explicit cast required, except in a variable
+ *     definition, for a compile-time constant, and within an expression that
+ *     already involves the alias (see the tainting rules in the resolver).
+ *
+ * Nothing below the resolution layer may observe an alias_type: every consumer
+ * reasoning about representation must go through type::canonical().
+ */
+class alias_type : public type {
+protected:
+    friend class context;
+    friend class gen::symbol_resolver;
+    friend class gen::aggregate_type_resolver;
+    friend class gen::type_reference_resolver;
+    friend class kdi_importer;
+
+    std::weak_ptr<alias_definition> _alias;
+
+    /** The renamed type. May itself be an alias_type (alias chain). */
+    std::shared_ptr<type> _underlying;
+
+    /** Fully-qualified K name of the alias, kept for diagnostics and KDI export. */
+    std::string _fq_name;
+
+    alias_type(std::weak_ptr<alias_definition> alias, std::shared_ptr<type> underlying,
+               std::string fq_name)
+        : _alias(std::move(alias)), _underlying(std::move(underlying)),
+          _fq_name(std::move(fq_name)) {}
+
+    void set_underlying(std::shared_ptr<type> underlying) { _underlying = std::move(underlying); }
+
+public:
+    bool is_resolved() const override { return _underlying && _underlying->is_resolved(); }
+
+    bool is_primitive() const override { return _underlying && _underlying->is_primitive(); }
+
+    std::shared_ptr<type> get_underlying() const { return _underlying; }
+    std::shared_ptr<alias_definition> get_alias() const { return _alias.lock(); }
+    const std::string& get_fq_name() const { return _fq_name; }
+
+    llvm::Type* get_llvm_type() const override {
+        return _underlying ? _underlying->get_llvm_type() : nullptr;
+    }
+
+    llvm::Constant* generate_default_value_initializer() const override {
+        return _underlying ? _underlying->generate_default_value_initializer() : nullptr;
+    }
+
+    std::string to_string() const override;
+};
+
+inline bool type::is_alias(const std::shared_ptr<type>& t) {
+    auto nc = remove_const(t);
+    return std::dynamic_pointer_cast<alias_type>(nc) != nullptr;
+}
+
 
 inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2) {
     if (type1 == type2) return true;
     if (!type1 || !type2) return false;
+
+    // Nominal equality for strong alias (typedef) types: two aliases are equal
+    // only when they denote the same declaration, and an alias is never equal
+    // to the type it renames. This is precisely what makes a typedef a
+    // distinct type at the K level, while remaining representation-identical.
+    {
+        auto al1 = std::dynamic_pointer_cast<alias_type>(type1);
+        auto al2 = std::dynamic_pointer_cast<alias_type>(type2);
+        if (al1 || al2) {
+            if (!al1 || !al2) return false;
+            auto d1 = al1->get_alias();
+            auto d2 = al2->get_alias();
+            if (d1 && d2) return d1 == d2;
+            return al1->get_fq_name() == al2->get_fq_name();
+        }
+    }
 
     // Structural equality for array types: compare element types recursively
     if (auto a1 = std::dynamic_pointer_cast<sized_array_type>(type1)) {
@@ -1137,6 +1243,10 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
     }
 
     return false;
+}
+
+inline bool type::are_layout_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2) {
+    return are_equal(canonical(type1), canonical(type2));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

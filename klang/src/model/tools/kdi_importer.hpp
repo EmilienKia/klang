@@ -38,6 +38,7 @@ namespace kdi {
     struct kdi_variable;
     struct kdi_template_def;
     struct kdi_union;
+    struct kdi_alias;
 }
 
 namespace k::model {
@@ -205,6 +206,16 @@ private:
      */
     void materialise_variable(const kdi::kdi_variable& var,
                               std::shared_ptr<context> ctx);
+
+    /**
+     * Materialise a single exported alias / typedef declaration into the
+     * matching namespace (or aggregate) of the model.
+     *
+     * The alias keeps its nominal identity: a strong alias (typedef) gets its
+     * own alias_type, a soft alias resolves directly to the aliased type.
+     */
+    void materialise_alias(const kdi::kdi_alias& al,
+                           std::shared_ptr<context> ctx);
 
     /**
      * Materialise a single discriminated union.

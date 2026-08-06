@@ -125,6 +125,23 @@ public:
         prefix() << "} // " << st.get_short_name() << std::endl;
     }
 
+    void visit_alias_definition(alias_definition& alias) override {
+        prefix() << (alias.is_strong() ? "typedef '" : "alias '")
+                 << alias.get_short_name() << "' (" << alias.get_fq_name() << ") : ";
+        if (auto t = alias.get_target_type()) {
+            _stm << t->to_string();
+        } else if (auto e = alias.get_target_element()) {
+            if (auto ne = std::dynamic_pointer_cast<named_element>(e)) {
+                _stm << ne->get_fq_name();
+            } else {
+                _stm << alias.get_target_name().to_string();
+            }
+        } else {
+            _stm << alias.get_target_name().to_string() << " (unresolved)";
+        }
+        _stm << ";" << std::endl;
+    }
+
     void visit_enumeration(enumeration& en) override {
         prefix() << "enum '" << en.get_short_name() << "' ("
                  << en.get_fq_name() << " / " << en.get_mangled_name()

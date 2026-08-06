@@ -73,6 +73,15 @@ details.
 | `protected` | ✓ Yes | Within the same root namespace only |
 | `private` | ✗ No | ✗ No |
 
+### Alias declarations
+
+`alias` and `typedef` declarations are exported like any other namespace- or
+member-level entity, following the same visibility rules; a block-local alias is
+never exported.  An exported alias is recorded **as written**, so a consumer can
+use the alias name directly.  A `typedef` also keeps its nominal identity across
+the module boundary, while a soft `alias` is recorded as a transparent renaming.
+See [Aliases and Typedefs](aliases.md).
+
 ### Struct / class / interface members
 
 | Visibility | Exported to `.kdi`? | Accessible by consumers? |

@@ -91,6 +91,7 @@ struct kdi_namespace {
     std::vector<kdi_namespace>   namespaces;    ///< nested namespaces
     std::vector<kdi_aggregate>   aggregates;    ///< struct / class / interface
     std::vector<kdi_enum>        enums;         ///< enumerations
+    std::vector<kdi_alias>       aliases;       ///< exported alias/typedef declarations
     std::vector<kdi_union>       unions;        ///< discriminated unions
     std::vector<kdi_function>    functions;     ///< global/static functions (PUBLIC)
     std::vector<kdi_variable>    variables;     ///< global/static variables (PUBLIC)

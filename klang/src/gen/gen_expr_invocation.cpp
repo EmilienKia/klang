@@ -478,6 +478,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             if (!best.func) return;
 
             check_function_visibility(*best.func, expr);
+        check_typedef_arguments(*best.func, expr.arguments(), expr.first_lexeme());
 
             callee->set_target(best.func);
             auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_expr);
@@ -794,6 +795,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         // Check visibility of the resolved function
         check_function_visibility(*best.func, expr);
+        check_typedef_arguments(*best.func, expr.arguments(), expr.first_lexeme());
 
         callee->set_target(best.func);
         auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_expr);
@@ -1597,6 +1599,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         // Check visibility of the resolved function
         check_function_visibility(*best.func, expr);
+        check_typedef_arguments(*best.func, expr.arguments(), expr.first_lexeme());
 
         if (this_candidate && best.func->is_member() && !best.func->is_static() && !best.is_unified_call) {
             is_free_to_member_call = true;

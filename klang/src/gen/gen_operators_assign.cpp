@@ -214,6 +214,16 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     }
     // ─────────────────────────────────────────────────────────────────────────
 
+    // A typedef is a distinct type: assigning a base-typed expression to it
+    // requires an explicit cast (unless the expression is a literal or is
+    // already tainted by the very same typedef).
+    check_strong_alias_conversion(right, target_type,
+                                  alias_conv_site::ASSIGNMENT, expr.first_lexeme());
+
+    // Aliases never influence assignment semantics: from here on the canonical
+    // (alias-free) target type is used.
+    target_type = type::canonical(target_type);
+
     // Step 1: Resolve left and right sub-expressions
     if(type::is_reference(target_type)) {
         // Left hand is ref-to-ref: assignment acts on the underlying object.

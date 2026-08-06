@@ -88,6 +88,38 @@ public:
     lookup_enumeration(std::shared_ptr<element> elem, const std::string& name);
 
     /**
+     * Look up an alias/typedef declaration by simple or qualified name, starting
+     * from elem and walking up the scope chain.
+     *
+     * A simple name is searched in every alias_holder scope on the chain (block,
+     * for statement, aggregate, namespace). A qualified name is resolved by
+     * navigating namespaces and aggregates from each scope on the chain, and
+     * finally from the root namespace.
+     */
+    static std::shared_ptr<alias_definition>
+    lookup_alias(std::shared_ptr<const element> elem, const k::name& name);
+
+    /**
+     * Resolve the target type of an alias declaration and, for a strong alias
+     * (typedef), build its nominal alias_type.
+     *
+     * The declared target type is resolved lazily and only once: an alias may be
+     * declared before the type it renames, and may itself rename another alias.
+     * @p resolve_by_name is the caller's own name-to-type resolution routine, so
+     * that this helper can be shared by every resolution pass.
+     *
+     * Returns the type the alias denotes (the nominal alias_type for a typedef,
+     * the renamed type itself for a soft alias), or nullptr if it cannot be
+     * resolved yet or if the alias does not denote a type.
+     * Sets @p cycle when an alias cycle is detected.
+     */
+    static std::shared_ptr<type>
+    materialize_alias_type(const std::shared_ptr<alias_definition>& alias,
+                           const std::shared_ptr<context>& ctx,
+                           const std::function<std::shared_ptr<type>(const k::name&, const element&)>& resolve_by_name,
+                           bool& cycle);
+
+    /**
      * Look up a union_type_def by simple or qualified name, starting from elem
      * and walking up the scope chain.
      */

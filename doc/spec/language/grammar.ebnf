@@ -175,6 +175,7 @@ Keyword
     | 'operator'
     | 'template' | 'typename' | 'generic'
     | 'throw'  | 'try'     | 'catch'     | 'throws'  | 'finally'
+    | 'alias'  | 'typedef'
     ;
 
 (* ---------- Literals ----------------------------------------------------- *)
@@ -388,6 +389,7 @@ Declaration
     = VisibilityDecl
     | NamespaceDecl
     | UsingDecl
+    | AliasDecl
     | FriendDecl
     | AggregateDecl
     | UnionDecl
@@ -418,6 +420,37 @@ UsingDecl
 UsingFilter
     = 'namespace' | 'struct' | 'interface' | 'class'
     ;
+
+AliasDecl
+    = SoftAliasDecl | TypedefDecl
+    ;
+
+SoftAliasDecl
+    = 'alias' , Identifier , ':' , QualifiedIdentifier , ';'
+    ;
+
+TypedefDecl
+    = 'typedef' , Identifier , ':' , TypeSpec , ';'
+    ;
+    (* Exported aliasing, as opposed to the scope-local UsingDecl: an AliasDecl
+       declared at unit, namespace or aggregate level is exported through the
+       KDI and is visible to importing modules.
+
+       'alias' is a soft alias — a pure convenience renaming of a type, a
+       function or a global/static variable.  It is fully transparent: the
+       alias name and the aliased symbol are interchangeable in both
+       directions.  Namespaces cannot be aliased this way; use
+       'using M = namespace X::Y;' instead.
+
+       'typedef' is a strong alias — it introduces a nominally distinct type
+       over an identical representation.  Conversion from the typedef to its
+       underlying type is implicit; the reverse requires an explicit cast,
+       except in a variable definition, for a compile-time constant, and
+       within an expression already involving the typedef.
+
+       Both forms are also accepted as a Statement.  In that case they are
+       implicitly private, restricted to the enclosing block, and never
+       exported. *)
 
 FriendDecl
     = 'friend' , [ FriendFilter ] , QualifiedIdentifier , [ TemplateArgList ] , ';'
@@ -711,6 +744,7 @@ Statement
     | ThrowStatement
     | TryCatchStatement
     | UsingDecl
+    | AliasDecl
     | VariableDecl
     | ExpressionStatement
     ;

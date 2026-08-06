@@ -251,6 +251,39 @@ void enumeration::accept(model_visitor& visitor) {
 
 
 //
+// Alias definition
+//
+
+std::shared_ptr<alias_definition> alias_definition::make_shared(std::shared_ptr<element> parent,
+                                                               const std::string& name,
+                                                               kind_t kind) {
+    auto alias = std::shared_ptr<alias_definition>(new alias_definition(parent));
+    alias->_kind = kind;
+    alias->assign_name(name);
+    return alias;
+}
+
+void alias_definition::update_mangled_name() {
+    // An alias never produces a symbol of its own: every use is replaced by the
+    // aliased entity, whose mangled name is used instead. Keeping the mangled
+    // name empty would trip compiler::verify_mangled_names(), so a purely
+    // descriptive name is stored; it is never emitted.
+    _mangled_name = std::to_string(_short_name.size()) + _short_name;
+}
+
+void alias_definition::accept(model_visitor& visitor) {
+    visitor.visit_alias_definition(*this);
+}
+
+std::shared_ptr<type> alias_definition::get_declared_type() const {
+    if (_kind == kind_t::STRONG) {
+        return _alias_type;
+    }
+    return _target_type;
+}
+
+
+//
 // Union holder
 //
 

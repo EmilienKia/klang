@@ -415,6 +415,7 @@ static std::string type_to_string_h(const kdi_type& t) {
             return v.fq_name;
         }
         if constexpr (std::is_same_v<T, kdi_enum_ref>)      return "enum " + v.fq_name;
+        if constexpr (std::is_same_v<T, kdi_alias_ref>)     return v.fq_name;
         if constexpr (std::is_same_v<T, kdi_template_param_ref>) return v.name;
         if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
             std::string s = v.name + "<";

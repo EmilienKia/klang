@@ -277,7 +277,7 @@ public:
 /**
  * For statement
  */
-class for_statement : public statement , public variable_holder, public using_holder
+class for_statement : public statement , public variable_holder, public using_holder, public alias_holder
 {
 protected:
     std::shared_ptr<variable_statement> _decl_stmt;
@@ -349,7 +349,7 @@ enum class foreach_kind {
  * is constructed then destroyed at every iteration (unlike a classic for-loop's
  * decl_stmt, which lives for the entire loop).
  */
-class foreach_statement : public statement, public variable_holder, public using_holder
+class foreach_statement : public statement, public variable_holder, public using_holder, public alias_holder
 {
 protected:
     /** The user-declared foreach loop variable ('name : type' part). Rebuilt (construct/destruct) every iteration. */
@@ -688,7 +688,7 @@ public:
 /**
  * Statement block.
  */
-class block : public statement , public variable_holder, public using_holder {
+class block : public statement , public variable_holder, public using_holder, public alias_holder {
 protected:
     friend class function;
 

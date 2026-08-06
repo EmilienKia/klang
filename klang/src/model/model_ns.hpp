@@ -45,7 +45,7 @@ public:
 };
 
 
-class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder {
+class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder, public alias_holder {
 protected:
 
     friend class unit;

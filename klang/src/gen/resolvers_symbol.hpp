@@ -80,6 +80,13 @@ protected:
     std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
     resolve_via_using(const element& elem, const name& name);
 
+    /**
+     * Validate every alias declared by a scope. Aliasing a namespace is
+     * forbidden by design: 'using N = namespace X::Y;' is the only way to
+     * rename a namespace.
+     */
+    void check_alias_declarations(const alias_holder& holder, const element& scope);
+
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
         logger_relay::report(diag);

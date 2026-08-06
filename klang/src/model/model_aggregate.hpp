@@ -90,7 +90,7 @@ struct base_spec {
  * Holds all common member data: member variables, functions, constructors,
  * destructor, static ctor/dtor, nested aggregates, bases, vtable, vptrs, etc.
  */
-class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder, public friend_holder, public annotation_holder {
+class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder, public alias_holder, public friend_holder, public annotation_holder {
 protected:
     friend class ns;
     friend class gen::implementation_generator;

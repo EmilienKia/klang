@@ -228,6 +228,101 @@ namespace k::model {
             "Using declaration is not allowed here; it must appear inside a namespace, structure, or block scope");
     }
 
+    void model_builder::visit_alias_decl(parse::ast::alias_decl &decl) {
+        const std::string alias_name{decl.name.content};
+        trace("[model_builder::visit_alias_decl] {} '{}'",
+              {decl.is_strong ? "typedef" : "alias", alias_name});
+
+        auto kind = decl.is_strong ? model::alias_definition::kind_t::STRONG
+                                   : model::alias_definition::kind_t::SOFT;
+
+        // Locate the enclosing scope. Namespace and aggregate scopes hold exported
+        // aliases; block and for-statement scopes hold block-local ones.
+        std::shared_ptr<model::element> parent_elem;
+        std::shared_ptr<model::alias_holder> holder;
+        bool block_local = false;
+
+        if (auto ns_scope = current_context_content<model::ns>()) {
+            parent_elem = ns_scope;
+            holder = ns_scope;
+        } else if (auto agg_scope = current_context_content<model::aggregate>()) {
+            parent_elem = agg_scope;
+            holder = agg_scope;
+        } else if (auto block_scope = current_context_content<model::block>()) {
+            parent_elem = block_scope;
+            holder = block_scope;
+            block_local = true;
+        } else if (auto for_scope = current_context_content<model::for_statement>()) {
+            parent_elem = for_scope;
+            holder = for_scope;
+            block_local = true;
+        }
+
+        if (!holder) {
+            throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_BAD_SCOPE), decl.alias_kw,
+                "{} declaration is not allowed here; it must appear inside a namespace, an aggregate or a block",
+                {decl.is_strong ? "Typedef" : "Alias"});
+        }
+
+        // Reject a duplicate alias name in the very same scope.
+        if (holder->get_alias(alias_name)) {
+            throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_DUPLICATE_NAME), decl.name,
+                "'{}' is already declared as an alias in this scope", {alias_name});
+        }
+
+        auto alias = model::alias_definition::make_shared(parent_elem, alias_name, kind);
+        alias->set_block_local(block_local);
+        alias->set_decl_lexeme(decl.alias_kw);
+        // Note: alias_decl has diamond inheritance (declaration + statement →
+        // ast_node), so shared_from_this() is ambiguous, exactly as for
+        // using_decl. The alias keyword token is enough for error reporting.
+
+        // Resolve visibility. A block-local alias is necessarily private: it can
+        // never be part of the module interface.
+        if (auto vctx = current_context<visibility_context>()) {
+            if (vctx->visibility != model::DEFAULT) {
+                if (block_local) {
+                    throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_VISIBILITY_IN_BLOCK), decl.alias_kw,
+                        "A block-local {} cannot be given an explicit visibility; it is always private",
+                        {decl.is_strong ? "typedef" : "alias"});
+                }
+                alias->set_visibility(vctx->visibility);
+            }
+        }
+        if (block_local) {
+            alias->set_visibility(model::PRIVATE);
+        }
+
+        // Documentation is attached to the declaration sub-object by the parser
+        // (statement-context aliases carry none).
+        auto& decl_node = static_cast<parse::ast::declaration&>(decl);
+        if (has_doc(decl_node.doc)) {
+            alias->set_documentation(doc::build_typed_doc<doc::doc_entity>(alias, *decl_node.doc));
+        }
+
+        // Record the aliased entity. A typedef always names a type, which can be
+        // built right away from its type specifier (it may still be an unresolved
+        // type, resolved later by the aggregate type resolver). A soft alias names
+        // a symbol whose kind is only known after symbol resolution.
+        if (!decl.type) {
+            throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_TYPEDEF_TARGET_NOT_A_TYPE), decl.alias_kw,
+                "{} '{}' must name {}",
+                {decl.is_strong ? "Typedef" : "Alias", alias_name,
+                 decl.is_strong ? "a type" : "a type or a symbol"});
+        }
+        alias->_target_type = _context->from_type_specifier(*decl.type);
+        if (decl.is_strong) {
+            alias->_target_kind = model::alias_definition::target_kind_t::TYPE;
+        }
+        if (decl.qname) {
+            alias->set_target_name(decl.qname->to_name());
+        } else if (auto ident = std::dynamic_pointer_cast<parse::ast::identified_type_specifier>(decl.type)) {
+            alias->set_target_name(ident->name.to_name());
+        }
+
+        holder->add_alias(alias);
+    }
+
     void model_builder::visit_friend_decl(parse::ast::friend_decl &decl) {
         // Build the friend_directive descriptor from the AST node
         trace("[model_builder::visit_friend_decl] friend directive", {});

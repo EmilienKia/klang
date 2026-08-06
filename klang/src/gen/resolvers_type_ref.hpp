@@ -230,8 +230,47 @@ protected:
         const std::string& method_name,
         const lex::opt_any_lexeme& lexeme);
 
-    [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(code, message, args);
+    // ── Strong alias (typedef) conversion checking ─────────────────────────────
+
+    /**
+     * Position at which an implicit conversion towards a strong alias occurs.
+     * Determines whether an untainted base-typed expression is rejected or only
+     * reported: an assignment can be enforced at compile time, whereas an
+     * argument or a return value cannot — the symbol is mangled with the
+     * canonical type, so the linker would accept the base-typed call anyway.
+     */
+    enum class alias_conv_site { ASSIGNMENT, ARGUMENT, RETURN };
+
+    /**
+     * Check an implicit conversion of @p expr towards @p target when @p target
+     * denotes a strong alias (typedef).
+     *
+     * Accepted without any diagnostic when the expression is a compile-time
+     * literal or when it is "tainted" by the alias — that is, when it derives
+     * from an operand of that very alias type through operations that preserve
+     * the type (an expression is a sufficient locality to drop the cast).
+     * Otherwise an error (ASSIGNMENT) or a warning (ARGUMENT, RETURN) is issued.
+     */
+    void check_strong_alias_conversion(const std::shared_ptr<expression>& expr,
+                                       const std::shared_ptr<type>& target,
+                                       alias_conv_site site,
+                                       const lex::opt_any_lexeme& lexeme);
+
+    /**
+     * Apply check_strong_alias_conversion() at ARGUMENT position for every
+     * argument of a resolved call.
+     */
+    /**
+     * Eagerly resolve every alias declared by a scope, so that unused aliases
+     * are still fully typed when the KDI is exported.
+     */
+    void materialize_aliases(const alias_holder& holder, element& scope);
+
+    void check_typedef_arguments(function& fn,
+                                 const std::vector<std::shared_ptr<expression>>& args,
+                                 const lex::opt_any_lexeme& lexeme);
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {        auto diag = k::log::diagnostic::make_error(code, message, args);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }

@@ -872,6 +872,8 @@ void symbol_resolver::visit_namespace(ns& ns)
         }
     }
 
+    check_alias_declarations(ns, ns);
+
     for (size_t i = 0; i < ns.get_children().size(); ++i) {
         ns.get_children()[i]->accept(*this);
     }
@@ -890,9 +892,16 @@ void signature_resolver::resolve_signatures(ns& ns) {
 void signature_resolver::visit_namespace(ns& ns) {
     // Only visit aggregate children — free functions don't need the
     // signature pre-pass because they don't cause cross-type forward references.
+    //
+    // Exception: when the namespace declares aliases, free-function signatures
+    // are pre-resolved too, so that overloads differing only by a typedef are
+    // diagnosed before any call site is resolved (which would otherwise report
+    // a plain ambiguity instead of the dedicated diagnostic).
+    const bool visit_free_functions = !ns.get_aliases().empty();
     for (size_t i = 0; i < ns.get_children().size(); ++i) {
         auto& child = ns.get_children()[i];
-        if (std::dynamic_pointer_cast<aggregate>(child)) {
+        if (std::dynamic_pointer_cast<aggregate>(child)
+            || (visit_free_functions && std::dynamic_pointer_cast<function>(child))) {
             child->accept(*this);
         }
     }
@@ -918,6 +927,10 @@ void type_reference_resolver::visit_namespace(ns& ns)
         signature_resolver sig_resolver(_log, _context, _unit);
         sig_resolver.resolve_signatures(ns);
     }
+
+    // Step 1b: Eagerly materialise the aliases declared here, so that an alias
+    // that is never used in this module is still fully typed when exported.
+    materialize_aliases(ns, ns);
 
     // Step 2: Visit all children (namespaces, aggregates, functions, variables)
     // Full pass: visit everything (including function bodies).

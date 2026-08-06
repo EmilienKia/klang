@@ -74,6 +74,8 @@ class klass;
 class interface;
 class annotation_type;
 class union_type_def;
+class alias_definition;
+class alias_type;
 class ns;
 class unit;
 
@@ -93,6 +95,7 @@ class imported_interface;
 
 
 namespace gen {
+class scope_lookup;
 class symbol_resolver;
 class aggregate_type_resolver;
 class model_materializer;

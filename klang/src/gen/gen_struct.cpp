@@ -261,6 +261,8 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
 
     visit_named_element(st);
 
+    check_alias_declarations(st, st);
+
     // Pre declare type
     // TODO Mangle struct name to avoid collisions
     // Guard: do NOT create/overwrite the struct_type if the aggregate already has
@@ -890,6 +892,8 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
     lex::opt_any_lexeme st_lexeme;
     if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
     // Note: const-struct method promotion is already done in symbol_resolver phase.
+
+    materialize_aliases(st, st);
 
     // Visit nested aggregate and union children first
     for(auto& child : st.get_children()) {

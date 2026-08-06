@@ -163,6 +163,10 @@ private:
     /** Dispatch aggregate visit body (shared between structure/klass/interface). */
     void visit_aggregate_body(aggregate& agg, kdi::kdi_aggregate& kagg);
 
+    /** Export the exported alias/typedef declarations of a scope. */
+    void export_aliases(const alias_holder& holder, std::vector<kdi::kdi_alias>& out,
+                        const std::string& scope_fq_name);
+
     /** Build a kdi_template_origin from an entity's tpl_base_name and tpl_args. */
     kdi::kdi_template_origin build_template_origin(const std::string& base_name,
                                                     const std::string& fq_name,

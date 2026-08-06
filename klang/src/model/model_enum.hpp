@@ -18,6 +18,7 @@
 #ifndef KLANG_MODEL_ENUM_HPP
 #define KLANG_MODEL_ENUM_HPP
 #include "model_element.hpp"
+#include "model_alias.hpp"
 namespace k::model {
 struct enum_entry_def {
     std::string name;

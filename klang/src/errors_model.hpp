@@ -278,6 +278,34 @@ enum class type_diag : unsigned int {
     ERR_FOREACH_VAR_DRAIN_FORBIDDEN                = 0x01FA,
 };
 
+/**
+ * Diagnostics for the exported aliasing declarations ('alias' and 'typedef').
+ *
+ * Codes 0x0210-0x022F.
+ */
+enum class alias_diag : unsigned int {
+    /** The aliased symbol or type could not be resolved. */
+    ERR_ALIAS_TARGET_NOT_FOUND                    = 0x0210,
+    /** The alias chain loops back onto itself. */
+    ERR_ALIAS_CYCLE                               = 0x0211,
+    /** Another entity with the same name already exists in this scope. */
+    ERR_ALIAS_DUPLICATE_NAME                      = 0x0212,
+    /** An alias declaration appears in a scope that cannot hold one. */
+    ERR_ALIAS_BAD_SCOPE                           = 0x0213,
+    /** 'alias' cannot target a namespace; 'using N = namespace X;' must be used. */
+    ERR_ALIAS_NAMESPACE_TARGET                    = 0x0214,
+    /** An explicit visibility was given to a block-local alias. */
+    ERR_ALIAS_VISIBILITY_IN_BLOCK                 = 0x0215,
+    /** 'typedef' was given a target that is not a type. */
+    ERR_TYPEDEF_TARGET_NOT_A_TYPE                 = 0x0216,
+    /** An untainted underlying-typed expression was assigned to a typedef. */
+    ERR_TYPEDEF_REQUIRES_EXPLICIT_CAST            = 0x0217,
+    /** Two overloads differ only by a typedef, which never distinguishes a signature. */
+    ERR_TYPEDEF_OVERLOAD_FORBIDDEN                = 0x0218,
+    /** A typedef-typed parameter or return was given a plain underlying-typed value. */
+    WARN_TYPEDEF_BASE_TYPE_ARGUMENT               = 0x0219,
+};
+
 } // namespace k::diag
 
 #endif // KLANG_ERRORS_MODEL_HPP

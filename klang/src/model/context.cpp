@@ -1321,6 +1321,21 @@ context::declare_llvm_function_from_def(const std::string& llvm_def,
     return fn;
 }
 
+std::shared_ptr<alias_type> context::create_alias_type(const std::shared_ptr<alias_definition>& alias,
+                                                       const std::shared_ptr<type>& underlying) {
+    if (!alias || !underlying) return nullptr;
+
+    auto it = _alias_types.find(alias.get());
+    if (it != _alias_types.end()) {
+        it->second->set_underlying(underlying);
+        return it->second;
+    }
+
+    auto at = std::shared_ptr<alias_type>(new alias_type(alias, underlying, alias->get_short_name()));
+    _alias_types[alias.get()] = at;
+    return at;
+}
+
 std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     if (type->is_resolved() && !type::contains_unresolved(type)) {
         return type;

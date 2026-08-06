@@ -66,6 +66,18 @@ protected:
     void visit_static_constructor(static_constructor&) override;
     void visit_static_destructor(static_destructor&) override;
     void visit_parameter(parameter&) override;
+
+    /** Reject two overloads that differ only by a strong alias (typedef). */
+    void check_typedef_overload(function& fn);
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme,
+                                  const std::string& message,
+                                  const std::vector<std::string>& args = {}) {
+        auto diag = k::log::diagnostic::make_error(code, message, args);
+        if (lexeme) diag.at(*lexeme);
+        logger_relay::report(diag);
+        throw resolution_error(std::move(diag));
+    }
 };
 
 } // namespace k::model::gen

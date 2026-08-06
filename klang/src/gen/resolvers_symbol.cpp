@@ -326,6 +326,22 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             }
         }
 
+        // Soft alias redirection: 'alias N : symbol;' makes N a fully transparent
+        // second name for the aliased variable or function. The target is resolved
+        // in the scope that declares the alias, never in the scope that uses it.
+        if (auto ah = dynamic_cast<const alias_holder*>(&elem)) {
+            if (auto al = ah->get_alias(name.to_string())) {
+                if (al->is_soft() && !al->get_target_name().empty() && !al->_resolving) {
+                    if (auto scope = al->parent<element>()) {
+                        al->_resolving = true;
+                        auto res = resolve_symbol(*scope, al->get_target_name());
+                        al->_resolving = false;
+                        if (res.index() != 0) return res;
+                    }
+                }
+            }
+        }
+
         // Step 4: Simple names: search variables, functions, inherited members (BFS), parameters
         // Look at inherited members from base classes (recursive BFS)
         if (auto agg = dynamic_cast<const aggregate*>(&elem)) {
@@ -400,6 +416,58 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         }
 
         return std::monostate{};
+    }
+}
+
+namespace {
+
+/**
+ * True when @p target_name denotes a namespace reachable from @p scope, either
+ * root-anchored (::a::b) or by climbing the enclosing namespace chain.
+ */
+bool alias_target_denotes_namespace(const element& scope, const k::name& target_name) {
+    auto enclosing = scope_lookup::enclosing_namespace(scope);
+    if (!enclosing) return false;
+
+    auto walk = [](std::shared_ptr<const ns> from, const k::name& name) -> bool {
+        std::shared_ptr<const ns> current = std::move(from);
+        for (size_t i = 0; i < name.size(); ++i) {
+            if (!current) return false;
+            current = current->get_child_namespace(name[i]);
+        }
+        return (bool) current;
+    };
+
+    if (target_name.has_root_prefix()) {
+        return walk(scope_lookup::root_namespace(scope), target_name.without_root_prefix());
+    }
+
+    for (std::shared_ptr<const ns> current = enclosing; current; ) {
+        if (walk(current, target_name)) return true;
+        if (current->is_root()) break;
+        current = current->parent<ns>();
+    }
+    return false;
+}
+
+} // anonymous namespace
+
+void symbol_resolver::check_alias_declarations(const alias_holder& holder, const element& scope) {
+    for (const auto& al : holder.get_aliases()) {
+        if (!al) continue;
+        // Give the alias its fully-qualified name: it is needed to export the
+        // declaration and to reference it from an exported signature.
+        visit_named_element(*al);
+        const k::name& target = al->get_target_name();
+        if (target.empty()) continue;
+        if (alias_target_denotes_namespace(scope, target)) {
+            throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_NAMESPACE_TARGET),
+                        al->get_decl_lexeme(),
+                        "'{}' names a namespace: a namespace cannot be aliased with '{}'; "
+                        "use 'using {} = namespace {};' instead",
+                        {target.to_string(), al->is_strong() ? "typedef" : "alias",
+                         al->get_short_name(), target.to_string()});
+        }
     }
 }
 

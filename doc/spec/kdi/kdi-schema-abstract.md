@@ -98,6 +98,11 @@ KdiType = one of:
   { kind: "fn_ref",  ret: KdiType, params: [KdiType] }
   { kind: "aggregate", fq_name: string }  -- reference into KdiTypeTable
   { kind: "enum", fq_name: string }       -- reference into KdiTypeTable.enums
+  { kind: "alias", fq_name: string }      -- reference to an exported typedef
+    -- Only a strong alias ('typedef') is referenced this way: it is nominally
+    -- distinct from the type it renames, so the distinction has to survive the
+    -- round trip. A soft alias ('alias') is fully transparent and is always
+    -- exported as the type it renames.
   { kind: "template_param", name: string } -- template-signature placeholder
   { kind: "generic_ref", name: string, args: [KdiType] }
     -- Reference to another (possibly still-uninstantiated) named type applied
@@ -131,11 +136,41 @@ KdiNamespace {
   namespaces : [KdiNamespace]      -- nested namespaces
   aggregates : [KdiAggregate]      -- struct / class / interface
   enums      : [KdiEnum]
+  aliases    : [KdiAlias]          -- exported 'alias' / 'typedef' declarations
   functions  : [KdiFunction]       -- global and static functions (PUBLIC only)
   variables  : [KdiVariable]       -- global and static variables (PUBLIC only)
   template_defs : [KdiTemplateDef] -- optional; omitted when empty
 }
 ```
+
+---
+
+## KdiAlias
+
+An exported aliasing declaration (`alias` or `typedef`). An alias declares
+nothing new: it is always replaced by the entity it renames, recursively, until
+a non-alias entity is reached — no symbol is ever synthesised for it. It is
+exported as written so that an importing module can use the alias name and, for
+a strong alias, keep its nominal identity.
+
+```
+KdiAlias {
+  name           : string          -- short name
+  fq_name        : string          -- fully-qualified K name
+  visibility     : KdiVisibility
+  is_strong      : bool            -- true for 'typedef', false for 'alias'
+  target_type    : KdiType?        -- the renamed type; always set for a typedef
+  target_fq_name : string?         -- renamed entity, as written; set for a soft
+                                   --   alias targeting a function or a variable
+  doc            : KdiDocBlock?
+}
+```
+
+Notes:
+* Block-local and `private` aliases are never exported.
+* A namespace cannot be aliased, so `target_fq_name` never names a namespace.
+* A `typedef` never changes the mangling of a symbol: mangled names always use
+  the fully resolved (alias-free) type.
 
 ---
 
@@ -239,6 +274,7 @@ KdiAggregate {
   vtable       : KdiVtable?
 
   -- Nested aggregates
+  aliases      : [KdiAlias]        -- optional; omitted when empty
   nested       : [KdiAggregate]
 
   -- LLVM IR struct type definition, e.g. "%struct.ns.Counter = type { i32*, i32 }"

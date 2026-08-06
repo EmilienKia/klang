@@ -21,6 +21,7 @@
 // Prefer including the specific sub-header when only part of the model is needed:
 //   model_fwd.hpp       — includes, forward declarations, visibility enum, vtable structs
 //   model_element.hpp   — element, named_element, variable_definition, holder mixins
+//   model_alias.hpp     — alias_definition, alias_holder
 //   model_enum.hpp      — enum_entry_def, enum_raw_entry_def, enumeration
 //   model_aggregate.hpp — member_variable_definition, base_spec, aggregate hierarchy
 //   model_function.hpp  — parameter, function, constructors/destructors, global functions

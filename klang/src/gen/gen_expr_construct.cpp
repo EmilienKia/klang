@@ -183,7 +183,9 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
         //    allow direct aggregate copy without a constructor.
         if (ctor_args.size() == 1) {
             auto arg_type = ctor_args[0]->get_type();
-            auto arg_type_nc = type::remove_const(arg_type);
+            // Aliases are nominal only: a copy from an alias of the same struct
+            // is still a direct struct copy.
+            auto arg_type_nc = type::canonical(type::remove_const(arg_type));
             bool is_direct_copy = false;
             bool is_lvalue_copy = false; // source is a ref<struct> (lvalue)
             // Check bare struct type (rvalue from function return or temporary)
@@ -192,7 +194,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             }
             // Check ref<struct> (lvalue variable)
             if (!is_direct_copy && type::is_reference(arg_type_nc)) {
-                auto ref_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype());
+                auto ref_sub = type::canonical(type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype()));
                 if (ref_sub == st_type) {
                     is_direct_copy = true;
                     is_lvalue_copy = true;
@@ -390,7 +392,8 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             "this indicates a compiler bug — the constructed symbol must be a variable");
     }
 
-    auto var_type = var_def->get_type();
+    // Aliases have no representation of their own: construct on the canonical type.
+    auto var_type = type::canonical(var_def->get_type());
 
     llvm::Value* object_ref = nullptr;
     _value = nullptr;

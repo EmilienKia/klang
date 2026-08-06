@@ -1011,6 +1011,23 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
         if (prim && type::is_resolved(prim)) return prim;
     }
 
+
+    // Step 2b: aliases and typedefs. An alias is looked up before aggregates and
+    // enums so that it can also shadow an outer type name, exactly like a using
+    // declaration would.
+    if (auto al = scope_lookup::lookup_alias(context_elem.shared_as<const element>(), type_name)) {
+        bool cycle = false;
+        auto aliased = scope_lookup::materialize_alias_type(
+            al, _context,
+            [this](const k::name& n, const element& e) { return resolve_type_by_name(n, e); },
+            cycle);
+        if (cycle) {
+            throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE), al->get_decl_lexeme(),
+                "Alias '{}' is defined in terms of itself", {al->get_fq_name()});
+        }
+        if (aliased) return aliased;
+    }
+
     // Step 3: Walk up the scope chain looking for aggregates, unions, and enumerations
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
         if (auto st = resolve_struct_from(*current, type_name)) return st->get_struct_type();

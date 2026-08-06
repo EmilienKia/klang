@@ -4063,3 +4063,103 @@ TEST_CASE("import struct — indirect members targeting an imported aggregate re
 
     REQUIRE( result.exit_code == 42 );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Exported aliasing across a module boundary — 'alias' and 'typedef'
+// ═════════════════════════════════════════════════════════════════════════════
+
+namespace {
+
+/// Library exporting a soft alias, two typedefs and a function typed with one
+/// of the typedefs.
+constexpr const char* ALIAS_LIB_SRC = R"K(
+    module aliaslib;
+
+    typedef Identifier : int;
+    alias   Num        : int;
+
+    struct Point { x : int; y : int; }
+    typedef Coord : Point;
+
+    makeId(v : Identifier) : Identifier { return v; }
+)K";
+
+} // anonymous namespace
+
+// ─────────────────────────────────────────────────────────────────────────────
+// An imported soft alias, typedef and typedef-over-struct are all usable as
+// types from the importing module.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("import exported aliases and typedefs", "[import][alias][typedef]") {
+    auto result = build_exec_with_lib(
+        ALIAS_LIB_SRC,
+        R"K(
+            module app;
+            import aliaslib;
+
+            main() : int {
+                id : aliaslib::Identifier = 4;
+                n  : aliaslib::Num        = 3;
+                c  : aliaslib::Coord;
+                c.x = 5;
+                return aliaslib::makeId(id) + n + c.x;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 12 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// An imported typedef keeps its nominal identity: assigning the underlying
+// type to it still requires an explicit cast, and the cast is a no-op.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("imported typedef keeps its nominal identity", "[import][typedef]") {
+    auto result = build_exec_with_lib(
+        ALIAS_LIB_SRC,
+        R"K(
+            module app;
+            import aliaslib;
+
+            main() : int {
+                n  : int = 40;
+                id : aliaslib::Identifier = (aliaslib::Identifier) n;
+                // The reverse direction is implicit.
+                back : int = id;
+                return back + 2;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// An imported soft alias is fully transparent: it is interchangeable with the
+// type it renames, in both directions and without any cast.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("imported soft alias is transparent", "[import][alias]") {
+    auto result = build_exec_with_lib(
+        ALIAS_LIB_SRC,
+        R"K(
+            module app;
+            import aliaslib;
+
+            twice(v : int) : int { return v * 2; }
+
+            main() : int {
+                n : aliaslib::Num = 21;
+                m : int = n;
+                return twice(m);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 42 );
+}

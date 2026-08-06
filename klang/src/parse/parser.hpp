@@ -143,6 +143,14 @@ public:
     std::shared_ptr<ast::using_decl> parse_using_decl();
 
     /**
+     * Parse an exported aliasing declaration:
+     *   'alias'   IDENTIFIER ':' QUALIFIED_IDENTIFIER ';'
+     *   'typedef' IDENTIFIER ':' TYPE_SPECIFIER ';'
+     * Valid both in declaration and in statement context.
+     */
+    std::shared_ptr<ast::alias_decl> parse_alias_decl();
+
+    /**
      * FriendDecl = 'friend' , [ FriendFilter ] , QualifiedIdentifier , ';' ;
      * FriendFilter = 'struct' | 'interface' | 'class' ;
      */
