@@ -1,4 +1,175 @@
-# Function References
+# Function References (Unbound Member Function Pointers)
+
+[← Index](../index.md) · [Functions](functions.md)
+
+> **This page covers *unbound member function references* only** — the `T::*(Params):R`
+> form that holds the address of a non-static member function without binding a receiver.
+>
+> The general callable system (bound member functions, free functions, functors, lambdas)
+> is documented in **[Callables](callables.md)**.
+
+An *unbound member function reference* binds no receiver. It stores the address of a
+method and must be called with an explicit object using the `.*` or `->*` operators.
+
+---
+
+## Contents
+
+1. [Member function reference types](#1-member-function-reference-types)
+2. [Obtaining a member function address](#2-obtaining-a-member-function-address)
+3. [Calling — operators `.*` and `->*`](#3-calling--operators--and--)
+4. [Passing and returning](#4-passing-and-returning)
+5. [Overload disambiguation](#5-overload-disambiguation)
+6. [Nullability](#6-nullability)
+7. [Grammar summary](#7-grammar-summary)
+
+---
+
+## 1. Member function reference types
+
+```
+T::*(Params):R      -- pointer  (nullable, rebindable)
+T::?(Params):R      -- view     (nullable, non-rebindable)
+T::+(Params):R      -- link     (non-null, rebindable)
+```
+
+* `T` is the struct/class name. Qualified names (`myns::Counter`) are allowed.
+* `Params` is the explicit parameter list (excluding `this`).
+* `: R` is the **return type** — required when two overloads differ only in return
+  type, strongly recommended otherwise (omitting it is allowed but deprecated).
+
+**Example:**
+
+```k
+struct Counter {
+    value : int;
+    add(x : int) : int { return value + x; }
+    mul(x : int) : int { return value * x; }
+}
+
+mfp : Counter::*(int):int = Counter::add;   // pointer to Counter::add
+```
+
+> **Note:** For most use cases, prefer **bound callables** (`obj.method`) over unbound
+> member function references. `obj.method` produces a `*(Params):R` callable that
+> already carries the receiver object, avoiding the verbose `.*` / `->*` syntax.
+
+---
+
+## 2. Obtaining a member function address
+
+A symbol expression that resolves to a member function and is qualified with
+`StructName::` but is not followed by a call evaluates to an unbound member function
+reference:
+
+```k
+mfp : Counter::*(int):int = Counter::add;
+```
+
+Assignment after declaration follows the same rules (for `*` and `+`):
+
+```k
+mfp = Counter::mul;   // re-bind to a different method
+```
+
+---
+
+## 3. Calling — operators `.*` and `->*`
+
+### `.*` — call on an object or reference
+
+```
+'(' ObjExpr '.*' MfpExpr ')' '(' [ ArgumentList ] ')'
+```
+
+`ObjExpr` must be of struct type `T` (value or `T&`).
+
+```k
+c : Counter;
+c.value = 40;
+result : int = (c.*mfp)(2);    // → 42
+```
+
+### `->*` — call through an indirection
+
+```
+'(' IndirExpr '->*' MfpExpr ')' '(' [ ArgumentList ] ')'
+```
+
+`IndirExpr` must be `T*`, `T?`, `T+`, `T!` or `T&`.
+
+```k
+ptr : Counter* = c;
+result : int = (ptr->*mfp)(2); // → 42
+```
+
+### Parenthesisation is required
+
+```k
+c.*mfp(2)       // ERROR: parsed as c.*(mfp(2))
+(c.*mfp)(2)     // CORRECT
+```
+
+---
+
+## 4. Passing and returning
+
+```k
+invoke(mfp : Counter::*(int):int, c : Counter, x : int) : int {
+    return (c.*mfp)(x);
+}
+
+get_add() : Counter::*(int):int {
+    return Counter::add;
+}
+```
+
+---
+
+## 5. Overload disambiguation
+
+The declared type selects the overload:
+
+```k
+mfp_i : Counter::*(int):int    = Counter::add;   // (int) overload
+mfp_d : Counter::*(double):double = Counter::add; // (double) overload
+```
+
+---
+
+## 6. Nullability
+
+| Qualifier | Nullable | Rebindable |
+|---|---|---|
+| `*` | Yes | Yes |
+| `?` | Yes | No |
+| `+` | No  | Yes |
+
+```k
+mfp : Counter::*(int):int = null;   // valid — pointer may be null
+```
+
+Calling a null unbound member function reference is undefined behaviour.
+
+---
+
+## 7. Grammar summary
+
+```
+MemberFnRefType
+    = ( '*' | '?' | '+' ) , '(' , [ TypeList ] , ')' , [ ':' , TypeSpec ]
+    ;
+
+MemberRefCallExpr
+    = '(' , ObjExpr   , '.*'  , MfpExpr ')' , '(' [ ExpressionList ] ')'
+    | '(' , IndirExpr , '->*' , MfpExpr ')' , '(' [ ExpressionList ] ')'
+    ;
+```
+
+---
+
+*See also:* [Callables](callables.md) · [Lambdas](lambdas.md) · [Types](../basic/types.md) · [Functions](functions.md)
+
 
 [← Index](../index.md) · [Functions](functions.md)
 

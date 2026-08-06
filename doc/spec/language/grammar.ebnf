@@ -426,8 +426,10 @@ AliasDecl
     ;
 
 SoftAliasDecl
-    = [ TemplateDeclaration ] , 'alias' , Identifier , ':' , QualifiedIdentifier , ';'
+    = [ TemplateDeclaration ] , 'alias' , Identifier , ':' , TypeSpec , ';'
     ;
+    (* Pre-existing implementation mismatch fixed: the parser already accepted a full
+       TypeSpec here; the grammar now matches. Required for 'alias F : (T):R;'.        *)
 
 TypedefDecl
     = [ TemplateDeclaration ] , 'typedef' , Identifier , ':' , TypeSpec , ';'
@@ -596,7 +598,12 @@ DestructorHead
 OperatorFunctionHead
     = 'operator' , OperatorSymbol
     | 'operator' , '[' , ']'                                     (* subscript operator *)
+    | 'operator' , '(' , ')' , '('                               (* call operator — NEW; see disambiguation note *)
     ;
+    (* Disambiguation between call operator and cast/conversion operator:
+       'operator' '(' ')' followed by '(' → call operator (OperatorFunctionHead)
+       'operator' '(' ')' followed by ':' | '->' | ';' | 'throws' → conversion operator (CastOperatorFunctionHead)
+       The lookahead of one token after the closing ')' is sufficient.              *)
 
 CastOperatorFunctionHead
     = 'operator' , '(' , ')'                                     (* casting / conversion operator *)
@@ -702,9 +709,47 @@ Specifier
 (* ---------- Type Specifiers ---------------------------------------------- *)
 
 TypeSpec
-    = FunctionRefType
-    | QualifiedIdentifier , '::' , FunctionRefType               (* member fn ref *)
+    = CallableTypeSpec                                            (* callable — addressed or prototype *)
+    | QualifiedIdentifier , '::' , MemberFnRefType               (* unbound member fn ref *)
     | [ 'const' ] , ( FundamentalTypeSpec | QualifiedIdentifier ) , { TypeSuffix }
+    ;
+
+(* A callable type: either a bare prototype (no addresser, only valid as alias/template
+   target) or a prototype qualified by an addresser (* ? + &).
+   Examples:
+     (int,double):long              -- prototype, no addresser
+     *(int):int                     -- pointer (nullable, rebindable)
+     ?(int)                         -- view (nullable, non-rebindable), void return
+     +(int,int):bool                -- link (non-null, rebindable)
+     &():int                        -- reference (non-null, non-rebindable)
+     const *(int):int               -- const callable pointer (non-rebindable)
+     (int):int throws IOException   -- callable with checked-exception contract
+   K has no 'void' keyword: void return = omitted return type.
+   '!' and '#' addressers are FORBIDDEN on callables (ERR_CALLABLE_BAD_ADDRESSER).
+   The '&' addresser is NEW compared to the old function-reference types.            *)
+CallableTypeSpec
+    = [ 'const' ] , [ CallableAddresser ] ,
+      '(' , [ TypeList ] , ')' ,
+      [ ':' , TypeSpec ] ,
+      [ ThrowsClause ]
+    ;
+    (* The ': TypeSpec' return type is parsed greedily: the ':' immediately after ')'
+       always opens the return type. Nested callable types as parameters terminate on
+       the enclosing ',' or ')'. Example: (int, (int):int):bool has parameter type
+       (int):int and return type bool.                                               *)
+
+CallableAddresser
+    = '*'   (* pointer — nullable, rebindable *)
+    | '?'   (* view    — nullable, non-rebindable *)
+    | '+'   (* link    — non-null,  rebindable *)
+    | '&'   (* reference — non-null, non-rebindable; must be explicitly initialised *)
+    ;
+
+(* Unbound member function reference: T::*(params):R, T::?(params), T::+(params).
+   The return type suffix is optional but strongly recommended to avoid ambiguity.
+   Retained for backward compatibility; see doc/spec/language/functions/callables.md. *)
+MemberFnRefType
+    = ( '*' | '?' | '+' ) , '(' , [ TypeList ] , ')' , [ ':' , TypeSpec ]
     ;
 
 FundamentalTypeSpec
@@ -716,13 +761,6 @@ FundamentalTypeSpec
     (* 'char' has no signed/unsigned variant. The 1-byte integer types are      *)
     (* 'byte' (signed) and 'unsigned byte'. 'unsigned char' is not a valid type.*)
 
-FunctionRefType
-    = FunctionRefQualifier , '(' , [ TypeList ] , ')'
-    ;
-
-FunctionRefQualifier
-    = '*' | '?' | '+'
-    ;
 
 TypeList
     = TypeSpec , { ',' , TypeSpec }
@@ -981,7 +1019,40 @@ PrimaryExpr
     | AnnotationInitExpr
     | BraceInitList
     | IdentifierExpr
+    | LambdaExpr                                                  (* NEW *)
     ;
+
+(* A lambda expression yields a '&(params):ret' callable.
+   The closure lifetime is the enclosing block (or the aggregate/global, if used in
+   an initialiser). Capture-free lambdas yield {fn, null} with zero closure cost.   *)
+LambdaExpr
+    = [ 'const' ] , [ CaptureList ] , '(' , [ ParameterList ] , ')' ,
+      [ ':' , TypeSpec ] , BlockStatement
+    ;
+    (* 'const' prefix: forces the generated operator() to be const.
+       No CaptureList: implicit capture-all-by-reference.
+       '[]': empty capture list — any reference to an enclosing local is an error.
+       Return type may be omitted and will be deduced (see lambdas.md §6).           *)
+
+CaptureList
+    = '[' , ']'
+    | '[' , Capture , { ',' , Capture } , ']'
+    ;
+
+Capture
+    = [ 'const' ] , [ '&' ] , 'this'
+    | [ 'const' ] , [ '&' ] , Identifier
+    | [ 'const' ] , [ '&' ] , Identifier , '=' , ConditionalExpr   (* init capture *)
+    ;
+    (* Legal spellings only (anything else → ERR_LAMBDA_BAD_CAPTURE_SYNTAX):
+       x            — capture x by value
+       &x           — capture x by reference (link T+)
+       const &x     — capture x by const reference (const T&)
+       x = expr     — init capture by value (expr evaluated at lambda site)
+       &x = expr    — init capture by reference to lvalue expr
+       this / &this — capture enclosing object by reference (Outer+)
+       const this / const &this — capture enclosing object by const reference
+       [&], [=], [auto …] — REJECTED (ERR_LAMBDA_BAD_CAPTURE_SYNTAX)               *)
 
 AnnotationInitExpr
     = AnnotationDef
