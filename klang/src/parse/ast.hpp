@@ -264,14 +264,20 @@ namespace k::parse {
             std::vector<std::shared_ptr<type_specifier>> param_types;
             /** Declared return type; null means void. */
             std::shared_ptr<type_specifier> return_type;
+            /**
+             * Declared checked-exception set (`throws A, B`). Empty means the callable
+             * declares that it throws nothing.
+             */
+            std::vector<std::shared_ptr<type_specifier>> throws_spec;
 
             callable_type_specifier(
                 const std::optional<lex::operator_>& addresser,
                 const std::optional<qualified_identifier>& owner,
                 const std::vector<std::shared_ptr<type_specifier>>& param_types,
-                const std::shared_ptr<type_specifier>& return_type = nullptr)
+                const std::shared_ptr<type_specifier>& return_type = nullptr,
+                const std::vector<std::shared_ptr<type_specifier>>& throws_spec = {})
                 : addresser(addresser), owner(owner), param_types(param_types),
-                  return_type(return_type) {}
+                  return_type(return_type), throws_spec(throws_spec) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

@@ -434,13 +434,21 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             if (!ret_type) return {};
         }
 
+        // Declared checked-exception set (may itself contain unresolved entries).
+        std::vector<std::shared_ptr<type>> throws_types;
+        for (const auto& tt : frt->throws_spec) {
+            auto t = from_type_specifier(*tt);
+            if (!t) return {};
+            throws_types.push_back(t);
+        }
+
         // Owner structure (for member function pointer): resolved lazily
         // We create an unresolved placeholder struct_type via create_unresolved if owner is set.
         // The real binding happens in type_reference_resolver.
         std::shared_ptr<unresolved_callable_type> result{
             new unresolved_callable_type(
                 frt->owner.has_value() ? frt->owner->to_name() : k::name{},
-                rk, param_types, ret_type)};
+                rk, param_types, ret_type, throws_types)};
         return result;
     } else {
         return {};

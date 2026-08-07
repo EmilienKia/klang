@@ -192,6 +192,13 @@ class ast_dump_visitor : public k::parse::ast_visitor {
                 _stm << " : ";
                 frt.return_type->visit(*this);
             }
+            if (!frt.throws_spec.empty()) {
+                _stm << " throws ";
+                for (size_t i = 0; i < frt.throws_spec.size(); ++i) {
+                    if (i > 0) _stm << ", ";
+                    frt.throws_spec[i]->visit(*this);
+                }
+            }
         }
 
         void visit_visibility_decl(ast::visibility_decl& decl) override {

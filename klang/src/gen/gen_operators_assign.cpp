@@ -497,28 +497,42 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 "only pointer (*) and link (+) callables are rebindable",
                 {target_type ? target_type->to_string() : "?"});
         }
-        // A member function designated without call parentheses (`obj.method`) binds
-        // its receiver into a `{ fn, ctx }` callable value.
-        if (frt_target) {
-            if (auto bound = try_bind_member_callable(right, frt_target)) {
-                expr.assign_right(bound);
-                expr.set_type(ref_target_type);
-                return;
+        // Everything else (member/functor/functional-interface binding, free
+        // function symbol selection, callable→callable conversion and `null`)
+        // goes through the single adaptation funnel, which enforces the phase B.7
+        // co/contravariance and `throws`-subset rules.
+        if (frt_target && !frt_target->is_unbound_member()) {
+            // A nullable source rebound into a non-null (`+`) callable is guarded
+            // by a runtime null-check emitted by the implementation generator.
+            if (!frt_target->is_nullable()) {
+                auto eff_src = source_type;
+                if (type::is_reference(eff_src)) {
+                    eff_src = type::remove_const(
+                        std::dynamic_pointer_cast<reference_type>(eff_src)->get_subtype());
+                }
+                if (auto src_ct = std::dynamic_pointer_cast<callable_type>(eff_src)) {
+                    if (src_ct->is_nullable()) {
+                        auto diag = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::operator_diag::WARN_IMPLICIT_LOSSY_CAST),
+                            "Rebinding a non-null callable from a nullable callable (type '{}'): "
+                            "a runtime null-check will be inserted",
+                            {src_ct->to_string()});
+                        logger_relay::report(diag);
+                    }
+                }
             }
-            if (auto bound = try_bind_functor_callable(right, frt_target)) {
-                expr.assign_right(bound);
-                expr.set_type(ref_target_type);
-                return;
+            auto adapted = adapt_type(right, frt_target);
+            if (!adapted) {
+                throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_INCOMPATIBLE_SIGNATURE), expr.first_lexeme(),
+                    "Cannot assign an expression of type '{}' to the callable type '{}'",
+                    {source_type ? source_type->to_string() : "?",
+                     target_type ? target_type->to_string() : "?"});
             }
-            if (auto bound = try_bind_functional_interface_callable(right, frt_target)) {
-                expr.assign_right(bound);
-                expr.set_type(ref_target_type);
-                return;
-            }
+            expr.assign_right(adapted);
+            expr.set_type(ref_target_type);
+            return;
         }
-        // Unwrap ref<frt> on the source side if needed.
-        // For a direct function symbol (is_function()), impl_gen returns the Function* directly —
-        // no load needed. For a frt variable, impl_gen returns the alloca address — needs a load.
+        // Unbound member function reference: keeps the historical bare
+        // function-pointer representation produced directly by impl_gen.
         if (type::is_reference(source_type)) {
             auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
             if (type::is_callable(inner)) {
@@ -530,7 +544,6 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                     right->set_type(source_type);
                     expr.assign_right(right);
                 }
-                // else: direct function symbol → keep ref<frt>; impl_gen produces Function* directly
             }
         }
         expr.set_type(ref_target_type);
@@ -960,6 +973,16 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             // In an if-condition, soft-fail to _null_failure_bb instead of fatal trap.
             emit_null_check(right, fatal, "link_rebind", _null_failure_bb);
         }
+    }
+
+    // Callable rebind from a nullable source: emit the runtime null-check before
+    // the store. A `+` callable is non-null by construction and the call-site
+    // lowering skips the null check accordingly.
+    if (target_type && type::is_fat_callable(target_type)) {
+        auto rhs_model = expr.right();
+        emit_callable_nonnull_check(target_type,
+                                    rhs_model ? rhs_model->get_type() : nullptr,
+                                    right, expr.first_lexeme());
     }
 
     // ── Union inherited assignment (upcast: derived→base, downcast: base→derived) ──

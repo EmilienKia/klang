@@ -197,6 +197,15 @@ std::string encode_type_specifier(const std::shared_ptr<ast::type_specifier>& ts
             result += " : ";
             result += encode_type_specifier(frt->return_type);
         }
+        if (!frt->throws_spec.empty()) {
+            result += " throws ";
+            for (size_t i = 0; i < frt->throws_spec.size(); ++i) {
+                if (i > 0) {
+                    result += ", ";
+                }
+                result += encode_type_specifier(frt->throws_spec[i]);
+            }
+        }
         return result;
     }
     if (auto owner = std::dynamic_pointer_cast<ast::owner_type_specifier>(ts)) {

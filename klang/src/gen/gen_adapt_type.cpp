@@ -82,6 +82,29 @@ type_reference_resolver::adapt_callable_type(
     const std::shared_ptr<type>& type_src,
     const std::shared_ptr<type>& type_nc)
 {
+    // ── null → callable ──────────────────────────────────────────────────────
+    // `null` is a valid target only for a nullable callable (`*` or `?`); it
+    // materialises the zeroed `{ null, null }` fat value.
+    if (type::is_null(type_src)) {
+        auto dest_ct = std::dynamic_pointer_cast<callable_type>(type_nc);
+        if (!dest_ct && type::is_reference(type_nc)) {
+            dest_ct = std::dynamic_pointer_cast<callable_type>(
+                type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype()));
+        }
+        if (dest_ct && !dest_ct->is_unbound_member()) {
+            if (!dest_ct->is_nullable()) {
+                throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_NULL_TO_NONNULL),
+                    expr ? expr->first_lexeme() : lex::opt_any_lexeme{},
+                    "'null' cannot be assigned to the non-null callable type '{}'; "
+                    "only a pointer (*) or view (?) callable may hold null",
+                    {dest_ct->to_string()});
+            }
+            auto cast = cast_expression::make_shared(expr, dest_ct);
+            cast->set_type(dest_ct);
+            return cast;
+        }
+    }
+
     // Step 1: frt → frt with different addresser: cast_expression to reinterpret
     // Case 1: target is a bare callable_type
     // Step 2: ref<frt> → frt: load_value_expression to dereference
@@ -102,13 +125,17 @@ type_reference_resolver::adapt_callable_type(
         }
     }
     if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(type_nc)) {
-        if (std::dynamic_pointer_cast<callable_type>(type_src)) {
-            // Source is already a bare frt — no load needed.
+        if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type_src)) {
+            // Source is already a bare frt — no load needed, but the prototypes must
+            // still satisfy the co/contravariance rules (phase B.7).
+            if (!tgt_frt->is_unbound_member() && !src_frt->is_unbound_member()) {
+                check_callable_conversion(src_frt, tgt_frt, expr ? expr->first_lexeme() : lex::opt_any_lexeme{});
+            }
             return expr;
         }
         if (type::is_reference(type_src)) {
             auto src_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
-            if (std::dynamic_pointer_cast<callable_type>(src_inner)) {
+            if (auto src_frt = std::dynamic_pointer_cast<callable_type>(src_inner)) {
                 // Direct function symbol: bind it into a callable value.
                 auto sym = std::dynamic_pointer_cast<symbol_expression>(expr);
                 if (sym && sym->is_function()) {
@@ -121,18 +148,17 @@ type_reference_resolver::adapt_callable_type(
                     if (!fn) return expr;
                     // Symbol resolution picks the first declaration carrying that name,
                     // which is declaration-order dependent: re-select the overload whose
-                    // parameter list matches the destination prototype.
+                    // prototype is compatible with the destination, and reject the
+                    // binding outright when none is.
+                    std::vector<std::shared_ptr<function>> cands{fn};
                     if (auto holder = fn->parent<element>()) {
                         if (auto* fh = dynamic_cast<function_holder*>(holder.get())) {
-                            auto cands = fh->get_functions(fn->get_short_name());
-                            if (cands.size() > 1) {
-                                bool ambiguous = false;
-                                if (auto picked = select_overload_for_prototype(cands, *tgt_frt, &ambiguous)) {
-                                    fn = picked;
-                                }
-                            }
+                            auto found = fh->get_functions(fn->get_short_name());
+                            if (!found.empty()) cands = found;
                         }
                     }
+                    fn = select_callable_target(cands, tgt_frt, fn->get_short_name(),
+                                                expr->first_lexeme());
                     auto bind = callable_bind_expression::make_shared(
                         fn->is_static() || !fn->parent<aggregate>()
                             ? (fn->parent<aggregate>() ? callable_bind_expression::kind::static_method
@@ -143,6 +169,9 @@ type_reference_resolver::adapt_callable_type(
                     return bind;
                 }
                 // Variable holding a callable: load the stored value from the alloca.
+                if (!tgt_frt->is_unbound_member() && !src_frt->is_unbound_member()) {
+                    check_callable_conversion(src_frt, tgt_frt, expr->first_lexeme());
+                }
                 return adapt_reference_load_value(expr);
             }
         }

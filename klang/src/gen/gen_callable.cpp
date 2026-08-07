@@ -118,19 +118,9 @@ bool has_unimplemented_slot(const aggregate& agg) {
     return false;
 }
 
-/** True when the parameter list and the return type of @p fn match @p proto. */
+/** True when the prototype of @p fn is a compatible binding target for @p proto. */
 bool matches_callable_prototype(const function& fn, const callable_type& proto) {
-    const auto& params = proto.get_parameter_types();
-    if (fn.get_parameter_size() != params.size()) return false;
-    for (size_t i = 0; i < params.size(); ++i) {
-        auto p = fn.get_parameter(i);
-        if (!p || !type::are_equal(p->get_type(), params[i])) return false;
-    }
-    // A null return type means "returns nothing" on both sides.
-    auto fn_ret  = std::const_pointer_cast<type>(fn.get_return_type());
-    auto tgt_ret = proto.get_return_type();
-    if (!fn_ret || !tgt_ret) return !fn_ret && !tgt_ret;
-    return type::are_equal(fn_ret, tgt_ret);
+    return callable_signature_compatible(fn, proto).ok();
 }
 
 } // anonymous namespace
@@ -161,6 +151,94 @@ void type_reference_resolver::visit_callable_bind_expression(callable_bind_expre
 }
 
 // ── Member function binding (phase B.4) ────────────────────────────────────
+
+std::shared_ptr<function> type_reference_resolver::select_callable_target(
+    const std::vector<std::shared_ptr<function>>& candidates,
+    const std::shared_ptr<callable_type>& tgt,
+    const std::string& what,
+    const lex::opt_any_lexeme& where)
+{
+    std::vector<std::shared_ptr<function>> compatible;
+    // Kept to build an informative message when nothing qualifies: an offset
+    // adjustment is a *different* failure from a plain signature mismatch.
+    bool any_needs_adjustment = false;
+    std::string adjustment_reason;
+    std::string first_reason;
+    bool first_is_throws = false;
+
+    for (const auto& cand : candidates) {
+        if (!cand) continue;
+        auto compat = callable_signature_compatible(*cand, *tgt);
+        if (compat.ok()) {
+            compatible.push_back(cand);
+            continue;
+        }
+        if (compat.result == callable_compat::status::needs_adjustment && !any_needs_adjustment) {
+            any_needs_adjustment = true;
+            adjustment_reason = compat.reason;
+        }
+        if (first_reason.empty()) {
+            first_reason = compat.reason;
+            first_is_throws = compat.throws_violation;
+        }
+    }
+
+    if (compatible.size() == 1) return compatible.front();
+
+    if (compatible.size() > 1) {
+        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_AMBIGUOUS_OVERLOAD),
+            where, "Several overloads of '{}' match the callable type '{}'",
+            {what, tgt->to_string()});
+    }
+
+    if (any_needs_adjustment) {
+        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_COVARIANCE_NEEDS_ADJUSTMENT),
+            where, "'{}' cannot be bound to the callable type '{}': {}",
+            {what, tgt->to_string(), adjustment_reason});
+    }
+
+    // A `throws` set violation is reported with its own code so that a caller can
+    // tell "this target throws more than I promised" from a shape mismatch.
+    if (candidates.size() == 1 && first_is_throws) {
+        throw_error(static_cast<unsigned int>(k::diag::callable_model_diag::ERR_CALLABLE_THROWS_NOT_SUBSET),
+            where, "'{}' cannot be bound to the callable type '{}': {}",
+            {what, tgt->to_string(), first_reason});
+    }
+
+    // A single declaration that simply does not fit is a signature error; several
+    // declarations mean no overload was found.
+    if (candidates.size() == 1) {
+        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_INCOMPATIBLE_SIGNATURE),
+            where, "'{}' cannot be bound to the callable type '{}': {}",
+            {what, tgt->to_string(), first_reason});
+    }
+    throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_NO_MATCHING_OVERLOAD),
+        where, "No overload of '{}' matches the callable type '{}': {}",
+        {what, tgt->to_string(), first_reason});
+    return nullptr; // unreachable — throw_error never returns
+}
+
+void type_reference_resolver::check_callable_conversion(
+    const std::shared_ptr<callable_type>& src,
+    const std::shared_ptr<callable_type>& tgt,
+    const lex::opt_any_lexeme& where)
+{
+    if (!src || !tgt) return;
+
+    auto compat = callable_signature_compatible(*src, *tgt);
+    if (compat.ok()) return;
+
+    if (compat.result == callable_compat::status::needs_adjustment) {
+        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_COVARIANCE_NEEDS_ADJUSTMENT),
+            where, "A callable of type '{}' cannot be converted to '{}': {}",
+            {src->to_string(), tgt->to_string(), compat.reason});
+    }
+    throw_error(static_cast<unsigned int>(compat.throws_violation
+                    ? static_cast<unsigned int>(k::diag::callable_model_diag::ERR_CALLABLE_THROWS_NOT_SUBSET)
+                    : static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_INCOMPATIBLE_SIGNATURE)),
+        where, "A callable of type '{}' cannot be converted to '{}': {}",
+        {src->to_string(), tgt->to_string(), compat.reason});
+}
 
 std::vector<std::shared_ptr<function>> type_reference_resolver::collect_member_overloads(
     const std::shared_ptr<aggregate>& agg, const std::string& name)
@@ -339,23 +417,7 @@ std::shared_ptr<expression> type_reference_resolver::try_bind_member_callable(
              const_receiver ? "; the receiver is const, so only a const member function qualifies" : ""});
     }
 
-    std::shared_ptr<function> fn;
-    if (viable.size() == 1) {
-        fn = viable.front();
-    } else {
-        bool ambiguous = false;
-        fn = select_overload_for_prototype(viable, *tgt, &ambiguous);
-        if (ambiguous) {
-            throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_AMBIGUOUS_OVERLOAD),
-                where, "Several overloads of '{}' match the callable type '{}'",
-                {member_name, tgt->to_string()});
-        }
-        if (!fn) {
-            throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_NO_MATCHING_OVERLOAD),
-                where, "No overload of '{}' matches the callable type '{}'",
-                {member_name, tgt->to_string()});
-        }
-    }
+    std::shared_ptr<function> fn = select_callable_target(viable, tgt, member_name, where);
 
     return make_member_bind(fn, receiver, tgt, nullable_receiver, where);
 }
@@ -405,9 +467,9 @@ std::shared_ptr<expression> type_reference_resolver::try_bind_functor_callable(
             {agg->get_short_name(), tgt->to_string()});
     }
     if (!fn) {
-        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_NO_MATCHING_OVERLOAD),
-            where, "No 'operator()' overload of '{}' matches the callable type '{}'",
-            {agg->get_short_name(), tgt->to_string()});
+        // Not an exact parameter match: fall back to the full co/contravariance rules,
+        // which also produce the diagnostic when nothing qualifies.
+        fn = select_callable_target(viable, tgt, std::string(k::op::OP_CALL), where);
     }
 
     const bool nullable_receiver = receiver_is_nullable(src);
@@ -719,6 +781,26 @@ llvm::Value* implementation_generator::build_bound_callable(
         return build_callable_value(*_builder, callable_ty, fn_ptr, ctx_ptr);
     }
     return build_callable_from_function(expr.get_target(), ctx_ptr, expr.first_lexeme());
+}
+
+void implementation_generator::emit_callable_nonnull_check(
+    const std::shared_ptr<type>& target_type,
+    const std::shared_ptr<type>& source_type,
+    llvm::Value* callable_val,
+    const std::optional<k::lex::any_lexeme>& where)
+{
+    if (!callable_val) return;
+    auto tgt = peel_to_callable(target_type);
+    if (!tgt || tgt->is_nullable()) return;
+    // Only a source that *may* be null needs the guard; a bind expression or another
+    // `+` / `&` callable is non-null by construction.
+    auto src = peel_to_callable(source_type);
+    if (!src || !src->is_nullable()) return;
+
+    set_debug_location(where);
+    llvm::Value* fn_ptr = extract_fn(*_builder, callable_val);
+    auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_assignation");
+    emit_null_check(fn_ptr, fatal, "callable_nonnull");
 }
 
 void implementation_generator::emit_callable_invocation(

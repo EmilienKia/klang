@@ -731,6 +731,20 @@ public:
                                   const std::vector<llvm::Value*>& args,
                                   const std::shared_ptr<type>& result_type,
                                   const std::optional<k::lex::any_lexeme>& where);
+
+    /**
+     * Emit the runtime null-check required when a *nullable* callable (`*` / `?`)
+     * value is bound to a *non-null* one (`+` / `&`).
+     *
+     * A `+` / `&` callable is non-null by construction, and the call-site lowering
+     * relies on that: it skips the null check before dispatching. Without this guard
+     * a null slipped in at initialisation/assignment time would be jumped to.
+     * A no-op when @p target_type is nullable or @p source_type is already non-null.
+     */
+    void emit_callable_nonnull_check(const std::shared_ptr<type>& target_type,
+                                     const std::shared_ptr<type>& source_type,
+                                     llvm::Value* callable_val,
+                                     const std::optional<k::lex::any_lexeme>& where);
     void visit_owner_move_expression(owner_move_expression&) override;
     void visit_array_init_expression(array_init_expression&) override;
     void visit_designated_struct_init_expression(designated_struct_init_expression&) override;

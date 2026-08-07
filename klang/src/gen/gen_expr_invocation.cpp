@@ -853,20 +853,21 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         callee->accept(*this);
         auto callee_type = callee->get_type();
         if (callee_type) {
-            // Unwrap reference / indirection wrapper
-            auto inner_type = callee_type;
-            while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
-                                   type::is_pointer(inner_type) || type::is_view(inner_type))) {
-                inner_type = inner_type->get_subtype();
-            }
+            // Unwrap reference / indirection / const wrapper. `const` matters here:
+            // a `const` callable is still invocable, only not rebindable.
+            auto unwrap_indirections = [](std::shared_ptr<type> t) {
+                t = type::remove_const(t);
+                while (t && (type::is_reference(t) || type::is_link(t) ||
+                             type::is_pointer(t) || type::is_view(t))) {
+                    t = type::remove_const(t->get_subtype());
+                }
+                return t;
+            };
+            auto inner_type = unwrap_indirections(callee_type);
             // Also unwrap an unresolved_callable_type that has been resolved
             if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(inner_type)) {
                 if (ufrt->is_resolved()) {
-                    inner_type = ufrt->get_resolved();
-                    while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
-                                           type::is_pointer(inner_type) || type::is_view(inner_type))) {
-                        inner_type = inner_type->get_subtype();
-                    }
+                    inner_type = unwrap_indirections(ufrt->get_resolved());
                 }
             }
             // If the inner type is a callable_type, this is an indirect call

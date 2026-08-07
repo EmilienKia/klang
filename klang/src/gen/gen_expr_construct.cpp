@@ -941,6 +941,8 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             _value = nullptr;
             expr.argument(0)->accept(*this);
             if (_value) {
+                emit_callable_nonnull_check(var_type, expr.argument(0)->get_type(),
+                                            _value, expr.first_lexeme());
                 _builder->CreateStore(_value, object_ref);
             }
         }

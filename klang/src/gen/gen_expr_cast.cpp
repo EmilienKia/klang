@@ -1037,6 +1037,18 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         return;
     }
 
+    // ── null → callable: the zeroed `{ null, null }` fat value ───────────────
+    if (type::is_null(source_type) && type::is_fat_callable(target_type)) {
+        auto* callable_ty = llvm::dyn_cast_or_null<llvm::StructType>(
+            _context->get_llvm_type(type::remove_const(target_type)));
+        if (!callable_ty) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05D), expr.first_lexeme(),
+                "Internal error: the callable target of a 'null' cast has no LLVM struct type");
+        }
+        _value = llvm::ConstantAggregateZero::get(callable_ty);
+        return;
+    }
+
     // ── null → indirection: emit a null pointer constant of the target type ──
     // All indirection kinds (pointer/link/view/owner) share the same opaque
     // pointer representation at the LLVM IR level.

@@ -72,6 +72,7 @@ add_library(klang
         src/gen/gen_variable_definition.cpp
         src/gen/gen_adapt_type.cpp
         src/gen/gen_callable.cpp
+        src/gen/gen_callable_compat.cpp
         src/compiler.hpp
         src/compiler.cpp
         src/compiler_linker.cpp
@@ -177,7 +178,7 @@ klang_gen_test(klang-tests-model 60
 # ---------------------------------------------------------------------------
 # Group 3 — Codegen core: functions, statements, control flow, init order
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-core 300
+klang_gen_test(klang-tests-gen-core 480
         tests/test-gen.cpp
         tests/test-gen-statements.cpp
         tests/test-gen-resolution.cpp
@@ -188,6 +189,7 @@ klang_gen_test(klang-tests-gen-core 300
         tests/test-gen-callable-basic.cpp
         tests/test-gen-callable-member.cpp
         tests/test-gen-callable-interface.cpp
+        tests/test-gen-callable-variance.cpp
         tests/test-gen-operator-call.cpp
         tests/test-gen-intrinsic.cpp
         tests/test-gen-string-literal.cpp

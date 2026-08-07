@@ -681,6 +681,30 @@ protected:
         const std::shared_ptr<aggregate>& agg, const std::string& name);
 
     /**
+     * Pick, among @p candidates, the single function whose prototype is compatible
+     * with the callable type @p tgt under the co/contravariance rules of phase B.7
+     * (see `callable_signature_compatible()` in `gen_callable_helpers.hpp`).
+     *
+     * Never returns nullptr: it always throws a diagnostic when no candidate — or
+     * more than one — qualifies. @p what names the entity in the message
+     * (e.g. `"add"`, `"operator()"`).
+     */
+    std::shared_ptr<function> select_callable_target(
+        const std::vector<std::shared_ptr<function>>& candidates,
+        const std::shared_ptr<callable_type>& tgt,
+        const std::string& what,
+        const lex::opt_any_lexeme& where);
+
+    /**
+     * Enforce the callable co/contravariance rules between two *declared* callable
+     * types (callable → callable initialisation or assignment). Throws on failure.
+     */
+    void check_callable_conversion(
+        const std::shared_ptr<callable_type>& src,
+        const std::shared_ptr<callable_type>& tgt,
+        const lex::opt_any_lexeme& where);
+
+    /**
      * Build the placeholder callable type carried by a member-function designation
      * written without call parentheses (`obj.method`). It only exists so that
      * adapt_type() has a source type to work from; the real target is selected

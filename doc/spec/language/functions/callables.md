@@ -442,6 +442,27 @@ fp2 : *(int) : int               = read;    // ERROR — read may throw IOError,
 | Aggregate derivation, non-zero offset | ✗ | ✗ |
 | Primitive widening/narrowing | ✗ | ✗ |
 
+### Consequence of the K object layout
+
+The offset-0 requirement is a *layout* rule, not a nominal one, and the K object
+layout makes it strict:
+
+- a **class** (or interface) stores its vptr at field 0, so **no base sub-object of
+  a class is ever at offset 0** — class-to-base callable covariance is always
+  rejected with `ERR_CALLABLE_COVARIANCE_NEEDS_ADJUSTMENT`;
+- a **struct** lays its bases out first, so its **first** base *is* at offset 0 —
+  covariance to that base is accepted, but not to any later base;
+- a **virtual base** is reached through a `__vbptr_X__` indirection and therefore
+  never qualifies.
+
+Identity is decided **nominally first**: a `typedef` never collapses into the type
+it renames, so `*(int):Meters` is not satisfied by an `int`-returning function even
+though `Meters` is a `typedef` of `int`. A soft `alias` is a name, not a type, and
+is transparent.
+
+The addresser of an indirection must also match exactly: a `Base+` return does not
+satisfy a `Base*` return, in either direction.
+
 ---
 
 ## 10. Aliases and templates

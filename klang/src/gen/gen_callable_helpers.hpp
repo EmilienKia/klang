@@ -20,6 +20,7 @@
 #define KLANG_GEN_CALLABLE_HELPERS_HPP
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <llvm/IR/Constants.h>
@@ -113,6 +114,91 @@ inline std::shared_ptr<function> select_overload_for_prototype(
     }
     return found;
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Callable compatibility (phase B.7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The prototype of *something invocable*, decoupled from how it is spelled.
+ *
+ * Both a `callable_type` (a declared callable variable) and a `function` (a target
+ * being bound) are projected onto this view so that a single set of co/contravariance
+ * rules governs every binding site.
+ */
+struct callable_signature_view {
+    /** nullptr means "returns nothing" (K has no `void` keyword). */
+    std::shared_ptr<type> return_type;
+    std::vector<std::shared_ptr<type>> parameter_types;
+    /** Declared checked-exception set; empty == throws nothing. */
+    std::vector<std::shared_ptr<type>> throws;
+    /** Human-readable rendering used in diagnostics. */
+    std::string label;
+
+    static callable_signature_view of(const callable_type& ct);
+    static callable_signature_view of(const function& fn);
+};
+
+/** Outcome of a callable signature compatibility check. */
+struct callable_compat {
+    enum class status {
+        /** The source prototype may be bound to the destination as-is. */
+        ok,
+        /** A nominal derivation exists but its sub-object is not at offset 0. */
+        needs_adjustment,
+        /** No conversion exists at all. */
+        incompatible,
+    };
+
+    status result = status::ok;
+    /** Human-readable explanation, empty when @c result is @c ok. */
+    std::string reason;
+    /** True when the failure is specifically a `throws(src) ⊄ throws(dst)` violation. */
+    bool throws_violation = false;
+
+    bool ok() const { return result == status::ok; }
+    explicit operator bool() const { return ok(); }
+};
+
+/**
+ * True when the @p base sub-object of @p derived begins at byte offset 0, i.e. a
+ * pointer to @p derived and a pointer to that @p base sub-object share the same bit
+ * pattern.
+ *
+ * Only that case is a *safe* co/contravariant substitution for a callable: the
+ * indirect call goes through a raw address with no opportunity to adjust it.
+ * A virtual base is never at a statically known offset and therefore never
+ * qualifies.
+ */
+bool callable_base_at_zero_offset(const std::shared_ptr<aggregate>& derived,
+                                  const std::shared_ptr<aggregate>& base);
+
+/**
+ * Check whether a target with prototype @p src may be bound to a callable declared
+ * with prototype @p dst.
+ *
+ * Rules (spec `doc/spec/language/functions/callables.md` §9):
+ *   - same parameter count;
+ *   - return type *covariant*   — `src.return_type` usable where `dst.return_type` is expected;
+ *   - parameter types *contravariant* — `dst.parameter_types[i]` usable where
+ *     `src.parameter_types[i]` is expected;
+ *   - `throws(src) ⊆ throws(dst)`;
+ *   - identity is checked *nominally first* (so a `typedef` never collapses into the
+ *     type it renames), then aggregate derivation is accepted only at offset 0;
+ *   - no primitive widening/narrowing is ever accepted.
+ *
+ * @return `ok`, or `needs_adjustment` / `incompatible` together with a
+ *         human-readable reason suitable for a diagnostic message.
+ */
+callable_compat callable_signature_compatible(const callable_signature_view& src,
+                                              const callable_signature_view& dst);
+
+/** Convenience overload: compare two declared callable types. */
+callable_compat callable_signature_compatible(const callable_type& src, const callable_type& dst);
+
+/** Convenience overload: compare a function target against a declared callable type. */
+callable_compat callable_signature_compatible(const function& src, const callable_type& dst);
 
 } // namespace k::model::gen
 

@@ -1069,13 +1069,37 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                 }
 
                 if (!failed) {
-                    fn_holder.sync();
-                    std::shared_ptr<ast::type_specifier> result =
-                        std::make_shared<ast::callable_type_specifier>(addresser_op, owner_opt, params, ret_type);
-                    if (callable_const_kw.has_value()) {
-                        result = std::make_shared<ast::const_type_specifier>(*callable_const_kw, result);
+                    // Optional `throws A, B` clause: the declared checked-exception set
+                    // of the callable. Absent means "throws nothing".
+                    std::vector<std::shared_ptr<ast::type_specifier>> throws_spec;
+                    if (auto lthrows = _lexer.get(); lthrows == lex::keyword::THROWS) {
+                        while (true) {
+                            auto tt = parse_type_spec(stop_before_bracket);
+                            if (!tt) {
+                                if (tentative) { failed = true; break; }
+                                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BRACE_INIT_NESTED_ERROR), _lexer.pick_current(),
+                                    "Expected a type specifier in the 'throws' clause of a callable type");
+                            }
+                            throws_spec.push_back(tt);
+                            if (auto sep = _lexer.get(); sep != lex::punctuator::COMMA) {
+                                _lexer.unget();
+                                break;
+                            }
+                        }
+                    } else {
+                        _lexer.unget();
                     }
-                    return result;
+
+                    if (!failed) {
+                        fn_holder.sync();
+                        std::shared_ptr<ast::type_specifier> result =
+                            std::make_shared<ast::callable_type_specifier>(addresser_op, owner_opt, params,
+                                                                          ret_type, throws_spec);
+                        if (callable_const_kw.has_value()) {
+                            result = std::make_shared<ast::const_type_specifier>(*callable_const_kw, result);
+                        }
+                        return result;
+                    }
                 }
             }
         }

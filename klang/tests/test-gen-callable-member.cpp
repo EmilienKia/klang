@@ -412,7 +412,7 @@ TEST_CASE("Callable member: a bound callable called inside a try catches the thr
         test() : int {
             t : Thrower;
             t.base = 2;
-            f : *(int):int = t.go;
+            f : *(int):int throws Boom = t.go;
             try {
                 f(40);
             } catch (e : Boom&) {
