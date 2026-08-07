@@ -80,6 +80,14 @@ protected:
     /** Nominal types of strong aliases, interned per alias_definition. */
     std::map<const alias_definition*, std::shared_ptr<alias_type>> _alias_types;
     std::vector<std::shared_ptr<unresolved_type>> _unresolved;
+    /**
+     * Keeps every `unresolved_callable_type` built from a type specifier alive for the
+     * lifetime of the context. Wrapper types (const, reference, …) hold their subtype
+     * through a *weak* pointer and rely on being cached on that subtype, so an
+     * uninterned callable prototype would die as soon as the builder returned,
+     * leaving `const (int):int` with a dangling inner type.
+     */
+    std::vector<std::shared_ptr<unresolved_callable_type>> _unresolved_callables;
     /** The unique `%__k.callable = type { ptr, ptr }` named struct of this context. */
     llvm::StructType* _callable_llvm_type = nullptr;
     /**
@@ -201,6 +209,11 @@ public:
 
     std::shared_ptr<type> resolve_type(const std::shared_ptr<type>& type);
 
+private:
+    /** resolve_type() without the callable-addresser normalisation (internal). */
+    std::shared_ptr<type> resolve_type_uncollapsed(const std::shared_ptr<type>& type);
+public:
+
     /**
      * Return (creating it on first call) the unique `%__k.callable = type { ptr, ptr }`
      * named LLVM struct of this context. Never build a callable LLVM type inline: a
@@ -237,6 +250,26 @@ public:
 
     /** Reject `!`, `#` and `[]` applied to a callable type. */
     static void reject_callable_addresser(const std::shared_ptr<type>& subtype, const char* suffix);
+
+    /**
+     * Normalise an indirection wrapper placed directly over a fat callable.
+     *
+     * `F&` — where `F` names a callable prototype through an alias or a
+     * parameterised alias — is parsed as `reference(unresolved("F"))`, because
+     * the parser has no way to know that `F` denotes a callable. Once the name
+     * is resolved, `reference(callable)` is meaningless: a callable *is* an
+     * indirection, so the suffix must re-address it exactly like the inline
+     * form `&(int):bool` does.
+     *
+     * Applies recursively so that `const F&` is normalised too, and leaves
+     * every other type untouched.
+     *
+     * @throws context_resolution_error when the addresser is applied to a
+     *         strong alias (typedef) naming a *bare prototype*: the nominal
+     *         identity of a typedef is attached to its declared type as a
+     *         whole, so it cannot be re-addressed after the fact.
+     */
+    std::shared_ptr<type> collapse_callable_addresser(const std::shared_ptr<type>& t);
 
     /**
      * Build (once) the nominal alias_type of a strong alias (typedef).

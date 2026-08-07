@@ -1024,6 +1024,11 @@ namespace k::parse {
          * same representation.
          */
         struct alias_decl : public declaration, public statement {
+            /// Declaration specifiers ('public', 'protected', 'private') written
+            /// directly in front of the declaration, as opposed to a block-level
+            /// visibility declaration.
+            std::vector<lex::keyword> specifiers;
+
             /// The 'alias' or 'typedef' keyword token.
             lex::keyword alias_kw;
 

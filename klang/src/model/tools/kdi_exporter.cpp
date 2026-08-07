@@ -217,8 +217,42 @@ kdi::kdi_visibility kdi_builder::to_kdi_vis(visibility v) {
                           : kdi::kdi_visibility::public_;
 }
 
-kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
-    if (!t) return kdi::kdi_type::make_void();
+kdi::kdi_callable_addresser kdi_builder::to_kdi_addresser(callable_type::addresser a) {
+    switch (a) {
+        case callable_type::addresser::none:      return kdi::kdi_callable_addresser::none;
+        case callable_type::addresser::view:      return kdi::kdi_callable_addresser::view;
+        case callable_type::addresser::link:      return kdi::kdi_callable_addresser::link;
+        case callable_type::addresser::reference: return kdi::kdi_callable_addresser::ref;
+        case callable_type::addresser::pointer:   break;
+    }
+    return kdi::kdi_callable_addresser::ptr;
+}
+
+kdi::kdi_callable_type kdi_builder::to_kdi_callable(
+    const callable_type& ct,
+    const std::function<kdi::kdi_type(const std::shared_ptr<type>&)>& convert) const
+{
+    kdi::kdi_callable_type k;
+    k.addresser = to_kdi_addresser(ct.get_addresser());
+    // A null model return type means "returns nothing"; it is encoded as void
+    // so that the decoder never has to deal with an absent entry.
+    k.ret = std::make_shared<kdi::kdi_type>(
+        ct.get_return_type() ? convert(ct.get_return_type()) : kdi::kdi_type::make_void());
+    for (const auto& p : ct.get_parameter_types())
+        k.params.push_back(std::make_shared<kdi::kdi_type>(convert(p)));
+    for (const auto& th : ct.get_throws())
+        k.throws.push_back(std::make_shared<kdi::kdi_type>(convert(th)));
+    if (auto mfr = dynamic_cast<const member_function_reference_type*>(&ct)) {
+        if (auto owner = mfr->get_member_of()) {
+            std::string fq = owner->get_fq_name();
+            if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') fq = fq.substr(2);
+            k.member_of = fq;
+        }
+    }
+    return k;
+}
+
+kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {    if (!t) return kdi::kdi_type::make_void();
 
     if (auto ct = std::dynamic_pointer_cast<const_type>(t)) {
         kdi::kdi_const_type kct;
@@ -267,11 +301,8 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
         return kdi::kdi_type{std::move(k)};
     }
     if (auto frt = std::dynamic_pointer_cast<callable_type>(t)) {
-        kdi::kdi_fn_ref_type k;
-        k.ret = std::make_shared<kdi::kdi_type>(to_kdi_type(frt->get_return_type()));
-        for (auto& p : frt->get_parameter_types())
-            k.params.push_back(std::make_shared<kdi::kdi_type>(to_kdi_type(p)));
-        return kdi::kdi_type{std::move(k)};
+        return kdi::kdi_type{to_kdi_callable(
+            *frt, [this](const std::shared_ptr<type>& sub) { return to_kdi_type(sub); })};
     }
     if (auto st = std::dynamic_pointer_cast<struct_type>(t)) {
         // Use the fully-qualified name so importing compilers can unambiguously
@@ -393,11 +424,25 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
         return kdi::kdi_type{std::move(k)};
     }
     if (auto frt = std::dynamic_pointer_cast<callable_type>(t)) {
-        kdi::kdi_fn_ref_type k;
-        k.ret = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(frt->get_return_type(), ti));
-        for (auto& p : frt->get_parameter_types()) {
+        return kdi::kdi_type{to_kdi_callable(
+            *frt, [this, &ti](const std::shared_ptr<type>& sub) {
+                return to_kdi_signature_type(sub, ti);
+            })};
+    }
+    if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        // A callable appearing in a still-generic signature (e.g. '*(T):R'):
+        // its components are template-parameter placeholders, so it cannot be
+        // converted through to_kdi_type().
+        kdi::kdi_callable_type k;
+        k.addresser = to_kdi_addresser(ufrt->get_addresser());
+        k.ret = std::make_shared<kdi::kdi_type>(
+            ufrt->get_return_type() ? to_kdi_signature_type(ufrt->get_return_type(), ti)
+                                    : kdi::kdi_type::make_void());
+        for (const auto& p : ufrt->parameter_types())
             k.params.push_back(std::make_shared<kdi::kdi_type>(to_kdi_signature_type(p, ti)));
-        }
+        for (const auto& th : ufrt->get_throws())
+            k.throws.push_back(std::make_shared<kdi::kdi_type>(to_kdi_signature_type(th, ti)));
+        if (!ufrt->owner_name().empty()) k.member_of = ufrt->owner_name().to_string();
         return kdi::kdi_type{std::move(k)};
     }
 
@@ -946,6 +991,12 @@ void kdi_builder::visit_namespace(ns& n) {
         _file.unit.root_ns = std::move(kns);
 }
 
+// NOTE (callables): a closure aggregate synthesised for a lambda is an implementation
+// detail of the enclosing function and must never appear in a .kdi descriptor — a consumer
+// only ever sees the callable type of the lambda, never the aggregate behind it. Closures
+// are compiler-generated and left with private visibility, so the is_exported() guards at
+// the top of visit_structure()/visit_klass() already skip them; keep that invariant when
+// closure support lands.
 void kdi_builder::visit_structure(structure& s) {
     if (!is_exported(s.get_visibility())) return;
 

@@ -197,6 +197,10 @@ protected:
         const std::shared_ptr<type>& t,
         const element* scope_elem);
 
+    /** Rebuild the indirection/qualifier wrapper of @p model around @p sub. */
+    static std::shared_ptr<type> rewrap_like(const std::shared_ptr<type>& model,
+                                             const std::shared_ptr<type>& sub);
+
     /**
      * Post-instantiation: resolve all internal types of a freshly instantiated
      * template aggregate so that code generation can proceed.

@@ -426,14 +426,17 @@ AliasDecl
     ;
 
 SoftAliasDecl
-    = [ TemplateDeclaration ] , 'alias' , Identifier , ':' , TypeSpec , ';'
+    = { Specifier } , [ TemplateDeclaration ] , 'alias' , Identifier , ':' , TypeSpec , ';'
     ;
     (* Pre-existing implementation mismatch fixed: the parser already accepted a full
        TypeSpec here; the grammar now matches. Required for 'alias F : (T):R;'.        *)
 
 TypedefDecl
-    = [ TemplateDeclaration ] , 'typedef' , Identifier , ':' , TypeSpec , ';'
+    = { Specifier } , [ TemplateDeclaration ] , 'typedef' , Identifier , ':' , TypeSpec , ';'
     ;
+    (* A leading Specifier list carries the per-declaration visibility, exactly like any
+       other declaration: 'public alias F : (int):bool;' overrides the enclosing
+       visibility block. Visibility specifiers are rejected on a block-local alias. *)
     (* A TemplateDeclaration introduces a parameterised alias, which renames a whole
        family of types, e.g. 'template<typename T> alias Vec : Array<T, 16>;'.
        A parameterised alias is never a symbol of its own: 'Vec<int>' is

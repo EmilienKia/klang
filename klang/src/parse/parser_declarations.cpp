@@ -550,6 +550,11 @@ std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
 {
     lex::lex_holder holder(_lexer);
 
+    // Declaration specifiers written in front of the declaration
+    // ('public alias F : …;'), as opposed to a block-level visibility
+    // declaration ('public:').
+    std::vector<lex::keyword> specifiers = parse_specifiers();
+
     // Parse an optional template declaration: a parameterised alias renames a
     // family of types (e.g. 'template<typename T> alias Vec : Array<T, 16>;').
     const char* tpl_kw_start = nullptr;
@@ -614,6 +619,7 @@ std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
             std::move(qname),
             std::move(type),
             std::move(template_params));
+    result->specifiers = std::move(specifiers);
 
     // Capture the source text of a parameterised alias for KDI export: from the
     // 'template' keyword through the closing ';'.

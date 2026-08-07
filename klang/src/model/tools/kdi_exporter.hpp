@@ -45,6 +45,7 @@
 
 #include <kdi.hpp>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -136,6 +137,18 @@ private:
 
     /** Convert a model type to a kdi_type DTO (recursive). */
     kdi::kdi_type to_kdi_type(const std::shared_ptr<type>& t) const;
+
+    /** Map a model callable addresser to its KDI counterpart. */
+    static kdi::kdi_callable_addresser to_kdi_addresser(callable_type::addresser a);
+
+    /**
+     * Convert a callable_type (or an unbound member function reference) to its
+     * KDI DTO, converting every component through @p convert so that both the
+     * concrete and the template-signature conversions can share the code.
+     */
+    kdi::kdi_callable_type to_kdi_callable(
+        const callable_type& ct,
+        const std::function<kdi::kdi_type(const std::shared_ptr<type>&)>& convert) const;
 
     /** Convert a template-signature type to KDI, preserving template parameter placeholders. */
     kdi::kdi_type to_kdi_signature_type(const std::shared_ptr<type>& t,

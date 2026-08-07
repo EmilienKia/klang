@@ -387,13 +387,23 @@ static std::string type_to_string_h(const kdi_type& t) {
         if constexpr (std::is_same_v<T, kdi_array_type>) return "[]" + (v.elem ? type_to_string_h(*v.elem) : "?");
         if constexpr (std::is_same_v<T, kdi_sized_array_type>)
             return "[" + std::to_string(v.size) + "]" + (v.elem ? type_to_string_h(*v.elem) : "?");
-        if constexpr (std::is_same_v<T, kdi_fn_ref_type>) {
-            std::string s = "fn(";
+        if constexpr (std::is_same_v<T, kdi_callable_type>) {
+            std::string s = v.member_of.empty() ? std::string{}
+                                                : (v.member_of + "::");
+            s += callable_addresser_symbol(v.addresser);
+            s += "(";
             for (size_t i = 0; i < v.params.size(); ++i) {
                 if (i) s += ", ";
                 s += (v.params[i] ? type_to_string_h(*v.params[i]) : "?");
             }
-            return s + ") : " + (v.ret ? type_to_string_h(*v.ret) : "void");
+            s += ")";
+            if (v.ret && !std::holds_alternative<kdi_void_type>(v.ret->value))
+                s += " : " + type_to_string_h(*v.ret);
+            for (size_t i = 0; i < v.throws.size(); ++i) {
+                s += (i ? ", " : " throws ");
+                s += (v.throws[i] ? type_to_string_h(*v.throws[i]) : "?");
+            }
+            return s;
         }
         if constexpr (std::is_same_v<T, kdi_aggregate_ref>) {
             // If this reference targets a compiler-synthesized concrete template

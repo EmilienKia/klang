@@ -107,6 +107,10 @@ public:
      * declared before the type it renames, and may itself rename another alias.
      * @p resolve_by_name is the caller's own name-to-type resolution routine, so
      * that this helper can be shared by every resolution pass.
+     * @p resolve_chain is the caller's own *type* resolution routine; it is the
+     * only way to resolve a composite target such as a callable prototype
+     * (`alias F : (int):bool;`), whose components are not reachable by name
+     * alone. May be empty, in which case such targets stay unresolved.
      *
      * Returns the type the alias denotes (the nominal alias_type for a typedef,
      * the renamed type itself for a soft alias), or nullptr if it cannot be
@@ -117,7 +121,8 @@ public:
     materialize_alias_type(const std::shared_ptr<alias_definition>& alias,
                            const std::shared_ptr<context>& ctx,
                            const std::function<std::shared_ptr<type>(const k::name&, const element&)>& resolve_by_name,
-                           bool& cycle);
+                           bool& cycle,
+                           const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain = {});
 
     /**
      * Resolve a use of a parameterised alias, e.g. 'Vec<int>' declared as

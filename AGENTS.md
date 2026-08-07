@@ -385,8 +385,10 @@ stores only the pointer. Cause chaining is therefore restricted to by-value thro
 model-mutating pass — the declared aliases must survive until KDI export, which runs *after*
 code generation — so `type::canonical()` is applied at a closed set of consumption points:
 `alias_type::get_llvm_type()`, `type::are_layout_equal()`, `adapt_type()`,
-`compute_cast_weight()`, `visit_cast_expression()`, `process_arithmetic()`, the
-variable-definition and construction validators, member access in `gen_expr_member.cpp`, and
+`compute_cast_weight()`, `visit_cast_expression()` (including its callable-to-callable
+retag branch), `process_arithmetic()`, the variable-definition and construction validators,
+member access in `gen_expr_member.cpp`, `peel_to_callable()` in `gen/gen_callable_helpers.hpp`,
+the `unwrap_indirections` lambda of `gen/gen_expr_invocation.cpp`, and
 `mangler::mangle_type()`. `type::are_equal()` stays **nominal** for aliases — that is what
 makes a typedef a distinct type — and `kdi_type_converter` must *not* canonicalise, or
 nominality would be lost across module boundaries.
@@ -395,6 +397,38 @@ Expression types always stay canonical (generators dispatch on `dynamic_pointer_
 primitive_type>` and break otherwise); the alias an expression came from is carried instead by
 the `_alias_taint` weak pointer on `expression`, read through `carries_alias()`, and never
 reaches code generation.
+
+### Callable type invariants
+
+A callable is itself an indirection, so an addresser applied to a *name* that denotes a
+callable **re-addresses** it instead of wrapping it: `F&` with `alias F : (int):bool;` is
+`&(int):bool`, never `reference<callable>`. The parser cannot know that, so every path that
+resolves a declared type funnels the rebuilt wrapper chain through
+`context::collapse_callable_addresser()` (`context::resolve_type()`,
+`type_reference_resolver::resolve_variable_type()`, `aggregate_type_resolver::resolve_one_type()`).
+The collapse peels an intervening `const` (`const F&` parses as `reference(const(F))`) and
+rejects re-addressing a `typedef` that renames a *bare prototype*
+(`ERR_CALLABLE_TYPEDEF_PROTOTYPE_READDRESS`), because `alias_type` is interned once per
+`alias_definition` and could not represent two distinct addressed forms.
+
+Two further consequences:
+
+- **A callable declared through an alias is initialised by a constructor invocation.**
+  `model_builder` decides between "wrap the initialiser in a
+  `constructor_invocation_expression`" and "store it directly" on the *unresolved* declared
+  type, so `a : F*` looks like a pointer there and takes the direct-store path. The callable
+  branch of `type_reference_resolver::visit_variable_definition()` normalises it back, since
+  code generation emits the initialising store only from the constructor-invocation node.
+- **The signature of a callable is resolved by exactly one routine per pass.** Any duplicated
+  inline rebuild silently drops a component — dropping the `throws` set made two distinct
+  callable types mangle to the same symbol. Phase 1.a always goes through
+  `aggregate_type_resolver::resolve_unresolved_callable_type()`, the full pass through
+  `type_reference_resolver::resolve_callable_type()`.
+
+`unresolved_callable_type` instances built by `context::from_type_specifier()` are kept alive
+in `context::_unresolved_callables`: wrapper types hold their subtype through a **weak**
+pointer and rely on being cached on it, so an uninterned prototype would die as soon as the
+builder returned and leave `const (int):int` with a dangling inner type.
 
 ### Naming and mangling invariants
 
@@ -556,6 +590,8 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Fix a callable variance / compatibility rule | `gen/gen_callable_compat.cpp` (`callable_signature_compatible`, `type_usable_as`, `callable_base_at_zero_offset`), `gen/gen_callable_helpers.hpp` (API), `gen/gen_callable.cpp` (`select_callable_target`, `check_callable_conversion`), `gen/gen_adapt_type.cpp` (`adapt_callable_type`), `gen/gen_operators_assign.cpp` (callable rebinding), tests `klang/tests/test-gen-callable-variance.cpp`, spec `doc/spec/language/functions/callables.md` §9 |
 | Fix/extend comparison operator fallback (synthesis) | `model/operators.hpp` (`comparison_expression` synthesis descriptor + Phase 2 `_spaceship_zero_*` fields), `gen/gen_operators_overload.cpp` (`resolve_comparison_with_fallback` — the 7-tier priority algorithm: DIRECT, SPACESHIP, SPACESHIP_SWAP, NEGATE, SWAP, SWAP_NEGATE, COMPOSITE; `try_resolve_spaceship_zero_comparison` — Phase 2 aggregate-vs-0 lookup), `gen/gen_operators_logical.cpp` (`generate_comparison_operator`, `call_comparison_source_operator` — sret-aware synthesis codegen; `generate_spaceship_zero_comparison` — Phase 2; all six comparison visitors), `gen/gen_operators_spaceship.cpp` (`<=>` direct usage, `is_spaceship_return_shape_ok`, `compare_spaceship_result_to_zero`), `klang/tests/test-gen-comparison-fallback.cpp` + `klang/tests/test-gen-spaceship.cpp` (permanent test suites, incl. Phase 2 aggregate-return cases), spec: `doc/spec/language/functions/operators.md` §9 |
 | Understand doc-comment parsing | `parse/doc_comment_parser.hpp/.cpp` (marker cleaning + generic `{tag,content}` entry extraction), `parse/ast.hpp` (`ast::documentation` with `entries[]`), `model/documentation.hpp/.cpp` (semantic interpretation: entries → param/return/throws/tparam/tagged) |
+| Work on callable aliases / typedefs / template aliases | `model/context.cpp` (`collapse_callable_addresser`, `get_callable_type`), `gen/resolvers_scope_lookup.cpp` (`materialize_alias_type`, `resolve_alias_template`), `gen/resolvers_type_ref.cpp` (`resolve_callable_type`, `resolve_type_chain`), `gen/resolvers_aggregate.cpp` (`resolve_unresolved_callable_type`), tests `klang/tests/test-gen-callable-alias.cpp` |
+| Work on callable KDI export/import | `model/tools/kdi_exporter.cpp` (`to_kdi_callable`), `kdi_type_converter.cpp` (`convert_callable`), `libkdi/src/kdi_types.hpp` (`kdi_callable_type`), `kdi_json.cpp`, `kdi_cbor.cpp`, tests `klang/tests/test-import.cpp` `[callable]` and `libkdi/tests/test_{dto,json,cbor}.cpp` |
 | Add a test | `klang/tests/test-gen-*.cpp` (follow existing pattern with `helpers.cpp`) |
 
 ---

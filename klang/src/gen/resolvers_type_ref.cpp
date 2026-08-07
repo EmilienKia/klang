@@ -394,7 +394,8 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
         auto aliased = scope_lookup::materialize_alias_type(
             al, _context,
             [this](const k::name& n, const element& e) { return resolve_type_by_name(n, e); },
-            cycle);
+            cycle,
+            [this](const std::shared_ptr<type>& t, const element& e) { return resolve_type_chain(t, &e); });
         if (cycle) {
             throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE), al->get_decl_lexeme(),
                 "Alias '{}' is defined in terms of itself", {al->get_fq_name()});
@@ -1857,6 +1858,13 @@ std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
     // A struct_type is semantically resolved even before its LLVM type is materialized.
     if (std::dynamic_pointer_cast<struct_type>(t)) return t;
 
+    // Leaf: a callable prototype whose components are now known (typically the
+    // target of a parameterised alias after argument substitution).
+    if (auto ucall = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        return resolve_callable_type(ucall, scope_elem ? *scope_elem
+                                                       : static_cast<const element&>(_unit));
+    }
+
     // Leaf: unresolved_type — delegate to resolve_inner_type which can
     // trigger template instantiation via try_instantiate_template_type.
     if (auto unres = std::dynamic_pointer_cast<unresolved_type>(t)) {
@@ -1871,18 +1879,32 @@ std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
     auto resolved_sub = resolve_type_chain(sub, scope_elem);
     if (!resolved_sub || (!type::is_resolved(resolved_sub) && !std::dynamic_pointer_cast<struct_type>(resolved_sub))) return t;
 
-    if (std::dynamic_pointer_cast<pointer_type>(t))   return resolved_sub->get_pointer();
-    if (std::dynamic_pointer_cast<reference_type>(t))  return resolved_sub->get_reference();
-    if (std::dynamic_pointer_cast<owner_type>(t))      return resolved_sub->get_owner();
-    if (std::dynamic_pointer_cast<link_type>(t))       return resolved_sub->get_link();
-    if (std::dynamic_pointer_cast<view_type>(t))       return resolved_sub->get_view();
-    if (std::dynamic_pointer_cast<drain_type>(t))      return resolved_sub->get_drain();
-    if (std::dynamic_pointer_cast<const_type>(t))      return resolved_sub->get_const();
-    if (auto sarr = std::dynamic_pointer_cast<sized_array_type>(t))
-        return resolved_sub->get_array(sarr->get_size());
-    if (std::dynamic_pointer_cast<array_type>(t))      return resolved_sub->get_array();
+    // An addresser applied to a name denoting a callable re-addresses it in
+    // place instead of wrapping it.
+    if (auto collapsed = _context->collapse_callable_addresser(rewrap_like(t, resolved_sub));
+        collapsed) {
+        return collapsed;
+    }
 
     return t;
+}
+
+/** Rebuild the wrapper kind of @p model around @p sub. */
+std::shared_ptr<type> type_reference_resolver::rewrap_like(
+    const std::shared_ptr<type>& model,
+    const std::shared_ptr<type>& sub)
+{
+    if (std::dynamic_pointer_cast<pointer_type>(model))   return sub->get_pointer();
+    if (std::dynamic_pointer_cast<reference_type>(model)) return sub->get_reference();
+    if (std::dynamic_pointer_cast<owner_type>(model))     return sub->get_owner();
+    if (std::dynamic_pointer_cast<link_type>(model))      return sub->get_link();
+    if (std::dynamic_pointer_cast<view_type>(model))      return sub->get_view();
+    if (std::dynamic_pointer_cast<drain_type>(model))     return sub->get_drain();
+    if (std::dynamic_pointer_cast<const_type>(model))     return sub->get_const();
+    if (auto sarr = std::dynamic_pointer_cast<sized_array_type>(model))
+        return sub->get_array(sarr->get_size());
+    if (std::dynamic_pointer_cast<array_type>(model))     return sub->get_array();
+    return model;
 }
 
 void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
@@ -2099,7 +2121,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         validate_owner_variable(ctx);
     } else if (type::is_sized_array(var_type)) {
         validate_sized_array_variable(ctx);
-    } else if (auto ct = std::dynamic_pointer_cast<callable_type>(var_type)) {
+    } else if (auto ct = std::dynamic_pointer_cast<callable_type>(type::remove_const(var_type))) {
         if (ct->is_prototype()) {
             throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_PROTOTYPE_NOT_INSTANTIABLE),
                 var_lexeme,
@@ -2112,6 +2134,24 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 var_lexeme,
                 "A non-null callable of type '{}' must be explicitly initialised",
                 {var_type->to_string()});
+        }
+        // The model builder wraps an initialiser in a constructor_invocation_expression
+        // for value types but stores it directly for indirection types, and it decides
+        // on the *unresolved* declared type. A callable declared through an alias
+        // (`a : F*` with `alias F : (int):int;`) still looked like a pointer there and
+        // took the direct-store path. Normalise it back to a constructor invocation:
+        // code generation emits the initialising store only from that node.
+        if (!ctx.init_expr && ctx.init_expr_base) {
+            std::shared_ptr<variable_definition> var_sp;
+            if (auto* var_elem = dynamic_cast<element*>(&var)) {
+                var_sp = std::dynamic_pointer_cast<variable_definition>(var_elem->shared_as<element>());
+            }
+            if (var_sp) {
+                auto ctor = constructor_invocation_expression::make_shared(var_sp, {ctx.init_expr_base});
+                var.set_init_expr(ctor);
+                ctx.init_expr = ctor;
+                ctx.init_expr_base = ctor;
+            }
         }
         // Adapt the initialiser to the declared callable type: this is where a
         // function designation (`fn`, `obj.method`, a functor…) is rewritten into a
@@ -3693,7 +3733,8 @@ void type_reference_resolver::materialize_aliases(const alias_holder& holder, el
         scope_lookup::materialize_alias_type(
             al, _context,
             [this](const k::name& n, const element& e) { return resolve_type_by_name(n, e); },
-            cycle);
+            cycle,
+            [this](const std::shared_ptr<type>& t, const element& e) { return resolve_type_chain(t, &e); });
         if (cycle) {
             throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE),
                         al->get_decl_lexeme(),

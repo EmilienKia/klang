@@ -41,7 +41,10 @@ namespace k::model::gen {
  */
 inline std::shared_ptr<callable_type> peel_to_callable(std::shared_ptr<type> t) {
     for (unsigned int guard = 0; t && guard < 8u; ++guard) {
-        t = type::remove_const(t);
+        // canonical() strips a `typedef` layer: a strong alias over a callable
+        // is nominal for conversions, but fully transparent once the callable
+        // is consumed (call lowering, bind, ABI).
+        t = type::canonical(type::remove_const(t));
         if (auto ct = std::dynamic_pointer_cast<callable_type>(t)) {
             return ct->is_unbound_member() ? nullptr : ct;
         }

@@ -149,6 +149,16 @@
       Repro/target-behaviour test: `test-import.cpp`, "Known-limitation: homonymous imported
       templates from different modules" (`[.][import][template][homonym-imports]`).
 
+- **Callable `throws` clause in a parameter list is greedy.** The type specification
+  `*(int):int throws A, B` reads its exception list until a token that cannot start a type,
+  so inside a parameter list the comma separating the parameters is swallowed by the throws
+  clause: `f(p: *(int):int throws Boom, v: int)` fails to parse. A callable parameter that
+  declares a `throws` clause must therefore currently be the **last** parameter. Options:
+  parenthesise the throws list, terminate it with an explicit token, or restrict the greedy
+  scan when the callable type is parsed inside a parameter list. Repro/target-behaviour test:
+  `test-gen-callable-alias.cpp`, "callable throws clause in a parameter list is greedy"
+  (`[.][gen][callable][throws][parser-limitation]`).
+
 ### K Compiler
 
 #### Features to add

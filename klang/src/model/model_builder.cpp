@@ -335,6 +335,21 @@ namespace k::model {
                 alias->set_visibility(vctx->visibility);
             }
         }
+        // A specifier written in front of the declaration overrides the enclosing
+        // block visibility, exactly as for a function or a variable.
+        for (const auto& spec : decl.specifiers) {
+            std::optional<model::visibility> vis;
+            if      (spec.type == lex::keyword::PUBLIC)    vis = model::PUBLIC;
+            else if (spec.type == lex::keyword::PROTECTED) vis = model::PROTECTED;
+            else if (spec.type == lex::keyword::PRIVATE)   vis = model::PRIVATE;
+            if (!vis) continue;
+            if (block_local) {
+                throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_VISIBILITY_IN_BLOCK), decl.alias_kw,
+                    "A block-local {} cannot be given an explicit visibility; it is always private",
+                    {decl.is_strong ? "typedef" : "alias"});
+            }
+            alias->set_visibility(*vis);
+        }
         if (block_local) {
             alias->set_visibility(model::PRIVATE);
         }

@@ -4233,3 +4233,212 @@ TEST_CASE("cross-module parameterised alias — strong alias keeps its nominal i
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE( result.exit_code == 42 );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Callable types across module boundaries (KDI export/import)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A library exporting a callable-typed global, a callable parameter and a
+// callable return type.  All three must round-trip through the .kdi descriptor
+// and stay usable (and callable) from the importing executable.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("cross-module callable — global, parameter and return type round-trip",
+          "[import][e2e][callable]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module cbl_lib;
+
+            public isPos(x: int) : bool { return x > 0; }
+
+            public gPred : *(int):bool = isPos;
+
+            public applyPred(p: *(int):bool, v: int) : bool { return p(v); }
+
+            public getPred() : *(int):bool { return isPos; }
+        )K",
+        R"K(
+            module cbl_exe;
+            import cbl_lib;
+
+            isNeg(x: int) : bool { return x < 0; }
+
+            main() : int {
+                // Callable-typed global imported from the library.
+                g : *(int):bool = cbl_lib::gPred;
+                if (!g(7)) return 1;
+                // Callable return type.
+                q : *(int):bool = cbl_lib::getPred();
+                if (!q(4)) return 2;
+                // Callable parameter, bound to a local function.
+                if (!cbl_lib::applyPred(isNeg, -1)) return 3;
+                return 42;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A soft alias over a callable is a pure renaming: the importing module may use
+// the alias name or the underlying callable interchangeably.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("cross-module callable — soft alias over a callable is transparent",
+          "[import][e2e][callable][alias]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module cbl_alias_lib;
+
+            public isPos(x: int) : bool { return x > 0; }
+
+            public alias Pred : *(int):bool;
+
+            public applyAlias(p: Pred, v: int) : bool { return p(v); }
+        )K",
+        R"K(
+            module cbl_alias_exe;
+            import cbl_alias_lib;
+
+            main() : int {
+                p : cbl_alias_lib::Pred = cbl_alias_lib::isPos;
+                if (!p(3)) return 1;
+                // The alias and the raw callable denote the very same type.
+                r : *(int):bool = p;
+                if (!r(5)) return 2;
+                if (!cbl_alias_lib::applyAlias(cbl_alias_lib::isPos, 9)) return 3;
+                return 42;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A typedef over a callable keeps its nominal identity across the module
+// boundary: converting the underlying callable into it requires an explicit cast.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("cross-module callable — typedef over a callable stays nominal",
+          "[import][e2e][callable][typedef]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module cbl_typedef_lib;
+
+            public isPos(x: int) : bool { return x > 0; }
+
+            public typedef StrictPred : *(int):bool;
+
+            public getPred() : *(int):bool { return isPos; }
+        )K",
+        R"K(
+            module cbl_typedef_exe;
+            import cbl_typedef_lib;
+
+            main() : int {
+                s : cbl_typedef_lib::StrictPred =
+                    (cbl_typedef_lib::StrictPred) cbl_typedef_lib::getPred();
+                return s(2) ? 42 : 1;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A parameterised alias over a callable is exported as source text and
+// re-materialised on import; instantiating it in the consumer must produce the
+// very same callable type as the raw prototype (this is what `k::functional`
+// relies on).  Imported parameterised aliases are re-homed under the consumer's
+// root namespace, so they are referenced unqualified.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("cross-module callable — parameterised alias over a callable round-trips",
+          "[import][e2e][callable][alias][template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module cbl_tpl_lib;
+
+            public:
+            template<typename T, typename R> alias Fn : *(T):R;
+            template<typename T> alias Predicate : Fn<T,bool>;
+
+            isPos(x: int) : bool { return x > 0; }
+
+            applyFn(p: Fn<int,bool>, v: int) : bool { return p(v); }
+        )K",
+        R"K(
+            module cbl_tpl_exe;
+            import cbl_tpl_lib;
+
+            isNeg(x: int) : bool { return x < 0; }
+
+            main() : int {
+                f : Fn<int,bool> = isNeg;
+                if (!f(-5)) return 1;
+                // Alias chaining: Predicate<T> renames Fn<T,bool>.
+                p : Predicate<int> = cbl_tpl_lib::isPos;
+                if (!p(3)) return 2;
+                // The instantiated alias is the raw callable type.
+                r : *(int):bool = f;
+                if (!r(-9)) return 3;
+                if (!cbl_tpl_lib::applyFn(cbl_tpl_lib::isPos, 9)) return 4;
+                return 42;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Callable mangling must be stable across the export/import boundary: the
+// symbol the consumer emits for a call has to match the one the library
+// defined, including the addresser and the declared throws set.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("cross-module callable — mangling stays stable across import",
+          "[import][e2e][callable][mangling]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module cbl_mangle_lib;
+
+            public class Boom { }
+
+            public byPtr(f: *(int):int, v: int) : int { return f(v); }
+            public byRef(f: &(int):int, v: int) : int { return f(v); }
+            public byLink(f: +(int):int, v: int) : int { return f(v); }
+            public byView(f: ?(int):int, v: int) : int { return f(v); }
+            // The throws clause of a callable parameter type is greedy, so such a
+            // parameter must come last (see TODO.md, "callable throws clause in a
+            // parameter list").
+            public withThrows(v: int, f: *(int):int throws Boom) : int throws Boom { return f(v); }
+        )K",
+        R"K(
+            module cbl_mangle_exe;
+            import cbl_mangle_lib;
+
+            twice(x: int) : int { return x * 2; }
+
+            main() : int {
+                acc : int = 0;
+                acc = acc + cbl_mangle_lib::byPtr(twice, 1);
+                acc = acc + cbl_mangle_lib::byRef(twice, 2);
+                acc = acc + cbl_mangle_lib::byLink(twice, 3);
+                acc = acc + cbl_mangle_lib::byView(twice, 4);
+                try {
+                    acc = acc + cbl_mangle_lib::withThrows(11, twice);
+                } catch (e : cbl_mangle_lib::Boom&) {
+                    return 5;
+                }
+                return acc;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}

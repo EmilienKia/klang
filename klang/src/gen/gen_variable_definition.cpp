@@ -286,6 +286,10 @@ void type_reference_resolver::resolve_variable_type(
             resolved = _context->resolve_type(var.get_type());
         }
 
+        // An addresser applied to a name denoting a callable re-addresses the
+        // callable instead of wrapping it (`F&` == `&(int):bool`).
+        resolved = _context->collapse_callable_addresser(resolved);
+
         if (resolved && type::is_resolved(resolved)) {
             var.set_type(resolved);
         } else {

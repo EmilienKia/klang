@@ -476,10 +476,22 @@ alias IntMapper : (int) : int;                 // prototype alias
 alias Predicate : (bool) : bool;               // prototype alias, void-param version
 ```
 
-Variables are then declared with an addresser on the alias name:
+Variables are then declared with an addresser **suffixed** to the alias name — an addresser
+never prefixes a *named* type:
 
 ```k
-f : *IntMapper = add_one;    // same as: f : *(int) : int = add_one
+f : IntMapper* = add_one;    // same as: f : *(int) : int = add_one
+g : IntMapper& = add_one;    // non-null, non-rebindable
+h : const IntMapper& = add_one;
+```
+
+Because a callable is already an indirection, an addresser applied to a name denoting a
+callable *re-addresses* it: `IntMapper*` is `*(int):int`, never "a pointer to a callable".
+The alias may also be declared with its addresser, in which case it is used bare:
+
+```k
+alias IntMapperPtr : *(int) : int;
+f : IntMapperPtr = add_one;
 ```
 
 ### Strong alias (`typedef`)
@@ -492,6 +504,15 @@ typedef Filter : *(int) : bool;     // strong alias of pointer-to-callable
 f : Filter = is_positive;   // OK — Filter is the addressed form
 ```
 
+A `typedef` renaming a **bare prototype** cannot be re-addressed afterwards: the nominal type
+of a `typedef` is interned once per declaration, so `G*` and `G&` could not be told apart.
+Declare the addresser on the `typedef` itself instead:
+
+```k
+typedef G : (int) : bool;   // bare prototype
+g : G&;                     // error 0x0253 — declare 'typedef G : &(int) : bool;'
+```
+
 ### Template alias
 
 Callable prototypes are frequently used as template arguments to express higher-order abstractions:
@@ -501,10 +522,26 @@ template<typename T, typename R>
 alias Function : (T) : R;
 
 template<typename T, typename R>
-transform(src : T, fn : *Function<T, R>) : R {
+alias FunctionPtr : *(T) : R;
+
+template<typename T, typename R>
+transform(src : T, fn : FunctionPtr<T, R>) : R {
     return fn(src);
 }
 ```
+
+A parameterised alias may also rename another parameterised alias (alias chaining):
+
+```k
+template<typename T> alias Predicate : Function<T, bool>;
+```
+
+Parameterised aliases over callables are exported to KDI as source text and re-materialised
+on import, so `k::functional`-style abstractions work unchanged across module boundaries.
+
+> **Limitation.** The `throws` clause of a callable type specification is parsed greedily, so
+> a callable parameter that declares one must be the **last** parameter of its function
+> (see `TODO.md`).
 
 ---
 

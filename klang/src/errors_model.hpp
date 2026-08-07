@@ -328,6 +328,8 @@ enum class callable_model_diag : unsigned int {
     ERR_CALLABLE_THROWS_NOT_SUBSET                = 0x0251,
     /** A member function was bound to a callable through a null receiver. */
     ERR_CALLABLE_NULL_RECEIVER_BIND               = 0x0252,
+    /** An addresser suffix was applied to a typedef naming a bare callable prototype. */
+    ERR_CALLABLE_TYPEDEF_PROTOTYPE_READDRESS      = 0x0253,
 };
 
 } // namespace k::diag

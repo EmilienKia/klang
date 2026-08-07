@@ -855,11 +855,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         if (callee_type) {
             // Unwrap reference / indirection / const wrapper. `const` matters here:
             // a `const` callable is still invocable, only not rebindable.
+            // canonical() strips a `typedef` layer: a strong alias is nominal for
+            // conversions but fully transparent for the call lowering.
             auto unwrap_indirections = [](std::shared_ptr<type> t) {
-                t = type::remove_const(t);
+                t = type::canonical(type::remove_const(t));
                 while (t && (type::is_reference(t) || type::is_link(t) ||
                              type::is_pointer(t) || type::is_view(t))) {
-                    t = type::remove_const(t->get_subtype());
+                    t = type::canonical(type::remove_const(t->get_subtype()));
                 }
                 return t;
             };

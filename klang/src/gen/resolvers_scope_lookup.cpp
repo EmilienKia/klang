@@ -576,7 +576,8 @@ std::shared_ptr<type>
 scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& alias,
                                      const std::shared_ptr<context>& ctx,
                                      const std::function<std::shared_ptr<type>(const k::name&, const element&)>& resolve_by_name,
-                                     bool& cycle) {
+                                     bool& cycle,
+                                     const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain) {
     cycle = false;
     if (!alias) return {};
 
@@ -616,6 +617,14 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
     // The alias body is resolved in the scope that declares it, never in the
     // scope that uses it.
 
+    // A composite target — most notably a callable prototype `(int):bool` —
+    // is resolved through the caller's own type-resolution chain: its
+    // components are types, not a name.
+    if (!type::is_resolved(target) && scope && resolve_chain) {
+        if (auto resolved = resolve_chain(target, *scope)) {
+            if (type::is_resolved(resolved)) target = resolved;
+        }
+    }
     if (!type::is_resolved(target) && ctx) {
         if (auto resolved = ctx->resolve_type(target)) {
             if (type::is_resolved(resolved)) target = resolved;
@@ -699,7 +708,16 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
 
         if (use_model_args) {
             if (i < model_args.size()) arg_type = model_args[i];
-            else                       arg_type = param.default_type;
+            // A substituted argument list carries a null slot for every argument
+            // that names no template parameter ('bool' in 'Fn<T,bool>'): the AST
+            // argument at the same index still describes it exactly.
+            if (!arg_type && i < ast_args.size()) {
+                const auto& ast_arg = ast_args[i];
+                if (ast_arg && ast_arg->is_type() && ast_arg->type_arg) {
+                    arg_type = ctx->from_type_specifier(*ast_arg->type_arg);
+                }
+            }
+            if (!arg_type) arg_type = param.default_type;
             if (!arg_type) {
                 report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH),
                              "Parameterised {} '{}' takes {} template argument(s), {} given",

@@ -237,6 +237,7 @@ klang_gen_test(klang-tests-gen-types 250
         tests/test-gen-alias-soft.cpp
         tests/test-gen-typedef.cpp
         tests/test-gen-alias-template.cpp
+        tests/test-gen-callable-alias.cpp
 )
 
 # ---------------------------------------------------------------------------

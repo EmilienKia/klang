@@ -95,7 +95,15 @@ KdiType = one of:
   { kind: "const",  inner: KdiType }
   { kind: "array",  elem: KdiType }
   { kind: "sized_array", elem: KdiType, size: uint }
-  { kind: "fn_ref",  ret: KdiType, params: [KdiType] }
+  { kind: "callable", addresser: string, ret: KdiType?, params: [KdiType],
+    throws: [KdiType]?, member_of: string? }
+    -- A K callable type. "addresser" is one of "none" (a bare prototype,
+    -- which only ever appears as the target of an alias), "ptr" (*),
+    -- "view" (?), "link" (+) or "ref" (&). "ret" is absent for a callable
+    -- returning nothing. "throws" carries the declared checked-exception
+    -- set (absent or empty means "throws nothing") and is part of the type
+    -- identity. "member_of" is the fully-qualified name of the owner
+    -- aggregate of an unbound member-function reference.
   { kind: "aggregate", fq_name: string }  -- reference into KdiTypeTable
   { kind: "enum", fq_name: string }       -- reference into KdiTypeTable.enums
   { kind: "alias", fq_name: string }      -- reference to an exported typedef

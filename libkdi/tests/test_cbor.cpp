@@ -363,6 +363,67 @@ TEST_CASE("CBOR: all type kinds round-trip", "[cbor][types]") {
     REQUIRE(std::get<kdi_aggregate_ref>(fns[14].return_type.value).fq_name == "types::Foo");
 }
 
+TEST_CASE("CBOR: callable type round-trips", "[cbor][type][callable]") {
+    kdi_callable_type c;
+    c.addresser = kdi_callable_addresser::ptr;
+    c.ret = std::make_shared<kdi_type>(kdi_type::make_int(32));
+    c.params.push_back(std::make_shared<kdi_type>(kdi_type::make_int(32)));
+    c.params.push_back(std::make_shared<kdi_type>(kdi_type{kdi_bool_type{}}));
+
+    auto t = rt_type(kdi_type{std::move(c)});
+    REQUIRE(std::holds_alternative<kdi_callable_type>(t.value));
+    auto& r = std::get<kdi_callable_type>(t.value);
+    REQUIRE(r.addresser == kdi_callable_addresser::ptr);
+    REQUIRE(std::holds_alternative<kdi_int_type>(r.ret->value));
+    REQUIRE(r.params.size() == 2u);
+    REQUIRE(std::holds_alternative<kdi_bool_type>(r.params[1]->value));
+    REQUIRE(r.throws.empty());
+    REQUIRE(r.member_of.empty());
+}
+
+TEST_CASE("CBOR: callable type round-trips every addresser", "[cbor][type][callable]") {
+    const kdi_callable_addresser all[] = {
+        kdi_callable_addresser::none, kdi_callable_addresser::ptr,
+        kdi_callable_addresser::view, kdi_callable_addresser::link,
+        kdi_callable_addresser::ref};
+    for (auto a : all) {
+        auto t = rt_type(kdi_type::make_callable(a, kdi_type{kdi_void_type{}}));
+        REQUIRE(std::get<kdi_callable_type>(t.value).addresser == a);
+    }
+}
+
+TEST_CASE("CBOR: callable type round-trips throws and member owner", "[cbor][type][callable]") {
+    kdi_callable_type c;
+    c.addresser = kdi_callable_addresser::ref;
+    c.ret = std::make_shared<kdi_type>(kdi_type{kdi_void_type{}});
+    c.throws.push_back(std::make_shared<kdi_type>(kdi_type::make_aggregate("::k::IOException")));
+    c.throws.push_back(std::make_shared<kdi_type>(kdi_type::make_aggregate("::k::FatalError")));
+    c.member_of = "::my::Counter";
+
+    auto t = rt_type(kdi_type{std::move(c)});
+    auto& r = std::get<kdi_callable_type>(t.value);
+    REQUIRE(r.throws.size() == 2u);
+    REQUIRE(std::get<kdi_aggregate_ref>(r.throws[0]->value).fq_name == "::k::IOException");
+    REQUIRE(std::get<kdi_aggregate_ref>(r.throws[1]->value).fq_name == "::k::FatalError");
+    REQUIRE(r.member_of == "::my::Counter");
+}
+
+TEST_CASE("CBOR: nested callable type round-trips", "[cbor][type][callable]") {
+    auto inner = std::make_shared<kdi_type>(
+        kdi_type::make_callable(kdi_callable_addresser::ptr, kdi_type::make_int(32)));
+    kdi_callable_type outer;
+    outer.addresser = kdi_callable_addresser::none;
+    outer.ret = inner;
+    outer.params.push_back(inner);
+
+    auto t = rt_type(kdi_type{std::move(outer)});
+    auto& r = std::get<kdi_callable_type>(t.value);
+    REQUIRE(std::holds_alternative<kdi_callable_type>(r.ret->value));
+    REQUIRE(std::holds_alternative<kdi_callable_type>(r.params[0]->value));
+    REQUIRE(std::get<kdi_callable_type>(r.params[0]->value).addresser
+            == kdi_callable_addresser::ptr);
+}
+
 TEST_CASE("CBOR: file/path helpers work", "[cbor]") {
     auto f = make_aggregate_file();
     std::string path = "/tmp/test_kdi_cbor_roundtrip.kdi";

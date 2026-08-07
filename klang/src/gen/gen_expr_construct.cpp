@@ -930,7 +930,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             size_field_ptr);
         // Field 1 (data) is now zeroed — primitives are ready.
         // TODO: call default constructors for struct element types.
-    } else if (type::is_callable(var_type)) {
+    } else if (type::is_callable(type::remove_const(var_type))) {
         // Function-reference variable (*(T), ^(T), ~(T)): store the function pointer value.
         // The variable is an alloca of type ptr (opaque pointer).
         // After visiting the argument, _value is already the raw function pointer (ptr):

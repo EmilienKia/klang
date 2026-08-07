@@ -172,7 +172,8 @@ Type =
 | { "kind": "const",  "inner": Type }
 | { "kind": "array",  "elem": Type }
 | { "kind": "sized_array", "elem": Type, "size": uint }
-| { "kind": "fn_ref", "ret": Type, "params": array[Type] }
+| { "kind": "callable", "addresser": text, "ret": Type?, "params": array[Type],
+|   "throws": array[Type]?, "member_of": text? }
 | { "kind": "aggregate", "fq_name": text }
 | { "kind": "enum", "fq_name": text }
 | { "kind": "alias", "fq_name": text }

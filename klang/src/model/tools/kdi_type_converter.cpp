@@ -157,6 +157,79 @@ convert_aggregate_ref(const kdi::kdi_aggregate_ref& ref, unit& owner,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Callable
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Map a KDI callable addresser back onto the model enumeration. */
+static callable_type::addresser model_addresser(kdi::kdi_callable_addresser a)
+{
+    switch (a) {
+        case kdi::kdi_callable_addresser::none: return callable_type::addresser::none;
+        case kdi::kdi_callable_addresser::view: return callable_type::addresser::view;
+        case kdi::kdi_callable_addresser::link: return callable_type::addresser::link;
+        case kdi::kdi_callable_addresser::ref:  return callable_type::addresser::reference;
+        case kdi::kdi_callable_addresser::ptr:  break;
+    }
+    return callable_type::addresser::pointer;
+}
+
+/**
+ * Rebuild a callable_type (or an unbound member_function_reference_type) from
+ * its KDI description.
+ *
+ * A void return is encoded as kdi_void_type, which convert() maps to nullptr —
+ * exactly the model representation of "returns nothing", so no special case is
+ * needed. A component that cannot be converted makes the whole callable
+ * unconvertible: an incomplete signature would silently bind the wrong
+ * overload at the use site.
+ */
+static std::shared_ptr<type>
+convert_callable(const kdi::kdi_callable_type& c, unit& owner,
+                 std::shared_ptr<context> ctx)
+{
+    callable_type_builder builder(ctx);
+    builder.addresser(model_addresser(c.addresser));
+
+    if (c.ret && !std::holds_alternative<kdi::kdi_void_type>(c.ret->value)) {
+        auto ret = convert(*c.ret, owner, ctx);
+        if (!ret) return nullptr;
+        builder.return_type(ret);
+    }
+
+    for (const auto& p : c.params) {
+        if (!p) return nullptr;
+        auto pt = convert(*p, owner, ctx);
+        if (!pt) return nullptr;
+        builder.append_parameter_type(pt);
+    }
+
+    std::vector<std::shared_ptr<type>> throws;
+    for (const auto& th : c.throws) {
+        if (!th) return nullptr;
+        auto tt = convert(*th, owner, ctx);
+        if (!tt) return nullptr;
+        throws.push_back(tt);
+    }
+    builder.throws(throws);
+
+    if (!c.member_of.empty()) {
+        std::vector<std::string> parts;
+        std::size_t start = 0;
+        while (true) {
+            auto pos = c.member_of.find("::", start);
+            if (pos == std::string::npos) { parts.push_back(c.member_of.substr(start)); break; }
+            parts.push_back(c.member_of.substr(start, pos - start));
+            start = pos + 2;
+        }
+        auto agg = owner.get_or_create_imported_aggregate(k::name{false, std::move(parts)}, ctx);
+        if (!agg) return nullptr;
+        builder.member_of(std::static_pointer_cast<aggregate>(agg));
+    }
+
+    return builder.build();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main dispatcher
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -236,9 +309,8 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
             if (!elem) return nullptr;
             return elem->get_array(static_cast<unsigned long>(v.size));
         }
-        else if constexpr (std::is_same_v<T, kdi::kdi_fn_ref_type>) {
-            // Function reference — not yet supported in model, return nullptr
-            return nullptr;
+        else if constexpr (std::is_same_v<T, kdi::kdi_callable_type>) {
+            return convert_callable(v, owner, ctx);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_aggregate_ref>) {
             return convert_aggregate_ref(v, owner, ctx);

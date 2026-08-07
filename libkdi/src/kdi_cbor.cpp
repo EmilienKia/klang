@@ -450,12 +450,20 @@ cbor_item_t* encode_type(const kdi_type& t) {
             map_push(m, "kind", cbor_str("sized_array"));
             map_push(m, "elem", encode_type(*v.elem));
             map_push(m, "size", cbor_build_uint64(v.size));
-        } else if constexpr (std::is_same_v<T, kdi_fn_ref_type>) {
-            map_push(m, "kind", cbor_str("fn_ref"));
-            map_push(m, "ret",  encode_type(*v.ret));
+        } else if constexpr (std::is_same_v<T, kdi_callable_type>) {
+            map_push(m, "kind", cbor_str("callable"));
+            map_push(m, "addresser", cbor_str(to_string(v.addresser)));
+            map_push(m, "ret",  v.ret ? encode_type(*v.ret)
+                                      : encode_type(kdi_type::make_void()));
             cbor_item_t* pa = cbor_new_indefinite_array();
             for (auto& p : v.params) cbor_array_push(pa, cbor_move(encode_type(*p)));
             map_push(m, "params", pa);
+            if (!v.throws.empty()) {
+                cbor_item_t* ta = cbor_new_indefinite_array();
+                for (auto& th : v.throws) cbor_array_push(ta, cbor_move(encode_type(*th)));
+                map_push(m, "throws", ta);
+            }
+            if (!v.member_of.empty()) map_push(m, "member_of", cbor_str(v.member_of));
         } else if constexpr (std::is_same_v<T, kdi_aggregate_ref>) {
             map_push(m, "kind",    cbor_str("aggregate"));
             map_push(m, "fq_name", cbor_str(v.fq_name));
@@ -518,20 +526,26 @@ kdi_type decode_type(cbor_item_t* item, const std::string& path) {
         t.size = opt_uint(item, "size", 0);
         return {t};
     }
-    if (kind == "fn_ref") {
-        kdi_fn_ref_type t;
+    if (kind == "callable") {
+        kdi_callable_type t;
+        t.addresser = callable_addresser_from_string(opt_string(item, "addresser"));
         auto* rp = map_get(item, "ret");
-        if (!rp) throw kdi_parse_error("missing 'ret' at " + path);
-        t.ret = std::make_shared<kdi_type>(decode_type(rp, path + ".ret"));
-        auto* pa = map_get(item, "params");
-        if (pa && cbor_isa_array(pa)) {
-            size_t n = cbor_array_size(pa);
+        t.ret = rp ? std::make_shared<kdi_type>(decode_type(rp, path + ".ret"))
+                   : std::make_shared<kdi_type>(kdi_type::make_void());
+        auto decode_list = [&](const char* key,
+                               std::vector<std::shared_ptr<kdi_type>>& out) {
+            auto* arr = map_get(item, key);
+            if (!arr || !cbor_isa_array(arr)) return;
+            size_t n = cbor_array_size(arr);
             for (size_t i = 0; i < n; ++i) {
-                t.params.push_back(std::make_shared<kdi_type>(
-                    decode_type(cbor_array_get(pa, i),
-                                path + ".params[" + std::to_string(i) + "]")));
+                out.push_back(std::make_shared<kdi_type>(
+                    decode_type(cbor_array_get(arr, i),
+                                path + "." + key + "[" + std::to_string(i) + "]")));
             }
-        }
+        };
+        decode_list("params", t.params);
+        decode_list("throws", t.throws);
+        t.member_of = opt_string(item, "member_of");
         return {t};
     }
     if (kind == "aggregate") {

@@ -219,10 +219,20 @@ static json to_json(const kdi_type& t) {
             return {{"kind","array"},{"elem",to_json(*v.elem)}};
         else if constexpr (std::is_same_v<T, kdi_sized_array_type>)
             return {{"kind","sized_array"},{"elem",to_json(*v.elem)},{"size",v.size}};
-        else if constexpr (std::is_same_v<T, kdi_fn_ref_type>) {
+        else if constexpr (std::is_same_v<T, kdi_callable_type>) {
             json ps = json::array();
             for (auto& p : v.params) ps.push_back(to_json(*p));
-            return {{"kind","fn_ref"},{"ret",to_json(*v.ret)},{"params",ps}};
+            json j = {{"kind","callable"},
+                      {"addresser", to_string(v.addresser)},
+                      {"ret", v.ret ? to_json(*v.ret) : to_json(kdi_type::make_void())},
+                      {"params", ps}};
+            if (!v.throws.empty()) {
+                json ts = json::array();
+                for (auto& th : v.throws) ts.push_back(to_json(*th));
+                j["throws"] = ts;
+            }
+            if (!v.member_of.empty()) j["member_of"] = v.member_of;
+            return j;
         }
         else if constexpr (std::is_same_v<T, kdi_aggregate_ref>)
             return {{"kind","aggregate"},{"fq_name",v.fq_name}};
@@ -288,11 +298,18 @@ static kdi_type from_json_type(const json& j) {
         r.size = j.at("size").get<uint64_t>();
         return kdi_type{std::move(r)};
     }
-    if (kind == "fn_ref") {
-        kdi_fn_ref_type r;
-        r.ret = std::make_shared<kdi_type>(from_json_type(j.at("ret")));
-        for (auto& p : j.at("params"))
-            r.params.push_back(std::make_shared<kdi_type>(from_json_type(p)));
+    if (kind == "callable") {
+        kdi_callable_type r;
+        r.addresser = callable_addresser_from_string(j.value("addresser", std::string("ptr")));
+        r.ret = std::make_shared<kdi_type>(j.contains("ret") ? from_json_type(j.at("ret"))
+                                                             : kdi_type::make_void());
+        if (j.contains("params"))
+            for (auto& p : j.at("params"))
+                r.params.push_back(std::make_shared<kdi_type>(from_json_type(p)));
+        if (j.contains("throws"))
+            for (auto& th : j.at("throws"))
+                r.throws.push_back(std::make_shared<kdi_type>(from_json_type(th)));
+        r.member_of = j.value("member_of", std::string());
         return kdi_type{std::move(r)};
     }
     if (kind == "aggregate")

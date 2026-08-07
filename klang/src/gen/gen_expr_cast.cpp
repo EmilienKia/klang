@@ -324,6 +324,22 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             "type resolution must complete before code generation");
     }
 
+    // ── Callable → callable ──────────────────────────────────────────────────
+    // Every callable shares a single representation (the fat { ptr, ptr } value,
+    // or a bare function pointer for an unbound member reference), so a cast
+    // between two callables — typically the alias-stripping / re-tagging cast
+    // introduced by adapt_type around a typedef'd callable — is a pure
+    // annotation change with no code to emit.
+    {
+        auto src_c = std::dynamic_pointer_cast<callable_type>(type::remove_const(source_type));
+        auto tgt_c = std::dynamic_pointer_cast<callable_type>(type::remove_const(target_type));
+        if (src_c && tgt_c && src_c->is_unbound_member() == tgt_c->is_unbound_member()) {
+            _value = nullptr;
+            expr.sub_expr()->accept(*this);
+            return;
+        }
+    }
+
     // ── Enum ↔ primitive / enum ↔ enum casts ─────────────────────────────────
     // At LLVM IR level, enums are just integers. The cast is a no-op if the
     // underlying types match, or an integer truncation/extension otherwise.

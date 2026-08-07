@@ -63,13 +63,23 @@ std::string type_str(const kdi_type& t) {
             return "[]" + (v.elem ? type_str(*v.elem) : "?");
         if constexpr (std::is_same_v<T, kdi_sized_array_type>)
             return "[" + std::to_string(v.size) + "]" + (v.elem ? type_str(*v.elem) : "?");
-        if constexpr (std::is_same_v<T, kdi_fn_ref_type>) {
-            std::string s = "fn(";
+        if constexpr (std::is_same_v<T, kdi_callable_type>) {
+            std::string s = v.member_of.empty() ? std::string{}
+                                                : (v.member_of + "::");
+            s += callable_addresser_symbol(v.addresser);
+            s += "(";
             for (size_t i = 0; i < v.params.size(); ++i) {
                 if (i) s += ", ";
                 s += (v.params[i] ? type_str(*v.params[i]) : "?");
             }
-            return s + ") : " + (v.ret ? type_str(*v.ret) : "void");
+            s += ")";
+            if (v.ret && !std::holds_alternative<kdi_void_type>(v.ret->value))
+                s += " : " + type_str(*v.ret);
+            for (size_t i = 0; i < v.throws.size(); ++i) {
+                s += (i ? ", " : " throws ");
+                s += (v.throws[i] ? type_str(*v.throws[i]) : "?");
+            }
+            return s;
         }
         if constexpr (std::is_same_v<T, kdi_aggregate_ref>)
             return v.fq_name;

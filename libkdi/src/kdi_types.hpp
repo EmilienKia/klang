@@ -26,7 +26,7 @@
  *
  * Types are described as a tagged variant (kdi_type).  The encoding mirrors the
  * K type system: primitives, five indirections (&, *, +, ?, #), const, arrays,
- * function references, and named aggregate references.
+ * callables, and named aggregate references.
  */
 
 #include <cstdint>
@@ -114,13 +114,68 @@ struct kdi_sized_array_type {
     uint64_t                  size = 0;
 };
 
-// ── Function reference ────────────────────────────────────────────────────────
+// ── Callable ──────────────────────────────────────────────────────────────────
 
-/** Function reference type. */
-struct kdi_fn_ref_type {
+/** Addresser applied to a callable prototype. */
+enum class kdi_callable_addresser {
+    none,       ///< bare prototype `(int):bool` — alias / typedef target only
+    ptr,        ///< `*(int):bool` — nullable, rebindable
+    view,       ///< `?(int):bool` — nullable, not rebindable
+    link,       ///< `+(int):bool` — non-null, rebindable
+    ref         ///< `&(int):bool` — non-null, not rebindable
+};
+
+/**
+ * Callable type — a first-class invocable with a fixed prototype.
+ *
+ * Mirrors k::model::callable_type: an addresser, a return type (a
+ * kdi_void_type return means "returns nothing"), a parameter list and a
+ * declared checked-exception set.
+ *
+ * When @c member_of is non-empty the type is an *unbound member function
+ * reference* (`Counter::*(int):int`) rather than a fat callable: it carries no
+ * bound receiver and names the owner aggregate by its fully-qualified K name.
+ */
+struct kdi_callable_type {
+    kdi_callable_addresser                 addresser = kdi_callable_addresser::ptr;
     std::shared_ptr<kdi_type>              ret;
     std::vector<std::shared_ptr<kdi_type>> params;
+    std::vector<std::shared_ptr<kdi_type>> throws;
+    std::string                            member_of;  ///< empty unless unbound member fn ref
 };
+
+/** Textual encoding of a callable addresser, as stored in the KDI. */
+inline const char* to_string(kdi_callable_addresser a) {
+    switch (a) {
+        case kdi_callable_addresser::none: return "none";
+        case kdi_callable_addresser::view: return "view";
+        case kdi_callable_addresser::link: return "link";
+        case kdi_callable_addresser::ref:  return "ref";
+        case kdi_callable_addresser::ptr:  break;
+    }
+    return "ptr";
+}
+
+/** Decode a callable addresser; unknown spellings degrade to `ptr`. */
+inline kdi_callable_addresser callable_addresser_from_string(const std::string& s) {
+    if (s == "none") return kdi_callable_addresser::none;
+    if (s == "view") return kdi_callable_addresser::view;
+    if (s == "link") return kdi_callable_addresser::link;
+    if (s == "ref")  return kdi_callable_addresser::ref;
+    return kdi_callable_addresser::ptr;
+}
+
+/** K source-level symbol of a callable addresser (empty for a bare prototype). */
+inline const char* callable_addresser_symbol(kdi_callable_addresser a) {
+    switch (a) {
+        case kdi_callable_addresser::none: return "";
+        case kdi_callable_addresser::view: return "?";
+        case kdi_callable_addresser::link: return "+";
+        case kdi_callable_addresser::ref:  return "&";
+        case kdi_callable_addresser::ptr:  break;
+    }
+    return "*";
+}
 
 // ── Named aggregate reference ─────────────────────────────────────────────────
 
@@ -190,7 +245,7 @@ using kdi_type_variant = std::variant<
     kdi_const_type,
     kdi_array_type,
     kdi_sized_array_type,
-    kdi_fn_ref_type,
+    kdi_callable_type,
     kdi_aggregate_ref,
     kdi_enum_ref,
     kdi_alias_ref,
@@ -226,6 +281,15 @@ struct kdi_type {
     }
     static kdi_type make_owner(kdi_type inner) {
         return {kdi_owner_type{std::make_shared<kdi_type>(std::move(inner))}};
+    }
+    static kdi_type make_callable(kdi_callable_addresser addresser,
+                                  kdi_type ret,
+                                  std::vector<std::shared_ptr<kdi_type>> params = {}) {
+        kdi_callable_type c;
+        c.addresser = addresser;
+        c.ret       = std::make_shared<kdi_type>(std::move(ret));
+        c.params    = std::move(params);
+        return {std::move(c)};
     }
 };
 

@@ -149,13 +149,55 @@ TEST_CASE("JSON: sized_array type round-trips", "[json][type]") {
     REQUIRE( std::holds_alternative<kdi_sized_array_type>(t.value) );
     REQUIRE( std::get<kdi_sized_array_type>(t.value).size == 42 );
 }
-TEST_CASE("JSON: fn_ref type round-trips", "[json][type]") {
-    kdi_fn_ref_type f;
+TEST_CASE("JSON: callable type round-trips", "[json][type][callable]") {
+    kdi_callable_type f;
+    f.addresser = kdi_callable_addresser::ptr;
     f.ret = std::make_shared<kdi_type>(kdi_type::make_void());
     f.params.push_back(std::make_shared<kdi_type>(kdi_type::make_int(32)));
     auto t = rt_type(kdi_type{std::move(f)});
-    REQUIRE( std::holds_alternative<kdi_fn_ref_type>(t.value) );
-    REQUIRE( std::get<kdi_fn_ref_type>(t.value).params.size() == 1 );
+    REQUIRE( std::holds_alternative<kdi_callable_type>(t.value) );
+    auto& c = std::get<kdi_callable_type>(t.value);
+    REQUIRE( c.addresser == kdi_callable_addresser::ptr );
+    REQUIRE( c.params.size() == 1 );
+    REQUIRE( std::holds_alternative<kdi_void_type>(c.ret->value) );
+    REQUIRE( c.throws.empty() );
+    REQUIRE( c.member_of.empty() );
+}
+TEST_CASE("JSON: callable type round-trips every addresser", "[json][type][callable]") {
+    const kdi_callable_addresser all[] = {
+        kdi_callable_addresser::none, kdi_callable_addresser::ptr,
+        kdi_callable_addresser::view, kdi_callable_addresser::link,
+        kdi_callable_addresser::ref};
+    for (auto a : all) {
+        auto t = rt_type(kdi_type::make_callable(a, kdi_type::make_bool()));
+        REQUIRE( std::get<kdi_callable_type>(t.value).addresser == a );
+    }
+}
+TEST_CASE("JSON: callable type round-trips throws and member owner", "[json][type][callable]") {
+    kdi_callable_type f;
+    f.addresser = kdi_callable_addresser::ref;
+    f.ret = std::make_shared<kdi_type>(kdi_type::make_int(32));
+    f.params.push_back(std::make_shared<kdi_type>(kdi_type::make_int(32)));
+    f.throws.push_back(std::make_shared<kdi_type>(kdi_type::make_aggregate("::k::IOException")));
+    f.member_of = "::my::Counter";
+    auto t = rt_type(kdi_type{std::move(f)});
+    auto& c = std::get<kdi_callable_type>(t.value);
+    REQUIRE( c.addresser == kdi_callable_addresser::ref );
+    REQUIRE( c.throws.size() == 1 );
+    REQUIRE( std::get<kdi_aggregate_ref>(c.throws[0]->value).fq_name == "::k::IOException" );
+    REQUIRE( c.member_of == "::my::Counter" );
+}
+TEST_CASE("JSON: nested callable type round-trips", "[json][type][callable]") {
+    auto inner = std::make_shared<kdi_type>(
+        kdi_type::make_callable(kdi_callable_addresser::ptr, kdi_type::make_int(32)));
+    kdi_callable_type outer;
+    outer.addresser = kdi_callable_addresser::none;
+    outer.ret = inner;
+    outer.params.push_back(inner);
+    auto t = rt_type(kdi_type{std::move(outer)});
+    auto& c = std::get<kdi_callable_type>(t.value);
+    REQUIRE( std::holds_alternative<kdi_callable_type>(c.ret->value) );
+    REQUIRE( std::holds_alternative<kdi_callable_type>(c.params[0]->value) );
 }
 TEST_CASE("JSON: aggregate_ref type round-trips", "[json][type]") {
     auto t = rt_type(kdi_type::make_aggregate("my::Foo"));

@@ -139,21 +139,76 @@ TEST_CASE("kdi_type: sized_array_type stores element and size", "[dto][types]") 
     REQUIRE(std::holds_alternative<kdi_float_type>(sarr.elem->value));
 }
 
-// ─── kdi_type construction — function reference ───────────────────────────────
+// ─── kdi_type construction — callable ─────────────────────────────────────────
 
-TEST_CASE("kdi_type: fn_ref_type stores return and params", "[dto][types]") {
-    kdi_fn_ref_type fn;
+TEST_CASE("kdi_type: callable_type stores addresser, return and params", "[dto][types][callable]") {
+    kdi_callable_type fn;
+    fn.addresser = kdi_callable_addresser::ref;
     fn.ret = std::make_shared<kdi_type>(kdi_type::make_int(32));
     fn.params.push_back(std::make_shared<kdi_type>(kdi_type::make_int(32)));
     fn.params.push_back(std::make_shared<kdi_type>(kdi_type::make_float(64)));
 
     kdi_type t{std::move(fn)};
-    REQUIRE(std::holds_alternative<kdi_fn_ref_type>(t.value));
-    auto& fnr = std::get<kdi_fn_ref_type>(t.value);
-    REQUIRE(std::holds_alternative<kdi_int_type>(fnr.ret->value));
-    REQUIRE(fnr.params.size() == 2u);
-    REQUIRE(std::holds_alternative<kdi_int_type>(fnr.params[0]->value));
-    REQUIRE(std::holds_alternative<kdi_float_type>(fnr.params[1]->value));
+    REQUIRE(std::holds_alternative<kdi_callable_type>(t.value));
+    auto& c = std::get<kdi_callable_type>(t.value);
+    REQUIRE(c.addresser == kdi_callable_addresser::ref);
+    REQUIRE(std::holds_alternative<kdi_int_type>(c.ret->value));
+    REQUIRE(c.params.size() == 2u);
+    REQUIRE(std::holds_alternative<kdi_int_type>(c.params[0]->value));
+    REQUIRE(std::holds_alternative<kdi_float_type>(c.params[1]->value));
+    REQUIRE(c.throws.empty());
+    REQUIRE(c.member_of.empty());
+}
+
+TEST_CASE("kdi_type: make_callable helper", "[dto][types][callable]") {
+    std::vector<std::shared_ptr<kdi_type>> params{
+        std::make_shared<kdi_type>(kdi_type::make_int(32))};
+    auto t = kdi_type::make_callable(kdi_callable_addresser::none,
+                                     kdi_type::make_bool(), params);
+    REQUIRE(std::holds_alternative<kdi_callable_type>(t.value));
+    auto& c = std::get<kdi_callable_type>(t.value);
+    REQUIRE(c.addresser == kdi_callable_addresser::none);
+    REQUIRE(std::holds_alternative<kdi_bool_type>(c.ret->value));
+    REQUIRE(c.params.size() == 1u);
+}
+
+TEST_CASE("kdi_type: callable addresser textual encoding round-trips", "[dto][types][callable]") {
+    const kdi_callable_addresser all[] = {
+        kdi_callable_addresser::none, kdi_callable_addresser::ptr,
+        kdi_callable_addresser::view, kdi_callable_addresser::link,
+        kdi_callable_addresser::ref};
+    for (auto a : all) {
+        REQUIRE(callable_addresser_from_string(to_string(a)) == a);
+    }
+    // Unknown text falls back on the default (pointer) addresser.
+    REQUIRE(callable_addresser_from_string("nonsense") == kdi_callable_addresser::ptr);
+}
+
+TEST_CASE("kdi_type: callable stores throws and member owner", "[dto][types][callable]") {
+    kdi_callable_type fn;
+    fn.addresser = kdi_callable_addresser::link;
+    fn.ret = std::make_shared<kdi_type>(kdi_type::make_void());
+    fn.throws.push_back(std::make_shared<kdi_type>(kdi_type::make_aggregate("::k::IOException")));
+    fn.member_of = "::my::Counter";
+
+    kdi_type t{std::move(fn)};
+    auto& c = std::get<kdi_callable_type>(t.value);
+    REQUIRE(c.throws.size() == 1u);
+    REQUIRE(std::get<kdi_aggregate_ref>(c.throws[0]->value).fq_name == "::k::IOException");
+    REQUIRE(c.member_of == "::my::Counter");
+}
+
+TEST_CASE("kdi_type: nested callable parameter", "[dto][types][callable]") {
+    auto inner = std::make_shared<kdi_type>(
+        kdi_type::make_callable(kdi_callable_addresser::ptr, kdi_type::make_int(32)));
+    kdi_callable_type outer;
+    outer.addresser = kdi_callable_addresser::ptr;
+    outer.ret = std::make_shared<kdi_type>(kdi_type::make_void());
+    outer.params.push_back(inner);
+
+    kdi_type t{std::move(outer)};
+    auto& c = std::get<kdi_callable_type>(t.value);
+    REQUIRE(std::holds_alternative<kdi_callable_type>(c.params[0]->value));
 }
 
 // ─── kdi_type construction — nested indirections ──────────────────────────────

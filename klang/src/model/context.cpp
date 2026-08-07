@@ -316,6 +316,68 @@ void context::reject_callable_addresser(const std::shared_ptr<type>& subtype, co
         {std::string{suffix}}));
 }
 
+std::shared_ptr<type> context::collapse_callable_addresser(const std::shared_ptr<type>& t)
+{
+    if (!t) return t;
+
+    auto sub = t->get_subtype();
+    if (!sub) return t;
+
+    auto new_sub = collapse_callable_addresser(sub);
+
+    std::optional<callable_type::addresser> addr;
+    if      (type::is_reference(t)) addr = callable_type::addresser::reference;
+    else if (type::is_pointer(t))   addr = callable_type::addresser::pointer;
+    else if (type::is_link(t))      addr = callable_type::addresser::link;
+    else if (type::is_view(t))      addr = callable_type::addresser::view;
+
+    if (addr) {
+        // `const F&` parses as reference(const(F)): the const qualifier sits between
+        // the addresser and the callable, so it must be peeled off before the
+        // re-addressing test and re-applied to the result.
+        const bool inner_const = type::is_const(new_sub);
+        auto inner_nc = inner_const ? type::remove_const(new_sub) : new_sub;
+        auto reapply_const = [inner_const](const std::shared_ptr<type>& t2) {
+            return inner_const ? t2->get_const() : t2;
+        };
+        // A typedef of a bare prototype keeps a nominal identity that is
+        // interned once per declaration, so it cannot gain an addresser after
+        // the fact. Declare the typedef with its addresser instead.
+        if (auto at = std::dynamic_pointer_cast<alias_type>(inner_nc)) {
+            if (auto ct = std::dynamic_pointer_cast<callable_type>(type::canonical(inner_nc))) {
+                if (!ct->is_unbound_member() && ct->is_prototype()) {
+                    throw context_resolution_error(k::log::diagnostic::make_error(
+                        static_cast<unsigned int>(
+                            k::diag::callable_model_diag::ERR_CALLABLE_TYPEDEF_PROTOTYPE_READDRESS),
+                        "The typedef '{}' renames a bare callable prototype and cannot be "
+                        "re-addressed; declare it with its addresser, e.g. "
+                        "'typedef {} : *(…) : …;'",
+                        {at->to_string(), at->to_string()}));
+                }
+            }
+        }
+        if (auto ct = std::dynamic_pointer_cast<callable_type>(inner_nc)) {
+            if (!ct->is_unbound_member()) return reapply_const(readdress(ct, *addr));
+        }
+    }
+
+    if (new_sub == sub) return t;
+
+    if (type::is_reference(t)) return new_sub->get_reference();
+    if (type::is_pointer(t))   return new_sub->get_pointer();
+    if (type::is_link(t))      return new_sub->get_link();
+    if (type::is_view(t))      return new_sub->get_view();
+    if (type::is_owner(t))     return new_sub->get_owner();
+    if (type::is_drain(t))     return new_sub->get_drain();
+    if (type::is_const(t))     return new_sub->get_const();
+    if (type::is_sized_array(t)) {
+        auto sa = std::dynamic_pointer_cast<sized_array_type>(t);
+        return new_sub->get_array(sa->get_size());
+    }
+    if (type::is_array(t))     return new_sub->get_array();
+    return t;
+}
+
 std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_specifier& type_spec)
 {
     if(auto ct = dynamic_cast<const k::parse::ast::const_type_specifier*>(&type_spec)) {
@@ -449,6 +511,9 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             new unresolved_callable_type(
                 frt->owner.has_value() ? frt->owner->to_name() : k::name{},
                 rk, param_types, ret_type, throws_types)};
+        // Wrappers reference their subtype weakly (see _unresolved_callables): keep this
+        // freshly-built prototype alive so `const (int):int` and friends stay well-formed.
+        _unresolved_callables.push_back(result);
         return result;
     } else {
         return {};
@@ -1513,7 +1578,13 @@ std::shared_ptr<callable_type> context::readdress(
                              callable->get_throws());
 }
 
-std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
+std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& t) {
+    // An indirection applied to a name that turns out to denote a callable
+    // re-addresses it instead of wrapping it (see collapse_callable_addresser).
+    return collapse_callable_addresser(resolve_type_uncollapsed(t));
+}
+
+std::shared_ptr<type> context::resolve_type_uncollapsed(const std::shared_ptr<type>& type) {
     if (type->is_resolved() && !type::contains_unresolved(type)) {
         return type;
     }

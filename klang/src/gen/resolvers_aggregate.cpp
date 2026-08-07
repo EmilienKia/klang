@@ -1051,7 +1051,14 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
         auto aliased = scope_lookup::materialize_alias_type(
             al, _context,
             [this](const k::name& n, const element& e) { return resolve_type_by_name(n, e); },
-            cycle);
+            cycle,
+            [this](const std::shared_ptr<type>& t, const element& e) -> std::shared_ptr<type> {
+                // Phase 1.a has no full type resolver: only a callable prototype
+                // needs the extra hand here, everything else is name-resolvable.
+                if (auto uc = std::dynamic_pointer_cast<unresolved_callable_type>(t))
+                    return resolve_unresolved_callable_type(uc, e);
+                return nullptr;
+            });
         if (cycle) {
             throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE), al->get_decl_lexeme(),
                 "Alias '{}' is defined in terms of itself", {al->get_fq_name()});
@@ -1318,6 +1325,12 @@ resolve_one_type(const std::shared_ptr<type>& t,
                  std::shared_ptr<context> ctx) {
     if (type::is_resolved(t)) return t;
 
+    // A callable prototype ('(int):bool') is a leaf of its own: its components
+    // are resolved individually, never by name lookup on the whole thing.
+    if (auto ucall = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        return resolver.resolve_unresolved_callable_type(ucall, context_elem);
+    }
+
     // ── Template instantiation path (try FIRST for template types) ───────
     // If the type is an unresolved_type carrying AST template arguments
     // (e.g. Box<int>), try template instantiation before calling resolve_type,
@@ -1399,7 +1412,12 @@ resolve_one_type(const std::shared_ptr<type>& t,
                         case WrapKind::SizedArray: rebuilt = rebuilt->get_array(it->size);    break;
                     }
                 }
-                if (rebuilt && type::is_resolved(rebuilt)) return rebuilt;
+                if (rebuilt && type::is_resolved(rebuilt)) {
+                    // An addresser applied to a name that turned out to denote a
+                    // callable re-addresses it in place instead of wrapping it.
+                    if (auto collapsed = ctx->collapse_callable_addresser(rebuilt)) return collapsed;
+                    return rebuilt;
+                }
             }
             } // end !is_template_param_placeholder
         }
@@ -1678,6 +1696,20 @@ std::shared_ptr<type> aggregate_type_resolver::resolve_unresolved_callable_type(
     callable_type_builder builder(_context);
     builder.addresser(ufrt->get_addresser());
     bool all_resolved = true;
+
+    // A component of a callable signature can be an arbitrary type expression
+    // (a template instantiation, a wrapped name, another callable...), so it is
+    // resolved with the very same routine as any other Phase 1.a type reference.
+    auto resolve_component = [&](const std::shared_ptr<type>& t) -> std::shared_ptr<type> {
+        if (!t) return nullptr;
+        if (type::is_resolved(t)) return t;
+        if (auto nested = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+            return resolve_unresolved_callable_type(nested, scope);
+        }
+        auto r = resolve_one_type(t, *this, scope, _context);
+        return (r && type::is_resolved(r)) ? r : nullptr;
+    };
+
     // Unbound member function reference (e.g. Counter::*(int):int)
     if (!ufrt->owner_name().empty()) {
         std::shared_ptr<aggregate> owner_agg = resolve_struct_from(scope, ufrt->owner_name());
@@ -1689,27 +1721,23 @@ std::shared_ptr<type> aggregate_type_resolver::resolve_unresolved_callable_type(
         else all_resolved = false;
     }
     for (const auto& pt : ufrt->parameter_types()) {
-        if (!type::is_resolved(pt)) {
-            if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
-                auto rpt = resolve_type_by_name(u->type_id(), scope);
-                if (!rpt || !type::is_resolved(rpt)) { all_resolved = false; break; }
-                builder.append_parameter_type(rpt);
-            } else { all_resolved = false; break; }
-        } else {
-            builder.append_parameter_type(pt);
-        }
+        auto rpt = resolve_component(pt);
+        if (!rpt) { all_resolved = false; break; }
+        builder.append_parameter_type(rpt);
     }
     if (all_resolved && ufrt->get_return_type()) {
-        auto rt = ufrt->get_return_type();
-        if (!type::is_resolved(rt)) {
-            if (auto u = std::dynamic_pointer_cast<unresolved_type>(rt)) {
-                rt = resolve_type_by_name(u->type_id(), scope);
-            } else {
-                rt = nullptr;
-            }
-        }
-        if (rt && type::is_resolved(rt)) builder.return_type(rt);
+        auto rt = resolve_component(ufrt->get_return_type());
+        if (rt) builder.return_type(rt);
         else all_resolved = false;
+    }
+    if (all_resolved && !ufrt->get_throws().empty()) {
+        std::vector<std::shared_ptr<type>> thrown;
+        for (const auto& tt : ufrt->get_throws()) {
+            auto rtt = resolve_component(tt);
+            if (!rtt) { all_resolved = false; break; }
+            thrown.push_back(rtt);
+        }
+        if (all_resolved) builder.throws(thrown);
     }
     if (!all_resolved) return nullptr;
     return builder.build();
@@ -1752,54 +1780,16 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
     if (!type::is_resolved(param.get_type())) {
         // Handle unresolved_callable_type (function pointer/pin/link parameter type)
         if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(param.get_type())) {
-            callable_type_builder builder(_context);
-            builder.addresser(ufrt->get_addresser());
-            bool all_resolved = true;
-            auto owner_func = param.parent<function>();
-            // Resolve owner for member function reference parameters (e.g. Counter::*(int))
-            if (!ufrt->owner_name().empty()) {
-                std::shared_ptr<aggregate> owner_agg;
-                if (owner_func) owner_agg = resolve_struct_from(*owner_func, ufrt->owner_name());
-                if (!owner_agg) {
-                    auto root_ns = _unit.get_root_namespace();
-                    if (root_ns) owner_agg = resolve_struct_from(*root_ns, ufrt->owner_name());
-                }
-                if (owner_agg) {
-                    builder.member_of(owner_agg);
-                } else {
-                    all_resolved = false;
-                }
-            }
-            for (const auto& pt : ufrt->parameter_types()) {
-                if (!type::is_resolved(pt)) {
-                    if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
-                        std::shared_ptr<type> rpt;
-                        if (owner_func) rpt = resolve_type_by_name(u->type_id(), *owner_func);
-                        if (!rpt || !type::is_resolved(rpt)) rpt = _context->from_string(u->type_id());
-                        if (!rpt || !type::is_resolved(rpt)) { all_resolved = false; break; }
-                        builder.append_parameter_type(rpt);
-                    } else { all_resolved = false; break; }
-                } else {
-                    builder.append_parameter_type(pt);
-                }
-            }
-            if (all_resolved && ufrt->get_return_type()) {
-                auto rt = ufrt->get_return_type();
-                if (!type::is_resolved(rt)) {
-                    if (auto u = std::dynamic_pointer_cast<unresolved_type>(rt)) {
-                        rt.reset();
-                        if (owner_func) rt = resolve_type_by_name(u->type_id(), *owner_func);
-                        if (!rt || !type::is_resolved(rt)) rt = _context->from_string(u->type_id());
-                    } else {
-                        rt = nullptr;
-                    }
-                }
-                if (rt && type::is_resolved(rt)) builder.return_type(rt);
-                else all_resolved = false;
-            }
-            if (all_resolved) {
-                auto resolved = builder.build();
-                if (resolved) param.set_type(resolved);
+            // Delegate to the shared routine: it resolves every component of the
+            // signature (parameters, return, *throws set*, nested callables) with the
+            // regular Phase 1.a machinery. Rebuilding the callable here would silently
+            // drop the throws set, and two callable types differing only by their
+            // throws clause would then mangle to the same symbol.
+            const element& scope = param.parent<function>()
+                ? static_cast<const element&>(*param.parent<function>())
+                : static_cast<const element&>(param);
+            if (auto resolved = resolve_unresolved_callable_type(ufrt, scope)) {
+                param.set_type(resolved);
             }
             return;
         }
