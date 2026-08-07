@@ -2118,7 +2118,17 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         // callable_bind_expression against the destination prototype.
         if (auto init_arg = ctx.get_single_init_arg()) {
             auto adapted = adapt_type(init_arg, ct);
-            if (adapted && adapted != init_arg) {
+            if (!adapted) {
+                // Without this check an aggregate (or any other non-callable value)
+                // silently kept its own representation and was later read back as a
+                // `{ fn, ctx }` pair — a silent miscompilation.
+                throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_INCOMPATIBLE_SIGNATURE),
+                    var_lexeme,
+                    "An initialiser of type '{}' cannot be bound to the callable type '{}'",
+                    {init_arg->get_type() ? init_arg->get_type()->to_string() : "?",
+                     var_type->to_string()});
+            }
+            if (adapted != init_arg) {
                 ctx.assign_single_init_arg(adapted);
             }
         }

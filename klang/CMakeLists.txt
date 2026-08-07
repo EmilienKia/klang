@@ -187,6 +187,7 @@ klang_gen_test(klang-tests-gen-core 300
         tests/test-gen-func-ref.cpp
         tests/test-gen-callable-basic.cpp
         tests/test-gen-callable-member.cpp
+        tests/test-gen-callable-interface.cpp
         tests/test-gen-operator-call.cpp
         tests/test-gen-intrinsic.cpp
         tests/test-gen-string-literal.cpp

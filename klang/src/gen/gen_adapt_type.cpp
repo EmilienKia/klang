@@ -98,6 +98,7 @@ type_reference_resolver::adapt_callable_type(
         if (dest_ct && !dest_ct->is_unbound_member() && !dest_ct->is_prototype()) {
             if (auto bound = try_bind_member_callable(expr, dest_ct)) return bound;
             if (auto bound = try_bind_functor_callable(expr, dest_ct)) return bound;
+            if (auto bound = try_bind_functional_interface_callable(expr, dest_ct)) return bound;
         }
     }
     if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(type_nc)) {

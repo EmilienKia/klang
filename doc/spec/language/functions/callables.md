@@ -278,22 +278,40 @@ result : int = a(37);   // calls a.operator()(37) → 42
 
 ### 6.6 Functional interface
 
-An *interface* (or abstract class) that declares **exactly one** abstract virtual method may be bound to a callable. The method's signature must match the callable's prototype. The object's address becomes the context pointer, and dispatch goes through the vtable:
+An *interface* (or abstract class) whose vtable layout holds **exactly one** abstract virtual slot — the universal destructor slot excluded — is *functional* and may be bound to a callable. The slot's signature must match the callable's prototype. The object's address becomes the context pointer, and dispatch goes through the vtable:
 
 ```k
 interface Transformer {
-    transform(x : int) : int -> delete;   // the single abstract method
+    transform(x : int) : int;   // the single abstract method
 }
 
 class Doubler : public Transformer {
-    transform(x : int) : int override { return x * 2; }
+    override transform(x : int) : int { return x * 2; }
 }
 
 d  : Doubler;
-fp : *(int) : int = d;   // binds Transformer::transform through Doubler's vtable
+fp : *(int) : int = d;      // binds Transformer::transform through Doubler's vtable
+
+use(t : Transformer&) : int {
+    g : &(int) : int = t;   // same binding through an interface reference
+    return g(21);
+}
 ```
 
-If the interface or abstract class has more than one abstract method, the binding is a compile-time error.
+Every addresser is accepted on the receiver: `I&`, `I*`, `I+`, `I?` and `I!`. As for any other bound callable, a `*`/`?` receiver bound to a nullable callable propagates the null (`{null, null}`) instead of trapping, whereas binding it to a `+`/`&` callable dereferences the receiver and raises a `FatalError` when it is null.
+
+The slot count is computed on the **vtable layout**, not on the declarations: an abstract method inherited from a base interface — or re-declared several times along a diamond — counts exactly once. *Default* methods (§ [interfaces](../structs/interfaces.md)) are concrete and are never counted.
+
+A concrete class that implements exactly one abstract slot inherited from a functional base is bindable too, as in the `Doubler` example above.
+
+Errors:
+
+| Condition | Diagnostic |
+|---|---|
+| The interface / abstract class has zero or more than one abstract slot | `ERR_CALLABLE_NOT_FUNCTIONAL_IFACE` (0x01D7) |
+| The single abstract method does not match the callable prototype | `ERR_CALLABLE_IFACE_SIGNATURE_MISMATCH` (0x01D8) |
+
+When the receiver also declares an `operator()`, the functor rule of [§6.5](#65-functor--object-with-operator) wins: `operator()` is looked up first.
 
 ### 6.7 Another compatible callable
 

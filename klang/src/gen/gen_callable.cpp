@@ -80,6 +80,59 @@ bool receiver_is_nullable(std::shared_ptr<type> t) {
     return type::is_pointer(t) || type::is_view(t) || type::is_owner(t);
 }
 
+/** True when @p entry describes the universal destructor slot. */
+bool is_destructor_slot(const vtable_entry& entry) {
+    return std::dynamic_pointer_cast<destructor>(entry.func) != nullptr
+        || std::dynamic_pointer_cast<destructor>(entry.introducing_func) != nullptr;
+}
+
+/**
+ * Collect the *functional* slots of @p agg: the vtable slots (destructor excluded)
+ * that were introduced as abstract, or that are still abstract in @p agg.
+ *
+ * Scanning the vtable layout rather than the declarations makes an inherited
+ * abstract method count exactly once, whichever base introduced it and however
+ * many times a derived interface re-declares it.
+ */
+std::vector<const vtable_entry*> collect_functional_slots(const aggregate& agg) {
+    std::vector<const vtable_entry*> out;
+    auto vt = agg.get_vtable();
+    if (!vt) return out;
+    for (const auto& entry : vt->entries) {
+        if (is_destructor_slot(entry)) continue;
+        const bool introduced_abstract = entry.introducing_func && entry.introducing_func->is_abstract_func();
+        const bool still_abstract      = entry.func && entry.func->is_abstract_func();
+        if (introduced_abstract || still_abstract) out.push_back(&entry);
+    }
+    return out;
+}
+
+/** True when @p agg still has an unimplemented virtual slot (it is abstract). */
+bool has_unimplemented_slot(const aggregate& agg) {
+    auto vt = agg.get_vtable();
+    if (!vt) return false;
+    for (const auto& entry : vt->entries) {
+        if (is_destructor_slot(entry)) continue;
+        if (entry.func && entry.func->is_abstract_func()) return true;
+    }
+    return false;
+}
+
+/** True when the parameter list and the return type of @p fn match @p proto. */
+bool matches_callable_prototype(const function& fn, const callable_type& proto) {
+    const auto& params = proto.get_parameter_types();
+    if (fn.get_parameter_size() != params.size()) return false;
+    for (size_t i = 0; i < params.size(); ++i) {
+        auto p = fn.get_parameter(i);
+        if (!p || !type::are_equal(p->get_type(), params[i])) return false;
+    }
+    // A null return type means "returns nothing" on both sides.
+    auto fn_ret  = std::const_pointer_cast<type>(fn.get_return_type());
+    auto tgt_ret = proto.get_return_type();
+    if (!fn_ret || !tgt_ret) return !fn_ret && !tgt_ret;
+    return type::are_equal(fn_ret, tgt_ret);
+}
+
 } // anonymous namespace
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -368,6 +421,76 @@ std::shared_ptr<expression> type_reference_resolver::try_bind_functor_callable(
     return bind;
 }
 
+/**
+ * Bind a functional interface receiver to a callable.
+ *
+ * An interface — or, per design decision D10, an abstract class — is *functional*
+ * when its vtable layout holds exactly one abstract virtual slot, the universal
+ * destructor slot excluded. Binding it produces
+ * `callable_bind_expression(kind::functional_interface)`, whose `fn` is the vtable
+ * slot load and whose `ctx` is the unadjusted subobject pointer.
+ *
+ * A concrete aggregate that implements exactly one abstract slot inherited from a
+ * functional base is bindable too (spec §6.6); unlike an interface / abstract
+ * receiver it does *not* diagnose a bad shape, it simply declines the binding so
+ * that the generic conversion diagnostics keep their place.
+ */
+std::shared_ptr<expression> type_reference_resolver::try_bind_functional_interface_callable(
+    const std::shared_ptr<expression>& expr,
+    const std::shared_ptr<callable_type>& tgt)
+{
+    if (!expr || !tgt || tgt->is_unbound_member() || tgt->is_prototype()) return nullptr;
+    auto src = expr->get_type();
+    if (!src) return nullptr;
+
+    auto agg = receiver_aggregate(src);
+    if (!agg || !agg->has_vtable()) return nullptr;
+
+    // An interface or an abstract class *is* a functional-interface candidate, so a
+    // bad shape is an error; a concrete aggregate only opts in when it fits.
+    const bool diagnose = agg->is_interface() || has_unimplemented_slot(*agg);
+
+    lex::opt_any_lexeme where = expr->first_lexeme();
+    auto slots = collect_functional_slots(*agg);
+    if (slots.size() != 1) {
+        if (!diagnose) return nullptr;
+        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_NOT_FUNCTIONAL_IFACE),
+            where,
+            "'{}' is not a functional interface: it declares {} abstract method(s), "
+            "but exactly one is required to bind it to the callable type '{}'",
+            {agg->get_short_name(), std::to_string(slots.size()), tgt->to_string()});
+    }
+
+    const auto* slot = slots.front();
+    auto fn = slot->func ? slot->func : slot->introducing_func;
+    if (!fn) return nullptr;
+
+    if (!matches_callable_prototype(*fn, *tgt)) {
+        if (!diagnose) return nullptr;
+        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_IFACE_SIGNATURE_MISMATCH),
+            where,
+            "The single abstract method '{}' of the functional interface '{}' does not match "
+            "the callable type '{}'",
+            {fn->get_short_name(), agg->get_short_name(), tgt->to_string()});
+    }
+
+    const bool nullable_receiver = receiver_is_nullable(src);
+    auto receiver = expr;
+    if (nullable_receiver && !tgt->is_nullable()) {
+        // The destination cannot hold null, so the receiver must be dereferenced:
+        // that emits the null check and raises a FatalError instead of faulting on
+        // the vptr load.
+        auto deref = dereference_expression::make_shared(expr);
+        deref->accept(*this);
+        receiver = deref;
+    }
+    auto bind = make_member_bind(fn, receiver, tgt, nullable_receiver, where);
+    if (auto cbe = std::dynamic_pointer_cast<callable_bind_expression>(bind)) {
+        cbe->set_kind(callable_bind_expression::kind::functional_interface);
+    }
+    return bind;
+}
+
 bool type_reference_resolver::try_resolve_callable_member_invocation(
     function_invocation_expression& expr,
     const std::shared_ptr<member_of_object_expression>& member_callee,
@@ -478,6 +601,7 @@ void implementation_generator::visit_callable_bind_expression(callable_bind_expr
         case callable_bind_expression::kind::bound_method:
         case callable_bind_expression::kind::functor:
         case callable_bind_expression::kind::virtual_method:
+        case callable_bind_expression::kind::functional_interface:
             if (!ctx_ptr) {
                 throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_MEMBER_BIND_REQUIRES_OBJECT),
                     expr.first_lexeme(),
@@ -549,7 +673,12 @@ llvm::Value* implementation_generator::build_bound_callable(
     auto& llvm_ctx = _context->llvm_context();
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
     auto* callable_ty = _context->get_or_create_callable_llvm_type();
-    const bool is_virtual = expr.get_kind() == callable_bind_expression::kind::virtual_method;
+    // A functional-interface bind always dispatches through the vtable, and so does a
+    // virtual method bind; both carry the slot index and the aggregate owning it.
+    const bool is_virtual =
+        (expr.get_kind() == callable_bind_expression::kind::virtual_method
+         || expr.get_kind() == callable_bind_expression::kind::functional_interface)
+        && expr.get_vtable_slot() >= 0 && expr.get_dispatch_base() != nullptr;
 
     // ── Null-propagating bind: `{null,null}` when the receiver is null ────────
     if (expr.is_null_propagating()) {

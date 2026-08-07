@@ -644,6 +644,27 @@ protected:
         const std::shared_ptr<callable_type>& tgt);
 
     /**
+     * Bind a *functional interface* receiver — an interface or an abstract class
+     * whose vtable layout holds exactly one abstract virtual slot (the destructor
+     * slot excluded) — to the callable type @p tgt, producing
+     * `callable_bind_expression(kind::functional_interface)`.
+     *
+     * The bound `fn` is the vtable slot load and the `ctx` is the *unadjusted*
+     * subobject pointer the vptr was loaded from, exactly like a virtual method
+     * bind (the slot, or its thunk, performs the this-adjustment).
+     *
+     * A concrete aggregate implementing exactly one abstract slot is also bindable
+     * (spec §6.6); it stays silent (returns nullptr) when its shape does not fit,
+     * whereas an interface / abstract class receiver diagnoses the mismatch.
+     *
+     * @return The binding expression, or nullptr when @p expr does not designate a
+     *         functional-interface receiver.
+     */
+    std::shared_ptr<expression> try_bind_functional_interface_callable(
+        const std::shared_ptr<expression>& expr,
+        const std::shared_ptr<callable_type>& tgt);
+
+    /**
      * Build the `callable_bind_expression` for @p fn bound to @p receiver.
      * @p receiver is the object expression *as written* (it may be a nullable
      * indirection); @p nullable_receiver tells whether it may be null.
