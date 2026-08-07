@@ -90,6 +90,9 @@ inline constexpr const char* OP_POSTFIX_DEC = "__operator_MM_";  // _-- (postfix
 // ── Subscript ────────────────────────────────────────────────────────────────
 inline constexpr const char* OP_SUBSCRIPT  = "__operator_ix_";   // [] (index/subscript)
 
+// ── Call ─────────────────────────────────────────────────────────────────────
+inline constexpr const char* OP_CALL       = "__operator_cl_";   // () (call operator)
+
 // ── Cast ─────────────────────────────────────────────────────────────────────
 // Cast operators use "__operator_cv_" as prefix, followed by the encoded target type.
 // Example: "__operator_cv_int"
@@ -117,6 +120,13 @@ inline bool is_cast_operator(const std::string& name) {
     constexpr std::string_view prefix = "__operator_cv_";
     return name.size() > prefix.size()
         && name.compare(0, prefix.size(), prefix) == 0;
+}
+
+/**
+ * Check whether a canonical function name is the call operator (__operator_cl_).
+ */
+inline bool is_call_operator(const std::string& name) {
+    return name == OP_CALL;
 }
 
 /**
@@ -201,6 +211,7 @@ inline std::string get_operator_symbol(const std::string& name) {
     if (name == OP_POSTFIX_INC) return "_++";
     if (name == OP_POSTFIX_DEC) return "_--";
     if (name == OP_SUBSCRIPT)   return "[]";
+    if (name == OP_CALL)        return "()";
     if (is_cast_operator(name)) return "(cast)";
     return name;
 }

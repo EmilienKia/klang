@@ -633,6 +633,17 @@ protected:
         const std::shared_ptr<callable_type>& tgt);
 
     /**
+     * Bind a functor object (an aggregate declaring `operator()`) to the callable
+     * type @p tgt, producing `callable_bind_expression(kind::functor)`.
+     *
+     * @return The binding expression, or nullptr when @p expr is not an aggregate
+     *         declaring `operator()`.
+     */
+    std::shared_ptr<expression> try_bind_functor_callable(
+        const std::shared_ptr<expression>& expr,
+        const std::shared_ptr<callable_type>& tgt);
+
+    /**
      * Build the `callable_bind_expression` for @p fn bound to @p receiver.
      * @p receiver is the object expression *as written* (it may be a nullable
      * indirection); @p nullable_receiver tells whether it may be null.

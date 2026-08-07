@@ -28,6 +28,7 @@
 #include "resolvers.hpp"
 #include "gen_helpers.hpp"
 #include "gen_callable_helpers.hpp"
+#include "../common/operator_names.hpp"
 
 #include "../model/expressions.hpp"
 #include "../model/imported.hpp"
@@ -304,6 +305,67 @@ std::shared_ptr<expression> type_reference_resolver::try_bind_member_callable(
     }
 
     return make_member_bind(fn, receiver, tgt, nullable_receiver, where);
+}
+
+/**
+ * Bind a functor object (an aggregate declaring `operator()`) to a callable.
+ *
+ * Produces `callable_bind_expression(kind::functor)` whose context is the receiver
+ * adapted to the selected `operator()`'s implicit `this` parameter, so a const object
+ * can only bind a `const operator()`.
+ */
+std::shared_ptr<expression> type_reference_resolver::try_bind_functor_callable(
+    const std::shared_ptr<expression>& expr,
+    const std::shared_ptr<callable_type>& tgt)
+{
+    if (!expr || !tgt || tgt->is_unbound_member() || tgt->is_prototype()) return nullptr;
+    auto src = expr->get_type();
+    if (!src) return nullptr;
+
+    auto agg = receiver_aggregate(src);
+    if (!agg) return nullptr;
+
+    auto candidates = collect_member_overloads(agg, std::string(k::op::OP_CALL));
+    if (candidates.empty()) return nullptr;
+
+    lex::opt_any_lexeme where = expr->first_lexeme();
+    const bool const_receiver = receiver_is_const(src);
+    std::vector<std::shared_ptr<function>> viable;
+    for (const auto& c : candidates) {
+        if (!c || c->is_static()) continue;
+        if (const_receiver && !c->is_const_member()) continue;
+        viable.push_back(c);
+    }
+    if (viable.empty()) {
+        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_NO_MATCHING_OVERLOAD),
+            where,
+            "No 'operator()' of '{}' can be bound to a callable of type '{}'{}",
+            {agg->get_short_name(), tgt->to_string(),
+             const_receiver ? "; the receiver is const, so only a const operator() qualifies" : ""});
+    }
+
+    bool ambiguous = false;
+    auto fn = select_overload_for_prototype(viable, *tgt, &ambiguous);
+    if (ambiguous) {
+        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_AMBIGUOUS_OPERATOR_CALL),
+            where, "Several 'operator()' overloads of '{}' match the callable type '{}'",
+            {agg->get_short_name(), tgt->to_string()});
+    }
+    if (!fn) {
+        throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_NO_MATCHING_OVERLOAD),
+            where, "No 'operator()' overload of '{}' matches the callable type '{}'",
+            {agg->get_short_name(), tgt->to_string()});
+    }
+
+    const bool nullable_receiver = receiver_is_nullable(src);
+    auto bind = make_member_bind(fn, expr, tgt, nullable_receiver, where);
+    if (auto cbe = std::dynamic_pointer_cast<callable_bind_expression>(bind)) {
+        // A virtual operator() keeps its vtable dispatch; a direct one is a functor bind.
+        if (cbe->get_kind() == callable_bind_expression::kind::bound_method) {
+            cbe->set_kind(callable_bind_expression::kind::functor);
+        }
+    }
+    return bind;
 }
 
 bool type_reference_resolver::try_resolve_callable_member_invocation(

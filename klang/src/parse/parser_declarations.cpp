@@ -25,6 +25,7 @@
 #include <deque>
 
 #include "../common/logger.hpp"
+#include "../common/operator_names.hpp"
 #include "../errors.hpp"
 
 namespace k::parse {
@@ -1551,11 +1552,24 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EXPECTED_OPERATOR_SYMBOL), _lexer.pick_current(), "Expected operator symbol after 'operator' keyword");
         }
 
-        // Check for casting operator: operator() : ReturnType
+        // Disambiguate the two forms introduced by 'operator ( )':
+        //   operator()(params) : Ret { … }   → call operator     (parameter list follows)
+        //   operator() : Ret { … }           → conversion operator
+        bool is_call_operator = false;
         if(lop == lex::punctuator::PARENTHESIS_OPEN) {
             auto lclose = _lexer.get();
             if(lclose == lex::punctuator::PARENTHESIS_CLOSE) {
-                is_cast_operator = true;
+                lex::lex_holder call_holder(_lexer);
+                auto lnext = _lexer.get();
+                if(lnext == lex::punctuator::PARENTHESIS_OPEN) {
+                    // A second '(' opens the call operator parameter list.
+                    call_holder.rollback();
+                    is_call_operator = true;
+                    canonical_name = k::op::OP_CALL;
+                } else {
+                    call_holder.rollback();
+                    is_cast_operator = true;
+                }
             } else {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CAST_OPERATOR_EMPTY_PARAMS), _lexer.pick_current(), "Casting operator must have empty parameter list: operator()");
             }
@@ -1563,7 +1577,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
 
         // Check for subscript operator: operator[] (index)
         bool is_subscript_operator = false;
-        if(!is_cast_operator && lop == lex::punctuator::BRACKET_OPEN) {
+        if(!is_cast_operator && !is_call_operator && lop == lex::punctuator::BRACKET_OPEN) {
             auto lclose = _lexer.get();
             if(lclose == lex::punctuator::BRACKET_CLOSE) {
                 is_subscript_operator = true;
@@ -1577,9 +1591,9 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             // Casting operator: the return type will be parsed later and injected into the canonical name.
             // For now, use a placeholder name that will be updated after return type is parsed.
             canonical_name = "__operator_cv_";
-        } else if(is_subscript_operator) {
-            // Subscript operator: canonical_name already set to "__operator_ix_"
-            // Parameters will be parsed normally below (single index parameter).
+        } else if(is_subscript_operator || is_call_operator) {
+            // Subscript / call operator: canonical_name is already set.
+            // Parameters will be parsed normally below.
         } else if(lex::is<lex::operator_>(lop)) {
             auto& op = lex::as<lex::operator_>(lop);
             switch(op.type) {

@@ -28,6 +28,7 @@
 #include "../model/template_instantiator.hpp"
 #include "../model/template_deduction.hpp"
 #include "../parse/ast.hpp"
+#include "../common/operator_names.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 #include "llvm/Support/raw_os_ostream.h"
 #include <llvm/IR/Constants.h>
@@ -896,6 +897,24 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 di.kind = virtual_dispatch_info::dispatch_kind::INDIRECT;
                 expr.set_dispatch_info(std::move(di));
                 return;
+            }
+
+            // ── Functor call: obj(args) where obj is an aggregate with operator() ──
+            auto callee_bare = type::remove_const(inner_type);
+            if (auto callee_st = std::dynamic_pointer_cast<struct_type>(callee_bare)) {
+                if (auto callee_agg = callee_st->get_struct()) {
+                    if (!collect_member_overloads(callee_agg, std::string(k::op::OP_CALL)).empty()) {
+                        auto op_sym = symbol_expression::from_string(std::string(k::op::OP_CALL));
+                        auto obj_member = member_of_object_expression::make_shared(callee, op_sym);
+                        if (auto ast = expr.get_ast_expression()) obj_member->set_ast_expression(ast);
+                        expr.callee_expr(obj_member);
+                        visit_function_invocation_expression(expr);
+                        return;
+                    }
+                    throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_NOT_INVOCABLE), expr.first_lexeme(),
+                        "Object of type '{}' is not invocable: no 'operator()' is declared in '{}' or its bases",
+                        {callee_bare->to_string(), callee_agg->get_short_name()});
+                }
             }
         }
     }

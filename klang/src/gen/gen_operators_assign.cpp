@@ -505,6 +505,11 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 expr.set_type(ref_target_type);
                 return;
             }
+            if (auto bound = try_bind_functor_callable(right, frt_target)) {
+                expr.assign_right(bound);
+                expr.set_type(ref_target_type);
+                return;
+            }
         }
         // Unwrap ref<frt> on the source side if needed.
         // For a direct function symbol (is_function()), impl_gen returns the Function* directly —
