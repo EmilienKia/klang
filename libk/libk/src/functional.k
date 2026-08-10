@@ -1,9 +1,11 @@
 // libk/libk/src/functional.k
-// K standard library functional programming aliases (module k::functional)
+// K standard library functional programming aliases (namespace k::functional)
 //
 // Copyright 2023-2026 Emilien Kia
 
-module k::functional;
+module k;
+
+namespace functional {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Function aliases — inspired by Java java.util.function package
@@ -67,3 +69,5 @@ alias BiConsumer : *(T, U):void;
 // - andThen(f, g) = x -> g(f(x))  [apply f first, then g]
 // These are standard in functional programming libraries and can be added
 // as extension methods on callable types once the basics are complete.
+
+} // namespace functional

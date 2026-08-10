@@ -749,6 +749,13 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
     }
     if (parts.empty()) return;
 
+    // Aliases exported by the base stdlib module `k` are already available in
+    // every compilation unit through the compiler's implicit auto-import.
+    // Re-materialising them here would duplicate their declarations (and for
+    // template aliases, re-run the source round-trip against the already
+    // imported namespace), so skip them entirely.
+    if (!parts.empty() && parts.front() == "k") return;
+
     // Navigate to the parent namespace (all parts except the last).
     auto target_ns = _unit.get_root_namespace();
     for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
@@ -1260,4 +1267,3 @@ void kdi_importer::check_unused_imports() const {
 }
 
 } // namespace k::model
-
