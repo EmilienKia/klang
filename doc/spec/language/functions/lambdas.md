@@ -143,6 +143,8 @@ The return type of a lambda is determined in the following order of priority:
 
 If deduction would be ambiguous (e.g. conflicting `return` types and no explicit annotation), the compiler reports an error requiring an explicit return type.
 
+> **Current compiler limitation.** Destination-context deduction for capture-free lambdas is not fully reliable yet in all callable-binding paths. When a lambda is assigned to a callable and inference would otherwise depend on the target type, prefer spelling the return type explicitly.
+
 ```k
 // Explicit return type
 square : &(int):int = (n:int):int { return n * n; };

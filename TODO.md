@@ -67,6 +67,7 @@
   Core callable type system, binding (free/static/member/functor/interface), variance checking, KDI 
   round-trip, lambda parsing, capture-free lowering, return-type deduction. **Phases B.12-B.13 done**: 
   Template instantiation support, k::functional stdlib aliases. **Remaining future items** (Phase C+):
+  - [ ] Lambda return-type inference from callable destination context (capture-free lambdas still need an explicit return type in some paths)
   - [ ] Full capture semantics: reference vs value capture, capture-by-binding-time, mutable/const inference
   - [ ] Dynamic closure allocation and environment storage
   - [ ] Capture-with-escaping warnings/errors (scope lifetime analysis)
@@ -75,6 +76,24 @@
   - [ ] Callables in generic bodies (currently unsupported due to fat-pointer size)
   - [ ] Callables as non-type template parameters (value-template instantiation)
   - [ ] Thread-local callable state (for thread factories, event handlers)
+
+#### Latest full test-suite backlog (2026-08-10)
+
+The last full `ctest -j3 --output-on-failure` run still reports these unrelated blockers/timeouts:
+
+- [ ] `libk-thread-io-tests` — `test-sync-rwlock.cpp:193` (`ReadWriteLock: a reader waits for the writer to finish`)
+- [ ] `libk-thread-io-tests` — `test-sync-latch.cpp:386`
+- [ ] `libk-thread-io-tests` — `test-io-socket-interrupt.cpp:90`
+- [ ] `klang-tests-gen-core` — timeout
+- [ ] `klang-tests-gen-arithmetic` — timeout
+- [ ] `klang-tests-gen-types` — timeout
+- [ ] `klang-tests-gen-classes` — timeout
+- [ ] `klang-tests-gen-memory` — timeout
+- [ ] `klang-tests-gen-oop` — timeout
+- [ ] `klang/tests/test-gen-ternary-comprehensive.cpp:18`
+- [ ] `klang/tests/test-gen-template-value-params.cpp:519`
+- [ ] `klang/tests/test-klangc-static-diamond.cpp:226`
+- [ ] `klang/tests/test-import.cpp:717, 762, 820, 884, 1225, 1267, 3689, 4359`
 
 
 #### Current bugs and gaps to fix
