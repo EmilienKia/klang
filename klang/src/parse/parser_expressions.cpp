@@ -1027,6 +1027,7 @@ namespace {
 
         int depth = 0;
         bool first_token = true;
+        bool saw_top_level_question = false;
         while (true) {
             auto tok = lexer.get();
             if (!tok) {
@@ -1048,9 +1049,14 @@ namespace {
                     return false;
                 }
                 --depth;
+            } else if (tok == lex::operator_::QUESTION_MARK && depth == 0) {
+                saw_top_level_question = true;
             } else if (tok == lex::operator_::COLON && depth == 0) {
                 holder.rollback();
-                return true;
+                // Top-level ':' usually indicates a lambda signature "(x: T)" or
+                // a lambda return annotation "() : T", but in a parenthesized
+                // ternary "(cond ? a : b)" it must stay an expression.
+                return !saw_top_level_question;
             }
         }
     }

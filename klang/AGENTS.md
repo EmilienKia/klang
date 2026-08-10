@@ -185,18 +185,21 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-model` | model/documentation/materializer/phase checks |
 | `klang-tests-gen-core` | general codegen + resolution baseline |
 | `klang-tests-gen-functions` | callables/lambda/func-ref/varargs |
-| `klang-tests-gen-control` | statements/control-flow/exceptions/init-order |
-| `klang-tests-gen-arithmetic` | primitive arithmetic behavior |
+| `klang-tests-gen-control` | statements/control-flow/init-order/static ctor-dtor |
+| `klang-tests-gen-exceptions` | throw/catch/contracts/rethrow/unwinding |
+| `klang-tests-gen-ternary` | ternary expression behavior matrix |
+| `klang-tests-gen-arithmetic-shard-0/1` | primitive arithmetic behavior (sharded run) |
 | `klang-tests-gen-operators` | operator overload/comparison/spaceship/casts |
-| `klang-tests-gen-types` | enum/union/const/null/annotations |
+| `klang-tests-gen-types-shard-0/1` | enum/union/const/null/annotations (sharded run) |
 | `klang-tests-gen-aliases` | alias/typedef/callable-alias |
 | `klang-tests-gen-classes` | class basics/inheritance/upcasts |
 | `klang-tests-gen-virtuality` | virtual/interface/override/diamond |
 | `klang-tests-gen-memory` | owner/indirection/arrays/drain |
-| `klang-tests-gen-oop` | lifecycle/RVO/temporary/named-return |
+| `klang-tests-gen-oop-lifecycle` | lifecycle and RVO |
+| `klang-tests-gen-oop-temporary` | named return + temporary construction |
 | `klang-tests-gen-scoping` | using/friend |
 | `klang-tests-gen-templates` | template-heavy behavior |
-| `klang-tests-import` | KDI import/transitive/prod-lib |
+| `klang-tests-import-shard-0/1` | KDI import/transitive/prod-lib (sharded run) |
 | `klangc-tests` | CLI/integration behavior |
 
 Grouping policy:

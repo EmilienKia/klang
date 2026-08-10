@@ -142,6 +142,22 @@ macro(klang_gen_test TARGET TIMEOUT)
     set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
 endmacro()
 
+macro(klang_gen_test_sharded TARGET TIMEOUT SHARD_COUNT)
+    add_executable(${TARGET} ${ARGN})
+    target_link_libraries(${TARGET} klang-test-helpers Catch2::Catch2WithMain)
+    target_link_options(${TARGET} PRIVATE -rdynamic)
+    add_dependencies(${TARGET} libk_stdlib)
+
+    math(EXPR __last_shard "${SHARD_COUNT} - 1")
+    foreach(__shard_idx RANGE 0 ${__last_shard})
+        add_test(
+            NAME ${TARGET}-shard-${__shard_idx}
+            COMMAND ${TARGET} --shard-count ${SHARD_COUNT} --shard-index ${__shard_idx}
+        )
+        set_tests_properties(${TARGET}-shard-${__shard_idx} PROPERTIES TIMEOUT ${TIMEOUT})
+    endforeach()
+endmacro()
+
 # ---------------------------------------------------------------------------
 # Group 1 — Frontend: lexer, parser, file-resolver, process
 # No JIT, no libk dependency — runnable even before libk is built.
@@ -208,8 +224,7 @@ klang_gen_test(klang-tests-gen-functions 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 3c — Codegen: statements, control flow, init order, exceptions
-# Estimated wall-clock: ~60s on a low-spec VM.
+# Group 3c — Codegen: statements, control flow, init order, static lifecycle
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-control 120
         tests/test-gen-statements.cpp
@@ -221,16 +236,27 @@ klang_gen_test(klang-tests-gen-control 120
         tests/test-gen-init-order.cpp
         tests/test-gen-static-ctor-dtor.cpp
         tests/test-gen-static-local.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 3d — Exception model and throw contracts
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-exceptions 120
         tests/test-gen-exceptions.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 3e — Ternary expression matrix
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-ternary 120
         tests/test-gen-ternary-comprehensive.cpp
 )
 
 # ---------------------------------------------------------------------------
 # Group 4a — Arithmetic operators (all numeric types)
-# test-gen-arithmetic.cpp alone is the heaviest file (~2s per type × many types)
-# Estimated wall-clock: ~80s on a low-spec VM.
+# Sharded because the full executable runtime can exceed the timeout budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arithmetic 120
+klang_gen_test_sharded(klang-tests-gen-arithmetic 120 2
         tests/test-gen-arithmetic.cpp
 )
 
@@ -249,9 +275,9 @@ klang_gen_test(klang-tests-gen-operators 120
 
 # ---------------------------------------------------------------------------
 # Group 5a — Enums, unions, const, null semantics, annotations
-# Estimated wall-clock: ~60s on a low-spec VM.
+# Sharded to keep each CTest invocation below timeout budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-types 120
+klang_gen_test_sharded(klang-tests-gen-types 120 2
         tests/test-gen-enum.cpp
         tests/test-gen-union.cpp
         tests/test-gen-union-template.cpp
@@ -322,20 +348,24 @@ klang_gen_test(klang-tests-gen-memory 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 8a — OOP: lifecycle, RVO, named return, temporaries
-# Estimated wall-clock: ~80s on a low-spec VM.
+# Group 8a — OOP: lifecycle and RVO
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-oop 120
+klang_gen_test(klang-tests-gen-oop-lifecycle 120
         tests/test-gen-lifecycle.cpp
         tests/test-gen-rvo.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 8b — OOP: named return and temporaries
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-oop-temporary 120
         tests/test-gen-named-return.cpp
         tests/test-gen-temporary-construction.cpp
         tests/test-gen-temporary-brace-init.cpp
 )
 
 # ---------------------------------------------------------------------------
-# Group 8b — Using declarations and friend: heavier because of import overhead
-# Estimated wall-clock: ~40s on a low-spec VM.
+# Group 8c — Using declarations and friend: heavier because of import overhead
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-scoping 120
         tests/test-gen-using.cpp
@@ -364,14 +394,14 @@ klang_gen_test(klang-tests-gen-templates 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 10 — (merged into gen-control above — no standalone group needed)
+# Group 10 — (covered by dedicated groups above — no standalone group needed)
 #
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Group 11 — KDI import, production libraries, multi-source
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-import 120
+klang_gen_test_sharded(klang-tests-import 120 2
         tests/test-import.cpp
         tests/test-prod-lib.cpp
         tests/test-import-template-reparse-diagnostic.cpp
