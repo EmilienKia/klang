@@ -50,7 +50,9 @@
 - Exceptions: core support already implemented (`throw`/`try`/`catch`/`finally`/`rethrow`, `throws` clauses with
   checked-exception enforcement, KDI import/export of `throws` clauses, stdlib exception hierarchy, cause
   chaining). Remaining gaps:
-    - [ ] Exception specifications on function pointer/reference types
+    - [x] Exception specifications on function pointer/reference types — **Done in Phase B.2**: Callable types 
+      now carry explicit throws clauses like free functions; KDI import/export and variance checking all 
+      respect the throws set.
     - [ ] `noexcept` conditional expression (`noexcept(expr)`)
     - [ ] Exception handling in static constructors/destructors
     - [ ] Unhandled FatalError diagnostic: when an uncaught FatalError propagates past `main()`, the runtime should print a diagnostic message (exception type, code, optional stack trace) before terminating the process
@@ -61,7 +63,19 @@
 - Add static code decoration and constraint (usage example : units of measurement)
 - member reordering optimization
 - boolean member bitfield optimization
-- lambda expressions and closures, variable capture, and functional interfaces
+- [x] Lambda expressions and closures, variable capture, and functional interfaces — **Phase B.1-B.11 done**: 
+  Core callable type system, binding (free/static/member/functor/interface), variance checking, KDI 
+  round-trip, lambda parsing, capture-free lowering, return-type deduction. **Phases B.12-B.13 done**: 
+  Template instantiation support, k::functional stdlib aliases. **Remaining future items** (Phase C+):
+  - [ ] Full capture semantics: reference vs value capture, capture-by-binding-time, mutable/const inference
+  - [ ] Dynamic closure allocation and environment storage
+  - [ ] Capture-with-escaping warnings/errors (scope lifetime analysis)
+  - [ ] Bracket-less lambda syntax (`[]` omission when no captures)
+  - [ ] Higher-order composition helpers (`compose`, `andThen`) on callables
+  - [ ] Callables in generic bodies (currently unsupported due to fat-pointer size)
+  - [ ] Callables as non-type template parameters (value-template instantiation)
+  - [ ] Thread-local callable state (for thread factories, event handlers)
+
 
 #### Current bugs and gaps to fix
 

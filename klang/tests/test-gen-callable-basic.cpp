@@ -279,6 +279,21 @@ TEST_CASE("Callable: a bare prototype is not an instantiable value type", "[gen]
     )SRC", nullptr));
 }
 
+TEST_CASE("Callable: capture-free lambda infers the callable prototype from the destination", "[gen][callable][lambda]")
+{
+    auto jit = gen_jit(R"SRC(
+        module test;
+        test() : int {
+            f : &(int):int = [](x: int) { return x + 1; };
+            return f(41);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
 TEST_CASE("Callable: a non-null callable must be initialised", "[gen][callable][null]")
 {
     REQUIRE(compile_should_fail(R"SRC(

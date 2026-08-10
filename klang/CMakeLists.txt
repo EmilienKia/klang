@@ -152,6 +152,7 @@ add_executable(klang-tests-frontend
         tests/test-parser.cpp
         tests/test-parser-templates.cpp
         tests/test-parse-alias.cpp
+        tests/test-parse-lambda.cpp
         tests/test-file-resolver.cpp
         tests/test-process.cpp
 )
@@ -190,6 +191,7 @@ klang_gen_test(klang-tests-gen-core 480
         tests/test-gen-callable-member.cpp
         tests/test-gen-callable-interface.cpp
         tests/test-gen-callable-variance.cpp
+        tests/test-gen-lambda.cpp
         tests/test-gen-operator-call.cpp
         tests/test-gen-intrinsic.cpp
         tests/test-gen-string-literal.cpp
