@@ -25,5 +25,15 @@
 #include "helpers.hpp"
 
 TEST_CASE("Lambda: capture-free lambda binds to a callable", "[gen][lambda]") {
-    SKIP("Lambda return-type inference still needs destination-context binding for capture-free lambdas");
+    auto jit = gen_jit(R"SRC(
+        module test;
+        apply(f : *(int):int, x : int) : int { return f(x); }
+        test() : int {
+            return apply([](x : int) { return x + 1; }, 41);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
 }

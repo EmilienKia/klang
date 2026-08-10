@@ -67,6 +67,10 @@
   Core callable type system, binding (free/static/member/functor/interface), variance checking, KDI 
   round-trip, lambda parsing, capture-free lowering, return-type deduction. **Phases B.12-B.13 done**: 
   Template instantiation support, k::functional stdlib aliases. **Remaining future items** (Phase C+):
+  - [ ] Déduction du type de retour des fonctions — in the short term this only needs to
+        propagate the destination callable context into capture-free lambdas; a broader
+        function/lambda return inference pass would collect `return` expressions first and
+        resolve the final type afterwards.
   - [ ] Lambda return-type inference from callable destination context (capture-free lambdas still need an explicit return type in some paths)
   - [ ] Full capture semantics: reference vs value capture, capture-by-binding-time, mutable/const inference
   - [ ] Dynamic closure allocation and environment storage

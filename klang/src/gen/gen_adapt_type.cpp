@@ -122,7 +122,13 @@ type_reference_resolver::adapt_callable_type(
             if (auto lambda = std::dynamic_pointer_cast<lambda_expression>(expr)) {
                 auto bind = lambda->bind();
                 if (bind) {
+                    if (auto target = bind->get_target()) {
+                        if (!target->has_return_type() && dest_ct->get_return_type()) {
+                            target->set_return_type(dest_ct->get_return_type());
+                        }
+                    }
                     bind->set_type(dest_ct);
+                    lambda->set_type(dest_ct);
                     return bind;
                 }
             }

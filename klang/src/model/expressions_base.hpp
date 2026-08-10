@@ -112,6 +112,7 @@ protected:
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
     friend class template_instantiator;
+    friend class model_builder;
 
     void set_type(std::shared_ptr<type> type);
 

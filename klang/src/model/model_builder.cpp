@@ -37,6 +37,8 @@ namespace k::model {
         bool has_doc(const std::optional<parse::ast::documentation>& doc) {
             return doc.has_value() && !doc->empty();
         }
+
+        unsigned long long lambda_synth_counter = 0;
     } // anonymous namespace
 
     static std::string gen_random_unsigned_id() {
@@ -2652,12 +2654,75 @@ namespace k::model {
                 captures.push_back(nullptr);
             }
         }
+        std::shared_ptr<model::function_holder> holder;
+        std::shared_ptr<model::element> decl_owner;
+        for (auto it = _contexts.rbegin(); it != _contexts.rend(); ++it) {
+            if (*it) {
+                decl_owner = (*it)->content;
+                if (std::dynamic_pointer_cast<model::ns>(decl_owner)
+                    || std::dynamic_pointer_cast<model::aggregate>(decl_owner)) {
+                    holder = std::dynamic_pointer_cast<model::function_holder>(decl_owner);
+                    if (holder) break;
+                }
+            }
+        }
+        if (!holder) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_NO_IMPL_NO_ABSTRACT), lex::identifier{"lambda"},
+                "Lambda expression cannot be declared here");
+        }
+
+        const std::string lambda_name = "__lambda_" + std::to_string(++lambda_synth_counter);
+        std::vector<lex::keyword> lambda_specifiers;
+        lambda_specifiers.emplace_back("private", lex::keyword::PRIVATE);
+        if (current_context_content<model::aggregate>()) {
+            lambda_specifiers.emplace_back("static", lex::keyword::STATIC);
+        }
+
+        auto lambda_decl = std::make_shared<parse::ast::function_decl>(
+            lambda_specifiers,
+            lex::identifier{lambda_name},
+            expr.return_type,
+            expr.params,
+            expr.body,
+            false);
+
+        auto previous_expr = _expr;
+        auto previous_stmt = _stmt;
+        if (auto ns_scope = std::dynamic_pointer_cast<model::ns>(decl_owner)) {
+            stack<ns_context> push(_contexts, ns_scope);
+            visit_function_decl(*lambda_decl);
+        } else if (auto agg_scope = std::dynamic_pointer_cast<model::aggregate>(decl_owner)) {
+            stack<struct_context> push(_contexts, agg_scope);
+            visit_function_decl(*lambda_decl);
+        }
+        _expr = previous_expr;
+        _stmt = previous_stmt;
+
+        auto target = holder->get_function(lambda_name);
+        if (!target) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_DUPLICATE_DEFINITION), lex::identifier{"lambda"},
+                "Failed to materialise lambda target '{}'",
+                {lambda_name});
+        }
         auto bind = model::callable_bind_expression::make_shared(
             model::callable_bind_expression::kind::lambda,
-            nullptr,
+            target,
             nullptr);
         _expr = model::lambda_expression::make_shared(bind, captures);
-        if (_expr) _expr->set_ast_expression(expr.shared_as<parse::ast::lambda_expression>());
+        if (_expr) {
+            callable_type_builder builder(_context);
+            builder.addresser(callable_type::addresser::reference);
+            if (target && target->has_return_type()) {
+                builder.return_type(target->get_return_type());
+            }
+            for (const auto& param : expr.params) {
+                if (param && param->type) {
+                    builder.append_parameter_type(_context->from_type_specifier(*param->type));
+                }
+            }
+            _expr->set_type(builder.build());
+            _expr->set_ast_expression(expr.shared_as<parse::ast::lambda_expression>());
+        }
     }
 
     void model_builder::visit_new_expr(parse::ast::new_expr& expr) {
