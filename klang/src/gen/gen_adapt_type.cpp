@@ -119,6 +119,13 @@ type_reference_resolver::adapt_callable_type(
                 type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype()));
         }
         if (dest_ct && !dest_ct->is_unbound_member() && !dest_ct->is_prototype()) {
+            if (auto lambda = std::dynamic_pointer_cast<lambda_expression>(expr)) {
+                auto bind = lambda->bind();
+                if (bind) {
+                    bind->set_type(dest_ct);
+                    return bind;
+                }
+            }
             if (auto bound = try_bind_member_callable(expr, dest_ct)) return bound;
             if (auto bound = try_bind_functor_callable(expr, dest_ct)) return bound;
             if (auto bound = try_bind_functional_interface_callable(expr, dest_ct)) return bound;

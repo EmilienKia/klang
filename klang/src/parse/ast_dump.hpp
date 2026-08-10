@@ -781,6 +781,47 @@ class ast_dump_visitor : public k::parse::ast_visitor {
                 if (elem.value) elem.value->visit(*this);
             }
         }
+
+        void visit_lambda_capture(ast::lambda_capture& cap) override {
+            if (cap.is_const) _stm << "const ";
+            if (cap.is_reference) _stm << '&';
+            if (cap.is_this) {
+                _stm << "this";
+            } else if (cap.name.has_value()) {
+                _stm << cap.name->content;
+            } else {
+                _stm << "<<capture?>>";
+            }
+            if (cap.init_expr) {
+                _stm << " = ";
+                cap.init_expr->visit(*this);
+            }
+        }
+
+        void visit_lambda_expression(ast::lambda_expression& lambda) override {
+            if (lambda.is_const) _stm << "const ";
+            if (lambda.has_capture_list) {
+                _stm << '[';
+                for (size_t i = 0; i < lambda.captures.size(); ++i) {
+                    if (i > 0) _stm << ", ";
+                    lambda.captures[i].visit(*this);
+                }
+                _stm << ']';
+            }
+            _stm << '(';
+            for (size_t i = 0; i < lambda.params.size(); ++i) {
+                if (i > 0) _stm << ", ";
+                lambda.params[i]->visit(*this);
+            }
+            _stm << ')';
+            if (lambda.return_type) {
+                _stm << " : ";
+                lambda.return_type->visit(*this);
+            }
+            if (lambda.body) {
+                lambda.body->visit(*this);
+            }
+        }
 };
 
 

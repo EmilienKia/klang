@@ -2641,6 +2641,25 @@ namespace k::model {
         _expr->set_ast_expression(expr.shared_as<parse::ast::pack_expansion_expr>());
     }
 
+    void model_builder::visit_lambda_expression(parse::ast::lambda_expression &expr) {
+        std::vector<std::shared_ptr<model::expression>> captures;
+        for (auto& cap : expr.captures) {
+            if (cap.init_expr) {
+                _expr = nullptr;
+                cap.init_expr->visit(*this);
+                captures.push_back(_expr);
+            } else {
+                captures.push_back(nullptr);
+            }
+        }
+        auto bind = model::callable_bind_expression::make_shared(
+            model::callable_bind_expression::kind::lambda,
+            nullptr,
+            nullptr);
+        _expr = model::lambda_expression::make_shared(bind, captures);
+        if (_expr) _expr->set_ast_expression(expr.shared_as<parse::ast::lambda_expression>());
+    }
+
     void model_builder::visit_new_expr(parse::ast::new_expr& expr) {
         // Resolve the allocated type from the AST type specifier
         auto alloc_type = _context->from_type_specifier(*expr.type);

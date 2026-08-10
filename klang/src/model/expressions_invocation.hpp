@@ -642,5 +642,41 @@ public:
     }
 };
 
+class lambda_expression : public expression {
+protected:
+    std::vector<std::shared_ptr<expression>> _captures;
+    std::shared_ptr<callable_bind_expression> _bind;
+    bool _capture_free = true;
+
+    lambda_expression() = default;
+    lambda_expression(const lambda_expression&) = delete;
+
+public:
+    void accept(model_visitor& visitor) override;
+
+    const std::vector<std::shared_ptr<expression>>& captures() const { return _captures; }
+    const std::shared_ptr<callable_bind_expression>& bind() const { return _bind; }
+    bool is_capture_free() const { return _capture_free; }
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<lambda_expression> c{new lambda_expression()};
+        c->_type = _type;
+        c->_bind = _bind;
+        c->_captures = _captures;
+        c->_capture_free = _capture_free;
+        return c;
+    }
+
+    static std::shared_ptr<lambda_expression> make_shared(
+        const std::shared_ptr<callable_bind_expression>& bind,
+        const std::vector<std::shared_ptr<expression>>& captures) {
+        std::shared_ptr<lambda_expression> c{new lambda_expression()};
+        c->_bind = bind;
+        c->_captures = captures;
+        c->_capture_free = captures.empty();
+        return c;
+    }
+};
+
 } // namespace k::model
 #endif //KLANG_MODEL_EXPRESSIONS_INVOCATION_HPP

@@ -302,6 +302,8 @@ namespace k::parse {
         struct binary_expression;
         struct ternary_expression;
         struct multi_expression;
+        struct block_statement;
+        struct parameter_spec;
 
         struct literal_expr;
 
@@ -690,6 +692,47 @@ namespace k::parse {
                                const std::optional<lex::punctuator>& array_bracket_close = std::nullopt)
                 : callee(callee), brace_init(brace_init), is_array_type_form(is_array_type_form),
                   array_bracket_open(array_bracket_open), array_bracket_close(array_bracket_close) {}
+
+            virtual void visit(ast_visitor& visitor) override;
+        };
+
+        /** A single capture in a lambda capture list. */
+        struct lambda_capture : public ast_node {
+            bool is_const = false;
+            bool is_reference = false;
+            bool is_this = false;
+            std::optional<lex::identifier> name;
+            expr_ptr init_expr;
+
+            lambda_capture(bool is_const,
+                           bool is_reference,
+                           bool is_this,
+                           std::optional<lex::identifier> name = std::nullopt,
+                           expr_ptr init_expr = nullptr)
+                : is_const(is_const), is_reference(is_reference), is_this(is_this),
+                  name(std::move(name)), init_expr(std::move(init_expr)) {}
+
+            virtual void visit(ast_visitor& visitor) override;
+        };
+
+        /** Lambda expression. */
+        struct lambda_expression : public expression {
+            bool is_const = false;
+            bool has_capture_list = false;
+            std::vector<lambda_capture> captures;
+            std::vector<std::shared_ptr<parameter_spec>> params;
+            std::shared_ptr<type_specifier> return_type;
+            std::shared_ptr<block_statement> body;
+
+            lambda_expression(bool is_const,
+                              bool has_capture_list,
+                              std::vector<lambda_capture> captures,
+                              std::vector<std::shared_ptr<parameter_spec>> params,
+                              std::shared_ptr<type_specifier> return_type,
+                              std::shared_ptr<block_statement> body)
+                : is_const(is_const), has_capture_list(has_capture_list),
+                  captures(std::move(captures)), params(std::move(params)),
+                  return_type(std::move(return_type)), body(std::move(body)) {}
 
             virtual void visit(ast_visitor& visitor) override;
         };
@@ -1707,6 +1750,8 @@ namespace k::parse {
         virtual void visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &) = 0;
         virtual void visit_member_access_postfix_expr(ast::member_access_postfix_expr &) = 0;
         virtual void visit_brace_postfix_expr(ast::brace_postfix_expr &) = 0;
+        virtual void visit_lambda_capture(ast::lambda_capture &) = 0;
+        virtual void visit_lambda_expression(ast::lambda_expression &) = 0;
         virtual void visit_identifier_expr(ast::identifier_expr &) = 0;
 
         virtual void visit_new_expr(ast::new_expr &) = 0;
@@ -1780,6 +1825,8 @@ namespace k::parse {
         void visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &) override;
         void visit_member_access_postfix_expr(ast::member_access_postfix_expr &) override;
         void visit_brace_postfix_expr(ast::brace_postfix_expr &) override;
+        void visit_lambda_capture(ast::lambda_capture &) override;
+        void visit_lambda_expression(ast::lambda_expression &) override;
         void visit_identifier_expr(ast::identifier_expr &) override;
 
         void visit_new_expr(ast::new_expr &) override;

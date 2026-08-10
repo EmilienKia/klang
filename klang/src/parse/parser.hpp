@@ -328,6 +328,16 @@ public:
     std::shared_ptr<ast::block_statement> parse_statement_block();
 
     /**
+     * LambdaExpr = [ 'const' ] , [ CaptureList ] , '(' , [ ParameterList ] , ')' ,
+     *              [ ':' , TypeSpec ] , BlockStatement ;
+     *
+     * When @p allow_fallback is true, a leading '(' that does not actually form a
+     * lambda is rolled back and nullptr is returned so the caller can parse a
+     * parenthesised expression instead.
+     */
+    ast::expr_ptr parse_lambda_expression(bool allow_fallback = false);
+
+    /**
      * ReturnStatement = 'return' , [ Expression ] , ';' ;
      */
      std::shared_ptr<ast::return_statement> parse_return_statement();

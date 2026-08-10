@@ -178,6 +178,7 @@ protected:
     void visit_brace_postfix_expr(parse::ast::brace_postfix_expr &) override;
     void visit_identifier_expr(parse::ast::identifier_expr &) override;
     void visit_pack_expansion_expr(parse::ast::pack_expansion_expr &) override;
+    void visit_lambda_expression(parse::ast::lambda_expression &) override;
 
     void visit_new_expr(parse::ast::new_expr &) override;
     void visit_delete_expr(parse::ast::delete_expr &) override;

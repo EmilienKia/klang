@@ -91,6 +91,7 @@ public:
     virtual void visit_delete_expression(delete_expression&) =0;
     virtual void visit_callable_bind_expression(callable_bind_expression&) =0;
     virtual void visit_callable_invocation_expression(callable_invocation_expression&) =0;
+    virtual void visit_lambda_expression(lambda_expression&) =0;
     virtual void visit_array_init_expression(array_init_expression&) =0;
     virtual void visit_designated_struct_init_expression(designated_struct_init_expression&) =0;
 
@@ -217,6 +218,7 @@ public:
     void visit_delete_expression(delete_expression&) override;
     void visit_callable_bind_expression(callable_bind_expression&) override;
     void visit_callable_invocation_expression(callable_invocation_expression&) override;
+    void visit_lambda_expression(lambda_expression&) override;
     void visit_array_init_expression(array_init_expression&) override;
     void visit_designated_struct_init_expression(designated_struct_init_expression&) override;
 

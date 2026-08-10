@@ -672,6 +672,9 @@ void implementation_generator::visit_callable_bind_expression(callable_bind_expr
             }
             _value = build_bound_callable(expr, ctx_ptr);
             return;
+        case callable_bind_expression::kind::lambda:
+            _value = build_callable_from_function(expr.get_target(), ctx_ptr, expr.first_lexeme());
+            return;
         default:
             break;
     }

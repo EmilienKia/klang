@@ -708,6 +708,15 @@ enum class callable_diag : unsigned int {
     WARN_CALLABLE_DANGLING_CONTEXT                = 0x01DF,
 };
 
+/**
+ * Parser diagnostics for lambda expressions.
+ * Range 0x01E0 — 0x01EF.
+ */
+enum class lambda_diag : unsigned int {
+    /** A lambda capture list uses an unsupported or malformed spelling. */
+    ERR_LAMBDA_BAD_CAPTURE_SYNTAX                = 0x01E0,
+};
+
 
 } // namespace k::diag
 

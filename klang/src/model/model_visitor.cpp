@@ -207,6 +207,10 @@ void default_model_visitor::visit_callable_invocation_expression(callable_invoca
     visit_expression(expr);
 }
 
+void default_model_visitor::visit_lambda_expression(lambda_expression& expr) {
+    visit_expression(expr);
+}
+
 void default_model_visitor::visit_array_init_expression(array_init_expression& expr) {
     visit_expression(expr);
 }

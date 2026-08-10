@@ -60,8 +60,6 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/selector.k
     # ── Phase 6: event loop / reactor foundation ──────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/event_loop.k
-    # ── Phase 7: functional programming ───────────────────────────────────
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/functional.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)

@@ -813,6 +813,190 @@ ast::expr_ptr parser::parse_postfix_expr()
     return any;
 }
 
+ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
+{
+    lex::lex_holder holder(_lexer);
+
+    bool is_const_lambda = false;
+    bool has_capture_list = false;
+    std::vector<ast::lambda_capture> captures;
+
+    auto parse_capture = [&]() -> std::optional<ast::lambda_capture> {
+        bool capture_const = false;
+        bool capture_ref = false;
+        bool capture_this = false;
+        std::optional<lex::identifier> capture_name;
+        ast::expr_ptr init_expr;
+
+        {
+            lex::lex_holder const_holder(_lexer);
+            auto lconst = _lexer.get();
+            if (lconst == lex::keyword::CONST) {
+                capture_const = true;
+            } else {
+                const_holder.rollback();
+            }
+        }
+
+        {
+            lex::lex_holder ref_holder(_lexer);
+            auto lamp = _lexer.get();
+            if (lamp == lex::operator_::AMPERSAND) {
+                capture_ref = true;
+            } else {
+                ref_holder.rollback();
+            }
+        }
+
+        auto lname = _lexer.get();
+        if (lname == lex::keyword::THIS) {
+            capture_this = true;
+        } else if (lex::is<lex::identifier>(lname)) {
+            capture_name = lex::as<lex::identifier>(lname);
+        } else {
+            return std::nullopt;
+        }
+
+        {
+            lex::lex_holder init_holder(_lexer);
+            auto leq = _lexer.get();
+            if (leq == lex::operator_::EQUAL) {
+                init_expr = parse_conditional_expr();
+                if (!init_expr) {
+                    throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
+                                _lexer.pick_current(),
+                                "Lambda init-capture expects an expression after '='");
+                }
+            } else {
+                init_holder.rollback();
+            }
+        }
+
+        return ast::lambda_capture(capture_const, capture_ref, capture_this, capture_name, init_expr);
+    };
+
+    {
+        lex::lex_holder const_holder(_lexer);
+        auto lconst = _lexer.get();
+        if (lconst == lex::keyword::CONST) {
+            is_const_lambda = true;
+        } else {
+            const_holder.rollback();
+        }
+    }
+
+    {
+        lex::lex_holder capture_holder(_lexer);
+        auto lbrack = _lexer.get();
+        if (lbrack == lex::punctuator::BRACKET_OPEN) {
+            has_capture_list = true;
+            auto maybe_close = _lexer.get();
+            if (maybe_close != lex::punctuator::BRACKET_CLOSE) {
+                _lexer.unget();
+                while (true) {
+                    auto cap = parse_capture();
+                    if (!cap.has_value()) {
+                        throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
+                                    _lexer.pick_current(),
+                                    "Malformed lambda capture list");
+                    }
+                    captures.push_back(std::move(*cap));
+
+                    auto sep = _lexer.get();
+                    if (sep == lex::punctuator::COMMA) {
+                        continue;
+                    }
+                    if (sep == lex::punctuator::BRACKET_CLOSE) {
+                        break;
+                    }
+                    throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
+                                sep, "Lambda capture list expects ',' or ']'");
+                }
+            }
+        } else {
+            capture_holder.rollback();
+        }
+    }
+
+    auto lparen = _lexer.get();
+    if (lparen != lex::punctuator::PARENTHESIS_OPEN) {
+        if (allow_fallback) {
+            holder.rollback();
+            return {};
+        }
+        throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
+                    lparen, "Lambda expression expects a parameter list enclosed in '(' and ')'");
+    }
+
+    std::vector<std::shared_ptr<ast::parameter_spec>> params;
+    auto maybe_close = _lexer.get();
+    if (maybe_close != lex::punctuator::PARENTHESIS_CLOSE) {
+        _lexer.unget();
+        while (true) {
+            auto param = parse_parameter_spec();
+            if (!param || !param->name.has_value() || param->default_expr || param->is_varargs || param->is_pack_expansion) {
+                if (allow_fallback) {
+                    holder.rollback();
+                    return {};
+                }
+                throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
+                            _lexer.pick_current(),
+                            "Lambda parameter list expects explicit named parameters of the form 'name : Type'");
+            }
+            params.push_back(param);
+            auto sep = _lexer.get();
+            if (sep == lex::punctuator::COMMA) {
+                continue;
+            }
+            if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                break;
+            }
+            if (allow_fallback) {
+                holder.rollback();
+                return {};
+            }
+            throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
+                        sep, "Lambda parameter list expects ',' or ')'");
+        }
+    }
+
+    std::shared_ptr<ast::type_specifier> return_type;
+    {
+        lex::lex_holder ret_holder(_lexer);
+        auto maybe_colon = _lexer.get();
+        if (maybe_colon == lex::operator_::COLON) {
+            return_type = parse_type_spec();
+            if (!return_type) {
+                if (allow_fallback) {
+                    holder.rollback();
+                    return {};
+                }
+                throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
+                            _lexer.pick_current(),
+                            "Lambda return type expects a type specifier after ':'");
+            }
+        } else {
+            ret_holder.rollback();
+        }
+    }
+
+    auto body = parse_statement_block();
+    if (!body) {
+        if (allow_fallback) {
+            holder.rollback();
+            return {};
+        }
+        throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
+                    _lexer.pick_current(),
+                    "Lambda expression expects a block body '{...}'");
+    }
+
+    holder.sync();
+    return std::make_shared<ast::lambda_expression>(
+        is_const_lambda, has_capture_list, std::move(captures), std::move(params),
+        std::move(return_type), std::move(body));
+}
+
 namespace {
     /**
      * True for the simple (non-compound) primitive-type keywords, i.e. those
@@ -837,6 +1021,41 @@ namespace {
     }
 }
 
+namespace {
+    bool looks_like_lambda_paren_list(k::lex::lexer& lexer) {
+        lex::lex_holder holder(lexer);
+
+        int depth = 0;
+        bool first_token = true;
+        while (true) {
+            auto tok = lexer.get();
+            if (!tok) {
+                holder.rollback();
+                return false;
+            }
+
+            if (tok == lex::punctuator::PARENTHESIS_CLOSE && first_token) {
+                holder.rollback();
+                return true;
+            }
+
+            first_token = false;
+            if (tok == lex::punctuator::PARENTHESIS_OPEN) {
+                ++depth;
+            } else if (tok == lex::punctuator::PARENTHESIS_CLOSE) {
+                if (depth == 0) {
+                    holder.rollback();
+                    return false;
+                }
+                --depth;
+            } else if (tok == lex::operator_::COLON && depth == 0) {
+                holder.rollback();
+                return true;
+            }
+        }
+    }
+}
+
 ast::expr_ptr parser::parse_primary_expr()
 {
     lex::lex_holder holder(_lexer);
@@ -844,9 +1063,30 @@ ast::expr_ptr parser::parse_primary_expr()
     lex::opt_ref_any_lexeme l = _lexer.get();
     if (lex::is<lex::literal>(l)) {
         return std::make_shared<ast::literal_expr>(lex::as_any_literal(l));
+    } else if (l == lex::punctuator::BRACKET_OPEN) {
+        _lexer.unget();
+        return parse_lambda_expression(false);
+    } else if (l == lex::keyword::CONST) {
+        {
+            lex::lex_holder const_holder(_lexer);
+            if (_lexer.get() == lex::punctuator::PARENTHESIS_OPEN && looks_like_lambda_paren_list(_lexer)) {
+                const_holder.rollback();
+                _lexer.unget();
+                if (auto lambda = parse_lambda_expression(true)) {
+                    return lambda;
+                }
+            }
+            const_holder.rollback();
+        }
     } else if ( l == lex::keyword::THIS) {
         return std::make_shared<ast::this_expr>(lex::as<lex::keyword>(l));
     } else if( l == lex::punctuator::PARENTHESIS_OPEN) {
+        if (looks_like_lambda_paren_list(_lexer)) {
+            _lexer.unget();
+            if (auto lambda = parse_lambda_expression(true)) {
+                return lambda;
+            }
+        }
         ast::expr_ptr expr = parse_expression();
         if(!expr) {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_PAREN_EXPECT_SUBEXPR), _lexer.pick_current(), "Parenthesis expression expects a sub-expression after open-parenthesis '('");
@@ -887,6 +1127,8 @@ ast::expr_ptr parser::parse_primary_expr()
         holder.rollback();
         return parse_identifier_expr();
     }
+
+    return {};
 }
 
 ast::expr_ptr parser::parse_identifier_expr()

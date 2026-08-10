@@ -508,6 +508,10 @@ void callable_invocation_expression::accept(model_visitor& visitor) {
     visitor.visit_callable_invocation_expression(*this);
 }
 
+void lambda_expression::accept(model_visitor& visitor) {
+    visitor.visit_lambda_expression(*this);
+}
+
 std::shared_ptr<callable_invocation_expression> callable_invocation_expression::make_shared(
     const std::shared_ptr<expression>& callee,
     const std::vector<std::shared_ptr<expression>>& args)
