@@ -13,6 +13,7 @@ Investigate and fix compiler issues in `klang/` while preserving pipeline and co
 - Name/symbol/type resolution: `src/gen/resolvers_*.cpp`
 - Callable/operator/cast behavior: `src/gen/gen_callable*.cpp`, `src/gen/gen_operators*.cpp`, `src/gen/gen_expr_cast.cpp`
 - Import/KDI boundary: `src/model/tools/kdi_importer.cpp`, `src/compiler_linker.cpp`
+- Parser SIGSEGV / deep recursive backtrace: inspect non-consuming parse branches and heuristics in `src/parse/parser_expressions.cpp` (notably `parse_primary_expr()` and `looks_like_lambda_paren_list()`).
 
 ## Mandatory invariants
 - Preserve pass order in `compiler::parse_sources()`.
@@ -24,4 +25,3 @@ Investigate and fix compiler issues in `klang/` while preserving pipeline and co
 - Root cause summary mapped to exact files/functions.
 - Minimal patch with no unrelated refactors.
 - Regression test in the closest `klang/tests` suite.
-
