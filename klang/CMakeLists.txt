@@ -177,15 +177,27 @@ klang_gen_test(klang-tests-model 60
 )
 
 # ---------------------------------------------------------------------------
-# Group 3 — Codegen core: functions, statements, control flow, init order
+# Group 3a — Codegen core: basic codegen, resolution, visibility, variables
+# Estimated wall-clock: ~60s on a low-spec VM.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-core 480
+klang_gen_test(klang-tests-gen-core 120
         tests/test-gen.cpp
-        tests/test-gen-statements.cpp
         tests/test-gen-resolution.cpp
         tests/test-gen-visibility.cpp
         tests/test-gen-varargs.cpp
         tests/test-gen-extern.cpp
+        tests/test-gen-intrinsic.cpp
+        tests/test-gen-string-literal.cpp
+        tests/test-gen-variable-init.cpp
+        tests/test-gen-diagnostic-suppression.cpp
+        tests/test-multi-source.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 3b — Codegen: functions, callables, lambdas, func-refs
+# Estimated wall-clock: ~60s on a low-spec VM.
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-functions 120
         tests/test-gen-func-ref.cpp
         tests/test-gen-callable-basic.cpp
         tests/test-gen-callable-member.cpp
@@ -193,28 +205,40 @@ klang_gen_test(klang-tests-gen-core 480
         tests/test-gen-callable-variance.cpp
         tests/test-gen-lambda.cpp
         tests/test-gen-operator-call.cpp
-        tests/test-gen-intrinsic.cpp
-        tests/test-gen-string-literal.cpp
-        tests/test-gen-variable-init.cpp
-        tests/test-gen-init-order.cpp
-        tests/test-gen-static-ctor-dtor.cpp
-        tests/test-gen-static-local.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 3c — Codegen: statements, control flow, init order, exceptions
+# Estimated wall-clock: ~60s on a low-spec VM.
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-control 120
+        tests/test-gen-statements.cpp
         tests/test-gen-if-link-softfail.cpp
         tests/test-gen-if-local-var.cpp
         tests/test-gen-if-cond-var-test.cpp
         tests/test-gen-if-multi-cond-var.cpp
         tests/test-gen-if-multi-softfail.cpp
-        tests/test-multi-source.cpp
+        tests/test-gen-init-order.cpp
+        tests/test-gen-static-ctor-dtor.cpp
+        tests/test-gen-static-local.cpp
         tests/test-gen-exceptions.cpp
-        tests/test-gen-diagnostic-suppression.cpp
+        tests/test-gen-ternary-comprehensive.cpp
 )
 
 # ---------------------------------------------------------------------------
-# Group 4 — Arithmetic, operators, casts
-# Isolated because test-gen-arithmetic.cpp alone takes ~20s.
+# Group 4a — Arithmetic operators (all numeric types)
+# test-gen-arithmetic.cpp alone is the heaviest file (~2s per type × many types)
+# Estimated wall-clock: ~80s on a low-spec VM.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arithmetic 400
+klang_gen_test(klang-tests-gen-arithmetic 120
         tests/test-gen-arithmetic.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 4b — Operator overloads, comparison, spaceship, assign, casts
+# Estimated wall-clock: ~60s on a low-spec VM.
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-operators 120
         tests/test-gen-operator-overload.cpp
         tests/test-gen-comparison-fallback.cpp
         tests/test-gen-spaceship.cpp
@@ -224,9 +248,10 @@ klang_gen_test(klang-tests-gen-arithmetic 400
 )
 
 # ---------------------------------------------------------------------------
-# Group 5 — Algebraic and special types: enums, unions, const, null, annotations
+# Group 5a — Enums, unions, const, null semantics, annotations
+# Estimated wall-clock: ~60s on a low-spec VM.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-types 250
+klang_gen_test(klang-tests-gen-types 120
         tests/test-gen-enum.cpp
         tests/test-gen-union.cpp
         tests/test-gen-union-template.cpp
@@ -235,6 +260,13 @@ klang_gen_test(klang-tests-gen-types 250
         tests/test-gen-null-semantics.cpp
         tests/test-gen-annotation-meta.cpp
         tests/test-gen-designated-init.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 5b — Alias, typedef, redirector, callable-alias
+# Estimated wall-clock: ~40s on a low-spec VM.
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-aliases 120
         tests/test-gen-redirector.cpp
         tests/test-gen-alias-soft.cpp
         tests/test-gen-typedef.cpp
@@ -243,7 +275,8 @@ klang_gen_test(klang-tests-gen-types 250
 )
 
 # ---------------------------------------------------------------------------
-# Group 6 — Classes, inheritance, virtuality, interfaces
+# Group 6a — Structs, inheritance, basic classes
+# Estimated wall-clock: ~50s on a low-spec VM.
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-classes 120
         tests/test-gen-nested-structs.cpp
@@ -251,12 +284,19 @@ klang_gen_test(klang-tests-gen-classes 120
         tests/test-gen-class-basic.cpp
         tests/test-gen-class-abstract.cpp
         tests/test-gen-class-upcast.cpp
+        tests/test-gen-upcast.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 6b — Virtuality, interfaces, override, diamond inheritance
+# Estimated wall-clock: ~50s on a low-spec VM.
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-virtuality 120
         tests/test-gen-class-virtuality.cpp
         tests/test-gen-virtual-inheritance.cpp
         tests/test-gen-virtuality-coverage.cpp
         tests/test-gen-multi-diamond.cpp
         tests/test-gen-override.cpp
-        tests/test-gen-upcast.cpp
         tests/test-gen-interface.cpp
         tests/test-gen-interface-default.cpp
         tests/test-gen-virtual-destructor.cpp
@@ -264,8 +304,9 @@ klang_gen_test(klang-tests-gen-classes 120
 
 # ---------------------------------------------------------------------------
 # Group 7 — Memory model: ownership, indirection, arrays, drain
+# Estimated wall-clock: ~60s on a low-spec VM.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-memory 200
+klang_gen_test(klang-tests-gen-memory 120
         tests/test-gen-owner.cpp
         tests/test-gen-drain.cpp
         tests/test-gen-indirection.cpp
@@ -281,20 +322,29 @@ klang_gen_test(klang-tests-gen-memory 200
 )
 
 # ---------------------------------------------------------------------------
-# Group 8 — OOP semantics: lifecycle, RVO, temporaries, using, friend
+# Group 8a — OOP: lifecycle, RVO, named return, temporaries
+# Estimated wall-clock: ~80s on a low-spec VM.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-oop 240
+klang_gen_test(klang-tests-gen-oop 120
         tests/test-gen-lifecycle.cpp
         tests/test-gen-rvo.cpp
         tests/test-gen-named-return.cpp
         tests/test-gen-temporary-construction.cpp
         tests/test-gen-temporary-brace-init.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 8b — Using declarations and friend: heavier because of import overhead
+# Estimated wall-clock: ~40s on a low-spec VM.
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-scoping 120
         tests/test-gen-using.cpp
         tests/test-gen-friend.cpp
 )
 
 # ---------------------------------------------------------------------------
 # Group 9 — Templates and generics
+# Estimated wall-clock: ~45s on a low-spec VM.
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-templates 120
         tests/test-gen-template-functions.cpp
@@ -314,16 +364,14 @@ klang_gen_test(klang-tests-gen-templates 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 10 — Advanced expressions: ternary operator with all type combinations
+# Group 10 — (merged into gen-control above — no standalone group needed)
+#
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-expressions 300
-        tests/test-gen-ternary-comprehensive.cpp
-)
 
 # ---------------------------------------------------------------------------
 # Group 11 — KDI import, production libraries, multi-source
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-import 180
+klang_gen_test(klang-tests-import 120
         tests/test-import.cpp
         tests/test-prod-lib.cpp
         tests/test-import-template-reparse-diagnostic.cpp
@@ -347,3 +395,4 @@ target_link_libraries(klangc-tests klang-test-helpers Catch2::Catch2WithMain)
 add_dependencies(klangc-tests klangc libk_stdlib)
 
 add_test(NAME klangc-tests COMMAND klangc-tests)
+set_tests_properties(klangc-tests PROPERTIES TIMEOUT 60)

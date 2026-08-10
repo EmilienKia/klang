@@ -438,6 +438,7 @@ target_compile_definitions(libk-tests PRIVATE
     LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
 )
 add_test(NAME libk-tests COMMAND libk-tests)
+set_tests_properties(libk-tests PROPERTIES TIMEOUT 120)
 
 # ── libk threading and I/O tests ──────────────────────────────────────────────
 # Functional correctness tests that involve real threads, futures, sync
@@ -474,6 +475,7 @@ target_compile_definitions(libk-thread-io-tests PRIVATE
     LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
 )
 add_test(NAME libk-thread-io-tests COMMAND libk-thread-io-tests)
+set_tests_properties(libk-thread-io-tests PROPERTIES TIMEOUT 120)
 
 # ── libk performance / stress tests ──────────────────────────────────────────
 # Extremely resource-intensive (thread storms, I/O saturation, cancellation
