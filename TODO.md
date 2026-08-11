@@ -81,13 +81,16 @@
   - [ ] Callables as non-type template parameters (value-template instantiation)
   - [ ] Thread-local callable state (for thread factories, event handlers)
 
-#### Latest full test-suite backlog (2026-08-10)
+#### Latest full test-suite backlog (2026-08-10, updated 2026-08-11)
 
-The last full `ctest -j3 --output-on-failure` run still reports these unrelated blockers/timeouts:
+The following libk I/O and sync tests have been **RESOLVED as of HEAD** (31120ad):
+- [x] `libk-thread-io-tests` — `test-sync-rwlock.cpp:193` — **FIXED**: All 6 rwlock tests pass (19 assertions)
+- [x] `libk-thread-io-tests` — `test-sync-latch.cpp:386` — **FIXED**: All 4 barrier/latch tests pass (13 assertions)
+- [x] `libk-thread-io-tests` — `test-io-socket-interrupt.cpp:90` — **FIXED**: All 2 socket interrupt tests pass
+- [x] Full `libk-thread-io-tests` suite — **VERIFIED PASSING**: 460 assertions, 135 test cases
 
-- [ ] `libk-thread-io-tests` — `test-sync-rwlock.cpp:193` (`ReadWriteLock: a reader waits for the writer to finish`)
-- [ ] `libk-thread-io-tests` — `test-sync-latch.cpp:386`
-- [ ] `libk-thread-io-tests` — `test-io-socket-interrupt.cpp:90`
+Remaining unrelated compiler blockers/timeouts:
+
 - [ ] `klang-tests-gen-core` — timeout
 - [ ] `klang-tests-gen-arithmetic` — timeout
 - [ ] `klang-tests-gen-types` — timeout
