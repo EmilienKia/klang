@@ -852,7 +852,9 @@ All class bases are **implicitly virtual** → in a diamond, a single copy of th
 
 ### 12.7 `override` Specifier
 
-`override` before the method name: asserts that the method overrides an inherited virtual. If no actual override = error. Omitting `override` on a valid override = warning.
+`override` before the method name: asserts that the method overrides an inherited virtual.  
+Override matching uses method name + constness + parameter types; parameter names are ignored.  
+If no actual override = error. Omitting `override` on a valid override = warning.
 
 ### 12.8 Abstract Classes
 

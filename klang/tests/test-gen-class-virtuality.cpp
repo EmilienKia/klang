@@ -81,6 +81,8 @@
  *   [V] final on a class constructor → error
  *   [W] final on a class destructor → error
  *   [X] final on a struct constructor → error
+ *  ── override signature matching ─────────────────────────────────────────────
+ *   [Y] override ignores parameter names, but enforces parameter types
  */
 
 #include <catch2/catch_all.hpp>
@@ -619,6 +621,40 @@ test_c_via_b() : int { c: C; return call_val_via_b(c); }
     // Dispatch via B& uses B's slot (also slot 0, sealed) → B::val = 2.
     CHECK(fn_c_via_a() == 2); // A's slot → B::val (C::val is in a different slot)
     CHECK(fn_c_via_b() == 2); // B's slot (sealed by final) → B::val
+}
+
+TEST_CASE("[Y] override matching ignores parameter names and enforces parameter types",
+          "[class][virtuality][override]") {
+
+    SECTION("Different parameter names still override when types match") {
+        auto jit = gen_jit(R"SRC(
+module __cls_override_param_names_ignored__;
+class Base {
+    mix(left: int, right: int) : int { return left + right; }
+}
+class Derived : public Base {
+    override mix(a: int, b: int) : int { return a * 10 + b; }
+}
+call_mix(base: Base&) : int { return base.mix(2, 3); }
+test() : int { d: Derived; return call_mix(d); }
+)SRC", false, false);
+        REQUIRE(jit);
+        auto fn = jit->lookup_symbol<int(*)()>("test");
+        REQUIRE(fn);
+        CHECK(fn() == 23);
+    }
+
+    SECTION("Different parameter type with override specifier is rejected") {
+        REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module __cls_override_param_types_must_match__;
+class Base {
+    mix(left: int, right: int) : int { return left + right; }
+}
+class Derived : public Base {
+    override mix(left: int, right: float) : int { return left; }
+}
+)SRC", false, false));
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1202,4 +1238,3 @@ struct Foo {
 }
 )SRC"));
 }
-

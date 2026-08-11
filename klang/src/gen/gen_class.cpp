@@ -123,6 +123,8 @@ namespace {
  * True if two non-static member functions have the same virtual signature.
  * The const-qualification of 'this' is part of the signature: a mutable
  * function does NOT override a const function and vice-versa.
+ * Parameter identifiers are intentionally ignored: only name, constness and
+ * parameter types participate in override matching.
  */
 bool have_same_virtual_signature(const function& a, const function& b) {
     if (a.get_short_name() != b.get_short_name()) return false;

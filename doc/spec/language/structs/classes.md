@@ -78,7 +78,7 @@ test_circle() : int {
 ```
 
 The vtable is built automatically by the compiler.  
-Derived classes **override** inherited virtual methods by declaring a member function with the same name and parameter types.
+Derived classes **override** inherited virtual methods by declaring a member function with the same name and parameter types. Parameter names are not part of override matching.
 
 ### Only `class` objects dispatch virtually
 
@@ -1011,6 +1011,8 @@ The `override` specifier can be placed before a member function name inside a cl
 
 ### 16.2 Rules
 
+Override matching uses method name + member `const`-qualification + parameter types. Parameter names are ignored.
+
 | Constraint | Effect on violation |
 |---|---|
 | The function must actually override an inherited virtual slot | Error `0x0177` |
@@ -1034,6 +1036,17 @@ class Base {
 class Derived : public Base {
     Derived() {}
     override val() : int { return 2; }    // OK: overrides Base::val
+}
+```
+
+#### Valid override with different parameter names
+
+```k
+class Base {
+    calc(left: int, right: int) : int { return left + right; }
+}
+class Derived : public Base {
+    override calc(a: int, b: int) : int { return a * 10 + b; } // OK
 }
 ```
 
@@ -1118,4 +1131,3 @@ class Derived : public Base {
     override operator +(other: Base&) : int { return v + other.v + 100; }
 }
 ```
-

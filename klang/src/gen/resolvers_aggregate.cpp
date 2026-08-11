@@ -164,8 +164,9 @@ void ensure_klass_vtable_built(klass& kl) {
     }
 
     // Signature comparator (name + const-qualification + parameter/return types,
-    // falling back to canonical spelling so cross-module template instantiations
-    // compare equal — mirrors have_same_virtual_signature() in gen_class.cpp).
+    // parameter identifiers ignored), falling back to canonical spelling so
+    // cross-module template instantiations compare equal — mirrors
+    // have_same_virtual_signature() in gen_class.cpp).
     auto same_sig = [](const function& a, const function& b) -> bool {
         if (a.get_short_name() != b.get_short_name()) return false;
         if (a.is_const_member() != b.is_const_member()) return false;
