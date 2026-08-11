@@ -4489,3 +4489,33 @@ TEST_CASE("cross-module callable — mangling stays stable across import",
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE( result.exit_code == 42 );
 }
+
+TEST_CASE("import cast-operator — explicit cast works on imported class value",
+          "[import][e2e][cast][operator]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module castop_lib;
+
+            public class Wrapper {
+                public value : int;
+                public Wrapper(v : int) : value(v) {}
+                public operator() : int { return value; }
+            }
+
+            public make(v : int) : Wrapper {
+                return Wrapper(v);
+            }
+        )K",
+        R"K(
+            module castop_exe;
+            import castop_lib;
+
+            main() : int {
+                return (int) castop_lib::make(42);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}

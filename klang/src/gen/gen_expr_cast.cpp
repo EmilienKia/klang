@@ -234,7 +234,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
         // ── Casting operator overload: (TargetType)struct_value ──────────────
         // Check BEFORE ref→value unwrapping so that the reference is preserved
         // as the 'this' parameter for the casting operator call.
-        else if(type::is_reference(source_type)) {
+        else {
             auto get_source_aggregate = [](const std::shared_ptr<type>& src) -> std::shared_ptr<aggregate> {
                 auto effective = src;
                 if (type::is_reference(effective)) {
@@ -247,36 +247,48 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                 return nullptr;
             };
 
-            // Step 3: Validate primitive casts (widening, narrowing, int↔float)
+            // Step 3: Resolve cast operator for ref<Struct> and Struct values.
+            // For value sources, materialize a temporary reference receiver.
             auto source_agg = get_source_aggregate(source_type);
             if (source_agg) {
-                bool is_const_this = false;
-                auto ref_sub = std::dynamic_pointer_cast<reference_type>(source_type)->get_referenced_type();
-                is_const_this = type::is_const(ref_sub);
+                bool is_const_this = type::is_reference(source_type)
+                    ? type::is_const(std::dynamic_pointer_cast<reference_type>(source_type)->get_referenced_type())
+                    : type::is_const(source_type);
 
-                // Step 4: Validate pointer/link/view/owner casts (same indirection kind or cross-kind)
                 auto cast_func = resolve_cast_operator_overload(source_agg, target_type, is_const_this);
                 if (cast_func) {
+                    auto receiver_type = source_type;
+                    if (!type::is_reference(source_type)) {
+                        auto source_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(source_type));
+                        if (source_st) {
+                            auto temp = temporary_construction_expression::make_shared(
+                                source_st, std::vector<std::shared_ptr<expression>>{sub_expr->shared_as<expression>()});
+                            temp->accept(*this);
+                            expr.assign(temp);
+                            receiver_type = temp->get_type();
+                            source_type = receiver_type;
+                        }
+                    }
+
                     expr.set_operator_func(cast_func);
 
-                    // Step 5: Validate struct upcast (static) and downcast (dynamic, requires RTTI)
                     // Compute virtual dispatch info if the function is virtual
                     if (cast_func->is_virtual() && cast_func->get_vtable_slot() >= 0) {
-                        auto receiver_type = source_type;
                         auto di = compute_operator_dispatch_info(cast_func, receiver_type);
                         expr.set_operator_dispatch_info(std::move(di));
                     }
 
-                    // Step 6: Set the result type to the cast target type
                     expr.set_type(declared_cast_type ? declared_cast_type : target_type);
                     return;
                 }
             }
 
             // No casting operator found: fall back to ref<T> → T load
-            auto deref = load_value_expression::make_shared(sub_expr->shared_as<expression>());
-            expr.assign(deref);
-            deref->set_type(source_type->get_subtype());
+            if (type::is_reference(source_type)) {
+                auto deref = load_value_expression::make_shared(sub_expr->shared_as<expression>());
+                expr.assign(deref);
+                deref->set_type(source_type->get_subtype());
+            }
         }
     }
 

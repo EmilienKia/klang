@@ -24,6 +24,7 @@
 
 #include "resolvers.hpp"
 #include "gen_callable_helpers.hpp"
+#include "gen_helpers.hpp"
 
 #include "../model/expressions.hpp"
 #include "../errors.hpp"
@@ -927,6 +928,24 @@ type_reference_resolver::adapt_from_reference(
             return cast;
         }
     }
+    // ref<Struct> -> T via user-defined cast operator
+    if (auto src_st = std::dynamic_pointer_cast<struct_type>(ref_subtype)) {
+        auto src_agg = src_st->get_struct();
+        if (src_agg) {
+            bool is_const_this = type::is_const(ref_src->get_referenced_type());
+            auto cast_func = resolve_cast_operator_overload(src_agg, type_nc, is_const_this);
+            if (cast_func) {
+                auto cast = std::dynamic_pointer_cast<cast_expression>(
+                    cast_expression::make_shared(expr, type_nc));
+                cast->set_operator_func(cast_func);
+                if (cast_func->is_virtual() && cast_func->get_vtable_slot() >= 0) {
+                    cast->set_operator_dispatch_info(compute_operator_dispatch_info(cast_func, type_src));
+                }
+                cast->set_type(type_nc);
+                return cast;
+            }
+        }
+    }
     return {};
 }
 
@@ -1083,6 +1102,27 @@ type_reference_resolver::adapt_primitive_or_struct_type(
         if (auto src_st = std::dynamic_pointer_cast<struct_type>(src_nc)) {
             if (auto tgt_st = std::dynamic_pointer_cast<struct_type>(type_nc)) {
                 if (src_st.get() == tgt_st.get()) return expr;
+            }
+        }
+        // Struct value -> T via user-defined cast operator. Member operators need a receiver
+        // reference, so materialize a temporary for value sources.
+        if (auto src_st = std::dynamic_pointer_cast<struct_type>(src_nc)) {
+            auto src_agg = src_st->get_struct();
+            if (src_agg) {
+                auto cast_func = resolve_cast_operator_overload(src_agg, type_nc, type::is_const(expr->get_type()));
+                if (cast_func) {
+                    auto temp = temporary_construction_expression::make_shared(src_st, {expr});
+                    temp->set_type(src_st->get_reference());
+                    auto cast = std::dynamic_pointer_cast<cast_expression>(
+                        cast_expression::make_shared(temp, type_nc));
+                    cast->set_operator_func(cast_func);
+                    if (cast_func->is_virtual() && cast_func->get_vtable_slot() >= 0) {
+                        cast->set_operator_dispatch_info(
+                            compute_operator_dispatch_info(cast_func, src_st->get_reference()));
+                    }
+                    cast->set_type(type_nc);
+                    return cast;
+                }
             }
         }
         // Value construction through a temporary for struct/union targets:

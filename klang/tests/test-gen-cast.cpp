@@ -744,3 +744,33 @@ TEST_CASE("Explicit cast: (long) double", "[gen][cast][primitive][double][long]"
     REQUIRE(fn() == 999999L);
 }
 
+// =============================================================================
+// Implicit user-defined cast operator
+// =============================================================================
+TEST_CASE("Implicit cast: user-defined cast operator applies for init and args",
+          "[gen][cast][implicit][operator]") {
+    auto jit = gen_jit(R"SRC(
+        module __cast_udc_implicit__;
+
+        class Wrapper {
+            public value : int;
+            public Wrapper(v : int) : value(v) {}
+            public operator() : int { return value; }
+        }
+
+        plus_one(v : int) : int {
+            return v + 1;
+        }
+
+        test() : int {
+            w : Wrapper(41);
+            a : int = w;
+            b : int = plus_one(w);
+            return a + b;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 83);
+}

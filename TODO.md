@@ -342,13 +342,22 @@ compiler blockers/timeouts:
         manual codegen attempt for the abandoned `$source`-as-unsized-type approach), not a
         defect reachable from valid K source in the committed codebase. No fix needed; no
         regression test added (nothing to regress against).
-- [ ] Implicit user-defined cast-operator conversions are not applied: a class with
-      `operator() : T` is not implicitly converted in an initialisation/argument context
-      (e.g. `x : int = wrapper;` yields garbage). Only explicit casts work, and only for
-      a cast operator defined in the *same* module — `(T) imported_value` reports
-      "casting between non-primitive types is not yet supported" for an imported class.
-      Affects the ergonomic read path of `StringBuilder`'s `CharRef` proxy (use
-      `charAt(i)` to read; `sb[i] = c` to write).
+- [x] **FIXED — implicit user-defined cast-operator conversions now apply, and explicit
+      casts via imported cast-operators work on value sources.** Root cause:
+      implicit adaptation (`compute_cast_weight` / `adapt_type`) had no path for
+      user-defined `operator() : T`, so `x : int = wrapper;` and argument passing
+      rejected the conversion (`Error 000E3`). In addition, explicit cast resolution
+      only probed cast-operators for reference receivers; value expressions (notably
+      imported factory returns) skipped that path and later failed in codegen with
+      "casting between non-primitive types is not yet supported". Fix:
+      cast-operator lookup is now integrated in implicit scoring/adaptation for both
+      `ref<Struct>` and struct values (materializing a temporary receiver for values
+      when needed), and explicit cast resolution now also supports struct value
+      receivers before the primitive-only fallback. Regression coverage:
+      `klang/tests/test-gen-cast.cpp` ("Implicit cast: user-defined cast operator
+      applies for init and args", tag `[gen][cast][implicit][operator]`) and
+      `klang/tests/test-import.cpp` ("import cast-operator — explicit cast works on
+      imported class value", tag `[import][e2e][cast][operator]`).
 - [x] **Value semantics for owning aggregates — wiring completed.**
       The unified copy/move routine `implementation_generator::emit_value_copy_or_move()`
       (`gen/gen_operators_assign.cpp`, declared in `gen/generators.hpp`) correctly handles

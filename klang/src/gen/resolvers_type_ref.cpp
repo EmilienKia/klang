@@ -2833,6 +2833,16 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             }
             if (prim_tgt) return CAST_WIDENING;
         }
+        // ref<Struct> -> T via user-defined cast operator
+        if (auto src_st = std::dynamic_pointer_cast<struct_type>(sub)) {
+            auto src_agg = src_st->get_struct();
+            if (src_agg) {
+                bool is_const_this = type::is_const(ref_src->get_referenced_type());
+                if (resolve_cast_operator_overload(src_agg, tgt_nc, is_const_this)) {
+                    return CAST_CONSTRUCT;
+                }
+            }
+        }
         return CAST_IMPOSSIBLE;
     }
 
@@ -2924,6 +2934,11 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         auto st_tgt_val = std::dynamic_pointer_cast<struct_type>(tgt_nc);
         if (st_tgt_val && st_src == st_tgt_val) {
             return CAST_NONE;
+        }
+        // Struct value -> T via user-defined cast operator
+        auto src_agg = st_src->get_struct();
+        if (src_agg && resolve_cast_operator_overload(src_agg, tgt_nc, type::is_const(effective_src))) {
+            return CAST_CONSTRUCT;
         }
     }
 
