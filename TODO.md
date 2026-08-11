@@ -80,22 +80,26 @@
   - [ ] Callables as non-type template parameters (value-template instantiation)
   - [ ] Thread-local callable state (for thread factories, event handlers)
 
-#### Latest full test-suite backlog (2026-08-10, updated 2026-08-11)
+#### Latest full test-suite backlog (2026-08-11, updated 2026-08-11)
 
-The previously reported libk I/O/sync regressions now pass on current HEAD
-(31120ad) and have been removed from the active backlog. Remaining unrelated
-compiler blockers/timeouts:
+Full baseline run (HEAD `75d3feb`) executed with:
 
-- [ ] `klang-tests-gen-core` — timeout
-- [ ] `klang-tests-gen-arithmetic` — timeout
-- [ ] `klang-tests-gen-types` — timeout
-- [ ] `klang-tests-gen-classes` — timeout
-- [ ] `klang-tests-gen-memory` — timeout
-- [ ] `klang-tests-gen-oop` — timeout
-- [ ] `klang/tests/test-gen-ternary-comprehensive.cpp:18`
-- [ ] `klang/tests/test-gen-template-value-params.cpp:519`
-- [ ] `klang/tests/test-klangc-static-diamond.cpp:226`
-- [ ] `klang/tests/test-import.cpp:717, 762, 820, 884, 1225, 1267, 3689, 4359`
+- `cd cmake-build-debug && ninja -j3 && ctest --output-on-failure`
+
+Result: **92% tests passed, 2 tests failed out of 26**.
+
+Timeout follow-up and mitigation (same day):
+
+- `klang-tests-gen-core` was close to the 120s budget and timed out under `ctest`
+  despite passing standalone; timeout increased to **180s**.
+- `libk-tests` was too large for a stable 120s budget under `ctest`; it was split
+  into two functional targets:
+    - `libk-tests-core` (exceptions/RTTI/strings/value types)
+    - `libk-tests-collections-io` (collections + stream/file/path I/O)
+  Both received a **180s** timeout budget.
+- Targeted verification run:
+  - `ctest -R "^(klang-tests-gen-core|libk-tests-core|libk-tests-collections-io)$" --output-on-failure`
+  - **100% passed (3/3)**.
 
 
 #### Current bugs and gaps to fix

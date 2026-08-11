@@ -400,11 +400,11 @@ set(KLANG_STDLIB_KDI_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
 set(KLANG_STDLIB_LIB_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
     "Directory containing libk.so / libk.a (K base stdlib binaries)")
 
-# ── libk functional tests ─────────────────────────────────────────────────────
+# ── libk functional tests (core) ─────────────────────────────────────────────
+# Core stdlib semantics (exceptions, RTTI, strings, value types, math, shared).
 # Pure single-threaded tests: no spawned threads, no network, no async I/O.
-# Fast and safe to run on low-resource hosts.
 # ─────────────────────────────────────────────────────────────────────────────
-add_executable(libk-tests
+add_executable(libk-tests-core
     tests/test-exceptions.cpp
     tests/test-rtti.cpp
     tests/test-rtti-constructors.cpp
@@ -414,6 +414,24 @@ add_executable(libk-tests
     tests/test-string-literal.cpp
     tests/test-string-search.cpp
     tests/test-string-builder-mutation.cpp
+    tests/test-math.cpp
+    tests/test-optional.cpp
+    tests/test-shared.cpp
+)
+target_link_libraries(libk-tests-core klang-test-helpers Catch2::Catch2WithMain dl)
+add_dependencies(libk-tests-core libk_stdlib)
+target_compile_definitions(libk-tests-core PRIVATE
+    LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
+    LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
+)
+add_test(NAME libk-tests-core COMMAND libk-tests-core)
+set_tests_properties(libk-tests-core PROPERTIES TIMEOUT 180)
+
+# ── libk functional tests (collections + stream I/O) ─────────────────────────
+# Collection containers and synchronous stream/file/path I/O APIs.
+# Split from core to keep each CTest target below timeout budget.
+# ─────────────────────────────────────────────────────────────────────────────
+add_executable(libk-tests-collections-io
     tests/test-io-byte-array-streams.cpp
     tests/test-io-filter-streams.cpp
     tests/test-io-transform-streams.cpp
@@ -421,24 +439,21 @@ add_executable(libk-tests
     tests/test-io-data-streams.cpp
     tests/test-io-print-stream.cpp
     tests/test-io-stdio.cpp
-    tests/test-math.cpp
     tests/test-list.cpp
-    tests/test-optional.cpp
     tests/test-vector.cpp
     tests/test-set.cpp
     tests/test-map.cpp
     tests/test-io-byte-buffer.cpp
     tests/test-io-path.cpp
-    tests/test-shared.cpp
 )
-target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
-add_dependencies(libk-tests libk_stdlib)
-target_compile_definitions(libk-tests PRIVATE
+target_link_libraries(libk-tests-collections-io klang-test-helpers Catch2::Catch2WithMain dl)
+add_dependencies(libk-tests-collections-io libk_stdlib)
+target_compile_definitions(libk-tests-collections-io PRIVATE
     LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
     LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
 )
-add_test(NAME libk-tests COMMAND libk-tests)
-set_tests_properties(libk-tests PROPERTIES TIMEOUT 120)
+add_test(NAME libk-tests-collections-io COMMAND libk-tests-collections-io)
+set_tests_properties(libk-tests-collections-io PROPERTIES TIMEOUT 180)
 
 # ── libk threading and I/O tests ──────────────────────────────────────────────
 # Functional correctness tests that involve real threads, futures, sync

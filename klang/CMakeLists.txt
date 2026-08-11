@@ -196,7 +196,7 @@ klang_gen_test(klang-tests-model 60
 # Group 3a — Codegen core: basic codegen, resolution, visibility, variables
 # Estimated wall-clock: ~60s on a low-spec VM.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-core 120
+klang_gen_test(klang-tests-gen-core 180
         tests/test-gen.cpp
         tests/test-gen-resolution.cpp
         tests/test-gen-visibility.cpp
