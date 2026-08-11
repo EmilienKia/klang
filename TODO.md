@@ -270,13 +270,16 @@ compiler blockers/timeouts:
       - Regression test: `[import][e2e][import-struct-indirect-member]` in
         `klang/tests/test-import.cpp`, covering both the indirect-only and the
         mixed by-value/indirect struct shapes.
-- [ ] **A struct member declared as a reference to an aggregate (`m : T&`) cannot be used
-      for member access.** `public struct S { r : CountDownLatch&; }` + `s->r.countDown()`
-      reports `Error 000F4 : ... a reference to 'struct:k::CountDownLatch&' which is not a
-      struct` — the member access yields a reference-to-reference instead of peeling the
-      member's own addresser. Pointer (`*`), link (`+`) and owner (`!`) members work.
-      Workaround: use `*`, `+` or `!` for aggregate members. Found while implementing the
-      libk synchronisation layer (Phase 3).
+- [x] **FIXED — a struct member declared as a reference to an aggregate (`m : T&`) can now
+      be used for member access.** Root cause: chained member calls on such fields were seen
+      as `ref<ref<T>>` and the `.` resolution/invocation path did not peel the inner
+      reference for aggregate lookup, so `s->r.method()` failed with
+      `Error 000F4` / `Error 000FB` (“left-hand side ... not a struct”). Fixes applied in
+      `gen/gen_expr_member.cpp` (type-resolution + codegen peeling/load of inner ref for
+      aggregate member access) and `gen/gen_expr_invocation.cpp` (method-call receiver
+      normalisation for `ref<ref<T>>`). Regression coverage:
+      `[gen][indirection][refs][member-access]` in
+      `klang/tests/test-gen-indirection.cpp` (“Member access through struct reference member”).
 
 - [x] **FIXED — ARRAY-variant `foreach` re-evaluated its source expression on every
       iteration instead of exactly once.** `type_reference_resolver::visit_foreach_statement`

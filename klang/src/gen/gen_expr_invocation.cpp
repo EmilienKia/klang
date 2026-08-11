@@ -368,6 +368,17 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         if (auto owner_subtype = std::dynamic_pointer_cast<owner_type>(bare_subtype)) {
             bare_subtype = type::remove_const(owner_subtype->get_subtype());
         }
+        // A reference-typed struct field accessed as `obj.r.method()` reaches here
+        // as ref<ref<T>>. Peel the inner reference so method lookup targets T.
+        if (auto inner_ref = std::dynamic_pointer_cast<reference_type>(bare_subtype)) {
+            auto inner_sub = type::canonical(type::remove_const(inner_ref->get_subtype()));
+            if (std::dynamic_pointer_cast<struct_type>(inner_sub)) {
+                if (type::is_const(inner_ref->get_subtype())) {
+                    is_const_this = true;
+                }
+                bare_subtype = inner_sub;
+            }
+        }
         auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype);
         if (!struct_subtype) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_TOO_FEW_ARGS), expr.first_lexeme(),
@@ -2007,6 +2018,16 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         auto sub_type = member_callee->sub_expr()->get_type();
         if (type::is_reference(sub_type)) {
             auto inner = std::dynamic_pointer_cast<reference_type>(sub_type)->get_subtype();
+            // Reference-typed fields (`m : T&`) are observed here as ref<ref<T>>
+            // for calls like `obj.m.method()`. Follow the inner reference once so
+            // 'this' is the actual object pointer, not the reference slot.
+            if (auto inner_ref = std::dynamic_pointer_cast<reference_type>(inner)) {
+                auto inner_sub = type::canonical(type::remove_const(inner_ref->get_subtype()));
+                if (std::dynamic_pointer_cast<struct_type>(inner_sub)) {
+                    _value = _builder->CreateLoad(
+                        llvm::PointerType::get(_builder->getContext(), 0), _value, "ref_this_load");
+                }
+            }
             if (type::is_owner(inner)) {
                 _value = _builder->CreateLoad(
                     llvm::PointerType::get(_builder->getContext(), 0), _value, "owner_this_load");

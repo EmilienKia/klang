@@ -394,6 +394,34 @@ TEST_CASE("Member-of-pointer (->) on a link to struct", "[gen][indirection][arro
     REQUIRE(fn() == 30);
 }
 
+TEST_CASE("Member access through struct reference member", "[gen][indirection][refs][member-access]") {
+    auto jit = gen_jit(R"SRC(
+        module __ref_member_access__;
+
+        class Counter {
+        public:
+            ping() : int { return 1; }
+        }
+
+        struct Holder {
+            r : Counter&;
+        }
+
+        probe(h: Holder*) : int {
+            return h->r.ping();
+        }
+
+        test() : int {
+            // Only checks compilation/type-resolution path for h->r.method().
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 0);
+}
+
 // =============================================================================
 // INTERACTION: link ~ and reference & have transparent object semantics
 // =============================================================================
@@ -417,4 +445,3 @@ TEST_CASE("Link passed as function parameter behaves like object", "[gen][indire
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 12);
 }
-

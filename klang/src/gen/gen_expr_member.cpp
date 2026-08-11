@@ -158,6 +158,19 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         }
     }
 
+    // A struct member declared as a reference (m : T&) is observed as
+    // ref<ref<T>> at the next access step (e.g. s->m.f). Peel that inner
+    // reference so member lookup runs against T itself.
+    if (auto inner_ref = std::dynamic_pointer_cast<reference_type>(bare_subtype)) {
+        auto inner_sub = type::canonical(type::remove_const(inner_ref->get_subtype()));
+        if (std::dynamic_pointer_cast<struct_type>(inner_sub)) {
+            if (type::is_const(inner_ref->get_subtype())) {
+                is_const_access = true;
+            }
+            bare_subtype = inner_sub;
+        }
+    }
+
     // ── Virtual member: array.size ──────────────────────────────────────────
     // Arrays (sized or unsized) expose a virtual read-only member "size"
     // that returns the element count (unsigned int, stored in LLVM struct field 0).
@@ -656,9 +669,25 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
         }
     }
 
+    // A field of type T& is represented as ref<ref<T>> when accessed as a
+    // field-expression lvalue. For chained member access (s->r.m), follow the
+    // inner reference once to get the actual aggregate object pointer.
+    bool struct_needs_inner_ref_load = false;
+    if (auto inner_ref = std::dynamic_pointer_cast<reference_type>(bare_subtype)) {
+        auto inner_sub = type::canonical(type::remove_const(inner_ref->get_subtype()));
+        if (std::dynamic_pointer_cast<struct_type>(inner_sub)) {
+            bare_subtype = inner_sub;
+            struct_needs_inner_ref_load = true;
+        }
+    }
+
     // Step 3: GEP to the member field using the recorded field index
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
-        const auto& member_name =  expr.symbol();
+        if (struct_needs_inner_ref_load) {
+            _value = _builder->CreateLoad(
+                llvm::PointerType::get(_builder->getContext(), 0), _value, "obj_inner_ref_load");
+        }
+        const auto& member_name = expr.symbol();
         // For qualified names like A::v, use only the last part (the field name)
         const k::name& sym_name = member_name.get_name();
         std::string simple_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
