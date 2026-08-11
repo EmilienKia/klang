@@ -56,7 +56,6 @@
     - [ ] `noexcept` conditional expression (`noexcept(expr)`)
     - [ ] Exception handling in static constructors/destructors
     - [ ] Unhandled FatalError diagnostic: when an uncaught FatalError propagates past `main()`, the runtime should print a diagnostic message (exception type, code, optional stack trace) before terminating the process
-    - [ ] Destructor invocation during stack unwinding (RAII cleanup on throw)
     - [ ] `catch(...)` catch-all clause (catch any `Throwable`)
 - Switch/case statements and expression
 - With-block - temporary change 'this' scope for a block of code (e.g. `with (obj) { ... }` to access members directly)
@@ -83,13 +82,9 @@
 
 #### Latest full test-suite backlog (2026-08-10, updated 2026-08-11)
 
-The following libk I/O and sync tests have been **RESOLVED as of HEAD** (31120ad):
-- [x] `libk-thread-io-tests` — `test-sync-rwlock.cpp:193` — **FIXED**: All 6 rwlock tests pass (19 assertions)
-- [x] `libk-thread-io-tests` — `test-sync-latch.cpp:386` — **FIXED**: All 4 barrier/latch tests pass (13 assertions)
-- [x] `libk-thread-io-tests` — `test-io-socket-interrupt.cpp:90` — **FIXED**: All 2 socket interrupt tests pass
-- [x] Full `libk-thread-io-tests` suite — **VERIFIED PASSING**: 460 assertions, 135 test cases
-
-Remaining unrelated compiler blockers/timeouts:
+The previously reported libk I/O/sync regressions now pass on current HEAD
+(31120ad) and have been removed from the active backlog. Remaining unrelated
+compiler blockers/timeouts:
 
 - [ ] `klang-tests-gen-core` — timeout
 - [ ] `klang-tests-gen-arithmetic` — timeout
@@ -237,17 +232,19 @@ Remaining unrelated compiler blockers/timeouts:
       `compiler::set_extra_library_dirs()` / `set_extra_libraries()` and
       `build_extra_link_args()` in `compiler_linker.cpp`, wired from `klang.cpp`.
 
-- [ ] **A class declared in one module cannot implement a template interface imported
-      from another module.** A class in module `X` deriving `k::io::OutputStream<byte>`
-      is rejected with `Error 00174` (method `write` not implemented) and `Error 00177`
-      (method does not override anything) even when the signatures are byte-identical to
-      the base declaration. The same class compiles fine when declared *inside* module
-      `k`. The instantiated template interface reconstructed by the KDI importer is
-      apparently not identified with the one the derived class's vtable check looks up.
-      Impact: user modules cannot implement `k::io::InputStream<T>` / `OutputStream<T>`
-      or any other imported template interface — a significant limitation of the I/O
-      extension model. Workaround: put the implementation in module `k`, or derive from
-      a non-template interface.
+- [x] **FIXED — a class declared in one module can now implement a template interface
+      imported from another module.** Root cause: virtual-signature matching compared
+      unresolved local types and imported reconstructed types too strictly when their
+      textual forms differed (notably qualified vs unqualified unresolved names and
+      template-instantiation wrappers like `Out<T>&` / `OutputStream<T>&`), which caused
+      false `Error 00177` / `Error 00174` on valid overrides. Fix in
+      `gen/gen_class.cpp::have_same_virtual_signature` and
+      `gen/resolvers_materializer.cpp::mat_same_virtual_sig`: signature comparison now
+      normalizes unresolved/imported forms and matches equivalent wrapped template
+      self-types across module boundaries. Regression coverage added in
+      `klang/tests/test-import.cpp`:
+      `import virtual — local class implements imported template interface with self-return`
+      (`[import][e2e][import-class][import-virtual-template-interface]`).
 
 - [x] **FIXED — a struct member whose type is an addresser to an *imported* aggregate
       was silently left unresolved.** Declaring `public struct S { p : String*; }` in a

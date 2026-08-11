@@ -136,14 +136,148 @@ bool have_same_virtual_signature(const function& a, const function& b) {
     // instances. Fall back to the canonical type spelling (to_string), which is
     // name-based and identical for two instantiations of the same template, so a
     // derived override is matched to its imported base slot.
-    auto type_match = [](const std::shared_ptr<type>& x, const std::shared_ptr<type>& y) -> bool {
-        if (type::are_equal(x, y)) return true;
-        return x && y && x->to_string() == y->to_string();
+    auto type_match = [](const std::shared_ptr<type>& x, const std::shared_ptr<type>& y,
+                         const function& owner_x, const function& owner_y) -> bool {
+        auto nx = type::canonical(x);
+        auto ny = type::canonical(y);
+        if (type::are_equal(nx, ny)) return true;
+
+        // In pass A, a local override can still carry unresolved types while the
+        // imported base slot already carries materialised types. Resolve only this
+        // asymmetric unresolved-vs-resolved case on demand.
+        auto ux = std::dynamic_pointer_cast<unresolved_type>(nx);
+        auto uy = std::dynamic_pointer_cast<unresolved_type>(ny);
+        if (ux && uy) {
+            auto unresolved_name = [](const unresolved_type& u) {
+                return u.type_id().to_string();
+            };
+            auto unresolved_short_name = [&](const unresolved_type& u) {
+                std::string name = u.type_id().to_string();
+                if (auto pos = name.rfind("::"); pos != std::string::npos) {
+                    name = name.substr(pos + 2);
+                }
+                return name;
+            };
+            const std::string nx_name = unresolved_name(*ux);
+            const std::string ny_name = unresolved_name(*uy);
+            const std::string sx = unresolved_short_name(*ux);
+            const std::string sy = unresolved_short_name(*uy);
+            const bool x_qualified = nx_name.find("::") != std::string::npos;
+            const bool y_qualified = ny_name.find("::") != std::string::npos;
+            if (sx == sy && x_qualified != y_qualified) {
+                return true;
+            }
+        }
+        if (ux && !ux->is_resolved() && !uy) {
+            if (auto ctx = const_cast<function&>(owner_x).get_context()) {
+                nx = type::canonical(ctx->resolve_type(nx));
+            }
+        } else if (uy && !uy->is_resolved() && !ux) {
+            if (auto ctx = const_cast<function&>(owner_y).get_context()) {
+                ny = type::canonical(ctx->resolve_type(ny));
+            }
+        } else if (ux && uy && !ux->is_resolved() && !uy->is_resolved()) {
+            const bool x_looks_instantiation = ux->has_template_args() || ux->type_id().to_string().find("__") != std::string::npos;
+            const bool y_looks_instantiation = uy->has_template_args() || uy->type_id().to_string().find("__") != std::string::npos;
+            if (x_looks_instantiation) {
+                if (auto ctx = const_cast<function&>(owner_x).get_context()) {
+                    nx = type::canonical(ctx->resolve_type(nx));
+                }
+            }
+            if (y_looks_instantiation) {
+                if (auto ctx = const_cast<function&>(owner_y).get_context()) {
+                    ny = type::canonical(ctx->resolve_type(ny));
+                }
+            }
+        }
+
+        if (auto urx = std::dynamic_pointer_cast<unresolved_type>(nx); urx && urx->is_resolved()) {
+            nx = type::canonical(urx->get_resolved());
+        }
+        if (auto ury = std::dynamic_pointer_cast<unresolved_type>(ny); ury && ury->is_resolved()) {
+            ny = type::canonical(ury->get_resolved());
+        }
+
+        if (type::are_equal(nx, ny)) return true;
+
+        // Bridge unresolved template spellings (e.g. "Out<byte>") to imported
+        // materialised instantiations (e.g. struct Out__byte), including through
+        // indirection wrappers like '&' used by stream interfaces.
+        std::function<bool(const std::shared_ptr<type>&, const std::shared_ptr<type>&)> is_semantic_template_match;
+        is_semantic_template_match =
+            [&](const std::shared_ptr<type>& a, const std::shared_ptr<type>& b) -> bool {
+                if (!a || !b) return false;
+                if (type::are_equal(a, b)) return true;
+
+                auto recurse_if_same_wrapper = [&](auto pred) -> bool {
+                    if (pred(a) && pred(b)) {
+                        return is_semantic_template_match(a->get_subtype(), b->get_subtype());
+                    }
+                    return false;
+                };
+                if (recurse_if_same_wrapper(type::is_reference)) return true;
+                if (recurse_if_same_wrapper(type::is_pointer)) return true;
+                if (recurse_if_same_wrapper(type::is_link)) return true;
+                if (recurse_if_same_wrapper(type::is_view)) return true;
+                if (recurse_if_same_wrapper(type::is_owner)) return true;
+                if (recurse_if_same_wrapper(type::is_drain)) return true;
+                if (recurse_if_same_wrapper(type::is_const)) return true;
+                if (recurse_if_same_wrapper(type::is_array)) return true;
+
+                auto uu_a = std::dynamic_pointer_cast<unresolved_type>(a);
+                auto uu_b = std::dynamic_pointer_cast<unresolved_type>(b);
+                if (uu_a && uu_b) {
+                    auto full = [](const unresolved_type& u) {
+                        return u.type_id().to_string();
+                    };
+                    auto short_name = [&](const unresolved_type& u) {
+                        std::string name = full(u);
+                        if (auto pos = name.rfind("::"); pos != std::string::npos) {
+                            name = name.substr(pos + 2);
+                        }
+                        return name;
+                    };
+                    const std::string a_full = full(*uu_a);
+                    const std::string b_full = full(*uu_b);
+                    const std::string a_short = short_name(*uu_a);
+                    const std::string b_short = short_name(*uu_b);
+                    if (a_short == b_short
+                        && ((a_full.find("::") != std::string::npos)
+                            != (b_full.find("::") != std::string::npos))) {
+                        return true;
+                    }
+                }
+
+                auto u = std::dynamic_pointer_cast<unresolved_type>(a);
+                auto s = std::dynamic_pointer_cast<struct_type>(b);
+                if (!u || !s) return false;
+                auto st = s->get_struct();
+                if (!st || !st->has_tpl_args()) return false;
+
+                std::string unresolved_name = u->type_id().to_string();
+                if (auto pos = unresolved_name.rfind("::"); pos != std::string::npos) {
+                    unresolved_name = unresolved_name.substr(pos + 2);
+                }
+
+                std::string tpl_name = st->get_tpl_base_name();
+                tpl_name += "<";
+                const auto& tpl_args = st->get_tpl_args();
+                for (size_t i = 0; i < tpl_args.size(); ++i) {
+                    if (i != 0) tpl_name += ",";
+                    if (!tpl_args[i].is_type() || !tpl_args[i].type_arg) return false;
+                    tpl_name += tpl_args[i].type_arg->to_string();
+                }
+                tpl_name += ">";
+                return unresolved_name == tpl_name;
+            };
+        if (is_semantic_template_match(nx, ny) || is_semantic_template_match(ny, nx)) return true;
+
+        return nx && ny && nx->to_string() == ny->to_string();
     };
     for (size_t i = 0; i < a.get_parameter_size(); ++i) {
         auto ta = std::const_pointer_cast<type>(a.get_parameter(i)->get_type());
         auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
-        if (!type_match(ta, tb)) return false;
+        if (!type_match(ta, tb, a, b)) return false;
     }
     // Normalise the 'void' return type before comparing.
     // A void return is modelled as a NULL type, but that normalisation only
@@ -164,7 +298,7 @@ bool have_same_virtual_signature(const function& a, const function& b) {
     const bool a_void = is_void_return(ra);
     const bool b_void = is_void_return(rb);
     if (a_void || b_void) return a_void == b_void;
-    if (!type_match(ra, rb)) {
+    if (!type_match(ra, rb, a, b)) {
         return false;
     }
     return true;
@@ -3659,9 +3793,3 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
 
 
 } // namespace k::model::gen
-
-
-
-
-
-

@@ -3887,6 +3887,53 @@ TEST_CASE("import virtual — local class overrides a void-returning imported vi
     REQUIRE( result.exit_code == 107 );   // 7 + 100
 }
 
+TEST_CASE("import virtual — local class implements imported template interface with self-return",
+          "[import][e2e][import-class][import-virtual-template-interface]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tplvirt_lib;
+
+            template<typename T>
+            public interface Out {
+                write(v: T) : Out<T>&;
+                close() : Out<T>&;
+            }
+        )K",
+        R"K(
+            module exec_tplvirt;
+            import tplvirt_lib;
+
+            class CounterOut : public tplvirt_lib::Out<byte> {
+            public:
+                sum : int = 0;
+                isClosed : bool = false;
+
+                CounterOut() {}
+
+                override write(v: byte) : tplvirt_lib::Out<byte>& {
+                    sum = sum + v;
+                    return this;
+                }
+
+                override close() : tplvirt_lib::Out<byte>& {
+                    isClosed = true;
+                    return this;
+                }
+            }
+
+            main() : int {
+                out : CounterOut! = new CounterOut();
+                out->write(5);
+                out->close();
+                return out->sum + (out->isClosed ? 100 : 0);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 105 );   // 5 + 100
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // [import-exception] An exception thrown inside a library must be catchable by
 // the importing module, including by one of its base classes.
