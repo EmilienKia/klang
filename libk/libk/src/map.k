@@ -756,7 +756,8 @@ class TreeMap : public MutableSortedMap<K, V> {
         result : OptionalConstRef<V>;
         node : TreeMapNode<K,V>* = _find(key);
         if (node != null) {
-            result.set(node->getValue());
+            val : V& = node->getValue();
+            result.set(val);
         }
         return result;
     }
@@ -766,7 +767,8 @@ class TreeMap : public MutableSortedMap<K, V> {
         result : OptionalRef<V>;
         node : TreeMapNode<K,V>* = _find(key);
         if (node != null) {
-            result.set(node->getValue());
+            val : V& = node->getValue();
+            result.set(val);
         }
         return result;
     }
@@ -835,7 +837,8 @@ class TreeMap : public MutableSortedMap<K, V> {
             return result;
         }
         node : TreeMapNode<K,V>* = minNode(_root);
-        result.set(node->_entry);
+        entry : MapEntry<K,V>& = node->_entry;
+        result.set(entry);
         return result;
     }
 
@@ -849,7 +852,8 @@ class TreeMap : public MutableSortedMap<K, V> {
         while (cur->_right != null) {
             cur = cur->_right;
         }
-        result.set(cur->_entry);
+        entry : MapEntry<K,V>& = cur->_entry;
+        result.set(entry);
         return result;
     }
 

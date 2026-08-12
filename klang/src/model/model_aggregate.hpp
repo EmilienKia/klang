@@ -171,6 +171,7 @@ protected:
 
     std::shared_ptr<function> do_create_function(const std::string &name, bool is_static) override;
     void on_function_defined(std::shared_ptr<function>) override;
+    void on_function_removed(const std::shared_ptr<function>&) override;
 
     std::shared_ptr<structure> do_create_structure(const std::string &name) override;
     std::shared_ptr<klass> do_create_class(const std::string &name) override;

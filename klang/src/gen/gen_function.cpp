@@ -193,7 +193,7 @@ void signature_resolver::visit_parameter(parameter& param) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
             // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
-            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain };
+            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain, Array };
             std::vector<WrapKind> wrappers;
             auto inner = var_type;
             while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
@@ -204,6 +204,7 @@ void signature_resolver::visit_parameter(parameter& param) {
                 else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
                 else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
                 else if (type::is_drain(inner))      wrappers.push_back(WrapKind::Drain);
+                else if (type::is_array(inner))      wrappers.push_back(WrapKind::Array);
                 else break;
                 inner = inner->get_subtype();
             }
@@ -221,6 +222,7 @@ void signature_resolver::visit_parameter(parameter& param) {
                             case WrapKind::Const: res_type = res_type->get_const();     break;
                             case WrapKind::Owner: res_type = res_type->get_owner();     break;
                             case WrapKind::Drain: res_type = res_type->get_drain();     break;
+                            case WrapKind::Array: res_type = res_type->get_array();     break;
                         }
                     }
                 }
@@ -261,7 +263,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
             // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
-            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain };
+            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain, Array };
             std::vector<WrapKind> wrappers;
             auto inner = var_type;
             while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
@@ -272,6 +274,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                 else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
                 else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
                 else if (type::is_drain(inner))      wrappers.push_back(WrapKind::Drain);
+                else if (type::is_array(inner))      wrappers.push_back(WrapKind::Array);
                 else break;
                 inner = inner->get_subtype();
             }
@@ -303,6 +306,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                             case WrapKind::Const: res_type = res_type->get_const();     break;
                             case WrapKind::Owner: res_type = res_type->get_owner();     break;
                             case WrapKind::Drain: res_type = res_type->get_drain();     break;
+                            case WrapKind::Array: res_type = res_type->get_array();     break;
                         }
                     }
                 }

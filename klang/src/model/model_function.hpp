@@ -808,6 +808,8 @@ class global_main_function : public function {
 protected:
 
     std::shared_ptr<function> _real_main_func;
+    /** True when the user's main() has a `const String[]` args parameter. */
+    bool _has_args = false;
 
     friend class unit;
     global_main_function(std::shared_ptr<element> parent, std::shared_ptr<function> real_main_func);
@@ -818,6 +820,9 @@ public:
     void update_mangled_name() override;
 
     function& get_real_func() {return *_real_main_func;}
+
+    bool has_args() const { return _has_args; }
+    void set_has_args(bool v) { _has_args = v; }
 };
 
 

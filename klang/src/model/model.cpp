@@ -29,6 +29,8 @@
 
 #include <kdi.hpp>  // kdi::kdi_file, kdi::kdi_namespace, kdi::kdi_function, …
 
+#include <algorithm>
+
 #include <queue>
 #include <unordered_set>
 
@@ -147,6 +149,18 @@ std::vector<std::shared_ptr<function>> function_holder::get_functions(const std:
         }
     }
     return res;
+}
+
+void function_holder::add_existing_function(std::shared_ptr<function> func) {
+    _functions.push_back(func);
+    on_function_defined(func);
+}
+
+void function_holder::remove_function(const std::shared_ptr<function>& func) {
+    _functions.erase(
+        std::remove(_functions.begin(), _functions.end(), func),
+        _functions.end());
+    on_function_removed(func);
 }
 
 
@@ -975,6 +989,12 @@ void aggregate::on_function_defined(std::shared_ptr<function> func) {
     _children.push_back(func);
 }
 
+void aggregate::on_function_removed(const std::shared_ptr<function>& func) {
+    _children.erase(
+        std::remove(_children.begin(), _children.end(), func),
+        _children.end());
+}
+
 std::shared_ptr<variable_definition> aggregate::do_create_variable(const std::string &name, bool is_static) {
     if (is_static) {
         return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(shared_as<aggregate>(), name));
@@ -1282,6 +1302,12 @@ std::shared_ptr<function> ns::do_create_function(const std::string &name, bool i
 
 void ns::on_function_defined(std::shared_ptr<function> func) {
     _children.push_back(func);
+}
+
+void ns::on_function_removed(const std::shared_ptr<function>& func) {
+    _children.erase(
+        std::remove(_children.begin(), _children.end(), func),
+        _children.end());
 }
 
 std::shared_ptr<structure> ns::do_create_structure(const std::string &name) {

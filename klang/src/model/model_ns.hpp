@@ -66,6 +66,7 @@ protected:
 
     std::shared_ptr<function> do_create_function(const std::string &name, bool is_static) override;
     void on_function_defined(std::shared_ptr<function> func) override;
+    void on_function_removed(const std::shared_ptr<function>& func) override;
 
     std::shared_ptr<structure> do_create_structure(const std::string &name) override;
     std::shared_ptr<klass> do_create_class(const std::string &name) override;
@@ -194,6 +195,26 @@ protected:
     std::unordered_map<std::string, std::weak_ptr<struct_type>> _instantiation_struct_types;
 
     std::shared_ptr<global_main_function> _global_main_func;
+
+    /**
+     * The Application class used as entry point for this unit.
+     * - nullptr  → no main function / library module
+     * - non-null → either the synthesized Application class (Phase 2b) or the
+     *              user-defined one (Phase 3).
+     */
+    std::shared_ptr<klass> _application_class;
+
+    /**
+     * True when _application_class was synthesised by the compiler (Phase 2b)
+     * rather than written by the user (Phase 3+).
+     */
+    bool _application_class_synthesized = false;
+
+    /**
+     * Global variable holding the single Application instance.
+     * Declared as private in the unit's root namespace.
+     */
+    std::shared_ptr<global_variable_definition> _app_instance_var;
 
 
     /**

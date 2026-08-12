@@ -168,6 +168,40 @@ void symbol_resolver::visit_unit(unit& unit)
         }
     }
 
+    // ── Pre-pass 0c: Application class synthesis / detection ─────────────────────
+    // Only for non-k modules where ::k::Application is available:
+    {
+        // Skip if this IS module k (Application is defined here, not consumed)
+        bool is_module_k = (root_ns->get_short_name() == "k");
+        bool app_base_available = !is_module_k && is_type_available(_unit, "Application");
+
+        if (app_base_available) {
+            auto existing_app = std::dynamic_pointer_cast<klass>(root_ns->get_aggregate("Application"));
+            auto main_funcs   = root_ns->get_functions("main");
+
+            if (existing_app) {
+                // Phase 3: user explicitly declared class Application in this module.
+                _unit._application_class            = existing_app;
+                _unit._application_class_synthesized = false;
+            } else if (!main_funcs.empty()) {
+                // Phase 2b: synthesise a private Application class and move all main
+                // overloads into it.
+                auto app_class = root_ns->define_class("Application");
+                app_class->set_visibility(PRIVATE);
+                app_class->add_base("k::Application", PUBLIC);
+
+                for (auto& mfn : main_funcs) {
+                    root_ns->remove_function(mfn);
+                    element::set_parent(app_class, mfn);
+                    app_class->add_existing_function(mfn);
+                }
+
+                _unit._application_class            = app_class;
+                _unit._application_class_synthesized = true;
+            }
+        }
+    }
+
     // ── Pre-pass 1: resolve base names for diamond detection ────────────────────
     // We need to call compute_virtual_bases() BEFORE visit_namespace() so that
     // is_virtual is set correctly before sub-objects are injected.
@@ -292,6 +326,59 @@ void symbol_resolver::visit_unit(unit& unit)
         }
     }
 
+    // ── Pre-pass 1b: Application class validation (Phase 3) ──────────────────
+    // Runs after Pre-pass 1 has resolved base_spec::base pointers, so
+    // is_derived_from() below sees the fully-resolved base graph.
+    if (_unit._application_class && !_unit._application_class_synthesized) {
+        auto app_class = _unit._application_class;
+        lex::opt_any_lexeme app_lexeme;
+        if (auto ast_ad = app_class->get_ast_aggregate_decl()) app_lexeme = lex::any_lexeme{ast_ad->name};
+
+        if (app_class->is_abstract()) {
+            auto d = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_MUST_NOT_BE_ABSTRACT),
+                "'class Application' must not be abstract: it is instantiated directly as the "
+                "application's entry-point object", {});
+            if (app_lexeme) d.at(*app_lexeme);
+            logger_relay::report(d);
+            throw resolution_error(std::move(d));
+        }
+
+        auto k_application = std::dynamic_pointer_cast<aggregate>(
+            scope_lookup::lookup_structure_or_import(_unit, _context, app_class->shared_as<element>(), "k::Application"));
+        if (!k_application || !app_class->is_derived_from(k_application)) {
+            auto d = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_MUST_EXTEND_K_APPLICATION),
+                "'class Application' must (directly or transitively) extend '::k::Application'", {});
+            if (app_lexeme) d.at(*app_lexeme);
+            logger_relay::report(d);
+            throw resolution_error(std::move(d));
+        }
+
+        // Exactly one usable (non-deleted) 'main' method.
+        auto main_funcs = app_class->get_functions("main");
+        std::vector<std::shared_ptr<function>> usable_mains;
+        for (auto& f : main_funcs) {
+            if (!f->is_deleted()) usable_mains.push_back(f);
+        }
+        if (usable_mains.empty()) {
+            auto d = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_NO_USABLE_MAIN),
+                "'class Application' must declare exactly one usable 'main' method", {});
+            if (app_lexeme) d.at(*app_lexeme);
+            logger_relay::report(d);
+            throw resolution_error(std::move(d));
+        } else if (usable_mains.size() > 1) {
+            auto d = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_MULTIPLE_MAIN),
+                "'class Application' declares {} usable 'main' overloads; exactly one is allowed",
+                {std::to_string(usable_mains.size())});
+            if (app_lexeme) d.at(*app_lexeme);
+            logger_relay::report(d);
+            throw resolution_error(std::move(d));
+        }
+    }
+
     // Step 2: Visit the root namespace (recursively resolves all symbols)
     visit_namespace(*_unit.get_root_namespace());
 
@@ -313,8 +400,14 @@ void type_reference_resolver::visit_unit(unit& unit)
     visit_global_constructor_function(_unit.get_global_constructor_function());
     visit_global_destructor_function(_unit.get_global_destructor_function());
 
-    if (auto func = unit.get_root_namespace()->get_function("main")) {
-        if (auto main_func = unit.generate_main_function(func)) {
+    std::shared_ptr<function> main_fn = unit.get_root_namespace()->get_function("main");
+    if (!main_fn && unit._application_class) {
+        // main() may have been moved into the (synthesised or user-declared)
+        // Application class — look it up there instead.
+        main_fn = unit._application_class->get_function("main");
+    }
+    if (main_fn) {
+        if (auto main_func = unit.generate_main_function(main_fn)) {
             visit_global_main_function(*main_func);
         }
     }
@@ -954,6 +1047,142 @@ void declaration_generator::visit_namespace(ns &ns) {
     for (size_t i = 0; i < ns.get_children().size(); ++i) {
         ns.get_children()[i]->accept(*this);
     }
+}
+
+/**
+ * Implementation of the C-ABI main proxy for the Application mode.
+ *
+ * When the unit has an Application class (_unit._application_class != nullptr),
+ * emits LLVM IR directly to:
+ *   1. Allocate the Application instance on the stack.
+ *   2. Call the Application default constructor (sets up vtable pointers).
+ *   3. Optionally build the args String[] from argc/argv.
+ *   4. Call Application::main() with direct (non-virtual) dispatch.
+ *   5. Call the Application destructor.
+ *   6. Return the int result (or 0 for void mains).
+ *
+ * In legacy mode (no Application class) delegates to visit_function().
+ */
+void implementation_generator::visit_global_main_function(global_main_function& main_func) {
+    if (!_unit._application_class) {
+        // Legacy path: model body was built by type_reference_resolver
+        visit_function(main_func);
+        return;
+    }
+
+    auto& llvm_ctx = **_context;
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+    // Retrieve the C proxy LLVM function (declared by declaration_generator)
+    auto proxy_it = _context->_functions.find(main_func.shared_as<function>());
+    if (proxy_it == _context->_functions.end()) {
+        trace("[implementation_generator::visit_global_main_function] proxy function not found in function table");
+        return;
+    }
+    llvm::Function* proxy_fn = proxy_it->second;
+
+    // Create entry block
+    llvm::BasicBlock* entry_bb = llvm::BasicBlock::Create(llvm_ctx, "entry", proxy_fn);
+    _builder->SetInsertPoint(entry_bb);
+
+    llvm::Value* argc_val = proxy_fn->getArg(0);  // i32
+    llvm::Value* argv_val = proxy_fn->getArg(1);  // ptr
+
+    auto app_class = _unit._application_class;
+
+    // ── Allocate Application on stack ─────────────────────────────────────────
+    auto app_struct_type = app_class->get_struct_type();
+    llvm::Type* app_llvm_type = app_struct_type ? _context->get_llvm_type(app_struct_type) : nullptr;
+    if (!app_llvm_type) {
+        trace("[implementation_generator::visit_global_main_function] Application LLVM struct type not available");
+        _builder->CreateRet(llvm::ConstantInt::get(i32_ty, 1));
+        return;
+    }
+    llvm::AllocaInst* app_alloca = _builder->CreateAlloca(app_llvm_type, nullptr, "__app");
+
+    // ── Call Application default constructor ──────────────────────────────────
+    for (const auto& ctor : app_class->constructors()) {
+        if (!ctor->is_deleted() && ctor->get_parameter_size() == 0) {
+            auto ctor_it = _context->_functions.find(ctor->shared_as<function>());
+            if (ctor_it != _context->_functions.end()) {
+                _builder->CreateCall(ctor_it->second->getFunctionType(),
+                                     ctor_it->second, {app_alloca});
+            }
+            break;
+        }
+    }
+
+    // ── Build args array if needed (Phase 1 + Application) ───────────────────
+    llvm::Value* args_llvm_val = nullptr;
+    if (main_func.has_args()) {
+        k::name helper_name{false, {"k", "__k_argv_to_string_array"}};
+        llvm::Function* helper_fn = nullptr;
+
+        // Try _context->_functions (if declaration pass registered it)
+        if (const kdi::kdi_function* kdi_h = _unit.find_imported_function(helper_name)) {
+            auto imp = _unit.get_or_create_imported_function(kdi_h, _context);
+            auto h_it = _context->_functions.find(imp);
+            if (h_it != _context->_functions.end()) {
+                helper_fn = h_it->second;
+            }
+            // Fallback: declare by mangled name from KDI
+            if (!helper_fn && !kdi_h->mangled_name.empty()) {
+                auto* fn_ty = llvm::FunctionType::get(ptr_ty, {i32_ty, ptr_ty}, false);
+                helper_fn = get_module().getFunction(kdi_h->mangled_name);
+                if (!helper_fn) {
+                    helper_fn = llvm::Function::Create(
+                        fn_ty, llvm::Function::ExternalLinkage,
+                        kdi_h->mangled_name, get_module());
+                }
+            }
+        }
+
+        if (helper_fn) {
+            args_llvm_val = _builder->CreateCall(
+                helper_fn->getFunctionType(), helper_fn,
+                {argc_val, argv_val}, "__k_args");
+        }
+    }
+
+    // ── Call Application::main() (direct dispatch) ────────────────────────────
+    auto& real_fn   = main_func.get_real_func();
+    auto  main_it   = _context->_functions.find(real_fn.shared_as<function>());
+    llvm::Value* ret_val = llvm::ConstantInt::get(i32_ty, 0);
+
+    if (main_it != _context->_functions.end()) {
+        llvm::Function* main_fn = main_it->second;
+
+        std::vector<llvm::Value*> main_args = {app_alloca};
+        if (main_func.has_args() && args_llvm_val) {
+            main_args.push_back(args_llvm_val);
+        }
+
+        if (real_fn.has_return_type()) {
+            llvm::Value* call_ret = _builder->CreateCall(
+                main_fn->getFunctionType(), main_fn, main_args, "main_ret");
+            if (call_ret->getType() == i32_ty) {
+                ret_val = call_ret;
+            } else if (call_ret->getType()->isIntegerTy()) {
+                ret_val = _builder->CreateZExtOrTrunc(call_ret, i32_ty, "main_ret_i32");
+            }
+        } else {
+            _builder->CreateCall(main_fn->getFunctionType(), main_fn, main_args);
+        }
+    }
+
+    // ── Call Application destructor ────────────────────────────────────────────
+    auto dtor = app_class->get_destructor();
+    if (dtor) {
+        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+        if (dtor_it != _context->_functions.end()) {
+            _builder->CreateCall(dtor_it->second->getFunctionType(),
+                                 dtor_it->second, {app_alloca});
+        }
+    }
+
+    // ── Return ────────────────────────────────────────────────────────────────
+    _builder->CreateRet(ret_val);
 }
 
 void implementation_generator::visit_namespace(ns &ns) {

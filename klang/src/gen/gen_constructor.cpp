@@ -857,99 +857,161 @@ void implementation_generator::visit_global_destructor_function(global_destructo
 
 // type_reference_resolver::visit_global_main_function
 // -----------------------------------------------------
-// Synthesizes the C-ABI "main" entry-point proxy that wraps the user-defined
-// 'main' function.  This proxy is what the linker and OS call at startup.
+// Synthesises the C-ABI "main" entry-point proxy that wraps the user-defined
+// 'main' function.
 //
-// Steps:
-//  1. Validate that the user's 'main' function takes no parameters (parameters
-//     are not yet supported); throw a compile error if parameters are present.
-//  2. Resolve the 'int' primitive type from the context.
-//  3. Configure the proxy function metadata:
-//     - Assign the well-known name "main" (C-ABI entry point).
-//     - Set return type to 'int'.
-//     - Add 'argc' (int) and 'argv' (unsigned char**) parameters.
-//  4. Build the proxy body:
-//     - If the user's 'main' returns a value:
-//       a. Create a function_invocation_expression calling the user function.
-//       b. Adapt/cast the return value to 'int' (implicit cast if needed).
-//       c. Wrap in a return_statement.
-//     - If the user's 'main' returns void:
-//       a. Create an expression_statement for the call (result discarded).
-//       b. Append it to the block.
-//       c. Append a return_statement returning the integer literal 0.
-//  5. The block is now complete; visit_function will be called later in the
-//     normal visitor flow to resolve types within the synthesized body.
+// There are two operating modes selected by _unit._application_class:
+//
+// LEGACY (no Application class):
+//   Used when the k module is not imported (unit tests, etc.).
+//   The user's free main() is called directly from the C proxy.
+//   Phase 1: if main() has `args : const String[]`, the proxy calls
+//   ::k::__k_argv_to_string_array(argc, argv) and passes the result.
+//
+// APPLICATION mode:
+//   Used when the unit has an Application class (synthesised or user-written).
+//   The proxy body is generated at the LLVM IR level by
+//   implementation_generator::visit_global_main_function (this resolver only
+//   sets up the C-ABI signature and detects the has-args flag).
 /**
  * Resolve the global main function: wrap the user's main() into the runtime entry point.
- *
- * Steps:
- *   1. Find the user-defined main() function in the unit.
- *   2. Build a wrapper block that calls global_ctor, user main, global_dtor.
- *   3. Resolve all expressions in the wrapper block.
  */
 void type_reference_resolver::visit_global_main_function(global_main_function& main_func) {
 
-    std::vector<std::shared_ptr<expression>> args;
-
-    // Step 1: Find the user-defined main() function in the unit
-    // Look at the compatible prototypes
-    // TODO Add a better method prototype compatibility checking/searching
-    if (main_func.get_real_func().has_parameter()) {
-        lex::opt_any_lexeme main_lexeme;
-        if (auto ast_fd = main_func.get_real_func().get_ast_function_decl()) main_lexeme = lex::any_lexeme{ast_fd->name};
-        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_RETURN_TYPE), main_lexeme,
-            "'main' function does not support parameters yet; "
-            "declare it as 'func main() : int' or 'func main() : void'");
-    }
-
-    auto int_type = _context->from_type(primitive_type::INT);
+    // ── Step 1: Build C-ABI proxy function signature ─────────────────────────
+    // The proxy is always: int main(int argc, unsigned char** argv)
+    auto int_type      = _context->from_type(primitive_type::INT);
+    auto argv_type     = _context->from_type(primitive_type::UNSIGNED_CHAR)
+                                 ->get_pointer()->get_pointer();
 
     main_func.assign_name(name(true, "main"));
     main_func.set_return_type(int_type);
-    main_func.append_parameter("argc", int_type);
-    main_func.append_parameter("argv", _context->from_type(primitive_type::UNSIGNED_CHAR)->get_pointer()->get_pointer());
+    auto argc_param = main_func.append_parameter("argc", int_type);
+    auto argv_param = main_func.append_parameter("argv", argv_type);
 
-    // Step 2: Build a wrapper block that calls global_ctor, user main, global_dtor
+    // ── Step 2: Determine whether the user's main() takes a const String[] arg ─
+    // For member functions (Application mode), 'this' is tracked separately
+    // from `parameters()` (see model_function::_this_param), so no adjustment
+    // is needed for it here.
+    bool has_args = false;
+    {
+        auto& real_fn = main_func.get_real_func();
+        size_t user_param_count = real_fn.get_parameter_size();
+
+        if (user_param_count > 1) {
+            lex::opt_any_lexeme main_lexeme;
+            if (auto ast_fd = real_fn.get_ast_function_decl())
+                main_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_PARAMS),
+                main_lexeme,
+                "'main' function must have zero or one parameter (of type 'const String[]'); "
+                "found {} user parameter(s)",
+                {std::to_string(user_param_count)});
+        }
+
+        if (user_param_count == 1) {
+            auto user_param = real_fn.parameters().front();
+
+            // Validate: must be const String[] (arrays are implicitly passed by
+            // reference, so the resolved type is typically `reference_type(const_type(array_type(String)))`).
+            if (user_param && user_param->get_type()) {
+                auto pt = user_param->get_type();
+                auto no_ref = type::is_reference(pt) ? pt->get_subtype() : pt;
+                auto nc = type::remove_const(no_ref);
+                if (!type::is_array(nc)) {
+                    lex::opt_any_lexeme main_lexeme;
+                    if (auto ast_fd = real_fn.get_ast_function_decl())
+                        main_lexeme = lex::any_lexeme{ast_fd->name};
+                    throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_PARAMS),
+                        main_lexeme,
+                        "'main' parameter must be of type 'const String[]', got '{}'",
+                        {pt->to_string()});
+                }
+            }
+            has_args = true;
+            main_func.set_has_args(true);
+        }
+    }
+
+    // ── APPLICATION mode: signature only, body is IR-generated ───────────────
+    if (_unit._application_class != nullptr) {
+        // Nothing more to do here: the body will be emitted directly as LLVM IR
+        // in implementation_generator::visit_global_main_function.
+        return;
+    }
+
+    // ── LEGACY mode: build K-model proxy body ────────────────────────────────
     auto main_block = main_func.get_block();
-    auto ret_stmt = std::make_shared<model::return_statement>(main_block);
+    auto ret_stmt   = std::make_shared<model::return_statement>(main_block);
 
-    // Step 3: Resolve all expressions in the wrapper block
-    std::shared_ptr<expression> invoke = function_invocation_expression::make_shared(main_func.get_real_func().shared_as<function>(), args);
+    std::vector<std::shared_ptr<expression>> user_args;
 
-    // Annotate with DIRECT dispatch_info — the real 'main' function is always
-    // a direct call (not virtual).  This synthetic node bypasses the normal
-    // type_reference_resolver path, so we set the annotation manually.
+    if (has_args) {
+        // Look up ::k::__k_argv_to_string_array in imports
+        k::name helper_name{false, {"k", "__k_argv_to_string_array"}};
+        const kdi::kdi_function* kdi_helper = _unit.find_imported_function(helper_name);
+        if (!kdi_helper) {
+            lex::opt_any_lexeme main_lexeme;
+            if (auto ast_fd = main_func.get_real_func().get_ast_function_decl())
+                main_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_PARAMS),
+                main_lexeme,
+                "'main' with 'const String[]' parameter requires the k standard library "
+                "(import k; or auto-import); make sure the application is linked against libk");
+        }
+        auto helper_fn = _unit.get_or_create_imported_function(kdi_helper, _context);
+
+        // Create: __k_args : String[] = __k_argv_to_string_array(argc, argv)
+        auto args_var_def = main_block->append_variable("__k_args", false);
+        args_var_def->set_type(helper_fn->get_return_type());
+
+        auto argc_sym = symbol_expression::from_variable(argc_param);
+        auto argv_sym = symbol_expression::from_variable(argv_param);
+        auto helper_invoke = function_invocation_expression::make_shared(
+            helper_fn, {argc_sym, argv_sym});
+        {
+            virtual_dispatch_info di;
+            di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+            std::dynamic_pointer_cast<function_invocation_expression>(helper_invoke)
+                ->set_dispatch_info(std::move(di));
+        }
+        args_var_def->set_init_expr(helper_invoke);
+
+        // Pass __k_args to user main
+        user_args.push_back(symbol_expression::from_variable(args_var_def));
+    }
+
+    // Build the invocation of the user's free main()
+    std::shared_ptr<expression> invoke = function_invocation_expression::make_shared(
+        main_func.get_real_func().shared_as<function>(), user_args);
     {
         virtual_dispatch_info di;
         di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
-        std::dynamic_pointer_cast<function_invocation_expression>(invoke)->set_dispatch_info(std::move(di));
+        std::dynamic_pointer_cast<function_invocation_expression>(invoke)
+            ->set_dispatch_info(std::move(di));
     }
 
     if (main_func.get_real_func().has_return_type()) {
-        // Cast invocation result to int
         auto cast = adapt_type(invoke, int_type);
-        if(!cast) {
+        if (!cast) {
             lex::opt_any_lexeme main_lexeme;
-            if (auto ast_fd = main_func.get_real_func().get_ast_function_decl()) main_lexeme = lex::any_lexeme{ast_fd->name};
-            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_PARAMS), main_lexeme,
+            if (auto ast_fd = main_func.get_real_func().get_ast_function_decl())
+                main_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_RETURN_TYPE),
+                main_lexeme,
                 "'main' function return type '{}' cannot be implicitly cast to 'int'; "
                 "the return type must be 'int', 'void', or a type castable to 'int'",
-                {main_func.get_real_func().get_return_type() ? main_func.get_real_func().get_return_type()->to_string() : "?"});
-        } else if(cast != invoke) {
-            // Casted, assign casted expression as return expr.
+                {main_func.get_real_func().get_return_type()
+                    ? main_func.get_real_func().get_return_type()->to_string() : "?"});
+        } else if (cast != invoke) {
             invoke = cast;
-        } else {
-            // Compatible type, no need to cast.
         }
-        // Return casted result
         ret_stmt->set_expression(invoke);
         main_func.get_block()->append_statement(ret_stmt);
     } else {
-        // Create statement for this invocation
         auto call_stmt = std::make_shared<model::expression_statement>(main_block);
         call_stmt->set_expression(invoke);
         main_func.get_block()->append_statement(call_stmt);
-        // Create return statement with returning 0
         ret_stmt->set_expression(value_expression::from_value(0));
         main_func.get_block()->append_statement(ret_stmt);
     }

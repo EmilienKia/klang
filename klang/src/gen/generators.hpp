@@ -430,6 +430,7 @@ public:
     void visit_function(function &) override;
     void visit_global_constructor_function(global_constructor_function&) override;
     void visit_global_destructor_function(global_destructor_function&) override;
+    void visit_global_main_function(global_main_function&) override;
     void visit_aggregate(aggregate&) override;
     void visit_klass(klass&) override;
     void visit_interface(interface&) override;

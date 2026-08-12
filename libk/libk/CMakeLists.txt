@@ -62,6 +62,8 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/event_loop.k
     # ── Phase 7: functional programming ───────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/functional.k
+    # ── Application entry-point infrastructure ────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/application.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -326,12 +328,26 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile Application entry-point FFI helpers ───────────────────────────
+set(APP_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/application_ffi.c)
+set(APP_FFI_OBJ ${LIBK_OUTPUT_DIR}/application_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${APP_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${APP_FFI_OBJ} ${APP_FFI_C}
+    DEPENDS ${APP_FFI_C}
+    COMMENT "Compiling K Application entry-point FFI helpers (application_ffi.c)"
+    VERBATIM
+)
+
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
                    ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
                    ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}
-                   ${NETWORK_FFI_OBJ})
+                   ${NETWORK_FFI_OBJ}
+                   ${APP_FFI_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -417,6 +433,7 @@ add_executable(libk-tests-core
     tests/test-math.cpp
     tests/test-optional.cpp
     tests/test-shared.cpp
+    tests/test-application.cpp
 )
 target_link_libraries(libk-tests-core klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests-core libk_stdlib)

@@ -717,6 +717,25 @@ enum class lambda_diag : unsigned int {
     ERR_LAMBDA_BAD_CAPTURE_SYNTAX                = 0x01E0,
 };
 
+/**
+ * Diagnostics for the Application entry-point mechanism (user-declared
+ * `class Application` in an executable module).
+ * Range 0x01F0 — 0x01FF.
+ */
+enum class application_diag : unsigned int {
+    /** A user-declared `class Application` does not (directly or transitively)
+     * extend `::k::Application`. */
+    ERR_APPLICATION_MUST_EXTEND_K_APPLICATION    = 0x01F0,
+    /** A user-declared `class Application` is missing a usable (non-deleted,
+     * non-abstract) `main` method. */
+    ERR_APPLICATION_NO_USABLE_MAIN               = 0x01F1,
+    /** A user-declared `class Application` declares more than one usable
+     * (non-deleted, non-abstract) `main` method. */
+    ERR_APPLICATION_MULTIPLE_MAIN                = 0x01F2,
+    /** A user-declared `class Application` is itself abstract; it must be
+     * concrete/instantiable. */
+    ERR_APPLICATION_MUST_NOT_BE_ABSTRACT         = 0x01F3,
+};
 
 } // namespace k::diag
 

@@ -269,12 +269,27 @@ public:
 
     std::vector<std::shared_ptr<function>> functions() {return _functions;}
 
+    /**
+     * Register an already-constructed function in this holder without creating
+     * a new one.  Used by the compiler to move a free function into a class
+     * during the Application synthesis pass.
+     */
+    void add_existing_function(std::shared_ptr<function> func);
+
+    /**
+     * Remove the given function from this holder's list (does nothing if not
+     * present).  Used to move a free function from a namespace into a class.
+     */
+    void remove_function(const std::shared_ptr<function>& func);
+
 protected:
     /** List of all defined functions. */
     std::vector<std::shared_ptr<function>> _functions;
 
     virtual std::shared_ptr<function> do_create_function(const std::string &name, bool is_static) =0;
     virtual void on_function_defined(std::shared_ptr<function>) =0;
+    /** Called by remove_function() after erasing from _functions. Override to remove from _children etc. */
+    virtual void on_function_removed(const std::shared_ptr<function>&) {}
 };
 
 /**
