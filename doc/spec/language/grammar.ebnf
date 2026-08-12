@@ -659,7 +659,11 @@ StaticDep
 
 FunctionBody
     = BlockStatement
-    | '->' , ( 'default' | 'delete' ) , ';'                     (* aliasing; '-> default' only for constructors and assignment operators *)
+    | '->' , ( 'default' | 'delete' ) , ';'                     (* aliasing; '-> default' only for constructors and
+                                                                    assignment operators; '-> delete' also allowed
+                                                                    (delete-only) on a non-static member function
+                                                                    literally named 'main' — see main.md, "Application
+                                                                    entry-point chain" *)
     | '->' , QualifiedIdentifier ,
              [ '(' , [ TypeSpecList ] , ')' ] , ';'              (* redirect *)
     | ';'                                                        (* abstract / bodyless *)

@@ -24,6 +24,7 @@ Contents:
 | Type / Namespace | Description | Source |
 |------------------|-------------|--------|
 | [`Object`](object.md) | Root base class for all K classes. | `src/object.k` |
+| [`Application`, `EnvironmentMap`](application.md) | Abstract base class for the program entry-point object (`main`), and its read-only `env()` accessor. | `src/application.k` |
 | [`CharHelpers`](string.md#charhelpers) | Static utility methods for `char[]` buffer operations. | `src/string.k` |
 | [`String`](string.md#string) | Immutable, final string class wrapping a null-terminated `char[]!` buffer. | `src/string.k` |
 | [`StringBuilder`](string.md#stringbuilder) | Mutable, growable string builder backed by a single contiguous buffer. | `src/string.k` |
