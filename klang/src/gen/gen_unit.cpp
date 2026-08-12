@@ -512,6 +512,21 @@ void symbol_resolver::visit_unit(unit& unit)
                 auto entry_std = active_stds.front();
                 chain_entry_main = entry_std;
 
+                if (is_final_level && main_is_implemented(entry_std)) {
+                    // Phase 3 terminal case: the final concrete class directly implements
+                    // its own standard 'main' with no further delegation — any custom
+                    // 'main' overloads here would be meaningless (nothing to delegate to).
+                    if (!customs.empty()) {
+                        raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_UNEXPECTED_MAIN),
+                            lexeme_of(level),
+                            "class '{}' implements '{}' directly (no further chain level exists); it must "
+                            "not also declare custom 'main' overload(s)",
+                            {level->get_short_name(), main_sig_to_string(entry_std)});
+                    }
+                    decided = true;
+                    continue;
+                }
+
                 if (main_is_implemented(entry_std)) {
                     // Delegating implementation: must pair with exactly one custom abstract main.
                     if (customs.size() != 1) {
