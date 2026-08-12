@@ -27,7 +27,7 @@
 
 namespace k::model::gen {
 
-std::tuple<std::shared_ptr<function>, std::shared_ptr<expression>, type_reference_resolver::cast_weight>
+std::tuple<std::shared_ptr<function>, std::shared_ptr<type>, type_reference_resolver::cast_weight>
 /**
  * Resolve a binary operator overload for an aggregate type using cast-weight scoring,
  * for an explicitly-named operator (rather than the operator naturally matching `expr`'s
@@ -49,8 +49,12 @@ std::tuple<std::shared_ptr<function>, std::shared_ptr<expression>, type_referenc
  * @param left_expr     The expression bound to the receiver ("this") / first non-member param.
  * @param right_expr    The expression bound to the sole member param / second non-member param.
  * @param is_const_this True if left_expr is a const object (only const member operators are viable).
- * @return {best_func, adapted_right, best_score} or {nullptr, nullptr, CAST_IMPOSSIBLE} if no
- *         viable match exists.
+ * @return {best_func, adapt_target_type, best_score} — adapt_target_type is the type
+ *         `right_expr` must be adapted to if this candidate wins, or nullptr if none is
+ *         needed. Callers must call adapt_type() themselves, exactly once, only on the
+ *         actually-selected overall winner — see the .hpp declaration's full contract for
+ *         why eager per-candidate adaptation is unsafe. Returns {nullptr, nullptr,
+ *         CAST_IMPOSSIBLE} if no viable match exists.
  */
 type_reference_resolver::resolve_named_binary_operator_overload(
     const binary_expression& expr,
@@ -112,7 +116,13 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         cast_weight score;
         bool is_member;
         bool is_const_func;
-        std::shared_ptr<expression> adapted_right;
+        /** Target parameter type to adapt `right_expr` to if this candidate wins.
+         * Adaptation is deferred until after selection (see below) because adapt_type()
+         * may create a wrapping cast_expression that reparents its input expression as a
+         * side effect — calling it eagerly for every scored-but-possibly-losing candidate
+         * would corrupt the shared input expression's parent chain even when that
+         * candidate is discarded. */
+        std::shared_ptr<type> adapt_target_type;
     };
 
     std::vector<CandInfo> valid;
@@ -125,8 +135,7 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         auto right_param_type = params[0]->get_type();
         auto w = compute_cast_weight(right_expr, right_param_type);
         if (w != CAST_IMPOSSIBLE) {
-            auto adapted = adapt_type(right_expr, right_param_type);
-            valid.push_back({func, w, true, func->is_const_member(), adapted ? adapted : right_expr});
+            valid.push_back({func, w, true, func->is_const_member(), right_param_type});
         }
     }
 
@@ -150,8 +159,7 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         // Step 3: Score each candidate by cast_weight on the right operand (and left for non-member)
         // Overall score = worst of left and right
         cast_weight w = std::max(wl, wr);
-        auto adapted = adapt_type(right_expr, right_param_type);
-        valid.push_back({func, w, false, false, adapted ? adapted : right_expr});
+        valid.push_back({func, w, false, false, right_param_type});
     }
 
     // Step 4: Prefer member operators over non-member when scores are equal
@@ -211,7 +219,7 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         throw resolution_error(std::move(d));
     }
 
-    return {best[0]->func, best[0]->adapted_right, best_score};
+    return {best[0]->func, best[0]->adapt_target_type, best_score};
 }
 
 std::pair<std::shared_ptr<function>, std::shared_ptr<expression>>
@@ -231,9 +239,11 @@ type_reference_resolver::resolve_binary_operator_overload(
 {
     std::string op_name = get_binary_operator_name(expr);
     if (op_name.empty()) return {nullptr, nullptr};
-    auto [func, adapted_right, weight] = resolve_named_binary_operator_overload(
+    auto [func, adapt_target_type, weight] = resolve_named_binary_operator_overload(
         expr, op_name, left_agg, left_expr, right_expr, is_const_this);
-    return {func, adapted_right};
+    if (!func) return {nullptr, nullptr};
+    auto adapted = adapt_type(right_expr, adapt_target_type);
+    return {func, adapted ? adapted : right_expr};
 }
 
 namespace {
@@ -295,12 +305,12 @@ type_reference_resolver::try_resolve_spaceship_zero_comparison(
     zero_placeholder->set_parent_expression(scope_host);
     zero_placeholder->set_type(_context->from_type(primitive_type::INT));
 
-    auto [func, adapted_zero, w] = resolve_named_binary_operator_overload(
+    auto [func, adapt_target_type, w] = resolve_named_binary_operator_overload(
         expr, wanted_op_name, result_agg, receiver_placeholder, zero_placeholder, /*is_const_this=*/false);
 
     if (!func || !cmp_op_returns_bool(func)) return std::nullopt;
 
-    auto arg_type = adapted_zero ? adapted_zero->get_type() : zero_placeholder->get_type();
+    auto arg_type = adapt_target_type ? adapt_target_type : zero_placeholder->get_type();
     auto arg_type_nc = type::remove_const(arg_type);
     if (type::is_reference(arg_type_nc)) return std::nullopt; // by-value numeric parameter only (see docs)
     auto prim_arg = std::dynamic_pointer_cast<primitive_type>(arg_type_nc);
@@ -355,7 +365,11 @@ type_reference_resolver::resolve_comparison_with_fallback(
         bool negate_terms;
         cast_weight weight;
         unsigned tier;
-        std::shared_ptr<expression> adapted_arg;
+        /** Target type to adapt the "argument"-role operand to if this candidate wins.
+         * Adaptation itself is deferred until after the overall winner is selected below
+         * (see resolve_named_binary_operator_overload's contract) — never nullptr-safe to
+         * call adapt_type() eagerly per-candidate here. */
+        std::shared_ptr<type> adapt_target_type;
         /** Phase 2: only set for SPACESHIP/SPACESHIP_SWAP when `func`'s return type is an
          * aggregate; see comparison_fallback_result::spaceship_zero_func. */
         std::shared_ptr<function> spaceship_zero_func;
@@ -365,9 +379,9 @@ type_reference_resolver::resolve_comparison_with_fallback(
 
     // Tier 0: DIRECT — the exact operator, receiver = left, arg = right.
     {
-        auto [func, adapted, w] = resolve_named_binary_operator_overload(
+        auto [func, adapt_target_type, w] = resolve_named_binary_operator_overload(
             expr, wanted, left_agg, left_expr, right_expr, is_const_left);
-        if (func) candidates.push_back({func, cmp_synthesis::DIRECT, false, w, 0, adapted, nullptr, nullptr});
+        if (func) candidates.push_back({func, cmp_synthesis::DIRECT, false, w, 0, adapt_target_type, nullptr, nullptr});
     }
 
     // Tier 1: SPACESHIP — source = `operator <=>`, receiver = left, arg = right; wanted is
@@ -376,14 +390,14 @@ type_reference_resolver::resolve_comparison_with_fallback(
     // the sign test is instead a call to a directly-declared bool-returning comparison of
     // that aggregate against the integer literal 0 (see try_resolve_spaceship_zero_comparison).
     {
-        auto [func, adapted, w] = resolve_named_binary_operator_overload(
+        auto [func, adapt_target_type, w] = resolve_named_binary_operator_overload(
             expr, k::op::OP_SPACESHIP, left_agg, left_expr, right_expr, is_const_left);
         if (func) {
             auto ret_type = func->has_return_type() ? func->get_return_type() : nullptr;
             if (is_valid_spaceship_return_type(ret_type)) {
-                candidates.push_back({func, cmp_synthesis::SPACESHIP, false, w, 1, adapted, nullptr, nullptr});
+                candidates.push_back({func, cmp_synthesis::SPACESHIP, false, w, 1, adapt_target_type, nullptr, nullptr});
             } else if (auto zero_match = try_resolve_spaceship_zero_comparison(expr, ret_type, wanted, left_expr)) {
-                candidates.push_back({func, cmp_synthesis::SPACESHIP, false, w, 1, adapted,
+                candidates.push_back({func, cmp_synthesis::SPACESHIP, false, w, 1, adapt_target_type,
                                        zero_match->first, zero_match->second});
             }
         }
@@ -394,15 +408,15 @@ type_reference_resolver::resolve_comparison_with_fallback(
     // (operand-reversed) spaceship result against 0, using the swapped operator semantics.
     // Phase 2: same aggregate-result handling as tier 1, but probing the swapped wanted op.
     if (right_agg) {
-        auto [func, adapted, w] = resolve_named_binary_operator_overload(
+        auto [func, adapt_target_type, w] = resolve_named_binary_operator_overload(
             expr, k::op::OP_SPACESHIP, right_agg, right_expr, left_expr, is_const_right);
         if (func) {
             auto ret_type = func->has_return_type() ? func->get_return_type() : nullptr;
             if (is_valid_spaceship_return_type(ret_type)) {
-                candidates.push_back({func, cmp_synthesis::SPACESHIP_SWAP, false, w, 2, adapted, nullptr, nullptr});
+                candidates.push_back({func, cmp_synthesis::SPACESHIP_SWAP, false, w, 2, adapt_target_type, nullptr, nullptr});
             } else if (auto zero_match = try_resolve_spaceship_zero_comparison(
                            expr, ret_type, swap_of_cmp_op(wanted), right_expr)) {
-                candidates.push_back({func, cmp_synthesis::SPACESHIP_SWAP, false, w, 2, adapted,
+                candidates.push_back({func, cmp_synthesis::SPACESHIP_SWAP, false, w, 2, adapt_target_type,
                                        zero_match->first, zero_match->second});
             }
         }
@@ -412,10 +426,10 @@ type_reference_resolver::resolve_comparison_with_fallback(
     {
         std::string src_op = negate_of_cmp_op(wanted);
         if (!src_op.empty()) {
-            auto [func, adapted, w] = resolve_named_binary_operator_overload(
+            auto [func, adapt_target_type, w] = resolve_named_binary_operator_overload(
                 expr, src_op, left_agg, left_expr, right_expr, is_const_left);
             if (func && cmp_op_returns_bool(func))
-                candidates.push_back({func, cmp_synthesis::NEGATE, false, w, 3, adapted});
+                candidates.push_back({func, cmp_synthesis::NEGATE, false, w, 3, adapt_target_type, nullptr, nullptr});
         }
     }
 
@@ -423,10 +437,10 @@ type_reference_resolver::resolve_comparison_with_fallback(
     if (right_agg) {
         std::string src_op = swap_of_cmp_op(wanted);
         if (!src_op.empty()) {
-            auto [func, adapted, w] = resolve_named_binary_operator_overload(
+            auto [func, adapt_target_type, w] = resolve_named_binary_operator_overload(
                 expr, src_op, right_agg, right_expr, left_expr, is_const_right);
             if (func && cmp_op_returns_bool(func))
-                candidates.push_back({func, cmp_synthesis::SWAP, false, w, 4, adapted});
+                candidates.push_back({func, cmp_synthesis::SWAP, false, w, 4, adapt_target_type, nullptr, nullptr});
         }
     }
 
@@ -434,10 +448,10 @@ type_reference_resolver::resolve_comparison_with_fallback(
     if (right_agg) {
         std::string src_op = negate_of_cmp_op(swap_of_cmp_op(wanted));
         if (!src_op.empty()) {
-            auto [func, adapted, w] = resolve_named_binary_operator_overload(
+            auto [func, adapt_target_type, w] = resolve_named_binary_operator_overload(
                 expr, src_op, right_agg, right_expr, left_expr, is_const_right);
             if (func && cmp_op_returns_bool(func))
-                candidates.push_back({func, cmp_synthesis::SWAP_NEGATE, false, w, 5, adapted});
+                candidates.push_back({func, cmp_synthesis::SWAP_NEGATE, false, w, 5, adapt_target_type, nullptr, nullptr});
         }
     }
 
@@ -448,10 +462,10 @@ type_reference_resolver::resolve_comparison_with_fallback(
     if ((wanted_is_eq || wanted_is_ne) && right_agg) {
         static const char* bases[] = { k::op::OP_LT, k::op::OP_GT, k::op::OP_LE, k::op::OP_GE };
         for (const char* base : bases) {
-            auto [func_n, adapted_n, w_n] = resolve_named_binary_operator_overload(
+            auto [func_n, adapt_target_type_n, w_n] = resolve_named_binary_operator_overload(
                 expr, base, left_agg, left_expr, right_expr, is_const_left);
             if (!func_n || w_n != CAST_NONE) continue;
-            auto [func_s, adapted_s, w_s] = resolve_named_binary_operator_overload(
+            auto [func_s, adapt_target_type_s, w_s] = resolve_named_binary_operator_overload(
                 expr, base, right_agg, right_expr, left_expr, is_const_right);
             if (!func_s || w_s != CAST_NONE) continue;
             if (func_n != func_s) continue; // must be the identical function both ways
@@ -459,7 +473,7 @@ type_reference_resolver::resolve_comparison_with_fallback(
 
             bool negate_terms = (is_strict_cmp_op(base) == wanted_is_eq);
             cmp_synthesis kind = wanted_is_eq ? cmp_synthesis::COMPOSITE_AND : cmp_synthesis::COMPOSITE_OR;
-            candidates.push_back({func_n, kind, negate_terms, CAST_NONE, 6, nullptr});
+            candidates.push_back({func_n, kind, negate_terms, CAST_NONE, 6, nullptr, nullptr, nullptr});
         }
     }
 
@@ -474,11 +488,23 @@ type_reference_resolver::resolve_comparison_with_fallback(
         }
     }
 
+    // Adapt the "argument"-role operand exactly once, only for the overall winning
+    // candidate — see resolve_named_binary_operator_overload's contract docs for why
+    // eager per-candidate adaptation is unsafe (it would reparent a possibly-shared,
+    // already-attached expression via a throwaway cast for every discarded candidate).
+    std::shared_ptr<expression> adapted_arg;
+    if (best->adapt_target_type) {
+        bool receiver_is_left = (best->tier == 0 || best->tier == 1 || best->tier == 3);
+        auto& operand = receiver_is_left ? right_expr : left_expr;
+        auto adapted = adapt_type(operand, best->adapt_target_type);
+        adapted_arg = adapted ? adapted : operand;
+    }
+
     comparison_fallback_result result;
     result.func = best->func;
     result.synthesis = best->synthesis;
     result.composite_negate_terms = best->negate_terms;
-    result.adapted_arg = best->adapted_arg;
+    result.adapted_arg = adapted_arg;
     result.spaceship_zero_func = best->spaceship_zero_func;
     result.spaceship_zero_arg_type = best->spaceship_zero_arg_type;
     return result;

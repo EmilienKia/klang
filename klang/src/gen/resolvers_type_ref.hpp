@@ -780,10 +780,17 @@ protected:
      * @param left_expr     The expression bound to the receiver ("this") / first non-member param.
      * @param right_expr    The expression bound to the sole member param / second non-member param.
      * @param is_const_this True if left_expr is a const object (only const member operators are viable).
-     * @return {best_func, adapted_right, best_score} or {nullptr, nullptr, CAST_IMPOSSIBLE} if no
-     *         viable match exists.
+     * @return {best_func, adapt_target_type, best_score} — adapt_target_type is the operator's
+     *         declared parameter type that `right_expr` (or `left_expr` for a swapped-role
+     *         probe) must be adapted to if this candidate is used, or nullptr if no
+     *         adaptation is needed. Callers must call adapt_type() themselves, exactly once,
+     *         only for the candidate that is actually selected as the final winner — calling
+     *         it eagerly for every scored candidate would reparent the (possibly shared,
+     *         already-attached) input expression via the wrapping cast_expression it may
+     *         create, even for candidates that are ultimately discarded. Returns
+     *         {nullptr, nullptr, CAST_IMPOSSIBLE} if no viable match exists.
      */
-    std::tuple<std::shared_ptr<function>, std::shared_ptr<expression>, cast_weight>
+    std::tuple<std::shared_ptr<function>, std::shared_ptr<type>, cast_weight>
     resolve_named_binary_operator_overload(
         const binary_expression& expr,
         const std::string& op_name,

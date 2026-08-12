@@ -2502,3 +2502,71 @@ test() : int {
     REQUIRE(fn);
     CHECK(fn() == 74);  // 37 + 37
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Regression: comparing a member-call result (with a mutable/const overload
+// pair) as an operand of == used to corrupt that call expression's parent
+// chain, because operator-overload resolution's multi-tier comparison
+// fallback (resolve_comparison_with_fallback) called the mutating
+// adapt_type() eagerly on every scored/probed candidate — including tiers
+// that are ultimately discarded — rather than only on the final winner.
+// Since adapt_type() can reparent its input expression via a wrapping
+// cast_expression, this silently detached the shared '_v.get(i)' node from
+// the real expression tree, and any later attempt to resolve its enclosing
+// function context (e.g. to find 'this' for member-variable access nested
+// within it) failed with a misleading internal error ("cannot find
+// enclosing function context for member variable access").
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("Comparison against member-call result with const/mutable overload pair does not corrupt expression tree", "[operator][comparison][gen][regression]") {
+    auto jit = gen_jit(R"SRC(
+module __op_cmp_member_call_regression__;
+struct StringLike {
+    tag : int;
+    operator ==(other: const StringLike&) : bool {
+        return tag == other.tag;
+    }
+    const operator ==(other: const StringLike&) : bool {
+        return tag == other.tag;
+    }
+}
+class Box {
+    _items : StringLike[3];
+    Box() {
+        _items[0].tag = 1;
+        _items[1].tag = 2;
+        _items[2].tag = 3;
+    }
+    // Dual mutable/const accessor pair, mirroring Vector<T>::get()'s overload pair.
+    get(i: int) : StringLike& {
+        return _items[i];
+    }
+    const get(i: int) : const StringLike& {
+        return _items[i];
+    }
+}
+class Holder {
+    _box : Box;
+    const containsTag(want: const StringLike&) : bool {
+        i : int = 0;
+        while (i < 3) {
+            if (_box.get(i) == want) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+}
+test(searched_tag: int) : bool {
+    h : Holder;
+    want : StringLike;
+    want.tag = searched_tag;
+    return h.containsTag(want);
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<bool(*)(int)>("test");
+    REQUIRE(fn);
+    CHECK(fn(2) == true);
+    CHECK(fn(42) == false);
+}

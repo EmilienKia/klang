@@ -486,6 +486,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             if (upcast_this) this_expr = upcast_this;
             // Update the sub_expr of member_callee so the IR generator uses the upcast
             member_callee->sub_expr() = this_expr;
+            member_callee->sub_expr()->set_parent_expression(member_callee->shared_as<expression>());
 
             auto best = get_best_matching_function(qual_candidates, expr.arguments(), this_expr);
             if (!best.func) return;

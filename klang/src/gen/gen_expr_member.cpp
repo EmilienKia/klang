@@ -408,6 +408,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                         auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                         upcast->set_type(base_ref_type);
                         expr.sub_expr() = upcast;
+                        expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                     } else if (struct_subtype->get_member(vbptr_field_name)) {
                         // Intermediate class: has a __vbptr_X__ pointer.
                         // Use ref<A> (not A*) — the cast implementation will load the vbptr.
@@ -417,6 +418,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                         auto vbptr_cast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                         vbptr_cast->set_type(base_ref_type);
                         expr.sub_expr() = vbptr_cast;
+                        expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                     } else {
                         // Fallback: the member is in a base X that is not directly a virtual base
                         // of struct_subtype, but is reachable through a virtual base path.
@@ -445,6 +447,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                             auto vbase_upcast = cast_expression::make_shared(inter_upcast, vbase_ref_type);
                             vbase_upcast->set_type(vbase_ref_type);
                             expr.sub_expr() = vbase_upcast;
+                            expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                             found = true;
                             break;
                         }
@@ -456,6 +459,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                             auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                             upcast->set_type(base_ref_type);
                             expr.sub_expr() = upcast;
+                            expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                         }
                     }
                 } else {
@@ -466,6 +470,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                     auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                     upcast->set_type(base_ref_type);
                     expr.sub_expr() = upcast;
+                    expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                 }
             }
         } else if (hit.is_function) {
@@ -489,6 +494,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                         auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                         upcast->set_type(base_ref_type);
                         expr.sub_expr() = upcast;
+                        expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                     } else if (struct_subtype->get_member(vbptr_field_name)) {
                         // Intermediate class has __vbptr_X__: load vbptr.
                         // Use ref<A> type (not A*) so function invocations accept it as reference.
@@ -498,6 +504,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                         auto vbptr_cast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                         vbptr_cast->set_type(base_ref_type);
                         expr.sub_expr() = vbptr_cast;
+                        expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                     } else {
                         // Fallback: member function in a transitively reachable base
                         // (e.g., D->B(virtual)->A(non-virtual): method is in A)
@@ -519,6 +526,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                                 auto vbase_upcast = cast_expression::make_shared(inter_upcast, vbase_ref_type);
                                 vbase_upcast->set_type(vbase_ref_type);
                                 expr.sub_expr() = vbase_upcast;
+                                expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                                 found2 = true;
                                 break;
                             }
@@ -531,6 +539,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                             auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                             upcast->set_type(base_ref_type);
                             expr.sub_expr() = upcast;
+                            expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                         }
                     }
                 } else {
@@ -540,6 +549,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                     auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                     upcast->set_type(base_ref_type);
                     expr.sub_expr() = upcast;
+                    expr.sub_expr()->set_parent_expression(expr.shared_as<expression>());
                 }
             }
             // Step 5: For unified-call syntax: check free functions with first param = ref to struct

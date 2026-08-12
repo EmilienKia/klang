@@ -507,7 +507,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                     func = candidate;
                 }
             }
-            if(!func) {
+            if (!func) {
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), symbol.first_lexeme(),
                     "Internal error: cannot find enclosing function context for member variable '{}' access; "
                     "member variables can only be accessed from inside a method",

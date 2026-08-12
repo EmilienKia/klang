@@ -436,6 +436,24 @@ std::shared_ptr<type> template_instantiator::resolve_base_type_name(
         }
         // Try as enum type or other named type via context lookup
         if (auto resolved = ctx->from_string(name); resolved && type::is_resolved(resolved)) return resolved;
+        // Search every module actually imported by this compilation unit (mirrors
+        // the fallback used for simple/non-generic base names just below in the
+        // caller, and scope_lookup::lookup_structure_or_import's import fallback).
+        // Without this, a generic base template argument that names an imported
+        // class type (e.g. the "String" in "Box<String>", imported via "import k;")
+        // never resolves here — parent_ns->get_aggregate() only looks at the
+        // template's own enclosing namespace, not at namespaces reached only via
+        // import — silently leaving bs.base unset for that generic base and
+        // breaking is_derived_from()/upcast checks against it.
+        for (const auto& imp_mod : unit_ref.get_imports()) {
+            if (imp_mod.module_name.empty()) continue;
+            if (auto imp = unit_ref.get_or_create_imported_aggregate(
+                    imp_mod.module_name.with_back(name), ctx)) {
+                if (auto imp_agg = std::static_pointer_cast<aggregate>(imp); imp_agg->get_struct_type()) {
+                    return imp_agg->get_struct_type();
+                }
+            }
+        }
         // Final fallback: reverse-map arg_name to the original type object via
         // the substitution map. substitute_base_name uses type->to_string() for
         // non-struct/non-enum types (e.g. "Object*" for pointer_type, "Object!"
@@ -493,6 +511,19 @@ std::shared_ptr<type> template_instantiator::resolve_base_type_name(
             unit_ref.register_instantiation_struct_type(base_key, st);
         }
         base_agg->set_struct_type(st);
+        // Mirror the "normal" instantiation path (resolvers_aggregate.cpp /
+        // resolvers_type_ref.cpp), which re-triggers update_mangled_name()
+        // right after set_struct_type(): instantiate_aggregate() computes
+        // the mangled name BEFORE a struct_type exists (see its own comment,
+        // "struct_type may not be set yet"), so it can come out empty. Since
+        // this recursive base-resolution path may be the ONLY place that ever
+        // sets base_agg's struct_type (e.g. an interface reached solely as a
+        // grand-base, like Entry<K,V> under MutableEntry<K,V> under
+        // MapEntry<K,V>), we must (re-)assign its FQ name and mangled name
+        // here too (ensure_agg_names_assigned handles both, plus its
+        // constructor/method children), or it keeps an empty mangled name
+        // forever.
+        ensure_agg_names_assigned(base_agg);
     }
     return base_agg->get_struct_type();
 }
@@ -2831,6 +2862,25 @@ void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggr
     for (auto& child : concrete->get_children()) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
             inject_for_aggregate(nested);
+        }
+    }
+
+    // Recurse into resolved bases (and their own bases, transitively), mirroring
+    // inject_base_subobject_fields()'s recursion. Without this, an intermediate
+    // level of a multi-level template hierarchy that is only ever reached as a
+    // BASE (e.g. Map<K,V> under MutableSortedMap<K,V> under TreeMap<K,V>, never
+    // directly named as a type elsewhere) never gets ITS OWN constructor's
+    // base-init statements injected — its "__base_X__" subobject fields exist
+    // (added by inject_base_subobject_fields, called before this function at
+    // every top-level call site) but nothing ever calls
+    // constructor_invocation_expression for them, silently leaving that
+    // intermediate level's own bases uninitialised (e.g. never invoking
+    // Sequence<Entry<K,V>>'s constructor from within Map<K,V>'s constructor).
+    // The per-constructor `are_base_inits_injected()` guard makes this safe to
+    // call repeatedly for a base reached via multiple derived paths (diamonds).
+    for (auto& bs : concrete->get_bases()) {
+        if (bs.base) {
+            inject_constructor_member_inits(bs.base);
         }
     }
 }
