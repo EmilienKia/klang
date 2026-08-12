@@ -84,6 +84,113 @@ static bool is_type_available(unit& unit, const std::string& type_name) {
     return false;
 }
 
+// ── Phase 4: ::k::Application abstract-chain helpers ─────────────────────────
+//
+// A "chain" is the sequence of classes from the first (outermost) abstract
+// class deriving directly/transitively from ::k::Application (but not
+// ::k::Application itself), down to the final concrete `class Application`.
+// See gen_unit.cpp Pre-pass 1b for the validation algorithm using these.
+
+/// The shape of a 'main' overload, matched against the 4 standard signatures.
+enum class std_main_sig { NONE_STD, VOID_NOARGS, INT_NOARGS, VOID_ARGS, INT_ARGS };
+
+/// Classify a 'main' function's signature: one of the 4 standard shapes, or
+/// NONE_STD for any other ("custom") shape.
+static std_main_sig classify_main_signature(const std::shared_ptr<function>& f) {
+    if (!f) return std_main_sig::NONE_STD;
+    size_t n = f->get_parameter_size();
+    bool has_ret = f->has_return_type();
+    if (n == 0) {
+        return has_ret ? std_main_sig::INT_NOARGS : std_main_sig::VOID_NOARGS;
+    }
+    if (n == 1) {
+        auto p = f->parameters().front();
+        if (!p || !p->get_type()) return std_main_sig::NONE_STD;
+        auto pt = p->get_type();
+        auto no_ref = type::is_reference(pt) ? pt->get_subtype() : pt;
+        auto nc = type::remove_const(no_ref);
+        if (!type::is_array(nc)) return std_main_sig::NONE_STD;
+        return has_ret ? std_main_sig::INT_ARGS : std_main_sig::VOID_ARGS;
+    }
+    return std_main_sig::NONE_STD;
+}
+
+/// True if two 'main' functions share the exact same parameter/return shape
+/// (used to match a delegation target's abstract declaration against its
+/// override in a subsequent class of the chain).
+static bool same_main_shape(const std::shared_ptr<function>& a, const std::shared_ptr<function>& b) {
+    if (!a || !b) return false;
+    if (a->has_return_type() != b->has_return_type()) return false;
+    if (a->has_return_type()) {
+        auto ra = a->get_return_type(), rb = b->get_return_type();
+        if (!ra || !rb || ra->to_string() != rb->to_string()) return false;
+    }
+    if (a->get_parameter_size() != b->get_parameter_size()) return false;
+    for (size_t i = 0; i < a->get_parameter_size(); ++i) {
+        auto pa = a->parameters()[i], pb = b->parameters()[i];
+        if (!pa || !pb) return false;
+        auto ta = pa->get_type(), tb = pb->get_type();
+        if (!ta || !tb || ta->to_string() != tb->to_string()) return false;
+    }
+    return true;
+}
+
+/// A function is "implemented" (has a real body) iff it is neither deleted
+/// nor abstract. (A well-formed program cannot have any other reason for a
+/// function to lack a body.)
+static bool main_is_implemented(const std::shared_ptr<function>& f) {
+    return f && !f->is_deleted() && !f->is_abstract_func();
+}
+
+/// Build the ::k::Application-derived chain for `final_class`, ordered from
+/// the outermost abstract class (nearest to ::k::Application, exclusive) to
+/// `final_class` itself (last element). Returns {final_class} alone if there
+/// is no intermediate abstract class between it and ::k::Application.
+static std::vector<std::shared_ptr<klass>> build_application_chain(
+    const std::shared_ptr<klass>& final_class,
+    const std::shared_ptr<aggregate>& k_application)
+{
+    std::vector<std::shared_ptr<klass>> chain;
+    std::shared_ptr<klass> cur = final_class;
+    std::unordered_set<klass*> visited;
+    while (cur && cur.get() != k_application.get() && visited.insert(cur.get()).second) {
+        chain.push_back(cur);
+        std::shared_ptr<klass> next;
+        for (auto& bs : cur->get_bases()) {
+            if (!bs.base) continue;
+            if (bs.base.get() == k_application.get()) {
+                // Direct base is ::k::Application itself: `cur` is the top of the chain.
+                next = nullptr;
+                break;
+            }
+            if (auto bk = std::dynamic_pointer_cast<klass>(bs.base)) {
+                if (bk->is_derived_from(k_application)) {
+                    next = bk;
+                    break;
+                }
+            }
+        }
+        cur = next;
+    }
+    std::reverse(chain.begin(), chain.end());
+    return chain;
+}
+
+/// Human-readable rendering of a main signature for diagnostics.
+static std::string main_sig_to_string(const std::shared_ptr<function>& f) {
+    if (!f) return "main(...)";
+    std::string s = "main(";
+    bool first = true;
+    for (auto& p : f->parameters()) {
+        if (!first) s += ", ";
+        first = false;
+        s += p && p->get_type() ? p->get_type()->to_string() : "?";
+    }
+    s += ")";
+    if (f->has_return_type() && f->get_return_type()) s += " : " + f->get_return_type()->to_string();
+    return s;
+}
+
 /**
  * Visit the compilation unit during symbol resolution.
  *
@@ -355,28 +462,179 @@ void symbol_resolver::visit_unit(unit& unit)
             throw resolution_error(std::move(d));
         }
 
-        // Exactly one usable (non-deleted) 'main' method.
-        auto main_funcs = app_class->get_functions("main");
-        std::vector<std::shared_ptr<function>> usable_mains;
-        for (auto& f : main_funcs) {
-            if (!f->is_deleted()) usable_mains.push_back(f);
+        // ── Phase 4: walk the ::k::Application abstract-class chain ──────────
+        // Build the chain from the outermost abstract class deriving from
+        // ::k::Application (exclusive) down to the final concrete `app_class`.
+        auto chain = build_application_chain(app_class, k_application);
+        // build_application_chain always includes at least app_class itself.
+
+        auto lexeme_of = [](const std::shared_ptr<klass>& k) -> lex::opt_any_lexeme {
+            lex::opt_any_lexeme lx;
+            if (auto ast_ad = k->get_ast_aggregate_decl()) lx = lex::any_lexeme{ast_ad->name};
+            return lx;
+        };
+
+        auto raise = [&](unsigned code, const lex::opt_any_lexeme& lx,
+                          const std::string& msg, const std::vector<std::string>& args = {}) {
+            auto d = k::log::diagnostic::make_error(code, msg, args);
+            if (lx) d.at(*lx);
+            logger_relay::report(d);
+            throw resolution_error(std::move(d));
+        };
+
+        std::shared_ptr<function> chain_entry_main;   // topmost declared main (codegen target)
+        std::shared_ptr<function> required_main;      // signature still needed at current chain position
+        bool decided = false;
+
+        for (size_t i = 0; i < chain.size(); ++i) {
+            auto& level = chain[i];
+            bool is_final_level = (i + 1 == chain.size());
+            auto own_mains = level->get_functions("main");
+
+            if (!decided) {
+                if (own_mains.empty()) continue; // pure pass-through, keep looking
+
+                std::vector<std::shared_ptr<function>> stds, customs;
+                for (auto& f : own_mains) {
+                    if (classify_main_signature(f) != std_main_sig::NONE_STD) stds.push_back(f);
+                    else customs.push_back(f);
+                }
+                std::vector<std::shared_ptr<function>> active_stds;
+                for (auto& f : stds) if (!f->is_deleted()) active_stds.push_back(f);
+
+                if (active_stds.size() != 1) {
+                    raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_BAD_ACTIVE_MAIN_COUNT),
+                        lexeme_of(level),
+                        "class '{}' must leave exactly one of the four standard 'main' signatures "
+                        "non-deleted to decide the application entry point; found {}",
+                        {level->get_short_name(), std::to_string(active_stds.size())});
+                }
+                auto entry_std = active_stds.front();
+                chain_entry_main = entry_std;
+
+                if (main_is_implemented(entry_std)) {
+                    // Delegating implementation: must pair with exactly one custom abstract main.
+                    if (customs.size() != 1) {
+                        raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_BAD_DELEGATE_COUNT),
+                            lexeme_of(level),
+                            "class '{}' implements '{}' as a delegating entry point, so it must also "
+                            "declare exactly one custom abstract 'main' to delegate to; found {}",
+                            {level->get_short_name(), main_sig_to_string(entry_std), std::to_string(customs.size())});
+                    }
+                    auto delegate = customs.front();
+                    if (delegate->is_deleted() || !delegate->is_abstract_func()) {
+                        raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_DELEGATE_NOT_ABSTRACT),
+                            lexeme_of(level),
+                            "class '{}': the custom 'main' delegation target '{}' must be declared 'abstract' "
+                            "(no body, not deleted)",
+                            {level->get_short_name(), main_sig_to_string(delegate)});
+                    }
+                    required_main = delegate;
+                } else {
+                    // entry_std left abstract: it becomes the required override for the next level.
+                    if (!customs.empty()) {
+                        raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_UNEXPECTED_MAIN),
+                            lexeme_of(level),
+                            "class '{}' leaves '{}' abstract (non-delegating); it must not also declare "
+                            "custom 'main' overload(s)",
+                            {level->get_short_name(), main_sig_to_string(entry_std)});
+                    }
+                    required_main = entry_std;
+                }
+                decided = true;
+                if (is_final_level && !main_is_implemented(required_main)) {
+                    raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_FINAL_MAIN_NOT_IMPLEMENTED),
+                        app_lexeme,
+                        "'class Application' must implement the required entry-point method '{}'",
+                        {main_sig_to_string(required_main)});
+                }
+                if (is_final_level) { required_main = nullptr; }
+                continue;
+            }
+
+            // required_main is set: look for its override at this level.
+            std::shared_ptr<function> matching;
+            std::vector<std::shared_ptr<function>> others;
+            for (auto& f : own_mains) {
+                if (same_main_shape(f, required_main)) matching = f;
+                else others.push_back(f);
+            }
+            if (!matching) {
+                if (!others.empty()) {
+                    raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_UNEXPECTED_MAIN),
+                        lexeme_of(level),
+                        "class '{}' declares 'main' overload(s) that do not match the entry signature "
+                        "'{}' required by an outer class in the ::k::Application chain",
+                        {level->get_short_name(), main_sig_to_string(required_main)});
+                }
+                if (is_final_level) {
+                    raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_FINAL_MAIN_NOT_IMPLEMENTED),
+                        app_lexeme,
+                        "'class Application' must implement the required entry-point method '{}'",
+                        {main_sig_to_string(required_main)});
+                }
+                continue; // pass-through
+            }
+            if (matching->is_deleted()) {
+                raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_REQUIRED_MAIN_DELETED),
+                    lexeme_of(level),
+                    "class '{}' marks the required entry-point method '{}' as deleted; it cannot be "
+                    "deleted once selected by an outer class",
+                    {level->get_short_name(), main_sig_to_string(required_main)});
+            }
+            if (!main_is_implemented(matching)) {
+                if (!others.empty()) {
+                    raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_UNEXPECTED_MAIN),
+                        lexeme_of(level),
+                        "class '{}' re-declares '{}' abstract; it must not also declare custom 'main' overload(s)",
+                        {level->get_short_name(), main_sig_to_string(matching)});
+                }
+                if (is_final_level) {
+                    raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_FINAL_MAIN_NOT_IMPLEMENTED),
+                        app_lexeme,
+                        "'class Application' must implement the required entry-point method '{}'",
+                        {main_sig_to_string(required_main)});
+                }
+                continue; // still abstract, keep looking further down
+            }
+            // matching is implemented.
+            if (is_final_level) {
+                required_main = nullptr; // resolved
+                continue;
+            }
+            // Intermediate class implements it: must further delegate via exactly one new abstract main.
+            if (others.size() != 1) {
+                raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_BAD_DELEGATE_COUNT),
+                    lexeme_of(level),
+                    "class '{}' implements '{}' as a delegating entry point, so it must also declare "
+                    "exactly one new custom abstract 'main' to continue the chain; found {}",
+                    {level->get_short_name(), main_sig_to_string(matching), std::to_string(others.size())});
+            }
+            auto new_delegate = others.front();
+            if (new_delegate->is_deleted() || !new_delegate->is_abstract_func()) {
+                raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_CHAIN_DELEGATE_NOT_ABSTRACT),
+                    lexeme_of(level),
+                    "class '{}': the custom 'main' delegation target '{}' must be declared 'abstract' "
+                    "(no body, not deleted)",
+                    {level->get_short_name(), main_sig_to_string(new_delegate)});
+            }
+            required_main = new_delegate;
         }
-        if (usable_mains.empty()) {
-            auto d = k::log::diagnostic::make_error(
-                static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_NO_USABLE_MAIN),
+
+        if (!decided) {
+            raise(static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_NO_USABLE_MAIN),
+                app_lexeme,
                 "'class Application' must declare exactly one usable 'main' method", {});
-            if (app_lexeme) d.at(*app_lexeme);
-            logger_relay::report(d);
-            throw resolution_error(std::move(d));
-        } else if (usable_mains.size() > 1) {
-            auto d = k::log::diagnostic::make_error(
-                static_cast<unsigned int>(k::diag::application_diag::ERR_APPLICATION_MULTIPLE_MAIN),
-                "'class Application' declares {} usable 'main' overloads; exactly one is allowed",
-                {std::to_string(usable_mains.size())});
-            if (app_lexeme) d.at(*app_lexeme);
-            logger_relay::report(d);
-            throw resolution_error(std::move(d));
         }
+
+        _unit._application_entry_main = chain_entry_main;
+        // The entry call must go through virtual dispatch iff the topmost
+        // declared entry-point 'main' is itself abstract (its real body lives
+        // in a subclass further down the chain). If it has a body directly
+        // (the "delegating implementation" case), a direct call is correct:
+        // the body's own internal calls to the abstract delegate already
+        // dispatch virtually per normal language semantics.
+        _unit._application_entry_main_is_virtual = !main_is_implemented(chain_entry_main);
     }
 
     // Step 2: Visit the root namespace (recursively resolves all symbols)
@@ -404,7 +662,15 @@ void type_reference_resolver::visit_unit(unit& unit)
     if (!main_fn && unit._application_class) {
         // main() may have been moved into the (synthesised or user-declared)
         // Application class — look it up there instead.
-        main_fn = unit._application_class->get_function("main");
+        // Phase 4: if the Application class sits atop an abstract
+        // ::k::Application chain, use the chain-derived entry point (the
+        // topmost declared standard 'main' overload) instead of blindly
+        // picking the first function named "main" directly on the final
+        // class (which, in a chain, is very likely a different, non-entry
+        // overload).
+        main_fn = unit._application_entry_main
+            ? unit._application_entry_main
+            : unit._application_class->get_function("main");
     }
     if (main_fn) {
         if (auto main_func = unit.generate_main_function(main_fn)) {
@@ -1057,7 +1323,10 @@ void declaration_generator::visit_namespace(ns &ns) {
  *   1. Allocate the Application instance on the stack.
  *   2. Call the Application default constructor (sets up vtable pointers).
  *   3. Optionally build the args String[] from argc/argv.
- *   4. Call Application::main() with direct (non-virtual) dispatch.
+ *   4. Call the entry-point 'main' — direct dispatch normally, or virtual
+ *      dispatch (Phase 4) when the topmost declared 'main' in a
+ *      ::k::Application abstract chain is itself abstract (its real
+ *      implementation lives further down the chain, in an override).
  *   5. Call the Application destructor.
  *   6. Return the int result (or 0 for void mains).
  *
@@ -1145,29 +1414,49 @@ void implementation_generator::visit_global_main_function(global_main_function& 
         }
     }
 
-    // ── Call Application::main() (direct dispatch) ────────────────────────────
+    // ── Call the entry-point 'main' (direct or virtual dispatch — Phase 4) ────
     auto& real_fn   = main_func.get_real_func();
-    auto  main_it   = _context->_functions.find(real_fn.shared_as<function>());
     llvm::Value* ret_val = llvm::ConstantInt::get(i32_ty, 0);
 
-    if (main_it != _context->_functions.end()) {
-        llvm::Function* main_fn = main_it->second;
+    std::vector<llvm::Value*> main_args = {app_alloca};
+    if (main_func.has_args() && args_llvm_val) {
+        main_args.push_back(args_llvm_val);
+    }
 
-        std::vector<llvm::Value*> main_args = {app_alloca};
-        if (main_func.has_args() && args_llvm_val) {
-            main_args.push_back(args_llvm_val);
+    llvm::Type* main_ret_type = real_fn.has_return_type()
+        ? _context->get_llvm_type(real_fn.get_return_type())
+        : llvm::Type::getVoidTy(llvm_ctx);
+    if (!main_ret_type) main_ret_type = llvm::Type::getVoidTy(llvm_ctx);
+    std::vector<llvm::Type*> main_param_types = {ptr_ty};
+    for (auto& p : real_fn.parameters()) {
+        auto* pty = p ? _context->get_llvm_type(p->get_type()) : nullptr;
+        main_param_types.push_back(pty ? pty : ptr_ty);
+    }
+    auto* main_llvm_fn_type = llvm::FunctionType::get(main_ret_type, main_param_types, false);
+
+    llvm::Value* call_ret = nullptr;
+    if (_unit._application_entry_main_is_virtual) {
+        // Phase 4: the entry declared 'main' is abstract at this level; its real
+        // implementation is an override further down the ::k::Application chain.
+        // Dispatch through the vtable slot of the aggregate that declares it.
+        auto owner_klass = std::dynamic_pointer_cast<klass>(real_fn.get_owner());
+        if (owner_klass && real_fn.get_vtable_slot() >= 0) {
+            call_ret = emit_virtual_dispatch_call(*_builder, *owner_klass, app_alloca,
+                real_fn.get_vtable_slot(), main_llvm_fn_type, main_args, _context, "main_ret");
         }
-
-        if (real_fn.has_return_type()) {
-            llvm::Value* call_ret = _builder->CreateCall(
-                main_fn->getFunctionType(), main_fn, main_args, "main_ret");
-            if (call_ret->getType() == i32_ty) {
-                ret_val = call_ret;
-            } else if (call_ret->getType()->isIntegerTy()) {
-                ret_val = _builder->CreateZExtOrTrunc(call_ret, i32_ty, "main_ret_i32");
-            }
-        } else {
-            _builder->CreateCall(main_fn->getFunctionType(), main_fn, main_args);
+    } else {
+        auto main_it = _context->_functions.find(real_fn.shared_as<function>());
+        if (main_it != _context->_functions.end()) {
+            llvm::Function* main_llvm_fn = main_it->second;
+            call_ret = _builder->CreateCall(main_llvm_fn->getFunctionType(), main_llvm_fn,
+                main_args, real_fn.has_return_type() ? "main_ret" : "");
+        }
+    }
+    if (call_ret && real_fn.has_return_type()) {
+        if (call_ret->getType() == i32_ty) {
+            ret_val = call_ret;
+        } else if (call_ret->getType()->isIntegerTy()) {
+            ret_val = _builder->CreateZExtOrTrunc(call_ret, i32_ty, "main_ret_i32");
         }
     }
 

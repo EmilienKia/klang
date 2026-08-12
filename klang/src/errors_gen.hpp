@@ -735,6 +735,33 @@ enum class application_diag : unsigned int {
     /** A user-declared `class Application` is itself abstract; it must be
      * concrete/instantiable. */
     ERR_APPLICATION_MUST_NOT_BE_ABSTRACT         = 0x01F3,
+
+    // ── Phase 4: abstract Application-chain diagnostics ──────────────────────
+
+    /** At a given level of the `::k::Application`-derived abstract class
+     * chain, zero, or more than one, of the four standard `main` signatures
+     * (`main()`, `main():int`, `main(args:const String[])`,
+     * `main(args:const String[]):int`) is left non-deleted; exactly one must
+     * remain active to decide (or continue) the entry-point chain. */
+    ERR_APPLICATION_CHAIN_BAD_ACTIVE_MAIN_COUNT   = 0x01F4,
+    /** An implemented standard `main` that delegates to a custom abstract
+     * `main` must be paired with exactly one custom (non-standard-shaped)
+     * abstract `main` method declared in the same class. */
+    ERR_APPLICATION_CHAIN_BAD_DELEGATE_COUNT      = 0x01F5,
+    /** The custom `main` used as a delegation target (or as a further
+     * delegation point down the chain) must be abstract (no body). */
+    ERR_APPLICATION_CHAIN_DELEGATE_NOT_ABSTRACT   = 0x01F6,
+    /** A class in the `::k::Application` chain declares a `main` overload
+     * that does not match the signature currently required by an outer
+     * (less-derived) class in the chain. */
+    ERR_APPLICATION_CHAIN_UNEXPECTED_MAIN         = 0x01F7,
+    /** A class in the `::k::Application` chain marks the currently required
+     * `main` override as deleted; the required entry-point method cannot be
+     * deleted once selected by an outer class. */
+    ERR_APPLICATION_CHAIN_REQUIRED_MAIN_DELETED   = 0x01F8,
+    /** The final, concrete `class Application` does not implement the `main`
+     * signature required by the abstract `::k::Application` chain above it. */
+    ERR_APPLICATION_CHAIN_FINAL_MAIN_NOT_IMPLEMENTED = 0x01F9,
 };
 
 } // namespace k::diag

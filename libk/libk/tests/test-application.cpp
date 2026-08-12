@@ -185,3 +185,171 @@ TEST_CASE("Application — env() exposes process environment variables", "[libk]
 
     unsetenv("KLANG_TEST_APP_ENV_VAR");
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 6. Phase 4 — abstract ::k::Application chain: single abstract standard main
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Application chain — single abstract standard main is implemented by the final class",
+          "[libk][application][application-chain]") {
+    auto jit = jit_k(R"SRC(
+        module __app_chain_single__;
+        import k;
+
+        abstract class Layer1 : public k::Application {
+            public main() : int -> delete;
+            public main(args : const String[]) -> delete;
+            public main(args : const String[]) : int -> delete;
+            public abstract main() : int;
+        }
+
+        class Application : public Layer1 {
+            public main() : int {
+                return 42;
+            }
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    static const int argc = 1;
+    static const char* argv[] = {"prog", nullptr};
+    auto main = jit->lookup_main_entry_symbol< int(*)(int, char**) >();
+    REQUIRE(main(argc, (char**)argv) == 42);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 7. Phase 4 — delegating standard main + custom abstract main (single level)
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Application chain — delegating implementation invokes a custom abstract main",
+          "[libk][application][application-chain]") {
+    auto jit = jit_k(R"SRC(
+        module __app_chain_delegate__;
+        import k;
+
+        abstract class Layer1 : public k::Application {
+            public main() -> delete;
+            public main() : int -> delete;
+            public main(args : const String[]) : int -> delete;
+            public main(args : const String[]) : int {
+                return main(args.size);
+            }
+            protected abstract main(n : int) : int;
+        }
+
+        class Application : public Layer1 {
+            protected main(n : int) : int {
+                return 100 + n;
+            }
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    static const int argc = 3;
+    static const char* argv[] = {"prog", "a", "b", nullptr};
+    auto main = jit->lookup_main_entry_symbol< int(*)(int, char**) >();
+    REQUIRE(main(argc, (char**)argv) == 103);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 8. Phase 4 — multi-level abstract chain (2 abstract classes)
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Application chain — two-level abstract chain dispatches virtually end to end",
+          "[libk][application][application-chain]") {
+    auto jit = jit_k(R"SRC(
+        module __app_chain_multilevel__;
+        import k;
+
+        abstract class Layer1 : public k::Application {
+            public main() : int -> delete;
+            public main(args : const String[]) -> delete;
+            public main(args : const String[]) : int -> delete;
+            public abstract main() : int;
+        }
+
+        abstract class Layer2 : public Layer1 {
+            public main() : int {
+                return main(1) + 1;
+            }
+            protected abstract main(code : int) : int;
+        }
+
+        class Application : public Layer2 {
+            protected main(code : int) : int {
+                return 97 + code;
+            }
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    static const int argc = 1;
+    static const char* argv[] = {"prog", nullptr};
+    auto main = jit->lookup_main_entry_symbol< int(*)(int, char**) >();
+    REQUIRE(main(argc, (char**)argv) == 99);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 9. Phase 4 — validation errors
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Application chain — all four standard mains deleted without a custom delegate is an error",
+          "[libk][application][application-chain]") {
+    auto jit = jit_k(R"SRC(
+        module __app_chain_err_all_deleted__;
+        import k;
+
+        abstract class Layer1 : public k::Application {
+            public main() -> delete;
+            public main() : int -> delete;
+            public main(args : const String[]) -> delete;
+            public main(args : const String[]) : int -> delete;
+        }
+
+        class Application : public Layer1 {
+            public main() {
+            }
+        }
+        )SRC");
+    REQUIRE_FALSE(jit);
+}
+
+TEST_CASE("Application chain — delegating main without a paired custom abstract main is an error",
+          "[libk][application][application-chain]") {
+    auto jit = jit_k(R"SRC(
+        module __app_chain_err_no_delegate__;
+        import k;
+
+        abstract class Layer1 : public k::Application {
+            public main() -> delete;
+            public main() : int -> delete;
+            public main(args : const String[]) : int -> delete;
+            public main(args : const String[]) {
+            }
+        }
+
+        class Application : public Layer1 {
+        }
+        )SRC");
+    REQUIRE_FALSE(jit);
+}
+
+TEST_CASE("Application chain — final concrete class not implementing the required main is an error",
+          "[libk][application][application-chain]") {
+    auto jit = jit_k(R"SRC(
+        module __app_chain_err_final_missing__;
+        import k;
+
+        abstract class Layer1 : public k::Application {
+            public main() : int -> delete;
+            public main(args : const String[]) -> delete;
+            public main(args : const String[]) : int -> delete;
+            public abstract main() : int;
+        }
+
+        class Application : public Layer1 {
+            public main() : int -> delete;
+        }
+        )SRC");
+    REQUIRE_FALSE(jit);
+}

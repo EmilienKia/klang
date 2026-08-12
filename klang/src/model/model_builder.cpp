@@ -1352,11 +1352,20 @@ namespace k::model {
             function->set_redirect_target_name(func.redirect_target->to_name());
         } else if(func.aliasing_spec != parse::ast::function_decl::aliasing_spec_t::NONE) {
             // DEFAULT/DELETE is allowed on non-static constructors and assignment operator functions.
+            // DELETE (only, not DEFAULT) is also allowed on a non-static, non-static member
+            // function named 'main' — this supports the ::k::Application abstract entry-point
+            // chain mechanism, where an abstract Application subclass may mark 0-4 of the four
+            // standard 'main' overloads (void/int return, with/without 'const String[]' args) as
+            // deleted to select which one remains the active entry point at that level of the
+            // chain (see language spec: Application chain).
             bool is_assignment_operator = func.is_operator && k::op::is_assignment_operator(func_name);
-            if(!std::dynamic_pointer_cast<constructor>(function) && !is_assignment_operator) {
+            bool is_deletable_main = (func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::DELETE)
+                && !is_static && func_name == "main";
+            if(!std::dynamic_pointer_cast<constructor>(function) && !is_assignment_operator && !is_deletable_main) {
                 throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_VIRTUAL_ON_STRUCT), func.name,
-                    "'-> default' / '-> delete' is only allowed on non-static constructors or assignment operators; "
-                    "function '{}' is not a non-static constructor or assignment operator",
+                    "'-> default' / '-> delete' is only allowed on non-static constructors, assignment "
+                    "operators, or (delete-only) a non-static member function named 'main'; "
+                    "function '{}' is none of these",
                     {func_name});
             }
             auto aliasing = (func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::DEFAULT)

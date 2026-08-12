@@ -216,6 +216,27 @@ protected:
      */
     std::shared_ptr<global_variable_definition> _app_instance_var;
 
+    /**
+     * Phase 4: the topmost declared `main` overload in the `::k::Application`
+     * abstract-class chain that decides the application's entry-point
+     * signature (see gen_unit.cpp Pre-pass 1b).
+     * - nullptr                      → no chain / not applicable (Phase 2-3
+     *                                  behaviour: `_application_class`'s own
+     *                                  single usable `main` is used directly).
+     * - non-null, _application_entry_main_is_virtual == false
+     *                                → same as Phase 2-3 (single-level case).
+     * - non-null, _application_entry_main_is_virtual == true
+     *                                → the C-ABI main proxy must call this
+     *                                  function through virtual dispatch, so
+     *                                  the call cascades through however many
+     *                                  delegating overrides exist down to the
+     *                                  final concrete Application's override.
+     */
+    std::shared_ptr<function> _application_entry_main;
+
+    /** See _application_entry_main. */
+    bool _application_entry_main_is_virtual = false;
+
 
     /**
      * Source objects for re-parsed template definitions imported from KDI.
