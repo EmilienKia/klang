@@ -1504,6 +1504,8 @@ namespace k::parse {
             std::string template_source_text;
             std::vector<lex::keyword> specifiers;
             lex::identifier name;
+            lex::opt_any_lexeme operator_; /** Lexeme for the operator keyword, if this is an operator function declaration. */
+            lex::opt_any_lexeme operator_symbol; /** Lexeme for the operator symbol, if this is an operator function declaration. */
             std::shared_ptr<ast::type_specifier> type;
             std::vector<std::shared_ptr<parameter_spec>> params;
             /** Member initializer list (only for constructors). */

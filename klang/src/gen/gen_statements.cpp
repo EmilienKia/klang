@@ -712,7 +712,8 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
 
         auto cast = keep_temp_array_ref ? expr : adapt_type(expr, ret_type);
         if(!cast) {
-            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH), stmt.get_ast_return_statement()->ret, "Return expression type must be compatible to the expected function return type");
+            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH), lex::any_lexeme(stmt.get_ast_return_statement()->ret),
+                        "Return expression type must be compatible to the expected function return type");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_expression(cast);
@@ -2301,7 +2302,8 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
             expr->accept(*this);
             auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
             if(!cast) {
-                throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), stmt.get_ast_if_else_stmt()->if_kw, "If test expression type must be convertible to bool");
+                throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL),
+                    lex::any_lexeme(stmt.get_ast_if_else_stmt()->if_kw), "If test expression type must be convertible to bool");
             } else if(cast != expr) {
                 stmt.set_test_expr(cast);
             }
@@ -2335,7 +2337,8 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
                         if(cast_fn) can_cast = true;
                     }
                     if(!can_cast) {
-                        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), stmt.get_ast_if_else_stmt()->if_kw, "If condition variable type must be convertible to bool");
+                        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL),
+                            lex::any_lexeme(stmt.get_ast_if_else_stmt()->if_kw), "If condition variable type must be convertible to bool");
                     }
                 }
             }
@@ -2347,7 +2350,8 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
             expr->accept(*this);
             auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
             if(!cast) {
-                throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), stmt.get_ast_if_else_stmt()->if_kw, "If test expression type must be convertible to bool");
+                throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL),
+                    lex::any_lexeme(stmt.get_ast_if_else_stmt()->if_kw), "If test expression type must be convertible to bool");
             } else if(cast != expr ) {
                 // Casted, assign casted expression as return expr.
                 stmt.set_test_expr(cast);
@@ -2769,7 +2773,8 @@ void type_reference_resolver::visit_while_statement(while_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
-            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_WHILE_COND_NOT_BOOL), stmt.get_ast_while_stmt()->while_kw, "While test expression type must be convertible to bool");
+            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_WHILE_COND_NOT_BOOL),
+                lex::any_lexeme(stmt.get_ast_while_stmt()->while_kw), "While test expression type must be convertible to bool");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_test_expr(cast);
@@ -2900,7 +2905,8 @@ void type_reference_resolver::visit_for_statement(for_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
-            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_FOR_COND_NOT_BOOL), stmt.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_FOR_COND_NOT_BOOL),
+                lex::any_lexeme(stmt.get_ast_for_stmt()->for_kw), "For test expression type must be convertible to bool");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_test_expr(cast);

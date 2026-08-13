@@ -1558,10 +1558,14 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     bool is_cast_operator = false;
     std::string canonical_name;
     auto lname= _lexer.get();
+    lex::opt_any_lexeme loperator;
+    lex::opt_any_lexeme loperator_name;
 
     if(lname == lex::keyword::OPERATOR) {
         // Parse the operator symbol and map to canonical name
         is_operator = true;
+        loperator = lname;
+
         auto lop = _lexer.get();
         if(!lop) {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EXPECTED_OPERATOR_SYMBOL), _lexer.pick_current(), "Expected operator symbol after 'operator' keyword");
@@ -1588,6 +1592,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             } else {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CAST_OPERATOR_EMPTY_PARAMS), _lexer.pick_current(), "Casting operator must have empty parameter list: operator()");
             }
+            loperator_name = lop;
         }
 
         // Check for subscript operator: operator[] (index)
@@ -1600,6 +1605,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             } else {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CAST_OPERATOR_EMPTY_PARAMS), _lexer.pick_current(), "Subscript operator must use empty brackets: operator[]");
             }
+            loperator_name = lop;
         }
 
         if(is_cast_operator) {
@@ -1671,6 +1677,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 default:
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_UNSUPPORTED_OPERATOR_SYMBOL), _lexer.pick_previous(), "Unsupported operator symbol in 'operator' declaration");
             }
+            loperator_name = lop;
         } else if(lex::is<lex::identifier>(lop) && std::string{lex::as<lex::identifier>(lop).content} == "_") {
             // Postfix forms: _++ or _--
             auto lop2 = _lexer.get();
@@ -1681,6 +1688,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             } else {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_POSTFIX_OPERATOR_EXPECT_INC_DEC), _lexer.pick_previous(), "Expected '++' or '--' after '_' in postfix operator declaration (use '_++' for postfix increment or '_--' for postfix decrement)");
             }
+            loperator_name = lop2;
         } else {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_INVALID_OPERATOR_AFTER_KEYWORD), _lexer.pick_previous(), "Expected a valid operator symbol after 'operator' keyword");
         }
@@ -2222,6 +2230,10 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     }
     auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, statements, is_destructor);
     decl->is_operator = is_operator;
+    if (is_operator) {
+        decl->operator_ = loperator;
+        decl->operator_symbol = loperator_name;
+    }
     decl->annotations = std::move(annotations);
     decl->template_params = std::move(template_params);
     decl->is_generic = fn_is_generic;

@@ -290,7 +290,9 @@ protected:
                                  const std::vector<std::shared_ptr<expression>>& args,
                                  const lex::opt_any_lexeme& lexeme);
 
-    [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {        auto diag = k::log::diagnostic::make_error(code, message, args);
+    [[noreturn]] void throw_error(unsigned int code, const lex::any_lexeme &lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        auto diag = k::log::diagnostic::make_error(code, message, args);
+        diag.at(lexeme);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }

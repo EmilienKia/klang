@@ -1409,7 +1409,9 @@ void symbol_resolver::visit_klass(klass& klass) {
             static_cast<unsigned int>(k::diag::structure_diag::ERR_PRIVATE_OVERRIDE),
             "private function '{}' in class '{}' cannot override a virtual function",
             {f->get_short_name(), klass.get_short_name()});
-        if (klass_lexeme) diag.at(*klass_lexeme);
+        if (auto ast_f = f->get_ast_function_decl()) {
+            diag.at(ast_f->name);
+        }
         throw resolution_error(std::move(diag));
     }
 
@@ -1421,7 +1423,9 @@ void symbol_resolver::visit_klass(klass& klass) {
             "function '{}' in class '{}' is declared 'override' but does not override "
             "any inherited virtual function",
             {f->get_short_name(), klass.get_short_name()});
-        if (klass_lexeme) diag.at(*klass_lexeme);
+        if (auto ast_f = f->get_ast_function_decl()) {
+            diag.at(ast_f->name);
+        }
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
@@ -1433,7 +1437,9 @@ void symbol_resolver::visit_klass(klass& klass) {
             "function '{}' in class '{}' overrides a virtual function but is not "
             "declared 'override'; add the 'override' specifier",
             {f->get_short_name(), klass.get_short_name()});
-        if (klass_lexeme) diag.at(*klass_lexeme);
+        if (auto ast_f = f->get_ast_function_decl()) {
+            diag.at(ast_f->name);
+        }
         logger_relay::report(diag);
     }
 
@@ -1450,7 +1456,9 @@ void symbol_resolver::visit_klass(klass& klass) {
             {f->get_short_name(), klass.get_short_name(),
              overridden ? overridden->get_short_name() : f->get_short_name(),
              inherited_from});
-        if (klass_lexeme) diag.at(*klass_lexeme);
+        if (auto ast_f = f->get_ast_function_decl()) {
+            diag.at(ast_f->name);
+        }
         logger_relay::report(diag);
     }
 
@@ -1465,7 +1473,9 @@ void symbol_resolver::visit_klass(klass& klass) {
             "function '{}' in interface '{}' redeclares inherited default method from '{}' without a body; "
             "this hides the inherited default implementation",
             {f->get_short_name(), klass.get_short_name(), inherited_from});
-        if (klass_lexeme) diag.at(*klass_lexeme);
+        if (auto ast_f = f->get_ast_function_decl()) {
+            diag.at(ast_f->name);
+        }
         logger_relay::report(diag);
     }
 
@@ -1479,7 +1489,9 @@ void symbol_resolver::visit_klass(klass& klass) {
                 "class '{}' has abstract method '{}' but is not declared 'abstract'; "
                 "add the 'abstract' specifier to the class declaration",
                 {klass.get_short_name(), func->get_short_name()});
-            if (klass_lexeme) diag.at(*klass_lexeme);
+            if (auto ast_f = func->get_ast_function_decl()) {
+                diag.at(ast_f->name);
+            }
             logger_relay::report(diag);
             throw resolution_error(std::move(diag));
         }
@@ -1494,7 +1506,9 @@ void symbol_resolver::visit_klass(klass& klass) {
                 {klass.get_short_name(), entry.func->get_short_name(),
                  entry.introducing_func->get_owner() ? entry.introducing_func->get_owner()->get_short_name() : "?",
                  entry.func->get_short_name()});
-            if (klass_lexeme) diag.at(*klass_lexeme);
+            if (auto ast_f = entry.func->get_ast_function_decl()) {
+                diag.at(ast_f->name);
+            }
             logger_relay::report(diag);
             throw resolution_error(std::move(diag));
         }
@@ -1542,7 +1556,9 @@ void symbol_resolver::visit_klass(klass& klass) {
                 {klass.get_short_name(), sig.get_short_name(),
                  sig.get_owner() ? sig.get_owner()->get_short_name() : "?",
                  sig.get_short_name()});
-            if (klass_lexeme) diag.at(*klass_lexeme);
+            if (auto ast_f = sig.get_ast_function_decl()) {
+                diag.at(ast_f->name);
+            }
             logger_relay::report(diag);
             throw resolution_error(std::move(diag));
         };

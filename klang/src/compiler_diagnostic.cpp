@@ -261,10 +261,10 @@ void compiler::print_logs() {
 void compiler::log_source_line(const source& src, unsigned int line, unsigned int col) {
     auto txt = src.get_line(line);
     fmt::print("{:>5d} | {}", line, txt);
-    fmt::print("      | {}^", std::string(col, ' ') );
     if (txt.empty() || (txt.back()!='\r' && txt.back()!='\n')) {
         fmt::print("\n");
     }
+    fmt::print("      | {}^\n", std::string(col, ' ') );
 }
 
 void compiler::log_source_line(const source& src, unsigned int line, unsigned int start, unsigned int end) {
@@ -273,13 +273,13 @@ void compiler::log_source_line(const source& src, unsigned int line, unsigned in
     } else {
         auto txt = src.get_line(line);
         fmt::print("{:>5d} | {}", line, txt);
-        if (start == end) {
-            fmt::print("      | {}^", std::string(start, ' ') );
-        } else {
-            fmt::print("      | {}^{}", std::string(start, ' '), std::string(end-start-1, '~') );
-        }
         if (txt.empty() || (txt.back()!='\r' && txt.back()!='\n')) {
             fmt::print("\n");
+        }
+        if (start == end) {
+            fmt::print("      | {}^\n", std::string(start, ' ') );
+        } else {
+            fmt::print("      | {}^{}\n", std::string(start, ' '), std::string(end-start-1, '~') );
         }
     }
 }

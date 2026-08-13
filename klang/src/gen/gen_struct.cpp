@@ -926,7 +926,7 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
             if (!is_asgn) continue;
             if (fn->is_deleted()) continue; // deleted operators have no return type
             if (!fn->has_return_type()) {
-                warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_BASE), st_lexeme,
+                warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_BASE), fn->get_ast_function_decl()->operator_,
                     "Assignment operator '{}' in '{}' has no return type; "
                     "conventionally it should return '{}' to allow chaining (e.g. a = b = c)",
                     {name, st.get_short_name(), expected_ret ? expected_ret->to_string() : st.get_short_name() + "&"});
@@ -935,7 +935,7 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
                 if (!type::is_reference(ret) ||
                     !type::are_equal(type::remove_const(std::dynamic_pointer_cast<reference_type>(ret)->get_subtype()),
                                      type::remove_const(st_type))) {
-                    warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_MEMBER), st_lexeme,
+                    warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_MEMBER), fn->get_ast_function_decl()->operator_,
                         "Assignment operator '{}' in '{}' returns '{}' instead of '{}'; "
                         "returning a reference to the owning type is recommended for chaining",
                         {name, st.get_short_name(),
