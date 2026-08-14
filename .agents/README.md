@@ -41,4 +41,5 @@ This directory stores reusable, project-specific operational definitions:
 - `language-change-sync/SKILL.md`
 - `test-timeout-budgeting/SKILL.md`
 - `kdi-change-impact-checklist/SKILL.md`
+- `klangc-compiler-debugging-gdb-lldb/SKILL.md`
 - `k-program-debugging-gdb-lldb/SKILL.md`

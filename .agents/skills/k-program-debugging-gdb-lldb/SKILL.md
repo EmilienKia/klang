@@ -17,14 +17,16 @@ Debug a K source program after compilation to a native executable.
 ## 1) Compile a K program with debug-friendly settings
 
 ```bash
-./cmake-build-debug/klang/klangc path/to/program.k -o /tmp/program_dbg
+./cmake-build-debug/klang/klangc -g path/to/program.k -o /tmp/program_dbg
 ```
 
 Notes:
-- Use a non-optimized debug build directory (`cmake-build-debug`) for best symbol fidelity.
+- Always pass `-g` (or `--debug`) to emit full DWARF metadata (variable locations, nested lexical blocks, scopes).
+- Use `--gdwarf-4` or `--gdwarf-5` to target specific DWARF versions if required.
+- If stepping only is required without variable metadata, use `--gline-tables-only`.
 - If needed, add compiler trace during diagnosis:
   ```bash
-  ./cmake-build-debug/klang/klangc --log-level trace path/to/program.k -o /tmp/program_dbg
+  ./cmake-build-debug/klang/klangc -g --log-level trace path/to/program.k -o /tmp/program_dbg
   ```
 
 ## 2) Debug with gdb

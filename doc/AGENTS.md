@@ -10,6 +10,7 @@ Scope: language spec, KDI spec, stdlib references, and man pages.
 - `spec/kdi/`: KDI format specification.
 - `spec/stdlib/`: stdlib public/protected API docs.
 - `man/`: `klangc` and `kditool` user manuals.
+- `howtos/`: practical guides (compiler debugging, K program debugging, CMake integration).
 
 ## 1.1 Investigation map
 
@@ -20,6 +21,9 @@ Scope: language spec, KDI spec, stdlib references, and man pages.
 | KDI format/update | `spec/kdi/` |
 | stdlib public API docs | `spec/stdlib/` |
 | CLI options/behavior docs | `man/klangc.md`, `man/kdi.md` |
+| Compiler debugging guide | `howtos/debug-klangc-compiler.md` |
+| K program debugging guide | `howtos/debug-compiled-k-programs.md` |
+| CMake build integration guide | `howtos/cmake-integration-k-projects.md` |
 
 ---
 
@@ -39,6 +43,10 @@ Scope: language spec, KDI spec, stdlib references, and man pages.
 - Keep docs technical, concise, and version-consistent.
 - Prefer normative wording for spec rules (`must`, `must not`, `may`).
 - Keep examples valid against current compiler behavior.
+- **Never expose local environment/agent constraints in documentation files (`doc/`):**
+  - Do not mention machine-local resource caps (e.g., `-j3`, VM memory limits, agent concurrency budgets) in user-facing manuals, specs, or how-tos.
+  - Document generic, standard commands (e.g. `cmake --build cmake-build-debug` or `ninja <target>`) in `doc/`.
+  - Local execution constraints remain mandatory operational guardrails for AI agents when running builds/tests, but belong solely in agent guides (`AGENTS.md`, `.agents/`).
 - When adding a new language feature, include at least:
   - grammar change (if applicable),
   - semantic rule text,
@@ -46,7 +54,8 @@ Scope: language spec, KDI spec, stdlib references, and man pages.
 
 ## 4. Update checklist
 
-1. Update the relevant spec/man page.
+1. Update the relevant spec/man/howto page.
 2. Verify examples still compile/run with current behavior.
-3. If compiler/runtime behavior changed, ensure matching tests exist.
-4. Keep wording normative and avoid implementation-only details in public docs.
+3. Ensure no local machine/agent constraints (e.g. `-j3`, VM limits) leak into `doc/`.
+4. If compiler/runtime behavior changed, ensure matching tests exist.
+5. Keep wording normative and avoid implementation-only details in public docs.
