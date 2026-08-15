@@ -17,6 +17,7 @@
  */
 
 #include "constant_value.hpp"
+#include "constant_evaluator.hpp"
 #include "aggregate_value.hpp"
 #include "model_aggregate.hpp"
 #include "model_enum.hpp"
@@ -482,7 +483,11 @@ std::optional<k::value_type> constant_value::to_value_type() const {
         }, *sc);
     }
     if (auto* ev = std::get_if<enum_value>(&_storage)) {
-        return k::value_type(ev->raw_value);
+        if (ev->enum_def && ev->enum_def->get_underlying_type()) {
+            auto narrowed = constant_evaluator::cast_to_type(constant_value(ev->raw_value), ev->enum_def->get_underlying_type());
+            if (narrowed) return narrowed->to_value_type();
+        }
+        return k::value_type(static_cast<int>(ev->raw_value));
     }
     if (auto* sv = std::get_if<std::shared_ptr<struct_value>>(&_storage)) {
         if (!*sv) return std::nullopt;

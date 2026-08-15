@@ -21,6 +21,8 @@
 
 #include "../model/model.hpp"
 #include "../model/aggregate_value.hpp"
+#include "../model/constant_value.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "../model/type.hpp"
 #include "../model/template.hpp"
 #include "../parse/ast.hpp"
@@ -45,26 +47,17 @@ using k::parse::ast::cast_expr;
 using k::parse::ast::brace_init_list;
 using k::parse::ast::designated_init_element;
 
-/** Intermediate evaluation result: a scalar value plus, when it directly
- *  denotes an enum entry, the enumeration it belongs to (used to validate
- *  enum-typed value parameters strictly — arithmetic on enum entries is not
- *  considered to still be "of that enum type"). */
-struct raw_result {
-    k::value_type value;
-    std::shared_ptr<enumeration> source_enum;
-};
-
 struct eval_outcome {
     bool ok = false;
-    raw_result result;
+    constant_value value;
     unsigned int error_code = 0;
     std::string message;
     std::vector<std::string> message_args;
 
-    static eval_outcome success(k::value_type v, std::shared_ptr<enumeration> en = nullptr) {
+    static eval_outcome success(constant_value v) {
         eval_outcome o;
         o.ok = true;
-        o.result = raw_result{std::move(v), std::move(en)};
+        o.value = std::move(v);
         return o;
     }
     static eval_outcome defer() {
@@ -83,76 +76,6 @@ struct eval_outcome {
     }
     bool is_hard_error() const { return !ok && error_code != 0; }
 };
-
-/** Extract a generic numeric view (int64_t + double, tagged is_float) from a k::value_type.
- *  Returns false for monostate/nullptr/string/aggregate_value (non-numeric). */
-bool as_numeric(const k::value_type& v, bool& is_float, int64_t& ival, double& fval) {
-    return std::visit([&](auto&& x) -> bool {
-        using T = std::decay_t<decltype(x)>;
-        if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>
-                      || std::is_same_v<T, std::string>) {
-            return false;
-        } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
-            // Aggregate values are not numeric
-            return false;
-        } else if constexpr (std::is_floating_point_v<T>) {
-            is_float = true;
-            fval = static_cast<double>(x);
-            ival = static_cast<int64_t>(x);
-            return true;
-        } else {
-            is_float = false;
-            ival = static_cast<int64_t>(x);
-            fval = static_cast<double>(x);
-            return true;
-        }
-    }, v);
-}
-
-/** Build a k::value_type of exactly the C++ alternative matching `kind`, from a signed
- *  64-bit magnitude (used both for narrowing to a declared parameter type and for
- *  reconstructing an enum entry's underlying representation). */
-k::value_type narrow_int_to_primitive(int64_t v, primitive_type::PRIMITIVE_TYPE kind) {
-    switch (kind) {
-        case primitive_type::BOOL:               return k::value_type{ v != 0 };
-        case primitive_type::CHAR:                return k::value_type{ static_cast<char>(v) };
-        case primitive_type::UNSIGNED_BYTE:       return k::value_type{ static_cast<unsigned char>(v) };
-        case primitive_type::SHORT:               return k::value_type{ static_cast<short>(v) };
-        case primitive_type::UNSIGNED_SHORT:      return k::value_type{ static_cast<unsigned short>(v) };
-        case primitive_type::INT:                 return k::value_type{ static_cast<int>(v) };
-        case primitive_type::UNSIGNED_INT:        return k::value_type{ static_cast<unsigned int>(v) };
-        case primitive_type::LONG:                return k::value_type{ static_cast<long>(v) };
-        case primitive_type::UNSIGNED_LONG:       return k::value_type{ static_cast<unsigned long>(v) };
-        case primitive_type::LONG_LONG:           return k::value_type{ static_cast<long long>(v) };
-        case primitive_type::UNSIGNED_LONG_LONG:  return k::value_type{ static_cast<unsigned long long>(v) };
-        case primitive_type::FLOAT:               return k::value_type{ static_cast<float>(v) };
-        case primitive_type::DOUBLE:              return k::value_type{ static_cast<double>(v) };
-        default:                                  return k::value_type{ static_cast<int>(v) };
-    }
-}
-
-k::value_type narrow_double_to_primitive(double v, primitive_type::PRIMITIVE_TYPE kind) {
-    switch (kind) {
-        case primitive_type::FLOAT:  return k::value_type{ static_cast<float>(v) };
-        case primitive_type::DOUBLE: return k::value_type{ v };
-        default:                     return narrow_int_to_primitive(static_cast<int64_t>(v), kind);
-    }
-}
-
-/** Default (un-narrowed) representation, used when no expected type is known. */
-k::value_type default_int_value(int64_t v) { return k::value_type{ static_cast<int>(v) }; }
-k::value_type default_float_value(double v) { return k::value_type{ v }; }
-
-/** Resolve `expected_type` (possibly const/wrapped) down to a primitive_type or enum_type,
- *  or nullptr if neither (in which case narrowing is skipped). */
-void unwrap_expected_type(const std::shared_ptr<type>& expected_type,
-                           std::shared_ptr<primitive_type>& out_prim,
-                           std::shared_ptr<enum_type>& out_enum) {
-    if (!expected_type) return;
-    auto t = type::remove_const(expected_type);
-    out_prim = std::dynamic_pointer_cast<primitive_type>(t);
-    out_enum = std::dynamic_pointer_cast<enum_type>(t);
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Enum-entry / dependent value-parameter identifier resolution
@@ -253,7 +176,7 @@ std::optional<k::value_type> lookup_enclosing_instantiated_value_arg(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Recursive raw evaluator
+// Recursive raw evaluator delegating to constant_evaluator
 // ─────────────────────────────────────────────────────────────────────────────
 
 eval_outcome eval_raw(const expression* expr,
@@ -268,7 +191,7 @@ eval_outcome eval_literal(const literal_expr& lit) {
         if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
             return eval_outcome::defer();
         } else {
-            return eval_outcome::success(k::value_type{v});
+            return eval_outcome::success(constant_value(v));
         }
     }, val);
 }
@@ -284,7 +207,7 @@ eval_outcome eval_identifier(const identifier_expr& id,
     if (q.size() == 1 && !q.has_root_prefix()) {
         const std::string name = q[0];
         if (auto v = lookup_enclosing_instantiated_value_arg(context_elem, name)) {
-            return eval_outcome::success(*v);
+            return eval_outcome::success(constant_value(*v));
         }
         return eval_outcome::defer();
     }
@@ -304,13 +227,13 @@ eval_outcome eval_identifier(const identifier_expr& id,
                 "enum '" + en->get_short_name() + "' has no entry named '" + entry_name + "'",
                 {en->get_short_name(), entry_name});
         }
-        k::value_type underlying;
-        if (auto ut = en->get_underlying_type()) {
-            underlying = narrow_int_to_primitive(entry->value, ut->get_type());
-        } else {
-            underlying = default_int_value(entry->value);
+        size_t idx = 0;
+        for (const auto& ent : en->entries()) {
+            if (ent.name == entry_name) break;
+            ++idx;
         }
-        return eval_outcome::success(std::move(underlying), en);
+        enum_value ev{en, idx, entry->value, entry->name};
+        return eval_outcome::success(constant_value(ev));
     }
 
     return eval_outcome::defer();
@@ -323,34 +246,44 @@ eval_outcome eval_unary(const unary_prefix_expr& ue,
     auto sub = eval_raw(ue.expr().get(), context_elem, ctx, unit_ptr);
     if (!sub.ok) return sub;
 
-    bool is_float = false; int64_t ival = 0; double fval = 0.0;
-    if (!as_numeric(sub.result.value, is_float, ival, fval)) {
+    if (!sub.value.is_numeric() && !sub.value.is_bool()) {
         return eval_outcome::error(
             static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
             "unary operator applied to a non-numeric constant value");
     }
 
+    unary_op uop;
     switch (ue.op.type) {
         case lex::operator_::MINUS:
-            return is_float ? eval_outcome::success(default_float_value(-fval))
-                             : eval_outcome::success(default_int_value(-ival));
+            uop = unary_op::MINUS;
+            break;
         case lex::operator_::PLUS:
-            return is_float ? eval_outcome::success(default_float_value(fval))
-                             : eval_outcome::success(default_int_value(ival));
+            uop = unary_op::PLUS;
+            break;
         case lex::operator_::EXCLAMATION_MARK:
-            return eval_outcome::success(k::value_type{ is_float ? (fval == 0.0) : (ival == 0) });
+            uop = unary_op::LOGICAL_NOT;
+            break;
         case lex::operator_::TILDE:
-            if (is_float) {
+            if (sub.value.is_float()) {
                 return eval_outcome::error(
                     static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
                     "bitwise complement '~' requires an integer constant");
             }
-            return eval_outcome::success(default_int_value(~ival));
+            uop = unary_op::BITWISE_NOT;
+            break;
         default:
             return eval_outcome::error(
                 static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
                 "unsupported unary operator in template value argument");
     }
+
+    auto res = constant_evaluator::eval_unary(uop, sub.value, nullptr);
+    if (!res.has_value()) {
+        return eval_outcome::error(
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+            "unsupported unary operator in template value argument");
+    }
+    return eval_outcome::success(*res);
 }
 
 eval_outcome eval_binary(const binary_operator_expr& be,
@@ -364,25 +297,25 @@ eval_outcome eval_binary(const binary_operator_expr& be,
     if (op == op_t::DOUBLE_AMPERSAND || op == op_t::DOUBLE_PIPE) {
         auto l = eval_raw(be.lexpr().get(), context_elem, ctx, unit_ptr);
         if (!l.ok) return l;
-        bool lf; int64_t li; double ld;
-        if (!as_numeric(l.result.value, lf, li, ld)) {
+        if (!l.value.is_numeric() && !l.value.is_bool()) {
             return eval_outcome::error(
                 static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
                 "logical operator applied to a non-numeric constant value");
         }
-        bool lbool = lf ? (ld != 0.0) : (li != 0);
-        if (op == op_t::DOUBLE_AMPERSAND && !lbool) return eval_outcome::success(k::value_type{false});
-        if (op == op_t::DOUBLE_PIPE && lbool) return eval_outcome::success(k::value_type{true});
+        bool lbool = l.value.is_bool() ? l.value.get_bool()
+            : (l.value.is_float() ? (l.value.get_double() != 0.0) : (l.value.get_int64() != 0));
+        if (op == op_t::DOUBLE_AMPERSAND && !lbool) return eval_outcome::success(constant_value(false));
+        if (op == op_t::DOUBLE_PIPE && lbool) return eval_outcome::success(constant_value(true));
         auto r = eval_raw(be.rexpr().get(), context_elem, ctx, unit_ptr);
         if (!r.ok) return r;
-        bool rf; int64_t ri; double rd;
-        if (!as_numeric(r.result.value, rf, ri, rd)) {
+        if (!r.value.is_numeric() && !r.value.is_bool()) {
             return eval_outcome::error(
                 static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
                 "logical operator applied to a non-numeric constant value");
         }
-        bool rbool = rf ? (rd != 0.0) : (ri != 0);
-        return eval_outcome::success(k::value_type{ rbool });
+        bool rbool = r.value.is_bool() ? r.value.get_bool()
+            : (r.value.is_float() ? (r.value.get_double() != 0.0) : (r.value.get_int64() != 0));
+        return eval_outcome::success(constant_value(rbool));
     }
 
     auto l = eval_raw(be.lexpr().get(), context_elem, ctx, unit_ptr);
@@ -390,75 +323,96 @@ eval_outcome eval_binary(const binary_operator_expr& be,
     auto r = eval_raw(be.rexpr().get(), context_elem, ctx, unit_ptr);
     if (!r.ok) return r;
 
-    bool lf, rf; int64_t li, ri; double ld, rd;
-    if (!as_numeric(l.result.value, lf, li, ld) || !as_numeric(r.result.value, rf, ri, rd)) {
+    if (!l.value.is_numeric() || !r.value.is_numeric()) {
         return eval_outcome::error(
             static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
             "binary operator applied to a non-numeric constant value");
     }
-    bool use_float = lf || rf;
+
+    if (op == op_t::SLASH) {
+        if ((r.value.is_float() && r.value.get_double() == 0.0) || (!r.value.is_float() && r.value.get_int64() == 0)) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+                "division by zero in template value argument constant expression");
+        }
+    } else if (op == op_t::PERCENT) {
+        if (l.value.is_float() || r.value.is_float()) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
+                "operator '%' requires integer constant operands");
+        }
+        if (r.value.get_int64() == 0) {
+            return eval_outcome::error(
+                static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+                "modulo by zero in template value argument constant expression");
+        }
+    }
 
     switch (op) {
-        case op_t::PLUS:  return use_float ? eval_outcome::success(default_float_value(ld + rd))
-                                            : eval_outcome::success(default_int_value(li + ri));
-        case op_t::MINUS: return use_float ? eval_outcome::success(default_float_value(ld - rd))
-                                            : eval_outcome::success(default_int_value(li - ri));
-        case op_t::STAR:  return use_float ? eval_outcome::success(default_float_value(ld * rd))
-                                            : eval_outcome::success(default_int_value(li * ri));
+        case op_t::PLUS:
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::ADD, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
+        case op_t::MINUS:
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::SUB, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
+        case op_t::STAR:
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::MUL, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
         case op_t::SLASH:
-            if (use_float) {
-                if (rd == 0.0) {
-                    return eval_outcome::error(
-                        static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
-                        "division by zero in template value argument constant expression");
-                }
-                return eval_outcome::success(default_float_value(ld / rd));
-            }
-            if (ri == 0) {
-                return eval_outcome::error(
-                    static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
-                    "division by zero in template value argument constant expression");
-            }
-            return eval_outcome::success(default_int_value(li / ri));
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::DIV, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
         case op_t::PERCENT:
-            if (use_float) {
-                return eval_outcome::error(
-                    static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
-                    "operator '%' requires integer constant operands");
-            }
-            if (ri == 0) {
-                return eval_outcome::error(
-                    static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
-                    "modulo by zero in template value argument constant expression");
-            }
-            return eval_outcome::success(default_int_value(li % ri));
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::MOD, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
         case op_t::AMPERSAND:
-            if (use_float) break;
-            return eval_outcome::success(default_int_value(li & ri));
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::BITWISE_AND, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
         case op_t::PIPE:
-            if (use_float) break;
-            return eval_outcome::success(default_int_value(li | ri));
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::BITWISE_OR, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
         case op_t::CARET:
-            if (use_float) break;
-            return eval_outcome::success(default_int_value(li ^ ri));
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::BITWISE_XOR, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
         case op_t::DOUBLE_CHEVRON_OPEN:
-            if (use_float) break;
-            return eval_outcome::success(default_int_value(li << ri));
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::SHIFT_LEFT, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
         case op_t::DOUBLE_CHEVRON_CLOSE:
-            if (use_float) break;
-            return eval_outcome::success(default_int_value(li >> ri));
+            if (auto res = constant_evaluator::eval_binary_arithmetic(binary_arith_op::SHIFT_RIGHT, l.value, r.value, nullptr))
+                return eval_outcome::success(*res);
+            break;
         case op_t::DOUBLE_EQUAL:
-            return eval_outcome::success(k::value_type{ use_float ? (ld == rd) : (li == ri) });
+            if (auto res = constant_evaluator::eval_comparison(comparison_op::EQUAL, l.value, r.value))
+                return eval_outcome::success(*res);
+            break;
         case op_t::EXCLAMATION_MARK_EQUAL:
-            return eval_outcome::success(k::value_type{ use_float ? (ld != rd) : (li != ri) });
+            if (auto res = constant_evaluator::eval_comparison(comparison_op::NOT_EQUAL, l.value, r.value))
+                return eval_outcome::success(*res);
+            break;
         case op_t::CHEVRON_OPEN:
-            return eval_outcome::success(k::value_type{ use_float ? (ld < rd) : (li < ri) });
+            if (auto res = constant_evaluator::eval_comparison(comparison_op::LESS, l.value, r.value))
+                return eval_outcome::success(*res);
+            break;
         case op_t::CHEVRON_CLOSE:
-            return eval_outcome::success(k::value_type{ use_float ? (ld > rd) : (li > ri) });
+            if (auto res = constant_evaluator::eval_comparison(comparison_op::GREATER, l.value, r.value))
+                return eval_outcome::success(*res);
+            break;
         case op_t::CHEVRON_OPEN_EQUAL:
-            return eval_outcome::success(k::value_type{ use_float ? (ld <= rd) : (li <= ri) });
+            if (auto res = constant_evaluator::eval_comparison(comparison_op::LESS_EQUAL, l.value, r.value))
+                return eval_outcome::success(*res);
+            break;
         case op_t::CHEVRON_CLOSE_EQUAL:
-            return eval_outcome::success(k::value_type{ use_float ? (ld >= rd) : (li >= ri) });
+            if (auto res = constant_evaluator::eval_comparison(comparison_op::GREATER_EQUAL, l.value, r.value))
+                return eval_outcome::success(*res);
+            break;
         default:
             break;
     }
@@ -473,13 +427,13 @@ eval_outcome eval_conditional(const conditional_expr& ce,
                                unit* unit_ptr) {
     auto cond = eval_raw(ce.lexpr().get(), context_elem, ctx, unit_ptr);
     if (!cond.ok) return cond;
-    bool cf; int64_t ci; double cd;
-    if (!as_numeric(cond.result.value, cf, ci, cd)) {
+    if (!cond.value.is_numeric() && !cond.value.is_bool()) {
         return eval_outcome::error(
             static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
             "ternary condition is not a numeric constant");
     }
-    bool taken = cf ? (cd != 0.0) : (ci != 0);
+    bool taken = cond.value.is_bool() ? cond.value.get_bool()
+        : (cond.value.is_float() ? (cond.value.get_double() != 0.0) : (cond.value.get_int64() != 0));
     return eval_raw((taken ? ce.mexpr() : ce.rexpr()).get(), context_elem, ctx, unit_ptr);
 }
 
@@ -495,23 +449,26 @@ eval_outcome eval_cast(const cast_expr& ce,
     target = ctx->resolve_type(target);
     if (!target || !type::is_resolved(target)) return eval_outcome::defer();
 
-    std::shared_ptr<primitive_type> prim;
-    std::shared_ptr<enum_type> en;
-    unwrap_expected_type(target, prim, en);
-    if (!prim) {
+    auto bare = type::remove_const(target);
+    if (!std::dynamic_pointer_cast<primitive_type>(bare) && !std::dynamic_pointer_cast<enum_type>(bare)) {
         return eval_outcome::error(
             static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
             "cast target in template value argument must be a primitive type");
     }
 
-    bool isf; int64_t iv; double fv;
-    if (!as_numeric(sub.result.value, isf, iv, fv)) {
+    if (!sub.value.is_numeric() && !sub.value.is_bool()) {
         return eval_outcome::error(
             static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
             "cast applied to a non-numeric constant value");
     }
-    return eval_outcome::success(isf ? narrow_double_to_primitive(fv, prim->get_type())
-                                      : narrow_int_to_primitive(iv, prim->get_type()));
+
+    auto casted = constant_evaluator::cast_to_type(sub.value, target);
+    if (!casted.has_value()) {
+        return eval_outcome::error(
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
+            "cast applied to a non-numeric constant value");
+    }
+    return eval_outcome::success(*casted);
 }
 
 /** Evaluate a brace-initialized expression as a compile-time aggregate value.
@@ -556,7 +513,7 @@ eval_outcome eval_aggregate_init(const brace_init_list& bil,
         members[name] = m;
     }
 
-    std::map<std::string, k::value_type> field_values;
+    std::map<std::string, constant_value> field_values;
     for (const auto& elem : bil.elements) {
         auto desig = std::dynamic_pointer_cast<designated_init_element>(elem);
         if (!desig) {
@@ -613,7 +570,7 @@ eval_outcome eval_aggregate_init(const brace_init_list& bil,
                 "designated member '" + member_name + "' is not a compile-time constant");
         }
 
-        field_values.emplace(member_name, *member_eval.value);
+        field_values.emplace(member_name, constant_value(*member_eval.value));
     }
 
     for (const auto& [member_name, _] : members) {
@@ -624,9 +581,14 @@ eval_outcome eval_aggregate_init(const brace_init_list& bil,
         }
     }
 
-    return eval_outcome::success(k::value_type{
-        std::make_shared<k::model::aggregate_value>(agg, std::move(field_values))
-    });
+    auto res = constant_evaluator::eval_struct_init(agg, field_values);
+    if (!res.has_value()) {
+        return eval_outcome::error(
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+            "failed to construct compile-time constant aggregate");
+    }
+
+    return eval_outcome::success(*res);
 }
 
 eval_outcome eval_raw(const expression* expr,
@@ -665,9 +627,12 @@ constexpr_eval_result evaluate_template_value_arg(
     if (auto bil = dynamic_cast<const brace_init_list*>(expr)) {
         auto agg_eval = eval_aggregate_init(*bil, context_elem, ctx, expected_type, unit_ptr);
         if (agg_eval.ok) {
-            out.status = constexpr_eval_status::OK;
-            out.value = agg_eval.result.value;
-            return out;
+            auto vt = agg_eval.value.to_value_type();
+            if (vt.has_value()) {
+                out.status = constexpr_eval_status::OK;
+                out.value = *vt;
+                return out;
+            }
         }
         if (agg_eval.is_hard_error()) {
             out.status = constexpr_eval_status::ERROR;
@@ -689,55 +654,73 @@ constexpr_eval_result evaluate_template_value_arg(
         return out;
     }
 
-    std::shared_ptr<primitive_type> exp_prim;
-    std::shared_ptr<enum_type> exp_enum;
-    unwrap_expected_type(expected_type, exp_prim, exp_enum);
+    if (expected_type) {
+        auto bare_expected = type::remove_const(expected_type);
 
-    if (exp_enum) {
-        auto target_enum = exp_enum->get_enumeration();
-        if (!raw.result.source_enum || raw.result.source_enum != target_enum) {
-            out.status = constexpr_eval_status::ERROR;
-            out.error_code = static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH);
-            out.message = "template value argument must be a constant of enum type '"
-                + (target_enum ? target_enum->get_short_name() : std::string("?")) + "'";
-            return out;
+        if (auto exp_enum = std::dynamic_pointer_cast<enum_type>(bare_expected)) {
+            auto target_enum = exp_enum->get_enumeration();
+            if (!raw.value.is_enum() || raw.value.get_enum().enum_def != target_enum) {
+                out.status = constexpr_eval_status::ERROR;
+                out.error_code = static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH);
+                out.message = "template value argument must be a constant of enum type '"
+                    + (target_enum ? target_enum->get_short_name() : std::string("?")) + "'";
+                return out;
+            }
+            auto vt = raw.value.to_value_type();
+            if (vt.has_value()) {
+                out.status = constexpr_eval_status::OK;
+                out.value = *vt;
+                return out;
+            }
         }
-        out.status = constexpr_eval_status::OK;
-        out.value = raw.result.value;
-        return out;
+
+        if (auto exp_prim = std::dynamic_pointer_cast<primitive_type>(bare_expected)) {
+            if (!raw.value.is_numeric() && !raw.value.is_bool()) {
+                out.status = constexpr_eval_status::ERROR;
+                out.error_code = static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH);
+                out.message = "template value argument is not compatible with the declared parameter type";
+                return out;
+            }
+            auto casted = constant_evaluator::cast_to_type(raw.value, exp_prim);
+            if (!casted.has_value()) {
+                out.status = constexpr_eval_status::ERROR;
+                out.error_code = static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH);
+                out.message = "template value argument is not compatible with the declared parameter type";
+                return out;
+            }
+            auto vt = casted->to_value_type();
+            if (vt.has_value()) {
+                out.status = constexpr_eval_status::OK;
+                out.value = *vt;
+                return out;
+            }
+        }
+
+        if (auto exp_struct = std::dynamic_pointer_cast<struct_type>(bare_expected)) {
+            auto target_agg = exp_struct->get_struct();
+            if (!raw.value.is_struct() || !raw.value.get_struct() || !target_agg || raw.value.get_struct()->get_type() != target_agg) {
+                out.status = constexpr_eval_status::ERROR;
+                out.error_code = static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH);
+                out.message = "template value argument is not compatible with the declared aggregate parameter type";
+                return out;
+            }
+            auto vt = raw.value.to_value_type();
+            if (vt.has_value()) {
+                out.status = constexpr_eval_status::OK;
+                out.value = *vt;
+                return out;
+            }
+        }
     }
 
-    if (exp_prim) {
-        bool isf; int64_t iv; double fv;
-        if (!as_numeric(raw.result.value, isf, iv, fv)) {
-            out.status = constexpr_eval_status::ERROR;
-            out.error_code = static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH);
-            out.message = "template value argument is not compatible with the declared parameter type";
-            return out;
-        }
+    // No expected type known or passthrough (strings, unconstrained primitives, etc.)
+    auto vt = raw.value.to_value_type();
+    if (vt.has_value()) {
         out.status = constexpr_eval_status::OK;
-        out.value = isf ? narrow_double_to_primitive(fv, exp_prim->get_type())
-                         : narrow_int_to_primitive(iv, exp_prim->get_type());
-        return out;
+        out.value = *vt;
+    } else {
+        out.status = constexpr_eval_status::DEFER;
     }
-
-    if (auto exp_struct = std::dynamic_pointer_cast<struct_type>(type::remove_const(expected_type))) {
-        auto target_agg = exp_struct->get_struct();
-        auto agg_val = std::get_if<std::shared_ptr<k::model::aggregate_value>>(&raw.result.value);
-        if (!agg_val || !*agg_val || !target_agg || (*agg_val)->get_type() != target_agg) {
-            out.status = constexpr_eval_status::ERROR;
-            out.error_code = static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH);
-            out.message = "template value argument is not compatible with the declared aggregate parameter type";
-            return out;
-        }
-        out.status = constexpr_eval_status::OK;
-        out.value = raw.result.value;
-        return out;
-    }
-
-    // No expected type known: keep the value as evaluated (string literals pass through here too).
-    out.status = constexpr_eval_status::OK;
-    out.value = raw.result.value;
     return out;
 }
 

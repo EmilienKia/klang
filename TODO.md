@@ -57,7 +57,7 @@
         When `expr.is_constant()` is true on a complex expression subtree, emit the result directly as an LLVM constant
         (`llvm::ConstantInt`, `llvm::ConstantFP`, `llvm::ConstantStruct`, etc.) instead of emitting runtime alloca,
         GEP, or arithmetic instructions.
-  - [ ] **Unification with template value argument evaluator (`resolvers_constexpr.cpp`)**:
+  - [x] **Unification with template value argument evaluator (`resolvers_constexpr.cpp`)**:
         Refactor template value argument evaluation (`resolvers_constexpr.cpp`) to delegate to the unified
         `constant_evaluator` / `constant_value` engine in the semantic model, eliminating duplicate evaluation logic
         between the raw AST and the resolved model.
