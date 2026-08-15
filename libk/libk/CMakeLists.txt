@@ -409,6 +409,7 @@ add_custom_command(
 add_custom_target(libk_stdlib_doc ALL
     DEPENDS ${LIBK_DOC_STAMP} ${LIBK_HTML_DOC_STAMP}
 )
+add_dependencies(libk_stdlib_doc libk_stdlib)
 
 # ── Export paths so other targets (compiler, tests) can find the stdlib ───────
 set(KLANG_STDLIB_KDI_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL

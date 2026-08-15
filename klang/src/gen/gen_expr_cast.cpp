@@ -317,8 +317,11 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
  */
 void implementation_generator::visit_cast_expression(cast_expression& expr) {
     if (expr.is_constant()) {
-        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
-        if (_value) return;
+        auto t = type::remove_const(expr.get_type());
+        if (t && (type::is_primitive(t) || type::is_enum(t) || type::is_null(t))) {
+            _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+            if (_value) return;
+        }
     }
 
     // Keep cast lowering anchored on the cast expression line when available.

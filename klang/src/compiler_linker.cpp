@@ -22,11 +22,13 @@
 #include "config.h"
 #include "common/path_lookup_file_resolver.hpp"
 
+#include <atomic>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <unordered_set>
+#include <unistd.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/FileSystem.h>
@@ -63,6 +65,18 @@
 
 namespace k {
 
+namespace {
+
+std::filesystem::path make_temp_object_path(const std::string& prefix) {
+    static std::atomic<uint64_t> counter{0};
+    auto pid = ::getpid();
+    auto count = counter.fetch_add(1);
+    auto filename = fmt::format("{}_{}_{}.o", prefix, pid, count);
+    return std::filesystem::temp_directory_path() / filename;
+}
+
+} // anonymous namespace
+
 bool compiler::gen_executable(const std::string& output_file) {
     if (!has_main_method()) {
         error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_NO_MAIN_FOR_EXECUTABLE),
@@ -75,7 +89,7 @@ bool compiler::gen_executable(const std::string& output_file) {
                             : output_file);
     resolve_ir_filenames(output_path.string());
 
-    auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
+    auto object_path = make_temp_object_path(output_path.stem().string());
 
     trace("[compiler::gen_executable] generating object '{}'", {object_path.string()});
     gen_object_file(object_path);
@@ -260,7 +274,7 @@ bool compiler::gen_shared_library(const std::string& output_file) {
                             : output_file);
     resolve_ir_filenames(output_path.string());
 
-    auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
+    auto object_path = make_temp_object_path(output_path.stem().string());
 
     trace("[compiler::gen_shared_library] generating object '{}'", {object_path.string()});
     gen_object_file(object_path);
@@ -300,7 +314,7 @@ bool compiler::gen_static_library(const std::string& output_file) {
                             : output_file);
     resolve_ir_filenames(output_path.string());
 
-    auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
+    auto object_path = make_temp_object_path(output_path.stem().string());
 
     trace("[compiler::gen_static_library] generating object '{}'", {object_path.string()});
     gen_object_file(object_path);
@@ -337,7 +351,7 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
     resolve_ir_filenames(so_path.string());
 
     // Generate the object file once
-    auto object_path = std::filesystem::temp_directory_path() / ("lib" + base + ".o");
+    auto object_path = make_temp_object_path("lib" + base);
     trace("[compiler::gen_libraries] generating object '{}'", {object_path.string()});
     if (!gen_object_file(object_path)) {
         return false;

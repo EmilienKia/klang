@@ -270,8 +270,11 @@ void implementation_generator::visit_load_value_expression(load_value_expression
     set_debug_location(expr.first_lexeme());
 
     if (expr.is_constant()) {
-        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
-        if (_value) return;
+        auto t = type::remove_const(expr.get_type());
+        if (t && (type::is_primitive(t) || type::is_enum(t) || type::is_null(t))) {
+            _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+            if (_value) return;
+        }
     }
 
     _value = nullptr;

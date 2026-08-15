@@ -72,7 +72,7 @@ std::optional<constant_value> constant_evaluator::cast_to_type(
             case primitive_type::BOOL:
                 return constant_value(is_float ? (fval != 0.0) : (ival != 0));
             case primitive_type::CHAR:
-                return constant_value(static_cast<char>(is_float ? static_cast<int64_t>(fval) : ival));
+                return constant_value(static_cast<unsigned int>(is_float ? static_cast<uint64_t>(fval) : static_cast<uint64_t>(ival)));
             case primitive_type::BYTE:
             case primitive_type::UNSIGNED_BYTE:
                 return constant_value(static_cast<unsigned char>(is_float ? static_cast<int64_t>(fval) : ival));
