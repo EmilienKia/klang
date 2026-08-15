@@ -268,6 +268,12 @@ void type_reference_resolver::visit_load_value_expression(load_value_expression&
 
 void implementation_generator::visit_load_value_expression(load_value_expression& expr) {
     set_debug_location(expr.first_lexeme());
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     // Use the expression's own type if set; fall back to the sub-expression's referenced type.

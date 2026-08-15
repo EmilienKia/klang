@@ -582,6 +582,35 @@ TEST_CASE("Constant expression — non-constant expressions remain non-const", "
     CHECK_FALSE(e_class->is_constant());
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  13. Direct LLVM IR emission optimization verification
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Constant expression — direct LLVM IR constant emission", "[model][const_expr][llvm_opt]") {
+    auto jit = gen_jit(R"SRC(
+        module __test_const_llvm_opt__;
+
+        struct Point {
+            public x : int;
+            public y : int;
+        }
+
+        const G_PT : Point = Point{ .x = 10, .y = 20 };
+
+        test_fold() : int {
+            const a : int = 15;
+            const b : int = 25;
+            return (a + b) * 2 + G_PT.x;
+        }
+    )SRC", false, false); // optimize=false to verify unoptimized frontend emission
+
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_fold");
+    REQUIRE(fn != nullptr);
+    // (15 + 25) * 2 + 10 = 90
+    CHECK(fn() == 90);
+}
+
 
 
 

@@ -53,7 +53,7 @@
   - [x] **Constant array support (array literals & indexing)**:
         Introduce `array_value` / constant array container in `constant_value` (e.g. `int[3]{10, 20, 30}`),
         supporting constant indexing (`arr[1]` → `20`) and the virtual `.size` member (`arr.size` → `3`) at compile time.
-  - [ ] **Direct LLVM code generation optimization (`implementation_generator`)**:
+  - [x] **Direct LLVM code generation optimization (`implementation_generator`)**:
         When `expr.is_constant()` is true on a complex expression subtree, emit the result directly as an LLVM constant
         (`llvm::ConstantInt`, `llvm::ConstantFP`, `llvm::ConstantStruct`, etc.) instead of emitting runtime alloca,
         GEP, or arithmetic instructions.

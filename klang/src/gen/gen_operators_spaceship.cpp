@@ -218,6 +218,11 @@ llvm::Value* implementation_generator::compare_spaceship_result_to_zero(llvm::Va
 void implementation_generator::visit_spaceship_expression(spaceship_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F057), expr.first_lexeme(),

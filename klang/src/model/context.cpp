@@ -26,6 +26,7 @@
 #include "model.hpp"
 #include "imported.hpp"
 #include "aggregate_value.hpp"
+#include "constant_value.hpp"
 #include "template_instantiator.hpp"
 #include "../errors.hpp"
 #include "../common/unicode.hpp"
@@ -806,6 +807,107 @@ llvm::Constant* context::get_llvm_constant_from_value_expression(const value_exp
         }
     }
     return c;
+}
+
+llvm::Constant* context::get_llvm_constant_from_constant_value(const constant_value& value, const std::shared_ptr<type>& expected_type) {
+    if (!value.is_valid()) return nullptr;
+
+    auto expected_nc = type::remove_const(expected_type);
+
+    if (value.is_null()) {
+        llvm::Type* target = expected_nc ? expected_nc->get_llvm_type() : llvm::PointerType::get(*_context, 0);
+        if (!target || !target->isPointerTy()) target = llvm::PointerType::get(*_context, 0);
+        return llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(target));
+    }
+
+    if (value.is_bool()) {
+        return value.get_bool() ? llvm::ConstantInt::getTrue(*_context) : llvm::ConstantInt::getFalse(*_context);
+    }
+
+    if (value.is_enum()) {
+        const auto& ev = value.get_enum();
+        llvm::Type* target = expected_nc ? expected_nc->get_llvm_type() : llvm::Type::getInt32Ty(*_context);
+        if (!target || !target->isIntegerTy()) target = llvm::Type::getInt32Ty(*_context);
+        return llvm::ConstantInt::get(target, ev.raw_value);
+    }
+
+    if (value.is_string()) {
+        auto str = value.get_string();
+        str.push_back('\0');
+        return get_or_create_string_literal(str);
+    }
+
+    if (value.is_struct()) {
+        auto sv = value.get_struct();
+        if (!sv) return nullptr;
+        auto st_type = std::dynamic_pointer_cast<struct_type>(expected_nc);
+        if (!st_type && sv->get_type()) {
+            st_type = sv->get_type()->get_struct_type();
+        }
+        if (!st_type) return nullptr;
+        if (!st_type->is_resolved()) {
+            auto resolved = std::dynamic_pointer_cast<struct_type>(resolve_type(st_type));
+            if (!resolved || !resolved->is_resolved()) return nullptr;
+            st_type = resolved;
+        }
+
+        auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(st_type->get_llvm_type());
+        if (!llvm_st) return nullptr;
+
+        std::vector<llvm::Constant*> fields;
+        fields.reserve(st_type->fields_size());
+        size_t idx = 0;
+        for (auto it = st_type->fields_begin(); it != st_type->fields_end(); ++it, ++idx) {
+            auto field_type = it->field_type.lock();
+            llvm::Constant* field_const = nullptr;
+            auto field_value = sv->get_field(it->name);
+            if (field_value.has_value()) {
+                field_const = get_llvm_constant_from_constant_value(*field_value, field_type);
+            }
+            if (!field_const && field_type) {
+                field_const = field_type->generate_default_value_initializer();
+            }
+            if (!field_const) {
+                field_const = llvm::Constant::getNullValue(
+                    llvm_st->getElementType(static_cast<unsigned int>(idx)));
+            }
+            auto* expected_elem = llvm_st->getElementType(static_cast<unsigned int>(idx));
+            if (field_const->getType() != expected_elem) {
+                if (auto* ci = llvm::dyn_cast<llvm::ConstantInt>(field_const);
+                    ci && expected_elem->isIntegerTy()) {
+                    field_const = llvm::ConstantInt::get(
+                        expected_elem,
+                        ci->getValue().sextOrTrunc(expected_elem->getIntegerBitWidth()));
+                } else if (field_const->isNullValue()) {
+                    field_const = llvm::Constant::getNullValue(expected_elem);
+                } else {
+                    return nullptr;
+                }
+            }
+            fields.push_back(field_const);
+        }
+        return llvm::ConstantStruct::get(llvm_st, fields);
+    }
+
+    if (value.is_float()) {
+        double d = value.get_double();
+        llvm::Type* target = expected_nc ? expected_nc->get_llvm_type() : llvm::Type::getDoubleTy(*_context);
+        if (target && target->isFloatTy()) {
+            return llvm::ConstantFP::get(target, static_cast<float>(d));
+        }
+        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(*_context), d);
+    }
+
+    if (value.is_integer()) {
+        int64_t ival = value.get_int64();
+        llvm::Type* target = expected_nc ? expected_nc->get_llvm_type() : llvm::Type::getInt32Ty(*_context);
+        if (!target || !target->isIntegerTy()) {
+            target = llvm::Type::getInt32Ty(*_context);
+        }
+        return llvm::ConstantInt::get(target, ival, value.is_signed_integer());
+    }
+
+    return nullptr;
 }
 
 llvm::Constant* context::get_or_create_string_literal(const std::string& content) {

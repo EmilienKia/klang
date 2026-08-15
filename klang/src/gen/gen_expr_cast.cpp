@@ -316,6 +316,11 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
  *   7. Enum ↔ underlying: emit zext/trunc as needed.
  */
 void implementation_generator::visit_cast_expression(cast_expression& expr) {
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     // Keep cast lowering anchored on the cast expression line when available.
     auto cast_lexeme = expr.first_lexeme();
     if (!cast_lexeme && expr.sub_expr()) {

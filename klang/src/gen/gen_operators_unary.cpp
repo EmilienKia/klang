@@ -543,6 +543,11 @@ void implementation_generator::visit_postfix_decrement_expression(postfix_decrem
 void implementation_generator::visit_unary_plus_expression(unary_plus_expression& expr) {
     if (generate_unary_operator_overload(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto val = process_unary_expression(expr);
     if(!val) {
         // TODO throw exception ?
@@ -571,6 +576,11 @@ void implementation_generator::visit_unary_plus_expression(unary_plus_expression
 
 void implementation_generator::visit_unary_minus_expression(unary_minus_expression& expr) {
     if (generate_unary_operator_overload(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto val = process_unary_expression(expr);
     if(!val) {
@@ -608,6 +618,11 @@ void implementation_generator::visit_unary_minus_expression(unary_minus_expressi
 
 void implementation_generator::visit_bitwise_not_expression(bitwise_not_expression& expr) {
     if (generate_unary_operator_overload(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto val = process_unary_expression(expr);
     if(!val) {

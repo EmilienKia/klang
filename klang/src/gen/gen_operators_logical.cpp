@@ -212,6 +212,11 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
 void implementation_generator::visit_logical_and_expression(logical_and_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     // ── Short-circuit evaluation (and-then) ─────────────────────────────────
     // Evaluate left first; if false, skip right entirely and yield false.
 
@@ -265,6 +270,11 @@ void implementation_generator::visit_logical_and_expression(logical_and_expressi
 
 void implementation_generator::visit_logical_or_expression(logical_or_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     // ── Short-circuit evaluation (or-else) ─────────────────────────────────
     // Evaluate left first; if true, skip right entirely and yield true.
@@ -429,6 +439,11 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
 
 void implementation_generator::visit_logical_not_expression(logical_not_expression& expr) {
     if (generate_unary_operator_overload(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto value = process_unary_expression(expr);
 
@@ -605,6 +620,11 @@ void type_reference_resolver::visit_conditional_expression(conditional_expressio
 void implementation_generator::visit_conditional_expression(conditional_expression& expr)
 {
     set_debug_location(expr.first_lexeme());
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto cond_expr = expr.lexpr();
     auto then_expr = expr.mexpr();
@@ -1342,6 +1362,11 @@ bool implementation_generator::generate_comparison_operator(comparison_expressio
 void implementation_generator::visit_equal_expression(equal_expression& expr) {
     if (generate_comparison_operator(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F00C), expr.first_lexeme(),
@@ -1405,6 +1430,11 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 
 void implementation_generator::visit_different_expression(different_expression& expr) {
     if (generate_comparison_operator(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -1470,6 +1500,11 @@ void implementation_generator::visit_different_expression(different_expression& 
 void implementation_generator::visit_lesser_expression(lesser_expression& expr) {
     if (generate_comparison_operator(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F010), expr.first_lexeme(),
@@ -1516,6 +1551,11 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
 
 void implementation_generator::visit_greater_expression(greater_expression& expr) {
     if (generate_comparison_operator(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -1564,6 +1604,11 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
 void implementation_generator::visit_lesser_equal_expression(lesser_equal_expression& expr) {
     if (generate_comparison_operator(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F014), expr.first_lexeme(),
@@ -1610,6 +1655,11 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
 
 void implementation_generator::visit_greater_equal_expression(greater_equal_expression& expr) {
     if (generate_comparison_operator(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {

@@ -224,6 +224,11 @@ void type_reference_resolver::visit_arithmetic_binary_expression(arithmetic_bina
 void implementation_generator::visit_addition_expression(addition_expression &expr) {
     if (generate_binary_operator_overload(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -254,6 +259,11 @@ void implementation_generator::visit_addition_expression(addition_expression &ex
 void implementation_generator::visit_substraction_expression(substraction_expression &expr) {
     if (generate_binary_operator_overload(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -283,6 +293,11 @@ void implementation_generator::visit_substraction_expression(substraction_expres
 
 void implementation_generator::visit_multiplication_expression(multiplication_expression &expr) {
     if (generate_binary_operator_overload(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -315,6 +330,11 @@ void implementation_generator::visit_multiplication_expression(multiplication_ex
 
 void implementation_generator::visit_division_expression(division_expression &expr) {
     if (generate_binary_operator_overload(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -352,6 +372,11 @@ void implementation_generator::visit_division_expression(division_expression &ex
 void implementation_generator::visit_modulo_expression(modulo_expression &expr) {
     if (generate_binary_operator_overload(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -387,6 +412,11 @@ void implementation_generator::visit_modulo_expression(modulo_expression &expr) 
 
 void implementation_generator::visit_bitwise_and_expression(bitwise_and_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -424,6 +454,11 @@ void implementation_generator::visit_bitwise_and_expression(bitwise_and_expressi
 void implementation_generator::visit_bitwise_or_expression(bitwise_or_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -459,6 +494,11 @@ void implementation_generator::visit_bitwise_or_expression(bitwise_or_expression
 
 void implementation_generator::visit_bitwise_xor_expression(bitwise_xor_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
@@ -496,6 +536,11 @@ void implementation_generator::visit_bitwise_xor_expression(bitwise_xor_expressi
 void implementation_generator::visit_left_shift_expression(left_shift_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -532,6 +577,11 @@ void implementation_generator::visit_left_shift_expression(left_shift_expression
 
 void implementation_generator::visit_right_shift_expression(right_shift_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
+
+    if (expr.is_constant()) {
+        _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+        if (_value) return;
+    }
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {

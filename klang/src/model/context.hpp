@@ -52,6 +52,7 @@ public:
 };
 
 class value_expression;
+class constant_value;
 class variable_statement;
 class parameter;
 class function;
@@ -173,6 +174,7 @@ public:
     llvm::Constant* get_llvm_constant_from_literal(const k::lex::any_literal &literal);
     llvm::Constant* get_llvm_constant_from_value(const k::value_type &value);
     llvm::Constant* get_llvm_constant_from_value_expression(const value_expression& value);
+    llvm::Constant* get_llvm_constant_from_constant_value(const constant_value& value, const std::shared_ptr<type>& expected_type = nullptr);
 
     /**
      * Return (or create) a global constant for a string literal.
