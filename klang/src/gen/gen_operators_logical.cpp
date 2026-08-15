@@ -24,6 +24,7 @@
 #include "../parse/ast.hpp"
 
 #include "../errors.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "gen_operators_helpers.hpp"
 
 #include <algorithm>
@@ -186,6 +187,22 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
 
     // For primitive type, logical is always returning boolean
     expr.set_type(_context->from_type(primitive_type::BOOL));
+
+    if (!expr.has_operator_overload()) {
+        bool is_and = dynamic_cast<logical_and_expression*>(&expr) != nullptr;
+        if (expr.left()->is_constant()) {
+            bool l_val = expr.left()->get_constant_value().get_bool();
+            if (is_and && !l_val) {
+                expr.set_constant_value(constant_value(false));
+            } else if (!is_and && l_val) {
+                expr.set_constant_value(constant_value(true));
+            } else if (expr.right()->is_constant()) {
+                auto res = constant_evaluator::eval_logical_binary(
+                    is_and, expr.left()->get_constant_value(), expr.right()->get_constant_value());
+                if (res) expr.set_constant_value(*res);
+            }
+        }
+    }
 }
 
 //
@@ -400,6 +417,14 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
     // Step 4: Set result type to bool
     // For primitive type, logical is always returning boolean
     expr.set_type(bool_type);
+
+    if (!expr.has_operator_overload() && expr.sub_expr()->is_constant()) {
+        auto res = constant_evaluator::eval_unary(
+            unary_op::LOGICAL_NOT, expr.sub_expr()->get_constant_value(), expr.get_type());
+        if (res) {
+            expr.set_constant_value(*res);
+        }
+    }
 }
 
 void implementation_generator::visit_logical_not_expression(logical_not_expression& expr) {
@@ -562,6 +587,19 @@ void type_reference_resolver::visit_conditional_expression(conditional_expressio
         expr.rexpr() = best->else_expr;
     }
     expr.set_type(best->target);
+
+    if (expr.lexpr()->is_constant()) {
+        bool cond_val = expr.lexpr()->get_constant_value().get_bool();
+        if (cond_val && expr.mexpr()->is_constant()) {
+            auto cast_val = constant_evaluator::cast_to_type(expr.mexpr()->get_constant_value(), expr.get_type());
+            if (cast_val) expr.set_constant_value(*cast_val);
+            else expr.set_constant_value(expr.mexpr()->get_constant_value());
+        } else if (!cond_val && expr.rexpr()->is_constant()) {
+            auto cast_val = constant_evaluator::cast_to_type(expr.rexpr()->get_constant_value(), expr.get_type());
+            if (cast_val) expr.set_constant_value(*cast_val);
+            else expr.set_constant_value(expr.rexpr()->get_constant_value());
+        }
+    }
 }
 
 void implementation_generator::visit_conditional_expression(conditional_expression& expr)
@@ -1045,6 +1083,22 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     // For primitive type, logical is always returning boolean
     static auto bool_type = _context->from_type(primitive_type::BOOL);
     expr.set_type(bool_type);
+
+    if (!expr.has_operator_overload() && expr.left()->is_constant() && expr.right()->is_constant()) {
+        comparison_op op = comparison_op::EQUAL;
+        if (dynamic_cast<equal_expression*>(&expr)) op = comparison_op::EQUAL;
+        else if (dynamic_cast<different_expression*>(&expr)) op = comparison_op::NOT_EQUAL;
+        else if (dynamic_cast<lesser_expression*>(&expr)) op = comparison_op::LESS;
+        else if (dynamic_cast<lesser_equal_expression*>(&expr)) op = comparison_op::LESS_EQUAL;
+        else if (dynamic_cast<greater_expression*>(&expr)) op = comparison_op::GREATER;
+        else if (dynamic_cast<greater_equal_expression*>(&expr)) op = comparison_op::GREATER_EQUAL;
+
+        auto res = constant_evaluator::eval_comparison(
+            op, expr.left()->get_constant_value(), expr.right()->get_constant_value());
+        if (res) {
+            expr.set_constant_value(*res);
+        }
+    }
 }
 
 //

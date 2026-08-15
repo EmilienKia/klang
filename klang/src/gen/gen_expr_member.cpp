@@ -25,6 +25,7 @@
 #include "../model/imported.hpp"
 #include "../model/template.hpp"
 #include "../model/template_instantiator.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 #include "llvm/Support/raw_os_ostream.h"
@@ -119,6 +120,11 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                         field_type = type::remove_const(field_type)->get_const();
                     }
                     expr.set_type(field_type->get_reference());
+                    if (expr.sub_expr()->is_constant()) {
+                        auto res = constant_evaluator::eval_member_access(
+                            expr.sub_expr()->get_constant_value(), simple_name);
+                        if (res) expr.set_constant_value(*res);
+                    }
                 }
                 // For method: leave type unset, handled by function_invocation_expression
             }
@@ -238,6 +244,11 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                 result_type = result_type->get_const();
             }
             expr.set_type(result_type->get_reference());
+            if (expr.sub_expr()->is_constant()) {
+                auto res = constant_evaluator::eval_member_access(
+                    expr.sub_expr()->get_constant_value(), name_str);
+                if (res) expr.set_constant_value(*res);
+            }
             return;
         }
 
@@ -387,6 +398,11 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                 field_type = type::remove_const(field_type)->get_const();
             }
             expr.set_type(field_type->get_reference());
+            if (expr.sub_expr()->is_constant()) {
+                auto res = constant_evaluator::eval_member_access(
+                    expr.sub_expr()->get_constant_value(), simple_name);
+                if (res) expr.set_constant_value(*res);
+            }
             // If the field is in a base, wrap sub_expr in a cast_expression to base ref
             // so that implementation_generator will compute the correct GEP offset.
             if (hit.in_struct_type != struct_subtype) {

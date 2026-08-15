@@ -27,6 +27,7 @@
 #include "gen_helpers.hpp"
 
 #include "../model/expressions.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "../errors.hpp"
 
 namespace k::model::gen {
@@ -888,6 +889,10 @@ type_reference_resolver::adapt_from_reference(
         if (*prim_sub == *prim_tgt) return loaded;
         auto cast = cast_expression::make_shared(loaded, prim_tgt);
         cast->set_type(prim_tgt);
+        if (loaded->is_constant()) {
+            auto res = constant_evaluator::cast_to_type(loaded->get_constant_value(), prim_tgt);
+            if (res) cast->set_constant_value(*res);
+        }
         return cast;
     }
     // ref<enum> → enum or ref<enum> → primitive: load first, then adapt
@@ -1013,16 +1018,12 @@ type_reference_resolver::adapt_enum_type(
 
         auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
         if (prim_tgt) {
-            auto underlying = enum_src->get_underlying_type();
-            if (*underlying == *prim_tgt) {
-                // Same underlying type: just reinterpret
-                auto cast = cast_expression::make_shared(expr, prim_tgt);
-                cast->set_type(prim_tgt);
-                return cast;
-            }
-            // Different primitive widths: cast through underlying
             auto cast = cast_expression::make_shared(expr, prim_tgt);
             cast->set_type(prim_tgt);
+            if (expr->is_constant()) {
+                auto res = constant_evaluator::cast_to_type(expr->get_constant_value(), prim_tgt);
+                if (res) cast->set_constant_value(*res);
+            }
             return cast;
         }
     }
@@ -1033,6 +1034,10 @@ type_reference_resolver::adapt_enum_type(
         if (prim_src) {
             auto cast = cast_expression::make_shared(expr, enum_tgt);
             cast->set_type(enum_tgt);
+            if (expr->is_constant()) {
+                auto res = constant_evaluator::cast_to_type(expr->get_constant_value(), enum_tgt);
+                if (res) cast->set_constant_value(*res);
+            }
             return cast;
         }
 
@@ -1134,6 +1139,9 @@ type_reference_resolver::adapt_primitive_or_struct_type(
             if (temp_ref_type && type::is_reference(temp_ref_type)) {
                 auto loaded = load_value_expression::make_shared(temp);
                 loaded->set_type(tgt_st);
+                if (temp->is_constant()) {
+                    loaded->set_constant_value(temp->get_constant_value());
+                }
                 return loaded;
             }
         }
@@ -1148,6 +1156,10 @@ type_reference_resolver::adapt_primitive_or_struct_type(
     // Step 3: Same primitive: return as-is
     auto cast = cast_expression::make_shared(expr, prim_tgt);
     cast->set_type(prim_tgt);
+    if (expr->is_constant()) {
+        auto res = constant_evaluator::cast_to_type(expr->get_constant_value(), prim_tgt);
+        if (res) cast->set_constant_value(*res);
+    }
     return cast;
 }
 

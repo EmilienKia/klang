@@ -94,6 +94,10 @@ add_library(klang
         src/model/template.cpp
         src/model/aggregate_value.hpp
         src/model/aggregate_value.cpp
+        src/model/constant_value.hpp
+        src/model/constant_value.cpp
+        src/model/constant_evaluator.hpp
+        src/model/constant_evaluator.cpp
 )
 
 target_include_directories(klang PRIVATE
@@ -185,6 +189,7 @@ klang_gen_test(klang-tests-model 60
         tests/test-model-annotation.cpp
         tests/test-model-constructor-rtti.cpp
         tests/test-model-materializer.cpp
+        tests/test-model-constant-expressions.cpp
         tests/test-template-instantiator.cpp
         tests/test-phase3-dispatch.cpp
         tests/test-phase4-gen.cpp

@@ -43,6 +43,7 @@
 #define KLANG_MODEL_EXPRESSIONS_BASE_HPP
 
 #include "model.hpp"
+#include "constant_value.hpp"
 
 namespace k::parse::ast {
 struct expression;
@@ -69,6 +70,11 @@ protected:
     std::shared_ptr<type> _type = nullptr;
 
     /**
+     * Compile-time constant value for this expression, if fully deduced at compile time.
+     */
+    std::optional<constant_value> _constant_value;
+
+    /**
      * Strong alias (typedef) this expression is tainted by, if any.
      *
      * An expression is tainted when it derives from an operand of that alias
@@ -88,7 +94,10 @@ protected:
     expression() = default;
     expression(std::shared_ptr<type> type) : _type(type) {}
     // Copy constructor: copies type and AST node, parent is NOT copied (clone is orphan).
-    expression(const expression& other) : _type(other._type), _alias_taint(other._alias_taint) { _ast_node = other._ast_node; }
+    expression(const expression& other)
+        : _type(other._type), _constant_value(other._constant_value), _alias_taint(other._alias_taint) {
+        _ast_node = other._ast_node;
+    }
 
     friend class unary_expression;
     friend class binary_expression;
@@ -125,6 +134,15 @@ public:
 
     std::shared_ptr<type> get_type() { return _type; }
     std::shared_ptr<const type> get_type() const { return _type; }
+
+    /** True when this expression is a compile-time constant with a fully evaluated value. */
+    bool is_constant() const { return _constant_value.has_value() && _constant_value->is_valid(); }
+    /** Get the compile-time constant value of this expression. */
+    const constant_value& get_constant_value() const { return *_constant_value; }
+    /** Set the compile-time constant value of this expression. */
+    void set_constant_value(constant_value val) { _constant_value = std::move(val); }
+    /** Clear the constant value. */
+    void clear_constant_value() { _constant_value.reset(); }
 
     /** Set the AST expression node associated with this model expression. */
     void set_ast_expression(std::shared_ptr<k::parse::ast::expression> ast) {

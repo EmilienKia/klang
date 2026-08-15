@@ -1587,7 +1587,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     if (type::is_reference(resolved_nc))
                         resolved_nc = resolved_nc->get_subtype();
                     auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_nc);
-                    if (st_type && st_type->get_struct()) {
+                    if (st_type) {
                         // Create a temporary_construction_expression
                         auto temp_expr = temporary_construction_expression::make_shared(
                             st_type, expr.arguments());

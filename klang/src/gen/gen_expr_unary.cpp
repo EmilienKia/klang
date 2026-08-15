@@ -260,6 +260,10 @@ void type_reference_resolver::visit_load_value_expression(load_value_expression&
             "but the operand has type '{}'",
             {type ? type->to_string() : "?"});
     }
+
+    if (expr.sub_expr()->is_constant()) {
+        expr.set_constant_value(expr.sub_expr()->get_constant_value());
+    }
 }
 
 void implementation_generator::visit_load_value_expression(load_value_expression& expr) {

@@ -23,6 +23,7 @@
 #include "../parse/ast.hpp"
 
 #include "../errors.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "gen_operators_helpers.hpp"
 
 namespace k::model::gen {
@@ -84,6 +85,18 @@ void type_reference_resolver::visit_arithmetic_unary_expression(arithmetic_unary
     }
 
     expr.set_type(type);
+
+    if (!expr.has_operator_overload() && expr.sub_expr()->is_constant()) {
+        unary_op op = unary_op::PLUS;
+        if (dynamic_cast<unary_minus_expression*>(&expr)) op = unary_op::MINUS;
+        else if (dynamic_cast<unary_plus_expression*>(&expr)) op = unary_op::PLUS;
+        else if (dynamic_cast<bitwise_not_expression*>(&expr)) op = unary_op::BITWISE_NOT;
+
+        auto res = constant_evaluator::eval_unary(op, expr.sub_expr()->get_constant_value(), expr.get_type());
+        if (res) {
+            expr.set_constant_value(*res);
+        }
+    }
 }
 
 //

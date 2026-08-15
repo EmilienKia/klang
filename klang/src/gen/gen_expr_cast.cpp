@@ -26,6 +26,7 @@
 #include "../model/imported.hpp"
 #include "../model/template.hpp"
 #include "../model/template_instantiator.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 #include "llvm/Support/raw_os_ostream.h"
@@ -293,6 +294,13 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
     }
 
     expr.set_type(declared_cast_type ? declared_cast_type : expr.get_cast_type());
+
+    if (!expr.has_operator_overload() && expr.sub_expr()->is_constant()) {
+        auto res = constant_evaluator::cast_to_type(expr.sub_expr()->get_constant_value(), expr.get_type());
+        if (res) {
+            expr.set_constant_value(*res);
+        }
+    }
 }
 
 /**

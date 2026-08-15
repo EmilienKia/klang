@@ -23,6 +23,7 @@
 #include "../parse/ast.hpp"
 
 #include "../errors.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "gen_operators_helpers.hpp"
 
 namespace k::model::gen {
@@ -177,6 +178,14 @@ void type_reference_resolver::visit_spaceship_expression(spaceship_expression& e
     // would leak a dangling type across independent compiler/context instances
     // (e.g. across successive unit tests, each with its own short-lived JIT).
     expr.set_type(_context->from_type(primitive_type::INT));
+
+    if (!expr.has_operator_overload() && expr.left()->is_constant() && expr.right()->is_constant()) {
+        auto res = constant_evaluator::eval_comparison(
+            comparison_op::SPACESHIP, expr.left()->get_constant_value(), expr.right()->get_constant_value());
+        if (res) {
+            expr.set_constant_value(*res);
+        }
+    }
 }
 
 //

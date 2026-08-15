@@ -290,6 +290,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<temporary_construction_expression> c{new temporary_construction_expression()};
         c->_type = _type;
+        c->_constant_value = _constant_value;
         c->_constructed_type = _constructed_type;
         c->_constructor = _constructor;
         std::vector<std::shared_ptr<expression>> args;

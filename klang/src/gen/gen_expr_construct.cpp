@@ -25,6 +25,7 @@
 #include "../model/imported.hpp"
 #include "../model/template.hpp"
 #include "../model/template_instantiator.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 #include "llvm/Support/raw_os_ostream.h"
@@ -270,6 +271,9 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
     if (auto prim_type = std::dynamic_pointer_cast<primitive_type>(expr.constructed_type())) {
         // Result type is ref<primitive>: the alloca will be used as a reference.
         expr.set_type(prim_type->get_reference());
+        if (!expr.empty() && expr.argument(0) && expr.argument(0)->is_constant()) {
+            expr.set_constant_value(expr.argument(0)->get_constant_value());
+        }
         return;
     }
 
@@ -302,6 +306,7 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
 
         auto src = expr.argument(0);
         std::shared_ptr<expression> best_expr;
+        const union_alternative* matched_alt = nullptr;
         cast_weight best_weight = CAST_IMPOSSIBLE;
         for (const auto* alt : union_def->all_alternatives_ptrs()) {
             if (!alt || !alt->resolved_type) continue;
@@ -312,6 +317,7 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
             if (!best_expr || w < best_weight) {
                 best_expr = adapted;
                 best_weight = w;
+                matched_alt = alt;
             }
         }
         if (!best_expr) {
@@ -324,6 +330,13 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
             expr.assign_argument(0, best_expr);
         }
         expr.set_type(st_type->get_reference());
+        if (matched_alt && best_expr->is_constant()) {
+            auto res = constant_evaluator::eval_union_init(
+                union_def, matched_alt->name, best_expr->get_constant_value());
+            if (res) {
+                expr.set_constant_value(*res);
+            }
+        }
         return;
     }
 
@@ -341,12 +354,19 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
     if (constructors.empty() && expr.empty()) {
         // No constructors and no arguments: zero-init (default construction)
         expr.set_type(st_type->get_reference());
+        if (!st->is_class()) {
+            auto res = constant_evaluator::eval_struct_init(st, {});
+            if (res) expr.set_constant_value(*res);
+        }
         return;
     }
 
     if (constructors.empty() && expr.size() == 1) {
         // Direct copy from a single argument (struct copy)
         expr.set_type(st_type->get_reference());
+        if (!st->is_class() && expr.argument(0) && expr.argument(0)->is_constant()) {
+            expr.set_constant_value(expr.argument(0)->get_constant_value());
+        }
         return;
     }
 

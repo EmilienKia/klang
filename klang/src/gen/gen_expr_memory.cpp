@@ -25,6 +25,7 @@
 #include "../model/imported.hpp"
 #include "../model/template.hpp"
 #include "../model/template_instantiator.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 #include "llvm/Support/raw_os_ostream.h"
@@ -623,6 +624,35 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
                         m.value = cast;
                     }
                 }
+            }
+        }
+    }
+
+    // Evaluate constant struct value if target is a struct and all members are constant
+    if (target_struct && !target_struct->is_class()) {
+        std::map<std::string, constant_value> field_values;
+        bool all_const = true;
+        for (const auto& m : expr.members()) {
+            if (m.is_call_form) {
+                if (m.args.size() == 1 && m.args[0] && m.args[0]->is_constant()) {
+                    field_values[m.member_name] = m.args[0]->get_constant_value();
+                } else {
+                    all_const = false;
+                    break;
+                }
+            } else {
+                if (m.value && m.value->is_constant()) {
+                    field_values[m.member_name] = m.value->get_constant_value();
+                } else {
+                    all_const = false;
+                    break;
+                }
+            }
+        }
+        if (all_const) {
+            auto res = constant_evaluator::eval_struct_init(target_struct, field_values);
+            if (res) {
+                expr.set_constant_value(*res);
             }
         }
     }

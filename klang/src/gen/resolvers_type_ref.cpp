@@ -3623,10 +3623,16 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
         auto deref = load_value_expression::make_shared(expr);
         // Strip const when loading a value: const is compile-time only.
         deref->set_type(k::model::type::remove_const(type->get_subtype()));
+        if (expr->is_constant()) {
+            deref->set_constant_value(expr->get_constant_value());
+        }
         return deref;
     } else if(type::is_drain(type)) {
         auto deref = load_value_expression::make_shared(expr);
         deref->set_type(k::model::type::remove_const(type->get_subtype()));
+        if (expr->is_constant()) {
+            deref->set_constant_value(expr->get_constant_value());
+        }
         return deref;
     } else {
         return expr;

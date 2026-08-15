@@ -23,6 +23,7 @@
 #include "../parse/ast.hpp"
 
 #include "../errors.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "gen_operators_helpers.hpp"
 
 namespace k::model::gen {
@@ -140,16 +141,24 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
     }
     // If source type is reference, deref it
     if(type::is_reference(source_type)) {
+        auto old_right = right;
         // Source type must be de-referenced
         right = load_value_expression::make_shared(right);
         source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
         right->set_type(source_type);
+        if (old_right && old_right->is_constant()) {
+            right->set_constant_value(old_right->get_constant_value());
+        }
         expr.assign_right(right);
     } else if(type::is_drain(source_type)) {
+        auto old_right = right;
         // Drain type must be dereferenced like a reference
         right = load_value_expression::make_shared(right);
         source_type = std::dynamic_pointer_cast<drain_type>(source_type)->get_drained_type();
         right->set_type(source_type);
+        if (old_right && old_right->is_constant()) {
+            right->set_constant_value(old_right->get_constant_value());
+        }
         expr.assign_right(right);
     }
     // Convert right enum to underlying primitive too
@@ -176,6 +185,27 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
         expr.assign_right(cast);
     } else {
         // Compatible target_type, no need to cast.
+    }
+
+    // Evaluate constant expression if operands are constant
+    if (!expr.has_operator_overload() && expr.left()->is_constant() && expr.right()->is_constant()) {
+        binary_arith_op op = binary_arith_op::ADD;
+        if (dynamic_cast<addition_expression*>(&expr)) op = binary_arith_op::ADD;
+        else if (dynamic_cast<substraction_expression*>(&expr)) op = binary_arith_op::SUB;
+        else if (dynamic_cast<multiplication_expression*>(&expr)) op = binary_arith_op::MUL;
+        else if (dynamic_cast<division_expression*>(&expr)) op = binary_arith_op::DIV;
+        else if (dynamic_cast<modulo_expression*>(&expr)) op = binary_arith_op::MOD;
+        else if (dynamic_cast<bitwise_and_expression*>(&expr)) op = binary_arith_op::BITWISE_AND;
+        else if (dynamic_cast<bitwise_or_expression*>(&expr)) op = binary_arith_op::BITWISE_OR;
+        else if (dynamic_cast<bitwise_xor_expression*>(&expr)) op = binary_arith_op::BITWISE_XOR;
+        else if (dynamic_cast<left_shift_expression*>(&expr)) op = binary_arith_op::SHIFT_LEFT;
+        else if (dynamic_cast<right_shift_expression*>(&expr)) op = binary_arith_op::SHIFT_RIGHT;
+
+        auto res = constant_evaluator::eval_binary_arithmetic(
+            op, expr.left()->get_constant_value(), expr.right()->get_constant_value(), expr.get_type());
+        if (res) {
+            expr.set_constant_value(*res);
+        }
     }
 }
 

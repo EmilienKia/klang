@@ -54,6 +54,7 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
     if (expr.is_literal()) {
         auto type = _context->from_literal(expr.any_literal());
         expr.set_type(type);
+        expr.set_constant_value(constant_value(expr.get_literal().value()));
     } else {
         if (expr.get_type()) {
             auto current = expr.get_type();
@@ -61,6 +62,7 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
                 auto resolved = _context->resolve_type(current);
                 if (resolved && type::is_resolved(resolved)) {
                     expr.set_type(resolved);
+                    expr.set_constant_value(constant_value(expr.get_value()));
                     return;
                 }
             } else {
@@ -71,6 +73,7 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
                 }
                 // Keep the declared type assigned during template substitution
                 // (e.g. enum/aggregate value parameters).
+                expr.set_constant_value(constant_value(expr.get_value()));
                 return;
             }
         }
@@ -96,6 +99,7 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
             else return {};
         }, val);
         expr.set_type(inferred);
+        expr.set_constant_value(constant_value(expr.get_value()));
     }
 }
 
@@ -446,6 +450,11 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
                 if (!fq.empty()) _context->add_enum(fq, et);
             }
             symbol.set_type(en->get_enum_type());
+            if (target.entry_index < en->entries().size()) {
+                const auto& entry = en->entries()[target.entry_index];
+                enum_value ev{en, target.entry_index, entry.value, entry.name};
+                symbol.set_constant_value(constant_value(ev));
+            }
         }
     } else if (symbol.is_annotation_type_rtti()) {
         // AnnotationName::annotation → const k::AnnotationType&

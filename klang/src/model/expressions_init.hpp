@@ -248,6 +248,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<designated_struct_init_expression> c{new designated_struct_init_expression()};
         c->_type = _type;
+        c->_constant_value = _constant_value;
         c->_target_aggregate = _target_aggregate;
         c->_is_temporary = _is_temporary;
         c->_type_name = _type_name;
