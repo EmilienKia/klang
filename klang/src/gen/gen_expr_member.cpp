@@ -185,6 +185,11 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         if (name_str == "size") {
             // "size" is an unsigned int value (not a reference — it is loaded, not addressable)
             expr.set_type(_context->from_type(primitive_type::UNSIGNED_INT));
+            if (expr.sub_expr()->is_constant()) {
+                auto res = constant_evaluator::eval_member_access(
+                    expr.sub_expr()->get_constant_value(), "size");
+                if (res) expr.set_constant_value(*res);
+            }
             return;
         }
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_NOT_FOUND_ON_TYPE), expr.first_lexeme(),
@@ -1246,6 +1251,15 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     } else if(adapted_right!=right) {
         right = adapted_right;
         expr.assign_right(right);
+    }
+
+    // Evaluate constant array subscript
+    if (!expr.has_operator_overload() && expr.left()->is_constant() && expr.right()->is_constant()) {
+        auto res = constant_evaluator::eval_array_subscript(
+            expr.left()->get_constant_value(), expr.right()->get_constant_value());
+        if (res) {
+            expr.set_constant_value(*res);
+        }
     }
 }
 

@@ -34,6 +34,7 @@ namespace k::model {
 class aggregate;
 class enumeration;
 class union_type_def;
+class array_type;
 class constant_value;
 
 /**
@@ -96,6 +97,29 @@ private:
 };
 
 /**
+ * Compile-time constant representation of an array value.
+ */
+class array_value {
+public:
+    array_value(std::shared_ptr<array_type> type, std::vector<constant_value> elements);
+
+    const std::shared_ptr<array_type>& get_type() const { return _type; }
+    const std::vector<constant_value>& get_elements() const { return _elements; }
+    size_t size() const { return _elements.size(); }
+
+    std::optional<constant_value> get_element(size_t index) const;
+    bool has_element(size_t index) const;
+
+    bool operator==(const array_value& other) const;
+    bool operator!=(const array_value& other) const { return !(*this == other); }
+    std::string dump() const;
+
+private:
+    std::shared_ptr<array_type> _type;
+    std::vector<constant_value> _elements;
+};
+
+/**
  * General compile-time constant value held by model expressions.
  */
 class constant_value {
@@ -118,7 +142,8 @@ public:
         scalar_t,
         enum_value,
         std::shared_ptr<struct_value>,
-        std::shared_ptr<union_value>
+        std::shared_ptr<union_value>,
+        std::shared_ptr<array_value>
     >;
 
     constant_value() = default;
@@ -143,6 +168,7 @@ public:
     constant_value(enum_value ev) : _storage(std::move(ev)) {}
     constant_value(std::shared_ptr<struct_value> sv) : _storage(std::move(sv)) {}
     constant_value(std::shared_ptr<union_value> uv) : _storage(std::move(uv)) {}
+    constant_value(std::shared_ptr<array_value> av) : _storage(std::move(av)) {}
     constant_value(const k::value_type& vt);
 
     bool is_valid() const;
@@ -157,6 +183,7 @@ public:
     bool is_enum() const;
     bool is_struct() const;
     bool is_union() const;
+    bool is_array() const;
 
     bool get_bool() const;
     int64_t get_int64() const;
@@ -166,6 +193,7 @@ public:
     const enum_value& get_enum() const;
     std::shared_ptr<struct_value> get_struct() const;
     std::shared_ptr<union_value> get_union() const;
+    std::shared_ptr<array_value> get_array() const;
 
     bool as_numeric(bool& is_float, int64_t& ival, double& fval) const;
 
@@ -186,4 +214,7 @@ private:
 } // namespace k::model
 
 #endif // KLANG_MODEL_CONSTANT_VALUE_HPP
+
+
+
 

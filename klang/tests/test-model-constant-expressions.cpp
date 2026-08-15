@@ -480,7 +480,79 @@ TEST_CASE("Constant expression — const variable propagation", "[model][const_e
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  11. Non-constant expressions boundary checks
+//  11. Constant arrays (literals, indexing, .size)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Constant expression — constant arrays", "[model][const_expr][array]") {
+    auto comp = compile_model(R"SRC(
+        module __test_const_array__;
+
+        const GLOBAL_ARR : int[4] { 2, 4, 6, 8 };
+
+        struct Point {
+            public x : int;
+            public y : int;
+        }
+
+        const GLOBAL_PTS : Point[2] {
+            Point{ .x = 1, .y = 2 },
+            Point{ .x = 3, .y = 4 }
+        };
+
+        test_array_literal_index() : int {
+            return int[]{ 10, 20, 30 }[1];
+        }
+
+        test_array_literal_size() : unsigned int {
+            return int[]{ 1, 2, 3, 4 }.size;
+        }
+
+        test_local_array_const() : int {
+            const arr : int[3] { 100, 200, 300 };
+            return arr[0] + arr[2];
+        }
+
+        test_local_array_size() : unsigned int {
+            const arr : int[3] { 100, 200, 300 };
+            return arr.size;
+        }
+
+        test_global_array_const() : int {
+            return GLOBAL_ARR[3] * (int)GLOBAL_ARR.size;
+        }
+
+        test_struct_array_const() : int {
+            return GLOBAL_PTS[1].x + GLOBAL_PTS[0].y;
+        }
+
+        test_out_of_bounds() : int {
+            const arr : int[3] { 10, 20, 30 };
+            return arr[10];
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto check_const = [&](const std::string& name, int64_t expected) {
+        auto expr = get_return_expr(comp, name);
+        REQUIRE(expr != nullptr);
+        CHECK(expr->is_constant());
+        CHECK(expr->get_constant_value().get_int64() == expected);
+    };
+
+    check_const("test_array_literal_index", 20);
+    check_const("test_array_literal_size", 4);
+    check_const("test_local_array_const", 400);
+    check_const("test_local_array_size", 3);
+    check_const("test_global_array_const", 32);
+    check_const("test_struct_array_const", 5);
+
+    auto e_oob = get_return_expr(comp, "test_out_of_bounds");
+    REQUIRE(e_oob != nullptr);
+    CHECK_FALSE(e_oob->is_constant());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  12. Non-constant expressions boundary checks
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Constant expression — non-constant expressions remain non-const", "[model][const_expr][boundary]") {
@@ -509,6 +581,8 @@ TEST_CASE("Constant expression — non-constant expressions remain non-const", "
     REQUIRE(e_class != nullptr);
     CHECK_FALSE(e_class->is_constant());
 }
+
+
 
 
 

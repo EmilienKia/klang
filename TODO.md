@@ -50,7 +50,7 @@
         Propagate compile-time constant values from `const var : T = expr;` (both local and global variables)
         into reading `symbol_expression` and dereferencing `load_value_expression` nodes, so that `p.x` or `a + 2`
         folds at compile time when `p` or `a` are declared `const`.
-  - [ ] **Constant array support (array literals & indexing)**:
+  - [x] **Constant array support (array literals & indexing)**:
         Introduce `array_value` / constant array container in `constant_value` (e.g. `int[3]{10, 20, 30}`),
         supporting constant indexing (`arr[1]` → `20`) and the virtual `.size` member (`arr.size` → `3`) at compile time.
   - [ ] **Direct LLVM code generation optimization (`implementation_generator`)**:

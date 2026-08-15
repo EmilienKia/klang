@@ -125,6 +125,43 @@ std::string union_value::dump() const {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// array_value
+// ════════════════════════════════════════════════════════════════════════════
+
+array_value::array_value(std::shared_ptr<array_type> type, std::vector<constant_value> elements)
+    : _type(std::move(type)), _elements(std::move(elements)) {}
+
+std::optional<constant_value> array_value::get_element(size_t index) const {
+    if (index < _elements.size()) {
+        return _elements[index];
+    }
+    return std::nullopt;
+}
+
+bool array_value::has_element(size_t index) const {
+    return index < _elements.size();
+}
+
+bool array_value::operator==(const array_value& other) const {
+    if (_elements.size() != other._elements.size()) return false;
+    for (size_t i = 0; i < _elements.size(); ++i) {
+        if (_elements[i] != other._elements[i]) return false;
+    }
+    return true;
+}
+
+std::string array_value::dump() const {
+    std::ostringstream ss;
+    ss << "[";
+    for (size_t i = 0; i < _elements.size(); ++i) {
+        if (i > 0) ss << ", ";
+        ss << _elements[i].dump();
+    }
+    ss << "]";
+    return ss.str();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // constant_value
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -238,6 +275,11 @@ bool constant_value::is_union() const {
            std::get<std::shared_ptr<union_value>>(_storage) != nullptr;
 }
 
+bool constant_value::is_array() const {
+    return std::holds_alternative<std::shared_ptr<array_value>>(_storage) &&
+           std::get<std::shared_ptr<array_value>>(_storage) != nullptr;
+}
+
 bool constant_value::get_bool() const {
     if (auto* sc = std::get_if<scalar_t>(&_storage)) {
         if (auto* b = std::get_if<bool>(sc)) return *b;
@@ -327,6 +369,13 @@ std::shared_ptr<union_value> constant_value::get_union() const {
     return nullptr;
 }
 
+std::shared_ptr<array_value> constant_value::get_array() const {
+    if (auto* av = std::get_if<std::shared_ptr<array_value>>(&_storage)) {
+        return *av;
+    }
+    return nullptr;
+}
+
 bool constant_value::as_numeric(bool& is_float, int64_t& ival, double& fval) const {
     if (auto* sc = std::get_if<scalar_t>(&_storage)) {
         return std::visit([&](auto&& x) -> bool {
@@ -385,6 +434,11 @@ bool constant_value::operator==(const constant_value& other) const {
             if (!lhs && !rhs) return true;
             if (!lhs || !rhs) return false;
             return *lhs == *rhs;
+        } else if constexpr (std::is_same_v<T, std::shared_ptr<array_value>>) {
+            const auto& rhs = std::get<std::shared_ptr<array_value>>(other._storage);
+            if (!lhs && !rhs) return true;
+            if (!lhs || !rhs) return false;
+            return *lhs == *rhs;
         }
         return false;
     }, _storage);
@@ -411,6 +465,9 @@ std::string constant_value::dump() const {
     }
     if (auto* uv = std::get_if<std::shared_ptr<union_value>>(&_storage)) {
         return (*uv) ? (*uv)->dump() : "union<null>";
+    }
+    if (auto* av = std::get_if<std::shared_ptr<array_value>>(&_storage)) {
+        return (*av) ? (*av)->dump() : "array<null>";
     }
     return "<unknown>";
 }
@@ -442,5 +499,9 @@ std::optional<k::value_type> constant_value::to_value_type() const {
 }
 
 } // namespace k::model
+
+
+
+
 
 

@@ -125,11 +125,19 @@ public:
     );
 
     /**
-     * Access a member of a constant struct or active alternative of a constant union.
+     * Access a member of a constant struct, active alternative of a constant union, or .size on array.
      */
     static std::optional<constant_value> eval_member_access(
         const constant_value& base,
         const std::string& member_name
+    );
+
+    /**
+     * Access an element of a constant array by index.
+     */
+    static std::optional<constant_value> eval_array_subscript(
+        const constant_value& base,
+        const constant_value& index
     );
 
     /**
@@ -154,4 +162,5 @@ public:
 } // namespace k::model
 
 #endif // KLANG_MODEL_CONSTANT_EVALUATOR_HPP
+
 

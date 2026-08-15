@@ -215,6 +215,16 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                 }
             }
         }
+
+        // Evaluate uniform constant array
+        if (arr_type && elem_type && !expr._uniform_ctor_args.empty() && expr._uniform_ctor_args[0] && expr._uniform_ctor_args[0]->is_constant()) {
+            auto cast_elem = constant_evaluator::cast_to_type(expr._uniform_ctor_args[0]->get_constant_value(), elem_type);
+            if (cast_elem) {
+                std::vector<constant_value> const_elements(arr_size, *cast_elem);
+                auto av = std::make_shared<array_value>(arr_type, std::move(const_elements));
+                expr.set_constant_value(constant_value(av));
+            }
+        }
         return;
     }
 
@@ -363,6 +373,40 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                     expr.assign_element(i, adapted_args[0]);
                 }
              }
+        }
+    }
+
+    // Evaluate constant array value if all elements are constant
+    if (arr_type && elem_type) {
+        std::vector<constant_value> const_elements;
+        bool all_const = true;
+        auto default_elem = constant_evaluator::default_value_for_type(elem_type);
+
+        for (size_t i = 0; i < arr_size; ++i) {
+            if (i < init_count && expr.element(i)) {
+                if (expr.element(i)->is_constant()) {
+                    auto cast_elem = constant_evaluator::cast_to_type(expr.element(i)->get_constant_value(), elem_type);
+                    if (cast_elem) {
+                        const_elements.push_back(*cast_elem);
+                    } else {
+                        const_elements.push_back(expr.element(i)->get_constant_value());
+                    }
+                } else {
+                    all_const = false;
+                    break;
+                }
+            } else {
+                if (default_elem) {
+                    const_elements.push_back(*default_elem);
+                } else {
+                    all_const = false;
+                    break;
+                }
+            }
+        }
+        if (all_const) {
+            auto av = std::make_shared<array_value>(arr_type, std::move(const_elements));
+            expr.set_constant_value(constant_value(av));
         }
     }
 }

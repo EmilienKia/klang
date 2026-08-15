@@ -140,6 +140,12 @@ std::optional<constant_value> constant_evaluator::cast_to_type(
         }
     }
 
+    if (auto arr_type = std::dynamic_pointer_cast<array_type>(bare_target)) {
+        if (val.is_array()) {
+            return val;
+        }
+    }
+
     if (type::is_any_indirection(bare_target)) {
         if (val.is_null()) {
             return val;
@@ -421,6 +427,26 @@ std::optional<constant_value> constant_evaluator::eval_member_access(
         if (uv && uv->get_alternative_name() == member_name) {
             return uv->get_active_value();
         }
+    } else if (base.is_array()) {
+        auto av = base.get_array();
+        if (av && member_name == "size") {
+            return constant_value(static_cast<unsigned int>(av->size()));
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<constant_value> constant_evaluator::eval_array_subscript(
+    const constant_value& base,
+    const constant_value& index
+) {
+    if (base.is_array() && index.is_integer()) {
+        auto av = base.get_array();
+        if (!av) return std::nullopt;
+        int64_t idx = index.get_int64();
+        if (idx >= 0 && static_cast<size_t>(idx) < av->size()) {
+            return av->get_element(static_cast<size_t>(idx));
+        }
     }
     return std::nullopt;
 }
@@ -488,6 +514,8 @@ std::optional<constant_value> constant_evaluator::eval_union_init(
 }
 
 } // namespace k::model
+
+
 
 
 
