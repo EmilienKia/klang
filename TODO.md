@@ -42,6 +42,25 @@
 - Better private visibility support
 - Improve log and debug messages
 - Add constant values expression computation at compile time, enhance compile-time evaluation capabilities
+  - [x] **Phase 1: Semantic model constant evaluation foundations** — `constant_value`, `enum_value`,
+        `struct_value`, and `union_value` representation; `_constant_value` on `expression`; compile-time folding
+        in `type_reference_resolver` for unary/binary arithmetic, comparisons, spaceship `<=>`, logical operations,
+        ternary conditionals, primitive casts, designated struct initializers, temporary construction, and member access.
+  - [x] **Propagation of `const`-declared variables**:
+        Propagate compile-time constant values from `const var : T = expr;` (both local and global variables)
+        into reading `symbol_expression` and dereferencing `load_value_expression` nodes, so that `p.x` or `a + 2`
+        folds at compile time when `p` or `a` are declared `const`.
+  - [ ] **Constant array support (array literals & indexing)**:
+        Introduce `array_value` / constant array container in `constant_value` (e.g. `int[3]{10, 20, 30}`),
+        supporting constant indexing (`arr[1]` → `20`) and the virtual `.size` member (`arr.size` → `3`) at compile time.
+  - [ ] **Direct LLVM code generation optimization (`implementation_generator`)**:
+        When `expr.is_constant()` is true on a complex expression subtree, emit the result directly as an LLVM constant
+        (`llvm::ConstantInt`, `llvm::ConstantFP`, `llvm::ConstantStruct`, etc.) instead of emitting runtime alloca,
+        GEP, or arithmetic instructions.
+  - [ ] **Unification with template value argument evaluator (`resolvers_constexpr.cpp`)**:
+        Refactor template value argument evaluation (`resolvers_constexpr.cpp`) to delegate to the unified
+        `constant_evaluator` / `constant_value` engine in the semantic model, eliminating duplicate evaluation logic
+        between the raw AST and the resolved model.
 - Add static conditional statements and static compiler value definitions
 - Add traits and compile-time type introspection capabilities
 - Add support for separate compilation and module interfaces (e.g. `export` keyword, module partitions)

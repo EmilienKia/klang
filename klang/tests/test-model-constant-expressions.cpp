@@ -396,7 +396,91 @@ TEST_CASE("Constant expression — combined operations", "[model][const_expr][co
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  10. Non-constant expressions boundary checks
+//  10. Propagation of const-declared variables (local and global)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Constant expression — const variable propagation", "[model][const_expr][const_var]") {
+    auto comp = compile_model(R"SRC(
+        module __test_const_var_prop__;
+
+        const GLOBAL_CONST : int = 100;
+
+        struct Point {
+            public x : int;
+            public y : int;
+        }
+
+        const GLOBAL_POINT : Point = Point{ .x = 5, .y = 10 };
+
+        union Val {
+            i : int;
+            d : double;
+        }
+
+        const GLOBAL_UNION : Val = Val(42);
+
+        test_local_const() : int {
+            const a : int = 10;
+            return a + 5;
+        }
+
+        test_chained_const() : int {
+            const x : int = 2;
+            const y : int = x * 10;
+            return y + 3;
+        }
+
+        test_global_const() : int {
+            return GLOBAL_CONST * 2;
+        }
+
+        test_local_struct_const() : int {
+            const pt : Point = Point{ .x = 10, .y = 20 };
+            return pt.x + pt.y;
+        }
+
+        test_local_struct_brace_const() : int {
+            const pt : Point { .x = 15, .y = 25 };
+            return pt.x * 2 + pt.y;
+        }
+
+        test_global_struct_const() : int {
+            return GLOBAL_POINT.x + GLOBAL_POINT.y;
+        }
+
+        test_global_union_const() : int {
+            return GLOBAL_UNION.i + 8;
+        }
+
+        test_mutable_not_propagated() : int {
+            x : int = 10;
+            return x + 5;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto check_const = [&](const std::string& name, int64_t expected) {
+        auto expr = get_return_expr(comp, name);
+        REQUIRE(expr != nullptr);
+        CHECK(expr->is_constant());
+        CHECK(expr->get_constant_value().get_int64() == expected);
+    };
+
+    check_const("test_local_const", 15);
+    check_const("test_chained_const", 23);
+    check_const("test_global_const", 200);
+    check_const("test_local_struct_const", 30);
+    check_const("test_local_struct_brace_const", 55);
+    check_const("test_global_struct_const", 15);
+    check_const("test_global_union_const", 50);
+
+    auto e_mut = get_return_expr(comp, "test_mutable_not_propagated");
+    REQUIRE(e_mut != nullptr);
+    CHECK_FALSE(e_mut->is_constant());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  11. Non-constant expressions boundary checks
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Constant expression — non-constant expressions remain non-const", "[model][const_expr][boundary]") {
@@ -425,6 +509,9 @@ TEST_CASE("Constant expression — non-constant expressions remain non-const", "
     REQUIRE(e_class != nullptr);
     CHECK_FALSE(e_class->is_constant());
 }
+
+
+
 
 
 

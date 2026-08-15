@@ -396,6 +396,11 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             // Variable is not a reference, so symbol type is a reference to the variable type.
             symbol.set_type(var_type->get_reference());
         }
+
+        // Propagate constant value if variable is declared const and has a constant value
+        if (var_def->is_const() && var_def->is_constant()) {
+            symbol.set_constant_value(var_def->get_constant_value());
+        }
     } else if (symbol.is_function()) {
         // Step 4: Check visibility of the resolved symbol
         // A symbol resolved to a function (without call parentheses) yields the address

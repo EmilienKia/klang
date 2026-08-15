@@ -27,6 +27,7 @@
 #include "../model/expressions.hpp"
 #include "../model/template.hpp"
 #include "../model/template_instantiator.hpp"
+#include "../model/constant_evaluator.hpp"
 #include "../model/tools/kdi_type_converter.hpp"
 #include "../parse/ast.hpp"
 #include <kdi.hpp>
@@ -2086,7 +2087,13 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
     // Resolve init expressions if any
     auto init_expr_base = var.get_init_expr();
     if (init_expr_base) {
+        _replacement_expr = nullptr;
         init_expr_base->accept(*this);
+        if (_replacement_expr) {
+            var.set_init_expr(_replacement_expr);
+            init_expr_base = _replacement_expr;
+            _replacement_expr = nullptr;
+        }
     }
 
     // Step 4: nothing to infer for a callable type — the declared type is complete.
@@ -2175,6 +2182,34 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
     } else {
         // Unsupported construction for other types for now
         // TODO Support construction for other types (array, etc.)
+    }
+
+    // Propagate constant value if variable is declared const
+    if (var.is_const()) {
+        auto init_expr = var.get_init_expr();
+        if (init_expr) {
+            std::optional<constant_value> const_val;
+            if (init_expr->is_constant()) {
+                const_val = init_expr->get_constant_value();
+            } else if (auto ctor_inv = std::dynamic_pointer_cast<constructor_invocation_expression>(init_expr)) {
+                if (ctor_inv->size() == 1 && ctor_inv->argument(0) && ctor_inv->argument(0)->is_constant()) {
+                    const_val = ctor_inv->argument(0)->get_constant_value();
+                    ctor_inv->set_constant_value(*const_val);
+                } else if (ctor_inv->empty()) {
+                    const_val = constant_evaluator::default_value_for_type(var.get_type());
+                    if (const_val) ctor_inv->set_constant_value(*const_val);
+                }
+            }
+
+            if (const_val && const_val->is_valid()) {
+                auto cast_val = constant_evaluator::cast_to_type(*const_val, var.get_type());
+                if (cast_val) {
+                    var.set_constant_value(*cast_val);
+                } else {
+                    var.set_constant_value(*const_val);
+                }
+            }
+        }
     }
 }
 
