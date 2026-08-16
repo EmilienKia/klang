@@ -774,3 +774,52 @@ TEST_CASE("Implicit cast: user-defined cast operator applies for init and args",
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 83);
 }
+
+// =============================================================================
+// Constant integer casts (safe range vs out-of-range)
+// =============================================================================
+
+TEST_CASE("Constant integer casts: safe constant casts evaluate correctly", "[gen][cast][constant]") {
+    auto jit = gen_jit(R"SRC(
+        module __cast_const_safe__;
+
+        test() : int {
+            // Unsigned to signed safe
+            u : unsigned int = 42u;
+            s1 : int = (int) 100u;
+            s2 : int = (int) (50u + 50u);
+            // Signed to unsigned safe
+            u1 : unsigned int = (unsigned int) 200;
+            u2 : unsigned int = (unsigned int) (100 + 100);
+            return s1 + s2 + (int)u1 + (int)u2 + (int)u;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 642);
+}
+
+TEST_CASE("Constant integer casts: various integer widths safe casts", "[gen][cast][constant]") {
+    auto jit = gen_jit(R"SRC(
+        module __cast_const_widths__;
+
+        test() : int {
+            // byte -> unsigned byte
+            ub : unsigned byte = (unsigned byte) 127;
+            // unsigned short -> short
+            s : short = (short) 30000us;
+            // long -> unsigned long
+            ul : unsigned long = (unsigned long) 1000000l;
+            // unsigned long -> long
+            l : long = (long) 5000000ul;
+            return (int)ub + (int)s + (int)(ul / 100000ul) + (int)(l / 500000l);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 127 + 30000 + 10 + 10);
+}
+
+

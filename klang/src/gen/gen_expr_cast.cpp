@@ -1248,21 +1248,58 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         if(tgt->is_boolean()) {
             _value = _builder->CreateICmpNE(_value, _builder->getIntN(src->type_size(), 0));
         } else if (tgt->is_integer()) {
+            bool is_safe_const_cast = false;
+            if (expr.sub_expr() && expr.sub_expr()->is_constant()) {
+                const auto& cval = expr.sub_expr()->get_constant_value();
+                if (cval.is_integer() || cval.is_bool()) {
+                    size_t tgt_bits = tgt->type_size();
+                    if (src->is_unsigned() && tgt->is_signed()) {
+                        uint64_t uval = cval.get_uint64();
+                        if (tgt_bits >= 64) {
+                            if (uval <= static_cast<uint64_t>(INT64_MAX)) {
+                                is_safe_const_cast = true;
+                            }
+                        } else {
+                            uint64_t max_signed = (1ULL << (tgt_bits - 1)) - 1ULL;
+                            if (uval <= max_signed) {
+                                is_safe_const_cast = true;
+                            }
+                        }
+                    } else if (src->is_signed() && tgt->is_unsigned()) {
+                        int64_t sval = cval.get_int64();
+                        if (sval >= 0) {
+                            if (tgt_bits >= 64) {
+                                is_safe_const_cast = true;
+                            } else {
+                                uint64_t max_unsigned = (tgt_bits == 64) ? ~0ULL : ((1ULL << tgt_bits) - 1ULL);
+                                if (static_cast<uint64_t>(sval) <= max_unsigned) {
+                                    is_safe_const_cast = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (tgt->is_signed()) {
-                if (src->is_unsigned()) {
+                if (src->is_unsigned() && !is_safe_const_cast) {
+#ifdef KLANG_WARN_CAST_UNSIGNED_TO_SIGNED
                     auto d = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::type_diag::WARN_CAST_UNSIGNED_TO_SIGNED),
                         "Casting an unsigned integer to a signed integer of the same size may produce "
                         "unexpected results if the value exceeds the signed range (overflow is implementation-defined)");
                     if (auto pos = expr.first_lexeme()) d.at(*pos);
                     report(d);
+#endif
                 }
             } else /* if (tgt->is_unsigned())*/  {
-                if (src->is_signed()) {
+                if (src->is_signed() && !is_safe_const_cast) {
+#ifdef KLANG_WARN_CAST_SIGN_CHANGE
                     auto d = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::type_diag::WARN_CAST_SIGN_CHANGE),
                         "Casting a signed integer to an unsigned integer may reinterpret negative values "
                         "as large positive values (two's complement wrap-around)");
                     if (auto pos = expr.first_lexeme()) d.at(*pos);
                     report(d);
+#endif
                 }
             }
             // Extension type depends on source signedness:

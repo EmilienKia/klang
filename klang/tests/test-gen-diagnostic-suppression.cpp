@@ -201,6 +201,69 @@ TEST_CASE("End-to-end: WARN_UNUSED_EXPR_RESULT is suppressed via set_ignored_dia
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Constant integer casts warning suppression vs runtime warning emission
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Constant integer casts: safe constant vs runtime/overflow cast warnings", "[gen][diagnostics][cast][suppression]") {
+    auto compile_and_capture_stdout = [&](const std::string_view& src) -> std::string {
+        TmpDir dir;
+        auto cap_path = dir.path / "stdout.txt";
+        auto comp = k::compiler::create(make_pic_target_machine());
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        comp->set_file_resolver(resolver);
+        std::string out;
+        {
+            StdoutCapture cap(cap_path);
+            comp->parse_source("test.k", src, /*optimize=*/false, /*dump=*/false);
+            out = cap.content();
+        }
+        return out;
+    };
+
+    SECTION("Safe constant integer cast emits no warning") {
+        const std::string_view safe_src = R"SRC(
+            module __cast_diag_safe__;
+            test() : int {
+                u : unsigned int = (unsigned int) 42;
+                s : int = (int) 100u;
+                return s + (int) u;
+            }
+        )SRC";
+        std::string out = compile_and_capture_stdout(safe_src);
+        REQUIRE(out.find("Warning 00170") == std::string::npos);
+        REQUIRE(out.find("Warning 00194") == std::string::npos);
+    }
+
+#ifdef KLANG_WARN_CAST_SIGN_CHANGE
+    SECTION("Runtime signed to unsigned cast emits warning 00170 when macro is defined") {
+        const std::string_view runtime_src = R"SRC(
+            module __cast_diag_runtime_s2u__;
+            test(x : int) : unsigned int {
+                return (unsigned int) x;
+            }
+        )SRC";
+        std::string out = compile_and_capture_stdout(runtime_src);
+        REQUIRE(out.find("Warning 00170") != std::string::npos);
+    }
+#endif
+
+#ifdef KLANG_WARN_CAST_UNSIGNED_TO_SIGNED
+    SECTION("Runtime unsigned to signed cast emits warning 00194 when macro is defined") {
+        const std::string_view runtime_src = R"SRC(
+            module __cast_diag_runtime_u2s__;
+            test(x : unsigned int) : int {
+                return (int) x;
+            }
+        )SRC";
+        std::string out = compile_and_capture_stdout(runtime_src);
+        REQUIRE(out.find("Warning 00194") != std::string::npos);
+    }
+#endif
+}
+
+
 
 
 
