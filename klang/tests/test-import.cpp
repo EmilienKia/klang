@@ -3863,13 +3863,13 @@ TEST_CASE("import virtual — local class overrides a void-returning imported vi
             class Collector : public voidvirt_lib::Sink {
             public:
                 Collector() {}
-                override accept(v: int) : void { total = total + v; }
+                override accept(v: int) : void { total += v; }
             }
 
             class ResetCounter : public voidvirt_lib::Emitter {
             public:
                 ResetCounter() {}
-                override reset() : void { total = total + 100; }
+                override reset() : void { total += 100; }
             }
 
             main() : int {
@@ -3911,7 +3911,7 @@ TEST_CASE("import virtual — local class implements imported template interface
                 CounterOut() {}
 
                 override write(v: byte) : tplvirt_lib::Out<byte>& {
-                    sum = sum + v;
+                    sum += v;
                     return this;
                 }
 
@@ -4472,12 +4472,12 @@ TEST_CASE("cross-module callable — mangling stays stable across import",
 
             main() : int {
                 acc : int = 0;
-                acc = acc + cbl_mangle_lib::byPtr(twice, 1);
-                acc = acc + cbl_mangle_lib::byRef(twice, 2);
-                acc = acc + cbl_mangle_lib::byLink(twice, 3);
-                acc = acc + cbl_mangle_lib::byView(twice, 4);
+                acc += cbl_mangle_lib::byPtr(twice, 1);
+                acc += cbl_mangle_lib::byRef(twice, 2);
+                acc += cbl_mangle_lib::byLink(twice, 3);
+                acc += cbl_mangle_lib::byView(twice, 4);
                 try {
-                    acc = acc + cbl_mangle_lib::withThrows(11, twice);
+                    acc += cbl_mangle_lib::withThrows(11, twice);
                 } catch (e : cbl_mangle_lib::Boom&) {
                     return 5;
                 }

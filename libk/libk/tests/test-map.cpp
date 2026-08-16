@@ -61,15 +61,15 @@ TEST_CASE("ListMap<int,int> — put/get/containsKey/containsValue", "[libk][map]
             m.put(1, 10);
             m.put(2, 20);
             result : int = 0;
-            if (m.size() == 2) result = result + 1;
-            if (m.containsKey(1)) result = result + 10;
-            if (!m.containsKey(3)) result = result + 100;
-            if (m.containsValue(20)) result = result + 1000;
-            if (!m.containsValue(99)) result = result + 10000;
+            if (m.size() == 2) ++result;
+            if (m.containsKey(1)) result += 10;
+            if (!m.containsKey(3)) result += 100;
+            if (m.containsValue(20)) result += 1000;
+            if (!m.containsValue(99)) result += 10000;
             g : OptionalConstRef<int> = m.get(1);
-            if (g.hasValue() && g.get() == 10) result = result + 100000;
+            if (g.hasValue() && g.get() == 10) result += 100000;
             g2 : OptionalConstRef<int> = m.get(42);
-            if (!g2.hasValue()) result = result + 1000000;
+            if (!g2.hasValue()) result += 1000000;
             return result;
         }
     )SRC");
@@ -88,11 +88,11 @@ TEST_CASE("ListMap<int,int> — put updates value in place without moving order"
             m.put(2, 20);
             m.put(1, 99);
             result : int = 0;
-            if (m.size() == 2) result = result + 1;
+            if (m.size() == 2) ++result;
             g : OptionalConstRef<int> = m.get(1);
-            if (g.get() == 99) result = result + 10;
-            if (m.first().get().key() == 1) result = result + 100;
-            if (m.last().get().key() == 2) result = result + 1000;
+            if (g.get() == 99) result += 10;
+            if (m.first().get().key() == 1) result += 100;
+            if (m.last().get().key() == 2) result += 1000;
             return result;
         }
     )SRC");
@@ -128,10 +128,10 @@ TEST_CASE("ListMap<int,int> — putIfAbsent leaves existing value untouched", "[
             r1 : OptionalRef<int> = m.putIfAbsent(1, 999);
             r2 : OptionalRef<int> = m.putIfAbsent(2, 20);
             result : int = 0;
-            if (r1.hasValue() && r1.get() == 10) result = result + 1;
-            if (!r2.hasValue()) result = result + 10;
-            if (m.get(1).get() == 10) result = result + 100;
-            if (m.get(2).get() == 20) result = result + 1000;
+            if (r1.hasValue() && r1.get() == 10) ++result;
+            if (!r2.hasValue()) result += 10;
+            if (m.get(1).get() == 10) result += 100;
+            if (m.get(2).get() == 20) result += 1000;
             return result;
         }
     )SRC");
@@ -149,16 +149,16 @@ TEST_CASE("ListMap<int,int> — replace with insertIfAbsent true/false", "[libk]
             m.put(1, 10);
             result : int = 0;
             prev : Optional<int> = m.replace(1, 11);
-            if (prev.hasValue() && prev.get() == 10) result = result + 1;
-            if (m.get(1).get() == 11) result = result + 10;
+            if (prev.hasValue() && prev.get() == 10) ++result;
+            if (m.get(1).get() == 11) result += 10;
 
             absentNoInsert : Optional<int> = m.replace(2, 20, false);
-            if (!absentNoInsert.hasValue()) result = result + 100;
-            if (!m.containsKey(2)) result = result + 1000;
+            if (!absentNoInsert.hasValue()) result += 100;
+            if (!m.containsKey(2)) result += 1000;
 
             absentInsert : Optional<int> = m.replace(3, 30);
-            if (!absentInsert.hasValue()) result = result + 10000;
-            if (m.get(3).get() == 30) result = result + 100000;
+            if (!absentInsert.hasValue()) result += 10000;
+            if (m.get(3).get() == 30) result += 100000;
             return result;
         }
     )SRC");
@@ -176,12 +176,12 @@ TEST_CASE("ListMap<int,int> — remove and clear", "[libk][map][listmap]") {
             m.put(1, 10);
             m.put(2, 20);
             result : int = 0;
-            if (m.remove(1)) result = result + 1;
-            if (!m.containsKey(1)) result = result + 10;
-            if (!m.remove(99)) result = result + 100;
-            if (m.size() == 1) result = result + 1000;
+            if (m.remove(1)) ++result;
+            if (!m.containsKey(1)) result += 10;
+            if (!m.remove(99)) result += 100;
+            if (m.size() == 1) result += 1000;
             m.clear();
-            if (m.isEmpty() && m.size() == 0) result = result + 10000;
+            if (m.isEmpty() && m.size() == 0) result += 10000;
             return result;
         }
     )SRC");
@@ -204,8 +204,8 @@ TEST_CASE("ListMap<int,int> — const iteration visits entries in insertion orde
             cur : OptionalConstRef<Entry<int,int>> = it.next();
             order : int = 1;
             while (cur.hasValue()) {
-                sum = sum + cur.get().key() * order + cur.get().value();
-                order = order * 10;
+                sum += cur.get().key() * order + cur.get().value();
+                order *= 10;
                 cur = it.next();
             }
             return sum;
@@ -268,10 +268,10 @@ TEST_CASE("TreeMap<int,int> — put updates existing key and keeps sorted order"
             m.put(3, 30);
             m.put(1, 99);
             result : int = 0;
-            if (m.size() == 3) result = result + 1;
-            if (m.get(1).get() == 99) result = result + 10;
-            if (m.first().get().key() == 1) result = result + 100;
-            if (m.last().get().key() == 5) result = result + 1000;
+            if (m.size() == 3) ++result;
+            if (m.get(1).get() == 99) result += 10;
+            if (m.first().get().key() == 1) result += 100;
+            if (m.last().get().key() == 5) result += 1000;
             return result;
         }
     )SRC");
@@ -301,7 +301,7 @@ TEST_CASE("TreeMap<int,int> — ascending iteration is sorted by key", "[libk][m
                     ascending = false;
                 }
                 lastKey = cur.get().key();
-                count = count + 1;
+                ++count;
                 cur = it.next();
             }
             if (ascending && count == 5) {
@@ -347,14 +347,14 @@ TEST_CASE("TreeMap<int,int> — remove leaf, single-child and two-children nodes
             i : int = 1;
             while (i <= 15) {
                 m.put(i, i * 100);
-                i = i + 1;
+                ++i;
             }
             result : int = 0;
-            if (m.remove(1)) result = result + 1;      // leaf-ish
-            if (m.remove(8)) result = result + 10;      // root-ish, two children
-            if (m.remove(15)) result = result + 100;    // far leaf
-            if (!m.remove(1)) result = result + 1000;   // already removed
-            if (m.size() == 12) result = result + 10000;
+            if (m.remove(1)) ++result;      // leaf-ish
+            if (m.remove(8)) result += 10;      // root-ish, two children
+            if (m.remove(15)) result += 100;    // far leaf
+            if (!m.remove(1)) result += 1000;   // already removed
+            if (m.size() == 12) result += 10000;
             // Remaining entries must still be sorted and complete.
             it : ConstIterator<Entry<int,int>>! = m.constIterator();
             cur : OptionalConstRef<Entry<int,int>> = it.next();
@@ -364,10 +364,10 @@ TEST_CASE("TreeMap<int,int> — remove leaf, single-child and two-children nodes
             while (cur.hasValue()) {
                 if (cur.get().key() <= lastKey) { ascending = false; }
                 lastKey = cur.get().key();
-                count = count + 1;
+                ++count;
                 cur = it.next();
             }
-            if (ascending && count == 12) result = result + 100000;
+            if (ascending && count == 12) result += 100000;
             return result;
         }
     )SRC");
@@ -385,18 +385,18 @@ TEST_CASE("TreeMap<int,int> — putIfAbsent and replace semantics", "[libk][map]
             m.put(1, 10);
             result : int = 0;
             r1 : OptionalRef<int> = m.putIfAbsent(1, 999);
-            if (r1.hasValue() && r1.get() == 10) result = result + 1;
-            if (m.get(1).get() == 10) result = result + 10;
+            if (r1.hasValue() && r1.get() == 10) ++result;
+            if (m.get(1).get() == 10) result += 10;
 
             r2 : OptionalRef<int> = m.putIfAbsent(2, 20);
-            if (!r2.hasValue()) result = result + 100;
-            if (m.get(2).get() == 20) result = result + 1000;
+            if (!r2.hasValue()) result += 100;
+            if (m.get(2).get() == 20) result += 1000;
 
             prev : Optional<int> = m.replace(2, 25);
-            if (prev.hasValue() && prev.get() == 20) result = result + 10000;
+            if (prev.hasValue() && prev.get() == 20) result += 10000;
 
             noInsert : Optional<int> = m.replace(3, 30, false);
-            if (!noInsert.hasValue() && !m.containsKey(3)) result = result + 100000;
+            if (!noInsert.hasValue() && !m.containsKey(3)) result += 100000;
             return result;
         }
     )SRC");
@@ -449,11 +449,11 @@ TEST_CASE("HashMap<Id,int> — put/get/containsKey/containsValue and value updat
             m.put(Id(2), 20);
             m.put(Id(1), 99);
             result : int = 0;
-            if (m.size() == 2) result = result + 1;
-            if (m.containsKey(Id(1))) result = result + 10;
-            if (!m.containsKey(Id(3))) result = result + 100;
-            if (m.containsValue(20)) result = result + 1000;
-            if (m.get(Id(1)).get() == 99) result = result + 10000;
+            if (m.size() == 2) ++result;
+            if (m.containsKey(Id(1))) result += 10;
+            if (!m.containsKey(Id(3))) result += 100;
+            if (m.containsValue(20)) result += 1000;
+            if (m.get(Id(1)).get() == 99) result += 10000;
             return result;
         }
     )SRC");
@@ -473,19 +473,19 @@ TEST_CASE("HashMap<Id,int> — putIfAbsent, replace and remove", "[libk][map][ha
             result : int = 0;
 
             r1 : OptionalRef<int> = m.putIfAbsent(Id(1), 999);
-            if (r1.hasValue() && r1.get() == 10) result = result + 1;
+            if (r1.hasValue() && r1.get() == 10) ++result;
 
             r2 : OptionalRef<int> = m.putIfAbsent(Id(2), 20);
-            if (!r2.hasValue() && m.get(Id(2)).get() == 20) result = result + 10;
+            if (!r2.hasValue() && m.get(Id(2)).get() == 20) result += 10;
 
             prev : Optional<int> = m.replace(Id(2), 25);
-            if (prev.hasValue() && prev.get() == 20 && m.get(Id(2)).get() == 25) result = result + 100;
+            if (prev.hasValue() && prev.get() == 20 && m.get(Id(2)).get() == 25) result += 100;
 
             noInsert : Optional<int> = m.replace(Id(3), 30, false);
-            if (!noInsert.hasValue() && !m.containsKey(Id(3))) result = result + 1000;
+            if (!noInsert.hasValue() && !m.containsKey(Id(3))) result += 1000;
 
-            if (m.remove(Id(1)) && !m.containsKey(Id(1))) result = result + 10000;
-            if (!m.remove(Id(42))) result = result + 100000;
+            if (m.remove(Id(1)) && !m.containsKey(Id(1))) result += 10000;
+            if (!m.remove(Id(42))) result += 100000;
             return result;
         }
     )SRC");
@@ -522,12 +522,12 @@ TEST_CASE("HashMap<Id,int> — iteration visits every distinct entry exactly onc
             i : int = 0;
             while (i < 20) {
                 m.put(Id(i), i * 10);
-                i = i + 1;
+                ++i;
             }
             it : ConstIterator<Entry<Id,int>>! = m.constIterator();
             seen : bool[20];
             j : int = 0;
-            while (j < 20) { seen[j] = false; j = j + 1; }
+            while (j < 20) { seen[j] = false; ++j; }
             count : int = 0;
             valid : bool = true;
             cur : OptionalConstRef<Entry<Id,int>> = it.next();
@@ -537,7 +537,7 @@ TEST_CASE("HashMap<Id,int> — iteration visits every distinct entry exactly onc
                     valid = false;
                 }
                 seen[k] = true;
-                count = count + 1;
+                ++count;
                 cur = it.next();
             }
             if (valid && count == 20) {
@@ -584,17 +584,17 @@ TEST_CASE("HashMap<Id,int> — grows (rehashes) past default capacity without lo
             i : int = 0;
             while (i < 100) {
                 m.put(Id(i), i);
-                i = i + 1;
+                ++i;
             }
             result : int = 0;
-            if (m.size() == 100) result = result + 1;
+            if (m.size() == 100) ++result;
             allFound : bool = true;
             j : int = 0;
             while (j < 100) {
                 if (m.get(Id(j)).get() != j) { allFound = false; }
-                j = j + 1;
+                ++j;
             }
-            if (allFound) result = result + 10;
+            if (allFound) result += 10;
             return result;
         }
     )SRC");

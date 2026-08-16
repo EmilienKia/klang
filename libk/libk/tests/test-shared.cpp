@@ -129,13 +129,13 @@ TEST_CASE("Shared<IntBox> — acquire from owner", "[libk][shared]") {
             s : Shared<IntBox>;
             s.acquire(p);
             result : int = 0;
-            if (!s.isNull()) { result = result + 1; }
-            if (s.useCount() == 1) { result = result + 10; }
+            if (!s.isNull()) { ++result; }
+            if (s.useCount() == 1) { result += 10; }
             ptr : IntBox* = s.get();
             if (ptr != null) {
-                if (ptr->_val == 42) { result = result + 100; }
+                if (ptr->_val == 42) { result += 100; }
             }
-            if (p == null) { result = result + 1000; }
+            if (p == null) { result += 1000; }
             return result;
         }
     )SRC");
@@ -157,13 +157,13 @@ TEST_CASE("Shared<IntBox> — constructor from owner drains", "[libk][shared]") 
             p : IntBox! = new IntBox(99);
             s : Shared<IntBox>(p);
             result : int = 0;
-            if (!s.isNull()) { result = result + 1; }
-            if (s.useCount() == 1) { result = result + 10; }
+            if (!s.isNull()) { ++result; }
+            if (s.useCount() == 1) { result += 10; }
             ptr : IntBox* = s.get();
             if (ptr != null) {
-                if (ptr->_val == 99) { result = result + 100; }
+                if (ptr->_val == 99) { result += 100; }
             }
-            if (p == null) { result = result + 1000; }
+            if (p == null) { result += 1000; }
             return result;
         }
     )SRC");
@@ -192,12 +192,12 @@ TEST_CASE("Shared<IntBox> — share increases useCount", "[libk][shared]") {
             s2 : Shared<IntBox>;
             s2.share(s1);
             result : int = 0;
-            if (s1.useCount() == 2) { result = result + 1; }
-            if (s2.useCount() == 2) { result = result + 10; }
-            if (s1.get() == s2.get()) { result = result + 100; }
+            if (s1.useCount() == 2) { ++result; }
+            if (s2.useCount() == 2) { result += 10; }
+            if (s1.get() == s2.get()) { result += 100; }
             ptr : IntBox* = s2.get();
             if (ptr != null) {
-                if (ptr->_val == 77) { result = result + 1000; }
+                if (ptr->_val == 77) { result += 1000; }
             }
             return result;
         }
@@ -225,9 +225,9 @@ TEST_CASE("Shared<IntBox> — multiple shares", "[libk][shared]") {
             s3 : Shared<IntBox>;
             s3.share(s2);
             result : int = 0;
-            if (s1.useCount() == 3) { result = result + 1; }
-            if (s2.useCount() == 3) { result = result + 10; }
-            if (s3.useCount() == 3) { result = result + 100; }
+            if (s1.useCount() == 3) { ++result; }
+            if (s2.useCount() == 3) { result += 10; }
+            if (s3.useCount() == 3) { result += 100; }
             return result;
         }
     )SRC");
@@ -257,11 +257,11 @@ TEST_CASE("Shared<IntBox> — reset decreases useCount", "[libk][shared]") {
             s2.share(s1);
             s1.reset();
             result : int = 0;
-            if (s1.isNull()) { result = result + 1; }
-            if (s2.useCount() == 1) { result = result + 10; }
+            if (s1.isNull()) { ++result; }
+            if (s2.useCount() == 1) { result += 10; }
             ptr : IntBox* = s2.get();
             if (ptr != null) {
-                if (ptr->_val == 33) { result = result + 100; }
+                if (ptr->_val == 33) { result += 100; }
             }
             return result;
         }
@@ -314,10 +314,10 @@ TEST_CASE("Shared<IntBox> — destructor of copy preserves object", "[libk][shar
                 s2.share(s1);
             }
             result : int = 0;
-            if (s1.useCount() == 1) { result = result + 1; }
+            if (s1.useCount() == 1) { ++result; }
             ptr : IntBox* = s1.get();
             if (ptr != null) {
-                if (ptr->_val == 88) { result = result + 10; }
+                if (ptr->_val == 88) { result += 10; }
             }
             return result;
         }
@@ -345,10 +345,10 @@ TEST_CASE("Shared<IntBox> — original destroyed first, copy survives", "[libk][
                 s2.share(s1);
             }
             result : int = 0;
-            if (s2.useCount() == 1) { result = result + 1; }
+            if (s2.useCount() == 1) { ++result; }
             ptr : IntBox* = s2.get();
             if (ptr != null) {
-                if (ptr->_val == 66) { result = result + 10; }
+                if (ptr->_val == 66) { result += 10; }
             }
             return result;
         }
@@ -370,7 +370,7 @@ TEST_CASE("Shared<class> — destructor called on last release", "[libk][shared]
         class Tracker {
             public _id : int;
             Tracker() { _id = 0; }
-            ~Tracker() { flag = flag + 1; }
+            ~Tracker() { ++flag; }
         }
         test() : int {
             {
@@ -411,10 +411,10 @@ TEST_CASE("Shared<IntBox> — reset with new pointer", "[libk][shared]") {
             p2 : IntBox! = new IntBox(20);
             s.reset(p2);
             result : int = 0;
-            if (s.useCount() == 1) { result = result + 1; }
+            if (s.useCount() == 1) { ++result; }
             ptr : IntBox* = s.get();
             if (ptr != null) {
-                if (ptr->_val == 20) { result = result + 10; }
+                if (ptr->_val == 20) { result += 10; }
             }
             return result;
         }

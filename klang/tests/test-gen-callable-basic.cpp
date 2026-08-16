@@ -203,7 +203,7 @@ TEST_CASE("Callable: void return type is an omitted return type", "[gen][callabl
     auto jit = gen_jit(R"SRC(
         module test;
         counter : int = 0;
-        bump(x : int) { counter = counter + x; }
+        bump(x : int) { counter += x; }
         test() : int {
             fp : *(int) = bump;
             fp(42);
@@ -242,8 +242,8 @@ TEST_CASE("Callable: comparison against null and boolean conversion", "[gen][cal
         test() : int {
             fp : *(int):int = add_one;
             res : int = 0;
-            if (fp != null) { res = res + 2; }
-            if (fp) { res = res + 40; }
+            if (fp != null) { res += 2; }
+            if (fp) { res += 40; }
             return res;
         }
     )SRC");

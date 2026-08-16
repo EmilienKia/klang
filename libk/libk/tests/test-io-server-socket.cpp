@@ -44,13 +44,13 @@ TEST_CASE("ServerSocket: localPort is available after bind", "[libk][io][server-
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
             p : int = srv->localPort();
             res : int = 0;
-            if (p > 0) { res = res + 1; }
-            if (srv->isOpen()) { res = res + 2; }
+            if (p > 0) { ++res; }
+            if (srv->isOpen()) { res += 2; }
             srv->close();
-            if (!srv->isOpen()) { res = res + 4; }
+            if (!srv->isOpen()) { res += 4; }
             // Idempotent close
             srv->close();
-            res = res + 8;
+            res += 8;
             delete srv;
             delete addr;
             return res;

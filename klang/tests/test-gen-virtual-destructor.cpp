@@ -137,7 +137,7 @@ TEST_CASE("Virtual destructor: destroying through interface owner calls derived 
         }
 
         class FooGreeter : Greeter {
-            ~FooGreeter() { dtor_count = dtor_count + 1; }
+            ~FooGreeter() { ++dtor_count; }
             override greet() : int { return 42; }
         }
 
@@ -214,7 +214,7 @@ TEST_CASE("Virtual destructor: destroying through secondary interface base still
                 // the Impl subobject when destroyed through the SECOND
                 // (non-primary) base IB, these field reads would be garbage.
                 dtor_field_sum = x + y;
-                dtor_count = dtor_count + 1;
+                ++dtor_count;
             }
             override a() : int { return 1; }
             override b() : int { return 2; }

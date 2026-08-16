@@ -80,8 +80,8 @@ TEST_CASE("DatagramSocket: UDP loopback sendTo/receive", "[libk][io][socket][udp
             recvThread->join();
 
             res : int = 0;
-            if (sent == 4) { res = res + 1; }
-            if (recvWorker->ok() == 1) { res = res + 2; }
+            if (sent == 4) { ++res; }
+            if (recvWorker->ok() == 1) { res += 2; }
 
             sendSock->close();
             recvSock->close();
@@ -150,8 +150,8 @@ TEST_CASE("DatagramSocket: connected mode send/receive", "[libk][io][socket][udp
 
             recvThread->join();
             res : int = 0;
-            if (sent == 3) { res = res + 1; }
-            if (recvWorker->ok() == 1) { res = res + 2; }
+            if (sent == 3) { ++res; }
+            if (recvWorker->ok() == 1) { res += 2; }
 
             delete out;
             delete recvThread;

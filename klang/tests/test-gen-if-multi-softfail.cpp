@@ -373,7 +373,7 @@ TEST_CASE("if-multi-softfail: dtor called for initialized vars on soft-fail",
             val : int;
 
             ~S() {
-                g_dtor_count = g_dtor_count + 1;
+                ++g_dtor_count;
             }
         }
 
@@ -410,7 +410,7 @@ TEST_CASE("if-multi-softfail: dtor called for all vars in then branch",
             val : int;
 
             ~S() {
-                g_dtor_count = g_dtor_count + 1;
+                ++g_dtor_count;
             }
         }
 

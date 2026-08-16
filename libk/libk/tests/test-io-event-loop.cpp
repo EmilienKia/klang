@@ -55,7 +55,7 @@ TEST_CASE("EventLoop: submit executes task and stop exits loop", "[libk][io][eve
         public:
             HitTask(loop: k::io::EventLoop*) : _loop(loop) {}
             override run() : void {
-                hits = hits + 1;
+                ++hits;
                 _loop->stop();
             }
         }

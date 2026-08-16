@@ -243,7 +243,7 @@ TEST_CASE("callable template alias — substituted parameter inside a nested typ
         module test;
         template<typename T> alias Consumer : *(T);
         acc : int = 0;
-        add(x: int) { acc = acc + x; }
+        add(x: int) { acc += x; }
         run() : int {
             c : Consumer<int> = add;
             c(40);

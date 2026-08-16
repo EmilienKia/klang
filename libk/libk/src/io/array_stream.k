@@ -51,7 +51,7 @@ public:
         i : int = 0;
         while (i < size) {
             _buf[i] = buf[i];
-            i = i + 1;
+            ++i;
         }
         _count = size;
     }
@@ -63,7 +63,7 @@ public:
             return ::k::Optional<T>();
         }
         val : T = _buf[_pos];
-        _pos = _pos + 1;
+        ++_pos;
         return ::k::Optional<T>(val);
     }
 
@@ -83,9 +83,9 @@ public:
         i : unsigned int = 0;
         while (i < actual) {
             buf[off + i] = _buf[(unsigned int) _pos + i];
-            i = i + 1;
+            ++i;
         }
-        _pos = _pos + (int) actual;
+        _pos += (int) actual;
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(actual);
     }
 
@@ -97,7 +97,7 @@ public:
         avail : unsigned long = (unsigned long) (_count - _pos);
         actual : unsigned long = n;
         if (actual > avail) actual = avail;
-        _pos = _pos + (int) actual;
+        _pos += (int) actual;
         return actual;
     }
 
@@ -141,7 +141,7 @@ public:
     override write(v: T) : OutputStream<T>& {
         _ensureCap(1);
         _buf[_count] = v;
-        _count = _count + 1;
+        ++_count;
         return this;
     }
 
@@ -153,9 +153,9 @@ public:
         i : unsigned int = 0;
         while (i < len) {
             _buf[_count + (int) i] = buf[off + i];
-            i = i + 1;
+            ++i;
         }
-        _count = _count + (int) len;
+        _count += (int) len;
         return this;
     }
 
@@ -189,7 +189,7 @@ public:
         i : int = 0;
         while (i < _count) {
             result[i] = _buf[i];
-            i = i + 1;
+            ++i;
         }
         return result;
     }
@@ -221,7 +221,7 @@ private:
             i : int = 0;
             while (i < _count) {
                 newBuf[i] = _buf[i];
-                i = i + 1;
+                ++i;
             }
             delete _buf;
         }

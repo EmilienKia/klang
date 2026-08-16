@@ -356,7 +356,7 @@ module __virt_diamond_dtor__;
 dtor_count : int;
 
 class A {
-    ~A() { dtor_count = dtor_count + 1; }
+    ~A() { ++dtor_count; }
 }
 
 class B : public A {
@@ -579,7 +579,7 @@ module __bug_diamond_dtor__;
 dtor_count : int;
 
 class A {
-    ~A() { dtor_count = dtor_count + 1; }
+    ~A() { ++dtor_count; }
 }
 class B : public A { B() {} }
 class C : public A { C() {} }
@@ -749,7 +749,7 @@ module __exp_diamond_dtor_once__;
 
 dtor_count : int;
 
-class A { ~A() { dtor_count = dtor_count + 1; } }
+class A { ~A() { ++dtor_count; } }
 class B : public A { B() {} }
 class C : public A { C() {} }
 class D : public B, public C { D() {} }

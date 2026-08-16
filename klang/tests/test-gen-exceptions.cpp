@@ -1474,7 +1474,7 @@ TEST_CASE("Exception: bare throw rethrows caught exception to outer handler", "[
                     throw;
                 }
             } catch (e: MyErr&) {
-                result = result + e.getCode();
+                result += e.getCode();
             }
             return result;
         }
@@ -1659,7 +1659,7 @@ TEST_CASE("Exception: finally executes on normal flow", "[gen][exceptions][final
             } catch (e: Exception*) {
                 result = -1;
             } finally {
-                result = result + 10;
+                result += 10;
             }
             return result;
         }
@@ -1691,7 +1691,7 @@ TEST_CASE("Exception: finally executes after catch", "[gen][exceptions][finally]
             } catch (e: TestErr*) {
                 result = 5;
             } finally {
-                result = result + 10;
+                result += 10;
             }
             return result;
         }
@@ -1711,7 +1711,7 @@ TEST_CASE("Exception: try-finally without catch clauses", "[gen][exceptions][fin
             try {
                 result = 42;
             } finally {
-                result = result + 1;
+                ++result;
             }
             return result;
         }
@@ -1748,10 +1748,10 @@ TEST_CASE("Exception: finally executes on unmatched exception", "[gen][exception
                 } catch (e: ErrY*) {
                     result = -1;
                 } finally {
-                    result = result + 100;
+                    result += 100;
                 }
             } catch (e: ErrX*) {
-                result = result + 5;
+                result += 5;
             }
             return result;
         }
@@ -1772,10 +1772,10 @@ TEST_CASE("Exception: nested try-finally both execute", "[gen][exceptions][final
                 try {
                     result = 1;
                 } finally {
-                    result = result + 10;
+                    result += 10;
                 }
             } finally {
-                result = result + 100;
+                result += 100;
             }
             return result;
         }
@@ -1793,9 +1793,9 @@ TEST_CASE("Exception: finally with no exception and no catch", "[gen][exceptions
         test_finally_simple() : int {
             x : int = 10;
             try {
-                x = x * 2;
+                x *= 2;
             } finally {
-                x = x + 3;
+                x += 3;
             }
             return x;
         }
@@ -1826,10 +1826,10 @@ TEST_CASE("Exception: finally does not suppress exception", "[gen][exceptions][f
                 try {
                     thrower_prop();
                 } finally {
-                    result = result + 50;
+                    result += 50;
                 }
             } catch (e: PropErr*) {
-                result = result + 7;
+                result += 7;
             }
             return result;
         }
@@ -1877,7 +1877,7 @@ TEST_CASE("Exception: finally runs on return from try body", "[gen][exceptions][
                 g_finally_ran = 100;
                 return 42;
             } finally {
-                g_finally_ran = g_finally_ran + 1;
+                ++g_finally_ran;
             }
             return -1;
         }
@@ -1920,7 +1920,7 @@ TEST_CASE("Exception: finally runs on return from catch body", "[gen][exceptions
                 g_finally_ran2 = 200;
                 return 99;
             } finally {
-                g_finally_ran2 = g_finally_ran2 + 1;
+                ++g_finally_ran2;
             }
             return -1;
         }
@@ -1943,14 +1943,14 @@ TEST_CASE("Exception: finally runs on break from try body in loop", "[gen][excep
             i : int = 0;
             while (i < 10) {
                 try {
-                    result = result + 1;
+                    ++result;
                     if (i == 3) {
                         break;
                     }
                 } finally {
-                    result = result + 100;
+                    result += 100;
                 }
-                i = i + 1;
+                ++i;
             }
             return result;
         }
@@ -1971,14 +1971,14 @@ TEST_CASE("Exception: finally runs on continue from try body in loop", "[gen][ex
             result : int = 0;
             i : int = 0;
             while (i < 5) {
-                i = i + 1;
+                ++i;
                 try {
                     if (i == 3) {
                         continue;
                     }
-                    result = result + 1;
+                    ++result;
                 } finally {
-                    result = result + 10;
+                    result += 10;
                 }
             }
             return result;
@@ -2012,14 +2012,14 @@ TEST_CASE("Exception: finally runs on break from catch body in loop", "[gen][exc
                 try {
                     thrower_loop();
                 } catch (e: ErrLoop&) {
-                    result = result + 1;
+                    ++result;
                     if (i == 2) {
                         break;
                     }
                 } finally {
-                    result = result + 100;
+                    result += 100;
                 }
-                i = i + 1;
+                ++i;
             }
             return result;
         }
@@ -2075,14 +2075,14 @@ TEST_CASE("Exception: finally with continue in for loop", "[gen][exceptions][fin
 
         test_finally_continue_for() : int {
             result : int = 0;
-            for (i : int = 0; i < 4; i = i + 1) {
+            for (i : int = 0; i < 4; ++i) {
                 try {
                     if (i == 2) {
                         continue;
                     }
-                    result = result + i;
+                    result += i;
                 } finally {
-                    result = result + 100;
+                    result += 100;
                 }
             }
             return result;
@@ -2118,7 +2118,7 @@ TEST_CASE("Exception chaining: getCause returns null when no cause", "[gen][exce
                 result = ex.getCode();
                 cause : Throwable* = ex.getCause();
                 if (cause == null) {
-                    result = result + 100;
+                    result += 100;
                 }
             }
             return result;
@@ -2186,7 +2186,7 @@ TEST_CASE("Exception chaining: throw with cause preserves cause pointer", "[gen]
             } catch (wrap : WrapErr&) {
                 result = wrap.getCode();
                 if (wrap.hasCause()) {
-                    result = result + 100;
+                    result += 100;
                 }
             }
             return result;
@@ -2393,9 +2393,9 @@ TEST_CASE("Exception chaining: null cause via explicit null argument", "[gen][ex
             } catch (w : WrapErr&) {
                 result = w.getCode();
                 if (w.hasCause()) {
-                    result = result + 1000;
+                    result += 1000;
                 } else {
-                    result = result + 1;
+                    ++result;
                 }
             }
             return result;
@@ -2429,7 +2429,7 @@ TEST_CASE("Exception unwinding: struct destructor called on throw",
         struct Tracked {
             _id : int;
             Tracked(id: int) : _id(id) { }
-            ~Tracked() { dtor_count = dtor_count + 1; }
+            ~Tracked() { ++dtor_count; }
         }
 
         thrower() {
@@ -2521,7 +2521,7 @@ TEST_CASE("Exception unwinding: owner freed on throw",
         struct Resource {
             _v : int;
             Resource() : _v(42) { }
-            ~Resource() { free_count = free_count + 1; }
+            ~Resource() { ++free_count; }
         }
 
         thrower() {
@@ -2562,7 +2562,7 @@ TEST_CASE("Exception unwinding: null owner not freed",
         struct Resource {
             _v : int;
             Resource() : _v(42) { }
-            ~Resource() { free_count = free_count + 1; }
+            ~Resource() { ++free_count; }
         }
 
         thrower() {
@@ -2649,7 +2649,7 @@ TEST_CASE("Exception unwinding: try-catch inside cleanup scope catches normally"
         struct Guard {
             _id : int;
             Guard(id: int) : _id(id) { }
-            ~Guard() { dtor_count = dtor_count + 1; }
+            ~Guard() { ++dtor_count; }
         }
 
         test_catch_inside() : int {
@@ -2693,7 +2693,7 @@ TEST_CASE("Exception unwinding: unconstructed vars not destroyed",
         struct Widget {
             _v : int;
             Widget(v: int) : _v(v) { }
-            ~Widget() { dtor_count = dtor_count + 1; }
+            ~Widget() { ++dtor_count; }
         }
 
         thrower() {
@@ -2736,7 +2736,7 @@ TEST_CASE("Exception unwinding: owner param freed on throw in function body",
         struct Resource {
             _v : int;
             Resource() : _v(99) { }
-            ~Resource() { free_count = free_count + 1; }
+            ~Resource() { ++free_count; }
         }
 
         consumer(r : Resource!) : int {
@@ -2820,7 +2820,7 @@ TEST_CASE("Exception unwinding: sized array elements destroyed on throw",
         struct Widget {
             _v : int;
             Widget(v: int) : _v(v) { }
-            ~Widget() { dtor_count = dtor_count + 1; }
+            ~Widget() { ++dtor_count; }
         }
 
         thrower() {
@@ -2862,7 +2862,7 @@ TEST_CASE("Exception unwinding: early return in block with destructible vars",
         struct Tracked {
             _v : int;
             Tracked() : _v(0) {}
-            ~Tracked() { dtor_count = dtor_count + 1; }
+            ~Tracked() { ++dtor_count; }
         }
 
         early_return(flag : int) : int {
@@ -2983,7 +2983,7 @@ TEST_CASE("Exception: virtual call unwinding runs destructors of live locals",
         struct Tracked {
             _v : int;
             Tracked() : _v(0) {}
-            ~Tracked() { dtor_count = dtor_count + 1; }
+            ~Tracked() { ++dtor_count; }
         }
 
         interface Task {
@@ -3033,7 +3033,7 @@ TEST_CASE("exceptions: a landing pad reached before an owner declaration must no
         struct Payload {
             _v : int;
             Payload() : _v(0) {}
-            ~Payload() { freed = freed + 1; }
+            ~Payload() { ++freed; }
         }
 
         class Holder {

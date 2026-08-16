@@ -620,7 +620,7 @@ TEST_CASE("Template struct with nested struct and self-referencing pointer", "[g
                 (*node)._val = value;
                 (*node)._next = _head;
                 _head = node;
-                _size = _size + 1;
+                ++_size;
             }
 
             getSize() : int {

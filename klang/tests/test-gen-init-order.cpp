@@ -89,13 +89,13 @@ TEST_CASE("Init order: explicit static-ctor dep via mem-init list — A before B
 
         struct A {
             static A() {
-                order_log = order_log | 1;
+                order_log |= 1;
             }
         }
 
         struct B {
             static B() : A() {
-                order_log = order_log | 2;
+                order_log |= 2;
             }
         }
 
@@ -165,12 +165,12 @@ TEST_CASE("Init order: finalization is exact reverse of initialization",
         live_count : int;
 
         struct A {
-            static A()  { live_count = live_count + 1; }
-            static ~A() { live_count = live_count - 1; }
+            static A()  { ++live_count; }
+            static ~A() { --live_count; }
         }
 
         struct B {
-            static B()  : A() { live_count = live_count + 10; }
+            static B()  : A() { live_count += 10; }
             static ~B()       { live_count = live_count - 10; }
         }
 
@@ -248,12 +248,12 @@ TEST_CASE("Init order: duplicate explicit deps — deduped, no error",
         cnt : int;
 
         struct A {
-            static A() { cnt = cnt + 1; }
+            static A() { ++cnt; }
         }
 
         struct B {
             // Listing A twice should not matter — A still runs exactly once
-            static B() : A() { cnt = cnt + 10; }
+            static B() : A() { cnt += 10; }
         }
 
         get_cnt() : int { return cnt; }
@@ -333,19 +333,19 @@ TEST_CASE("Init order: diamond dependency — A runs exactly once",
         d_count : int;
 
         struct A {
-            static A() { a_count = a_count + 1; }
+            static A() { ++a_count; }
         }
 
         struct B {
-            static B() : A() { b_count = b_count + 1; }
+            static B() : A() { ++b_count; }
         }
 
         struct C {
-            static C() : A() { c_count = c_count + 1; }
+            static C() : A() { ++c_count; }
         }
 
         struct D {
-            static D() : B(), C() { d_count = d_count + 1; }
+            static D() : B(), C() { ++d_count; }
         }
 
         get_a() : int { return a_count; }

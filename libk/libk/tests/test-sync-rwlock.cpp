@@ -59,16 +59,16 @@ TEST_CASE("ReadWriteLock: read holds are shared and counted", "[libk][sync][rwlo
         test() : int {
             l : ReadWriteLock;
             res : int = 0;
-            if (l.readCount() == 0) { res = res + 1; }
+            if (l.readCount() == 0) { ++res; }
             l.readLock();
-            if (l.readCount() == 1) { res = res + 2; }
+            if (l.readCount() == 1) { res += 2; }
             // A second shared hold is granted without blocking.
-            if (l.tryReadLock()) { res = res + 4; }
-            if (l.readCount() == 2) { res = res + 8; }
+            if (l.tryReadLock()) { res += 4; }
+            if (l.readCount() == 2) { res += 8; }
             l.readUnlock();
             l.readUnlock();
-            if (l.readCount() == 0) { res = res + 16; }
-            if (!l.isWriteLocked()) { res = res + 32; }
+            if (l.readCount() == 0) { res += 16; }
+            if (!l.isWriteLocked()) { res += 32; }
             return res;
         }
     )SRC");
@@ -84,18 +84,18 @@ TEST_CASE("ReadWriteLock: the write lock is exclusive", "[libk][sync][rwlock]") 
         test() : int {
             l : ReadWriteLock;
             res : int = 0;
-            if (l.tryWriteLock()) { res = res + 1; }
-            if (l.isWriteLocked()) { res = res + 2; }
+            if (l.tryWriteLock()) { ++res; }
+            if (l.isWriteLocked()) { res += 2; }
             // Neither readers nor other writers may enter.
-            if (!l.tryReadLock()) { res = res + 4; }
-            if (!l.tryWriteLock()) { res = res + 8; }
+            if (!l.tryReadLock()) { res += 4; }
+            if (!l.tryWriteLock()) { res += 8; }
             l.writeUnlock();
-            if (!l.isWriteLocked()) { res = res + 16; }
+            if (!l.isWriteLocked()) { res += 16; }
             // A live reader excludes writers.
             l.readLock();
-            if (!l.tryWriteLock()) { res = res + 32; }
+            if (!l.tryWriteLock()) { res += 32; }
             l.readUnlock();
-            if (l.tryWriteLock()) { res = res + 64; }
+            if (l.tryWriteLock()) { res += 64; }
             l.writeUnlock();
             return res;
         }
@@ -112,8 +112,8 @@ TEST_CASE("ReadWriteLock: unlocking a free lock throws", "[libk][sync][rwlock]")
         test() : int {
             l : ReadWriteLock;
             res : int = 0;
-            try { l.readUnlock(); } catch (e: IllegalMonitorStateException&) { res = res + 1; }
-            try { l.writeUnlock(); } catch (e2: IllegalMonitorStateException&) { res = res + 2; }
+            try { l.readUnlock(); } catch (e: IllegalMonitorStateException&) { ++res; }
+            try { l.writeUnlock(); } catch (e2: IllegalMonitorStateException&) { res += 2; }
             return res;
         }
     )SRC");
@@ -168,14 +168,14 @@ TEST_CASE("ReadWriteLock: a reader waits for the writer to finish", "[libk][sync
             try {
                 ready->await();
                 // The writer holds the lock: a timed read must give up.
-                if (!lock->tryReadLock(Duration::ofMillis(20L))) { res = res + 1; }
-                if (lock->isWriteLocked()) { res = res + 2; }
+                if (!lock->tryReadLock(Duration::ofMillis(20L))) { ++res; }
+                if (lock->isWriteLocked()) { res += 2; }
                 // Blocking until the writer is done yields the published value.
                 lock->readLock();
-                if (s.value == 7) { res = res + 4; }
+                if (s.value == 7) { res += 4; }
                 lock->readUnlock();
                 t->join();
-                if (lock->readCount() == 0) { res = res + 8; }
+                if (lock->readCount() == 0) { res += 8; }
             } catch (e: Throwable&) {
                 res = -1;
             }
@@ -242,12 +242,12 @@ TEST_CASE("ReadWriteLock: a writer waits for readers to leave", "[libk][sync][rw
                 ready->countDown();
                 // Wait for the writer to have failed its timed acquisition.
                 done->await();
-                if (!s.wrote) { res = res + 1; }
+                if (!s.wrote) { ++res; }
                 lock->readUnlock();
                 t->join();
-                if (s.wrote) { res = res + 2; }
-                if (w->_blockedWhileReading) { res = res + 4; }
-                if (!lock->isWriteLocked()) { res = res + 8; }
+                if (s.wrote) { res += 2; }
+                if (w->_blockedWhileReading) { res += 4; }
+                if (!lock->isWriteLocked()) { res += 8; }
             } catch (e: Throwable&) {
                 res = -1;
             }
@@ -290,7 +290,7 @@ TEST_CASE("ReadWriteLock: readers never observe a torn write", "[libk][sync][rwl
                     // A reader entering here would see a != b.
                     _s->b = _s->b + 1L;
                     _s->lock->writeUnlock();
-                    i = i + 1;
+                    ++i;
                 }
             }
         }
@@ -306,10 +306,10 @@ TEST_CASE("ReadWriteLock: readers never observe a torn write", "[libk][sync][rwl
                 i : int = 0;
                 while (i < 500) {
                     _s->lock->readLock();
-                    if (_s->a != _s->b) { _torn = _torn + 1; }
-                    _reads = _reads + 1L;
+                    if (_s->a != _s->b) { ++_torn; }
+                    _reads += 1L;
                     _s->lock->readUnlock();
-                    i = i + 1;
+                    ++i;
                 }
             }
         }
@@ -337,10 +337,10 @@ TEST_CASE("ReadWriteLock: readers never observe a torn write", "[libk][sync][rwl
             try { t1->join(); t2->join(); t3->join(); t4->join(); } catch (e: Throwable&) { }
 
             res : int = 0;
-            if (rd1->_torn == 0 && rd2->_torn == 0) { res = res + 1; }
-            if (rd1->_reads == 500L && rd2->_reads == 500L) { res = res + 2; }
-            if (s.a == 1000L && s.b == 1000L) { res = res + 4; }
-            if (lock->readCount() == 0 && !lock->isWriteLocked()) { res = res + 8; }
+            if (rd1->_torn == 0 && rd2->_torn == 0) { ++res; }
+            if (rd1->_reads == 500L && rd2->_reads == 500L) { res += 2; }
+            if (s.a == 1000L && s.b == 1000L) { res += 4; }
+            if (lock->readCount() == 0 && !lock->isWriteLocked()) { res += 8; }
             delete t1; delete t2; delete t3; delete t4;
             delete m1; delete m2; delete rd1; delete rd2;
             delete lock;

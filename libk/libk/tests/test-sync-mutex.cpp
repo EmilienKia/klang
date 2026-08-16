@@ -60,13 +60,13 @@ TEST_CASE("Mutex: lock and unlock on a single thread", "[libk][sync][mutex]") {
         test() : int {
             m : Mutex;
             r : int = 0;
-            if (!m.isHeldByCurrentThread()) { r = r + 1; }
+            if (!m.isHeldByCurrentThread()) { ++r; }
             m.lock();
-            if (m.isHeldByCurrentThread()) { r = r + 2; }
-            if (m.holdCount() == 1) { r = r + 4; }
+            if (m.isHeldByCurrentThread()) { r += 2; }
+            if (m.holdCount() == 1) { r += 4; }
             m.unlock();
-            if (!m.isHeldByCurrentThread()) { r = r + 8; }
-            if (m.holdCount() == 0) { r = r + 16; }
+            if (!m.isHeldByCurrentThread()) { r += 8; }
+            if (m.holdCount() == 0) { r += 16; }
             return r;
         }
     )SRC");
@@ -82,10 +82,10 @@ TEST_CASE("Mutex: tryLock succeeds on a free lock", "[libk][sync][mutex]") {
         test() : int {
             m : Mutex;
             r : int = 0;
-            if (m.tryLock()) { r = r + 1; }
-            if (m.isHeldByCurrentThread()) { r = r + 2; }
+            if (m.tryLock()) { ++r; }
+            if (m.isHeldByCurrentThread()) { r += 2; }
             m.unlock();
-            if (m.tryLock()) { r = r + 4; }
+            if (m.tryLock()) { r += 4; }
             m.unlock();
             return r;
         }
@@ -130,15 +130,15 @@ TEST_CASE("ReentrantLock: the owner may re-acquire the lock", "[libk][sync][mute
             m.lock();
             m.lock();
             m.lock();
-            if (m.holdCount() == 3) { r = r + 1; }
+            if (m.holdCount() == 3) { ++r; }
             m.unlock();
-            if (m.holdCount() == 2) { r = r + 2; }
+            if (m.holdCount() == 2) { r += 2; }
             m.unlock();
             m.unlock();
-            if (m.holdCount() == 0) { r = r + 4; }
-            if (!m.isHeldByCurrentThread()) { r = r + 8; }
+            if (m.holdCount() == 0) { r += 4; }
+            if (!m.isHeldByCurrentThread()) { r += 8; }
             // The lock is free again, so it can be taken from scratch.
-            if (m.tryLock()) { r = r + 16; }
+            if (m.tryLock()) { r += 16; }
             m.unlock();
             return r;
         }
@@ -155,12 +155,12 @@ TEST_CASE("ReentrantLock: tryLock also nests", "[libk][sync][mutex]") {
         test() : int {
             m : ReentrantLock;
             r : int = 0;
-            if (m.tryLock()) { r = r + 1; }
-            if (m.tryLock()) { r = r + 2; }
-            if (m.holdCount() == 2) { r = r + 4; }
+            if (m.tryLock()) { ++r; }
+            if (m.tryLock()) { r += 2; }
+            if (m.holdCount() == 2) { r += 4; }
             m.unlock();
             m.unlock();
-            if (m.holdCount() == 0) { r = r + 8; }
+            if (m.holdCount() == 0) { r += 8; }
             return r;
         }
     )SRC");
@@ -198,7 +198,7 @@ TEST_CASE("Mutex: concurrent increments are serialised", "[libk][sync][mutex][th
                     _shared->lock.lock();
                     _shared->counter = _shared->counter + 1L;
                     _shared->lock.unlock();
-                    i = i + 1;
+                    ++i;
                 }
             }
         }
@@ -269,13 +269,13 @@ TEST_CASE("Mutex: tryLock fails while another thread holds the lock", "[libk][sy
             try {
                 s.ready->await();
                 // The other thread owns the lock: acquisition must fail.
-                if (!s.lock.tryLock()) { res = res + 1; }
-                if (!s.lock.isHeldByCurrentThread()) { res = res + 2; }
-                if (!s.lock.tryLock(Duration::ofMillis(40L))) { res = res + 4; }
+                if (!s.lock.tryLock()) { ++res; }
+                if (!s.lock.isHeldByCurrentThread()) { res += 2; }
+                if (!s.lock.tryLock(Duration::ofMillis(40L))) { res += 4; }
                 s.done->countDown();
                 t->join();
                 // The lock is free again once the holder returned.
-                if (s.lock.tryLock()) { res = res + 8; }
+                if (s.lock.tryLock()) { res += 8; }
                 s.lock.unlock();
             } catch (e: Throwable&) {
                 res = -1;

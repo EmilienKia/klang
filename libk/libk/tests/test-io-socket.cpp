@@ -88,13 +88,13 @@ TEST_CASE("Socket: loopback connect/send/recv round-trip", "[libk][io][socket]")
             c->read(in, 2000000000L);
             in->flip();
             ok : int = 0;
-            if (in->remaining() == 4u) { ok = ok + 1; }
-            if (in->get(0u) == (byte) 80) { ok = ok + 2; }
-            if (in->get(3u) == (byte) 71) { ok = ok + 4; }
+            if (in->remaining() == 4u) { ++ok; }
+            if (in->get(0u) == (byte) 80) { ok += 2; }
+            if (in->get(3u) == (byte) 71) { ok += 4; }
 
             c->close();
             t->join();
-            if (worker->ok() == 1) { ok = ok + 8; }
+            if (worker->ok() == 1) { ok += 8; }
 
             srv->close();
             delete in; delete out; delete c;
@@ -432,11 +432,11 @@ TEST_CASE("Socket: resolves localhost hostnames", "[libk][io][socket]") {
             in->flip();
 
             res : int = 0;
-            if (in->remaining() == 1u) { res = res + 1; }
-            if (in->get(0u) == (byte) 90) { res = res + 2; }
+            if (in->remaining() == 1u) { ++res; }
+            if (in->get(0u) == (byte) 90) { res += 2; }
 
             t->join();
-            if (worker->ok() == 1) { res = res + 4; }
+            if (worker->ok() == 1) { res += 4; }
 
             cli->close();
             srv->close();

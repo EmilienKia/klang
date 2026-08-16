@@ -331,9 +331,9 @@ op_calls : int;
 ctor_calls : int;
 struct Ord {
     v: int;
-    Ord(av: int) : v(av) { ctor_calls = ctor_calls + 1; }
+    Ord(av: int) : v(av) { ++ctor_calls; }
     operator <(other: Ord&) : bool {
-        op_calls = op_calls + 1;
+        ++op_calls;
         return v < other.v;
     }
 }
@@ -436,12 +436,12 @@ main() : int {
     a: Ord(3);
     b: Ord(5);
     r : int = 0;
-    if (a < b) r = r + 1;       // DIRECT
-    if (a != b) r = r + 2;      // COMPOSITE
-    if (b > a) r = r + 4;       // SWAP
-    if (a <= b) r = r + 8;      // SWAP_NEGATE
-    if (!(b <= a)) r = r + 16;  // SWAP_NEGATE, false case
-    if (!(a >= b)) r = r + 32;  // NEGATE, false case
+    if (a < b) ++r;       // DIRECT
+    if (a != b) r += 2;      // COMPOSITE
+    if (b > a) r += 4;       // SWAP
+    if (a <= b) r += 8;      // SWAP_NEGATE
+    if (!(b <= a)) r += 16;  // SWAP_NEGATE, false case
+    if (!(a >= b)) r += 32;  // NEGATE, false case
     return r;
 }
 )SRC");

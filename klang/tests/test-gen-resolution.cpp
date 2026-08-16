@@ -534,7 +534,7 @@ TEST_CASE("Unified call syntax: member method called with free-function syntax",
             val : int = 0;
 
             increment(n : int) : int {
-                val = val + n;
+                val += n;
                 return val;
             }
         }

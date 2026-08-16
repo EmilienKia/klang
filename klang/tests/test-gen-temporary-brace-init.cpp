@@ -284,7 +284,7 @@ g_dtors : int = 0;
 struct Tracked {
     val : int;
     ~Tracked() {
-        g_dtors = g_dtors + 1;
+        ++g_dtors;
     }
 }
 
@@ -553,7 +553,7 @@ g_dtors : int = 0;
 struct Tracked {
     n : int;
     ~Tracked() {
-        g_dtors = g_dtors + 1;
+        ++g_dtors;
     }
 }
 

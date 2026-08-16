@@ -129,7 +129,7 @@ struct Tracked {
     val : int;
     Tracked(v : int) : val(v) {}
     ~Tracked() {
-        g_dtors = g_dtors + 1;
+        ++g_dtors;
     }
 }
 

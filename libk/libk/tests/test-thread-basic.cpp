@@ -369,7 +369,7 @@ TEST_CASE("Thread start and join — task body executes", "[libk][thread][lifecy
         class Incrementer : public Runnable {
         public:
             override run() : void {
-                counter = counter + 1;
+                ++counter;
             }
         }
 
@@ -401,7 +401,7 @@ TEST_CASE("Thread join — multiple threads increment counter", "[libk][thread][
                 _amount = amount;
             }
             override run() : void {
-                counter = counter + _amount;
+                counter += _amount;
             }
         }
 

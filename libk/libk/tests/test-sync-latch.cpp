@@ -61,17 +61,17 @@ TEST_CASE("CountDownLatch: a zero-count latch is already open", "[libk][sync][la
         test() : int {
             l : CountDownLatch(0L);
             res : int = 0;
-            if (l.count() == 0L) { res = res + 1; }
+            if (l.count() == 0L) { ++res; }
             try {
                 l.await();
-                res = res + 2;
-                if (l.await(Duration::ofMillis(1L))) { res = res + 4; }
+                res += 2;
+                if (l.await(Duration::ofMillis(1L))) { res += 4; }
             } catch (e: Throwable&) {
                 res = -1;
             }
             // Counting down an open latch is a no-op, never negative.
             l.countDown();
-            if (l.count() == 0L) { res = res + 8; }
+            if (l.count() == 0L) { res += 8; }
             return res;
         }
     )SRC");
@@ -87,15 +87,15 @@ TEST_CASE("CountDownLatch: countDown opens the latch", "[libk][sync][latch]") {
         test() : int {
             l : CountDownLatch(3L);
             res : int = 0;
-            if (l.count() == 3L) { res = res + 1; }
+            if (l.count() == 3L) { ++res; }
             l.countDown();
-            if (l.count() == 2L) { res = res + 2; }
+            if (l.count() == 2L) { res += 2; }
             l.countDown();
             l.countDown();
-            if (l.count() == 0L) { res = res + 4; }
+            if (l.count() == 0L) { res += 4; }
             try {
                 l.await();
-                res = res + 8;
+                res += 8;
             } catch (e: Throwable&) {
                 res = -1;
             }
@@ -115,8 +115,8 @@ TEST_CASE("CountDownLatch: await(Duration) times out on a closed latch", "[libk]
             l : CountDownLatch(1L);
             res : int = 0;
             try {
-                if (!l.await(Duration::ofMillis(60L))) { res = res + 1; }
-                if (l.count() == 1L) { res = res + 2; }
+                if (!l.await(Duration::ofMillis(60L))) { ++res; }
+                if (l.count() == 1L) { res += 2; }
             } catch (e: Throwable&) {
                 res = -1;
             }
@@ -235,7 +235,7 @@ TEST_CASE("CountDownLatch: a blocked await is interruptible", "[libk][sync][latc
             } catch (e: Throwable&) { }
 
             res : int = b->_outcome;
-            if (gate->count() == 1L) { res = res + 10; }
+            if (gate->count() == 1L) { res += 10; }
             delete t;
             delete b;
             delete gate;
@@ -259,16 +259,16 @@ TEST_CASE("CyclicBarrier: a single-party barrier trips immediately", "[libk][syn
         test() : int {
             b : CyclicBarrier(1);
             res : int = 0;
-            if (b.parties() == 1) { res = res + 1; }
-            if (b.numberWaiting() == 0) { res = res + 2; }
+            if (b.parties() == 1) { ++res; }
+            if (b.numberWaiting() == 0) { res += 2; }
             try {
-                if (b.await() == 0) { res = res + 4; }
+                if (b.await() == 0) { res += 4; }
                 // The barrier is reusable.
-                if (b.await() == 0) { res = res + 8; }
+                if (b.await() == 0) { res += 8; }
             } catch (e: Throwable&) {
                 res = -1;
             }
-            if (!b.isBroken()) { res = res + 16; }
+            if (!b.isBroken()) { res += 16; }
             return res;
         }
     )SRC");
@@ -285,22 +285,22 @@ TEST_CASE("CyclicBarrier: a timed await times out and breaks the barrier", "[lib
             b : CyclicBarrier(2);
             res : int = 0;
             try {
-                if (b.await(Duration::ofMillis(60L)) == -1) { res = res + 1; }
+                if (b.await(Duration::ofMillis(60L)) == -1) { ++res; }
             } catch (e: Throwable&) {
                 res = -10;
             }
-            if (b.isBroken()) { res = res + 2; }
+            if (b.isBroken()) { res += 2; }
             // Every subsequent arrival fails until the barrier is reset.
             try {
                 b.await(Duration::ofMillis(20L));
-                res = res + 100;
+                res += 100;
             } catch (e2: BrokenBarrierException&) {
-                res = res + 4;
+                res += 4;
             } catch (o: Throwable&) {
-                res = res + 200;
+                res += 200;
             }
             b.reset();
-            if (!b.isBroken()) { res = res + 8; }
+            if (!b.isBroken()) { res += 8; }
             return res;
         }
     )SRC");
@@ -368,12 +368,12 @@ TEST_CASE("CyclicBarrier: every party crosses together", "[libk][sync][barrier][
             try { t1->join(); t2->join(); t3->join(); } catch (e: Throwable&) { }
 
             res : int = 0;
-            if (s.crossedWithAllArrived == 3) { res = res + 1; }
-            if (!barrier->isBroken()) { res = res + 2; }
+            if (s.crossedWithAllArrived == 3) { ++res; }
+            if (!barrier->isBroken()) { res += 2; }
             // Arrival indices are a permutation of {0, 1, 2}.
             sum : int = p1->_index + p2->_index + p3->_index;
-            if (sum == 3) { res = res + 4; }
-            if (p3->_index == 0) { res = res + 8; }
+            if (sum == 3) { res += 4; }
+            if (p3->_index == 0) { res += 8; }
             delete t1; delete t2; delete t3;
             delete p1; delete p2; delete p3;
             delete barrier;
@@ -441,9 +441,9 @@ TEST_CASE("CyclicBarrier: an interrupted party breaks the barrier", "[libk][sync
             } catch (e: Throwable&) { }
 
             res : int = 0;
-            if (p1->_outcome == 2) { res = res + 1; }
-            if (p2->_outcome == 3) { res = res + 2; }
-            if (barrier->isBroken()) { res = res + 4; }
+            if (p1->_outcome == 2) { ++res; }
+            if (p2->_outcome == 3) { res += 2; }
+            if (barrier->isBroken()) { res += 4; }
             delete t1; delete t2;
             delete p1; delete p2;
             delete barrier;

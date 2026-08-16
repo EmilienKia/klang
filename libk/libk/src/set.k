@@ -171,7 +171,7 @@ class ListSet : public MutableOrderedSet<T>, public MutableReversibleSequence<T>
                 _list.removeAt(i);
                 return true;
             }
-            i = i + 1;
+            ++i;
         }
         return false;
     }
@@ -488,7 +488,7 @@ class TreeSet : public MutableSortedSet<T>, public MutableReversibleSequence<T> 
             return false;
         }
         _root = insertNode(_root, element);
-        _size = _size + 1;
+        ++_size;
         return true;
     }
 
@@ -501,7 +501,7 @@ class TreeSet : public MutableSortedSet<T>, public MutableReversibleSequence<T> 
             return false;
         }
         _root = deleteNode(_root, value);
-        _size = _size - 1;
+        --_size;
         return true;
     }
 
@@ -851,7 +851,7 @@ class HashSet : public MutableSet<T>, public MutableReversibleSequence<T> {
             created._nextChain = _chainsHead;
             _chainsHead = created;
             _buckets.append(raw);
-            i = i + 1;
+            ++i;
         }
     }
 
@@ -867,7 +867,7 @@ class HashSet : public MutableSet<T>, public MutableReversibleSequence<T> {
             created._nextChain = newChainsHead;
             newChainsHead = created;
             newBuckets.append(raw);
-            i = i + 1;
+            ++i;
         }
 
         bi : unsigned int = 0;
@@ -884,7 +884,7 @@ class HashSet : public MutableSet<T>, public MutableReversibleSequence<T> {
                 newChain->_head = node;
                 node = next;
             }
-            bi = bi + 1;
+            ++bi;
         }
 
         // Old chains are now all empty (nodes moved out above): free the wrappers.
@@ -893,7 +893,7 @@ class HashSet : public MutableSet<T>, public MutableReversibleSequence<T> {
         k : unsigned int = 0;
         while (k < newBuckets.size()) {
             _buckets.append(newBuckets.get(k));
-            k = k + 1;
+            ++k;
         }
         _chainsHead = newChainsHead;
         _capacity = newCapacity;
@@ -956,7 +956,7 @@ class HashSet : public MutableSet<T>, public MutableReversibleSequence<T> {
         node.setValue(element);
         node._next = chain->_head;
         chain->_head = node;
-        _size = _size + 1;
+        ++_size;
         return true;
     }
 
@@ -974,7 +974,7 @@ class HashSet : public MutableSet<T>, public MutableReversibleSequence<T> {
         if (chain->_head.getValue() == value) {
             next : HashSetNode<T>! = chain->_head._next;
             chain->_head = next;
-            _size = _size - 1;
+            --_size;
             return true;
         }
         prev : HashSetNode<T>* = chain->_head;
@@ -983,7 +983,7 @@ class HashSet : public MutableSet<T>, public MutableReversibleSequence<T> {
                 matched : HashSetNode<T>! = prev->_next;
                 afterMatched : HashSetNode<T>! = matched._next;
                 prev->_next = afterMatched;
-                _size = _size - 1;
+                --_size;
                 return true;
             }
             prev = prev->_next;
@@ -997,7 +997,7 @@ class HashSet : public MutableSet<T>, public MutableReversibleSequence<T> {
         while (i < _buckets.size()) {
             b : HashSetChain<T>* = _buckets.get(i);
             b->clearChain();
-            i = i + 1;
+            ++i;
         }
         _size = 0;
     }
@@ -1043,7 +1043,7 @@ private:
             idx : unsigned int = _bucketIndex;
             chain : HashSetChain<T>* = _buckets->get(idx);
             _current = chain->_head;
-            _bucketIndex = _bucketIndex + 1;
+            ++_bucketIndex;
         }
     }
 
@@ -1088,7 +1088,7 @@ private:
             idx : unsigned int = _bucketIndex;
             chain : HashSetChain<T>* = _buckets->get(idx);
             _current = chain->_head;
-            _bucketIndex = _bucketIndex + 1;
+            ++_bucketIndex;
         }
     }
 
@@ -1135,7 +1135,7 @@ private:
             if (_bucketIndex == 0) {
                 _hasBucket = false;
             } else {
-                _bucketIndex = _bucketIndex - 1;
+                --_bucketIndex;
             }
         }
     }
@@ -1188,7 +1188,7 @@ private:
             if (_bucketIndex == 0) {
                 _hasBucket = false;
             } else {
-                _bucketIndex = _bucketIndex - 1;
+                --_bucketIndex;
             }
         }
     }

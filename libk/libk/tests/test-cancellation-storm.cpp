@@ -63,10 +63,10 @@ TEST_CASE("Thread cancellation storm remains stable", "[libk][thread][stress][in
                 Thread::sleep(Duration::ofMillis(5L));
                 thr->interrupt();
                 thr->join();
-                ok = ok + worker->caught();
+                ok += worker->caught();
                 delete thr;
                 delete worker;
-                round = round + 1;
+                ++round;
             }
             return ok;
         }

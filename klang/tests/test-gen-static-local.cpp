@@ -42,7 +42,7 @@ TEST_CASE("Static local variable with constant init persists across calls",
 
         test() : int {
             static x : int = 42;
-            x += 1;
+            ++x;
             return x;
         }
     )SRC");
@@ -67,13 +67,13 @@ TEST_CASE("Static local variable initialized by function call — called once",
         call_count : int;
 
         make_value() : int {
-            call_count += 1;
+            ++call_count;
             return 10;
         }
 
         test() : int {
             static v : int = make_value();
-            v += 1;
+            ++v;
             return v;
         }
 
@@ -104,13 +104,13 @@ TEST_CASE("Two functions with identically named static locals are independent",
 
         foo() : int {
             static i : int = 100;
-            i += 1;
+            ++i;
             return i;
         }
 
         bar() : int {
             static i : int = 200;
-            i += 1;
+            ++i;
             return i;
         }
     )SRC");
@@ -138,13 +138,13 @@ TEST_CASE("Static local persists, non-static local resets each call",
 
         test_static() : int {
             static s : int = 0;
-            s += 1;
+            ++s;
             return s;
         }
 
         test_non_static() : int {
             n : int = 0;
-            n += 1;
+            ++n;
             return n;
         }
     )SRC");
@@ -228,7 +228,7 @@ TEST_CASE("Static local of struct type — constructor called at global init",
 
             Counter(v : int) {
                 value = v;
-                ctor_count += 1;
+                ++ctor_count;
             }
         }
 
@@ -303,7 +303,7 @@ TEST_CASE("Static local inside nested block persists across calls",
         test() : int {
             {
                 static inner : int = 5;
-                inner += 1;
+                ++inner;
                 return inner;
             }
         }

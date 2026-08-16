@@ -48,7 +48,7 @@ TEST_CASE("Thread stress: repeated lifecycle is stable", "[libk][thread][stress]
                 i : int = 0;
                 while (i < _loops) {
                     Thread::yield();
-                    i = i + 1;
+                    ++i;
                 }
                 _done = 1;
             }
@@ -75,10 +75,10 @@ TEST_CASE("Thread stress: repeated lifecycle is stable", "[libk][thread][stress]
                 tb->join();
                 tc->join();
                 td->join();
-                completed = completed + a->done() + b->done() + c->done() + d->done();
+                completed += a->done() + b->done() + c->done() + d->done();
                 delete ta; delete tb; delete tc; delete td;
                 delete a; delete b; delete c; delete d;
-                rounds = rounds + 1;
+                ++rounds;
             }
             return completed;
         }

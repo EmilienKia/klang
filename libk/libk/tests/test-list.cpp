@@ -67,9 +67,9 @@ TEST_CASE("LinkedList<int> — pushBack and peek", "[libk][list][int]") {
             lst.append(c);
 
             result : int = 0;
-            if (lst.size() == 3)      result = result + 1;
-            if (lst.first() == 10)   result = result + 10;
-            if (lst.last() == 30)    result = result + 100;
+            if (lst.size() == 3)      ++result;
+            if (lst.first() == 10)   result += 10;
+            if (lst.last() == 30)    result += 100;
             return result;
         }
     )SRC");
@@ -94,9 +94,9 @@ TEST_CASE("LinkedList<int> — pushFront ordering", "[libk][list][int]") {
             // order: 3, 2, 1
 
             result : int = 0;
-            if (lst.first() == 3)  result = result + 1;
-            if (lst.last() == 1)   result = result + 10;
-            if (lst[1] == 2)           result = result + 100;
+            if (lst.first() == 3)  ++result;
+            if (lst.last() == 1)   result += 10;
+            if (lst[1] == 2)           result += 100;
             return result;
         }
     )SRC");
@@ -122,9 +122,9 @@ TEST_CASE("LinkedList<int> — removeFront", "[libk][list][int]") {
             // list: 20, 30
 
             result : int = 0;
-            if (lst.size() == 2)      result = result + 1;
-            if (lst.first() == 20)   result = result + 10;
-            if (lst.last() == 30)    result = result + 100;
+            if (lst.size() == 2)      ++result;
+            if (lst.first() == 20)   result += 10;
+            if (lst.last() == 30)    result += 100;
             return result;
         }
     )SRC");
@@ -150,9 +150,9 @@ TEST_CASE("LinkedList<int> — removeBack", "[libk][list][int]") {
             // list: 10, 20
 
             result : int = 0;
-            if (lst.size() == 2)      result = result + 1;
-            if (lst.first() == 10)   result = result + 10;
-            if (lst.last() == 20)    result = result + 100;
+            if (lst.size() == 2)      ++result;
+            if (lst.first() == 10)   result += 10;
+            if (lst.last() == 20)    result += 100;
             return result;
         }
     )SRC");
@@ -175,8 +175,8 @@ TEST_CASE("LinkedList<int> — clear empties", "[libk][list][int]") {
             lst.clear();
 
             result : int = 0;
-            if (lst.isEmpty())           result = result + 1;
-            if (lst.size() == 0)      result = result + 10;
+            if (lst.isEmpty())           ++result;
+            if (lst.size() == 0)      result += 10;
             return result;
         }
     )SRC");
@@ -213,13 +213,13 @@ TEST_CASE("LinkedList<Point> — struct stored by value", "[libk][list][struct]"
             lst.append(p2);
 
             result : int = 0;
-            if (lst.size() == 2) result = result + 1;
+            if (lst.size() == 2) ++result;
             // front is a copy of p1
-            if (lst.first().x == 10) result = result + 10;
-            if (lst.first().y == 20) result = result + 100;
+            if (lst.first().x == 10) result += 10;
+            if (lst.first().y == 20) result += 100;
             // back is a copy of p2
-            if (lst.last().x == 30)  result = result + 1000;
-            if (lst.last().y == 40)  result = result + 10000;
+            if (lst.last().x == 30)  result += 1000;
+            if (lst.last().y == 40)  result += 10000;
             return result;
         }
     )SRC");
@@ -249,8 +249,8 @@ TEST_CASE("LinkedList<Point> — value semantics (mutation does not affect list)
             p.x = 99;
 
             result : int = 0;
-            if (lst.first().x == 5) result = result + 1;
-            if (lst.first().y == 7) result = result + 10;
+            if (lst.first().x == 5) ++result;
+            if (lst.first().y == 7) result += 10;
             return result;
         }
     )SRC");
@@ -283,8 +283,8 @@ TEST_CASE("LinkedList<Point> — removeFront / removeBack", "[libk][list][struct
             // only p2 remains
 
             result : int = 0;
-            if (lst.size() == 1)       result = result + 1;
-            if (lst.first().x == 2)   result = result + 10;
+            if (lst.size() == 1)       ++result;
+            if (lst.first().x == 2)   result += 10;
             return result;
         }
     )SRC");
@@ -312,9 +312,9 @@ TEST_CASE("LinkedList<int> — get by index", "[libk][list][int][index]") {
             lst.append(c);
 
             result : int = 0;
-            if (lst.get(0) == 10) result = result + 1;
-            if (lst.get(1) == 20) result = result + 10;
-            if (lst.get(2) == 30) result = result + 100;
+            if (lst.get(0) == 10) ++result;
+            if (lst.get(1) == 20) result += 10;
+            if (lst.get(2) == 30) result += 100;
             return result;
         }
     )SRC");
@@ -338,9 +338,9 @@ TEST_CASE("LinkedList<int> — operator[] read", "[libk][list][int][index]") {
             lst.append(c);
 
             result : int = 0;
-            if (lst[0] == 5)  result = result + 1;
-            if (lst[1] == 15) result = result + 10;
-            if (lst[2] == 25) result = result + 100;
+            if (lst[0] == 5)  ++result;
+            if (lst[1] == 15) result += 10;
+            if (lst[2] == 25) result += 100;
             return result;
         }
     )SRC");
@@ -396,9 +396,9 @@ TEST_CASE("LinkedList<Object*> — store and retrieve heap object pointers", "[l
             lst.append(o2);
 
             result : int = 0;
-            if (lst.size() == 2)       result = result + 1;
-            if (lst.first() == o1)    result = result + 10;
-            if (lst.last() == o2)     result = result + 100;
+            if (lst.size() == 2)       ++result;
+            if (lst.first() == o1)    result += 10;
+            if (lst.last() == o2)     result += 100;
 
             lst.clear();
             delete own1;
@@ -446,12 +446,12 @@ TEST_CASE("LinkedList<int> — insert at beginning, middle, end", "[libk][list][
             // list: 5, 10, 20, 30, 40
 
             result : int = 0;
-            if (lst.size() == 5)  result = result + 1;
-            if (lst[0] == 5)         result = result + 10;
-            if (lst[1] == 10)        result = result + 100;
-            if (lst[2] == 20)        result = result + 1000;
-            if (lst[3] == 30)        result = result + 10000;
-            if (lst[4] == 40)        result = result + 100000;
+            if (lst.size() == 5)  ++result;
+            if (lst[0] == 5)         result += 10;
+            if (lst[1] == 10)        result += 100;
+            if (lst[2] == 20)        result += 1000;
+            if (lst[3] == 30)        result += 10000;
+            if (lst[4] == 40)        result += 100000;
             return result;
         }
     )SRC");
@@ -488,11 +488,11 @@ TEST_CASE("LinkedList<Point> — insert struct at index", "[libk][list][struct][
             // list: (1,2), (3,4), (5,6)
 
             result : int = 0;
-            if (lst.size() == 3)    result = result + 1;
-            if (lst[0].x == 1)         result = result + 10;
-            if (lst[1].x == 3)         result = result + 100;
-            if (lst[1].y == 4)         result = result + 1000;
-            if (lst[2].x == 5)         result = result + 10000;
+            if (lst.size() == 3)    ++result;
+            if (lst[0].x == 1)         result += 10;
+            if (lst[1].x == 3)         result += 100;
+            if (lst[1].y == 4)         result += 1000;
+            if (lst[2].x == 5)         result += 10000;
             return result;
         }
     )SRC");
@@ -527,16 +527,16 @@ TEST_CASE("LinkedList<Color> — pushBack, insert, peek with enum", "[libk][list
             // order: RED, GREEN, BLUE
 
             result : int = 0;
-            if (lst.size() == 3)              result = result + 1;
-            if (lst.first() == Color::RED)   result = result + 10;
-            if (lst[1] == Color::GREEN)          result = result + 100;
-            if (lst.last() == Color::BLUE)   result = result + 1000;
+            if (lst.size() == 3)              ++result;
+            if (lst.first() == Color::RED)   result += 10;
+            if (lst[1] == Color::GREEN)          result += 100;
+            if (lst.last() == Color::BLUE)   result += 1000;
 
             lst.removeFront();
-            if (lst.first() == Color::GREEN) result = result + 10000;
+            if (lst.first() == Color::GREEN) result += 10000;
 
             lst.clear();
-            if (lst.isEmpty())                   result = result + 100000;
+            if (lst.isEmpty())                   result += 100000;
             return result;
         }
     )SRC");
@@ -568,10 +568,10 @@ TEST_CASE("LinkedList<Direction> — plain enum with auto values", "[libk][list]
             // order: NORTH, SOUTH, EAST
 
             result : int = 0;
-            if (lst.size() == 3)              result = result + 1;
-            if (lst[0] == Direction::NORTH)      result = result + 10;
-            if (lst[1] == Direction::SOUTH)      result = result + 100;
-            if (lst[2] == Direction::EAST)       result = result + 1000;
+            if (lst.size() == 3)              ++result;
+            if (lst[0] == Direction::NORTH)      result += 10;
+            if (lst[1] == Direction::SOUTH)      result += 100;
+            if (lst[2] == Direction::EAST)       result += 1000;
             return result;
         }
     )SRC");
@@ -604,10 +604,10 @@ TEST_CASE("LinkedList<Derived> — derived enum insert and access", "[libk][list
             // order: A(0), B(1), C(2)
 
             result : int = 0;
-            if (lst.size() == 3)            result = result + 1;
-            if (lst[0] == Derived::A)          result = result + 10;
-            if (lst[1] == Derived::B)          result = result + 100;
-            if (lst[2] == Derived::C)          result = result + 1000;
+            if (lst.size() == 3)            ++result;
+            if (lst[0] == Derived::A)          result += 10;
+            if (lst[1] == Derived::B)          result += 100;
+            if (lst[2] == Derived::C)          result += 1000;
             return result;
         }
     )SRC");
@@ -634,7 +634,7 @@ TEST_CASE("LinkedList<Object!> — store and retrieve owners", "[libk][list][own
             lst.append(o2);
 
             result : int = 0;
-            if (lst.size() == 2) result = result + 1;
+            if (lst.size() == 2) ++result;
             // owners were copied into the list by value,
             // so the list owns its own copy of the pointer
             lst.clear();
@@ -667,9 +667,9 @@ TEST_CASE("DoubleLinkedList<int> — pushBack and peek", "[libk][list][dlist][in
             lst.append(c);
 
             result : int = 0;
-            if (lst.size() == 3)      result = result + 1;
-            if (lst.first() == 10)   result = result + 10;
-            if (lst.last() == 30)    result = result + 100;
+            if (lst.size() == 3)      ++result;
+            if (lst.first() == 10)   result += 10;
+            if (lst.last() == 30)    result += 100;
             return result;
         }
     )SRC");
@@ -694,9 +694,9 @@ TEST_CASE("DoubleLinkedList<int> — pushFront ordering", "[libk][list][dlist][i
             // order: 3, 2, 1
 
             result : int = 0;
-            if (lst.first() == 3)  result = result + 1;
-            if (lst.last() == 1)   result = result + 10;
-            if (lst[1] == 2)           result = result + 100;
+            if (lst.first() == 3)  ++result;
+            if (lst.last() == 1)   result += 10;
+            if (lst[1] == 2)           result += 100;
             return result;
         }
     )SRC");
@@ -731,12 +731,12 @@ TEST_CASE("DoubleLinkedList<int> — insert at beginning, middle, end", "[libk][
             // list: 5, 10, 20, 30, 40
 
             result : int = 0;
-            if (lst.size() == 5)  result = result + 1;
-            if (lst[0] == 5)         result = result + 10;
-            if (lst[1] == 10)        result = result + 100;
-            if (lst[2] == 20)        result = result + 1000;
-            if (lst[3] == 30)        result = result + 10000;
-            if (lst[4] == 40)        result = result + 100000;
+            if (lst.size() == 5)  ++result;
+            if (lst[0] == 5)         result += 10;
+            if (lst[1] == 10)        result += 100;
+            if (lst[2] == 20)        result += 1000;
+            if (lst[3] == 30)        result += 10000;
+            if (lst[4] == 40)        result += 100000;
             return result;
         }
     )SRC");
@@ -770,10 +770,10 @@ TEST_CASE("DoubleLinkedList<int> — insert near end uses backward search", "[li
             // list: 1, 2, 3, 4, 99, 5
 
             result : int = 0;
-            if (lst.size() == 6)   result = result + 1;
-            if (lst[3] == 4)          result = result + 10;
-            if (lst[4] == 99)         result = result + 100;
-            if (lst[5] == 5)          result = result + 1000;
+            if (lst.size() == 6)   ++result;
+            if (lst[3] == 4)          result += 10;
+            if (lst[4] == 99)         result += 100;
+            if (lst[5] == 5)          result += 1000;
             return result;
         }
     )SRC");
@@ -799,9 +799,9 @@ TEST_CASE("DoubleLinkedList<int> — removeFront", "[libk][list][dlist][int]") {
             // list: 20, 30
 
             result : int = 0;
-            if (lst.size() == 2)      result = result + 1;
-            if (lst.first() == 20)   result = result + 10;
-            if (lst.last() == 30)    result = result + 100;
+            if (lst.size() == 2)      ++result;
+            if (lst.first() == 20)   result += 10;
+            if (lst.last() == 30)    result += 100;
             return result;
         }
     )SRC");
@@ -827,9 +827,9 @@ TEST_CASE("DoubleLinkedList<int> — removeBack O(1)", "[libk][list][dlist][int]
             // list: 10, 20
 
             result : int = 0;
-            if (lst.size() == 2)      result = result + 1;
-            if (lst.first() == 10)   result = result + 10;
-            if (lst.last() == 20)    result = result + 100;
+            if (lst.size() == 2)      ++result;
+            if (lst.first() == 10)   result += 10;
+            if (lst.last() == 20)    result += 100;
             return result;
         }
     )SRC");
@@ -852,8 +852,8 @@ TEST_CASE("DoubleLinkedList<int> — clear", "[libk][list][dlist][int]") {
             lst.clear();
 
             result : int = 0;
-            if (lst.isEmpty())           result = result + 1;
-            if (lst.size() == 0)      result = result + 10;
+            if (lst.isEmpty())           ++result;
+            if (lst.size() == 0)      result += 10;
             return result;
         }
     )SRC");
@@ -883,13 +883,13 @@ TEST_CASE("DoubleLinkedList<int> — indexed access from both ends", "[libk][lis
 
             result : int = 0;
             // Access from front (index 0,1 <= size/2=2)
-            if (lst[0] == 10)  result = result + 1;
-            if (lst[1] == 20)  result = result + 10;
+            if (lst[0] == 10)  ++result;
+            if (lst[1] == 20)  result += 10;
             // Access from back (index 3,4 > size/2=2)
-            if (lst[3] == 40)  result = result + 100;
-            if (lst[4] == 50)  result = result + 1000;
+            if (lst[3] == 40)  result += 100;
+            if (lst[4] == 50)  result += 1000;
             // Middle
-            if (lst[2] == 30)  result = result + 10000;
+            if (lst[2] == 30)  result += 10000;
             return result;
         }
     )SRC");
@@ -917,10 +917,10 @@ TEST_CASE("DoubleLinkedList<Point> — struct stored by value", "[libk][list][dl
             lst.append(p2);
 
             result : int = 0;
-            if (lst.size() == 2)         result = result + 1;
-            if (lst.first().x == 10)    result = result + 10;
-            if (lst.last().x == 30)     result = result + 100;
-            if (lst[1].y == 40)             result = result + 1000;
+            if (lst.size() == 2)         ++result;
+            if (lst.first().x == 10)    result += 10;
+            if (lst.last().x == 30)     result += 100;
+            if (lst[1].y == 40)             result += 1000;
             return result;
         }
     )SRC");
@@ -950,10 +950,10 @@ TEST_CASE("DoubleLinkedList<Color> — enum type", "[libk][list][dlist][enum]") 
             lst.append(b);
 
             result : int = 0;
-            if (lst.size() == 3)            result = result + 1;
-            if (lst[0] == Color::RED)          result = result + 10;
-            if (lst[1] == Color::GREEN)        result = result + 100;
-            if (lst.last() == Color::BLUE) result = result + 1000;
+            if (lst.size() == 3)            ++result;
+            if (lst[0] == Color::RED)          result += 10;
+            if (lst[1] == Color::GREEN)        result += 100;
+            if (lst.last() == Color::BLUE) result += 1000;
             return result;
         }
     )SRC");
@@ -990,10 +990,10 @@ TEST_CASE("LinkedList<Point> — emplaceBack zero-arg (default ctor)", "[libk][l
             lst.emplaceBack<>();
 
             result : int = 0;
-            if (lst.size() == 2)      result = result + 1;
-            if (lst[0].x == 0)           result = result + 10;
-            if (lst[0].y == 0)           result = result + 100;
-            if (lst[1].x == 0)           result = result + 1000;
+            if (lst.size() == 2)      ++result;
+            if (lst[0].x == 0)           result += 10;
+            if (lst[0].y == 0)           result += 100;
+            if (lst[1].x == 0)           result += 1000;
             return result;
         }
     )SRC");
@@ -1020,10 +1020,10 @@ TEST_CASE("LinkedList<Point> — emplaceFront zero-arg (default ctor)", "[libk][
             // both nodes constructed with defaults (7,9)
 
             result : int = 0;
-            if (lst.size() == 2)      result = result + 1;
-            if (lst[0].x == 7)           result = result + 10;
-            if (lst[0].y == 9)           result = result + 100;
-            if (lst[1].x == 7)           result = result + 1000;
+            if (lst.size() == 2)      ++result;
+            if (lst[0].x == 7)           result += 10;
+            if (lst[0].y == 9)           result += 100;
+            if (lst[1].x == 7)           result += 1000;
             return result;
         }
     )SRC");
@@ -1051,9 +1051,9 @@ TEST_CASE("LinkedList<Point> — emplace zero-arg at index", "[libk][list][struc
             // list: (5,3), (5,3), (5,3)
 
             result : int = 0;
-            if (lst.size() == 3)      result = result + 1;
-            if (lst[1].x == 5)           result = result + 10;
-            if (lst[1].y == 3)           result = result + 100;
+            if (lst.size() == 3)      ++result;
+            if (lst[1].x == 5)           result += 10;
+            if (lst[1].y == 3)           result += 100;
             return result;
         }
     )SRC");
@@ -1086,11 +1086,11 @@ TEST_CASE("DoubleLinkedList<Point> — emplaceBack/emplaceFront/emplace zero-arg
             // all have default values (1,2)
 
             result : int = 0;
-            if (lst.size() == 4)  result = result + 1;
-            if (lst[0].x == 1)       result = result + 10;
-            if (lst[1].x == 1)       result = result + 100;
-            if (lst[2].x == 1)       result = result + 1000;
-            if (lst[3].y == 2)       result = result + 10000;
+            if (lst.size() == 4)  ++result;
+            if (lst[0].x == 1)       result += 10;
+            if (lst[1].x == 1)       result += 100;
+            if (lst[2].x == 1)       result += 1000;
+            if (lst[3].y == 2)       result += 10000;
             return result;
         }
     )SRC");
@@ -1125,13 +1125,13 @@ TEST_CASE("DoubleLinkedList<TypedEnum> — typed enum (short)", "[libk][list][dl
             // order: LOW, MED, HIGH
 
             result : int = 0;
-            if (lst.size() == 3)              result = result + 1;
-            if (lst[0] == Priority::LOW)         result = result + 10;
-            if (lst[1] == Priority::MED)         result = result + 100;
-            if (lst[2] == Priority::HIGH)        result = result + 1000;
+            if (lst.size() == 3)              ++result;
+            if (lst[0] == Priority::LOW)         result += 10;
+            if (lst[1] == Priority::MED)         result += 100;
+            if (lst[2] == Priority::HIGH)        result += 1000;
 
             lst.removeFront();
-            if (lst.first() == Priority::MED) result = result + 10000;
+            if (lst.first() == Priority::MED) result += 10000;
             return result;
         }
     )SRC");
@@ -1203,10 +1203,10 @@ TEST_CASE("LinkedList<int> — through MutableIndexedCollection<int>& (set/inser
             // Started [1,2,3]; insert(1,99) -> [1,99,2,3]; set(0,42) -> [42,99,2,3];
             // removeAt(2) removes '2' -> [42,99,3].
             result : int = 0;
-            if (lst.size() == 3)  result = result + 1;
-            if (lst[0] == 42)     result = result + 10;
-            if (lst[1] == 99)     result = result + 100;
-            if (lst[2] == 3)      result = result + 1000;
+            if (lst.size() == 3)  ++result;
+            if (lst[0] == 42)     result += 10;
+            if (lst[1] == 99)     result += 100;
+            if (lst[2] == 3)      result += 1000;
             return result;
         }
     )SRC");
@@ -1226,7 +1226,7 @@ TEST_CASE("DoubleLinkedList<int> — through Sequence<int>& (const iteration)",
             total : int = 0;
             n : OptionalConstRef<int> = it.next();
             while (n.hasValue()) {
-                total = total + n.get();
+                total += n.get();
                 n = it.next();
             }
             return total;
@@ -1283,7 +1283,7 @@ TEST_CASE("DoubleLinkedList<int> — through MutableReversibleSequence<int>& (mu
             first : bool = true;
             n : OptionalRef<int> = it.next();
             while (n.hasValue()) {
-                total = total + n.get();
+                total += n.get();
                 if (first) {
                     n.get() = 0;
                     first = false;
@@ -1300,9 +1300,9 @@ TEST_CASE("DoubleLinkedList<int> — through MutableReversibleSequence<int>& (mu
             lst.append(3);
             total : int = sumReverseAndZeroLast(lst);
             result : int = 0;
-            if (total == 6)       result = result + 1;
-            if (lst[2] == 0)      result = result + 10; // last element zeroed via reverse iterator
-            if (lst[0] == 1)      result = result + 100;
+            if (total == 6)       ++result;
+            if (lst[2] == 0)      result += 10; // last element zeroed via reverse iterator
+            if (lst[0] == 1)      result += 100;
             return result;
         }
     )SRC");
@@ -1333,7 +1333,7 @@ TEST_CASE("DoubleLinkedList<int> — diamond dispatch: same instance through two
             n : OptionalRef<int> = it.next();
             total : int = 0;
             while (n.hasValue()) {
-                total = total + n.get();
+                total += n.get();
                 n = it.next();
             }
             return total;
@@ -1349,9 +1349,9 @@ TEST_CASE("DoubleLinkedList<int> — diamond dispatch: same instance through two
             b : int = viaReversible(lst);  // 1 + 2 + 3 = 6
 
             result : int = 0;
-            if (a == 4) result = result + 1;
-            if (b == 6) result = result + 10;
-            if (lst.size() == 3) result = result + 100;
+            if (a == 4) ++result;
+            if (b == 6) result += 10;
+            if (lst.size() == 3) result += 100;
             return result;
         }
     )SRC");

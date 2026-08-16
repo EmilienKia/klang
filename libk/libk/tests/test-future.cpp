@@ -63,10 +63,10 @@ TEST_CASE("Future: a fresh promise is pending", "[libk][future]") {
             p : Promise<int>;
             f : Future<int>! = p.future();
             r : int = 0;
-            if (f->isDone()) { r = r + 1; }
-            if (f->isSuccess()) { r = r + 2; }
-            if (f->isFailed()) { r = r + 4; }
-            if (f->isCancelled()) { r = r + 8; }
+            if (f->isDone()) { ++r; }
+            if (f->isSuccess()) { r += 2; }
+            if (f->isFailed()) { r += 4; }
+            if (f->isCancelled()) { r += 8; }
             delete f;
             return r;
         }
@@ -105,9 +105,9 @@ TEST_CASE("Future: a second completion attempt is rejected", "[libk][future]") {
             p : Promise<int>;
             f : Future<int>! = p.future();
             r : int = 0;
-            if (p.trySuccess(1)) { r = r + 1; }
-            if (p.trySuccess(2)) { r = r + 10; }
-            if (p.tryCancel()) { r = r + 100; }
+            if (p.trySuccess(1)) { ++r; }
+            if (p.trySuccess(2)) { r += 10; }
+            if (p.tryCancel()) { r += 100; }
             v : int = 0;
             try { v = f->get(); } catch (e: Throwable&) { v = -1; }
             delete f;

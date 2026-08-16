@@ -145,7 +145,7 @@ public:
         // K string literals always include a null terminator in the array
         // size; strip it so that only the readable content is written.
         if (len > 0) {
-            len = len - 1;
+            --len;
         }
         if (len > 0) {
             buf : byte[]! = new byte[(int) len];

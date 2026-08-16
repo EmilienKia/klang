@@ -473,7 +473,7 @@ module __cls_static_not_virt__;
 class Counter {
     static count: int;
     static reset() { count = 0; }
-    static increment() { count = count + 1; }
+    static increment() { ++count; }
     static get() : int { return count; }
 }
 test() : int {

@@ -33,13 +33,13 @@ public:
     NetworkAddress(host: const char[], port: int) : _host(null), _port(port) {
         n : int = host.size;
         if (n > 0 && host[n - 1] == (char) 0) {
-            n = n - 1;
+            --n;
         }
         _host = new char[n + 1];
         i : int = 0;
         while (i < n) {
             _host[i] = host[i];
-            i = i + 1;
+            ++i;
         }
         _host[n] = (char) 0;
     }

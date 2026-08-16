@@ -61,10 +61,10 @@ TEST_CASE("Path: stores its text and length", "[libk][io][path]") {
         test() : int {
             p : k::io::Path("/tmp/klang_path_text.bin");
             res : int = 0;
-            if (p.length() == 24) { res = res + 1; }
+            if (p.length() == 24) { ++res; }
             s : const char[]? = p.toString();
-            if (s[0] == (char)47) { res = res + 2; }
-            if (s[24] == (char)0) { res = res + 4; }
+            if (s[0] == (char)47) { res += 2; }
+            if (s[24] == (char)0) { res += 4; }
             return res;
         }
     )SRC");
@@ -82,16 +82,16 @@ TEST_CASE("Path: fileName and parent decompose the path", "[libk][io][path]") {
             res : int = 0;
 
             name : char[]! = p.fileName();
-            if (name.size == 9) { res = res + 1; }
-            if (name[0] == (char)102) { res = res + 2; }
+            if (name.size == 9) { ++res; }
+            if (name[0] == (char)102) { res += 2; }
 
             parent : k::io::Path! = p.parent();
-            if (parent != null) { res = res + 4; }
-            if (parent->length() == 8) { res = res + 8; }
+            if (parent != null) { res += 4; }
+            if (parent->length() == 8) { res += 8; }
 
             rel : k::io::Path("relative.txt");
             noParent : k::io::Path! = rel.parent();
-            if (noParent == null) { res = res + 16; }
+            if (noParent == null) { res += 16; }
 
             delete parent;
             delete name;
@@ -112,16 +112,16 @@ TEST_CASE("Path: resolve appends and absolute paths replace", "[libk][io][path]"
             res : int = 0;
 
             child : k::io::Path! = base.resolve("f.bin");
-            if (child->length() == 14) { res = res + 1; }
+            if (child->length() == 14) { ++res; }
             cs : const char[]? = child->toString();
-            if (cs[8] == (char)47) { res = res + 2; }
+            if (cs[8] == (char)47) { res += 2; }
 
             slashed : k::io::Path("/tmp/dir/");
             child2 : k::io::Path! = slashed.resolve("f.bin");
-            if (child2->length() == 14) { res = res + 4; }
+            if (child2->length() == 14) { res += 4; }
 
             abs : k::io::Path! = base.resolve("/etc/hosts");
-            if (abs->length() == 10) { res = res + 8; }
+            if (abs->length() == 10) { res += 8; }
 
             delete abs;
             delete child2;
@@ -146,13 +146,13 @@ TEST_CASE("Path: inspects existence, kind and size", "[libk][io][path]") {
             d : k::io::Path("/tmp");
             missing : k::io::Path("/tmp/klang_path_absent_9182736");
             res : int = 0;
-            if (f.exists())         { res = res + 1; }
-            if (f.isFile())         { res = res + 2; }
-            if (f.isDirectory() == false) { res = res + 4; }
-            if (f.size() == 5L)     { res = res + 8; }
-            if (d.isDirectory())    { res = res + 16; }
-            if (missing.exists() == false) { res = res + 32; }
-            if (missing.size() == -1L)     { res = res + 64; }
+            if (f.exists())         { ++res; }
+            if (f.isFile())         { res += 2; }
+            if (f.isDirectory() == false) { res += 4; }
+            if (f.size() == 5L)     { res += 8; }
+            if (d.isDirectory())    { res += 16; }
+            if (missing.exists() == false) { res += 32; }
+            if (missing.size() == -1L)     { res += 64; }
             return res;
         }
     )SRC");
@@ -175,11 +175,11 @@ TEST_CASE("Path: creates directories and removes files", "[libk][io][path]") {
             d : k::io::Path("/tmp/klang_path_mkdir");
             f : k::io::Path("/tmp/klang_path_remove.bin");
             res : int = 0;
-            if (d.createDirectory()) { res = res + 1; }
-            if (d.isDirectory())     { res = res + 2; }
-            if (f.remove())          { res = res + 4; }
-            if (f.exists() == false) { res = res + 8; }
-            if (f.remove() == false) { res = res + 16; }
+            if (d.createDirectory()) { ++res; }
+            if (d.isDirectory())     { res += 2; }
+            if (f.remove())          { res += 4; }
+            if (f.exists() == false) { res += 8; }
+            if (f.remove() == false) { res += 16; }
             return res;
         }
     )SRC");

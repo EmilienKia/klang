@@ -147,10 +147,10 @@ TEST_CASE("compiler: debug metadata covers loop scopes and catch variables", "[k
         flow(a: int) : int {
             result: int = a;
             while (result > 0) {
-                result = result - 1;
+                --result;
             }
             try {
-                result = result + 1;
+                ++result;
             } catch (caught: Exception*) {
                 result = 0;
             }
@@ -249,8 +249,8 @@ TEST_CASE("compiler: debug metadata gives loop scopes to single-statement bodies
 sum(n: int) : int {
     total: int = 0;
     while (n > 0)
-        for (i: int = 0; i < 2; i += 1)
-            total = total + i;
+        for (i: int = 0; i < 2; ++i)
+            total += i;
     return total;
 }
 )", true, false);
@@ -410,7 +410,7 @@ flow(a: int) : int {
     } catch (caught: Exception*) {
         return a;
     } finally {
-        a = a + 1;
+        ++a;
     }
 }
 )", false, false);
@@ -877,7 +877,7 @@ loop(a: int) : int {
     while (
         a > 0
     ) {
-        a = a - 1;
+        --a;
     }
     return a;
 }
@@ -929,7 +929,7 @@ loop(n: int) : int {
         i < n;
         i += 1
     ) {
-        total = total + i;
+        total += i;
     }
     return total;
 }
@@ -986,7 +986,7 @@ run(a: int, n: int) : int {
         continue;
     }
 
-    for (i: int = 0; i < n; i += 1) {
+    for (i: int = 0; i < n; ++i) {
         continue;
     }
 
@@ -1045,7 +1045,7 @@ run(a: int, n: int) : int {
         break;
     }
 
-    for (i: int = 0; i < n; i += 1) {
+    for (i: int = 0; i < n; ++i) {
         break;
     }
 
@@ -1103,7 +1103,7 @@ run(n: int) : int {
     while (
         n > 0
     ) {
-        n = n - 1;
+        --n;
     }
 
     for (

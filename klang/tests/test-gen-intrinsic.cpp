@@ -125,7 +125,7 @@ TEST_CASE("UniSlot construct invokes T constructor", "[gen][intrinsic]") {
 
         struct Widget {
             value : int;
-            Widget() { gConstructed = gConstructed + 1; value = 77; }
+            Widget() { ++gConstructed; value = 77; }
         }
 
         test_explicit_construct() : int {
@@ -154,7 +154,7 @@ TEST_CASE("UniSlot does not auto-destruct T member", "[gen][intrinsic]") {
         struct Widget {
             value : int;
             Widget() { value = 55; }
-            ~Widget() { gDestructed = gDestructed + 1; }
+            ~Widget() { ++gDestructed; }
         }
 
         test_no_auto_destruct() : int {
@@ -185,7 +185,7 @@ TEST_CASE("UniSlot destruct invokes T destructor", "[gen][intrinsic]") {
         struct Widget {
             value : int;
             Widget() { value = 55; }
-            ~Widget() { gDestructed = gDestructed + 1; }
+            ~Widget() { ++gDestructed; }
         }
 
         test_explicit_destruct() : int {
@@ -214,7 +214,7 @@ TEST_CASE("UniSlot full lifecycle", "[gen][intrinsic]") {
             count : int;
             Counter() { count = 10; }
             ~Counter() { count = 0; }
-            increment() { count = count + 1; }
+            increment() { ++count; }
         }
 
         test_lifecycle() : int {
@@ -428,16 +428,16 @@ TEST_CASE("MultiSlot — getCapacity tracks allocations", "[gen][intrinsic][mult
             slots : MultiSlot<int>;
             result : int = 0;
 
-            if (slots.getCapacity() == 0) result = result + 1;
+            if (slots.getCapacity() == 0) ++result;
 
             slots.allocate(5);
-            if (slots.getCapacity() == 5) result = result + 10;
+            if (slots.getCapacity() == 5) result += 10;
 
             slots.reallocate(20);
-            if (slots.getCapacity() == 20) result = result + 100;
+            if (slots.getCapacity() == 20) result += 100;
 
             slots.deallocate();
-            if (slots.getCapacity() == 0) result = result + 1000;
+            if (slots.getCapacity() == 0) result += 1000;
 
             return result;
         }

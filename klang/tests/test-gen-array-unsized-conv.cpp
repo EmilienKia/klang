@@ -40,8 +40,8 @@ TEST_CASE("Sized→unsized — pass int[4] to int[] parameter", "[gen][array-uns
             s : int = 0;
             i : unsigned int = 0u;
             while(i < n) {
-                s = s + a[i];
-                i = i + 1u;
+                s += a[i];
+                ++i;
             }
             return s;
         }
@@ -296,8 +296,8 @@ TEST_CASE("Sized→unsized — sum function with .size loop", "[gen][array-unsiz
             s : int = 0;
             i : unsigned int = 0u;
             while(i < a.size) {
-                s = s + a[i];
-                i = i + 1u;
+                s += a[i];
+                ++i;
             }
             return s;
         }

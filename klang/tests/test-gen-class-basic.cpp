@@ -186,7 +186,7 @@ module __cls_simple__;
 class Counter {
     count: int;
     Counter() : count(0) {}
-    increment() { count = count + 1; }
+    increment() { ++count; }
     get() : int { return count; }
 }
 test() : int {
@@ -391,7 +391,7 @@ class BankAccount {
         balance: int;
     public:
         BankAccount() : balance(0) {}
-        deposit(amount: int) { balance = balance + amount; }
+        deposit(amount: int) { balance += amount; }
         get_balance() : int { return balance; }
 }
 test() : int {

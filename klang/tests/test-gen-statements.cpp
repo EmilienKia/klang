@@ -86,7 +86,7 @@ TEST_CASE("While", "[gen][while]") {
             r = 0;
             while(i>0) {
                 r += i;
-                i = i - 1;
+                --i;
             }
             return r;
         }
@@ -115,7 +115,7 @@ TEST_CASE("For", "[gen][for]") {
         sum(i : short) : int {
             r : int;
             r = 0;
-            for(n: short = 0; n<i; n+=1) {
+            for (n: short = 0; n<i; ++n) {
                 r += n;
             }
             return r;
@@ -148,7 +148,7 @@ TEST_CASE("Break in while loop", "[gen][break]") {
                 if(i >= limit) {
                     break;
                 }
-                i = i + 1;
+                ++i;
             }
             return i;
         }
@@ -159,8 +159,8 @@ TEST_CASE("Break in while loop", "[gen][break]") {
                 if(i >= limit) {
                     break;
                 }
-                r = r + i;
-                i = i + 1;
+                r += i;
+                ++i;
             }
             return r;
         }
@@ -191,11 +191,11 @@ TEST_CASE("Break in for loop", "[gen][break]") {
         module __break_for__;
         sum_until_for(limit : int) : int {
             r : int = 0;
-            for(i : int = 0; i < 100; i += 1) {
+            for (i : int = 0; i < 100; ++i) {
                 if(i >= limit) {
                     break;
                 }
-                r = r + i;
+                r += i;
             }
             return r;
         }
@@ -224,10 +224,10 @@ TEST_CASE("Break in nested loops", "[gen][break]") {
                     if(j >= 3) {
                         break;
                     }
-                    total = total + 1;
-                    j = j + 1;
+                    ++total;
+                    ++j;
                 }
-                i = i + 1;
+                ++i;
             }
             return total;
         }
@@ -285,11 +285,11 @@ TEST_CASE("Continue in while loop", "[gen][continue]") {
             r : int = 0;
             i : int = 0;
             while(i < n) {
-                i = i + 1;
+                ++i;
                 if(i % 2 == 0) {
                     continue;
                 }
-                r = r + i;
+                r += i;
             }
             return r;
         }
@@ -314,11 +314,11 @@ TEST_CASE("Continue in for loop", "[gen][continue]") {
         module __continue_for__;
         sum_skip_multiples(n : int, skip : int) : int {
             r : int = 0;
-            for(i : int = 0; i < n; i += 1) {
+            for (i : int = 0; i < n; ++i) {
                 if(i % skip == 0) {
                     continue;
                 }
-                r = r + i;
+                r += i;
             }
             return r;
         }
@@ -342,11 +342,11 @@ TEST_CASE("Continue in for loop preserves step", "[gen][continue]") {
         module __continue_for_step__;
         count_non_multiples(n : int, skip : int) : int {
             count : int = 0;
-            for(i : int = 1; i <= n; i += 1) {
+            for (i : int = 1; i <= n; ++i) {
                 if(i % skip == 0) {
                     continue;
                 }
-                count = count + 1;
+                ++count;
             }
             return count;
         }
@@ -374,13 +374,13 @@ TEST_CASE("Continue in nested loops", "[gen][continue]") {
             while(i < n) {
                 j : int = 0;
                 while(j < n) {
-                    j = j + 1;
+                    ++j;
                     if(j % 2 == 0) {
                         continue;
                     }
-                    total = total + 1;
+                    ++total;
                 }
-                i = i + 1;
+                ++i;
             }
             return total;
         }

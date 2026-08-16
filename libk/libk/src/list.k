@@ -134,7 +134,7 @@ class LinkedList : public MutableIndexedCollection<T> {
            _tail = node;
            _head = node;
        }
-       _size = _size + 1;
+       ++_size;
     }
 
     /**
@@ -150,7 +150,7 @@ class LinkedList : public MutableIndexedCollection<T> {
            _tail = node;
        }
        _head = node;
-       _size = _size + 1;
+       ++_size;
     }
 
     prependAll(coll : Sequence<T>&) {
@@ -161,7 +161,7 @@ class LinkedList : public MutableIndexedCollection<T> {
     prependAll(coll : const T[]&) {
        i : unsigned int = coll.size;
        while (i > 0) {
-           i = i - 1;
+           --i;
            prepend(coll[i]);
        }
     }
@@ -175,7 +175,7 @@ class LinkedList : public MutableIndexedCollection<T> {
        i : unsigned int = 0;
        while (i < coll.size) {
            append(coll[i]);
-           i = i + 1;
+           ++i;
        }
     }
 
@@ -197,7 +197,7 @@ class LinkedList : public MutableIndexedCollection<T> {
                 _tail = node;
             }
             _head = node;
-            _size = _size + 1;
+            ++_size;
             return;
         }
         if (index >= _size) {
@@ -208,18 +208,18 @@ class LinkedList : public MutableIndexedCollection<T> {
                 _tail = node;
                 _head = node;
             }
-            _size = _size + 1;
+            ++_size;
             return;
         }
         prev : LinkedListNode* = _head;
         i : unsigned int = 1;
         while (i < index) {
             prev = prev->_next;
-            i = i + 1;
+            ++i;
         }
         node._next = prev->_next;
         prev->_next = node;
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Construct an element in-place at the front of the list. */
@@ -232,7 +232,7 @@ class LinkedList : public MutableIndexedCollection<T> {
             _tail = node;
         }
         _head = node;
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Construct an element in-place at the back of the list. */
@@ -247,7 +247,7 @@ class LinkedList : public MutableIndexedCollection<T> {
             _tail = node;
             _head = node;
         }
-        _size = _size + 1;
+        ++_size;
     }
 
     /**
@@ -265,7 +265,7 @@ class LinkedList : public MutableIndexedCollection<T> {
                 _tail = node;
             }
             _head = node;
-            _size = _size + 1;
+            ++_size;
             return;
         }
         if (index >= _size) {
@@ -276,18 +276,18 @@ class LinkedList : public MutableIndexedCollection<T> {
                 _tail = node;
                 _head = node;
             }
-            _size = _size + 1;
+            ++_size;
             return;
         }
         prev : LinkedListNode* = _head;
         i : unsigned int = 1;
         while (i < index) {
             prev = prev->_next;
-            i = i + 1;
+            ++i;
         }
         node._next = prev->_next;
         prev->_next = node;
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Return a mutable reference to the front element. Undefined if empty. */
@@ -316,7 +316,7 @@ class LinkedList : public MutableIndexedCollection<T> {
         i : unsigned int = 0;
         while (i < index) {
             current = current->_next;
-            i = i + 1;
+            ++i;
         }
         return current->getValue();
     }
@@ -327,7 +327,7 @@ class LinkedList : public MutableIndexedCollection<T> {
         i : unsigned int = 0;
         while (i < index) {
             current = current->_next;
-            i = i + 1;
+            ++i;
         }
         return current->getValue();
     }
@@ -338,7 +338,7 @@ class LinkedList : public MutableIndexedCollection<T> {
         i : unsigned int = 0;
         while (i < index) {
             current = current->_next;
-            i = i + 1;
+            ++i;
         }
         return current->getValue();
     }
@@ -349,7 +349,7 @@ class LinkedList : public MutableIndexedCollection<T> {
         i : unsigned int = 0;
         while (i < index) {
             current = current->_next;
-            i = i + 1;
+            ++i;
         }
         return current->getValue();
     }
@@ -370,7 +370,7 @@ class LinkedList : public MutableIndexedCollection<T> {
         if (_head == null) {
             _tail = null;
         }
-        _size = _size - 1;
+        --_size;
         return true;
     }
 
@@ -383,7 +383,7 @@ class LinkedList : public MutableIndexedCollection<T> {
         if (_head._next == null) {
             _head = null;
             _tail = null;
-            _size = _size - 1;
+            --_size;
             return true;
         }
         prev : LinkedListNode* = _head;
@@ -392,7 +392,7 @@ class LinkedList : public MutableIndexedCollection<T> {
         }
         prev->_next = null;
         _tail = prev;
-        _size = _size - 1;
+        --_size;
         return true;
     }
 
@@ -410,7 +410,7 @@ class LinkedList : public MutableIndexedCollection<T> {
         i : unsigned int = 1;
         while (i < index) {
             prev = prev->_next;
-            i = i + 1;
+            ++i;
         }
         // prev is the node before the one to remove
         toRemove : LinkedListNode! = prev->_next;
@@ -418,7 +418,7 @@ class LinkedList : public MutableIndexedCollection<T> {
         if (prev->_next == null) {
             _tail = prev;
         }
-        _size = _size - 1;
+        --_size;
         return true;
     }
 
@@ -489,7 +489,7 @@ public:
             return result;
         }
         current : unsigned int = _index;
-        _index = _index + 1;
+        ++_index;
         value : const T& = _list->get(current);
         result.set(value);
         return result;
@@ -520,7 +520,7 @@ public:
             return result;
         }
         current : unsigned int = _index;
-        _index = _index + 1;
+        ++_index;
         value : T& = _list->get(current);
         result.set(value);
         return result;
@@ -628,7 +628,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             _tail = node;
             _head = node;
         }
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Insert a copy of value at the front of the list. */
@@ -643,7 +643,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             _tail = node;
         }
         _head = node;
-        _size = _size + 1;
+        ++_size;
     }
 
     prependAll(coll : Sequence<T>&) {
@@ -654,7 +654,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
     prependAll(coll : const T[]&) {
         i : unsigned int = coll.size;
         while (i > 0) {
-            i = i - 1;
+            --i;
             prepend(coll[i]);
         }
     }
@@ -668,7 +668,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
         i : unsigned int = 0;
         while (i < coll.size) {
             append(coll[i]);
-            i = i + 1;
+            ++i;
         }
     }
 
@@ -691,7 +691,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
                 _tail = node;
             }
             _head = node;
-            _size = _size + 1;
+            ++_size;
             return;
         }
         if (index >= _size) {
@@ -706,7 +706,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
                 _tail = node;
                 _head = node;
             }
-            _size = _size + 1;
+            ++_size;
             return;
         }
         // Insert in the middle — search from nearest end
@@ -716,7 +716,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = 1;
             while (i < index) {
                 prev = prev->_next;
-                i = i + 1;
+                ++i;
             }
             node : DoubleLinkedListNode! = new DoubleLinkedListNode();
             node.setValue(value);
@@ -732,7 +732,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = _size - 1;
             while (i > index) {
                 next = next->_prev;
-                i = i - 1;
+                --i;
             }
             // next is at position 'index', we insert before it
             node : DoubleLinkedListNode! = new DoubleLinkedListNode();
@@ -742,7 +742,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             next->_prev = node;
             node._prev->_next = node;
         }
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Construct an element in-place at the front of the list. */
@@ -758,7 +758,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             _tail = node;
         }
         _head = node;
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Construct an element in-place at the back of the list. */
@@ -774,7 +774,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             _tail = node;
             _head = node;
         }
-        _size = _size + 1;
+        ++_size;
     }
 
     /**
@@ -796,7 +796,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
                 _tail = node;
             }
             _head = node;
-            _size = _size + 1;
+            ++_size;
             return;
         }
         if (index >= _size) {
@@ -810,7 +810,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
                 _tail = node;
                 _head = node;
             }
-            _size = _size + 1;
+            ++_size;
             return;
         }
         if (index <= _size / 2) {
@@ -818,7 +818,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = 1;
             while (i < index) {
                 prev = prev->_next;
-                i = i + 1;
+                ++i;
             }
             node : DoubleLinkedListNode! = new DoubleLinkedListNode();
             node.emplaceValue(args...);
@@ -833,7 +833,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = _size - 1;
             while (i > index) {
                 next = next->_prev;
-                i = i - 1;
+                --i;
             }
             // next is at position 'index', we insert before it
             node : DoubleLinkedListNode! = new DoubleLinkedListNode();
@@ -843,7 +843,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             next->_prev = node;
             node._prev->_next = node;
         }
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Return a mutable reference to the front element. Undefined if empty. */
@@ -876,7 +876,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = 0;
             while (i < index) {
                 current = current->_next;
-                i = i + 1;
+                ++i;
             }
             return current->getValue();
         } else {
@@ -884,7 +884,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = _size - 1;
             while (i > index) {
                 current = current->_prev;
-                i = i - 1;
+                --i;
             }
             return current->getValue();
         }
@@ -900,7 +900,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = 0;
             while (i < index) {
                 current = current->_next;
-                i = i + 1;
+                ++i;
             }
             return current->getValue();
         } else {
@@ -908,7 +908,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = _size - 1;
             while (i > index) {
                 current = current->_prev;
-                i = i - 1;
+                --i;
             }
             return current->getValue();
         }
@@ -924,7 +924,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = 0;
             while (i < index) {
                 current = current->_next;
-                i = i + 1;
+                ++i;
             }
             return current->getValue();
         } else {
@@ -932,7 +932,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = _size - 1;
             while (i > index) {
                 current = current->_prev;
-                i = i - 1;
+                --i;
             }
             return current->getValue();
         }
@@ -948,7 +948,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = 0;
             while (i < index) {
                 current = current->_next;
-                i = i + 1;
+                ++i;
             }
             return current->getValue();
         } else {
@@ -956,7 +956,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = _size - 1;
             while (i > index) {
                 current = current->_prev;
-                i = i - 1;
+                --i;
             }
             return current->getValue();
         }
@@ -978,7 +978,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
         } else {
             _tail = null;
         }
-        _size = _size - 1;
+        --_size;
         return true;
     }
 
@@ -991,13 +991,13 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             // Single element
             _head = null;
             _tail = null;
-            _size = _size - 1;
+            --_size;
             return true;
         }
         prev : DoubleLinkedListNode* = _tail->_prev;
         prev->_next = null;
         _tail = prev;
-        _size = _size - 1;
+        --_size;
         return true;
     }
 
@@ -1018,14 +1018,14 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
             i : unsigned int = 0;
             while (i < index) {
                 current = current->_next;
-                i = i + 1;
+                ++i;
             }
         } else {
             current = _tail;
             i : unsigned int = _size - 1;
             while (i > index) {
                 current = current->_prev;
-                i = i - 1;
+                --i;
             }
         }
 
@@ -1035,7 +1035,7 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
         if (prev->_next != null) {
             prev->_next._prev = prev;
         }
-        _size = _size - 1;
+        --_size;
         return true;
     }
 
@@ -1119,7 +1119,7 @@ public:
             return result;
         }
         current : unsigned int = _index;
-        _index = _index + 1;
+        ++_index;
         value : const T& = _list->get(current);
         result.set(value);
         return result;
@@ -1149,7 +1149,7 @@ public:
             return result;
         }
         current : unsigned int = _index;
-        _index = _index + 1;
+        ++_index;
         value : T& = _list->get(current);
         result.set(value);
         return result;

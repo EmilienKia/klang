@@ -341,8 +341,8 @@ TEST_CASE("[M] M11: template function with bool value param",
             a : bool = get_b<true>();
             b : bool = get_b<false>();
             r : int = 0;
-            if(a) { r = r + 1; }
-            if(b) { r = r + 10; }
+            if(a) { ++r; }
+            if(b) { r += 10; }
             return r;
         }
     )SRC");
@@ -412,8 +412,8 @@ TEST_CASE("[P] M11: template struct with bool value param",
             c : Config<int, true>;
             d : Config<int, false>;
             r : int = 0;
-            if(c.is_signed()) { r = r + 1; }
-            if(d.is_signed()) { r = r + 10; }
+            if(c.is_signed()) { ++r; }
+            if(d.is_signed()) { r += 10; }
             return r;
         }
     )SRC");

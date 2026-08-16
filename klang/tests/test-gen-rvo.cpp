@@ -58,8 +58,8 @@ TEST_CASE("RVO-1: Simple factory — exactly 1 ctor, 1 dtor", "[gen][rvo][rvo1]"
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -100,8 +100,8 @@ TEST_CASE("RVO-1: Factory with multiple-field struct", "[gen][rvo][rvo1]") {
         struct Point {
             x : int;
             y : int;
-            Point(px: int, py: int) : x(px), y(py) { g_ctors = g_ctors + 1; }
-            ~Point() { g_dtors = g_dtors + 1; }
+            Point(px: int, py: int) : x(px), y(py) { ++g_ctors; }
+            ~Point() { ++g_dtors; }
         }
 
         make_point(a: int, b: int) : Point {
@@ -140,8 +140,8 @@ TEST_CASE("RVO-1: Factory with default-constructed struct", "[gen][rvo][rvo1]") 
 
         struct Obj {
             val : int = 99;
-            Obj() { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj() { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make() : Obj {
@@ -185,8 +185,8 @@ TEST_CASE("RVO-2: NRVO basic — return named local, exactly 1 ctor, 1 dtor", "[
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -226,8 +226,8 @@ TEST_CASE("RVO-2: NRVO — local modified before return", "[gen][rvo][rvo2]") {
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -267,9 +267,9 @@ TEST_CASE("RVO-2: NRVO — member function called on local before return", "[gen
 
         struct Builder {
             val : int;
-            Builder(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Builder() { g_dtors = g_dtors + 1; }
-            add(x: int) { val = val + x; }
+            Builder(v: int) : val(v) { ++g_ctors; }
+            ~Builder() { ++g_dtors; }
+            add(x: int) { val += x; }
         }
 
         make(v: int) : Builder {
@@ -311,8 +311,8 @@ TEST_CASE("RVO-2: NRVO — single return at end of function", "[gen][rvo][rvo2]"
         struct Data {
             a : int;
             b : int;
-            Data(x: int, y: int) : a(x), b(y) { g_ctors = g_ctors + 1; }
-            ~Data() { g_dtors = g_dtors + 1; }
+            Data(x: int, y: int) : a(x), b(y) { ++g_ctors; }
+            ~Data() { ++g_dtors; }
         }
 
         make_data(x: int, y: int) : Data {
@@ -356,8 +356,8 @@ TEST_CASE("RVO-3: Assigned to local — no intermediate temporary", "[gen][rvo][
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -397,8 +397,8 @@ TEST_CASE("RVO-3: Two assigned locals from same factory function", "[gen][rvo][r
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -440,8 +440,8 @@ TEST_CASE("RVO-3: Assigned from chained factory — make_outer(make_inner())", "
 
         struct Inner {
             val : int;
-            Inner(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Inner() { g_dtors = g_dtors + 1; }
+            Inner(v: int) : val(v) { ++g_ctors; }
+            ~Inner() { ++g_dtors; }
         }
 
         make_inner(v: int) : Inner {
@@ -493,8 +493,8 @@ TEST_CASE("RVO-4: Discarded struct return — temporary created and destroyed", 
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -536,8 +536,8 @@ TEST_CASE("RVO-4: Member access on temporary — correct value, temp destroyed",
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -577,8 +577,8 @@ TEST_CASE("RVO-4: Method call on temporary — correct value, temp destroyed", "
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
 
             get_val() : int { return val; }
         }
@@ -622,8 +622,8 @@ TEST_CASE("RVO-5: Chained method returning struct — all intermediates are temp
 
         struct Builder {
             val : int;
-            Builder(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Builder() { g_dtors = g_dtors + 1; }
+            Builder(v: int) : val(v) { ++g_ctors; }
+            ~Builder() { ++g_dtors; }
 
             add(x: int) : Builder {
                 r : Builder(val + x);
@@ -669,7 +669,7 @@ TEST_CASE("RVO-5: Deep chain with different struct types", "[gen][rvo][rvo5]") {
 
         struct Step1 {
             val : int;
-            Step1(v: int) : val(v) { g_ctors = g_ctors + 1; }
+            Step1(v: int) : val(v) { ++g_ctors; }
             ~Step1() { g_order = g_order * 10 + 1; }
 
             next() : Step2 {
@@ -680,7 +680,7 @@ TEST_CASE("RVO-5: Deep chain with different struct types", "[gen][rvo][rvo5]") {
 
         struct Step2 {
             val : int;
-            Step2(v: int) : val(v) { g_ctors = g_ctors + 1; }
+            Step2(v: int) : val(v) { ++g_ctors; }
             ~Step2() { g_order = g_order * 10 + 2; }
 
             get() : int { return val; }
@@ -723,8 +723,8 @@ TEST_CASE("RVO-5: Chained call result assigned to variable", "[gen][rvo][rvo5]")
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
 
             transform(x: int) : Obj {
                 r : Obj(val + x);
@@ -774,8 +774,8 @@ TEST_CASE("RVO-6: Struct return passed by value to another function", "[gen][rvo
 
         struct Box {
             val : int;
-            Box(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Box() { g_dtors = g_dtors + 1; }
+            Box(v: int) : val(v) { ++g_ctors; }
+            ~Box() { ++g_dtors; }
         }
 
         make(v: int) : Box {
@@ -821,8 +821,8 @@ TEST_CASE("RVO-6: Struct return assigned then passed by value", "[gen][rvo][rvo6
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -868,8 +868,8 @@ TEST_CASE("RVO-6: Struct return from nested factory calls", "[gen][rvo][rvo6]") 
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -922,8 +922,8 @@ TEST_CASE("RVO-7: Multiple returns of same variable — NRVO eligible", "[gen][r
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -969,8 +969,8 @@ TEST_CASE("RVO-7: Multiple returns of different variables — NRVO ineligible, s
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(flag: int) : Obj {
@@ -1027,8 +1027,8 @@ TEST_CASE("RVO-7: Return from different scopes — NRVO-eligible with same varia
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(flag: int) : Obj {
@@ -1085,8 +1085,8 @@ TEST_CASE("RVO-8: Operator+ returning struct by value", "[gen][rvo][rvo8]") {
         struct Vec {
             x : int;
             y : int;
-            Vec(px: int, py: int) : x(px), y(py) { g_ctors = g_ctors + 1; }
-            ~Vec() { g_dtors = g_dtors + 1; }
+            Vec(px: int, py: int) : x(px), y(py) { ++g_ctors; }
+            ~Vec() { ++g_dtors; }
 
             operator+(other: Vec&) : Vec {
                 r : Vec(x + other.x, y + other.y);
@@ -1129,8 +1129,8 @@ TEST_CASE("RVO-8: Chained operator returning struct — a + b + c", "[gen][rvo][
 
         struct Vec {
             x : int;
-            Vec(v: int) : x(v) { g_ctors = g_ctors + 1; }
-            ~Vec() { g_dtors = g_dtors + 1; }
+            Vec(v: int) : x(v) { ++g_ctors; }
+            ~Vec() { ++g_dtors; }
 
             operator+(other: Vec&) : Vec {
                 r : Vec(x + other.x);
@@ -1180,8 +1180,8 @@ TEST_CASE("RVO-9: Virtual method returning struct by value", "[gen][rvo][rvo9]")
 
         struct Result {
             val : int;
-            Result(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Result() { g_dtors = g_dtors + 1; }
+            Result(v: int) : val(v) { ++g_ctors; }
+            ~Result() { ++g_dtors; }
         }
 
         class Base {
@@ -1327,8 +1327,8 @@ TEST_CASE("RVO-11: Struct return used in if-condition via method", "[gen][rvo][r
 
         struct Checker {
             val : int;
-            Checker(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Checker() { g_dtors = g_dtors + 1; }
+            Checker(v: int) : val(v) { ++g_ctors; }
+            ~Checker() { ++g_dtors; }
             is_positive() : int {
                 if (val > 0) { return 1; }
                 return 0;
@@ -1375,8 +1375,8 @@ TEST_CASE("RVO-11: Struct return in for-loop condition", "[gen][rvo][rvo11]") {
 
         struct Limit {
             max : int;
-            Limit(m: int) : max(m) { g_ctors = g_ctors + 1; }
-            ~Limit() { g_dtors = g_dtors + 1; }
+            Limit(m: int) : max(m) { ++g_ctors; }
+            ~Limit() { ++g_dtors; }
             above(i: int) : int {
                 if (max > i) { return 1; }
                 return 0;
@@ -1390,8 +1390,8 @@ TEST_CASE("RVO-11: Struct return in for-loop condition", "[gen][rvo][rvo11]") {
 
         test() : int {
             sum : int = 0;
-            for (i : int = 0; make_limit(3).above(i) > 0; i = i + 1) {
-                sum = sum + i;
+            for (i : int = 0; make_limit(3).above(i) > 0; ++i) {
+                sum += i;
             }
             return sum;
         }
@@ -1424,10 +1424,10 @@ TEST_CASE("RVO-11: Struct return in while-loop condition", "[gen][rvo][rvo11]") 
 
         struct Counter {
             max : int;
-            Counter(m: int) : max(m) { g_ctors = g_ctors + 1; }
-            ~Counter() { g_dtors = g_dtors + 1; }
+            Counter(m: int) : max(m) { ++g_ctors; }
+            ~Counter() { ++g_dtors; }
             has_next() : int {
-                g_counter = g_counter + 1;
+                ++g_counter;
                 if (max > g_counter) { return 1; }
                 return 0;
             }
@@ -1477,15 +1477,15 @@ TEST_CASE("RVO-12: Return struct containing struct member", "[gen][rvo][rvo12]")
 
         struct Inner {
             val : int;
-            Inner(v: int) : val(v) { g_inner_ctors = g_inner_ctors + 1; }
-            ~Inner() { g_inner_dtors = g_inner_dtors + 1; }
+            Inner(v: int) : val(v) { ++g_inner_ctors; }
+            ~Inner() { ++g_inner_dtors; }
         }
 
         struct Outer {
             inner : Inner;
             extra : int;
-            Outer(v: int, e: int) : inner(v), extra(e) { g_outer_ctors = g_outer_ctors + 1; }
-            ~Outer() { g_outer_dtors = g_outer_dtors + 1; }
+            Outer(v: int, e: int) : inner(v), extra(e) { ++g_outer_ctors; }
+            ~Outer() { ++g_outer_dtors; }
         }
 
         make_outer(v: int) : Outer {
@@ -1537,8 +1537,8 @@ TEST_CASE("RVO: Struct return value used in arithmetic expression", "[gen][rvo]"
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -1578,8 +1578,8 @@ TEST_CASE("RVO: Multiple sequential struct returns — independent lifetimes", "
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -1623,7 +1623,7 @@ TEST_CASE("RVO: Struct return from function with other locals — dtor ordering 
 
         struct Obj {
             id : int;
-            Obj(v: int) : id(v) { g_ctors = g_ctors + 1; }
+            Obj(v: int) : id(v) { ++g_ctors; }
             ~Obj() { g_order = g_order * 10 + id; }
         }
 
@@ -1677,8 +1677,8 @@ TEST_CASE("RVO: Struct factory called in return statement of another function", 
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -1724,7 +1724,7 @@ TEST_CASE("RVO: Destructor side effect preserved — dtor runs exactly once per 
         struct Acc {
             val : int;
             Acc(v: int) : val(v) {}
-            ~Acc() { g_sum = g_sum + val; }
+            ~Acc() { g_sum += val; }
         }
 
         make(v: int) : Acc {
@@ -1769,9 +1769,9 @@ TEST_CASE("RVO-13: NRVO bypasses copy constructor — no copy ctor call", "[gen]
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            Obj(other: Obj&) : val(other.val) { g_copy_ctors = g_copy_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            Obj(other: Obj&) : val(other.val) { ++g_copy_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -1875,8 +1875,8 @@ TEST_CASE("RVO-14: NRVO — return from if-else with helper locals in each branc
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(flag: int) : Obj {
@@ -1942,8 +1942,8 @@ TEST_CASE("RVO-15: Class return by value — sret + NRVO works for classes", "[g
 
         struct Result {
             val : int;
-            Result(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Result() { g_dtors = g_dtors + 1; }
+            Result(v: int) : val(v) { ++g_ctors; }
+            ~Result() { ++g_dtors; }
         }
 
         make_result(v: int) : Result {
@@ -1988,8 +1988,8 @@ TEST_CASE("RVO-16: Recursive factory — correct value through recursive sret ch
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(n: int) : Obj {

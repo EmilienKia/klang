@@ -160,7 +160,7 @@ public:
             if (n == 0) {
                 throw IOException(0);
             }
-            done = done + (long) n;
+            done += (long) n;
         }
     }
 

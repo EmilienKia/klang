@@ -86,11 +86,11 @@ final struct Shared {
         }
         /** Increment the reference count. */
         retain() {
-            _refCount = _refCount + 1;
+            ++_refCount;
         }
         /** Decrement the reference count. Returns the new count. */
         release() : int {
-            _refCount = _refCount - 1;
+            --_refCount;
             return _refCount;
         }
     }

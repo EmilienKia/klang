@@ -46,8 +46,8 @@ TEST_CASE("Vector<int> — empty vector", "[libk][vector][int]") {
         test() : int {
             vec : Vector<int>;
             result : int = 0;
-            if (vec.isEmpty())          result = result + 1;
-            if (vec.size() == 0)     result = result + 10;
+            if (vec.isEmpty())          ++result;
+            if (vec.size() == 0)     result += 10;
             return result;
         }
     )SRC");
@@ -71,9 +71,9 @@ TEST_CASE("Vector<int> — append and peek", "[libk][vector][int]") {
             vec.append(c);
 
             result : int = 0;
-            if (vec.size() == 3)      result = result + 1;
-            if (vec.first() == 10)   result = result + 10;
-            if (vec.last() == 30)    result = result + 100;
+            if (vec.size() == 3)      ++result;
+            if (vec.first() == 10)   result += 10;
+            if (vec.last() == 30)    result += 100;
             return result;
         }
     )SRC");
@@ -97,9 +97,9 @@ TEST_CASE("Vector<int> — subscript operator", "[libk][vector][int]") {
             vec.append(c);
 
             result : int = 0;
-            if (vec[0] == 100) result = result + 1;
-            if (vec[1] == 200) result = result + 10;
-            if (vec[2] == 300) result = result + 100;
+            if (vec[0] == 100) ++result;
+            if (vec[1] == 200) result += 10;
+            if (vec[2] == 300) result += 100;
             return result;
         }
     )SRC");
@@ -125,9 +125,9 @@ TEST_CASE("Vector<int> — removeLast", "[libk][vector][int]") {
             // vec: 10, 20
 
             result : int = 0;
-            if (vec.size() == 2)      result = result + 1;
-            if (vec.first() == 10)   result = result + 10;
-            if (vec.last() == 20)    result = result + 100;
+            if (vec.size() == 2)      ++result;
+            if (vec.first() == 10)   result += 10;
+            if (vec.last() == 20)    result += 100;
             return result;
         }
     )SRC");
@@ -153,9 +153,9 @@ TEST_CASE("Vector<int> — removeAt", "[libk][vector][int]") {
             // vec: 10, 30
 
             result : int = 0;
-            if (vec.size() == 2)      result = result + 1;
-            if (vec[0] == 10)            result = result + 10;
-            if (vec[1] == 30)            result = result + 100;
+            if (vec.size() == 2)      ++result;
+            if (vec[0] == 10)            result += 10;
+            if (vec[1] == 30)            result += 100;
             return result;
         }
     )SRC");
@@ -180,10 +180,10 @@ TEST_CASE("Vector<int> — insert at index", "[libk][vector][int]") {
             // vec: 10, 20, 30
 
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
-            if (vec[0] == 10)        result = result + 10;
-            if (vec[1] == 20)        result = result + 100;
-            if (vec[2] == 30)        result = result + 1000;
+            if (vec.size() == 3)  ++result;
+            if (vec[0] == 10)        result += 10;
+            if (vec[1] == 20)        result += 100;
+            if (vec[2] == 30)        result += 1000;
             return result;
         }
     )SRC");
@@ -206,9 +206,9 @@ TEST_CASE("Vector<int> — clear empties", "[libk][vector][int]") {
             vec.clear();
 
             result : int = 0;
-            if (vec.isEmpty())           result = result + 1;
-            if (vec.size() == 0)      result = result + 10;
-            if (vec.getCapacity() >= 2)  result = result + 100;
+            if (vec.isEmpty())           ++result;
+            if (vec.size() == 0)      result += 10;
+            if (vec.getCapacity() >= 2)  result += 100;
             return result;
         }
     )SRC");
@@ -227,8 +227,8 @@ TEST_CASE("Vector<int> — reserve", "[libk][vector][int]") {
             vec.reserve(100);
 
             result : int = 0;
-            if (vec.getCapacity() >= 100) result = result + 1;
-            if (vec.size() == 0)       result = result + 10;
+            if (vec.getCapacity() >= 100) ++result;
+            if (vec.size() == 0)       result += 10;
             return result;
         }
     )SRC");
@@ -248,14 +248,14 @@ TEST_CASE("Vector<int> — growth strategy", "[libk][vector][int]") {
             i : int = 0;
             while (i < 5) {
                 vec.append(i);
-                i = i + 1;
+                ++i;
             }
 
             result : int = 0;
-            if (vec.size() == 5)       result = result + 1;
-            if (vec.getCapacity() >= 5)   result = result + 10;
-            if (vec[0] == 0)              result = result + 100;
-            if (vec[4] == 4)              result = result + 1000;
+            if (vec.size() == 5)       ++result;
+            if (vec.getCapacity() >= 5)   result += 10;
+            if (vec[0] == 0)              result += 100;
+            if (vec[4] == 4)              result += 1000;
             return result;
         }
     )SRC");
@@ -290,11 +290,11 @@ TEST_CASE("Vector<Point> — struct stored by value", "[libk][vector][struct]") 
             vec.append(p3);
 
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
-            if (vec[0].x == 1)       result = result + 10;
-            if (vec[0].y == 2)       result = result + 100;
-            if (vec[1].x == 3)       result = result + 1000;
-            if (vec[2].y == 6)       result = result + 10000;
+            if (vec.size() == 3)  ++result;
+            if (vec[0].x == 1)       result += 10;
+            if (vec[0].y == 2)       result += 100;
+            if (vec[1].x == 3)       result += 1000;
+            if (vec[2].y == 6)       result += 10000;
             return result;
         }
     )SRC");
@@ -327,11 +327,11 @@ TEST_CASE("Vector<Point> — removeAt with struct", "[libk][vector][struct]") {
             // vec: Point(3,4), Point(5,6)
 
             result : int = 0;
-            if (vec.size() == 2)  result = result + 1;
-            if (vec[0].x == 3)       result = result + 10;
-            if (vec[0].y == 4)       result = result + 100;
-            if (vec[1].x == 5)       result = result + 1000;
-            if (vec[1].y == 6)       result = result + 10000;
+            if (vec.size() == 2)  ++result;
+            if (vec[0].x == 3)       result += 10;
+            if (vec[0].y == 4)       result += 100;
+            if (vec[1].x == 5)       result += 1000;
+            if (vec[1].y == 6)       result += 10000;
             return result;
         }
     )SRC");
@@ -363,11 +363,11 @@ TEST_CASE("Vector<Point> — insert with struct", "[libk][vector][struct]") {
             // vec: Point(1,2), Point(3,4), Point(5,6)
 
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
-            if (vec[0].x == 1)       result = result + 10;
-            if (vec[1].x == 3)       result = result + 100;
-            if (vec[1].y == 4)       result = result + 1000;
-            if (vec[2].x == 5)       result = result + 10000;
+            if (vec.size() == 3)  ++result;
+            if (vec[0].x == 1)       result += 10;
+            if (vec[1].x == 3)       result += 100;
+            if (vec[1].y == 4)       result += 1000;
+            if (vec[2].x == 5)       result += 10000;
             return result;
         }
     )SRC");
@@ -385,14 +385,14 @@ TEST_CASE("Vector<int> — e2e build and exec", "[libk][vector][run]") {
             i : int = 0;
             while (i < 10) {
                 vec.append(i);
-                i = i + 1;
+                ++i;
             }
             // Sum all elements
             sum : int = 0;
             j : int = 0;
             while (j < vec.size()) {
-                sum = sum + vec[j];
-                j = j + 1;
+                sum += vec[j];
+                ++j;
             }
             // 0+1+2+...+9 = 45
             if (sum == 45) return 0;
@@ -429,16 +429,16 @@ TEST_CASE("Vector<Color> — append, insert, peek with enum", "[libk][vector][en
             // order: RED, GREEN, BLUE
 
             result : int = 0;
-            if (vec.size() == 3)              result = result + 1;
-            if (vec.first() == Color::RED)   result = result + 10;
-            if (vec[1] == Color::GREEN)          result = result + 100;
-            if (vec.last() == Color::BLUE)   result = result + 1000;
+            if (vec.size() == 3)              ++result;
+            if (vec.first() == Color::RED)   result += 10;
+            if (vec[1] == Color::GREEN)          result += 100;
+            if (vec.last() == Color::BLUE)   result += 1000;
 
             vec.removeLast();
-            if (vec.last() == Color::GREEN)  result = result + 10000;
+            if (vec.last() == Color::GREEN)  result += 10000;
 
             vec.clear();
-            if (vec.isEmpty())                   result = result + 100000;
+            if (vec.isEmpty())                   result += 100000;
             return result;
         }
     )SRC");
@@ -470,10 +470,10 @@ TEST_CASE("Vector<Direction> — plain enum with auto values", "[libk][vector][e
             // order: NORTH, SOUTH, EAST
 
             result : int = 0;
-            if (vec.size() == 3)              result = result + 1;
-            if (vec[0] == Direction::NORTH)      result = result + 10;
-            if (vec[1] == Direction::SOUTH)      result = result + 100;
-            if (vec[2] == Direction::EAST)       result = result + 1000;
+            if (vec.size() == 3)              ++result;
+            if (vec[0] == Direction::NORTH)      result += 10;
+            if (vec[1] == Direction::SOUTH)      result += 100;
+            if (vec[2] == Direction::EAST)       result += 1000;
             return result;
         }
     )SRC");
@@ -508,15 +508,15 @@ TEST_CASE("Vector<TypedEnum> — typed enum (byte)", "[libk][vector][enum]") {
             // order: OK, WARN, ERR
 
             result : int = 0;
-            if (vec.size() == 3)          result = result + 1;
-            if (vec[0] == Status::OK)        result = result + 10;
-            if (vec[1] == Status::WARN)      result = result + 100;
-            if (vec[2] == Status::ERR)       result = result + 1000;
+            if (vec.size() == 3)          ++result;
+            if (vec[0] == Status::OK)        result += 10;
+            if (vec[1] == Status::WARN)      result += 100;
+            if (vec[2] == Status::ERR)       result += 1000;
 
             vec.removeAt(1);
             // order: OK, ERR
-            if (vec[1] == Status::ERR)       result = result + 10000;
-            if (vec.size() == 2)          result = result + 100000;
+            if (vec[1] == Status::ERR)       result += 10000;
+            if (vec.size() == 2)          result += 100000;
             return result;
         }
     )SRC");
@@ -549,10 +549,10 @@ TEST_CASE("Vector<Derived> — derived enum", "[libk][vector][enum]") {
             // order: A(0), B(1), C(2)
 
             result : int = 0;
-            if (vec.size() == 3)        result = result + 1;
-            if (vec[0] == Derived::A)      result = result + 10;
-            if (vec[1] == Derived::B)      result = result + 100;
-            if (vec[2] == Derived::C)      result = result + 1000;
+            if (vec.size() == 3)        ++result;
+            if (vec[0] == Derived::A)      result += 10;
+            if (vec[1] == Derived::B)      result += 100;
+            if (vec[2] == Derived::C)      result += 1000;
             return result;
         }
     )SRC");
@@ -577,11 +577,11 @@ TEST_CASE("Vector<int> — emplaceBack zero-arg", "[libk][vector][emplace]") {
             vec.emplaceBack();
 
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
+            if (vec.size() == 3)  ++result;
             // Default-constructed ints are 0 (zero-initialized by MultiSlot)
-            if (vec[0] == 0)         result = result + 10;
-            if (vec[1] == 0)         result = result + 100;
-            if (vec[2] == 0)         result = result + 1000;
+            if (vec[0] == 0)         result += 10;
+            if (vec[1] == 0)         result += 100;
+            if (vec[2] == 0)         result += 1000;
             return result;
         }
     )SRC");
@@ -609,11 +609,11 @@ TEST_CASE("Vector<Point> — emplaceBack with constructor args", "[libk][vector]
             vec.emplaceBack(50, 60);
 
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
-            if (vec[0].x == 10)      result = result + 10;
-            if (vec[0].y == 20)      result = result + 100;
-            if (vec[1].x == 30)      result = result + 1000;
-            if (vec[2].y == 60)      result = result + 10000;
+            if (vec.size() == 3)  ++result;
+            if (vec[0].x == 10)      result += 10;
+            if (vec[0].y == 20)      result += 100;
+            if (vec[1].x == 30)      result += 1000;
+            if (vec[2].y == 60)      result += 10000;
             return result;
         }
     )SRC");
@@ -639,10 +639,10 @@ TEST_CASE("Vector<Point> — emplaceBack zero-arg (default ctor)", "[libk][vecto
             vec.emplaceBack();
 
             result : int = 0;
-            if (vec.size() == 2)  result = result + 1;
-            if (vec[0].x == 99)      result = result + 10;
-            if (vec[0].y == 77)      result = result + 100;
-            if (vec[1].x == 99)      result = result + 1000;
+            if (vec.size() == 2)  ++result;
+            if (vec[0].x == 99)      result += 10;
+            if (vec[0].y == 77)      result += 100;
+            if (vec[1].x == 99)      result += 1000;
             return result;
         }
     )SRC");
@@ -667,10 +667,10 @@ TEST_CASE("Vector<int> — emplace at index zero-arg", "[libk][vector][emplace]"
             // vec: 10, 0, 30
 
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
-            if (vec[0] == 10)        result = result + 10;
-            if (vec[1] == 0)         result = result + 100;
-            if (vec[2] == 30)        result = result + 1000;
+            if (vec.size() == 3)  ++result;
+            if (vec[0] == 10)        result += 10;
+            if (vec[1] == 0)         result += 100;
+            if (vec[2] == 30)        result += 1000;
             return result;
         }
     )SRC");
@@ -699,11 +699,11 @@ TEST_CASE("Vector<Point> — emplace at index with args", "[libk][vector][emplac
             // vec: Point(1,2), Point(3,4), Point(5,6)
 
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
-            if (vec[0].x == 1)       result = result + 10;
-            if (vec[1].x == 3)       result = result + 100;
-            if (vec[1].y == 4)       result = result + 1000;
-            if (vec[2].x == 5)       result = result + 10000;
+            if (vec.size() == 3)  ++result;
+            if (vec[0].x == 1)       result += 10;
+            if (vec[1].x == 3)       result += 100;
+            if (vec[1].y == 4)       result += 1000;
+            if (vec[2].x == 5)       result += 10000;
             return result;
         }
     )SRC");
@@ -733,11 +733,11 @@ TEST_CASE("Vector<AggPoint> — emplaceBack aggregate init", "[libk][vector][emp
             vec.emplaceBack(50, 60);
 
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
-            if (vec[0].x == 10)      result = result + 10;
-            if (vec[0].y == 20)      result = result + 100;
-            if (vec[1].x == 30)      result = result + 1000;
-            if (vec[2].y == 60)      result = result + 10000;
+            if (vec.size() == 3)  ++result;
+            if (vec[0].x == 10)      result += 10;
+            if (vec[0].y == 20)      result += 100;
+            if (vec[1].x == 30)      result += 1000;
+            if (vec[2].y == 60)      result += 10000;
             return result;
         }
     )SRC");
@@ -764,11 +764,11 @@ TEST_CASE("Vector<AggPoint> — emplace at index aggregate init", "[libk][vector
             // vec: AggPoint{1,2}, AggPoint{3,4}, AggPoint{5,6}
 
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
-            if (vec[0].x == 1)       result = result + 10;
-            if (vec[1].x == 3)       result = result + 100;
-            if (vec[1].y == 4)       result = result + 1000;
-            if (vec[2].x == 5)       result = result + 10000;
+            if (vec.size() == 3)  ++result;
+            if (vec[0].x == 1)       result += 10;
+            if (vec[1].x == 3)       result += 100;
+            if (vec[1].y == 4)       result += 1000;
+            if (vec[2].x == 5)       result += 10000;
             return result;
         }
     )SRC");
@@ -817,9 +817,9 @@ TEST_CASE("Collection<int> — Vector through interface reference", "[libk][vect
             total : int = sumFirstAndLast(vec);
 
             result : int = 0;
-            if (sizeOf(vec) == 3) result = result + 1;
-            if (total == 40)         result = result + 10;
-            if (isNotEmpty(vec))      result = result + 100;
+            if (sizeOf(vec) == 3) ++result;
+            if (total == 40)         result += 10;
+            if (isNotEmpty(vec))      result += 100;
             return result;
         }
     )SRC");
@@ -841,7 +841,7 @@ TEST_CASE("Collection<int> — LinkedList through interface reference", "[libk][
             lst.append(b);
 
             result : int = 0;
-            if (lst.size() == 2)  result = result + 1;
+            if (lst.size() == 2)  ++result;
             return result;
         }
     )SRC");
@@ -874,7 +874,7 @@ TEST_CASE("Vector<int> — prvalue returned by value is moved (buffer intact)",
             i : int = 0;
             while (i < n) {
                 v.append(i * 10);
-                i = i + 1;
+                ++i;
             }
             return v;
         }
@@ -884,8 +884,8 @@ TEST_CASE("Vector<int> — prvalue returned by value is moved (buffer intact)",
             total : int = 0;
             i : unsigned int = 0;
             while (i < r.size()) {
-                total = total + r[i];        // 0+10+20+30+40 = 100 (buffer survived)
-                i = i + 1;
+                total += r[i];        // 0+10+20+30+40 = 100 (buffer survived)
+                ++i;
             }
             return total;
         }
@@ -906,7 +906,7 @@ TEST_CASE("Vector<int> — prvalue passed by value is moved (buffer intact)",
             i : int = 0;
             while (i < n) {
                 v.append(i * 10);
-                i = i + 1;
+                ++i;
             }
             return v;
         }
@@ -915,8 +915,8 @@ TEST_CASE("Vector<int> — prvalue passed by value is moved (buffer intact)",
             s : int = 0;
             i : unsigned int = 0;
             while (i < v.size()) {
-                s = s + v[i];
-                i = i + 1;
+                s += v[i];
+                ++i;
             }
             return s;
         }
@@ -943,7 +943,7 @@ TEST_CASE("Vector<int> — prvalue returned by value, e2e build and exec",
             i : int = 0;
             while (i < n) {
                 v.append(i);
-                i = i + 1;
+                ++i;
             }
             return v;
         }
@@ -953,8 +953,8 @@ TEST_CASE("Vector<int> — prvalue returned by value, e2e build and exec",
             sum : int = 0;
             j : unsigned int = 0;
             while (j < r.size()) {
-                sum = sum + r[j];
-                j = j + 1;
+                sum += r[j];
+                ++j;
             }
             // 0+1+...+9 = 45; a shallow-copy double free would crash on scope exit.
             if (sum == 45) return 0;
@@ -990,7 +990,7 @@ TEST_CASE("Vector<int> — through Sequence<int>& (const iteration)", "[libk][ve
             total : int = 0;
             n : OptionalConstRef<int> = it.next();
             while (n.hasValue()) {
-                total = total + n.get();
+                total += n.get();
                 n = it.next();
             }
             return total;
@@ -1074,7 +1074,7 @@ TEST_CASE("Vector<int> — through MutableReversibleSequence<int>& (mutating rev
             first : bool = true;
             n : OptionalRef<int> = it.next();
             while (n.hasValue()) {
-                total = total + n.get();
+                total += n.get();
                 if (first) {
                     n.get() = 0;
                     first = false;
@@ -1091,9 +1091,9 @@ TEST_CASE("Vector<int> — through MutableReversibleSequence<int>& (mutating rev
             vec.append(3);
             total : int = sumReverseAndZeroLast(vec);
             result : int = 0;
-            if (total == 6)       result = result + 1;
-            if (vec[2] == 0)      result = result + 10; // last element zeroed via reverse iterator
-            if (vec[0] == 1)      result = result + 100;
+            if (total == 6)       ++result;
+            if (vec[2] == 0)      result += 10; // last element zeroed via reverse iterator
+            if (vec[0] == 1)      result += 100;
             return result;
         }
     )SRC");
@@ -1147,10 +1147,10 @@ TEST_CASE("Vector<int> — through MutableIndexedCollection<int>& (set/insert/re
             // Started [1,2,3]; insert(1,99) -> [1,99,2,3]; set(0,42) -> [42,99,2,3];
             // removeAt(2) removes '2' -> [42,99,3].
             result : int = 0;
-            if (vec.size() == 3)  result = result + 1;
-            if (vec[0] == 42)     result = result + 10;
-            if (vec[1] == 99)     result = result + 100;
-            if (vec[2] == 3)      result = result + 1000;
+            if (vec.size() == 3)  ++result;
+            if (vec[0] == 42)     result += 10;
+            if (vec[1] == 99)     result += 100;
+            if (vec[2] == 3)      result += 1000;
             return result;
         }
     )SRC");
@@ -1183,7 +1183,7 @@ TEST_CASE("Vector<int> — diamond dispatch: same instance through two independe
             n : OptionalRef<int> = it.next();
             total : int = 0;
             while (n.hasValue()) {
-                total = total + n.get();
+                total += n.get();
                 n = it.next();
             }
             return total;
@@ -1199,9 +1199,9 @@ TEST_CASE("Vector<int> — diamond dispatch: same instance through two independe
             b : int = viaReversible(vec);  // 1 + 2 + 3 = 6
 
             result : int = 0;
-            if (a == 4) result = result + 1;
-            if (b == 6) result = result + 10;
-            if (vec.size() == 3) result = result + 100;
+            if (a == 4) ++result;
+            if (b == 6) result += 10;
+            if (vec.size() == 3) result += 100;
             return result;
         }
     )SRC");
@@ -1264,8 +1264,8 @@ TEST_CASE("Vector<int> — lvalue passed by value deep copies buffer (site 3)",
             s : int = 0;
             i : unsigned int = 0;
             while (i < v.size()) {
-                s = s + v[i];
-                i = i + 1;
+                s += v[i];
+                ++i;
             }
             return s;    // 1+2+3+99 = 105
         }
@@ -1337,7 +1337,7 @@ TEST_CASE("Vector<int> — lvalue copy deep copy e2e build and exec (site 2-3-4)
             v.append(999);
             s : int = 0;
             i : unsigned int = 0;
-            while (i < v.size()) { s = s + v[i]; i = i + 1; }
+            while (i < v.size()) { s += v[i]; ++i; }
             return s;
         }
 

@@ -199,7 +199,7 @@ public:
         i : unsigned int = 0;
         while (i < n) {
             _data[i] = _data[_position + i];
-            i = i + 1;
+            ++i;
         }
         _position = n;
         _limit = _capacity;
@@ -218,7 +218,7 @@ public:
             throw IndexOutOfBoundsError();
         }
         b : byte = _data[_position];
-        _position = _position + 1;
+        ++_position;
         return b;
     }
 
@@ -233,7 +233,7 @@ public:
             throw IndexOutOfBoundsError();
         }
         _data[_position] = b;
-        _position = _position + 1;
+        ++_position;
         return this;
     }
 
@@ -251,9 +251,9 @@ public:
         i : unsigned int = 0;
         while (i < n) {
             _data[_position + i] = src[i];
-            i = i + 1;
+            ++i;
         }
-        _position = _position + n;
+        _position += n;
         return this;
     }
 
@@ -306,9 +306,9 @@ public:
         i : unsigned int = 0;
         while (i < n) {
             dst[off + i] = _data[_position + i];
-            i = i + 1;
+            ++i;
         }
-        _position = _position + n;
+        _position += n;
         return n;
     }
 
@@ -329,9 +329,9 @@ public:
         i : unsigned int = 0;
         while (i < n) {
             _data[_position + i] = src[off + i];
-            i = i + 1;
+            ++i;
         }
-        _position = _position + n;
+        _position += n;
         return n;
     }
 
@@ -347,7 +347,7 @@ public:
         i : unsigned int = 0;
         while (i < n) {
             out[i] = _data[_position + i];
-            i = i + 1;
+            ++i;
         }
         return out;
     }

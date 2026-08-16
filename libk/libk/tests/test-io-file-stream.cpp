@@ -74,21 +74,21 @@ TEST_CASE("AsyncFileInputStream: reads bytes and reports end of stream",
             p : k::io::Path("/tmp/klang_afs_read.bin");
             res : int = 0;
             s : k::io::AsyncFileInputStream! = new k::io::AsyncFileInputStream(p);
-            if (s->isOpen()) { res = res + 1; }
+            if (s->isOpen()) { ++res; }
 
             first : k::Optional<byte> = s->read();
-            if (first.hasValue() && first.get() == (byte) 65) { res = res + 2; }
+            if (first.hasValue() && first.get() == (byte) 65) { res += 2; }
 
             buf : byte[4];
             n : k::Expected<unsigned int, k::io::StreamOutOfData> = s->read(buf);
-            if (n.hasResult() && n.getResult() == 4u) { res = res + 4; }
-            if (buf[0] == (byte) 66 && buf[3] == (byte) 69) { res = res + 8; }
+            if (n.hasResult() && n.getResult() == 4u) { res += 4; }
+            if (buf[0] == (byte) 66 && buf[3] == (byte) 69) { res += 8; }
 
             eos : k::Optional<byte> = s->read();
-            if (eos.hasValue() == false) { res = res + 16; }
+            if (eos.hasValue() == false) { res += 16; }
 
             s->close();
-            if (s->isOpen() == false) { res = res + 32; }
+            if (s->isOpen() == false) { res += 32; }
             delete s;
             return res;
         }
@@ -112,16 +112,16 @@ TEST_CASE("AsyncFileInputStream: skip and available track the position",
             s : k::io::AsyncFileInputStream! = new k::io::AsyncFileInputStream(p);
 
             a0 : k::Expected<unsigned int, k::io::StreamOutOfData> = s->available();
-            if (a0.hasResult() && a0.getResult() == 10u) { res = res + 1; }
+            if (a0.hasResult() && a0.getResult() == 10u) { ++res; }
 
-            if (s->skip(4) == 4) { res = res + 2; }
+            if (s->skip(4) == 4) { res += 2; }
             b : k::Optional<byte> = s->read();
-            if (b.hasValue() && b.get() == (byte) 52) { res = res + 4; }
+            if (b.hasValue() && b.get() == (byte) 52) { res += 4; }
 
             // Skipping past the end must clamp to what remains.
-            if (s->skip(1000) == 5) { res = res + 8; }
+            if (s->skip(1000) == 5) { res += 8; }
             a1 : k::Expected<unsigned int, k::io::StreamOutOfData> = s->available();
-            if (a1.hasResult() && a1.getResult() == 0u) { res = res + 16; }
+            if (a1.hasResult() && a1.getResult() == 0u) { res += 16; }
 
             s->close();
             delete s;
@@ -145,7 +145,7 @@ TEST_CASE("AsyncFileOutputStream: writes, flushes and truncates",
             p : k::io::Path("/tmp/klang_afs_write.bin");
             res : int = 0;
             s : k::io::AsyncFileOutputStream! = new k::io::AsyncFileOutputStream(p);
-            if (s->isOpen()) { res = res + 1; }
+            if (s->isOpen()) { ++res; }
 
             s->write((byte) 75);
             body : byte[4];
@@ -156,9 +156,9 @@ TEST_CASE("AsyncFileOutputStream: writes, flushes and truncates",
             s->write(body);
             s->flush();
 
-            if (s->channel()->size() == 5L) { res = res + 2; }
+            if (s->channel()->size() == 5L) { res += 2; }
             s->close();
-            if (s->isOpen() == false) { res = res + 4; }
+            if (s->isOpen() == false) { res += 4; }
             delete s;
             return res;
         }
@@ -214,17 +214,17 @@ TEST_CASE("AsyncFileOutputStream: writing after close raises ClosedChannelExcept
             try {
                 s->write((byte) 1);
             } catch (e: k::io::ClosedChannelException&) {
-                res = res + 1;
+                ++res;
             }
             buf : byte[2];
             try {
                 s->write(buf);
             } catch (e2: k::io::ClosedChannelException&) {
-                res = res + 2;
+                res += 2;
             }
             // flush() on a closed stream must stay harmless.
             s->flush();
-            res = res + 4;
+            res += 4;
             delete s;
             return res;
         }
@@ -323,12 +323,12 @@ TEST_CASE("FileChannel: closing from another thread is observed by users",
             t->start();
             t->join();
 
-            if (c->isOpen() == false) { res = res + 1; }
+            if (c->isOpen() == false) { ++res; }
             b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(64u);
             try {
                 c->read(b, 0L);
             } catch (e: k::io::ClosedChannelException&) {
-                res = res + 2;
+                res += 2;
             }
 
             delete t;

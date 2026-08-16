@@ -85,11 +85,11 @@ TEST_CASE("Condition: signal without the lock throws", "[libk][sync][condition]"
             m : Mutex;
             c : Condition! = m.newCondition();
             res : int = 0;
-            try { c->signal(); } catch (e: IllegalMonitorStateException&) { res = res + 1; }
-            try { c->signalAll(); } catch (e2: IllegalMonitorStateException&) { res = res + 2; }
+            try { c->signal(); } catch (e: IllegalMonitorStateException&) { ++res; }
+            try { c->signalAll(); } catch (e2: IllegalMonitorStateException&) { res += 2; }
             // Holding the lock makes both legal, even with no waiter.
             m.lock();
-            try { c->signal(); c->signalAll(); res = res + 4; } catch (o: Throwable&) { }
+            try { c->signal(); c->signalAll(); res += 4; } catch (o: Throwable&) { }
             m.unlock();
             delete c;
             return res;
@@ -114,8 +114,8 @@ TEST_CASE("Condition: await(Duration) times out and keeps the lock", "[libk][syn
             res : int = 0;
             m.lock();
             try {
-                if (!c->await(Duration::ofMillis(60L))) { res = res + 1; }
-                if (m.isHeldByCurrentThread()) { res = res + 2; }
+                if (!c->await(Duration::ofMillis(60L))) { ++res; }
+                if (m.isHeldByCurrentThread()) { res += 2; }
             } catch (o: Throwable&) {
                 res = -1;
             }
@@ -319,7 +319,7 @@ TEST_CASE("Condition: a blocked await is interruptible", "[libk][sync][condition
             } catch (e: Throwable&) { }
 
             res : int = w->_outcome;
-            if (w->_heldOnExit) { res = res + 10; }
+            if (w->_heldOnExit) { res += 10; }
             delete t;
             delete w;
             delete ready;

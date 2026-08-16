@@ -60,15 +60,15 @@ TEST_CASE("Semaphore: acquire and release track available permits", "[libk][sync
         test() : int {
             s : Semaphore(2);
             res : int = 0;
-            if (s.availablePermits() == 2) { res = res + 1; }
+            if (s.availablePermits() == 2) { ++res; }
             try {
                 s.acquire();
-                if (s.availablePermits() == 1) { res = res + 2; }
+                if (s.availablePermits() == 1) { res += 2; }
                 s.acquire();
-                if (s.availablePermits() == 0) { res = res + 4; }
+                if (s.availablePermits() == 0) { res += 4; }
                 s.release();
                 s.release();
-                if (s.availablePermits() == 2) { res = res + 8; }
+                if (s.availablePermits() == 2) { res += 8; }
             } catch (e: Throwable&) {
                 res = -1;
             }
@@ -87,15 +87,15 @@ TEST_CASE("Semaphore: tryAcquire fails when exhausted", "[libk][sync][semaphore]
         test() : int {
             s : Semaphore(1);
             res : int = 0;
-            if (s.tryAcquire()) { res = res + 1; }
-            if (!s.tryAcquire()) { res = res + 2; }
+            if (s.tryAcquire()) { ++res; }
+            if (!s.tryAcquire()) { res += 2; }
             s.release();
             // Multi-permit acquisition is all-or-nothing.
-            if (!s.tryAcquire(2)) { res = res + 4; }
-            if (s.availablePermits() == 1) { res = res + 8; }
+            if (!s.tryAcquire(2)) { res += 4; }
+            if (s.availablePermits() == 1) { res += 8; }
             s.release(3);
-            if (s.tryAcquire(4)) { res = res + 16; }
-            if (s.availablePermits() == 0) { res = res + 32; }
+            if (s.tryAcquire(4)) { res += 16; }
+            if (s.availablePermits() == 0) { res += 32; }
             return res;
         }
     )SRC");
@@ -111,10 +111,10 @@ TEST_CASE("Semaphore: drainPermits empties the semaphore", "[libk][sync][semapho
         test() : int {
             s : Semaphore(5);
             res : int = 0;
-            if (s.drainPermits() == 5) { res = res + 1; }
-            if (s.availablePermits() == 0) { res = res + 2; }
-            if (s.drainPermits() == 0) { res = res + 4; }
-            if (!s.tryAcquire()) { res = res + 8; }
+            if (s.drainPermits() == 5) { ++res; }
+            if (s.availablePermits() == 0) { res += 2; }
+            if (s.drainPermits() == 0) { res += 4; }
+            if (!s.tryAcquire()) { res += 8; }
             return res;
         }
     )SRC");
@@ -131,8 +131,8 @@ TEST_CASE("Semaphore: a zero-permit semaphore blocks a timed acquisition", "[lib
             s : Semaphore;
             res : int = 0;
             try {
-                if (!s.tryAcquire(Duration::ofMillis(60L))) { res = res + 1; }
-                if (s.availablePermits() == 0) { res = res + 2; }
+                if (!s.tryAcquire(Duration::ofMillis(60L))) { ++res; }
+                if (s.availablePermits() == 0) { res += 2; }
             } catch (e: Throwable&) {
                 res = -1;
             }
@@ -177,7 +177,7 @@ TEST_CASE("Semaphore: acquire blocks until another thread releases", "[libk][syn
             try {
                 s.acquire();
                 res = 1;
-                if (s.availablePermits() == 0) { res = res + 2; }
+                if (s.availablePermits() == 0) { res += 2; }
                 t->join();
             } catch (e: Throwable&) {
                 res = -1;
@@ -228,7 +228,7 @@ TEST_CASE("Semaphore: bounds the number of threads in a section", "[libk][sync][
                     _s->inside = _s->inside - 1;
                     _s->lock.unlock();
                     _s->sem->release();
-                    i = i + 1;
+                    ++i;
                 }
             }
         }
@@ -257,10 +257,10 @@ TEST_CASE("Semaphore: bounds the number of threads in a section", "[libk][sync][
             try { t1->join(); t2->join(); t3->join(); t4->join(); } catch (e: Throwable&) { }
 
             res : int = 0;
-            if (s.maxInside <= 2) { res = res + 1; }
-            if (s.maxInside >= 1) { res = res + 2; }
-            if (s.total == 160) { res = res + 4; }
-            if (sem->availablePermits() == 2) { res = res + 8; }
+            if (s.maxInside <= 2) { ++res; }
+            if (s.maxInside >= 1) { res += 2; }
+            if (s.total == 160) { res += 4; }
+            if (sem->availablePermits() == 2) { res += 8; }
             delete t1; delete t2; delete t3; delete t4;
             delete w1; delete w2; delete w3; delete w4;
             delete sem;
@@ -325,7 +325,7 @@ TEST_CASE("Semaphore: a blocked acquire is interruptible", "[libk][sync][semapho
 
             res : int = b->_outcome;
             // No permit may have been consumed by the interrupted acquisition.
-            if (sem->availablePermits() == 0) { res = res + 10; }
+            if (sem->availablePermits() == 0) { res += 10; }
             delete t;
             delete b;
             delete sem;

@@ -462,7 +462,7 @@ TEST_CASE("Mutable member function call on const object rejected", "[gen][const]
         struct Counter {
             value : int;
             Counter() : value(0) {}
-            increment() { value = value + 1; }
+            increment() { ++value; }
         }
         test(c : const Counter&) {
             c.increment();   // must be rejected: mutable method on const object
@@ -509,7 +509,7 @@ TEST_CASE("Const local struct variable — only const methods callable", "[gen][
         struct Counter {
             value : int;
             Counter() : value(0) {}
-            increment() { value = value + 1; }
+            increment() { ++value; }
         }
         test() {
             const c : Counter();

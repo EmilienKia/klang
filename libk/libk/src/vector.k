@@ -86,7 +86,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
             while (i < n) {
                 _slot.construct(i);
                 _slot.get(i) = other.get(i);
-                i = i + 1;
+                ++i;
             }
             _size = n;
         }
@@ -122,7 +122,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
         idx : unsigned int = _size;
         _slot.construct(idx);
         _slot.get(idx) = value;
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Insert a copy of value at the front of the vector. O(n). */
@@ -138,7 +138,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     prependAll(coll : const T[]&) {
         i : unsigned int = coll.size;
         while (i > 0) {
-            i = i - 1;
+            --i;
             prepend(coll[i]);
         }
     }
@@ -152,7 +152,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
         i : unsigned int = 0;
         while (i < coll.size) {
             append(coll[i]);
-            i = i + 1;
+            ++i;
         }
     }
 
@@ -163,7 +163,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
             grow(_size + 1);
         }
         _slot.construct(_size, args...);
-        _size = _size + 1;
+        ++_size;
     }
 
     /**
@@ -185,13 +185,13 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
             }
             prev : unsigned int = i - 1;
             _slot.get(i) = _slot.get(prev);
-            i = i - 1;
+            --i;
         }
         if (index == _size) {
             _slot.construct(index);
         }
         _slot.get(index) = value;
-        _size = _size + 1;
+        ++_size;
     }
 
     /**
@@ -214,14 +214,14 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
             }
             prev : unsigned int = i - 1;
             _slot.get(i) = _slot.get(prev);
-            i = i - 1;
+            --i;
         }
         if (index < _size) {
             // Destruct existing element before re-constructing in place
             _slot.destruct(index);
         }
         _slot.construct(index, args...);
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Return a mutable reference to the front element. Undefined if empty. */
@@ -276,7 +276,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     /** Remove the last element. Returns true if an element was removed. */
     removeLast() : bool {
         if (_size == 0) return false;
-        _size = _size - 1;
+        --_size;
         _slot.destruct(_size);
         return true;
     }
@@ -293,9 +293,9 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
         while (i < _size - 1) {
             next : unsigned int = i + 1;
             _slot.get(i) = _slot.get(next);
-            i = i + 1;
+            ++i;
         }
-        _size = _size - 1;
+        --_size;
         _slot.destruct(_size);
         return true;
     }
@@ -314,7 +314,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
         i : unsigned int = 0;
         while (i < _size) {
             _slot.destruct(i);
-            i = i + 1;
+            ++i;
         }
         _size = 0;
     }
@@ -407,7 +407,7 @@ public:
             return result;
         }
         current : unsigned int = _index;
-        _index = _index + 1;
+        ++_index;
         value : const T& = _vec->get(current);
         result.set(value);
         return result;
@@ -439,7 +439,7 @@ public:
             return result;
         }
         current : unsigned int = _index;
-        _index = _index + 1;
+        ++_index;
         value : T& = _vec->get(current);
         result.set(value);
         return result;
@@ -469,7 +469,7 @@ public:
         if (_index > _vec->size() || _index == 0) {
             return result;
         }
-        _index = _index - 1;
+        --_index;
         current : unsigned int = _index;
         value : const T& = _vec->get(current);
         result.set(value);
@@ -500,7 +500,7 @@ public:
         if (_index > _vec->size() || _index == 0) {
             return result;
         }
-        _index = _index - 1;
+        --_index;
         current : unsigned int = _index;
         value : T& = _vec->get(current);
         result.set(value);

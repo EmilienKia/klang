@@ -304,7 +304,7 @@ TEST_CASE("if-cond-var-test: destructor called in then branch",
             }
 
             ~S() {
-                g_dtor_count = g_dtor_count + 1;
+                ++g_dtor_count;
             }
         }
 
@@ -342,7 +342,7 @@ TEST_CASE("if-cond-var-test: destructor called in else branch",
             }
 
             ~S() {
-                g_dtor_count = g_dtor_count + 1;
+                ++g_dtor_count;
             }
         }
 

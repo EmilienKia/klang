@@ -483,9 +483,9 @@ TEST_CASE("while(ptr) — loop until null", "[gen][null][bool]") {
             x : int = 1;
             p : int* = &x;
             count : int = 0;
-            if (p) { count = count + 1; }
+            if (p) { ++count; }
             p = null;
-            if (p) { count = count + 1; }
+            if (p) { ++count; }
             return count;
         }
     )SRC");
@@ -688,10 +688,10 @@ TEST_CASE("Pointer assign null then check", "[gen][null][bool][assignment]") {
             x : int = 42;
             p : int* = &x;
             result : int = 0;
-            if (p) { result = result + 1; }
+            if (p) { ++result; }
             p = null;
-            if (p) { result = result + 10; }
-            if (!p) { result = result + 100; }
+            if (p) { result += 10; }
+            if (!p) { result += 100; }
             return result;
         }
     )SRC");
@@ -867,10 +867,10 @@ TEST_CASE("&& truth table preserved", "[gen][null][shortcircuit]") {
         module __sc_truth_and__;
         test() : int {
             result : int = 0;
-            if (false && false) { result = result + 1; }
-            if (false && true)  { result = result + 10; }
-            if (true && false)  { result = result + 100; }
-            if (true && true)   { result = result + 1000; }
+            if (false && false) { ++result; }
+            if (false && true)  { result += 10; }
+            if (true && false)  { result += 100; }
+            if (true && true)   { result += 1000; }
             return result;
         }
     )SRC");
@@ -885,10 +885,10 @@ TEST_CASE("|| truth table preserved", "[gen][null][shortcircuit]") {
         module __sc_truth_or__;
         test() : int {
             result : int = 0;
-            if (false || false) { result = result + 1; }
-            if (false || true)  { result = result + 10; }
-            if (true || false)  { result = result + 100; }
-            if (true || true)   { result = result + 1000; }
+            if (false || false) { ++result; }
+            if (false || true)  { result += 10; }
+            if (true || false)  { result += 100; }
+            if (true || true)   { result += 1000; }
             return result;
         }
     )SRC");

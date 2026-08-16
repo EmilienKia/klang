@@ -1228,7 +1228,7 @@ TEST_CASE("RTTI: annotated interface appears in class bases with correct name", 
                     expected : k::String("Describable");
                     if (name == expected) return 42;
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 1;
         }
@@ -1275,7 +1275,7 @@ TEST_CASE("RTTI: unannotated interface appears in class bases", "[libk][rtti][an
                         return 42;
                     }
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 1;
         }
@@ -3016,7 +3016,7 @@ TEST_CASE("Function RTTI: getFunctions() on Interface via bases", "[libk][rtti][
                     expected : k::String("Computable");
                     if (name == expected) return 42;
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 1;
         }
@@ -3060,9 +3060,9 @@ TEST_CASE("Function RTTI: mix of static and non-static methods", "[libk][rtti][f
             while (idx < fns->size) {
                 fn : const k::Function? = fns[idx];
                 if (fn != null) {
-                    if (fn->isStatic()) count = count + 1;
+                    if (fn->isStatic()) ++count;
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return count;
         }
@@ -3113,7 +3113,7 @@ TEST_CASE("Interface RTTI: getName() via base TypeInfo", "[libk][rtti][interface
                     expected : k::String("Printable");
                     if (name == expected) return 42;
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 1;
         }
@@ -3196,7 +3196,7 @@ TEST_CASE("Interface RTTI: annotated interface has annotation name", "[libk][rtt
                     expected : k::String("Api");
                     if (name == expected) return 42;
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 1;
         }
@@ -3458,7 +3458,7 @@ TEST_CASE("RTTI: class with base class and interface has both in bases", "[libk]
                     expected : k::String("Object");
                     if (name == expected) return 42;
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 1;
         }
@@ -3475,7 +3475,7 @@ TEST_CASE("RTTI: class with base class and interface has both in bases", "[libk]
                     expected : k::String("Drawable");
                     if (name == expected) return 42;
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 1;
         }

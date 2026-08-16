@@ -528,7 +528,7 @@ TEST_CASE("RTTI: multiple functions have correct parameter arrays", "[libk][rtti
                         return 1;
                     }
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 0;
         }
@@ -549,7 +549,7 @@ TEST_CASE("RTTI: multiple functions have correct parameter arrays", "[libk][rtti
                         return params->size;
                     }
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 0;
         }
@@ -570,7 +570,7 @@ TEST_CASE("RTTI: multiple functions have correct parameter arrays", "[libk][rtti
                         return params->size;
                     }
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return 0;
         }

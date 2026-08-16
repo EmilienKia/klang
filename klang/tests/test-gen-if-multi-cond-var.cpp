@@ -228,7 +228,7 @@ TEST_CASE("if-multi-cond-var: destructors called for all vars in then",
             val : int;
 
             ~S() {
-                g_dtor_count = g_dtor_count + 1;
+                ++g_dtor_count;
             }
         }
 
@@ -262,7 +262,7 @@ TEST_CASE("if-multi-cond-var: destructors called for all vars in else",
             val : int;
 
             ~S() {
-                g_dtor_count = g_dtor_count + 1;
+                ++g_dtor_count;
             }
         }
 

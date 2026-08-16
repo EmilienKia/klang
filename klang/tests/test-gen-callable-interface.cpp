@@ -134,7 +134,7 @@ TEST_CASE("Callable interface: a functional interface returning nothing binds to
         counter : int = 0;
         class Accumulator : public Sink {
             public:
-            override accept(x : int) { counter = counter + x; }
+            override accept(x : int) { counter += x; }
         }
         test() : int {
             a : Accumulator;

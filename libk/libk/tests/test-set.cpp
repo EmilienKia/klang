@@ -62,14 +62,14 @@ TEST_CASE("ListSet<int> — first/last reflect insertion order", "[libk][set][li
             s.add(1);
             s.add(2);
             result : int = 0;
-            if (s.first().get() == 3) result = result + 1;
-            if (s.last().get() == 2) result = result + 10;
-            if (!s.add(1)) result = result + 100;             // duplicate: no reorder
-            if (s.first().get() == 3) result = result + 1000;
-            if (s.last().get() == 2) result = result + 10000;
+            if (s.first().get() == 3) ++result;
+            if (s.last().get() == 2) result += 10;
+            if (!s.add(1)) result += 100;             // duplicate: no reorder
+            if (s.first().get() == 3) result += 1000;
+            if (s.last().get() == 2) result += 10000;
             s.remove(3);
-            if (s.first().get() == 1) result = result + 100000;   // oldest remaining
-            if (s.last().get() == 2) result = result + 1000000;
+            if (s.first().get() == 1) result += 100000;   // oldest remaining
+            if (s.last().get() == 2) result += 1000000;
             return result;
         }
     )SRC");
@@ -85,10 +85,10 @@ TEST_CASE("ListSet<int> — add rejects duplicates", "[libk][set][listset]") {
         test() : int {
             s : ListSet<int>;
             result : int = 0;
-            if (s.add(1)) result = result + 1;
-            if (s.add(2)) result = result + 10;
-            if (!s.add(1)) result = result + 100;
-            if (s.size() == 2) result = result + 1000;
+            if (s.add(1)) ++result;
+            if (s.add(2)) result += 10;
+            if (!s.add(1)) result += 100;
+            if (s.size() == 2) result += 1000;
             return result;
         }
     )SRC");
@@ -107,11 +107,11 @@ TEST_CASE("ListSet<int> — contains and remove", "[libk][set][listset]") {
             s.add(2);
             s.add(3);
             result : int = 0;
-            if (s.contains(2)) result = result + 1;
-            if (s.remove(2)) result = result + 10;
-            if (!s.contains(2)) result = result + 100;
-            if (!s.remove(42)) result = result + 1000;
-            if (s.size() == 2) result = result + 10000;
+            if (s.contains(2)) ++result;
+            if (s.remove(2)) result += 10;
+            if (!s.contains(2)) result += 100;
+            if (!s.remove(42)) result += 1000;
+            if (s.size() == 2) result += 10000;
             return result;
         }
     )SRC");
@@ -152,8 +152,8 @@ TEST_CASE("ListSet<int> — forward and reverse iteration", "[libk][set][listset
             it : ConstIterator<int>! = s.constIterator();
             cur : OptionalConstRef<int> = it.next();
             while (cur.hasValue()) {
-                sum = sum + cur.get();
-                count = count + 1;
+                sum += cur.get();
+                ++count;
                 cur = it.next();
             }
 
@@ -162,8 +162,8 @@ TEST_CASE("ListSet<int> — forward and reverse iteration", "[libk][set][listset
             rit : ConstIterator<int>! = s.constReverseIterator();
             rcur : OptionalConstRef<int> = rit.next();
             while (rcur.hasValue()) {
-                revSum = revSum + rcur.get();
-                revCount = revCount + 1;
+                revSum += rcur.get();
+                ++revCount;
                 rcur = rit.next();
             }
 
@@ -194,10 +194,10 @@ TEST_CASE("ListSet<int> — isSubsetOf / isSupersetOf", "[libk][set][listset]") 
             b.add(3);
 
             result : int = 0;
-            if (a.isSubsetOf(b)) result = result + 1;
-            if (!b.isSubsetOf(a)) result = result + 10;
-            if (b.isSupersetOf(a)) result = result + 100;
-            if (!a.isSupersetOf(b)) result = result + 1000;
+            if (a.isSubsetOf(b)) ++result;
+            if (!b.isSubsetOf(a)) result += 10;
+            if (b.isSupersetOf(a)) result += 100;
+            if (!a.isSupersetOf(b)) result += 1000;
             return result;
         }
     )SRC");
@@ -236,10 +236,10 @@ TEST_CASE("TreeSet<int> — add rejects duplicates and keeps order", "[libk][set
             s.add(1);
             s.add(4);
             result : int = 0;
-            if (!s.add(3)) result = result + 1;
-            if (s.size() == 5) result = result + 10;
-            if (s.first().get() == 1) result = result + 100;
-            if (s.last().get() == 8) result = result + 1000;
+            if (!s.add(3)) ++result;
+            if (s.size() == 5) result += 10;
+            if (s.first().get() == 1) result += 100;
+            if (s.last().get() == 8) result += 1000;
             return result;
         }
     )SRC");
@@ -270,7 +270,7 @@ TEST_CASE("TreeSet<int> — ascending iteration is sorted", "[libk][set][treeset
             while (cur.hasValue()) {
                 if (cur.get() <= prev) ok = false;
                 prev = cur.get();
-                count = count + 1;
+                ++count;
                 cur = it.next();
             }
             if (!ok) return 1;
@@ -305,7 +305,7 @@ TEST_CASE("TreeSet<int> — descending iteration is sorted", "[libk][set][treese
             while (cur.hasValue()) {
                 if (cur.get() >= prev) ok = false;
                 prev = cur.get();
-                count = count + 1;
+                ++count;
                 cur = it.next();
             }
             if (!ok) return 1;
@@ -335,14 +335,14 @@ TEST_CASE("TreeSet<int> — remove leaf, single-child and two-children nodes", "
 
             result : int = 0;
             // leaf removal
-            if (s.remove(10)) result = result + 1;
+            if (s.remove(10)) ++result;
             // single-child removal (20 now has no left child after 10 removed)
-            if (s.remove(20)) result = result + 10;
+            if (s.remove(20)) result += 10;
             // two-children removal (root has two children)
-            if (s.remove(50)) result = result + 100;
-            if (!s.contains(10) && !s.contains(20) && !s.contains(50)) result = result + 1000;
-            if (s.size() == 5) result = result + 10000;
-            if (!s.remove(999)) result = result + 100000;
+            if (s.remove(50)) result += 100;
+            if (!s.contains(10) && !s.contains(20) && !s.contains(50)) result += 1000;
+            if (s.size() == 5) result += 10000;
+            if (!s.remove(999)) result += 100000;
             return result;
         }
     )SRC");
@@ -360,7 +360,7 @@ TEST_CASE("TreeSet<int> — many sequential inserts stay balanced and sorted", "
             i : int = 0;
             while (i < 200) {
                 s.add(i);
-                i = i + 1;
+                ++i;
             }
             if (s.size() != 200) return 1;
 
@@ -372,7 +372,7 @@ TEST_CASE("TreeSet<int> — many sequential inserts stay balanced and sorted", "
             while (cur.hasValue()) {
                 if (cur.get() <= prev) ok = false;
                 prev = cur.get();
-                count = count + 1;
+                ++count;
                 cur = it.next();
             }
             if (!ok) return 2;
@@ -382,7 +382,7 @@ TEST_CASE("TreeSet<int> — many sequential inserts stay balanced and sorted", "
             i = 0;
             while (i < 200) {
                 s.remove(i);
-                i = i + 2;
+                i += 2;
             }
             if (s.size() != 100) return 4;
             if (s.contains(0)) return 5;
@@ -410,10 +410,10 @@ TEST_CASE("TreeSet<int> — isSubsetOf / isSupersetOf", "[libk][set][treeset]") 
             b.add(3);
 
             result : int = 0;
-            if (a.isSubsetOf(b)) result = result + 1;
-            if (!b.isSubsetOf(a)) result = result + 10;
-            if (b.isSupersetOf(a)) result = result + 100;
-            if (!a.isSupersetOf(b)) result = result + 1000;
+            if (a.isSubsetOf(b)) ++result;
+            if (!b.isSubsetOf(a)) result += 10;
+            if (b.isSupersetOf(a)) result += 100;
+            if (!a.isSupersetOf(b)) result += 1000;
             return result;
         }
     )SRC");
@@ -463,14 +463,14 @@ TEST_CASE("HashSet<Id> — add rejects duplicates, contains and remove", "[libk]
         test() : int {
             s : HashSet<Id>;
             result : int = 0;
-            if (s.add(Id(1))) result = result + 1;
-            if (s.add(Id(2))) result = result + 10;
-            if (!s.add(Id(1))) result = result + 100;
-            if (s.size() == 2) result = result + 1000;
-            if (s.contains(Id(2))) result = result + 10000;
-            if (s.remove(Id(2))) result = result + 100000;
-            if (!s.contains(Id(2))) result = result + 1000000;
-            if (!s.remove(Id(42))) result = result + 10000000;
+            if (s.add(Id(1))) ++result;
+            if (s.add(Id(2))) result += 10;
+            if (!s.add(Id(1))) result += 100;
+            if (s.size() == 2) result += 1000;
+            if (s.contains(Id(2))) result += 10000;
+            if (s.remove(Id(2))) result += 100000;
+            if (!s.contains(Id(2))) result += 1000000;
+            if (!s.remove(Id(42))) result += 10000000;
             return result;
         }
     )SRC");
@@ -507,12 +507,12 @@ TEST_CASE("HashSet<Id> — iteration visits every distinct element exactly once"
             i : int = 0;
             while (i < 50) {
                 s.add(Id(i));
-                i = i + 1;
+                ++i;
             }
 
             found : bool[50];
             j : int = 0;
-            while (j < 50) { found[j] = false; j = j + 1; }
+            while (j < 50) { found[j] = false; ++j; }
 
             count : int = 0;
             it : ConstIterator<Id>! = s.constIterator();
@@ -523,7 +523,7 @@ TEST_CASE("HashSet<Id> — iteration visits every distinct element exactly once"
                     if (found[v]) return 1000 + v; // duplicate!
                     found[v] = true;
                 }
-                count = count + 1;
+                ++count;
                 cur = it.next();
             }
             if (count != 50) return 1;
@@ -531,7 +531,7 @@ TEST_CASE("HashSet<Id> — iteration visits every distinct element exactly once"
             j = 0;
             while (j < 50) {
                 if (!found[j]) return 2000 + j;
-                j = j + 1;
+                ++j;
             }
             return 0;
         }
@@ -551,14 +551,14 @@ TEST_CASE("HashSet<Id> — reverse iteration visits every distinct element exact
             i : int = 0;
             while (i < 30) {
                 s.add(Id(i));
-                i = i + 1;
+                ++i;
             }
 
             count : int = 0;
             it : ConstIterator<Id>! = s.constReverseIterator();
             cur : OptionalConstRef<Id> = it.next();
             while (cur.hasValue()) {
-                count = count + 1;
+                ++count;
                 cur = it.next();
             }
             if (count != 30) return 1;
@@ -580,21 +580,21 @@ TEST_CASE("HashSet<Id> — grows (rehashes) past default capacity without losing
             i : int = 0;
             while (i < 500) {
                 if (!s.add(Id(i))) return 1;
-                i = i + 1;
+                ++i;
             }
             if (s.size() != 500) return 2;
 
             i = 0;
             while (i < 500) {
                 if (!s.contains(Id(i))) return 3000 + i;
-                i = i + 1;
+                ++i;
             }
 
             // remove half, verify remaining
             i = 0;
             while (i < 500) {
                 s.remove(Id(i));
-                i = i + 2;
+                i += 2;
             }
             if (s.size() != 250) return 4;
             if (s.contains(Id(0))) return 5;
@@ -623,10 +623,10 @@ TEST_CASE("HashSet<Id> — isSubsetOf / isSupersetOf", "[libk][set][hashset]") {
             b.add(Id(3));
 
             result : int = 0;
-            if (a.isSubsetOf(b)) result = result + 1;
-            if (!b.isSubsetOf(a)) result = result + 10;
-            if (b.isSupersetOf(a)) result = result + 100;
-            if (!a.isSupersetOf(b)) result = result + 1000;
+            if (a.isSubsetOf(b)) ++result;
+            if (!b.isSubsetOf(a)) result += 10;
+            if (b.isSupersetOf(a)) result += 100;
+            if (!a.isSupersetOf(b)) result += 1000;
             return result;
         }
     )SRC");

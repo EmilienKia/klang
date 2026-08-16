@@ -331,9 +331,9 @@ TEST_CASE("RTTI: getConstructors() param counts across multiple ctors", "[libk][
             while (idx < ctors->size) {
                 c : const k::Constructor? = ctors[idx];
                 if (c != null) {
-                    total = total + c->getParamCount();
+                    total += c->getParamCount();
                 }
-                idx = idx + 1;
+                ++idx;
             }
             return total;
         }

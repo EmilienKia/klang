@@ -387,7 +387,7 @@ TEST_CASE("Using namespace — write and read static variable of struct", "[gen]
             struct Counter {
                 static count : int = 0;
                 static increment() : int {
-                    count = count + 1;
+                    ++count;
                     return count;
                 }
             }

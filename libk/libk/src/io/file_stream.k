@@ -127,7 +127,7 @@ public:
             i : unsigned int = 0u;
             while (i < got) {
                 buf[off + i] = tmp->get(i);
-                i = i + 1u;
+                ++i;
             }
         }
         delete tmp;
@@ -210,9 +210,9 @@ public:
     AsyncFileOutputStream(path: const Path&, append: bool) : _chan(null) {
         opts : int = OPEN_WRITE | OPEN_CREATE;
         if (append) {
-            opts = opts | OPEN_APPEND;
+            opts |= OPEN_APPEND;
         } else {
-            opts = opts | OPEN_TRUNCATE;
+            opts |= OPEN_TRUNCATE;
         }
         _chan = FileChannel::open(path, opts);
         if (append) {
@@ -292,7 +292,7 @@ public:
         i : unsigned int = 0u;
         while (i < len) {
             tmp->put(buf[off + i]);
-            i = i + 1u;
+            ++i;
         }
         tmp->flip();
         try {

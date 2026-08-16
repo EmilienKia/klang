@@ -309,10 +309,10 @@ TEST_CASE("new struct array — ctor called for each element, dtor on delete", "
             val : int = 0;
             Item(v : int) {
                 val = v;
-                g_ctor = g_ctor + 1;
+                ++g_ctor;
             }
             ~Item() {
-                g_dtor = g_dtor + 1;
+                ++g_dtor;
             }
         }
 
@@ -350,7 +350,7 @@ TEST_CASE("new struct array — scope auto-cleanup calls all dtors", "[gen][new-
         struct Widget {
             id : int = 0;
             Widget(i : int) { id = i; }
-            ~Widget() { g_dtor = g_dtor + 1; }
+            ~Widget() { ++g_dtor; }
         }
 
         get_dtor_count() : int { return g_dtor; }
@@ -461,10 +461,10 @@ TEST_CASE("new struct array — default ctor for all elements", "[gen][new-array
             val : int = 0;
             Thing() {
                 val = 99;
-                g_ctor = g_ctor + 1;
+                ++g_ctor;
             }
             ~Thing() {
-                g_dtor = g_dtor + 1;
+                ++g_dtor;
             }
         }
 
@@ -503,7 +503,7 @@ TEST_CASE("new struct array — inferred size from init list", "[gen][new-array]
             x : int = 0;
             Pair(v : int) {
                 x = v;
-                g_ctor = g_ctor + 1;
+                ++g_ctor;
             }
             ~Pair() {}
         }
@@ -540,11 +540,11 @@ TEST_CASE("new struct array — mixed empty slots with default ctor", "[gen][new
             v : int = 0;
             Elem() {
                 v = 0;
-                g_defctor = g_defctor + 1;
+                ++g_defctor;
             }
             Elem(x : int) {
                 v = x;
-                g_ctor = g_ctor + 1;
+                ++g_ctor;
             }
             ~Elem() {}
         }
@@ -687,7 +687,7 @@ TEST_CASE("new struct array — scope auto-cleanup with default ctors", "[gen][n
         struct AutoItem {
             v : int = 0;
             AutoItem() { v = 7; }
-            ~AutoItem() { g_dtor = g_dtor + 1; }
+            ~AutoItem() { ++g_dtor; }
         }
 
         get_dtor_count() : int { return g_dtor; }
@@ -1073,8 +1073,8 @@ TEST_CASE("new Struct[n] — dynamic struct array with destructor", "[gen][new-a
         counter : int = 0;
 
         struct Tracked {
-            Tracked() { counter = counter + 1; }
-            ~Tracked() { counter = counter - 1; }
+            Tracked() { ++counter; }
+            ~Tracked() { --counter; }
         }
 
         test() : int {
@@ -1120,7 +1120,7 @@ TEST_CASE("new Struct[n] — dynamic struct array scope auto-cleanup", "[gen][ne
         struct AutoWidget {
             id : int = 0;
             AutoWidget() { id = 7; }
-            ~AutoWidget() { g_dtor = g_dtor + 1; }
+            ~AutoWidget() { ++g_dtor; }
         }
 
         get_dtor_count() : int { return g_dtor; }

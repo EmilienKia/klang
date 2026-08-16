@@ -108,23 +108,23 @@ TEST_CASE("FileChannel: create, write and read back", "[libk][io][file-channel]"
             src->put((byte) 78);
             src->put((byte) 71);
             src->flip();
-            if (out->write(src) == 5) { res = res + 1; }
-            if (out->position() == 5L) { res = res + 2; }
+            if (out->write(src) == 5) { ++res; }
+            if (out->position() == 5L) { res += 2; }
             out->force();
-            if (out->size() == 5L) { res = res + 4; }
+            if (out->size() == 5L) { res += 4; }
             out->close();
-            if (out->isOpen() == false) { res = res + 8; }
+            if (out->isOpen() == false) { res += 8; }
             delete out;
             delete src;
 
             in : k::io::FileChannel! = k::io::FileChannel::open(p);
             dst : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(16u);
             n : int = in->read(dst);
-            if (n == 5) { res = res + 16; }
+            if (n == 5) { res += 16; }
             dst->flip();
-            if (dst->get() == (byte) 75) { res = res + 32; }
-            if (dst->get(4u) == (byte) 71) { res = res + 64; }
-            if (in->read(dst, 5L) == 0) { res = res + 128; }
+            if (dst->get() == (byte) 75) { res += 32; }
+            if (dst->get(4u) == (byte) 71) { res += 64; }
+            if (in->read(dst, 5L) == 0) { res += 128; }
             in->close();
             delete in;
             delete dst;
@@ -151,17 +151,17 @@ TEST_CASE("FileChannel: positional access leaves the position untouched",
             c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
 
             b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(3u);
-            if (c->read(b, 4L) == 3) { res = res + 1; }
-            if (c->position() == 0L) { res = res + 2; }
+            if (c->read(b, 4L) == 3) { ++res; }
+            if (c->position() == 0L) { res += 2; }
             b->flip();
-            if (b->get() == (byte) 52) { res = res + 4; }
-            if (b->get() == (byte) 53) { res = res + 8; }
+            if (b->get() == (byte) 52) { res += 4; }
+            if (b->get() == (byte) 53) { res += 8; }
 
             b->clear();
-            if (c->read(b, 9L) == 1) { res = res + 16; }
+            if (c->read(b, 9L) == 1) { res += 16; }
 
             b->clear();
-            if (c->read(b, 10L) == 0) { res = res + 32; }
+            if (c->read(b, 10L) == 0) { res += 32; }
 
             c->close();
             delete c;
@@ -190,16 +190,16 @@ TEST_CASE("FileChannel: readFully raises EndOfStreamException past the end",
 
             small : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(4u);
             c->readFully(small, 0L);
-            if (small->hasRemaining() == false) { res = res + 1; }
+            if (small->hasRemaining() == false) { ++res; }
             small->flip();
-            if (small->get(3u) == (byte) 100) { res = res + 2; }
+            if (small->get(3u) == (byte) 100) { res += 2; }
 
             big : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
             try {
                 c->readFully(big, 0L);
             } catch (e: k::io::EndOfStreamException&) {
-                res = res + 4;
-                if (e.getBytesTransferred() == 4L) { res = res + 8; }
+                res += 4;
+                if (e.getBytesTransferred() == 4L) { res += 8; }
             }
 
             c->close();
@@ -232,16 +232,16 @@ TEST_CASE("FileChannel: writeFully transfers every remaining byte",
             i : unsigned int = 0u;
             while (i < 64u) {
                 b->put((byte) 65);
-                i = i + 1u;
+                ++i;
             }
             b->flip();
             c->writeFully(b, 0L);
-            if (b->hasRemaining() == false) { res = res + 1; }
+            if (b->hasRemaining() == false) { ++res; }
             c->force();
-            if (c->size() == 64L) { res = res + 2; }
+            if (c->size() == 64L) { res += 2; }
 
             c->truncate(10L);
-            if (c->size() == 10L) { res = res + 4; }
+            if (c->size() == 10L) { res += 4; }
 
             c->close();
             delete c;
@@ -267,25 +267,25 @@ TEST_CASE("FileChannel: a closed channel raises ClosedChannelException",
             p : k::io::Path("/tmp/klang_fc_closed.bin");
             res : int = 0;
             c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
-            if (c->isOpen()) { res = res + 1; }
-            if (c->nativeDescriptor() >= 0) { res = res + 2; }
+            if (c->isOpen()) { ++res; }
+            if (c->nativeDescriptor() >= 0) { res += 2; }
             c->close();
-            if (c->nativeDescriptor() == -1) { res = res + 4; }
+            if (c->nativeDescriptor() == -1) { res += 4; }
 
             b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(4u);
             try {
                 c->read(b, 0L);
             } catch (e: k::io::ClosedChannelException&) {
-                res = res + 8;
+                res += 8;
             }
             try {
                 c->size();
             } catch (e2: k::io::ClosedChannelException&) {
-                res = res + 16;
+                res += 16;
             }
             // Closing twice must stay harmless.
             c->close();
-            res = res + 32;
+            res += 32;
 
             delete c;
             delete b;
@@ -378,7 +378,7 @@ TEST_CASE("FileChannel: concurrent positional reads from several threads",
                 i : unsigned int = 0u;
                 while (i < 512u) {
                     if (b->get(i) != (byte) 90) { good = 0; }
-                    i = i + 1u;
+                    ++i;
                 }
                 _ok = good;
                 delete b;
@@ -410,7 +410,7 @@ TEST_CASE("FileChannel: concurrent positional reads from several threads",
 
             res : int = r0->ok() + r1->ok() + r2->ok() + r3->ok();
             // The channel position must be untouched by positional reads.
-            if (c->position() == 0L) { res = res + 8; }
+            if (c->position() == 0L) { res += 8; }
 
             delete t0; delete t1; delete t2; delete t3;
             delete r0; delete r1; delete r2; delete r3;

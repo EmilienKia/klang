@@ -2552,7 +2552,7 @@ class Holder {
             if (_box.get(i) == want) {
                 return true;
             }
-            i = i + 1;
+            ++i;
         }
         return false;
     }

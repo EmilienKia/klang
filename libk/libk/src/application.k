@@ -63,7 +63,7 @@ public __k_argv_to_string_array(argc: int, argv: byte*): String[]! {
     while (i < argc) {
         bytes : unsigned byte[]! = __k_cstr_at(argv, i);
         args[i] = String(bytes);
-        i = i + 1;
+        ++i;
     }
     return args;
 }
@@ -126,7 +126,7 @@ public final class EnvironmentMap : public Object {
             if (_keys.get(i) == key) {
                 return true;
             }
-            i = i + 1;
+            ++i;
         }
         return false;
     }
@@ -142,7 +142,7 @@ public final class EnvironmentMap : public Object {
                 found.set(v);
                 return found;
             }
-            i = i + 1;
+            ++i;
         }
         return OptionalConstRef<String>();
     }
@@ -187,7 +187,7 @@ public abstract class Application : public Object {
             key : String = __k_bytes_to_string(key_bytes);
             val : String = __k_bytes_to_string(val_bytes);
             _env.put(key, val);
-            i = i + 1;
+            ++i;
         }
     }
 

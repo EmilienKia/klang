@@ -108,7 +108,7 @@ TEST_CASE("NR-2: Named return int — modified in body", "[gen][named-return][nr
 TEST_CASE("NR-2: Named return int — init from parameter", "[gen][named-return][nr2]") {
     auto jit = gen_jit(R"SRC(
         module __nr2_param__;
-        foo(x : int) r : int = x { r = r + 1; }
+        foo(x : int) r : int = x { ++r; }
         test() : int { return foo(41); }
     )SRC");
     REQUIRE(jit);
@@ -172,8 +172,8 @@ TEST_CASE("NR-4: Named return struct — guaranteed NRVO (1 ctor, 1 dtor)", "[ge
 
         struct Obj {
             val : int;
-            Obj(v : int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v : int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v : int) r : Obj(v) { }
@@ -214,8 +214,8 @@ TEST_CASE("NR-5: Named return struct — modified in body, NRVO", "[gen][named-r
 
         struct Obj {
             val : int;
-            Obj(v : int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v : int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v : int) r : Obj(v) {
@@ -257,8 +257,8 @@ TEST_CASE("NR-6: Named return struct — conditional bare return, NRVO", "[gen][
 
         struct Obj {
             val : int;
-            Obj(v : int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v : int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         factory(b : bool) r : Obj(0) {
@@ -313,8 +313,8 @@ TEST_CASE("NR-7: Named return struct — default-constructed", "[gen][named-retu
 
         struct Obj {
             val : int;
-            Obj() : val(99) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj() : val(99) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make() r : Obj { }
@@ -354,8 +354,8 @@ TEST_CASE("NR-8: Named return struct — other locals are destroyed", "[gen][nam
 
         struct Obj {
             val : int;
-            Obj(v : int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v : int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v : int) r : Obj(v) {
@@ -399,7 +399,7 @@ TEST_CASE("NR-9: Named return in member function", "[gen][named-return][nr9]") {
             base : int;
             Helper(b : int) : base(b) {}
             compute(x : int) r : int = base {
-                r = r + x;
+                r += x;
             }
         }
 
@@ -458,8 +458,8 @@ TEST_CASE("NR-11: Classic struct return — NRVO still works", "[gen][named-retu
 
         struct Obj {
             val : int;
-            Obj(v : int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v : int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v : int) : Obj {
@@ -528,8 +528,8 @@ TEST_CASE("NR-13: Named return struct — bare return; destroys locals but not n
 
         struct Obj {
             val : int;
-            Obj(v : int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v : int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v : int, early : bool) r : Obj(v) {
@@ -661,7 +661,7 @@ TEST_CASE("NR-17: Named return struct — method call on named var", "[gen][name
         struct Counter {
             val : int;
             Counter(v : int) : val(v) {}
-            increment() { val = val + 1; }
+            increment() { ++val; }
             get() : int { return val; }
         }
 

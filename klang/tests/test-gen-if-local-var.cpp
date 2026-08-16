@@ -238,7 +238,7 @@ TEST_CASE("if-local-var: destructor called at end of then block",
             }
 
             ~S() {
-                g_dtor_count = g_dtor_count + 1;
+                ++g_dtor_count;
             }
         }
 

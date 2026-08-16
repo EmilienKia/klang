@@ -58,13 +58,13 @@ public:
         // A literal that already carries its terminator must not gain a second
         // one, otherwise the stored length would be off by one.
         if (_len > 0 && path[_len - 1] == (char) 0) {
-            _len = _len - 1;
+            --_len;
         }
         _path = new char[_len + 1];
         i : int = 0;
         while (i < _len) {
             _path[i] = path[i];
-            i = i + 1;
+            ++i;
         }
         _path[_len] = (char) 0;
     }
@@ -118,14 +118,14 @@ public:
     const fileName() : char[]! {
         start : int = _len;
         while (start > 0 && _path[start - 1] != (char) 47) {
-            start = start - 1;
+            --start;
         }
         n : int = _len - start;
         out : char[]! = new char[n + 1];
         i : int = 0;
         while (i < n) {
             out[i] = _path[start + i];
-            i = i + 1;
+            ++i;
         }
         out[n] = (char) 0;
         return out;
@@ -140,20 +140,20 @@ public:
     const parent() : Path! {
         cut : int = _len;
         while (cut > 0 && _path[cut - 1] != (char) 47) {
-            cut = cut - 1;
+            --cut;
         }
         if (cut == 0) {
             return null;
         }
         // Keep the root slash when the parent is "/".
         if (cut > 1) {
-            cut = cut - 1;
+            --cut;
         }
         buf : char[]! = new char[cut + 1];
         i : int = 0;
         while (i < cut) {
             buf[i] = _path[i];
-            i = i + 1;
+            ++i;
         }
         buf[cut] = (char) 0;
         p : Path! = new Path(buf);
@@ -171,7 +171,7 @@ public:
     const resolve(other: const char[]) : Path! {
         otherLen : int = other.size;
         if (otherLen > 0 && other[otherLen - 1] == (char) 0) {
-            otherLen = otherLen - 1;
+            --otherLen;
         }
         if (otherLen == 0) {
             return new Path(_path);
@@ -189,7 +189,7 @@ public:
         i : int = 0;
         while (i < _len) {
             buf[i] = _path[i];
-            i = i + 1;
+            ++i;
         }
         if (sep == 1) {
             buf[_len] = (char) 47;
@@ -197,7 +197,7 @@ public:
         j : int = 0;
         while (j < otherLen) {
             buf[_len + sep + j] = other[j];
-            j = j + 1;
+            ++j;
         }
         buf[total] = (char) 0;
         p : Path! = new Path(buf);

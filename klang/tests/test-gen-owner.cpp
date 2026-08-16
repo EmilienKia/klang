@@ -147,10 +147,10 @@ TEST_CASE("new struct with ctor/dtor: ctor called, dtor+free on delete", "[gen][
             value : int = 0;
             Box(v: int) {
                 value = v;
-                g_count = g_count + 1;
+                ++g_count;
             }
             ~Box() {
-                g_count = g_count - 1;
+                --g_count;
             }
         }
 
@@ -177,7 +177,7 @@ TEST_CASE("owner auto-destroy at scope exit calls dtor", "[gen][owner][jit]") {
         struct Widget {
             Widget() {}
             ~Widget() {
-                g_dtor = g_dtor + 1;
+                ++g_dtor;
             }
         }
 
@@ -229,7 +229,7 @@ TEST_CASE("Owner return value: ownership transferred to caller", "[gen][owner][m
         struct Box {
             v : int = 0;
             Box(x: int) { v = x; }
-            ~Box() { g_dtors = g_dtors + 1; }
+            ~Box() { ++g_dtors; }
         }
 
         make_box(x: int) : Box! {
@@ -263,8 +263,8 @@ TEST_CASE("Owner variable init from another owner (move)", "[gen][owner][move][j
         g_count : int = 0;
 
         struct Cnt {
-            Cnt() { g_count = g_count + 1; }
-            ~Cnt() { g_count = g_count - 1; }
+            Cnt() { ++g_count; }
+            ~Cnt() { --g_count; }
         }
 
         test_init_move() : int {
@@ -293,8 +293,8 @@ TEST_CASE("Owner assignment: old object deleted, new ownership transferred", "[g
 
         struct Tagged {
             id : int = 0;
-            Tagged(i: int) { id = i; g_id = g_id + 1; }
-            ~Tagged() { g_last_dtor = id; g_id = g_id - 1; }
+            Tagged(i: int) { id = i; ++g_id; }
+            ~Tagged() { g_last_dtor = id; --g_id; }
         }
 
         test_assign() : int {
@@ -324,7 +324,7 @@ TEST_CASE("Null assignment to owner: deletes object", "[gen][owner][move][jit]")
 
         struct Widget {
             Widget() {}
-            ~Widget() { g_dtors = g_dtors + 1; }
+            ~Widget() { ++g_dtors; }
         }
 
         test_null_assign() : int {
@@ -354,7 +354,7 @@ TEST_CASE("Owner as function parameter: ownership transferred", "[gen][owner][mo
 
         struct Obj {
             Obj() {}
-            ~Obj() { g_dtors = g_dtors + 1; }
+            ~Obj() { ++g_dtors; }
         }
 
         consume(o : Obj!) {
@@ -385,8 +385,8 @@ TEST_CASE("Owner chain: make → pass → consume, dtor called once", "[gen][own
         g_dtors : int = 0;
 
         struct Token {
-            Token() { g_ctors = g_ctors + 1; }
-            ~Token() { g_dtors = g_dtors + 1; }
+            Token() { ++g_ctors; }
+            ~Token() { ++g_dtors; }
         }
 
         make_token() : Token! {
@@ -589,7 +589,7 @@ TEST_CASE("Owner keeps ownership after observer assignment", "[gen][owner][indir
 
         struct Tracked {
             Tracked() {}
-            ~Tracked() { g_dtors = g_dtors + 1; }
+            ~Tracked() { ++g_dtors; }
         }
 
         test() : int {
@@ -629,7 +629,7 @@ TEST_CASE("new/delete of class type: ctor, virtual method, dtor", "[gen][owner][
         class Counter {
             count : int;
             Counter(n : int) : count(n) {}
-            ~Counter() { g_dtors = g_dtors + 1; }
+            ~Counter() { ++g_dtors; }
             get() : int { return count; }
         }
 
@@ -664,7 +664,7 @@ TEST_CASE("Owner in nested block: dtor called at inner scope exit", "[gen][owner
 
         struct Item {
             Item()  {}
-            ~Item() { g_dtors = g_dtors + 1; }
+            ~Item() { ++g_dtors; }
         }
 
         test_nested() : int {
@@ -735,8 +735,8 @@ TEST_CASE("Bare new expression statement: ctor+dtor both called (Warning 0x5010 
         g_dtors : int = 0;
 
         struct Ephemeral {
-            Ephemeral() { g_ctors = g_ctors + 1; }
-            ~Ephemeral() { g_dtors = g_dtors + 1; }
+            Ephemeral() { ++g_ctors; }
+            ~Ephemeral() { ++g_dtors; }
         }
 
         test() : int {
@@ -773,8 +773,8 @@ TEST_CASE("Function returning owner, result discarded: ctor+dtor (Warning 0x5010
         g_dtors : int = 0;
 
         struct Temp {
-            Temp() { g_ctors = g_ctors + 1; }
-            ~Temp() { g_dtors = g_dtors + 1; }
+            Temp() { ++g_ctors; }
+            ~Temp() { ++g_dtors; }
         }
 
         make() : Temp! {
@@ -801,8 +801,8 @@ TEST_CASE("Bare new array expression statement: elements allocated and freed (Wa
         g_dtors : int = 0;
 
         struct Item {
-            Item() { g_ctors = g_ctors + 1; }
-            ~Item() { g_dtors = g_dtors + 1; }
+            Item() { ++g_ctors; }
+            ~Item() { ++g_dtors; }
         }
 
         test() : int {

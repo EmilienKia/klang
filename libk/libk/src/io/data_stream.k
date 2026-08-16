@@ -312,8 +312,8 @@ public:
                 done : unsigned int = len - remaining;
                 return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(done);
             }
-            pos = pos + got;
-            remaining = remaining - got;
+            pos += got;
+            remaining -= got;
         }
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(len);
     }
@@ -354,13 +354,13 @@ public:
 
     override writeByte(v: byte) : DataOutput& {
         _out->write(v);
-        _written = _written + 1;
+        ++_written;
         return this;
     }
 
     override writeChar(v: char) : DataOutput& {
         _out->write((byte) v);
-        _written = _written + 1;
+        ++_written;
         return this;
     }
 
@@ -368,7 +368,7 @@ public:
         buf : byte[2];
         __k_io_short_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
-        _written = _written + 2;
+        _written += 2;
         return this;
     }
 
@@ -376,7 +376,7 @@ public:
         buf : byte[2];
         __k_io_short_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
-        _written = _written + 2;
+        _written += 2;
         return this;
     }
 
@@ -384,7 +384,7 @@ public:
         buf : byte[4];
         __k_io_int_to_native_bytes(v, &buf[0]);
         _out->write(buf);
-        _written = _written + 4;
+        _written += 4;
         return this;
     }
 
@@ -392,7 +392,7 @@ public:
         buf : byte[4];
         __k_io_int_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
-        _written = _written + 4;
+        _written += 4;
         return this;
     }
 
@@ -400,7 +400,7 @@ public:
         buf : byte[8];
         __k_io_long_to_native_bytes(v, &buf[0]);
         _out->write(buf);
-        _written = _written + 8;
+        _written += 8;
         return this;
     }
 
@@ -425,7 +425,7 @@ public:
         } else {
             _out->write((byte) 0);
         }
-        _written = _written + 1;
+        ++_written;
         return this;
     }
 

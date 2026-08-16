@@ -42,7 +42,7 @@ TEST_CASE("Foreach array — sum elements via copy", "[gen][foreach][array]") {
             arr : int[5]{1, 2, 3, 4, 5};
             sum : int = 0;
             for(x : int = arr) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -60,7 +60,7 @@ TEST_CASE("Foreach array — copy does not mutate source array", "[gen][foreach]
         test() : int {
             arr : int[3]{1, 2, 3};
             for(x : int = arr) {
-                x = x * 100;
+                x *= 100;
             }
             return arr[0] + arr[1] + arr[2];
         }
@@ -82,7 +82,7 @@ TEST_CASE("Foreach array — mutate elements via reference", "[gen][foreach][arr
         test() : int {
             arr : int[4]{1, 2, 3, 4};
             for(x : int& = arr) {
-                x = x * 10;
+                x *= 10;
             }
             return arr[0] + arr[1] + arr[2] + arr[3];
         }
@@ -101,7 +101,7 @@ TEST_CASE("Foreach array — const array requires const reference", "[gen][forea
             const arr : int[3]{5, 6, 7};
             sum : int = 0;
             for(x : const int& = arr) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -131,7 +131,7 @@ TEST_CASE("Foreach array — iterates over a primitive array temporary literal b
         test() : int {
             sum : int = 0;
             for(x : int = int[]{1, 2, 30}) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -150,7 +150,7 @@ TEST_CASE("Foreach array — reference loop variable can bind to a primitive arr
         test() : int {
             sum : int = 0;
             for(x : int& = int[]{1, 2, 30}) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -199,7 +199,7 @@ TEST_CASE("Foreach array — array literal source expression is evaluated exactl
         test() : int {
             sum : int = 0;
             for(x : int = int[]{next(), next(), next()}) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -241,7 +241,7 @@ TEST_CASE("Foreach over an unsized array reference parameter (sized→unsized wi
         sumArr(arr : int[]&) : int {
             sum : int = 0;
             for(x : int = arr) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -272,7 +272,7 @@ TEST_CASE("Foreach array — break stops iteration early", "[gen][foreach][array
                 if(x == 4) {
                     break;
                 }
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -294,7 +294,7 @@ TEST_CASE("Foreach array — continue skips one element", "[gen][foreach][array]
                 if(x == 3) {
                     continue;
                 }
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -320,9 +320,9 @@ TEST_CASE("Foreach array — nullable pointer elements can be null", "[gen][fore
             count : int = 0;
             for(p : int* = arr) {
                 if(p == null) {
-                    count = count + 100;
+                    count += 100;
                 } else {
-                    count = count + *p;
+                    count += *p;
                 }
             }
             return count;
@@ -345,7 +345,7 @@ TEST_CASE("Foreach array — classic for loop is unaffected", "[gen][foreach][ar
         test() : int {
             sum : int = 0;
             for(i : int = 0; i < 5; i++) {
-                sum = sum + i;
+                sum += i;
             }
             return sum;
         }
@@ -370,10 +370,10 @@ TEST_CASE("Foreach array — loop variable constructed/destructed each iteration
             val : int;
             Counter(v : int) {
                 val = v;
-                ctor_count = ctor_count + 1;
+                ++ctor_count;
             }
             ~Counter() {
-                dtor_count = dtor_count + 1;
+                ++dtor_count;
             }
         }
 
@@ -471,7 +471,7 @@ TEST_CASE("Foreach sequence — sum Vector<int> via copy", "[gen][foreach][seque
             vec.append(3);
             sum : int = 0;
             for(x : int = vec) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -494,7 +494,7 @@ TEST_CASE("Foreach iterator — direct Iterator<T> object", "[gen][foreach][iter
             it : Iterator<int>! = vec.iterator();
             sum : int = 0;
             for(x : int = it) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -515,11 +515,11 @@ TEST_CASE("Foreach sequence — mutable in-place via reference", "[gen][foreach]
             vec.append(2);
             vec.append(3);
             for(x : int& = vec) {
-                x = x * 10;
+                x *= 10;
             }
             sum : int = 0;
             for(x : int = vec) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -545,7 +545,7 @@ TEST_CASE("Foreach sequence — break and continue", "[gen][foreach][sequence]")
             for(x : int = vec) {
                 if (x == 2) { continue; }
                 if (x == 5) { break; }
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -564,7 +564,7 @@ TEST_CASE("Foreach sequence — empty sequence never enters body", "[gen][foreac
             vec : Vector<int>;
             sum : int = 0;
             for(x : int = vec) {
-                sum = sum + 1;
+                ++sum;
             }
             return sum;
         }
@@ -625,7 +625,7 @@ TEST_CASE("Foreach iterator — const source sums via copy (constIterator)", "[g
             cv : const Vector<int>& = vec;
             sum : int = 0;
             for(x : int = cv) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -648,7 +648,7 @@ TEST_CASE("Foreach sequence — iterator() called exactly once, destroyed once (
             ~CountingIter() { CountingIter::dtor_count = CountingIter::dtor_count + 1; }
             next() : OptionalConstRef<int> {
                 if (idx < limit) {
-                    idx = idx + 1;
+                    ++idx;
                     return OptionalConstRef<int>(idx);
                 }
                 return OptionalConstRef<int>();
@@ -667,7 +667,7 @@ TEST_CASE("Foreach sequence — iterator() called exactly once, destroyed once (
             seq : CountingSeq;
             sum : int = 0;
             for(x : int = seq) {
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }
@@ -708,7 +708,7 @@ TEST_CASE("Foreach sequence — hidden iterator destroyed once on break", "[gen]
             ~CountingIter() { CountingIter::dtor_count = CountingIter::dtor_count + 1; }
             next() : OptionalConstRef<int> {
                 if (idx < limit) {
-                    idx = idx + 1;
+                    ++idx;
                     return OptionalConstRef<int>(idx);
                 }
                 return OptionalConstRef<int>();
@@ -728,7 +728,7 @@ TEST_CASE("Foreach sequence — hidden iterator destroyed once on break", "[gen]
             sum : int = 0;
             for(x : int = seq) {
                 if (x == 3) { break; }
-                sum = sum + x;
+                sum += x;
             }
             return sum;
         }

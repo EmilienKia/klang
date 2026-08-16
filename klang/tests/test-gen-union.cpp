@@ -304,7 +304,7 @@ TEST_CASE("Union with class alternative — basic instantiation", "[gen][union][
         class Counter {
             count: int;
             Counter() : count(0) {}
-            increment() { count = count + 1; }
+            increment() { ++count; }
             get() : int { return count; }
         }
         union ValueOrCounter {

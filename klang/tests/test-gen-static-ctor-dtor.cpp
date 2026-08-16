@@ -193,13 +193,13 @@ TEST_CASE("Static destructor runs after global variable destruction (reverse ord
 
         struct Registry {
             static ~Registry() {
-                log = log + 10;
+                log += 10;
             }
         }
 
         struct Item {
             ~Item() {
-                log = log + 1;
+                ++log;
             }
         }
 
@@ -237,19 +237,19 @@ TEST_CASE("Multiple structs with static constructors: all called at init", "[gen
 
         struct A {
             static A() {
-                counter = counter + 1;
+                ++counter;
             }
         }
 
         struct B {
             static B() {
-                counter = counter + 10;
+                counter += 10;
             }
         }
 
         struct C {
             static C() {
-                counter = counter + 100;
+                counter += 100;
             }
         }
 
@@ -274,13 +274,13 @@ TEST_CASE("Multiple structs with static destructors: all called at finit", "[gen
 
         struct X {
             static ~X() {
-                counter = counter + 1;
+                ++counter;
             }
         }
 
         struct Y {
             static ~Y() {
-                counter = counter + 10;
+                counter += 10;
             }
         }
 

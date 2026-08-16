@@ -106,7 +106,7 @@ public:
         i : int = 0;
         while (i < _len) {
             _path[i] = path[i];
-            i = i + 1;
+            ++i;
         }
         _path[_len] = (char) 0;
     }
@@ -141,7 +141,7 @@ public:
         i : int = 0;
         while (i < nameLen) {
             result[i] = _path[start + i];
-            i = i + 1;
+            ++i;
         }
         return result;
     }
@@ -264,7 +264,7 @@ public:
         skipped : unsigned long = 0;
         while (skipped < n) {
             if (read().hasValue() == false) return skipped;
-            skipped = skipped + 1;
+            ++skipped;
         }
         return skipped;
     }

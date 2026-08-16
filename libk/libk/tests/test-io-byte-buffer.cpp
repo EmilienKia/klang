@@ -52,11 +52,11 @@ TEST_CASE("ByteBuffer: a freshly allocated buffer is in fill mode", "[libk][io][
         test() : int {
             b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
             res : int = 0;
-            if (b->capacity() == 8u)   { res = res + 1; }
-            if (b->position() == 0u)   { res = res + 2; }
-            if (b->limit() == 8u)      { res = res + 4; }
-            if (b->remaining() == 8u)  { res = res + 8; }
-            if (b->hasRemaining())     { res = res + 16; }
+            if (b->capacity() == 8u)   { ++res; }
+            if (b->position() == 0u)   { res += 2; }
+            if (b->limit() == 8u)      { res += 4; }
+            if (b->remaining() == 8u)  { res += 8; }
+            if (b->hasRemaining())     { res += 16; }
             delete b;
             return res;
         }
@@ -76,14 +76,14 @@ TEST_CASE("ByteBuffer: put then flip switches to drain mode", "[libk][io][bytebu
             b->put((byte)20);
             b->put((byte)30);
             res : int = 0;
-            if (b->position() == 3u) { res = res + 1; }
+            if (b->position() == 3u) { ++res; }
             b->flip();
-            if (b->position() == 0u) { res = res + 2; }
-            if (b->limit() == 3u)    { res = res + 4; }
-            if (b->get() == (byte)10) { res = res + 8; }
-            if (b->get() == (byte)20) { res = res + 16; }
-            if (b->get() == (byte)30) { res = res + 32; }
-            if (b->hasRemaining() == false) { res = res + 64; }
+            if (b->position() == 0u) { res += 2; }
+            if (b->limit() == 3u)    { res += 4; }
+            if (b->get() == (byte)10) { res += 8; }
+            if (b->get() == (byte)20) { res += 16; }
+            if (b->get() == (byte)30) { res += 32; }
+            if (b->hasRemaining() == false) { res += 64; }
             delete b;
             return res;
         }
@@ -104,11 +104,11 @@ TEST_CASE("ByteBuffer: clear and rewind reset the cursor", "[libk][io][bytebuffe
             b->flip();
             b->get();
             res : int = 0;
-            if (b->position() == 1u) { res = res + 1; }
+            if (b->position() == 1u) { ++res; }
             b->rewind();
-            if (b->position() == 0u && b->limit() == 2u) { res = res + 2; }
+            if (b->position() == 0u && b->limit() == 2u) { res += 2; }
             b->clear();
-            if (b->position() == 0u && b->limit() == 4u) { res = res + 4; }
+            if (b->position() == 0u && b->limit() == 4u) { res += 4; }
             delete b;
             return res;
         }
@@ -133,11 +133,11 @@ TEST_CASE("ByteBuffer: compact preserves the unread bytes", "[libk][io][bytebuff
             b->get();
             b->compact();
             res : int = 0;
-            if (b->position() == 2u) { res = res + 1; }
-            if (b->limit() == 8u)    { res = res + 2; }
+            if (b->position() == 2u) { ++res; }
+            if (b->limit() == 8u)    { res += 2; }
             b->flip();
-            if (b->get() == (byte)3) { res = res + 4; }
-            if (b->get() == (byte)4) { res = res + 8; }
+            if (b->get() == (byte)3) { res += 4; }
+            if (b->get() == (byte)4) { res += 8; }
             delete b;
             return res;
         }
@@ -156,9 +156,9 @@ TEST_CASE("ByteBuffer: absolute get and put leave the cursor untouched", "[libk]
             b->put(0u, (byte)7);
             b->put(3u, (byte)9);
             res : int = 0;
-            if (b->position() == 0u)   { res = res + 1; }
-            if (b->get(0u) == (byte)7) { res = res + 2; }
-            if (b->get(3u) == (byte)9) { res = res + 4; }
+            if (b->position() == 0u)   { ++res; }
+            if (b->get(0u) == (byte)7) { res += 2; }
+            if (b->get(3u) == (byte)9) { res += 4; }
             delete b;
             return res;
         }
@@ -179,11 +179,11 @@ TEST_CASE("ByteBuffer: wrap builds a drainable buffer", "[libk][io][bytebuffer]"
             src[2] = (byte)7;
             b : k::io::ByteBuffer! = k::io::ByteBuffer::wrap(src);
             res : int = 0;
-            if (b->position() == 0u) { res = res + 1; }
-            if (b->limit() == 3u)    { res = res + 2; }
-            if (b->get() == (byte)5) { res = res + 4; }
-            if (b->get() == (byte)6) { res = res + 8; }
-            if (b->get() == (byte)7) { res = res + 16; }
+            if (b->position() == 0u) { ++res; }
+            if (b->limit() == 3u)    { res += 2; }
+            if (b->get() == (byte)5) { res += 4; }
+            if (b->get() == (byte)6) { res += 8; }
+            if (b->get() == (byte)7) { res += 16; }
             delete b;
             delete src;
             return res;
@@ -208,20 +208,20 @@ TEST_CASE("ByteBuffer: bulk transfers and toArray", "[libk][io][bytebuffer]") {
             b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(4u);
             written : unsigned int = b->put(src, 0u, 4u);
             res : int = 0;
-            if (written == 4u) { res = res + 1; }
+            if (written == 4u) { ++res; }
             b->flip();
 
             dst : byte[]! = new byte[4];
             read : unsigned int = b->get(dst, 0u, 4u);
-            if (read == 4u) { res = res + 2; }
-            if (dst[0] == (byte)1 && dst[3] == (byte)4) { res = res + 4; }
+            if (read == 4u) { res += 2; }
+            if (dst[0] == (byte)1 && dst[3] == (byte)4) { res += 4; }
 
             b->rewind();
             copy : byte[]! = b->toArray();
-            if (copy.size == 4) { res = res + 8; }
-            if (copy[2] == (byte)3) { res = res + 16; }
+            if (copy.size == 4) { res += 8; }
+            if (copy[2] == (byte)3) { res += 16; }
             // toArray() must not move the cursor.
-            if (b->position() == 0u) { res = res + 32; }
+            if (b->position() == 0u) { res += 32; }
 
             delete copy;
             delete dst;
@@ -247,7 +247,7 @@ TEST_CASE("ByteBuffer: overflow and underflow are reported", "[libk][io][bytebuf
             try {
                 b->put((byte)2);
             } catch (e: IndexOutOfBoundsError&) {
-                res = res + 1;
+                ++res;
             }
 
             b->flip();
@@ -255,19 +255,19 @@ TEST_CASE("ByteBuffer: overflow and underflow are reported", "[libk][io][bytebuf
             try {
                 b->get();
             } catch (e: IndexOutOfBoundsError&) {
-                res = res + 2;
+                res += 2;
             }
 
             try {
                 b->get(9u);
             } catch (e: IndexOutOfBoundsError&) {
-                res = res + 4;
+                res += 4;
             }
 
             try {
                 b->limit(9u);
             } catch (e: IndexOutOfBoundsError&) {
-                res = res + 8;
+                res += 8;
             }
 
             delete b;

@@ -327,15 +327,15 @@ TEST_CASE("if-link soft-fail: nested if, inner soft-fails, outer succeeds",
             result : int = 0;
             if (lnk = p1) {
                 // outer succeeds
-                result = result + *lnk;  // +10
+                result += *lnk;  // +10
                 if (lnk = p2) {
                     // inner soft-fails
-                    result = result + 100;
+                    result += 100;
                 } else {
-                    result = result + 1;   // +1
+                    ++result;   // +1
                 }
             } else {
-                result = result + 1000;
+                result += 1000;
             }
             return result;
         }
@@ -359,11 +359,11 @@ TEST_CASE("if-link soft-fail: nested if, outer soft-fails",
             if (lnk = p1) {
                 // This block should NOT be entered
                 if (true) {
-                    result = result + 100;
+                    result += 100;
                 }
-                result = result + 200;
+                result += 200;
             } else {
-                result = result + 1;
+                ++result;
             }
             return result;
         }

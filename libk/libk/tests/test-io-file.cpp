@@ -472,7 +472,7 @@ TEST_CASE("File length returns correct size after write", "[libk][io][file]") {
             i : int = 0;
             while (i < 100) {
                 fos.write(i);
-                i = i + 1;
+                ++i;
             }
             fos.close();
 
@@ -504,7 +504,7 @@ TEST_CASE("FileOutputStream to FileInputStream round-trip", "[libk][io][file]") 
             i : int = 0;
             while (i < 256) {
                 fos.write(i);
-                i = i + 1;
+                ++i;
             }
             fos.close();
 
@@ -514,7 +514,7 @@ TEST_CASE("FileOutputStream to FileInputStream round-trip", "[libk][io][file]") 
             while (j < 256) {
                 v : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
                 if (v != j) return j + 1;
-                j = j + 1;
+                ++j;
             }
             // Next read should be EOF
             if (fis.read().hasValue()) return 257;

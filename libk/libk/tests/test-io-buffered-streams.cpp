@@ -126,7 +126,7 @@ TEST_CASE("BufferedInputStream available", "[libk][io][buffered]") {
             i : int = 0;
             while (i < 10) {
                 data[i] = (byte) i;
-                i = i + 1;
+                ++i;
             }
             bais : k::io::ArrayInputStream<byte>(data, 10);
             bis : k::io::BufferedInputStream(&bais, 4);
@@ -255,7 +255,7 @@ TEST_CASE("Buffered streams round-trip", "[libk][io][buffered]") {
             i : int = 0;
             while (i < 10) {
                 bos.write(i + 100);
-                i = i + 1;
+                ++i;
             }
             bos.flush();
 
@@ -268,7 +268,7 @@ TEST_CASE("Buffered streams round-trip", "[libk][io][buffered]") {
                 val : int = (int)(unsigned byte) bis.read().getOr((byte) 0);
                 expected : int = i + 100;
                 if (val != expected) return i + 1;
-                i = i + 1;
+                ++i;
             }
             atEof : bool = bis.read().hasValue();
             if (atEof) return 99;

@@ -273,7 +273,7 @@ public:
      */
     override read(dst: ByteBuffer+) : int {
         n : int = read(dst, _position, IO_NO_TIMEOUT);
-        _position = _position + (long) n;
+        _position += (long) n;
         return n;
     }
 
@@ -303,7 +303,7 @@ public:
             if (n == 0) {
                 throw EndOfStreamException(done);
             }
-            done = done + (long) n;
+            done += (long) n;
         }
     }
 
@@ -354,7 +354,7 @@ public:
      */
     override write(src: ByteBuffer+) : int {
         n : int = write(src, _position, IO_NO_TIMEOUT);
-        _position = _position + (long) n;
+        _position += (long) n;
         return n;
     }
 
@@ -382,7 +382,7 @@ public:
             if (n == 0) {
                 throw IOException(0);
             }
-            done = done + (long) n;
+            done += (long) n;
         }
     }
 

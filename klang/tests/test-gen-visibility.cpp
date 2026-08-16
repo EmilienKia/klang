@@ -189,7 +189,7 @@ TEST_CASE("Visibility: private struct member variable accessible from member fun
             count : int;
         public:
             Counter() : count(0) {}
-            increment() { count = count + 1; }
+            increment() { ++count; }
             get() : int { return count; }
         }
         test() : int {

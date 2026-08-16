@@ -374,7 +374,7 @@ struct Container {
     countTo(n : int) : int {
         i : int = 0;
         while (i < n) {
-            i = i + 1;
+            ++i;
         }
         return i;
     }

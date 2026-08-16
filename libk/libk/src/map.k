@@ -255,7 +255,7 @@ class ListMap : public MutableOrderedMap<K, V> {
             if (cur.get().key() == key) {
                 return idx;
             }
-            idx = idx + 1;
+            ++idx;
             cur = it.next();
         }
         return -1;
@@ -781,7 +781,7 @@ class TreeMap : public MutableSortedMap<K, V> {
             return;
         }
         _root = insertNode(_root, key, value);
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Associate value with key only if key is absent. O(log n). */
@@ -793,7 +793,7 @@ class TreeMap : public MutableSortedMap<K, V> {
             return result;
         }
         _root = insertNode(_root, key, value);
-        _size = _size + 1;
+        ++_size;
         return result;
     }
 
@@ -808,7 +808,7 @@ class TreeMap : public MutableSortedMap<K, V> {
         }
         if (insertIfAbsent) {
             _root = insertNode(_root, key, value);
-            _size = _size + 1;
+            ++_size;
         }
         return result;
     }
@@ -819,7 +819,7 @@ class TreeMap : public MutableSortedMap<K, V> {
             return false;
         }
         _root = deleteNode(_root, key);
-        _size = _size - 1;
+        --_size;
         return true;
     }
 
@@ -1090,7 +1090,7 @@ class HashMap : public MutableMap<K, V> {
             created._nextChain = _chainsHead;
             _chainsHead = created;
             _buckets.append(raw);
-            i = i + 1;
+            ++i;
         }
     }
 
@@ -1106,7 +1106,7 @@ class HashMap : public MutableMap<K, V> {
             created._nextChain = newChainsHead;
             newChainsHead = created;
             newBuckets.append(raw);
-            i = i + 1;
+            ++i;
         }
 
         bi : unsigned int = 0;
@@ -1123,7 +1123,7 @@ class HashMap : public MutableMap<K, V> {
                 newChain->_head = node;
                 node = next;
             }
-            bi = bi + 1;
+            ++bi;
         }
 
         // Old chains are now all empty (nodes moved out above): free the wrappers.
@@ -1132,7 +1132,7 @@ class HashMap : public MutableMap<K, V> {
         k : unsigned int = 0;
         while (k < newBuckets.size()) {
             _buckets.append(newBuckets.get(k));
-            k = k + 1;
+            ++k;
         }
         _chainsHead = newChainsHead;
         _capacity = newCapacity;
@@ -1192,7 +1192,7 @@ class HashMap : public MutableMap<K, V> {
                 }
                 node = node->_next;
             }
-            i = i + 1;
+            ++i;
         }
         return false;
     }
@@ -1238,7 +1238,7 @@ class HashMap : public MutableMap<K, V> {
         created.setValue(value);
         created._next = chain->_head;
         chain->_head = created;
-        _size = _size + 1;
+        ++_size;
     }
 
     /** Associate value with key only if key is absent. Average O(1). */
@@ -1260,7 +1260,7 @@ class HashMap : public MutableMap<K, V> {
         created.setValue(value);
         created._next = chain->_head;
         chain->_head = created;
-        _size = _size + 1;
+        ++_size;
         return result;
     }
 
@@ -1285,7 +1285,7 @@ class HashMap : public MutableMap<K, V> {
             created.setValue(value);
             created._next = chain->_head;
             chain->_head = created;
-            _size = _size + 1;
+            ++_size;
         }
         return result;
     }
@@ -1301,7 +1301,7 @@ class HashMap : public MutableMap<K, V> {
         if (chain->_head.getKey() == key) {
             next : HashMapNode<K,V>! = chain->_head._next;
             chain->_head = next;
-            _size = _size - 1;
+            --_size;
             return true;
         }
         prev : HashMapNode<K,V>* = chain->_head;
@@ -1310,7 +1310,7 @@ class HashMap : public MutableMap<K, V> {
                 matched : HashMapNode<K,V>! = prev->_next;
                 afterMatched : HashMapNode<K,V>! = matched._next;
                 prev->_next = afterMatched;
-                _size = _size - 1;
+                --_size;
                 return true;
             }
             prev = prev->_next;
@@ -1324,7 +1324,7 @@ class HashMap : public MutableMap<K, V> {
         while (i < _buckets.size()) {
             b : HashMapChain<K,V>* = _buckets.get(i);
             b->clearChain();
-            i = i + 1;
+            ++i;
         }
         _size = 0;
     }
@@ -1356,7 +1356,7 @@ class HashMapConstIterator : public ConstIterator<Entry<K,V>> {
             idx : unsigned int = _bucketIndex;
             chain : HashMapChain<K,V>* = _buckets->get(idx);
             _current = chain->_head;
-            _bucketIndex = _bucketIndex + 1;
+            ++_bucketIndex;
         }
     }
 
@@ -1396,7 +1396,7 @@ class HashMapIterator : public Iterator<MutableEntry<K,V>> {
             idx : unsigned int = _bucketIndex;
             chain : HashMapChain<K,V>* = _buckets->get(idx);
             _current = chain->_head;
-            _bucketIndex = _bucketIndex + 1;
+            ++_bucketIndex;
         }
     }
 

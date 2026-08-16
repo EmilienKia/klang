@@ -69,9 +69,9 @@ TEST_CASE("FileChannel stress: concurrent positional reads are stable", "[libk][
                     buf->clear();
                     n : int = file->read(buf, _base + (long) (i * 128), 0L);
                     if (n == 128) {
-                        ok = ok + 1;
+                        ++ok;
                     }
-                    i = i + 1;
+                    ++i;
                 }
                 _done = ok;
                 delete buf;

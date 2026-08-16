@@ -205,8 +205,8 @@ TEST_CASE("Array .size — used as loop bound", "[gen][array-size]") {
             sum : int = 0;
             i : unsigned int = 0u;
             while(i < arr.size) {
-                sum = sum + arr[i];
-                i = i + 1u;
+                sum += arr[i];
+                ++i;
             }
             return sum;
         }

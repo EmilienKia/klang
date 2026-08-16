@@ -62,7 +62,7 @@ public:
             }
         }
         val : byte = _bbuf[_bpos];
-        _bpos = _bpos + 1;
+        ++_bpos;
         result : ::k::Optional<byte>;
         result.set(val);
         return result;
@@ -94,7 +94,7 @@ public:
                         // EOS
                         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(totalRead);
                     }
-                    totalRead = totalRead + n;
+                    totalRead += n;
                     return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(totalRead);
                 }
                 _fill();
@@ -110,12 +110,12 @@ public:
             i : unsigned int = 0;
             while (i < toCopy) {
                 buf[dstOff + i] = _bbuf[(unsigned int) _bpos + i];
-                i = i + 1;
+                ++i;
             }
-            _bpos = _bpos + (int) toCopy;
-            dstOff = dstOff + toCopy;
-            remaining = remaining - toCopy;
-            totalRead = totalRead + toCopy;
+            _bpos += (int) toCopy;
+            dstOff += toCopy;
+            remaining -= toCopy;
+            totalRead += toCopy;
         }
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(totalRead);
     }
@@ -137,7 +137,7 @@ public:
     override skip(n: unsigned long) : unsigned long {
         buffered : unsigned long = (unsigned long)(_bcount - _bpos);
         if (buffered >= n) {
-            _bpos = _bpos + (int) n;
+            _bpos += (int) n;
             return n;
         }
         // Skip what's in buffer, then delegate the rest
@@ -205,7 +205,7 @@ public:
             _flushBuffer();
         }
         _bbuf[_bcount] = b;
-        _bcount = _bcount + 1;
+        ++_bcount;
         return this;
     }
 
@@ -225,9 +225,9 @@ public:
         i : unsigned int = 0;
         while (i < len) {
             _bbuf[_bcount + (int) i] = buf[off + i];
-            i = i + 1;
+            ++i;
         }
-        _bcount = _bcount + (int) len;
+        _bcount += (int) len;
         return this;
     }
 

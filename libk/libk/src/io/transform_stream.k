@@ -81,7 +81,7 @@ public:
                 break;
             }
             buf[off + written] = next.get();
-            written = written + 1;
+            ++written;
         }
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
@@ -97,7 +97,7 @@ public:
             if (!next.hasValue()) {
                 break;
             }
-            skipped = skipped + 1;
+            ++skipped;
         }
         return skipped;
     }
@@ -158,7 +158,7 @@ public:
             if (!buffer.isEmpty()) {
                 buf[off + written] = buffer[0];
                 buffer.removeFirst();
-                written = written + 1;
+                ++written;
                 continue;
             }
 
@@ -170,7 +170,7 @@ public:
             if (!buffer.isEmpty()) {
                 buf[off + written] = buffer[0];
                 buffer.removeFirst();
-                written = written + 1;
+                ++written;
             }
         }
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
@@ -185,7 +185,7 @@ public:
         while (skipped < n) {
             if (!buffer.isEmpty()) {
                 buffer.removeFirst();
-                skipped = skipped + 1;
+                ++skipped;
                 continue;
             }
 
@@ -196,7 +196,7 @@ public:
             doTransform(current.get());
             if (!buffer.isEmpty()) {
                 buffer.removeFirst();
-                skipped = skipped + 1;
+                ++skipped;
             }
         }
         return skipped;
@@ -212,7 +212,7 @@ protected:
     doTransform(in : const I&) {
         results : ::k::Vector<O> = transform(in);
         n : int = results.size();
-        for (j : int = 0; j < n; j = j + 1) {
+        for (j : int = 0; j < n; ++j) {
             buffer.append(results[j]);
         }
     }
@@ -265,7 +265,7 @@ public:
                 break;
             }
             buf[off + written] = next.get();
-            written = written + 1;
+            ++written;
         }
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
@@ -281,7 +281,7 @@ public:
             if (!next.hasValue()) {
                 break;
             }
-            skipped = skipped + 1;
+            ++skipped;
         }
         return skipped;
     }
@@ -344,7 +344,7 @@ public:
             if (!outputBuffer.isEmpty()) {
                 buf[off + written] = outputBuffer[0];
                 outputBuffer.removeFirst();
-                written = written + 1;
+                ++written;
                 continue;
             }
 
@@ -357,7 +357,7 @@ public:
             if (!outputBuffer.isEmpty()) {
                 buf[off + written] = outputBuffer[0];
                 outputBuffer.removeFirst();
-                written = written + 1;
+                ++written;
             }
         }
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
@@ -372,7 +372,7 @@ public:
         while (skipped < n) {
             if (!outputBuffer.isEmpty()) {
                 outputBuffer.removeFirst();
-                skipped = skipped + 1;
+                ++skipped;
                 continue;
             }
 
@@ -384,7 +384,7 @@ public:
             doTransform(inputBuffer);
             if (!outputBuffer.isEmpty()) {
                 outputBuffer.removeFirst();
-                skipped = skipped + 1;
+                ++skipped;
             }
         }
         return skipped;
@@ -401,7 +401,7 @@ protected:
         result : ::k::Vector<O> = transform(in);
         if (!result.isEmpty()) {
             n : int = result.size();
-            for (j : int = 0; j < n; j = j + 1) {
+            for (j : int = 0; j < n; ++j) {
                 outputBuffer.append(result[j]);
             }
             inputBuffer.clear();
@@ -461,7 +461,7 @@ public:
         i : unsigned int = 0;
         while (i < actual) {
             write(buf[off + i]);
-            i = i + 1;
+            ++i;
         }
         return this;
     }
@@ -497,7 +497,7 @@ public:
         i : unsigned int = 0;
         while (i < actual) {
             write(buf[off + i]);
-            i = i + 1;
+            ++i;
         }
         return this;
     }
@@ -513,7 +513,7 @@ protected:
         i : int = 0;
         while (i < values.size()) {
             _out->write(values[i]);
-            i = i + 1;
+            ++i;
         }
     }
 }
@@ -549,7 +549,7 @@ public:
         i : unsigned int = 0;
         while (i < actual) {
             write(buf[off + i]);
-            i = i + 1;
+            ++i;
         }
         return this;
     }
@@ -590,7 +590,7 @@ public:
         i : unsigned int = 0;
         while (i < actual) {
             write(buf[off + i]);
-            i = i + 1;
+            ++i;
         }
         return this;
     }
@@ -612,7 +612,7 @@ protected:
         result : ::k::Vector<O> = transform(inputBuffer);
         if (!result.isEmpty()) {
             n : int = result.size();
-            for (j : int = 0; j < n; j = j + 1) {
+            for (j : int = 0; j < n; ++j) {
                 outputBuffer.append(result[j]);
             }
             inputBuffer.clear();

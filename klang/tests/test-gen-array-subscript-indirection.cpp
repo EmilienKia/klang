@@ -487,9 +487,9 @@ TEST_CASE("Subscript on owner array member — external access", "[gen][subscrip
             buf[2] = 'C';
             h : Holder(buf);
             result : int = 0;
-            if (h._buf[0] == 'A') result = result + 1;
-            if (h._buf[1] == 'B') result = result + 10;
-            if (h._buf[2] == 'C') result = result + 100;
+            if (h._buf[0] == 'A') ++result;
+            if (h._buf[1] == 'B') result += 10;
+            if (h._buf[2] == 'C') result += 100;
             return result;
         }
     )SRC");
@@ -519,9 +519,9 @@ TEST_CASE("Subscript on owner array member via non-const method (implicit this)"
             buf[2] = 'C';
             h : Holder(buf, 3);
             result : int = 0;
-            if (h.at(0) == 'A') result = result + 1;
-            if (h.at(1) == 'B') result = result + 10;
-            if (h.at(2) == 'C') result = result + 100;
+            if (h.at(0) == 'A') ++result;
+            if (h.at(1) == 'B') result += 10;
+            if (h.at(2) == 'C') result += 100;
             return result;
         }
     )SRC");
@@ -580,8 +580,8 @@ TEST_CASE("Subscript on owner array member via non-const method (mutable write)"
             b : Buffer(buf, 2);
             b.set(0, 'Z');
             result : int = 0;
-            if (b.get(0) == 'Z') result = result + 1;
-            if (b.get(1) == 'Y') result = result + 10;
+            if (b.get(0) == 'Z') ++result;
+            if (b.get(1) == 'Y') result += 10;
             return result;
         }
     )SRC");

@@ -289,7 +289,7 @@ static constexpr const char* LINKEDLIST_EMPLACE_PREAMBLE = R"SRC(
                 node.setValue(value);
                 node._next = _head;
                 _head = node;
-                _size = _size + 1;
+                ++_size;
             }
 
             template<typename...Args>
@@ -298,7 +298,7 @@ static constexpr const char* LINKEDLIST_EMPLACE_PREAMBLE = R"SRC(
                 node.emplaceValue(args...);
                 node._next = _head;
                 _head = node;
-                _size = _size + 1;
+                ++_size;
             }
 
             template<typename...Args>
@@ -314,7 +314,7 @@ static constexpr const char* LINKEDLIST_EMPLACE_PREAMBLE = R"SRC(
                     }
                     cur->_next = node;
                 }
-                _size = _size + 1;
+                ++_size;
             }
 
             get(index : int) : T& {
@@ -322,7 +322,7 @@ static constexpr const char* LINKEDLIST_EMPLACE_PREAMBLE = R"SRC(
                 i : int = 0;
                 while (i < index) {
                     cur = cur->_next;
-                    i = i + 1;
+                    ++i;
                 }
                 return cur->getValue();
             }
@@ -351,9 +351,9 @@ TEST_CASE("SimpleList emplaceFront with default constructor (zero args)", "[gen]
             lst.emplaceBack<>();
 
             result : int = 0;
-            if (lst.getSize() == 2)       result = result + 1;
-            if (lst.get(0).value == 77)   result = result + 10;
-            if (lst.get(1).value == 77)   result = result + 100;
+            if (lst.getSize() == 2)       ++result;
+            if (lst.get(0).value == 77)   result += 10;
+            if (lst.get(1).value == 77)   result += 100;
             return result;
         }
     )SRC";

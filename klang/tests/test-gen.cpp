@@ -640,13 +640,13 @@ TEST_CASE("Static local variable", "[gen][var]") {
 
         test_static() : int {
             static i : int = init();
-            i += 1;
+            ++i;
             return i;
         }
 
         test_non_static() : int {
             j : int = 12;
-            j += 1;
+            ++j;
             return j;
         }
 
@@ -826,7 +826,7 @@ TEST_CASE("Struct destructor called on local variable at block exit", "[gen][str
 
         struct counter {
             ~counter() {
-                dtor_count = dtor_count + 1;
+                ++dtor_count;
             }
         }
 
@@ -1373,7 +1373,7 @@ TEST_CASE("Member function with default parameter", "[gen][default-params][struc
             value : int = 0;
 
             increment(by: int = 1) {
-                value = value + by;
+                value += by;
             }
 
             get() : int {
@@ -1495,7 +1495,7 @@ TEST_CASE("Local reference variable bound to a function parameter", "[gen][refs]
 
         increment(x : int&) {
             r : int& = x;
-            r = r + 1;
+            ++r;
         }
 
         test() : int {

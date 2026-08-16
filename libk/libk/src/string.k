@@ -70,7 +70,7 @@ public:
         i : int = 0;
         while (i < count) {
             dst[dstOff + i] = src[srcOff + i];
-            i = i + 1;
+            ++i;
         }
     }
 
@@ -89,7 +89,7 @@ public:
     public static copyBackward(dst: char[], dstOff: unsigned int, src: const char[], srcOff: unsigned int, count: unsigned int) {
         i : int = count;
         while (i > 0) {
-            i = i - 1;
+            --i;
             dst[dstOff + i] = src[srcOff + i];
         }
     }
@@ -106,7 +106,7 @@ public:
         i : int = 0;
         while (i < len) {
             if (a[i] != b[i]) return false;
-            i = i + 1;
+            ++i;
         }
         return true;
     }
@@ -125,7 +125,7 @@ public:
         i : int = 0;
         while (i < len) {
             if (a[aOff + i] != b[bOff + i]) return false;
-            i = i + 1;
+            ++i;
         }
         return true;
     }
@@ -142,7 +142,7 @@ public:
         i : int = 0;
         while (i < count) {
             dst[dstOff + i] = c;
-            i = i + 1;
+            ++i;
         }
     }
 
@@ -161,7 +161,7 @@ public:
             if (buf[off + i] == c) {
                 return off + i;
             }
-            i = i + 1;
+            ++i;
         }
         return -1;
     }
@@ -178,7 +178,7 @@ public:
     public static rfindChar(buf: const char[], off: unsigned int, len: unsigned int, c: char) : int {
         i : int = len;
         while (i > 0) {
-            i = i - 1;
+            --i;
             if (buf[off + i] == c) {
                 return off + i;
             }
@@ -210,7 +210,7 @@ public:
             if (equalsAt(haystack, hOff + i, needle, nOff, nLen)) {
                 return hOff + i;
             }
-            i = i + 1;
+            ++i;
         }
         return -1;
     }
@@ -233,7 +233,7 @@ public:
         if (nLen > hLen) return -1;
         i : int = hLen - nLen + 1;
         while (i > 0) {
-            i = i - 1;
+            --i;
             if (equalsAt(haystack, hOff + i, needle, nOff, nLen)) {
                 return hOff + i;
             }
@@ -256,7 +256,7 @@ public:
         while (i < len) {
             diff : int = a[aOff + i] - b[bOff + i];
             if (diff != 0) return diff;
-            i = i + 1;
+            ++i;
         }
         return 0;
     }
@@ -292,8 +292,8 @@ public:
         total : unsigned int = 0u;
         i : unsigned int = 0u;
         while (i < len) {
-            total = total + utf8Len(src[i]);
-            i = i + 1u;
+            total += utf8Len(src[i]);
+            ++i;
         }
         return total;
     }
@@ -303,8 +303,8 @@ public:
         total : unsigned int = 0u;
         i : unsigned int = 0u;
         while (i < len) {
-            total = total + utf16Len(src[i]);
-            i = i + 1u;
+            total += utf16Len(src[i]);
+            ++i;
         }
         return total;
     }
@@ -320,24 +320,24 @@ public:
             c : char = src[i];
             if (c < 0x80u) {
                 out[o] = (unsigned byte) c;
-                o = o + 1u;
+                ++o;
             } else if (c < 0x800u) {
                 out[o] = (unsigned byte) (0xC0u | (c >> 6));
                 out[o + 1u] = (unsigned byte) (0x80u | (c & 0x3Fu));
-                o = o + 2u;
+                o += 2u;
             } else if (c < 0x10000u) {
                 out[o] = (unsigned byte) (0xE0u | (c >> 12));
                 out[o + 1u] = (unsigned byte) (0x80u | ((c >> 6) & 0x3Fu));
                 out[o + 2u] = (unsigned byte) (0x80u | (c & 0x3Fu));
-                o = o + 3u;
+                o += 3u;
             } else {
                 out[o] = (unsigned byte) (0xF0u | (c >> 18));
                 out[o + 1u] = (unsigned byte) (0x80u | ((c >> 12) & 0x3Fu));
                 out[o + 2u] = (unsigned byte) (0x80u | ((c >> 6) & 0x3Fu));
                 out[o + 3u] = (unsigned byte) (0x80u | (c & 0x3Fu));
-                o = o + 4u;
+                o += 4u;
             }
-            i = i + 1u;
+            ++i;
         }
         out[o] = (unsigned byte) 0;
         return out;
@@ -354,14 +354,14 @@ public:
             c : char = src[i];
             if (c < 0x10000u) {
                 out[o] = (unsigned short) c;
-                o = o + 1u;
+                ++o;
             } else {
                 v : char = c - 0x10000u;
                 out[o] = (unsigned short) (0xD800u + (v >> 10));
                 out[o + 1u] = (unsigned short) (0xDC00u + (v & 0x3FFu));
-                o = o + 2u;
+                o += 2u;
             }
-            i = i + 1u;
+            ++i;
         }
         out[o] = (unsigned short) 0;
         return out;
@@ -383,8 +383,8 @@ public:
             } else if (b >= 0xC0) {
                 adv = 2u;
             }
-            i = i + adv;
-            count = count + 1u;
+            i += adv;
+            ++count;
         }
         return count;
     }
@@ -396,11 +396,11 @@ public:
         while (i < len) {
             u : int = src[i];
             if (u >= 0xD800 && u < 0xDC00) {
-                i = i + 2u;
+                i += 2u;
             } else {
-                i = i + 1u;
+                ++i;
             }
-            count = count + 1u;
+            ++count;
         }
         return count;
     }
@@ -417,25 +417,25 @@ public:
             cp : char = 0;
             if (b0 < 0x80) {
                 cp = (char) b0;
-                i = i + 1u;
+                ++i;
             } else if (b0 < 0xE0) {
                 b1 : int = src[i + 1u];
                 cp = (char) (((b0 & 0x1F) << 6) | (b1 & 0x3F));
-                i = i + 2u;
+                i += 2u;
             } else if (b0 < 0xF0) {
                 b1 : int = src[i + 1u];
                 b2 : int = src[i + 2u];
                 cp = (char) (((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F));
-                i = i + 3u;
+                i += 3u;
             } else {
                 b1 : int = src[i + 1u];
                 b2 : int = src[i + 2u];
                 b3 : int = src[i + 3u];
                 cp = (char) (((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
-                i = i + 4u;
+                i += 4u;
             }
             out[o] = cp;
-            o = o + 1u;
+            ++o;
         }
         out[o] = (char) 0;
         return out;
@@ -454,13 +454,13 @@ public:
             if (u >= 0xD800 && u < 0xDC00) {
                 lo : int = src[i + 1u];
                 cp = (char) (0x10000 + (((u - 0xD800) << 10) | (lo - 0xDC00)));
-                i = i + 2u;
+                i += 2u;
             } else {
                 cp = (char) u;
-                i = i + 1u;
+                ++i;
             }
             out[o] = cp;
-            o = o + 1u;
+            ++o;
         }
         out[o] = (char) 0;
         return out;
@@ -471,13 +471,13 @@ public:
     /** Copy `count` unsigned bytes from src[srcOff..] to dst[dstOff..]. */
     public static copyBytes(dst: unsigned byte[], dstOff: unsigned int, src: const unsigned byte[], srcOff: unsigned int, count: unsigned int) {
         i : unsigned int = 0u;
-        while (i < count) { dst[dstOff + i] = src[srcOff + i]; i = i + 1u; }
+        while (i < count) { dst[dstOff + i] = src[srcOff + i]; ++i; }
     }
 
     /** Copy `count` unsigned shorts from src[srcOff..] to dst[dstOff..]. */
     public static copyShorts(dst: unsigned short[], dstOff: unsigned int, src: const unsigned short[], srcOff: unsigned int, count: unsigned int) {
         i : unsigned int = 0u;
-        while (i < count) { dst[dstOff + i] = src[srcOff + i]; i = i + 1u; }
+        while (i < count) { dst[dstOff + i] = src[srcOff + i]; ++i; }
     }
 
     // ── Single code-point access in UTF-8 / UTF-16 (O(index) walk) ───────
@@ -488,11 +488,11 @@ public:
         cp : unsigned int = 0u;
         while (cp < cpIndex) {
             b : int = buf[i];
-            if (b >= 0xF0) { i = i + 4u; }
-            else if (b >= 0xE0) { i = i + 3u; }
-            else if (b >= 0xC0) { i = i + 2u; }
-            else { i = i + 1u; }
-            cp = cp + 1u;
+            if (b >= 0xF0) { i += 4u; }
+            else if (b >= 0xE0) { i += 3u; }
+            else if (b >= 0xC0) { i += 2u; }
+            else { ++i; }
+            ++cp;
         }
         b0 : int = buf[i];
         if (b0 < 0x80) { return (char) b0; }
@@ -507,8 +507,8 @@ public:
         cp : unsigned int = 0u;
         while (cp < cpIndex) {
             u : int = buf[i];
-            if (u >= 0xD800 && u < 0xDC00) { i = i + 2u; } else { i = i + 1u; }
-            cp = cp + 1u;
+            if (u >= 0xD800 && u < 0xDC00) { i += 2u; } else { ++i; }
+            ++cp;
         }
         u0 : int = buf[i];
         if (u0 >= 0xD800 && u0 < 0xDC00) {
@@ -527,11 +527,11 @@ public:
         cp : unsigned int = 0u;
         while (cp < cpIndex) {
             b : int = buf[i];
-            if (b >= 0xF0) { i = i + 4u; }
-            else if (b >= 0xE0) { i = i + 3u; }
-            else if (b >= 0xC0) { i = i + 2u; }
-            else { i = i + 1u; }
-            cp = cp + 1u;
+            if (b >= 0xF0) { i += 4u; }
+            else if (b >= 0xE0) { i += 3u; }
+            else if (b >= 0xC0) { i += 2u; }
+            else { ++i; }
+            ++cp;
         }
         b0 : int = buf[i];
         if (b0 < 0x80) { return (char) b0; }
@@ -547,8 +547,8 @@ public:
         cp : unsigned int = 0u;
         while (cp < cpIndex) {
             u : int = buf[i];
-            if (u >= 0xD800 && u < 0xDC00) { i = i + 2u; } else { i = i + 1u; }
-            cp = cp + 1u;
+            if (u >= 0xD800 && u < 0xDC00) { i += 2u; } else { ++i; }
+            ++cp;
         }
         u0 : int = buf[i];
         if (u0 >= 0xD800 && u0 < 0xDC00) {
@@ -570,20 +570,20 @@ public:
             cp : char = 0;
             if (b0 < 0x80) {
                 cp = (char) b0;
-                i = i + 1u;
+                ++i;
             } else if (b0 < 0xE0) {
                 cp = (char) (((b0 & 0x1F) << 6) | (src[i + 1u] & 0x3F));
-                i = i + 2u;
+                i += 2u;
             } else if (b0 < 0xF0) {
                 cp = (char) (((b0 & 0x0F) << 12) | ((src[i + 1u] & 0x3F) << 6) | (src[i + 2u] & 0x3F));
-                i = i + 3u;
+                i += 3u;
             } else {
                 cp = (char) (((b0 & 0x07) << 18) | ((src[i + 1u] & 0x3F) << 12) | ((src[i + 2u] & 0x3F) << 6) | (src[i + 3u] & 0x3F));
-                i = i + 4u;
+                i += 4u;
             }
             dst[o] = cp;
-            o = o + 1u;
-            n = n + 1u;
+            ++o;
+            ++n;
         }
         return n;
     }
@@ -601,14 +601,14 @@ public:
             if (u >= 0xD800 && u < 0xDC00) {
                 lo : int = src[i + 1u];
                 cp = (char) (0x10000 + (((u - 0xD800) << 10) | (lo - 0xDC00)));
-                i = i + 2u;
+                i += 2u;
             } else {
                 cp = (char) u;
-                i = i + 1u;
+                ++i;
             }
             dst[o] = cp;
-            o = o + 1u;
-            n = n + 1u;
+            ++o;
+            ++n;
         }
         return n;
     }
@@ -928,8 +928,8 @@ public:
         n : unsigned int = 0u;
         i : unsigned int = 0u;
         while (i < _size) {
-            if (b[i] == c) n = n + 1u;
-            i = i + 1u;
+            if (b[i] == c) ++n;
+            ++i;
         }
         return n;
     }
@@ -945,10 +945,10 @@ public:
         limit : unsigned int = _size;
         while (i + needle._size <= limit) {
             if (CharHelpers::equalsAt(b, i, nb, 0u, needle._size)) {
-                n = n + 1u;
-                i = i + needle._size;
+                ++n;
+                i += needle._size;
             } else {
-                i = i + 1u;
+                ++i;
             }
         }
         return n;
@@ -1369,7 +1369,7 @@ public:
                 st[i] = other._fragStart[i];
                 un[i] = other._fragUnits[i];
                 cp[i] = other._fragCp[i];
-                i = i + 1u;
+                ++i;
             }
             _fragEnc = ec;
             _fragStart = st;
@@ -1457,8 +1457,8 @@ public:
                 }
                 return CharHelpers::utf8CodePointAtFrom(_poolU8, _fragStart[i], local);
             }
-            pos = pos + _fragCp[i];
-            i = i + 1u;
+            pos += _fragCp[i];
+            ++i;
         }
         return (char) 0;
     }
@@ -1494,8 +1494,8 @@ public:
             } else {
                 CharHelpers::utf8DecodeRangeInto(_poolU8, _fragStart[i], _fragUnits[i], dst, off);
             }
-            off = off + _fragCp[i];
-            i = i + 1u;
+            off += _fragCp[i];
+            ++i;
         }
     }
 
@@ -1620,8 +1620,8 @@ public:
         n : unsigned int = 0u;
         i : unsigned int = 0u;
         while (i < _totalSize) {
-            if (b[i] == c) n = n + 1u;
-            i = i + 1u;
+            if (b[i] == c) ++n;
+            ++i;
         }
         return n;
     }
@@ -1662,7 +1662,7 @@ public:
         i : unsigned int = 0u;
         while (i < actual) {
             buf[i] = charAt(start + i);
-            i = i + 1u;
+            ++i;
         }
         buf[actual] = (char) 0;
         return String(buf, actual);
@@ -1705,7 +1705,7 @@ public:
             start : unsigned int = _u8Used;
             _ensureU8(ulen);
             CharHelpers::copyBytes(_poolU8, start, units, 0u, ulen);
-            _u8Used = _u8Used + ulen;
+            _u8Used += ulen;
             _pushFrag(0u, start, ulen, n);
         } else if (e == 1) {
             units : unsigned short[]! = s.toUtf16();
@@ -1713,14 +1713,14 @@ public:
             start : unsigned int = _u16Used;
             _ensureU16(ulen);
             CharHelpers::copyShorts(_poolU16, start, units, 0u, ulen);
-            _u16Used = _u16Used + ulen;
+            _u16Used += ulen;
             _pushFrag(1u, start, ulen, n);
         } else {
             units : char[]! = s.toUtf32();
             start : unsigned int = _u32Used;
             _ensureU32(n);
             CharHelpers::copy(_poolU32, start, units, 0u, n);
-            _u32Used = _u32Used + n;
+            _u32Used += n;
             _pushFrag(2u, start, n, n);
         }
         return this;
@@ -1738,7 +1738,7 @@ public:
         start : unsigned int = _u32Used;
         _ensureU32(n);
         CharHelpers::copy(_poolU32, start, src, 0u, n);
-        _u32Used = _u32Used + n;
+        _u32Used += n;
         _pushFrag(2u, start, n, n);
         return this;
     }
@@ -1753,7 +1753,7 @@ public:
         start : unsigned int = _u8Used;
         _ensureU8(ulen);
         CharHelpers::copyBytes(_poolU8, start, src, 0u, ulen);
-        _u8Used = _u8Used + ulen;
+        _u8Used += ulen;
         _pushFrag(0u, start, ulen, cp);
         return this;
     }
@@ -1768,7 +1768,7 @@ public:
         start : unsigned int = _u16Used;
         _ensureU16(ulen);
         CharHelpers::copyShorts(_poolU16, start, src, 0u, ulen);
-        _u16Used = _u16Used + ulen;
+        _u16Used += ulen;
         _pushFrag(1u, start, ulen, cp);
         return this;
     }
@@ -1786,22 +1786,22 @@ public:
                 start : unsigned int = _u8Used;
                 _ensureU8(ounits);
                 CharHelpers::copyBytes(_poolU8, start, other._poolU8, ostart, ounits);
-                _u8Used = _u8Used + ounits;
+                _u8Used += ounits;
                 _pushFrag(0u, start, ounits, ocp);
             } else if (e == 1) {
                 start : unsigned int = _u16Used;
                 _ensureU16(ounits);
                 CharHelpers::copyShorts(_poolU16, start, other._poolU16, ostart, ounits);
-                _u16Used = _u16Used + ounits;
+                _u16Used += ounits;
                 _pushFrag(1u, start, ounits, ocp);
             } else {
                 start : unsigned int = _u32Used;
                 _ensureU32(ounits);
                 CharHelpers::copy(_poolU32, start, other._poolU32, ostart, ounits);
-                _u32Used = _u32Used + ounits;
+                _u32Used += ounits;
                 _pushFrag(2u, start, ounits, ocp);
             }
-            i = i + 1u;
+            ++i;
         }
         return this;
     }
@@ -1816,7 +1816,7 @@ public:
         start : unsigned int = _u32Used;
         _ensureU32(1u);
         _poolU32[start] = c;
-        _u32Used = _u32Used + 1u;
+        ++_u32Used;
         _pushFrag(2u, start, 1u, 1u);
         return this;
     }
@@ -1935,8 +1935,8 @@ public:
             tmp : char = _poolU32[left];
             _poolU32[left] = _poolU32[right];
             _poolU32[right] = tmp;
-            left = left + 1u;
-            right = right - 1u;
+            ++left;
+            --right;
         }
         return this;
     }
@@ -1953,7 +1953,7 @@ public:
                 }
                 return this;
             }
-            start = start + 1u;
+            ++start;
         }
         return clear();
     }
@@ -1970,7 +1970,7 @@ public:
                 }
                 return this;
             }
-            end = end - 1u;
+            --end;
         }
         return clear();
     }
@@ -2086,7 +2086,7 @@ private:
                 newStart[i] = _fragStart[i];
                 newUnits[i] = _fragUnits[i];
                 newCp[i] = _fragCp[i];
-                i = i + 1u;
+                ++i;
             }
             delete _fragEnc;
             delete _fragStart;
@@ -2108,8 +2108,8 @@ private:
         _fragStart[_fragCount] = start;
         _fragUnits[_fragCount] = units;
         _fragCp[_fragCount] = cp;
-        _fragCount = _fragCount + 1u;
-        _totalSize = _totalSize + cp;
+        ++_fragCount;
+        _totalSize += cp;
     }
 
     /** Set the builder to a single UTF-32 fragment of `len` code points,

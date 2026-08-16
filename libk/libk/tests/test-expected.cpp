@@ -217,10 +217,10 @@ TEST_CASE("Expected copy constructor — modifying copy does not affect original
             // Overwrite dst with an error; src must keep its result
             dst.setError(99);
             result : int = 0;
-            if (src.hasResult()) { result = result + 1; }
-            if (src.getResult() == 10) { result = result + 10; }
-            if (dst.hasError()) { result = result + 100; }
-            if (dst.getError() == 99) { result = result + 1000; }
+            if (src.hasResult()) { ++result; }
+            if (src.getResult() == 10) { result += 10; }
+            if (dst.hasError()) { result += 100; }
+            if (dst.getError() == 99) { result += 1000; }
             return result;
         }
     )SRC");
@@ -243,10 +243,10 @@ TEST_CASE("Expected copy constructor — modifying copy does not affect original
             // Overwrite dst with a result; src must keep its error
             dst.setResult(77);
             result : int = 0;
-            if (src.hasError()) { result = result + 1; }
-            if (src.getError() == -5) { result = result + 10; }
-            if (dst.hasResult()) { result = result + 100; }
-            if (dst.getResult() == 77) { result = result + 1000; }
+            if (src.hasError()) { ++result; }
+            if (src.getError() == -5) { result += 10; }
+            if (dst.hasResult()) { result += 100; }
+            if (dst.getResult() == 77) { result += 1000; }
             return result;
         }
     )SRC");
@@ -268,9 +268,9 @@ TEST_CASE("Expected copy constructor — chained copies preserve result", "[libk
             b : Expected<int, int>(a);
             c : Expected<int, int>(b);
             result : int = 0;
-            if (a.hasResult() && a.getResult() == 7) { result = result + 1; }
-            if (b.hasResult() && b.getResult() == 7) { result = result + 10; }
-            if (c.hasResult() && c.getResult() == 7) { result = result + 100; }
+            if (a.hasResult() && a.getResult() == 7) { ++result; }
+            if (b.hasResult() && b.getResult() == 7) { result += 10; }
+            if (c.hasResult() && c.getResult() == 7) { result += 100; }
             return result;
         }
     )SRC");

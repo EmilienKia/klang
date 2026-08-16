@@ -245,7 +245,7 @@ class Vec : public MutableIndexed {
     _n: int;
     Vec() { _n = 0; }
     size() : int { return _n; }
-    insert(index: int, value: int) { _n = _n + 1; }
+    insert(index: int, value: int) { ++_n; }
 }
 test() : int {
     v: Vec;

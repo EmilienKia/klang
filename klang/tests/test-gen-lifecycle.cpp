@@ -117,7 +117,7 @@ TEST_CASE("Lifecycle Cat1: Return captures value before dtors (two variables)", 
         g_count : int = 0;
 
         struct C {
-            ~C() { g_count = g_count + 1; }
+            ~C() { ++g_count; }
         }
 
         test() : int {
@@ -214,7 +214,7 @@ TEST_CASE("Lifecycle Cat2: Owner of struct with dtor — delete then delete-null
 
         struct Tracked {
             Tracked() {}
-            ~Tracked() { g_dtors = g_dtors + 1; }
+            ~Tracked() { ++g_dtors; }
         }
 
         test() : int {
@@ -241,7 +241,7 @@ TEST_CASE("Lifecycle Cat2: Owner in conditional branch only", "[gen][lifecycle][
 
         struct Item {
             Item() {}
-            ~Item() { g_dtors = g_dtors + 1; }
+            ~Item() { ++g_dtors; }
         }
 
         test(flag: int) : int {
@@ -274,7 +274,7 @@ TEST_CASE("Lifecycle Cat3: Struct passed by value — dtor called on copy at fun
         struct Box {
             v : int = 0;
             Box() {}
-            ~Box() { g_dtors = g_dtors + 1; }
+            ~Box() { ++g_dtors; }
         }
 
         consume(b: Box) : int {
@@ -311,7 +311,7 @@ TEST_CASE("Lifecycle Cat3: Struct passed by reference — no copy, no extra dtor
         struct Box {
             v : int = 0;
             Box() {}
-            ~Box() { g_dtors = g_dtors + 1; }
+            ~Box() { ++g_dtors; }
         }
 
         read_ref(b: Box&) : int {
@@ -352,8 +352,8 @@ TEST_CASE("Lifecycle Cat4: Function returning struct by value, assigned to local
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : int {
@@ -396,7 +396,7 @@ TEST_CASE("Lifecycle Cat6: Outer struct with inner struct member — inner dtor 
         g_log : int = 0;
 
         struct Inner {
-            ~Inner() { g_log = g_log + 1; }
+            ~Inner() { ++g_log; }
         }
 
         struct Outer {
@@ -512,8 +512,8 @@ TEST_CASE("Lifecycle Cat4: Function returning struct by value, assigned to local
 
         struct Obj {
             val : int;
-            Obj(v: int) : val(v) { g_ctors = g_ctors + 1; }
-            ~Obj() { g_dtors = g_dtors + 1; }
+            Obj(v: int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -555,7 +555,7 @@ TEST_CASE("Lifecycle Cat4: Struct return value used in expression then discarded
         struct Obj {
             val : int;
             Obj(v: int) : val(v) {}
-            ~Obj() { g_dtors = g_dtors + 1; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -596,8 +596,8 @@ TEST_CASE("Lifecycle Cat5: Temporary struct from function call, result discarded
         g_dtors : int = 0;
 
         struct Tmp {
-            Tmp() { g_ctors = g_ctors + 1; }
-            ~Tmp() { g_dtors = g_dtors + 1; }
+            Tmp() { ++g_ctors; }
+            ~Tmp() { ++g_dtors; }
         }
 
         make() : Tmp {
@@ -646,7 +646,7 @@ TEST_CASE("Lifecycle Cat5: Member access on temporary struct return value", "[ge
         struct Obj {
             val : int;
             Obj(v: int) : val(v) {}
-            ~Obj() { g_dtors = g_dtors + 1; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -686,7 +686,7 @@ TEST_CASE("Lifecycle Cat5: Chained method call on temporary", "[gen][lifecycle][
         struct Obj {
             val : int;
             Obj(v: int) : val(v) {}
-            ~Obj() { g_dtors = g_dtors + 1; }
+            ~Obj() { ++g_dtors; }
 
             get_val() : int { return val; }
         }
@@ -847,7 +847,7 @@ TEST_CASE("Lifecycle Cat7: Temporary struct in if-condition", "[gen][lifecycle][
         struct Checker {
             val : int;
             Checker(v: int) : val(v) {}
-            ~Checker() { g_dtors = g_dtors + 1; }
+            ~Checker() { ++g_dtors; }
 
             is_positive() : int {
                 if (val > 0) { return 1; }
@@ -896,10 +896,10 @@ TEST_CASE("Lifecycle Cat7: Temporary struct in while-condition", "[gen][lifecycl
         struct Counter {
             val : int;
             Counter(v: int) : val(v) {}
-            ~Counter() { g_dtors = g_dtors + 1; }
+            ~Counter() { ++g_dtors; }
 
             has_next() : int {
-                g_counter = g_counter + 1;
+                ++g_counter;
                 if (val > g_counter) { return 1; }
                 return 0;
             }
@@ -944,7 +944,7 @@ TEST_CASE("Lifecycle Cat7: Temporary struct in for-condition", "[gen][lifecycle]
         struct Limit {
             max : int;
             Limit(m: int) : max(m) {}
-            ~Limit() { g_dtors = g_dtors + 1; }
+            ~Limit() { ++g_dtors; }
 
             above(i: int) : int {
                 if (max > i) { return 1; }
@@ -959,8 +959,8 @@ TEST_CASE("Lifecycle Cat7: Temporary struct in for-condition", "[gen][lifecycle]
 
         test() : int {
             sum : int = 0;
-            for (i : int = 0; make_limit(3).above(i) > 0; i = i + 1) {
-                sum = sum + i;
+            for (i : int = 0; make_limit(3).above(i) > 0; ++i) {
+                sum += i;
             }
             return sum;
         }
@@ -1032,7 +1032,7 @@ TEST_CASE("Lifecycle Cat2: Owner auto-cleanup at scope exit — dtor called exac
 
         struct Res {
             Res() {}
-            ~Res() { g_dtors = g_dtors + 1; }
+            ~Res() { ++g_dtors; }
         }
 
         test() : int {
@@ -1068,7 +1068,7 @@ TEST_CASE("Lifecycle Cat3: Multiple by-value params — all destroyed at functio
         struct Item {
             v : int = 0;
             Item() {}
-            ~Item() { g_dtors = g_dtors + 1; }
+            ~Item() { ++g_dtors; }
         }
 
         consume_two(a: Item, b: Item) : int {
@@ -1113,7 +1113,7 @@ TEST_CASE("Lifecycle Cat4: Struct return as bare expression-statement (no use)",
         struct Obj {
             val : int;
             Obj(v: int) : val(v) {}
-            ~Obj() { g_dtors = g_dtors + 1; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -1153,7 +1153,7 @@ TEST_CASE("Lifecycle Cat5: Temporary in assignment expression", "[gen][lifecycle
         struct Obj {
             val : int;
             Obj(v: int) : val(v) {}
-            ~Obj() { g_dtors = g_dtors + 1; }
+            ~Obj() { ++g_dtors; }
         }
 
         make(v: int) : Obj {
@@ -1192,7 +1192,7 @@ TEST_CASE("Lifecycle Cat5: Struct return passed by value as function argument", 
         struct Box {
             val : int;
             Box(v: int) : val(v) {}
-            ~Box() { g_dtors = g_dtors + 1; }
+            ~Box() { ++g_dtors; }
         }
 
         make(v: int) : Box {
@@ -1289,7 +1289,7 @@ TEST_CASE("Lifecycle Cat4: Struct copy from local to local", "[gen][lifecycle][c
         struct Obj {
             val : int;
             Obj(v: int) : val(v) {}
-            ~Obj() { g_dtors = g_dtors + 1; }
+            ~Obj() { ++g_dtors; }
         }
 
         test() : int {
@@ -1334,8 +1334,8 @@ TEST_CASE("Lifecycle Cat8: prvalue temporary passed by value is moved, not doubl
         g_dtors : int = 0;
 
         struct Res {
-            Res() { g_ctors = g_ctors + 1; }
-            ~Res() { g_dtors = g_dtors + 1; }
+            Res() { ++g_ctors; }
+            ~Res() { ++g_dtors; }
         }
 
         consume(r: Res) : int { return 0; }
@@ -1374,8 +1374,8 @@ TEST_CASE("Lifecycle Cat8: prvalue temporary returned by value is moved, not dou
         g_dtors : int = 0;
 
         struct Res {
-            Res() { g_ctors = g_ctors + 1; }
-            ~Res() { g_dtors = g_dtors + 1; }
+            Res() { ++g_ctors; }
+            ~Res() { ++g_dtors; }
         }
 
         make() : Res {
@@ -1461,9 +1461,9 @@ TEST_CASE("Lifecycle Cat8: lvalue copied into variable initialisation (site 2)",
         g_dtors  : int = 0;
 
         struct Tracked {
-            Tracked()               { g_ctors  = g_ctors  + 1; }
-            Tracked(other: Tracked&){ g_copies = g_copies + 1; }
-            ~Tracked()              { g_dtors  = g_dtors  + 1; }
+            Tracked()               { ++g_ctors; }
+            Tracked(other: Tracked&){ ++g_copies; }
+            ~Tracked()              { ++g_dtors; }
         }
 
         // Initialise a new variable from an existing lvalue.
@@ -1508,9 +1508,9 @@ TEST_CASE("Lifecycle Cat8: lvalue passed by value to function (site 3)",
         g_dtors  : int = 0;
 
         struct Tracked {
-            Tracked()               { g_ctors  = g_ctors  + 1; }
-            Tracked(other: Tracked&){ g_copies = g_copies + 1; }
-            ~Tracked()              { g_dtors  = g_dtors  + 1; }
+            Tracked()               { ++g_ctors; }
+            Tracked(other: Tracked&){ ++g_copies; }
+            ~Tracked()              { ++g_dtors; }
         }
 
         // The by-value parameter is a copy of the caller's lvalue.
@@ -1556,9 +1556,9 @@ TEST_CASE("Lifecycle Cat8: lvalue returned by value from function (site 4)",
         g_dtors  : int = 0;
 
         struct Tracked {
-            Tracked()               { g_ctors  = g_ctors  + 1; }
-            Tracked(other: Tracked&){ g_copies = g_copies + 1; }
-            ~Tracked()              { g_dtors  = g_dtors  + 1; }
+            Tracked()               { ++g_ctors; }
+            Tracked(other: Tracked&){ ++g_copies; }
+            ~Tracked()              { ++g_dtors; }
         }
 
         // Return one of two locals — the returned one is not the NRVO candidate,
