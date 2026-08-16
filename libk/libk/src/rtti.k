@@ -291,14 +291,14 @@ final const class Interface : public AggregateType {
     /**
      * Return the name of the interface.
      */
-    const getName() : const char[]? {
+    override const getName() : const char[]? {
         return name;
     }
 
     /**
      * Return the fully qualified name of the interface.
      */
-    const getFullName() : const char[]? {
+    override const getFullName() : const char[]? {
         return fullName;
     }
 
@@ -306,7 +306,7 @@ final const class Interface : public AggregateType {
      * Return the bases of the interface, if any.
      * Each element is a TypeInfo descriptor (always an Interface at runtime).
      */
-    const getBases() : const TypeInfo?[]? {
+    override const getBases() : const TypeInfo?[]? {
         return bases;
     }
 
@@ -314,7 +314,7 @@ final const class Interface : public AggregateType {
      * Return the nested types (classes and interfaces) declared inside this interface, if any.
      * Each element is a TypeInfo descriptor.
      */
-    const getNested() : const TypeInfo?[]? {
+    override const getNested() : const TypeInfo?[]? {
         return nested;
     }
 
@@ -322,21 +322,21 @@ final const class Interface : public AggregateType {
      * Return the enclosing type that this interface is nested in, if any.
      * Returns null if this interface is a top-level (non-nested) type.
      */
-    const getEnclosing() : const TypeInfo? {
+    override const getEnclosing() : const TypeInfo? {
         return enclosing;
     }
 
     /**
      * Return the declared visibility of this interface.
      */
-    const getVisibility() : Visibility {
+    override const getVisibility() : Visibility {
         return (Visibility) (flags & 3u);
     }
 
     /**
      * Return true if this interface is declared as a static nested type.
      */
-    const isStatic() : bool {
+    override const isStatic() : bool {
         return (flags & 4u) != 0u;
     }
 
@@ -392,14 +392,14 @@ final const class Class : public AggregateType {
     /**
      * Return the name of the class.
      */
-    const getName() : const char[]? {
+    override const getName() : const char[]? {
         return name;
     }
 
     /**
      * Return the fully qualified name of the class.
      */
-    const getFullName() : const char[]? {
+    override const getFullName() : const char[]? {
         return fullName;
     }
 
@@ -407,7 +407,7 @@ final const class Class : public AggregateType {
      * Return the base interfaces and classes of the class, if any.
      * Each element is a TypeInfo descriptor (always an Interface or a Class at runtime).
      */
-    const getBases() : const TypeInfo?[]? {
+    override const getBases() : const TypeInfo?[]? {
         return bases;
     }
 
@@ -415,7 +415,7 @@ final const class Class : public AggregateType {
      * Return the nested types (classes and interfaces) declared inside this class, if any.
      * Each element is a TypeInfo descriptor.
      */
-    const getNested() : const TypeInfo?[]? {
+    override const getNested() : const TypeInfo?[]? {
         return nested;
     }
 
@@ -423,21 +423,21 @@ final const class Class : public AggregateType {
      * Return the enclosing type that this class is nested in, if any.
      * Returns null if this class is a top-level (non-nested) type.
      */
-    const getEnclosing() : const TypeInfo? {
+    override const getEnclosing() : const TypeInfo? {
         return enclosing;
     }
 
     /**
      * Return the declared visibility of this class.
      */
-    const getVisibility() : Visibility {
+    override const getVisibility() : Visibility {
         return (Visibility) (flags & 3u);
     }
 
     /**
      * Return true if this class is declared as a static nested type.
      */
-    const isStatic() : bool {
+    override const isStatic() : bool {
         return (flags & 4u) != 0u;
     }
 
@@ -499,14 +499,14 @@ final const class AnnotationType : public AggregateType {
     /**
      * Return the name of the annotation type.
      */
-    const getName() : const char[]? {
+    override const getName() : const char[]? {
         return name;
     }
 
     /**
      * Return the fully qualified name of the annotation type.
      */
-    const getFullName() : const char[]? {
+    override const getFullName() : const char[]? {
         return fullName;
     }
 
@@ -514,7 +514,7 @@ final const class AnnotationType : public AggregateType {
      * Return the bases of the annotation type, if any.
      * Each element is a TypeInfo descriptor.
      */
-    const getBases() : const TypeInfo?[]? {
+    override const getBases() : const TypeInfo?[]? {
         return bases;
     }
 
@@ -522,7 +522,7 @@ final const class AnnotationType : public AggregateType {
      * Return the nested types declared inside this annotation type, if any.
      * Each element is a TypeInfo descriptor.
      */
-    const getNested() : const TypeInfo?[]? {
+    override const getNested() : const TypeInfo?[]? {
         return nested;
     }
 
@@ -530,21 +530,21 @@ final const class AnnotationType : public AggregateType {
      * Return the enclosing type that this annotation type is nested in, if any.
      * Returns null if this annotation type is a top-level (non-nested) type.
      */
-    const getEnclosing() : const TypeInfo? {
+    override const getEnclosing() : const TypeInfo? {
         return enclosing;
     }
 
     /**
      * Return the declared visibility of this annotation type.
      */
-    const getVisibility() : Visibility {
+    override const getVisibility() : Visibility {
         return (Visibility) (flags & 3u);
     }
 
     /**
      * Return true if this annotation type is declared as a static nested type.
      */
-    const isStatic() : bool {
+    override const isStatic() : bool {
         return (flags & 4u) != 0u;
     }
 

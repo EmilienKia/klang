@@ -58,7 +58,7 @@ public:
 
     // ── InputStream implementation ───────────────────────────────────────
 
-    read() : ::k::Optional<T> {
+    override read() : ::k::Optional<T> {
         if (_pos >= _count) {
             return ::k::Optional<T>();
         }
@@ -67,7 +67,7 @@ public:
         return ::k::Optional<T>(val);
     }
 
-    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         if (_pos >= _count) {
             // End-of-stream: return 0 bytes read (not an error — stream is open)
             zero : unsigned int = 0;
@@ -89,11 +89,11 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(actual);
     }
 
-    read(buf: T[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: T[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    skip(n: unsigned long) : unsigned long {
+    override skip(n: unsigned long) : unsigned long {
         avail : unsigned long = (unsigned long) (_count - _pos);
         actual : unsigned long = n;
         if (actual > avail) actual = avail;
@@ -101,12 +101,12 @@ public:
         return actual;
     }
 
-    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         avail : unsigned int = (unsigned int) (_count - _pos);
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(avail);
     }
 
-    close() {
+    override close() {
         // Nothing to release for an in-memory stream.
     }
 }
@@ -138,14 +138,14 @@ public:
 
     // ── OutputStream implementation ──────────────────────────────────────
 
-    write(v: T) : OutputStream<T>& {
+    override write(v: T) : OutputStream<T>& {
         _ensureCap(1);
         _buf[_count] = v;
         _count = _count + 1;
         return this;
     }
 
-    write(buf: const T[], off: unsigned int, len: unsigned int) : OutputStream<T>& {
+    override write(buf: const T[], off: unsigned int, len: unsigned int) : OutputStream<T>& {
         if (len == 0) {
             return this;
         }
@@ -159,16 +159,16 @@ public:
         return this;
     }
 
-    write(buf: const T[]) : OutputStream<T>& {
+    override write(buf: const T[]) : OutputStream<T>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
-    flush() : OutputStream<T>& {
+    override flush() : OutputStream<T>& {
         // No-op for in-memory stream.
         return this;
     }
 
-    close() : OutputStream<T>& {
+    override close() : OutputStream<T>& {
         // No-op for in-memory stream.
         return this;
     }

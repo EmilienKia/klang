@@ -54,7 +54,7 @@ public:
 
     // ── InputStream overrides ────────────────────────────────────────────
 
-    read() : ::k::Optional<byte> {
+    override read() : ::k::Optional<byte> {
         if (_bpos >= _bcount) {
             _fill();
             if (_bpos >= _bcount) {
@@ -68,7 +68,7 @@ public:
         return result;
     }
 
-    read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         if (len == 0) {
             zero : unsigned int = 0;
             return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
@@ -120,11 +120,11 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(totalRead);
     }
 
-    read(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         buffered : unsigned int = (unsigned int) (_bcount - _bpos);
         underlying : Expected<unsigned int, ::k::io::StreamOutOfData> = _in->available();
         if (underlying.hasError()) {
@@ -134,7 +134,7 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(total);
     }
 
-    skip(n: unsigned long) : unsigned long {
+    override skip(n: unsigned long) : unsigned long {
         buffered : unsigned long = (unsigned long)(_bcount - _bpos);
         if (buffered >= n) {
             _bpos = _bpos + (int) n;
@@ -147,7 +147,7 @@ public:
         return buffered + skipped;
     }
 
-    close() {
+    override close() {
         _in->close();
     }
 
@@ -200,7 +200,7 @@ public:
 
     // ── OutputStream overrides ───────────────────────────────────────────
 
-    write(b: byte) : OutputStream<byte>& {
+    override write(b: byte) : OutputStream<byte>& {
         if (_bcount >= _bsize) {
             _flushBuffer();
         }
@@ -209,7 +209,7 @@ public:
         return this;
     }
 
-    write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
+    override write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
         if (len == 0) return this;
         // If data is larger than buffer, flush and write directly
         if (len >= (unsigned int) _bsize) {
@@ -231,17 +231,17 @@ public:
         return this;
     }
 
-    write(buf: const byte[]) : OutputStream<byte>& {
+    override write(buf: const byte[]) : OutputStream<byte>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
-    flush() : OutputStream<byte>& {
+    override flush() : OutputStream<byte>& {
         _flushBuffer();
         _out->flush();
         return this;
     }
 
-    close() : OutputStream<byte>& {
+    override close() : OutputStream<byte>& {
         flush();
         _out->close();
         return this;

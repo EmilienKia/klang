@@ -250,12 +250,12 @@ public:
 
     // ── flush / close ────────────────────────────────────────────────────
 
-    flush() : OutputStream<byte>& {
+    override flush() : OutputStream<byte>& {
         _out->flush();
         return this;
     }
 
-    close() : OutputStream<byte>& {
+    override close() : OutputStream<byte>& {
         flush();
         _out->close();
         return this;

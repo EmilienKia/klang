@@ -1358,6 +1358,10 @@ llvm::Value* emit_virtual_dispatch_call(
 //  4. If the vtable is non-empty, attach it to the class and inject a synthetic
 //     __vptr__ field as the first member via klass::inject_vptr_field.
 void symbol_resolver::visit_klass(klass& klass) {
+    if (klass.is_template()) {
+        trace("[symbol_resolver::visit_klass] skipping template '{}'", {klass.get_short_name()});
+        return;
+    }
     trace("[symbol_resolver::visit_klass] '{}'", {klass.get_short_name()});
     // Guard: if this klass was already fully processed (e.g. via accept() from a
     // derived-class base-resolution path), skip both the aggregate processing AND
@@ -1627,6 +1631,10 @@ void signature_resolver::visit_klass(klass& klass) {
  *   8. Generate default constructors and copy constructors if needed.
  */
 void type_reference_resolver::visit_klass(klass& klass) {
+    if (klass.is_template()) {
+        trace("[type_reference_resolver::visit_klass] skipping template '{}'", {klass.get_short_name()});
+        return;
+    }
     trace("[type_reference_resolver::visit_klass] '{}'", {klass.get_short_name()});
     // Step 1: Visit nested aggregates first (depth-first)
     visit_aggregate(klass);
@@ -1678,6 +1686,10 @@ void type_reference_resolver::visit_klass(klass& klass) {
 //  5. Emit a GlobalVariable named after the mangled vtable name with the null initializer
 //     and ExternalLinkage, and store its pointer on the vtable_layout object.
 void declaration_generator::visit_klass(klass& klass) {
+    if (klass.is_template()) {
+        trace("[declaration_generator::visit_klass] skipping template '{}'", {klass.get_short_name()});
+        return;
+    }
     trace("[declaration_generator::visit_klass] '{}'", {klass.get_short_name()});
     // ── Pre-create secondary vtable globals BEFORE visit_aggregate ─────────────
     // Secondary vtable globals must exist before constructors are generated
@@ -2040,6 +2052,10 @@ void declaration_generator::visit_klass(klass& klass) {
 //  4. Replace the GlobalVariable's initializer (previously all-null from declaration
 //     pass) with the now-populated constant struct, completing the vtable.
 void implementation_generator::visit_klass(klass& klass) {
+    if (klass.is_template()) {
+        trace("[implementation_generator::visit_klass] skipping template '{}'", {klass.get_short_name()});
+        return;
+    }
     trace("[implementation_generator::visit_klass] '{}'", {klass.get_short_name()});
     visit_aggregate(klass);
     if (!klass.has_vtable()) return;

@@ -221,7 +221,7 @@ public:
 
     // ── InputStream implementation ───────────────────────────────────────
 
-    read() : ::k::Optional<byte> {
+    override read() : ::k::Optional<byte> {
         if (_fp == null) {
             return ::k::Optional<byte>();
         }
@@ -235,7 +235,7 @@ public:
         return result;
     }
 
-    read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         if (_fp == null) {
             err : ::k::io::StreamOutOfData = ::k::io::StreamOutOfData::Closed;
             return Expected<unsigned int, ::k::io::StreamOutOfData>::error(err);
@@ -256,11 +256,11 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(actual);
     }
 
-    read(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    skip(n: unsigned long) : unsigned long {
+    override skip(n: unsigned long) : unsigned long {
         skipped : unsigned long = 0;
         while (skipped < n) {
             if (read().hasValue() == false) return skipped;
@@ -269,12 +269,12 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         zero : unsigned int = 0;
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(zero);
     }
 
-    close() {
+    override close() {
         if (_fp != null) {
             __k_io_file_fclose(_fp);
             _fp = null;
@@ -348,32 +348,32 @@ public:
 
     // ── OutputStream implementation ──────────────────────────────────────
 
-    write(b: byte) : OutputStream<byte>& {
+    override write(b: byte) : OutputStream<byte>& {
         if (_fp != null) {
             __k_io_file_fwrite_byte(_fp, (int) b);
         }
         return this;
     }
 
-    write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
+    override write(buf: const byte[], off: unsigned int, len: unsigned int) : OutputStream<byte>& {
         if (_fp != null && len > 0) {
             __k_io_file_fwrite(_fp, &buf[off], (int) len);
         }
         return this;
     }
 
-    write(buf: const byte[]) : OutputStream<byte>& {
+    override write(buf: const byte[]) : OutputStream<byte>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
-    flush() : OutputStream<byte>& {
+    override flush() : OutputStream<byte>& {
         if (_fp != null) {
             __k_io_file_fflush(_fp);
         }
         return this;
     }
 
-    close() : OutputStream<byte>& {
+    override close() : OutputStream<byte>& {
         if (_fp != null) {
             __k_io_file_fflush(_fp);
             __k_io_file_fclose(_fp);

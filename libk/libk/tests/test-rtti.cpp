@@ -1211,7 +1211,7 @@ TEST_CASE("RTTI: annotated interface appears in class bases with correct name", 
 
         class Impl : public k::Object, public Describable {
             public Impl() {}
-            const describe() : int { return 7; }
+            override const describe() : int { return 7; }
         }
 
         test_iface_has_annotations() : int {
@@ -1256,7 +1256,7 @@ TEST_CASE("RTTI: unannotated interface appears in class bases", "[libk][rtti][an
 
         class Impl : public k::Object, public Bare {
             public Impl() {}
-            const value() : int { return 0; }
+            override const value() : int { return 0; }
         }
 
         test() : int {
@@ -2999,8 +2999,8 @@ TEST_CASE("Function RTTI: getFunctions() on Interface via bases", "[libk][rtti][
 
         class Impl : public k::Object, public Computable {
             public Impl() {}
-            const compute() : int { return 1; }
-            const reset() : int { return 0; }
+            override const compute() : int { return 1; }
+            override const reset() : int { return 0; }
         }
 
         test() : int {
@@ -3097,7 +3097,7 @@ TEST_CASE("Interface RTTI: getName() via base TypeInfo", "[libk][rtti][interface
 
         class Doc : public k::Object, public Printable {
             public Doc() {}
-            const print() : int { return 0; }
+            override const print() : int { return 0; }
         }
 
         test() : int {
@@ -3144,8 +3144,8 @@ TEST_CASE("Interface RTTI: class with multiple interfaces has correct bases size
 
         class Stream : public k::Object, public Readable, public Writable {
             public Stream() {}
-            const read() : int { return 1; }
-            const write() : int { return 2; }
+            override const read() : int { return 1; }
+            override const write() : int { return 2; }
         }
 
         test() : int {
@@ -3181,7 +3181,7 @@ TEST_CASE("Interface RTTI: annotated interface has annotation name", "[libk][rtt
 
         class Service : public k::Object, public Api {
             public Service() {}
-            const version() : int { return 1; }
+            override const version() : int { return 1; }
         }
 
         test() : int {
@@ -3435,7 +3435,7 @@ TEST_CASE("RTTI: class with base class and interface has both in bases", "[libk]
 
         class Widget : public k::Object, public Drawable {
             public Widget() {}
-            const draw() : int { return 1; }
+            override const draw() : int { return 1; }
         }
 
         test_size() : int {

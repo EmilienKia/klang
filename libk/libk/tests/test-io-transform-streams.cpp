@@ -51,7 +51,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
         public:
             KeepEvenTimesTen(input: k::io::InputStream<int>*) : OneToOneTransformInputStream(input) {}
 
-            transform(in : const int&) : ::k::Optional<int> {
+            override transform(in : const int&) : ::k::Optional<int> {
                 if ((in % 2) != 0) {
                     return ::k::Optional<int>();
                 }
@@ -63,7 +63,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
         public:
             ExpandOddValues(input: k::io::InputStream<long>*) : OneToManyTransformInputStream(input) {}
 
-            transform(in : const long&) : ::k::Vector<long> {
+            override transform(in : const long&) : ::k::Vector<long> {
                 out : ::k::Vector<long>;
                 if (((in % (long) 2)) == (long) 0) {
                     return out;
@@ -78,7 +78,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
         public:
             PairSum(input: k::io::InputStream<int>*) : ManyToOneTransformInputStream(input) {}
 
-            transform(in : const ::k::Vector<int>&) : ::k::Optional<int> {
+            override transform(in : const ::k::Vector<int>&) : ::k::Optional<int> {
                 if (in.size() < 2) {
                     return ::k::Optional<int>();
                 }
@@ -90,7 +90,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
         public:
             TripletExpand(input: k::io::InputStream<int>*) : ManyToManyTransformInputStream(input) {}
 
-            transform(in : const ::k::Vector<int>&) : ::k::Vector<int> {
+            override transform(in : const ::k::Vector<int>&) : ::k::Vector<int> {
                 out : ::k::Vector<int>;
                 if (in.size() < 3) {
                     return out;
@@ -196,7 +196,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
         public:
             KeepPositiveTimesTen(output: k::io::OutputStream<int>*) : OneToOneTransformOutputStream(output) {}
 
-            transform(in : const int&) : ::k::Optional<int> {
+            override transform(in : const int&) : ::k::Optional<int> {
                 if (in < 0) {
                     return ::k::Optional<int>();
                 }
@@ -208,7 +208,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
         public:
             ExpandOddValuesOut(output: k::io::OutputStream<int>*) : OneToManyTransformOutputStream(output) {}
 
-            transform(in : const int&) : ::k::Vector<int> {
+            override transform(in : const int&) : ::k::Vector<int> {
                 out : ::k::Vector<int>;
                 if ((in % 2) == 0) {
                     return out;
@@ -223,7 +223,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
         public:
             PairSumOut(output: k::io::OutputStream<long>*) : ManyToOneTransformOutputStream(output) {}
 
-            transform(in : const ::k::Vector<long>&) : ::k::Optional<long> {
+            override transform(in : const ::k::Vector<long>&) : ::k::Optional<long> {
                 if (in.size() < 2) {
                     return ::k::Optional<long>();
                 }
@@ -235,7 +235,7 @@ TEST_CASE("Transform streams one-to-one and buffering", "[libk][io][transform]")
         public:
             TripletExpandOut(output: k::io::OutputStream<long>*) : ManyToManyTransformOutputStream(output) {}
 
-            transform(in : const ::k::Vector<long>&) : ::k::Vector<long> {
+            override transform(in : const ::k::Vector<long>&) : ::k::Vector<long> {
                 out : ::k::Vector<long>;
                 if (in.size() < 3) {
                     return out;

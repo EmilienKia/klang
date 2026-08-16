@@ -45,27 +45,27 @@ public:
 
     // ── InputStream implementation (all delegated) ───────────────────────
 
-    read() : ::k::Optional<T> {
+    override read() : ::k::Optional<T> {
         return _in->read();
     }
 
-    read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: T[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->read(buf, off, len);
     }
 
-    read(buf: T[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: T[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->read(buf);
     }
 
-    skip(n: unsigned long) : unsigned long {
+    override skip(n: unsigned long) : unsigned long {
         return _in->skip(n);
     }
 
-    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 
-    close() {
+    override close() {
         _in->close();
     }
 }
@@ -96,27 +96,27 @@ public:
 
     // ── OutputStream implementation (all delegated) ──────────────────────
 
-    write(b: T) : OutputStream<T>& {
+    override write(b: T) : OutputStream<T>& {
         _out->write(b);
         return this;
     }
 
-    write(buf: const T[], off: unsigned int, len: unsigned int) : OutputStream<T>& {
+    override write(buf: const T[], off: unsigned int, len: unsigned int) : OutputStream<T>& {
         _out->write(buf, off, len);
         return this;
     }
 
-    write(buf: const T[]) : OutputStream<T>& {
+    override write(buf: const T[]) : OutputStream<T>& {
         _out->write(buf);
         return this;
     }
 
-    flush() : OutputStream<T>& {
+    override flush() : OutputStream<T>& {
         _out->flush();
         return this;
     }
 
-    close() : OutputStream<T>& {
+    override close() : OutputStream<T>& {
         flush();
         _out->close();
         return this;

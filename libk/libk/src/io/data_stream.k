@@ -157,7 +157,7 @@ public:
 
     // ── DataInput implementation ─────────────────────────────────────────
 
-    readByte() : Expected<byte, ::k::io::StreamOutOfData> {
+    override readByte() : Expected<byte, ::k::io::StreamOutOfData> {
         buf : byte[1];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf, 0, 1);
         if (n.hasError()) {
@@ -172,7 +172,7 @@ public:
         return Expected<byte, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readChar() : Expected<char, ::k::io::StreamOutOfData> {
+    override readChar() : Expected<char, ::k::io::StreamOutOfData> {
         buf : byte[1];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf, 0, 1);
         if (n.hasError()) {
@@ -187,7 +187,7 @@ public:
         return Expected<char, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readShort() : Expected<short, ::k::io::StreamOutOfData> {
+    override readShort() : Expected<short, ::k::io::StreamOutOfData> {
         buf : byte[2];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError()) {
@@ -202,7 +202,7 @@ public:
         return Expected<short, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readUnsignedShort() : Expected<unsigned short, ::k::io::StreamOutOfData> {
+    override readUnsignedShort() : Expected<unsigned short, ::k::io::StreamOutOfData> {
         buf : byte[2];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError()) {
@@ -217,7 +217,7 @@ public:
         return Expected<unsigned short, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readInt() : Expected<int, ::k::io::StreamOutOfData> {
+    override readInt() : Expected<int, ::k::io::StreamOutOfData> {
         buf : byte[4];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError()) {
@@ -232,7 +232,7 @@ public:
         return Expected<int, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readUnsignedInt() : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override readUnsignedInt() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         buf : byte[4];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError()) {
@@ -247,7 +247,7 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readLong() : Expected<long, ::k::io::StreamOutOfData> {
+    override readLong() : Expected<long, ::k::io::StreamOutOfData> {
         buf : byte[8];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError()) {
@@ -262,7 +262,7 @@ public:
         return Expected<long, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readUnsignedLong() : Expected<unsigned long, ::k::io::StreamOutOfData> {
+    override readUnsignedLong() : Expected<unsigned long, ::k::io::StreamOutOfData> {
         buf : byte[8];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError()) {
@@ -277,7 +277,7 @@ public:
         return Expected<unsigned long, ::k::io::StreamOutOfData>::expected(v);
     }
 
-    readFloat() : float {
+    override readFloat() : float {
         buf : byte[4];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError() || n.getResult() == 0) { return 0.0f; }
@@ -285,7 +285,7 @@ public:
         return __k_io_bits_to_float(bits);
     }
 
-    readDouble() : double {
+    override readDouble() : double {
         buf : byte[8];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf);
         if (n.hasError() || n.getResult() == 0) { return 0.0; }
@@ -293,14 +293,14 @@ public:
         return __k_io_bits_to_double(bits);
     }
 
-    readBool() : bool {
+    override readBool() : bool {
         buf : byte[1];
         n : Expected<unsigned int, ::k::io::StreamOutOfData> = readFully(buf, 0, 1);
         if (n.hasError() || n.getResult() == 0) { return false; }
         return buf[0] != (byte) 0;
     }
 
-    readFully(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override readFully(buf: byte[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         remaining : unsigned int = len;
         pos : unsigned int = off;
         while (remaining > 0) {
@@ -318,7 +318,7 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(len);
     }
 
-    readFully(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override readFully(buf: byte[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return readFully(buf, 0, (unsigned int) buf.size);
     }
 }
@@ -352,19 +352,19 @@ public:
 
     // ── DataOutput implementation ────────────────────────────────────────
 
-    writeByte(v: byte) : DataOutput& {
+    override writeByte(v: byte) : DataOutput& {
         _out->write(v);
         _written = _written + 1;
         return this;
     }
 
-    writeChar(v: char) : DataOutput& {
+    override writeChar(v: char) : DataOutput& {
         _out->write((byte) v);
         _written = _written + 1;
         return this;
     }
 
-    writeShort(v: short) : DataOutput& {
+    override writeShort(v: short) : DataOutput& {
         buf : byte[2];
         __k_io_short_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
@@ -372,7 +372,7 @@ public:
         return this;
     }
 
-    writeUnsignedShort(v: unsigned short) : DataOutput& {
+    override writeUnsignedShort(v: unsigned short) : DataOutput& {
         buf : byte[2];
         __k_io_short_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
@@ -380,7 +380,7 @@ public:
         return this;
     }
 
-    writeInt(v: int) : DataOutput& {
+    override writeInt(v: int) : DataOutput& {
         buf : byte[4];
         __k_io_int_to_native_bytes(v, &buf[0]);
         _out->write(buf);
@@ -388,7 +388,7 @@ public:
         return this;
     }
 
-    writeUnsignedInt(v: unsigned int) : DataOutput& {
+    override writeUnsignedInt(v: unsigned int) : DataOutput& {
         buf : byte[4];
         __k_io_int_to_native_bytes((int) v, &buf[0]);
         _out->write(buf);
@@ -396,7 +396,7 @@ public:
         return this;
     }
 
-    writeLong(v: long) : DataOutput& {
+    override writeLong(v: long) : DataOutput& {
         buf : byte[8];
         __k_io_long_to_native_bytes(v, &buf[0]);
         _out->write(buf);
@@ -404,22 +404,22 @@ public:
         return this;
     }
 
-    writeUnsignedLong(v: unsigned long) : DataOutput& {
+    override writeUnsignedLong(v: unsigned long) : DataOutput& {
         writeLong((long) v);
         return this;
     }
 
-    writeFloat(v: float) : DataOutput& {
+    override writeFloat(v: float) : DataOutput& {
         writeInt(__k_io_float_to_bits(v));
         return this;
     }
 
-    writeDouble(v: double) : DataOutput& {
+    override writeDouble(v: double) : DataOutput& {
         writeLong(__k_io_double_to_bits(v));
         return this;
     }
 
-    writeBool(v: bool) : DataOutput& {
+    override writeBool(v: bool) : DataOutput& {
         if (v) {
             _out->write((byte) 1);
         } else {

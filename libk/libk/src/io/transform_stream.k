@@ -39,7 +39,7 @@ public:
     /** Default constructor used by compiler-generated subclass constructors. */
     TransformInputStream() : _in(null) {}
 
-    close() {
+    override close() {
         _in->close();
     }
 }
@@ -54,7 +54,7 @@ public:
     OneToOneTransformInputStream(input: InputStream<I>*) : TransformInputStream(input) {}
     OneToOneTransformInputStream() : TransformInputStream() {}
 
-    read() : ::k::Optional<O> {
+    override read() : ::k::Optional<O> {
         current : ::k::Optional<I> = _in->read();
         while (current.hasValue()) {
             result : ::k::Optional<O> = transform(current.get());
@@ -64,7 +64,7 @@ public:
         return ::k::Optional<O>();
     }
 
-    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
@@ -86,11 +86,11 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
 
-    read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    skip(n: unsigned long) : unsigned long {
+    override skip(n: unsigned long) : unsigned long {
         skipped : unsigned long = 0;
         while (skipped < n) {
             next : ::k::Optional<O> = read();
@@ -102,7 +102,7 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 
@@ -123,7 +123,7 @@ public:
     OneToManyTransformInputStream(input: InputStream<I>*) : TransformInputStream(input) {}
     OneToManyTransformInputStream() : TransformInputStream() {}
 
-    read() : ::k::Optional<O> {
+    override read() : ::k::Optional<O> {
         if (!buffer.isEmpty()) {
             result : O = buffer[0];
             buffer.removeFirst();
@@ -143,7 +143,7 @@ public:
         return ::k::Optional<O>();
     }
 
-    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
@@ -176,11 +176,11 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
 
-    read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    skip(n: unsigned long) : unsigned long {
+    override skip(n: unsigned long) : unsigned long {
         skipped : unsigned long = 0;
         while (skipped < n) {
             if (!buffer.isEmpty()) {
@@ -202,7 +202,7 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 
@@ -231,7 +231,7 @@ public:
     ManyToOneTransformInputStream(input: InputStream<I>*) : TransformInputStream(input) {}
     ManyToOneTransformInputStream() : TransformInputStream() {}
 
-    read() : ::k::Optional<O> {
+    override read() : ::k::Optional<O> {
         while (true) {
             current : ::k::Optional<I> = _in->read();
             if (!current.hasValue()) {
@@ -248,7 +248,7 @@ public:
         return ::k::Optional<O>();
     }
 
-    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
@@ -270,11 +270,11 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
 
-    read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    skip(n: unsigned long) : unsigned long {
+    override skip(n: unsigned long) : unsigned long {
         skipped : unsigned long = 0;
         while (skipped < n) {
             next : ::k::Optional<O> = read();
@@ -286,7 +286,7 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 
@@ -308,7 +308,7 @@ public:
     ManyToManyTransformInputStream(input: InputStream<I>*) : TransformInputStream(input) {}
     ManyToManyTransformInputStream() : TransformInputStream() {}
 
-    read() : ::k::Optional<O> {
+    override read() : ::k::Optional<O> {
         if (!outputBuffer.isEmpty()) {
             result : O = outputBuffer[0];
             outputBuffer.removeFirst();
@@ -329,7 +329,7 @@ public:
         return ::k::Optional<O>();
     }
 
-    read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: O[], off: unsigned int, len: unsigned int) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
@@ -363,11 +363,11 @@ public:
         return Expected<unsigned int, ::k::io::StreamOutOfData>::expected(written);
     }
 
-    read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override read(buf: O[]) : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return read(buf, 0, (unsigned int) buf.size);
     }
 
-    skip(n: unsigned long) : unsigned long {
+    override skip(n: unsigned long) : unsigned long {
         skipped : unsigned long = 0;
         while (skipped < n) {
             if (!outputBuffer.isEmpty()) {
@@ -390,7 +390,7 @@ public:
         return skipped;
     }
 
-    available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
+    override available() : Expected<unsigned int, ::k::io::StreamOutOfData> {
         return _in->available();
     }
 
@@ -423,12 +423,12 @@ public:
     TransformOutputStream(output: OutputStream<O>*) : _out(output) {}
     TransformOutputStream() : _out(null) {}
 
-    flush() : OutputStream<I>& {
+    override flush() : OutputStream<I>& {
         _out->flush();
         return this;
     }
 
-    close() : OutputStream<I>& {
+    override close() : OutputStream<I>& {
         flush();
         _out->close();
         return this;
@@ -445,7 +445,7 @@ public:
     OneToOneTransformOutputStream(output: OutputStream<O>*) : TransformOutputStream(output) {}
     OneToOneTransformOutputStream() : TransformOutputStream() {}
 
-    write(value: I) : OutputStream<I>& {
+    override write(value: I) : OutputStream<I>& {
         result : ::k::Optional<O> = transform(value);
         if (result.hasValue()) {
             _out->write(result.get());
@@ -453,7 +453,7 @@ public:
         return this;
     }
 
-    write(buf: const I[], off: unsigned int, len: unsigned int) : OutputStream<I>& {
+    override write(buf: const I[], off: unsigned int, len: unsigned int) : OutputStream<I>& {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
@@ -466,7 +466,7 @@ public:
         return this;
     }
 
-    write(buf: const I[]) : OutputStream<I>& {
+    override write(buf: const I[]) : OutputStream<I>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
@@ -484,12 +484,12 @@ public:
     OneToManyTransformOutputStream(output: OutputStream<O>*) : TransformOutputStream(output) {}
     OneToManyTransformOutputStream() : TransformOutputStream() {}
 
-    write(value: I) : OutputStream<I>& {
+    override write(value: I) : OutputStream<I>& {
         emit(transform(value));
         return this;
     }
 
-    write(buf: const I[], off: unsigned int, len: unsigned int) : OutputStream<I>& {
+    override write(buf: const I[], off: unsigned int, len: unsigned int) : OutputStream<I>& {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
@@ -502,7 +502,7 @@ public:
         return this;
     }
 
-    write(buf: const I[]) : OutputStream<I>& {
+    override write(buf: const I[]) : OutputStream<I>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
@@ -531,7 +531,7 @@ public:
     ManyToOneTransformOutputStream(output: OutputStream<O>*) : TransformOutputStream(output) {}
     ManyToOneTransformOutputStream() : TransformOutputStream() {}
 
-    write(value: I) : OutputStream<I>& {
+    override write(value: I) : OutputStream<I>& {
         buffer.append(value);
         result : ::k::Optional<O> = transform(buffer);
         if (result.hasValue()) {
@@ -541,7 +541,7 @@ public:
         return this;
     }
 
-    write(buf: const I[], off: unsigned int, len: unsigned int) : OutputStream<I>& {
+    override write(buf: const I[], off: unsigned int, len: unsigned int) : OutputStream<I>& {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
@@ -554,7 +554,7 @@ public:
         return this;
     }
 
-    write(buf: const I[]) : OutputStream<I>& {
+    override write(buf: const I[]) : OutputStream<I>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
@@ -576,13 +576,13 @@ public:
     ManyToManyTransformOutputStream(output: OutputStream<O>*) : TransformOutputStream(output) {}
     ManyToManyTransformOutputStream() : TransformOutputStream() {}
 
-    write(value: I) : OutputStream<I>& {
+    override write(value: I) : OutputStream<I>& {
         inputBuffer.append(value);
         transformAndEmit();
         return this;
     }
 
-    write(buf: const I[], off: unsigned int, len: unsigned int) : OutputStream<I>& {
+    override write(buf: const I[], off: unsigned int, len: unsigned int) : OutputStream<I>& {
         actual : unsigned int = len;
         if (off + actual > buf.size) {
             actual = buf.size - off;
@@ -595,11 +595,11 @@ public:
         return this;
     }
 
-    write(buf: const I[]) : OutputStream<I>& {
+    override write(buf: const I[]) : OutputStream<I>& {
         return write(buf, 0, (unsigned int) buf.size);
     }
 
-    flush() : OutputStream<I>& {
+    override flush() : OutputStream<I>& {
         flushBufferedOutputs();
         _out->flush();
         return this;
