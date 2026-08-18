@@ -1,4 +1,4 @@
-# Collections — `Collection<T>`, `Vector<T>`, `LinkedList<T>`, `DoubleLinkedList<T>`
+# Collections — `Sequence<T>`, `MutableSequence<T>`, `Collection<T>`, `Vector<T>`, `LinkedList<T>`, `DoubleLinkedList<T>`
 
 > **Module:** `k`  
 > **Source:** `libk/libk/src/collections.k`  
@@ -8,11 +8,13 @@
 
 ## Overview
 
-The K standard library provides a generic collection framework built on three
-concrete collection classes that all implement the `Collection<T>` interface.
+The K standard library provides a generic collection framework built on interfaces and
+concrete collection classes.
 
 | Type | Description | Backing |
 |------|-------------|---------|
+| `Sequence<T>` | Read-only sequence interface (`forEach`) | (abstract) |
+| `MutableSequence<T>` | Mutable sequence interface (`forEach`) | (abstract) |
 | `Collection<T>` | Common interface for all collections | (abstract) |
 | `LinkedList<T>` | Singly-linked list | `UniSlot<T>` per node |
 | `DoubleLinkedList<T>` | Doubly-linked list | `UniSlot<T>` per node |
@@ -24,11 +26,36 @@ destroyed).
 
 ---
 
+## `Sequence<T>` and `MutableSequence<T>` — Interfaces
+
+```k
+template<typename T>
+interface Sequence {
+    const getSize() : int;
+    const isEmpty() : bool;
+    const forEach(consumer : functional::Consumer<const T&>);
+}
+
+template<typename T>
+interface MutableSequence : public Sequence<T> {
+    forEach(consumer : functional::Consumer<T&>);
+}
+```
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `const forEach(consumer : Consumer<const T&>)` | Invoke `consumer` with a `const T&` reference for each element in sequence order. |
+| `forEach(consumer : Consumer<T&>)` | Invoke `consumer` with a mutable `T&` reference for each element in sequence order. |
+
+---
+
 ## `Collection<T>` — Interface
 
 ```k
 template<typename T>
-interface Collection {
+interface Collection : public MutableSequence<T> {
     getSize() : int;
     isEmpty() : bool;
     pushFront(value : T&);

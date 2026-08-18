@@ -134,6 +134,19 @@ interface MutableMap : public Map<K,V> {
   /** Mutable iterator over the entries: value() can be updated in place, key() cannot. */
   iterator() : Iterator<MutableEntry<K,V>>!;
 
+  /**
+   * Consume a mutable reference of each entry in sequence order.
+   * @param consumer A callable consuming each entry.
+   */
+  default forEach(consumer : functional::Consumer<MutableEntry<K,V>&>) {
+      it : Iterator<MutableEntry<K,V>>! = iterator();
+      cur : OptionalRef<MutableEntry<K,V>> = it.next();
+      while (cur.hasValue()) {
+          consumer(cur.get());
+          cur = it.next();
+      }
+  }
+
   // TODO Add:
   /*
   mutableValues() : MutableView<V>;
@@ -420,6 +433,26 @@ class ListMap : public MutableOrderedMap<K, V> {
     iterator() : Iterator<MutableEntry<K,V>>! {
         return new ListMapIterator<K,V>(_list.iterator());
     }
+
+    /** Consume a const reference of each entry in sequence order. */
+    const forEach(consumer : functional::Consumer<const Entry<K,V>&>) {
+        it : ConstIterator<MapEntry<K,V>>! = _list.constIterator();
+        cur : OptionalConstRef<MapEntry<K,V>> = it.next();
+        while (cur.hasValue()) {
+            consumer(cur.get());
+            cur = it.next();
+        }
+    }
+
+    /** Consume a mutable reference of each entry in sequence order. */
+    forEach(consumer : functional::Consumer<MutableEntry<K,V>&>) {
+        it : Iterator<MapEntry<K,V>>! = _list.iterator();
+        cur : OptionalRef<MapEntry<K,V>> = it.next();
+        while (cur.hasValue()) {
+            consumer(cur.get());
+            cur = it.next();
+        }
+    }
 }
 
 /**
@@ -568,6 +601,24 @@ class TreeMap : public MutableSortedMap<K, V> {
 
     static balanceFactor(node : TreeMapNode<K,V>*) : int {
         return height(node->_left) - height(node->_right);
+    }
+
+    static forEachNode(node : TreeMapNode<K,V>*, consumer : functional::Consumer<const Entry<K,V>&>) {
+        if (node == null) {
+            return;
+        }
+        forEachNode(node->_left, consumer);
+        consumer(node->_entry);
+        forEachNode(node->_right, consumer);
+    }
+
+    static forEachNodeMut(node : TreeMapNode<K,V>*, consumer : functional::Consumer<MutableEntry<K,V>&>) {
+        if (node == null) {
+            return;
+        }
+        forEachNodeMut(node->_left, consumer);
+        consumer(node->_entry);
+        forEachNodeMut(node->_right, consumer);
     }
 
     /** Right rotation around y: promotes y's left child. Returns the new subtree root. */
@@ -890,6 +941,16 @@ class TreeMap : public MutableSortedMap<K, V> {
     /** Mutable ascending (in-order, by key) iterator over the entries. */
     iterator() : Iterator<MutableEntry<K,V>>! {
         return new TreeMapIterator<K,V>(_root);
+    }
+
+    /** Consume a const reference of each entry in sequence order. */
+    const forEach(consumer : functional::Consumer<const Entry<K,V>&>) {
+        forEachNode(_root, consumer);
+    }
+
+    /** Consume a mutable reference of each entry in sequence order. */
+    forEach(consumer : functional::Consumer<MutableEntry<K,V>&>) {
+        forEachNodeMut(_root, consumer);
     }
 }
 
@@ -1337,6 +1398,34 @@ class HashMap : public MutableMap<K, V> {
     /** Mutable iterator over the entries. Order is unspecified. */
     iterator() : Iterator<MutableEntry<K,V>>! {
         return new HashMapIterator<K,V>(_buckets);
+    }
+
+    /** Consume a const reference of each entry in sequence order. */
+    const forEach(consumer : functional::Consumer<const Entry<K,V>&>) {
+        bi : unsigned int = 0;
+        while (bi < _buckets.size()) {
+            chain : HashMapChain<K,V>* = _buckets.get(bi);
+            node : const HashMapNode<K,V>* = chain->_head;
+            while (node != null) {
+                consumer(node->_entry);
+                node = node->_next;
+            }
+            ++bi;
+        }
+    }
+
+    /** Consume a mutable reference of each entry in sequence order. */
+    forEach(consumer : functional::Consumer<MutableEntry<K,V>&>) {
+        bi : unsigned int = 0;
+        while (bi < _buckets.size()) {
+            chain : HashMapChain<K,V>* = _buckets.get(bi);
+            node : HashMapNode<K,V>* = chain->_head;
+            while (node != null) {
+                consumer(node->_entry);
+                node = node->_next;
+            }
+            ++bi;
+        }
     }
 }
 

@@ -167,8 +167,12 @@ class LinkedList : public MutableIndexedCollection<T> {
     }
 
     appendAll(coll : Sequence<T>&) {
-       // TODO: generic Sequence<T> traversal in stdlib currently lacks a stable dispatch path.
-       // Keep API surface and provide concrete overloads below.
+       it : ConstIterator<T>! = coll.constIterator();
+       cur : OptionalConstRef<T> = it.next();
+       while (cur.hasValue()) {
+           append(cur.get());
+           cur = it.next();
+       }
     }
 
     appendAll(coll : const T[]&) {
@@ -456,6 +460,30 @@ class LinkedList : public MutableIndexedCollection<T> {
     }
 
     /**
+     * Consume a const reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    const forEach(consumer : functional::Consumer<const T&>) {
+        current : LinkedListNode* = _head;
+        while (current != null) {
+            consumer(current->getValue());
+            current = current->_next;
+        }
+    }
+
+    /**
+     * Consume a mutable reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    forEach(consumer : functional::Consumer<T&>) {
+        current : LinkedListNode* = _head;
+        while (current != null) {
+            consumer(current->getValue());
+            current = current->_next;
+        }
+    }
+
+    /**
      * Return true if the list contains an element equal to value.
      * O(n) traversal to check each element.
      */
@@ -660,8 +688,12 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
     }
 
     appendAll(coll : Sequence<T>&) {
-        // TODO: generic Sequence<T> traversal in stdlib currently lacks a stable dispatch path.
-        // Keep API surface and provide concrete overloads below.
+        it : ConstIterator<T>! = coll.constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        while (cur.hasValue()) {
+            append(cur.get());
+            cur = it.next();
+        }
     }
 
     appendAll(coll : const T[]&) {
@@ -1070,6 +1102,30 @@ class DoubleLinkedList : public MutableIndexedCollection<T>, public MutableRever
      */
     iterator() : Iterator<T>! {
         return new DoubleLinkedListIterator<T>(this);
+    }
+
+    /**
+     * Consume a const reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    const forEach(consumer : functional::Consumer<const T&>) {
+        current : DoubleLinkedListNode* = _head;
+        while (current != null) {
+            consumer(current->getValue());
+            current = current->_next;
+        }
+    }
+
+    /**
+     * Consume a mutable reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    forEach(consumer : functional::Consumer<T&>) {
+        current : DoubleLinkedListNode* = _head;
+        while (current != null) {
+            consumer(current->getValue());
+            current = current->_next;
+        }
     }
 
     /**

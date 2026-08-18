@@ -83,6 +83,19 @@ interface Sequence {
      */
     const constIterator() : ConstIterator<T>!;
 
+    /**
+     * Consume a const reference of each element in the sequence, in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    default const forEach(consumer : functional::Consumer<const T&>) {
+        it : ConstIterator<T>! = constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        while (cur.hasValue()) {
+            consumer(cur.get());
+            cur = it.next();
+        }
+    }
+
 /*
     // TODO implement following manipulators:
     map<U>(f: Function<T, U>) -> Sequence<U>;
@@ -104,6 +117,19 @@ interface MutableSequence : public Sequence<T> {
      * @return An Iterator<T> allowing in-place modification during traversal.
      */
     iterator() : Iterator<T>!;
+
+    /**
+     * Consume a mutable reference of each element in the sequence, in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    default forEach(consumer : functional::Consumer<T&>) {
+        it : Iterator<T>! = iterator();
+        cur : OptionalRef<T> = it.next();
+        while (cur.hasValue()) {
+            consumer(cur.get());
+            cur = it.next();
+        }
+    }
 }
 
 template<typename T>
@@ -285,7 +311,14 @@ interface Appendable {
      * Append all elements from another collection to the end of this collection.
      * @param coll The collection to append.
      */
-    appendAll(coll : Sequence<T>&);
+    default appendAll(coll : Sequence<T>&) {
+        it : ConstIterator<T>! = coll.constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        while (cur.hasValue()) {
+            append(cur.get());
+            cur = it.next();
+        }
+    }
 }
 
 template<typename T>

@@ -116,13 +116,18 @@ Scope: K stdlib modules, runtime C substrate, FFI bridges, and libk test executa
 
 ## 5. Tests in this subtree
 
-- `libk-tests`: functional stdlib tests.
+- `libk-tests-core`: functional core stdlib tests (exceptions, RTTI, strings, math, shared).
+- `libk-tests-collections-io`: collections and synchronous stream/file/path I/O tests.
 - `libk-thread-io-tests`: thread/future/sync/file/network tests.
 - `libk-perf-tests` (optional): stress/perf suite (`-DLIBK_PERF_TESTS=ON`).
 
+### Scoped session rule
+
+If in a working session, only `libk` changes (`.c` and/or `.k`), only recompile `libk` and run `libk` tests each time. Do not run the full project test suite (compiler and kdi tools are unaffected).
+
 ```bash
 # Build libk tests
-cd cmake-build-debug && ninja -j3 libk-tests libk-thread-io-tests
+cd cmake-build-debug && ninja -j3 libk-tests-core libk-tests-collections-io libk-thread-io-tests
 
 # Run libk tests
 cd cmake-build-debug && ctest -R "libk-tests|libk-thread-io-tests" --output-on-failure

@@ -209,6 +209,22 @@ class ListSet : public MutableOrderedSet<T>, public MutableReversibleSequence<T>
         return _list.iterator();
     }
 
+    /**
+     * Consume a const reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    const forEach(consumer : functional::Consumer<const T&>) {
+        _list.forEach(consumer);
+    }
+
+    /**
+     * Consume a mutable reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    forEach(consumer : functional::Consumer<T&>) {
+        _list.forEach(consumer);
+    }
+
     /** Return a read-only reverse iterator over the elements of the set. */
     const constReverseIterator() : ConstIterator<T>! {
         return _list.constReverseIterator();
@@ -314,6 +330,24 @@ class TreeSet : public MutableSortedSet<T>, public MutableReversibleSequence<T> 
 
     static balanceFactor(node : TreeSetNode<T>*) : int {
         return height(node->_left) - height(node->_right);
+    }
+
+    static forEachNode(node : TreeSetNode<T>*, consumer : functional::Consumer<const T&>) {
+        if (node == null) {
+            return;
+        }
+        forEachNode(node->_left, consumer);
+        consumer(node->getValue());
+        forEachNode(node->_right, consumer);
+    }
+
+    static forEachNodeMut(node : TreeSetNode<T>*, consumer : functional::Consumer<T&>) {
+        if (node == null) {
+            return;
+        }
+        forEachNodeMut(node->_left, consumer);
+        consumer(node->getValue());
+        forEachNodeMut(node->_right, consumer);
     }
 
     /** Right rotation around y: promotes y's left child. Returns the new subtree root. */
@@ -450,6 +484,11 @@ class TreeSet : public MutableSortedSet<T>, public MutableReversibleSequence<T> 
         delete n;
     }
 
+    TreeSet() {
+        _root = null;
+        _size = 0;
+    }
+
     ~TreeSet() {
         clear();
     }
@@ -545,6 +584,22 @@ class TreeSet : public MutableSortedSet<T>, public MutableReversibleSequence<T> 
     /** Return a mutable ascending iterator over the elements of the set. */
     iterator() : Iterator<T>! {
         return new TreeSetIterator<T>(_root);
+    }
+
+    /**
+     * Consume a const reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    const forEach(consumer : functional::Consumer<const T&>) {
+        forEachNode(_root, consumer);
+    }
+
+    /**
+     * Consume a mutable reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    forEach(consumer : functional::Consumer<T&>) {
+        forEachNodeMut(_root, consumer);
     }
 
     /** Return a read-only descending iterator over the elements of the set. */
@@ -1010,6 +1065,40 @@ class HashSet : public MutableSet<T>, public MutableReversibleSequence<T> {
     /** Return a mutable iterator over the elements of the set. Order is unspecified. */
     iterator() : Iterator<T>! {
         return new HashSetIterator<T>(_buckets);
+    }
+
+    /**
+     * Consume a const reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    const forEach(consumer : functional::Consumer<const T&>) {
+        bi : unsigned int = 0;
+        while (bi < _buckets.size()) {
+            chain : HashSetChain<T>* = _buckets.get(bi);
+            node : const HashSetNode<T>* = chain->_head;
+            while (node != null) {
+                consumer(node->getValue());
+                node = node->_next;
+            }
+            ++bi;
+        }
+    }
+
+    /**
+     * Consume a mutable reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    forEach(consumer : functional::Consumer<T&>) {
+        bi : unsigned int = 0;
+        while (bi < _buckets.size()) {
+            chain : HashSetChain<T>* = _buckets.get(bi);
+            node : HashSetNode<T>* = chain->_head;
+            while (node != null) {
+                consumer(node->getValue());
+                node = node->_next;
+            }
+            ++bi;
+        }
     }
 
     /** Return a read-only reverse iterator over the elements of the set. Order is unspecified. */

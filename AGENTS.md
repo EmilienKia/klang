@@ -72,6 +72,17 @@ cd cmake-build-debug && ninja -j3
 cd cmake-build-debug && ctest --output-on-failure
 ```
 
+### 3.1 Scoped build/test policy
+
+- If in a working session, only `libk` changes (`.c` and/or `.k`), then only recompile `libk` and run `libk` tests each time. No need to run all project tests (the compiler and kdi tools are unaffected).
+```bash
+# Build libk tests
+cd cmake-build-debug && ninja -j3 libk-tests-core libk-tests-collections-io libk-thread-io-tests
+
+# Run libk tests
+cd cmake-build-debug && ctest -R "libk-tests|libk-thread-io-tests" --output-on-failure
+```
+
 ---
 
 ## 4. Cross-cutting quality policy

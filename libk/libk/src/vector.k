@@ -18,7 +18,6 @@
 
 module k;
 
-
 /**
  * Vector<T> — a dynamic array storing elements contiguously in memory.
  *
@@ -144,8 +143,12 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     }
 
     appendAll(coll : Sequence<T>&) {
-        // TODO: generic Sequence<T> traversal in stdlib currently lacks a stable dispatch path.
-        // Keep API surface and provide concrete overloads below.
+        it : ConstIterator<T>! = coll.constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        while (cur.hasValue()) {
+            append(cur.get());
+            cur = it.next();
+        }
     }
 
     appendAll(coll : const T[]&) {
@@ -366,6 +369,30 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
      */
     iterator() : Iterator<T>! {
         return new VectorIterator<T>(this, 0);
+    }
+
+    /**
+     * Consume a const reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    const forEach(consumer : functional::Consumer<const T&>) {
+        i : unsigned int = 0;
+        while (i < _size) {
+            consumer(_slot.get(i));
+            ++i;
+        }
+    }
+
+    /**
+     * Consume a mutable reference of each element in sequence order.
+     * @param consumer A callable consuming each element.
+     */
+    forEach(consumer : functional::Consumer<T&>) {
+        i : unsigned int = 0;
+        while (i < _size) {
+            consumer(_slot.get(i));
+            ++i;
+        }
     }
 
     /**

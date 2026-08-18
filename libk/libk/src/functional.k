@@ -23,9 +23,9 @@ template<typename T>
 alias Predicate : *(T):bool;
 
 // Consumer<T> — a callable that accepts one input and returns nothing
-// Equivalent to: *(T):void
+// Equivalent to: *(T)
 template<typename T>
-alias Consumer : *(T):void;
+alias Consumer : *(T);
 
 // Supplier<T> — a callable that takes no inputs and returns an output
 // Equivalent to: *():T
@@ -54,9 +54,9 @@ template<typename T, typename U>
 alias BiPredicate : *(T, U):bool;
 
 // BiConsumer<T, U> — a callable that accepts two inputs and returns nothing
-// Equivalent to: *(T, U):void
+// Equivalent to: *(T, U)
 template<typename T, typename U>
-alias BiConsumer : *(T, U):void;
+alias BiConsumer : *(T, U);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Composable function aliases (for future feature: compose/andThen)
