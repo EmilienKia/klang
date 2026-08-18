@@ -211,6 +211,15 @@ public:
         const std::shared_ptr<type>& kind_of,
         const std::shared_ptr<type>& inner);
 
+    static std::shared_ptr<const_type> make_pinned_const(const std::shared_ptr<type>& inner);
+    static std::shared_ptr<reference_type> make_pinned_reference(const std::shared_ptr<type>& inner);
+    static std::shared_ptr<pointer_type> make_pinned_pointer(const std::shared_ptr<type>& inner);
+    static std::shared_ptr<link_type> make_pinned_link(const std::shared_ptr<type>& inner);
+    static std::shared_ptr<view_type> make_pinned_view(const std::shared_ptr<type>& inner);
+    static std::shared_ptr<owner_type> make_pinned_owner(const std::shared_ptr<type>& inner);
+    static std::shared_ptr<drain_type> make_pinned_drain(const std::shared_ptr<type>& inner);
+    static std::shared_ptr<array_type> make_pinned_array(const std::shared_ptr<type>& inner);
+
     virtual llvm::Type* get_llvm_type() const;
 
     virtual llvm::Constant* generate_default_value_initializer() const;
@@ -307,6 +316,10 @@ public:
     const std::vector<std::shared_ptr<type>>& get_model_template_args() const {
         return _model_template_args;
     }
+
+    static std::shared_ptr<type> substitute_ast_type_spec(
+        const k::parse::ast::type_specifier* spec,
+        const std::unordered_map<std::string, std::shared_ptr<type>>& subst);
 
     /**
      * Create a clone of this unresolved_type with model-level template arg overrides

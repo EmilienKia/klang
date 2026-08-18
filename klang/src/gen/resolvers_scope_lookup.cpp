@@ -742,8 +742,10 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
             }
         }
 
-        arg_type = resolve_chain(arg_type, context_elem);
-        if (!arg_type || !type::is_resolved(arg_type)) {
+        if (auto res_arg = resolve_chain(arg_type, context_elem)) {
+            arg_type = res_arg;
+        }
+        if (!arg_type) {
             report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH),
                          "Template argument for parameter '{}' of parameterised {} '{}' could not be resolved",
                          {param.name, kind, alias->get_short_name()});
@@ -763,13 +765,16 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
                      {kind, alias->get_short_name()});
     }
 
-    auto substituted = resolve_chain(substitute_type(target, subst), context_elem);
+    auto substituted = substitute_type(target, subst);
+    if (auto res_sub = resolve_chain(substituted, context_elem)) {
+        substituted = res_sub;
+    }
     if (substituted && !type::is_resolved(substituted)) {
         if (auto retry = ctx->resolve_type(substituted)) {
             if (type::is_resolved(retry)) substituted = retry;
         }
     }
-    if (!substituted || !type::is_resolved(substituted)) {
+    if (!substituted) {
         report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_TARGET_UNRESOLVED),
                      "The renamed type of parameterised {} '{}' could not be resolved with the given arguments",
                      {kind, alias->get_short_name()});

@@ -1681,12 +1681,14 @@ std::shared_ptr<callable_type> context::readdress(
 }
 
 std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& t) {
+    if (!t) return nullptr;
     // An indirection applied to a name that turns out to denote a callable
     // re-addresses it instead of wrapping it (see collapse_callable_addresser).
     return collapse_callable_addresser(resolve_type_uncollapsed(t));
 }
 
 std::shared_ptr<type> context::resolve_type_uncollapsed(const std::shared_ptr<type>& type) {
+    if (!type) return nullptr;
     if (type->is_resolved() && !type::contains_unresolved(type)) {
         return type;
     }

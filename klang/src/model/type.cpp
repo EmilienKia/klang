@@ -169,6 +169,62 @@ std::shared_ptr<sized_array_type> type::get_array(unsigned long size)
     return get_array()->with_size(size);
 }
 
+std::shared_ptr<const_type> type::make_pinned_const(const std::shared_ptr<type>& inner) {
+    if (!inner) return nullptr;
+    auto wrapper = std::shared_ptr<const_type>(new const_type(inner));
+    wrapper->_pinned_subtype = inner;
+    return wrapper;
+}
+
+std::shared_ptr<reference_type> type::make_pinned_reference(const std::shared_ptr<type>& inner) {
+    if (!inner) return nullptr;
+    auto wrapper = std::shared_ptr<reference_type>(new reference_type(inner));
+    wrapper->_pinned_subtype = inner;
+    return wrapper;
+}
+
+std::shared_ptr<pointer_type> type::make_pinned_pointer(const std::shared_ptr<type>& inner) {
+    if (!inner) return nullptr;
+    auto wrapper = std::shared_ptr<pointer_type>(new pointer_type(inner));
+    wrapper->_pinned_subtype = inner;
+    return wrapper;
+}
+
+std::shared_ptr<link_type> type::make_pinned_link(const std::shared_ptr<type>& inner) {
+    if (!inner) return nullptr;
+    auto wrapper = std::shared_ptr<link_type>(new link_type(inner));
+    wrapper->_pinned_subtype = inner;
+    return wrapper;
+}
+
+std::shared_ptr<view_type> type::make_pinned_view(const std::shared_ptr<type>& inner) {
+    if (!inner) return nullptr;
+    auto wrapper = std::shared_ptr<view_type>(new view_type(inner));
+    wrapper->_pinned_subtype = inner;
+    return wrapper;
+}
+
+std::shared_ptr<owner_type> type::make_pinned_owner(const std::shared_ptr<type>& inner) {
+    if (!inner) return nullptr;
+    auto wrapper = std::shared_ptr<owner_type>(new owner_type(inner));
+    wrapper->_pinned_subtype = inner;
+    return wrapper;
+}
+
+std::shared_ptr<drain_type> type::make_pinned_drain(const std::shared_ptr<type>& inner) {
+    if (!inner) return nullptr;
+    auto wrapper = std::shared_ptr<drain_type>(new drain_type(inner));
+    wrapper->_pinned_subtype = inner;
+    return wrapper;
+}
+
+std::shared_ptr<array_type> type::make_pinned_array(const std::shared_ptr<type>& inner) {
+    if (!inner) return nullptr;
+    auto wrapper = std::shared_ptr<array_type>(new array_type(inner));
+    wrapper->_pinned_subtype = inner;
+    return wrapper;
+}
+
 std::shared_ptr<type> type::make_pinned_wrapper(
     const std::shared_ptr<type>& kind_of,
     const std::shared_ptr<type>& inner)
@@ -177,29 +233,25 @@ std::shared_ptr<type> type::make_pinned_wrapper(
         return nullptr;
     }
 
-    std::shared_ptr<type> wrapper;
     if (is_reference(kind_of)) {
-        wrapper = std::shared_ptr<reference_type>(new reference_type(inner));
+        return make_pinned_reference(inner);
     } else if (is_pointer(kind_of)) {
-        wrapper = std::shared_ptr<pointer_type>(new pointer_type(inner));
+        return make_pinned_pointer(inner);
     } else if (is_link(kind_of)) {
-        wrapper = std::shared_ptr<link_type>(new link_type(inner));
+        return make_pinned_link(inner);
     } else if (is_view(kind_of)) {
-        wrapper = std::shared_ptr<view_type>(new view_type(inner));
+        return make_pinned_view(inner);
     } else if (is_owner(kind_of)) {
-        wrapper = std::shared_ptr<owner_type>(new owner_type(inner));
+        return make_pinned_owner(inner);
     } else if (is_drain(kind_of)) {
-        wrapper = std::shared_ptr<drain_type>(new drain_type(inner));
+        return make_pinned_drain(inner);
     } else if (is_const(kind_of)) {
-        wrapper = std::shared_ptr<const_type>(new const_type(inner));
+        return make_pinned_const(inner);
     } else if (is_array(kind_of) && !is_sized_array(kind_of)) {
-        wrapper = std::shared_ptr<array_type>(new array_type(inner));
+        return make_pinned_array(inner);
     } else {
         return nullptr;
     }
-
-    wrapper->_pinned_subtype = inner;
-    return wrapper;
 }
 
 llvm::Type* type::get_llvm_type() const {
@@ -219,6 +271,63 @@ std::string unresolved_type::to_string() const {
     return "<<unresolved:" + _type_id.to_string() + ">>";
 }
 
+std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
+    const k::parse::ast::type_specifier* spec,
+    const std::unordered_map<std::string, std::shared_ptr<type>>& subst)
+{
+    if (!spec) return nullptr;
+
+    if (auto ct = dynamic_cast<const k::parse::ast::const_type_specifier*>(spec)) {
+        auto sub = substitute_ast_type_spec(ct->subtype.get(), subst);
+        return sub ? type::make_pinned_const(sub) : nullptr;
+    }
+    if (auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(spec)) {
+        auto sub = substitute_ast_type_spec(ptr->subtype.get(), subst);
+        if (!sub) return nullptr;
+        if (ptr->pointer_type == k::lex::operator_::AMPERSAND) return type::make_pinned_reference(sub);
+        if (ptr->pointer_type == k::lex::operator_::STAR) return type::make_pinned_pointer(sub);
+        if (ptr->pointer_type == k::lex::operator_::PLUS) return type::make_pinned_link(sub);
+        if (ptr->pointer_type == k::lex::operator_::QUESTION_MARK) return type::make_pinned_view(sub);
+        if (ptr->pointer_type == k::lex::operator_::HASH) return type::make_pinned_drain(sub);
+        return nullptr;
+    }
+    if (auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(spec)) {
+        auto sub = substitute_ast_type_spec(own->subtype.get(), subst);
+        return sub ? type::make_pinned_owner(sub) : nullptr;
+    }
+    if (auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(spec)) {
+        auto sub = substitute_ast_type_spec(arr->subtype.get(), subst);
+        if (!sub) return nullptr;
+        if (arr->lex_int) return sub->get_array(arr->lex_int->to_unsigned_int());
+        return type::make_pinned_array(sub);
+    }
+    if (auto id_spec = dynamic_cast<const k::parse::ast::identified_type_specifier*>(spec)) {
+        // A nested template reference (e.g. Box<T> in Pair<Box<T>, int>) is
+        // substituted recursively, so that the enclosing substitution reaches
+        // every parameter occurrence even where no instantiation scope makes
+        // the parameter names visible (parameterised aliases).
+        if (id_spec->has_explicit_template_args) {
+            auto nested = std::shared_ptr<unresolved_type>(
+                new unresolved_type(id_spec->name.to_name()));
+            nested->_ast_template_args = id_spec->template_args;
+            nested->_has_explicit_template_args = true;
+            if (auto cloned = nested->clone_with_substituted_model_args(subst)) {
+                return cloned;
+            }
+            return nested;
+        }
+        if (id_spec->name.size() == 1) {
+            std::string arg_name{id_spec->name.names[0].content};
+            auto sit = subst.find(arg_name);
+            if (sit != subst.end() && sit->second) {
+                return sit->second;
+            }
+        }
+        return std::shared_ptr<unresolved_type>(new unresolved_type(id_spec->name.to_name()));
+    }
+    return nullptr;
+}
+
 std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_args(
     const std::unordered_map<std::string, std::shared_ptr<type>>& subst) const
 {
@@ -233,37 +342,9 @@ std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_a
             model_args.push_back(nullptr);
             continue;
         }
-        auto id_spec = dynamic_cast<const k::parse::ast::identified_type_specifier*>(
-            ast_arg->type_arg.get());
-        if (!id_spec) {
-            model_args.push_back(nullptr);
-            continue;
-        }
-        // A nested template reference (e.g. Box<T> in Pair<Box<T>, int>) is
-        // substituted recursively, so that the enclosing substitution reaches
-        // every parameter occurrence even where no instantiation scope makes
-        // the parameter names visible (parameterised aliases).
-        if (id_spec->has_explicit_template_args) {
-            auto nested = std::shared_ptr<unresolved_type>(
-                new unresolved_type(id_spec->name.to_name()));
-            nested->_ast_template_args = id_spec->template_args;
-            nested->_has_explicit_template_args = true;
-            if (auto substituted_nested = nested->clone_with_substituted_model_args(subst)) {
-                model_args.push_back(substituted_nested);
-                any_substituted = true;
-            } else {
-                model_args.push_back(nullptr);
-            }
-            continue;
-        }
-        if (id_spec->name.size() != 1) {
-            model_args.push_back(nullptr);
-            continue;
-        }
-        std::string arg_name{id_spec->name.names[0].content};
-        auto sit = subst.find(arg_name);
-        if (sit != subst.end() && sit->second) {
-            model_args.push_back(sit->second);
+        auto sub = substitute_ast_type_spec(ast_arg->type_arg.get(), subst);
+        if (sub) {
+            model_args.push_back(sub);
             any_substituted = true;
         } else {
             model_args.push_back(nullptr);
@@ -388,12 +469,17 @@ type(subtype)
 
 bool pointer_type::is_resolved() const
 {
-    return subtype.lock()->is_resolved();
+    auto sub = subtype.lock();
+    return sub ? sub->is_resolved() : false;
 }
 
 llvm::Type* pointer_type::get_llvm_type() const {
-    if(_llvm_type==nullptr && is_resolved()) {
-        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
+    auto sub = subtype.lock();
+    if(_llvm_type==nullptr && sub && is_resolved()) {
+        auto sub_llvm = sub->get_llvm_type();
+        if (sub_llvm) {
+            _llvm_type = llvm::PointerType::get(sub_llvm, 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
+        }
     }
     return _llvm_type;
 }
@@ -417,7 +503,8 @@ type(subtype)
 
 bool reference_type::is_resolved() const
 {
-    return subtype.lock()->is_resolved();
+    auto sub = subtype.lock();
+    return sub ? sub->is_resolved() : false;
 }
 
 /*
@@ -427,8 +514,9 @@ std::shared_ptr<reference_type> reference_type::get_reference() {
 */
 
 llvm::Type* reference_type::get_llvm_type() const {
-    if(_llvm_type==nullptr && is_resolved()) {
-        auto llvm_subtype = subtype.lock()->get_llvm_type();
+    auto sub = subtype.lock();
+    if(_llvm_type==nullptr && sub && is_resolved()) {
+        auto llvm_subtype = sub->get_llvm_type();
         if (!llvm_subtype) return nullptr;
         _llvm_type = llvm::PointerType::get(llvm_subtype, 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
     }
@@ -453,12 +541,17 @@ type(subtype)
 
 bool link_type::is_resolved() const
 {
-    return subtype.lock()->is_resolved();
+    auto sub = subtype.lock();
+    return sub ? sub->is_resolved() : false;
 }
 
 llvm::Type* link_type::get_llvm_type() const {
-    if(_llvm_type==nullptr && is_resolved()) {
-        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0);
+    auto sub = subtype.lock();
+    if(_llvm_type==nullptr && sub && is_resolved()) {
+        auto sub_llvm = sub->get_llvm_type();
+        if (sub_llvm) {
+            _llvm_type = llvm::PointerType::get(sub_llvm, 0);
+        }
     }
     return _llvm_type;
 }
@@ -481,12 +574,14 @@ type(subtype)
 
 bool view_type::is_resolved() const
 {
-    return subtype.lock()->is_resolved();
+    auto sub = subtype.lock();
+    return sub ? sub->is_resolved() : false;
 }
 
 llvm::Type* view_type::get_llvm_type() const {
-    if(_llvm_type==nullptr && is_resolved()) {
-        auto* sub_llvm = subtype.lock()->get_llvm_type();
+    auto sub = subtype.lock();
+    if(_llvm_type==nullptr && sub && is_resolved()) {
+        auto* sub_llvm = sub->get_llvm_type();
         if (!sub_llvm) return nullptr;
         _llvm_type = llvm::PointerType::get(sub_llvm, 0);
     }
@@ -511,12 +606,17 @@ type(subtype)
 
 bool owner_type::is_resolved() const
 {
-    return subtype.lock()->is_resolved();
+    auto sub = subtype.lock();
+    return sub ? sub->is_resolved() : false;
 }
 
 llvm::Type* owner_type::get_llvm_type() const {
-    if(_llvm_type==nullptr && is_resolved()) {
-        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0);
+    auto sub = subtype.lock();
+    if(_llvm_type==nullptr && sub && is_resolved()) {
+        auto sub_llvm = sub->get_llvm_type();
+        if (sub_llvm) {
+            _llvm_type = llvm::PointerType::get(sub_llvm, 0);
+        }
     }
     return _llvm_type;
 }
@@ -539,12 +639,17 @@ type(subtype)
 
 bool drain_type::is_resolved() const
 {
-    return subtype.lock()->is_resolved();
+    auto sub = subtype.lock();
+    return sub ? sub->is_resolved() : false;
 }
 
 llvm::Type* drain_type::get_llvm_type() const {
-    if(_llvm_type==nullptr && is_resolved()) {
-        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0);
+    auto sub = subtype.lock();
+    if(_llvm_type==nullptr && sub && is_resolved()) {
+        auto sub_llvm = sub->get_llvm_type();
+        if (sub_llvm) {
+            _llvm_type = llvm::PointerType::get(sub_llvm, 0);
+        }
     }
     return _llvm_type;
 }
@@ -567,7 +672,8 @@ type(subtype)
 
 bool const_type::is_resolved() const
 {
-    return subtype.lock()->is_resolved();
+    auto sub = subtype.lock();
+    return sub ? sub->is_resolved() : false;
 }
 
 llvm::Type* const_type::get_llvm_type() const {
@@ -595,7 +701,8 @@ array_type::array_type(std::shared_ptr<type> subtype) :
 
 bool array_type::is_resolved() const
 {
-    return subtype.lock()->is_resolved();
+    auto sub = subtype.lock();
+    return sub ? sub->is_resolved() : false;
 }
 
 bool array_type::is_sized() const {

@@ -340,6 +340,9 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
         else if constexpr (std::is_same_v<T, kdi::kdi_template_param_ref>) {
             return ctx->from_string(v.name);
         }
+        else if constexpr (std::is_same_v<T, kdi::kdi_generic_ref_type>) {
+            return ctx->from_string(v.name);
+        }
         else {
             return nullptr;
         }

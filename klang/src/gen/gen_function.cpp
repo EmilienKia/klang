@@ -347,6 +347,9 @@ void symbol_resolver::visit_function(function& fn) {
         trace("[symbol_resolver::visit_function] skipping template '{}'", {fn.get_short_name()});
         return;
     }
+    if (auto owner = fn.get_owner(); owner && owner->is_template()) {
+        return;
+    }
     trace("[symbol_resolver::visit_function] '{}'", {fn.get_short_name()});
     visit_named_element(fn);
 
@@ -648,6 +651,7 @@ void signature_resolver::check_typedef_overload(function& fn) {
 void signature_resolver::visit_function(function& fn) {
     // Skip template definitions — they are not instantiated yet.
     if (fn.is_template()) return;
+    if (auto owner = fn.get_owner(); owner && owner->is_template()) return;
 
     // Resolve this-parameter type
     if (fn.is_member() && !fn.is_static()) {
@@ -703,6 +707,9 @@ void type_reference_resolver::visit_function(function& fn) {
     // Skip template definitions — they are not instantiated yet.
     if (fn.is_template()) {
         trace("[type_reference_resolver::visit_function] skipping template '{}'", {fn.get_short_name()});
+        return;
+    }
+    if (auto owner = fn.get_owner(); owner && owner->is_template()) {
         return;
     }
     trace("[type_reference_resolver::visit_function] '{}'", {fn.get_short_name()});

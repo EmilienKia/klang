@@ -749,13 +749,6 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
     }
     if (parts.empty()) return;
 
-    // Aliases exported by the base stdlib module `k` are already available in
-    // every compilation unit through the compiler's implicit auto-import.
-    // Re-materialising them here would duplicate their declarations (and for
-    // template aliases, re-run the source round-trip against the already
-    // imported namespace), so skip them entirely.
-    if (!parts.empty() && parts.front() == "k") return;
-
     // Navigate to the parent namespace (all parts except the last).
     auto target_ns = _unit.get_root_namespace();
     for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
@@ -814,6 +807,20 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
     }
 
     target_ns->add_alias(adef);
+
+    // Also populate root namespace and sub-namespace paths
+    auto root_ns = _unit.get_root_namespace();
+    if (parts.size() == 2 && root_ns != target_ns) {
+        root_ns->add_alias(adef);
+    } else if (parts.size() > 2) {
+        auto sub_ns = root_ns;
+        for (std::size_t i = 1; i + 1 < parts.size(); ++i) {
+            if (sub_ns) sub_ns = sub_ns->get_child_namespace(parts[i]);
+        }
+        if (sub_ns && sub_ns != root_ns && sub_ns != target_ns) {
+            sub_ns->add_alias(adef);
+        }
+    }
 }
 
 void kdi_importer::materialise_template_alias(const kdi::kdi_alias& al,
@@ -856,9 +863,29 @@ void kdi_importer::materialise_template_alias(const kdi::kdi_alias& al,
         k::model::model_builder::visit(_logger, ctx, *ast_unit, _unit);
         _unit.set_unit_name(saved_name);
 
-        if (auto root = _unit.get_root_namespace()) {
-            if (auto adef = root->get_alias(al.name)) {
-                adef->set_visibility(al.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+        auto root_ns = _unit.get_root_namespace();
+        auto adef = root_ns ? root_ns->get_alias(al.name) : nullptr;
+        if (adef) {
+            adef->set_visibility(al.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+
+            // Register in the full qualified namespace (e.g. k::functional)
+            auto target_ns = root_ns;
+            for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
+                if (target_ns) target_ns = target_ns->get_child_namespace(parts[i]);
+            }
+            if (target_ns && target_ns != root_ns) {
+                target_ns->add_alias(adef);
+            }
+
+            // Register in the sub-namespace (e.g. functional)
+            if (parts.size() > 2) {
+                auto sub_ns = root_ns;
+                for (std::size_t i = 1; i + 1 < parts.size(); ++i) {
+                    if (sub_ns) sub_ns = sub_ns->get_child_namespace(parts[i]);
+                }
+                if (sub_ns && sub_ns != root_ns && sub_ns != target_ns) {
+                    sub_ns->add_alias(adef);
+                }
             }
         }
     } catch (const std::exception& ex) {

@@ -22,6 +22,7 @@
 #include "resolvers_constexpr.hpp"
 #include "gen_helpers.hpp"
 #include "gen_intrinsics.hpp"
+#include "gen_callable_helpers.hpp"
 #include "../model/imported.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
@@ -817,14 +818,20 @@ type_reference_resolver::resolve_callable_type(
         if (type::is_resolved(pt)) {
             resolved = pt;
         } else if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
-            resolved = resolve_type_by_name(u->type_id(), context_elem);
+            resolved = resolve_type_chain(pt, &context_elem);
+            if (!resolved || !type::is_resolved(resolved)) {
+                resolved = resolve_type_by_name(u->type_id(), context_elem);
+            }
             if (!resolved || !type::is_resolved(resolved)) {
                 resolved = _context->from_string(u->type_id());
             }
         } else if (auto nested = std::dynamic_pointer_cast<unresolved_callable_type>(pt)) {
             resolved = resolve_callable_type(nested, context_elem);
         } else {
-            resolved = _context->resolve_type(pt);
+            resolved = resolve_type_chain(pt, &context_elem);
+            if (!resolved || !type::is_resolved(resolved)) {
+                resolved = _context->resolve_type(pt);
+            }
         }
         if (!resolved || !type::is_resolved(resolved)) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SIGNATURE_STRUCT_NOT_FOUND), std::nullopt,
@@ -1880,14 +1887,15 @@ std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
     auto resolved_sub = resolve_type_chain(sub, scope_elem);
     if (!resolved_sub || (!type::is_resolved(resolved_sub) && !std::dynamic_pointer_cast<struct_type>(resolved_sub))) return t;
 
+    auto rewrapped = rewrap_like(t, resolved_sub);
     // An addresser applied to a name denoting a callable re-addresses it in
     // place instead of wrapping it.
-    if (auto collapsed = _context->collapse_callable_addresser(rewrap_like(t, resolved_sub));
+    if (auto collapsed = _context->collapse_callable_addresser(rewrapped);
         collapsed) {
         return collapsed;
     }
 
-    return t;
+    return rewrapped;
 }
 
 /** Rebuild the wrapper kind of @p model around @p sub. */
@@ -2310,13 +2318,19 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // frt → frt (any addresser combination): free conversion (same LLVM type).
     // ref<frt> → frt: allowed (load from variable / direct function address).
     if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(tgt_nc)) {
-        if (std::dynamic_pointer_cast<callable_type>(type_src)) {
-            return CAST_NONE;
+        if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type_src)) {
+            if (type::are_equal(src_frt, tgt_frt)) return CAST_NONE;
+            auto compat = callable_signature_compatible(*src_frt, *tgt_frt);
+            if (compat.ok()) return CAST_WIDENING;
+            return CAST_IMPOSSIBLE;
         }
         if (type::is_reference(type_src)) {
             auto src_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
-            if (std::dynamic_pointer_cast<callable_type>(src_inner)) {
-                return CAST_REF_CONV; // ref<frt> → frt: load needed
+            if (auto src_frt = std::dynamic_pointer_cast<callable_type>(src_inner)) {
+                if (type::are_equal(src_frt, tgt_frt)) return CAST_REF_CONV;
+                auto compat = callable_signature_compatible(*src_frt, *tgt_frt);
+                if (compat.ok()) return CAST_WIDENING;
+                return CAST_IMPOSSIBLE;
             }
         }
         return CAST_IMPOSSIBLE;
@@ -2324,11 +2338,16 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // ref<frt> → ref<frt>: pass through.
     if (type::is_reference(tgt_nc)) {
         auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
-        if (std::dynamic_pointer_cast<callable_type>(tgt_sub_nc)) {
+        if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(tgt_sub_nc)) {
             if (type_src == tgt_nc || type_src == tgt) return CAST_NONE;
             if (type::is_reference(type_src)) {
                 auto src_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
-                if (std::dynamic_pointer_cast<callable_type>(src_sub)) return CAST_NONE;
+                if (auto src_frt = std::dynamic_pointer_cast<callable_type>(src_sub)) {
+                    if (type::are_equal(src_frt, tgt_frt)) return CAST_NONE;
+                    auto compat = callable_signature_compatible(*src_frt, *tgt_frt);
+                    if (compat.ok()) return CAST_WIDENING;
+                    return CAST_IMPOSSIBLE;
+                }
             }
             return CAST_IMPOSSIBLE;
         }
