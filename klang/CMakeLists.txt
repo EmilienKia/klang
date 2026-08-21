@@ -146,22 +146,6 @@ macro(klang_gen_test TARGET TIMEOUT)
     set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
 endmacro()
 
-macro(klang_gen_test_sharded TARGET TIMEOUT SHARD_COUNT)
-    add_executable(${TARGET} ${ARGN})
-    target_link_libraries(${TARGET} klang-test-helpers Catch2::Catch2WithMain)
-    target_link_options(${TARGET} PRIVATE -rdynamic)
-    add_dependencies(${TARGET} libk_stdlib)
-
-    math(EXPR __last_shard "${SHARD_COUNT} - 1")
-    foreach(__shard_idx RANGE 0 ${__last_shard})
-        add_test(
-            NAME ${TARGET}-shard-${__shard_idx}
-            COMMAND ${TARGET} --shard-count ${SHARD_COUNT} --shard-index ${__shard_idx}
-        )
-        set_tests_properties(${TARGET}-shard-${__shard_idx} PROPERTIES TIMEOUT ${TIMEOUT})
-    endforeach()
-endmacro()
-
 # ---------------------------------------------------------------------------
 # Group 1 — Frontend: lexer, parser, file-resolver, process
 # No JIT, no libk dependency — runnable even before libk is built.
@@ -259,10 +243,13 @@ klang_gen_test(klang-tests-gen-ternary 120
 
 # ---------------------------------------------------------------------------
 # Group 4a — Arithmetic operators (all numeric types)
-# Sharded because the full executable runtime can exceed the timeout budget.
+# Split into integer and floating-point/boolean/increment test executables.
 # ---------------------------------------------------------------------------
-klang_gen_test_sharded(klang-tests-gen-arithmetic 120 2
-        tests/test-gen-arithmetic.cpp
+klang_gen_test(klang-tests-gen-arithmetic-int 120
+        tests/test-gen-arithmetic-int.cpp
+)
+klang_gen_test(klang-tests-gen-arithmetic-float 120
+        tests/test-gen-arithmetic-float.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -280,13 +267,15 @@ klang_gen_test(klang-tests-gen-operators 120
 
 # ---------------------------------------------------------------------------
 # Group 5a — Enums, unions, const, null semantics, annotations
-# Sharded to keep each CTest invocation below timeout budget.
+# Split into enums/unions and const/null/metadata test executables.
 # ---------------------------------------------------------------------------
-klang_gen_test_sharded(klang-tests-gen-types 120 2
+klang_gen_test(klang-tests-gen-types-enums-unions 120
         tests/test-gen-enum.cpp
         tests/test-gen-union.cpp
         tests/test-gen-union-template.cpp
         tests/test-gen-union-inheritance.cpp
+)
+klang_gen_test(klang-tests-gen-types-const-meta 120
         tests/test-gen-const.cpp
         tests/test-gen-null-semantics.cpp
         tests/test-gen-annotation-meta.cpp
@@ -405,11 +394,18 @@ klang_gen_test(klang-tests-gen-templates 120
 
 # ---------------------------------------------------------------------------
 # Group 11 — KDI import, production libraries, multi-source
+# Split into core import, templates cross-module, and interop test executables.
 # ---------------------------------------------------------------------------
-klang_gen_test_sharded(klang-tests-import 180 2
-        tests/test-import.cpp
-        tests/test-prod-lib.cpp
+klang_gen_test(klang-tests-import-core 120
+        tests/test-import-core.cpp
+)
+klang_gen_test(klang-tests-import-templates 120
+        tests/test-import-templates.cpp
         tests/test-import-template-reparse-diagnostic.cpp
+)
+klang_gen_test(klang-tests-import-interop 120
+        tests/test-import-interop.cpp
+        tests/test-prod-lib.cpp
 )
 
 #

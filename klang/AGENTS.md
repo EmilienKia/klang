@@ -188,9 +188,11 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-control` | statements/control-flow/init-order/static ctor-dtor |
 | `klang-tests-gen-exceptions` | throw/catch/contracts/rethrow/unwinding |
 | `klang-tests-gen-ternary` | ternary expression behavior matrix |
-| `klang-tests-gen-arithmetic-shard-0/1` | primitive arithmetic behavior (sharded run) |
+| `klang-tests-gen-arithmetic-int` | integer arithmetic operators (byte..int64) |
+| `klang-tests-gen-arithmetic-float` | float/double/bool/incr-decr arithmetic |
 | `klang-tests-gen-operators` | operator overload/comparison/spaceship/casts |
-| `klang-tests-gen-types-shard-0/1` | enum/union/const/null/annotations (sharded run) |
+| `klang-tests-gen-types-enums-unions` | enums, typed enums, and union hierarchies |
+| `klang-tests-gen-types-const-meta` | const, null semantics, annotations, designated init |
 | `klang-tests-gen-aliases` | alias/typedef/callable-alias |
 | `klang-tests-gen-classes` | class basics/inheritance/upcasts |
 | `klang-tests-gen-virtuality` | virtual/interface/override/diamond |
@@ -199,7 +201,9 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-oop-temporary` | named return + temporary construction |
 | `klang-tests-gen-scoping` | using/friend |
 | `klang-tests-gen-templates` | template-heavy behavior |
-| `klang-tests-import-shard-0/1` | KDI import/transitive/prod-lib (sharded run) |
+| `klang-tests-import-core` | KDI import core, namespaces, enums, transitive |
+| `klang-tests-import-templates` | KDI cross-module template instantiation |
+| `klang-tests-import-interop` | KDI aliases, typedefs, callables, prod-lib |
 | `klangc-tests` | CLI/integration behavior |
 
 Grouping policy:
