@@ -917,6 +917,7 @@ void kdi_builder::export_aliases(const alias_holder& holder, std::vector<kdi::kd
                                  const std::string& scope_fq_name) {
     for (const auto& al : holder.get_aliases()) {
         if (!al || !al->is_exported()) continue;
+        if (al->is_imported()) continue;
 
         kdi::kdi_alias ka;
         ka.name       = al->get_short_name();

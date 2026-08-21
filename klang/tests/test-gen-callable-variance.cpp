@@ -809,7 +809,7 @@ TEST_CASE("Callable variance: a callable argument is checked at the call site",
         wide(x : int) : long { return x; }
         apply(f : *(int):int, x : int) : int { return f(x); }
         test() : int { return apply(wide, 41); }
-    )SRC", k::diag::callable_diag::ERR_CALLABLE_INCOMPATIBLE_SIGNATURE);
+    )SRC", k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH);
 }
 
 

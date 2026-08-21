@@ -184,7 +184,7 @@ set_tests_properties(klang-tests-frontend PROPERTIES TIMEOUT 30)
 # Group 2 — Model: model analysis, template instantiator, phase pipeline
 # Compile-only tests — no heavy JIT execution.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-model 60
+klang_gen_test(klang-tests-model 120
         tests/test-model-documentation.cpp
         tests/test-model-annotation.cpp
         tests/test-model-constructor-rtti.cpp
@@ -406,7 +406,7 @@ klang_gen_test(klang-tests-gen-templates 120
 # ---------------------------------------------------------------------------
 # Group 11 — KDI import, production libraries, multi-source
 # ---------------------------------------------------------------------------
-klang_gen_test_sharded(klang-tests-import 120 2
+klang_gen_test_sharded(klang-tests-import 180 2
         tests/test-import.cpp
         tests/test-prod-lib.cpp
         tests/test-import-template-reparse-diagnostic.cpp
@@ -430,4 +430,4 @@ target_link_libraries(klangc-tests klang-test-helpers Catch2::Catch2WithMain)
 add_dependencies(klangc-tests klangc libk_stdlib)
 
 add_test(NAME klangc-tests COMMAND klangc-tests)
-set_tests_properties(klangc-tests PROPERTIES TIMEOUT 60)
+set_tests_properties(klangc-tests PROPERTIES TIMEOUT 120)

@@ -74,6 +74,9 @@ protected:
     /** True when declared inside a statement block: implicitly private, never exported. */
     bool _block_local = false;
 
+    /** True when imported from an external KDI: never re-exported. */
+    bool _imported = false;
+
     /** The aliased entity name, exactly as written. */
     k::name _target_name;
 
@@ -159,6 +162,9 @@ public:
 
     bool is_block_local() const { return _block_local; }
     void set_block_local(bool v = true) { _block_local = v; }
+
+    bool is_imported() const { return _imported; }
+    void set_imported(bool v = true) { _imported = v; }
 
     /** True when this alias is part of the module's exported interface. */
     bool is_exported() const {

@@ -190,7 +190,6 @@ enum class function_diag : unsigned int {
     ERR_PARAM_DEFAULT_TYPE_MISMATCH               = 0x00D2,
     WARN_PARAM_DEFAULT_NARROWING                  = 0x00D3,
     ERR_PARAM_VOID_NOT_ALLOWED                    = 0x00DE,
-    ERR_FUNC_VISIBILITY_MISMATCH                  = 0x00E5,
     ERR_FUNC_ACCESS_DENIED                        = 0x0103,
     ERR_FUNC_CTOR_ACCESS_DENIED                   = 0x0104,
     ERR_FUNC_CTOR_VISIBILITY_MISMATCH             = 0x0105,

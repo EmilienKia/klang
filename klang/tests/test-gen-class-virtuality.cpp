@@ -308,10 +308,10 @@ class A {
     id() : int { return 1; }
 }
 class B : public A {
-    id() : int { return 2; }
+    override id() : int { return 2; }
 }
 class C : public B {
-    id() : int { return 3; }
+    override id() : int { return 3; }
 }
 call_id(a: A&) : int { return a.id(); }
 test_a() : int { a: A; return call_id(a); }

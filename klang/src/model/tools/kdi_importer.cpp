@@ -759,6 +759,15 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
     const std::string& alias_name = parts.back();
     if (target_ns->get_alias(alias_name)) return; // already materialised
 
+    auto root_ns = _unit.get_root_namespace();
+    if (root_ns && root_ns->get_alias(alias_name)) {
+        auto existing = root_ns->get_alias(alias_name);
+        if (target_ns != root_ns && !target_ns->get_alias(alias_name)) {
+            target_ns->add_alias(existing);
+        }
+        return;
+    }
+
     if (al.is_template) {
         // A parameterised alias is round-tripped as source text: re-parse the
         // declaration so that the local model rebuilds its template parameters
@@ -772,6 +781,7 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
                              : alias_definition::kind_t::SOFT;
     auto adef = alias_definition::make_shared(target_ns, alias_name, kind);
     if (!adef) return;
+    adef->set_imported(true);
     adef->set_visibility(al.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
 
     // Resolve the aliased type. Aliases whose target is a function or a
@@ -809,7 +819,6 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
     target_ns->add_alias(adef);
 
     // Also populate root namespace and sub-namespace paths
-    auto root_ns = _unit.get_root_namespace();
     if (parts.size() == 2 && root_ns != target_ns) {
         root_ns->add_alias(adef);
     } else if (parts.size() > 2) {
@@ -828,6 +837,28 @@ void kdi_importer::materialise_template_alias(const kdi::kdi_alias& al,
                                               std::shared_ptr<context> ctx)
 {
     if (al.source.empty()) return;
+
+    auto root_ns = _unit.get_root_namespace();
+    if (root_ns && root_ns->get_alias(al.name)) {
+        auto adef = root_ns->get_alias(al.name);
+        auto target_ns = root_ns;
+        for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
+            if (target_ns) target_ns = target_ns->get_child_namespace(parts[i]);
+        }
+        if (target_ns && target_ns != root_ns && !target_ns->get_alias(al.name)) {
+            target_ns->add_alias(adef);
+        }
+        if (parts.size() > 2) {
+            auto sub_ns = root_ns;
+            for (std::size_t i = 1; i + 1 < parts.size(); ++i) {
+                if (sub_ns) sub_ns = sub_ns->get_child_namespace(parts[i]);
+            }
+            if (sub_ns && sub_ns != root_ns && sub_ns != target_ns && !sub_ns->get_alias(al.name)) {
+                sub_ns->add_alias(adef);
+            }
+        }
+        return;
+    }
 
     // Namespace part of the fully-qualified name (everything but the last part).
     std::string ns_fq;
@@ -863,9 +894,10 @@ void kdi_importer::materialise_template_alias(const kdi::kdi_alias& al,
         k::model::model_builder::visit(_logger, ctx, *ast_unit, _unit);
         _unit.set_unit_name(saved_name);
 
-        auto root_ns = _unit.get_root_namespace();
+        root_ns = _unit.get_root_namespace();
         auto adef = root_ns ? root_ns->get_alias(al.name) : nullptr;
         if (adef) {
+            adef->set_imported(true);
             adef->set_visibility(al.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
 
             // Register in the full qualified namespace (e.g. k::functional)

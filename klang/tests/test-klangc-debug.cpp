@@ -521,7 +521,7 @@ class Base {
 }
 
 class Derived : public Base {
-    id() : int { return 1; }
+    override id() : int { return 1; }
 }
 
 cast_to_derived(base: Base*) : Derived* {
@@ -585,7 +585,7 @@ class Base {
 }
 
 class Derived : public Base {
-    id() : int { return 1; }
+    override id() : int { return 1; }
 }
 
 guarded(base: Base*) : int {

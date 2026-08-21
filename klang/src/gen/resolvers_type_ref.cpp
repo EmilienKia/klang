@@ -2317,20 +2317,40 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // ── Function reference type cases ─────────────────────────────────────────
     // frt → frt (any addresser combination): free conversion (same LLVM type).
     // ref<frt> → frt: allowed (load from variable / direct function address).
+    auto check_callable_match = [&](const std::shared_ptr<callable_type>& src_ct,
+                                    const std::shared_ptr<callable_type>& tgt_ct) -> cast_weight {
+        if (!src_ct || !tgt_ct) return CAST_IMPOSSIBLE;
+        if (type::are_equal(src_ct, tgt_ct)) return CAST_NONE;
+        auto compat = callable_signature_compatible(*src_ct, *tgt_ct);
+        if (compat.ok()) return CAST_WIDENING;
+        if (!src_ct->get_return_type()) {
+            auto peel = expr;
+            while (peel) {
+                if (std::dynamic_pointer_cast<lambda_expression>(peel)) break;
+                if (auto c = std::dynamic_pointer_cast<cast_expression>(peel)) { peel = c->sub_expr(); continue; }
+                if (auto ld = std::dynamic_pointer_cast<load_value_expression>(peel)) { peel = ld->sub_expr(); continue; }
+                break;
+            }
+            if (peel && std::dynamic_pointer_cast<lambda_expression>(peel)) {
+                callable_signature_view src_view = callable_signature_view::of(*src_ct);
+                src_view.return_type = tgt_ct->get_return_type();
+                auto lcompat = callable_signature_compatible(src_view, callable_signature_view::of(*tgt_ct));
+                if (lcompat.ok()) return CAST_WIDENING;
+            }
+        }
+        return CAST_IMPOSSIBLE;
+    };
+
     if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(tgt_nc)) {
         if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type_src)) {
-            if (type::are_equal(src_frt, tgt_frt)) return CAST_NONE;
-            auto compat = callable_signature_compatible(*src_frt, *tgt_frt);
-            if (compat.ok()) return CAST_WIDENING;
-            return CAST_IMPOSSIBLE;
+            return check_callable_match(src_frt, tgt_frt);
         }
         if (type::is_reference(type_src)) {
             auto src_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
             if (auto src_frt = std::dynamic_pointer_cast<callable_type>(src_inner)) {
-                if (type::are_equal(src_frt, tgt_frt)) return CAST_REF_CONV;
-                auto compat = callable_signature_compatible(*src_frt, *tgt_frt);
-                if (compat.ok()) return CAST_WIDENING;
-                return CAST_IMPOSSIBLE;
+                auto w = check_callable_match(src_frt, tgt_frt);
+                if (w == CAST_NONE) return CAST_REF_CONV;
+                return w;
             }
         }
         return CAST_IMPOSSIBLE;
@@ -2343,11 +2363,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             if (type::is_reference(type_src)) {
                 auto src_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
                 if (auto src_frt = std::dynamic_pointer_cast<callable_type>(src_sub)) {
-                    if (type::are_equal(src_frt, tgt_frt)) return CAST_NONE;
-                    auto compat = callable_signature_compatible(*src_frt, *tgt_frt);
-                    if (compat.ok()) return CAST_WIDENING;
-                    return CAST_IMPOSSIBLE;
+                    return check_callable_match(src_frt, tgt_frt);
                 }
+            }
+            if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type_src)) {
+                auto w = check_callable_match(src_frt, tgt_frt);
+                if (w == CAST_NONE) return CAST_WIDENING;
+                return w;
             }
             return CAST_IMPOSSIBLE;
         }
@@ -3295,7 +3317,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     }
 
     if (best_candidates.size() > 1) {
-        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_FUNC_VISIBILITY_DENIED),
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "Ambiguous constructor call: {} equally viable overloads",
             {std::to_string(best_candidates.size())});
         for (auto* c : best_candidates) {
@@ -3615,7 +3637,7 @@ type_reference_resolver::get_best_matching_function(
         if (!candidates.empty()) {
             if (auto ast_fd = candidates.front()->get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
         }
-        throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_VISIBILITY_MISMATCH), fn_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH), fn_lexeme,
             "No viable overload found for '{}' with {} argument(s): "
             "none of the {} candidate(s) can be called with the provided arguments",
             {fname, std::to_string(args.size()), std::to_string(candidates.size())});
@@ -3642,7 +3664,7 @@ type_reference_resolver::get_best_matching_function(
 
     if (best.size() > 1) {
         std::string fname = best[0]->func ? best[0]->func->get_short_name() : "<unknown>";
-        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_FUNC_VISIBILITY_DENIED),
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "Ambiguous call to '{}': {} equally viable overloads",
             {fname, std::to_string(best.size())});
         for (auto* c : best) {

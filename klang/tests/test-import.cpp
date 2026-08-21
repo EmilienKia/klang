@@ -4519,3 +4519,45 @@ TEST_CASE("import cast-operator — explicit cast works on imported class value"
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE(result.exit_code == 42);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-alias-no-reexport] Regression: Imported aliases from auto-imported `k`
+// (e.g. k::functional::Function/Consumer/Predicate) and from explicit dependency
+// libraries must not be re-exported into downstream library KDIs, and multiple
+// libraries importing them must not produce duplicate alias declarations.
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("import multi-lib — imported aliases do not collide across dependency chain",
+          "[import][e2e][alias][regression]") {
+    std::vector<LibSpec> libs = {
+        { R"K(
+            module multi_alias_lib1;
+            public template<typename T> alias Pred : *(T):bool;
+            public isEven(x: int) : bool { return x % 2 == 0; }
+        )K" },
+        { R"K(
+            module multi_alias_lib2;
+            import multi_alias_lib1;
+            public checkVal(p: multi_alias_lib1::Pred<int>, v: int) : bool {
+                return p(v);
+            }
+        )K" }
+    };
+
+    auto result = build_exec_with_libs(libs,
+        R"K(
+            module multi_alias_exe;
+            import multi_alias_lib1;
+            import multi_alias_lib2;
+
+            main() : int {
+                if (!multi_alias_lib2::checkVal(multi_alias_lib1::isEven, 42)) return 1;
+                if (multi_alias_lib2::checkVal(multi_alias_lib1::isEven, 43)) return 2;
+                return 0;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 0);
+}
+
