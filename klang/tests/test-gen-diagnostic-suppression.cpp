@@ -166,7 +166,7 @@ TEST_CASE("End-to-end: WARN_UNUSED_EXPR_RESULT is suppressed via set_ignored_dia
     constexpr unsigned int code = static_cast<unsigned int>(k::diag::statement_diag::WARN_UNUSED_EXPR_RESULT);
 
     const std::string_view src = R"SRC(
-        module __diag_suppress_e2e__;
+        module gen_diagnostic_suppression_01;
         test() : int {
             new int(42);   // triggers WARN_UNUSED_EXPR_RESULT: bare 'new' result discarded
             return 1;
@@ -224,7 +224,7 @@ TEST_CASE("Constant integer casts: safe constant vs runtime/overflow cast warnin
 
     SECTION("Safe constant integer cast emits no warning") {
         const std::string_view safe_src = R"SRC(
-            module __cast_diag_safe__;
+            module gen_diagnostic_suppression_02;
             test() : int {
                 u : unsigned int = (unsigned int) 42;
                 s : int = (int) 100u;
@@ -239,7 +239,7 @@ TEST_CASE("Constant integer casts: safe constant vs runtime/overflow cast warnin
 #ifdef KLANG_WARN_CAST_SIGN_CHANGE
     SECTION("Runtime signed to unsigned cast emits warning 00170 when macro is defined") {
         const std::string_view runtime_src = R"SRC(
-            module __cast_diag_runtime_s2u__;
+            module gen_diagnostic_suppression_03;
             test(x : int) : unsigned int {
                 return (unsigned int) x;
             }
@@ -252,7 +252,7 @@ TEST_CASE("Constant integer casts: safe constant vs runtime/overflow cast warnin
 #ifdef KLANG_WARN_CAST_UNSIGNED_TO_SIGNED
     SECTION("Runtime unsigned to signed cast emits warning 00194 when macro is defined") {
         const std::string_view runtime_src = R"SRC(
-            module __cast_diag_runtime_u2s__;
+            module gen_diagnostic_suppression_04;
             test(x : unsigned int) : int {
                 return (int) x;
             }

@@ -40,7 +40,7 @@
 
 TEST_CASE("Annotation: enum field with default value", "[annotation][enum]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_enum_1__;
+        module gen_annotation_meta_01;
         annotation Severity {
             enum Level { LOW; MEDIUM; HIGH; };
             level : Level = Level::MEDIUM;
@@ -58,7 +58,7 @@ TEST_CASE("Annotation: enum field with default value", "[annotation][enum]") {
 
 TEST_CASE("Annotation: enum field with positional init on class", "[annotation][enum]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_enum_2__;
+        module gen_annotation_meta_02;
         annotation Severity {
             enum Level { LOW; MEDIUM; HIGH; };
             level : Level;
@@ -86,7 +86,7 @@ TEST_CASE("Annotation: enum field with positional init on class", "[annotation][
 
 TEST_CASE("Annotation: enum array field with brace-init", "[annotation][enum]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_enum_arr_1__;
+        module gen_annotation_meta_03;
         annotation Filter {
             enum Kind { A; B; C; };
             kinds : Kind[];
@@ -115,7 +115,7 @@ TEST_CASE("Annotation: enum array field with brace-init", "[annotation][enum]") 
 
 TEST_CASE("@Target: annotation restricted to CLASS can be applied to class", "[annotation][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_1__;
+        module gen_annotation_meta_04;
         @annotations::Target({ElementType::CLASS})
         annotation MyMarker {}
         @MyMarker
@@ -131,7 +131,7 @@ TEST_CASE("@Target: annotation restricted to CLASS can be applied to class", "[a
 
 TEST_CASE("@Target: annotation restricted to CLASS cannot be applied to interface", "[annotation][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_2__;
+        module gen_annotation_meta_05;
         @annotations::Target({ElementType::CLASS})
         annotation MyMarker {}
         @MyMarker
@@ -145,7 +145,7 @@ TEST_CASE("@Target: annotation restricted to CLASS cannot be applied to interfac
 
 TEST_CASE("@Target: annotation restricted to ANNOTATION can be applied to annotation", "[annotation][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_3__;
+        module gen_annotation_meta_06;
         @annotations::Target({ElementType::ANNOTATION})
         annotation MetaMarker {}
         @MetaMarker
@@ -159,7 +159,7 @@ TEST_CASE("@Target: annotation restricted to ANNOTATION can be applied to annota
 
 TEST_CASE("@Target: annotation restricted to ANNOTATION cannot be applied to class", "[annotation][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_4__;
+        module gen_annotation_meta_07;
         @annotations::Target({ElementType::ANNOTATION})
         annotation MetaOnly {}
         @MetaOnly
@@ -173,7 +173,7 @@ TEST_CASE("@Target: annotation restricted to ANNOTATION cannot be applied to cla
 
 TEST_CASE("@Target: no @Target means annotation can be applied anywhere", "[annotation][target]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_target_5__;
+        module gen_annotation_meta_08;
         annotation Unrestricted {}
         @Unrestricted
         class C1 {
@@ -194,7 +194,7 @@ TEST_CASE("@Target: no @Target means annotation can be applied anywhere", "[anno
 
 TEST_CASE("@Target: multiple element types allowed", "[annotation][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_6__;
+        module gen_annotation_meta_09;
         @annotations::Target({ElementType::CLASS, ElementType::INTERFACE})
         annotation ClassOrIface {}
         @ClassOrIface
@@ -218,7 +218,7 @@ TEST_CASE("@Target: multiple element types allowed", "[annotation][target]") {
 
 TEST_CASE("@Inherited: annotation propagates to derived class", "[annotation][inherited]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_inherit_1__;
+        module gen_annotation_meta_10;
         @annotations::Inherited
         annotation Marker { value : int; }
         @Marker(42)
@@ -247,7 +247,7 @@ TEST_CASE("@Inherited: annotation propagates to derived class", "[annotation][in
 
 TEST_CASE("@Inherited: explicit override on derived replaces inherited", "[annotation][inherited]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_inherit_2__;
+        module gen_annotation_meta_11;
         @annotations::Inherited
         annotation Priority { value : int; }
         @Priority(1)
@@ -283,7 +283,7 @@ TEST_CASE("@Inherited: explicit override on derived replaces inherited", "[annot
 
 TEST_CASE("@Inherited: non-inherited annotation does NOT propagate", "[annotation][inherited]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_inherit_3__;
+        module gen_annotation_meta_12;
         annotation NoInherit { value : int; }
         @NoInherit(42)
         class Base {
@@ -314,7 +314,7 @@ TEST_CASE("@Inherited: non-inherited annotation does NOT propagate", "[annotatio
 TEST_CASE("@Retention(RUNTIME): annotation instances appear in RTTI", "[annotation][retention]") {
     // Default (no @Retention) = RUNTIME → annotation instance constant is emitted
     auto comp = compile_model(R"SRC(
-        module __test_ann_ret_1__;
+        module gen_annotation_meta_13;
         annotation RuntimeMarker {}
         @RuntimeMarker
         class Foo {
@@ -334,7 +334,7 @@ TEST_CASE("@Retention(SOURCE): annotation kept in model but not emitted", "[anno
     // SOURCE retention means the annotation is in the model but NOT in binary RTTI.
     // We verify the annotation is present in the model.
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_ret_2__;
+        module gen_annotation_meta_14;
         @annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
         @CompileOnly
@@ -359,7 +359,7 @@ TEST_CASE("@Retention(SOURCE): annotation kept in model but not emitted", "[anno
 
 TEST_CASE("Meta-annotations: @Target + @Inherited + @Retention combined", "[annotation][meta]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_meta_combo_1__;
+        module gen_annotation_meta_15;
         @annotations::Target({ElementType::CLASS})
         @annotations::Inherited
         annotation Important { reason : int; }
@@ -387,7 +387,7 @@ TEST_CASE("Meta-annotations: @Target + @Inherited + @Retention combined", "[anno
 
 TEST_CASE("@Target: INTERFACE-only annotation applied to interface succeeds", "[annotation][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_iface_ok__;
+        module gen_annotation_meta_16;
         @annotations::Target({ElementType::INTERFACE})
         annotation IfaceOnly {}
         @IfaceOnly
@@ -404,7 +404,7 @@ TEST_CASE("@Target: INTERFACE-only annotation applied to interface succeeds", "[
 
 TEST_CASE("@Target: INTERFACE-only annotation applied to class fails", "[annotation][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_iface_cls__;
+        module gen_annotation_meta_17;
         @annotations::Target({ElementType::INTERFACE})
         annotation IfaceOnly {}
         @IfaceOnly
@@ -418,7 +418,7 @@ TEST_CASE("@Target: INTERFACE-only annotation applied to class fails", "[annotat
 TEST_CASE("@Target: {CLASS, ANNOTATION} allows class and annotation but not interface", "[annotation][target]") {
     // Apply to class: OK
     auto comp_cls = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_ca_cls__;
+        module gen_annotation_meta_18;
         @annotations::Target({ElementType::CLASS, ElementType::ANNOTATION})
         annotation ClsOrAnn {}
         @ClsOrAnn
@@ -431,7 +431,7 @@ TEST_CASE("@Target: {CLASS, ANNOTATION} allows class and annotation but not inte
 
     // Apply to annotation: OK
     auto comp_ann = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_ca_ann__;
+        module gen_annotation_meta_19;
         @annotations::Target({ElementType::CLASS, ElementType::ANNOTATION})
         annotation ClsOrAnn2 {}
         @ClsOrAnn2
@@ -442,7 +442,7 @@ TEST_CASE("@Target: {CLASS, ANNOTATION} allows class and annotation but not inte
 
     // Apply to interface: FAIL
     auto comp_iface = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_ca_ifc__;
+        module gen_annotation_meta_20;
         @annotations::Target({ElementType::CLASS, ElementType::ANNOTATION})
         annotation ClsOrAnn3 {}
         @ClsOrAnn3
@@ -457,7 +457,7 @@ TEST_CASE("@Target: self-referential — @Target on Target itself", "[annotation
     // The real stdlib already has @Target({ANNOTATION}) on Target itself.
     // Verify that using the stdlib Target to restrict another annotation works.
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_self__;
+        module gen_annotation_meta_21;
         @annotations::Target({ElementType::CLASS})
         annotation ClassMarker {}
         @ClassMarker
@@ -474,7 +474,7 @@ TEST_CASE("@Target: self-referential — @Target on Target itself", "[annotation
 
 TEST_CASE("@Target: all three element types allowed", "[annotation][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_all3__;
+        module gen_annotation_meta_22;
         @annotations::Target({ElementType::CLASS, ElementType::INTERFACE, ElementType::ANNOTATION})
         annotation Universal {}
         @Universal
@@ -501,7 +501,7 @@ TEST_CASE("@Target: all three element types allowed", "[annotation][target]") {
 
 TEST_CASE("@Inherited: multi-level propagation (A → B → C)", "[annotation][inherited]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_inherit_multi__;
+        module gen_annotation_meta_23;
         @annotations::Inherited
         annotation Tag { value : int; }
         @Tag(10)
@@ -539,7 +539,7 @@ TEST_CASE("@Inherited: multi-level propagation (A → B → C)", "[annotation][i
 
 TEST_CASE("@Inherited: multiple distinct inherited annotations from same base", "[annotation][inherited]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_inherit_multi_ann__;
+        module gen_annotation_meta_24;
         @annotations::Inherited
         annotation Color { value : int; }
         @annotations::Inherited
@@ -574,7 +574,7 @@ TEST_CASE("@Inherited: multiple distinct inherited annotations from same base", 
 
 TEST_CASE("@Inherited: does NOT propagate through interfaces", "[annotation][inherited]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_inherit_no_iface__;
+        module gen_annotation_meta_25;
         @annotations::Inherited
         annotation Marker {}
         @Marker
@@ -600,7 +600,7 @@ TEST_CASE("@Inherited: does NOT propagate through interfaces", "[annotation][inh
 
 TEST_CASE("@Inherited: partial override — only the overridden one is replaced", "[annotation][inherited]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_inherit_partial__;
+        module gen_annotation_meta_26;
         @annotations::Inherited
         annotation Color { value : int; }
         @annotations::Inherited
@@ -647,7 +647,7 @@ TEST_CASE("@Inherited: partial override — only the overridden one is replaced"
 
 TEST_CASE("@Inherited: non-inherited annotation mixed with inherited — only inherited propagates", "[annotation][inherited]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_inherit_mixed__;
+        module gen_annotation_meta_27;
         @annotations::Inherited
         annotation Propagated { value : int; }
         annotation NotPropagated { value : int; }
@@ -702,7 +702,7 @@ static std::string get_llvm_ir_with_stdlib(std::string_view src) {
 
 TEST_CASE("@Retention: default (absent) is RUNTIME — annotation instance emitted in IR", "[annotation][retention]") {
     std::string ir = get_llvm_ir(R"SRC(
-        module __test_ann_ret_default__;
+        module gen_annotation_meta_28;
         annotation RuntimeDefault {}
         @RuntimeDefault
         class Foo {
@@ -720,7 +720,7 @@ TEST_CASE("@Retention: default (absent) is RUNTIME — annotation instance emitt
 
 TEST_CASE("@Retention(RUNTIME): explicit RUNTIME — annotation instance emitted in IR", "[annotation][retention]") {
     std::string ir = get_llvm_ir_with_stdlib(R"SRC(
-        module __test_ann_ret_explicit_rt__;
+        module gen_annotation_meta_29;
         @annotations::Retention(Policy::RUNTIME)
         annotation RuntimeExplicit {}
         @RuntimeExplicit
@@ -734,7 +734,7 @@ TEST_CASE("@Retention(RUNTIME): explicit RUNTIME — annotation instance emitted
 
 TEST_CASE("@Retention(SOURCE): annotation NOT emitted in IR", "[annotation][retention]") {
     std::string ir = get_llvm_ir_with_stdlib(R"SRC(
-        module __test_ann_ret_source__;
+        module gen_annotation_meta_30;
         @annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
         @CompileOnly
@@ -749,7 +749,7 @@ TEST_CASE("@Retention(SOURCE): annotation NOT emitted in IR", "[annotation][rete
 
 TEST_CASE("@Retention(SOURCE): annotation present in model but skipped in IR", "[annotation][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_ret_src_model__;
+        module gen_annotation_meta_31;
         @annotations::Retention(Policy::SOURCE)
         annotation SourceAnn {}
         @SourceAnn
@@ -774,7 +774,7 @@ TEST_CASE("@Retention(SOURCE): annotation present in model but skipped in IR", "
 
 TEST_CASE("@Retention: mixed SOURCE and RUNTIME annotations on same class", "[annotation][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_ret_mixed__;
+        module gen_annotation_meta_32;
         @annotations::Retention(Policy::SOURCE)
         annotation SourceOnly {}
         annotation RuntimeDefault {}
@@ -800,7 +800,7 @@ TEST_CASE("@Retention: mixed SOURCE and RUNTIME annotations on same class", "[an
 
 TEST_CASE("@Retention(SOURCE) on annotation type: meta-annotation not emitted in type RTTI", "[annotation][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_ret_src_on_type__;
+        module gen_annotation_meta_33;
         @annotations::Retention(Policy::SOURCE)
         annotation MetaSource {}
         @MetaSource
@@ -828,7 +828,7 @@ TEST_CASE("@Retention(SOURCE) on annotation type: meta-annotation not emitted in
 
 TEST_CASE("Annotation: enum field default value used when no argument provided", "[annotation][enum]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_enum_default__;
+        module gen_annotation_meta_34;
         annotation Priority {
             enum Level { LOW; MEDIUM; HIGH; };
             level : Level = Level::MEDIUM;
@@ -860,7 +860,7 @@ TEST_CASE("Annotation: enum field default value used when no argument provided",
 
 TEST_CASE("Annotation: self-referential annotation (@Foo annotation Foo)", "[annotation][meta]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_selfref__;
+        module gen_annotation_meta_35;
         @SelfRef
         annotation SelfRef {}
     )SRC");
@@ -873,7 +873,7 @@ TEST_CASE("Annotation: self-referential annotation (@Foo annotation Foo)", "[ann
 
 TEST_CASE("Annotation: cross-referential annotations in same module", "[annotation][meta]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_crossref__;
+        module gen_annotation_meta_36;
         @B
         annotation A {}
         @A
@@ -897,7 +897,7 @@ TEST_CASE("Annotation: cross-referential annotations in same module", "[annotati
 
 TEST_CASE("Meta-annotations: @Retention(SOURCE) + @Inherited — propagates in model but not in IR", "[annotation][meta]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_src_inh_combo__;
+        module gen_annotation_meta_37;
         @annotations::Retention(Policy::SOURCE)
         @annotations::Inherited
         annotation SourceInherited { value : int; }
@@ -931,7 +931,7 @@ TEST_CASE("Meta-annotations: @Retention(SOURCE) + @Inherited — propagates in m
 
 TEST_CASE("Meta-annotations: @Target(CLASS) + @Inherited + @Retention(RUNTIME) all together", "[annotation][meta]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_all3_combo__;
+        module gen_annotation_meta_38;
         @annotations::Target({ElementType::CLASS})
         @annotations::Inherited
         @annotations::Retention(Policy::RUNTIME)
@@ -966,7 +966,7 @@ TEST_CASE("Meta-annotations: @Target(CLASS) + @Inherited + @Retention(RUNTIME) a
 
 TEST_CASE("Meta-annotations: @Target(CLASS) + @Inherited — fails when applied to interface", "[annotation][meta]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_target_inh_fail__;
+        module gen_annotation_meta_39;
         @annotations::Target({ElementType::CLASS})
         @annotations::Inherited
         annotation ClassInherited {}
@@ -983,7 +983,7 @@ TEST_CASE("Meta-annotations: stdlib-like self-contained meta-annotation system",
     // Use the real stdlib meta-annotations to define a user annotation
     // with all three meta-annotations applied.
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ann_stdlib_like__;
+        module gen_annotation_meta_40;
 
         // User-defined annotation using the real stdlib meta-annotations
         @annotations::Target({ElementType::CLASS})
@@ -1026,7 +1026,7 @@ TEST_CASE("Meta-annotations: stdlib-like self-contained meta-annotation system",
 
 TEST_CASE("Function annotation: RUNTIME annotation on public function in model", "[annotation][function]") {
     auto comp = compile_model(R"SRC(
-        module __test_fn_ann_1__;
+        module gen_annotation_meta_41;
         annotation Marker {}
         class Foo {
             @Marker
@@ -1047,7 +1047,7 @@ TEST_CASE("Function annotation: RUNTIME annotation on public function in model",
 
 TEST_CASE("Function annotation: SOURCE retention annotation kept in model", "[annotation][function][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_fn_ann_src_1__;
+        module gen_annotation_meta_42;
         @annotations::Retention(Policy::SOURCE)
         annotation CompileHint {}
         class Foo {
@@ -1071,7 +1071,7 @@ TEST_CASE("Function annotation: SOURCE retention annotation kept in model", "[an
 
 TEST_CASE("Function annotation: multiple annotations on same function", "[annotation][function]") {
     auto comp = compile_model(R"SRC(
-        module __test_fn_ann_multi__;
+        module gen_annotation_meta_43;
         annotation Alpha {}
         annotation Beta {}
         class Foo {
@@ -1090,7 +1090,7 @@ TEST_CASE("Function annotation: multiple annotations on same function", "[annota
 
 TEST_CASE("Function annotation: annotation on free function (namespace level)", "[annotation][function]") {
     auto comp = compile_model(R"SRC(
-        module __test_fn_ann_free__;
+        module gen_annotation_meta_44;
         annotation Tag {}
         @Tag
         doStuff() : int { return 7; }
@@ -1107,7 +1107,7 @@ TEST_CASE("Function annotation: annotation on free function (namespace level)", 
 
 TEST_CASE("Function annotation: @Target(FUNCTION) allows annotation on function", "[annotation][function][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_fn_ann_target_1__;
+        module gen_annotation_meta_45;
         @annotations::Target({ElementType::FUNCTION})
         annotation FuncOnly {}
         class Foo {
@@ -1127,7 +1127,7 @@ TEST_CASE("Function annotation: @Target(FUNCTION) allows annotation on function"
 
 TEST_CASE("Function annotation: @Target(CLASS) rejects annotation on function", "[annotation][function][target]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __test_fn_ann_target_2__;
+        module gen_annotation_meta_46;
         @annotations::Target({ElementType::CLASS})
         annotation ClassOnly {}
         class Foo {
@@ -1147,7 +1147,7 @@ TEST_CASE("Function annotation: RUNTIME annotation on private function compiles 
     // A RUNTIME annotation on a private function is a warning (not an error).
     // The annotation is still in the model.
     auto comp = compile_model(R"SRC(
-        module __test_fn_ann_warn_priv__;
+        module gen_annotation_meta_47;
         annotation Marker {}
         class Foo {
             @Marker
@@ -1167,7 +1167,7 @@ TEST_CASE("Function annotation: RUNTIME annotation on private function compiles 
 
 TEST_CASE("Function annotation: RUNTIME annotation on protected function compiles (warning)", "[annotation][function][warning]") {
     auto comp = compile_model(R"SRC(
-        module __test_fn_ann_warn_prot__;
+        module gen_annotation_meta_48;
         annotation Marker {}
         class Foo {
             @Marker
@@ -1186,7 +1186,7 @@ TEST_CASE("Function annotation: RUNTIME annotation on protected function compile
 
 TEST_CASE("Function annotation: RUNTIME annotation on public function — no issue", "[annotation][function]") {
     auto comp = compile_model(R"SRC(
-        module __test_fn_ann_no_warn_pub__;
+        module gen_annotation_meta_49;
         annotation Marker {}
         class Foo {
             @Marker
@@ -1206,7 +1206,7 @@ TEST_CASE("Function annotation: RUNTIME annotation on public function — no iss
 
 TEST_CASE("Function annotation: SOURCE annotation on private function — no warning", "[annotation][function][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_fn_ann_no_warn_src__;
+        module gen_annotation_meta_50;
         @annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
         class Foo {
@@ -1228,7 +1228,7 @@ TEST_CASE("Function annotation: SOURCE annotation on private function — no war
 
 TEST_CASE("Function annotation: RUNTIME annotation on constructor compiles (warning)", "[annotation][function][warning]") {
     auto comp = compile_model(R"SRC(
-        module __test_fn_ann_warn_ctor__;
+        module gen_annotation_meta_51;
         annotation Marker {}
         class Foo {
             @Marker
@@ -1248,7 +1248,7 @@ TEST_CASE("Function annotation: RUNTIME annotation on constructor compiles (warn
 
 TEST_CASE("Function annotation: RUNTIME annotation on destructor compiles (warning)", "[annotation][function][warning]") {
     auto comp = compile_model(R"SRC(
-        module __test_fn_ann_warn_dtor__;
+        module gen_annotation_meta_52;
         annotation Marker {}
         class Foo {
             @Marker
@@ -1273,7 +1273,7 @@ TEST_CASE("Function annotation: RUNTIME annotation on destructor compiles (warni
 
 TEST_CASE("Constructor annotation: @Target(CONSTRUCTOR) allows annotation on constructor", "[annotation][constructor][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_ctor_ann_target_1__;
+        module gen_annotation_meta_53;
         @annotations::Target({ElementType::CONSTRUCTOR})
         annotation CtorOnly {}
         class Foo {
@@ -1294,7 +1294,7 @@ TEST_CASE("Constructor annotation: @Target(CONSTRUCTOR) allows annotation on con
 
 TEST_CASE("Constructor annotation: @Target(CLASS) rejects annotation on constructor", "[annotation][constructor][target]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __test_ctor_ann_target_2__;
+        module gen_annotation_meta_54;
         @annotations::Target({ElementType::CLASS})
         annotation ClassOnly {}
         class Foo {
@@ -1307,7 +1307,7 @@ TEST_CASE("Constructor annotation: @Target(CLASS) rejects annotation on construc
 
 TEST_CASE("Constructor annotation: @Target(FUNCTION) rejects annotation on constructor", "[annotation][constructor][target]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __test_ctor_ann_target_3__;
+        module gen_annotation_meta_55;
         @annotations::Target({ElementType::FUNCTION})
         annotation FuncOnly {}
         class Foo {
@@ -1320,7 +1320,7 @@ TEST_CASE("Constructor annotation: @Target(FUNCTION) rejects annotation on const
 
 TEST_CASE("Constructor annotation: @Target(CONSTRUCTOR) rejects annotation on function", "[annotation][constructor][target]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __test_ctor_ann_target_4__;
+        module gen_annotation_meta_56;
         @annotations::Target({ElementType::CONSTRUCTOR})
         annotation CtorOnly {}
         class Foo {
@@ -1333,7 +1333,7 @@ TEST_CASE("Constructor annotation: @Target(CONSTRUCTOR) rejects annotation on fu
 
 TEST_CASE("Constructor annotation: unrestricted annotation allowed on constructor", "[annotation][constructor][target]") {
     auto comp = compile_model(R"SRC(
-        module __test_ctor_ann_target_5__;
+        module gen_annotation_meta_57;
         annotation Marker {}
         class Foo {
             @Marker
@@ -1354,7 +1354,7 @@ TEST_CASE("Constructor annotation: unrestricted annotation allowed on constructo
 TEST_CASE("Constructor annotation: RUNTIME annotation on public constructor — no warning", "[annotation][constructor][warning]") {
     test_logger logger;
     bool ok = compile_collect_diagnostics(R"SRC(
-        module __test_ctor_ann_no_warn__;
+        module gen_annotation_meta_58;
         annotation Marker {}
         class Foo {
             @Marker
@@ -1392,7 +1392,7 @@ TEST_CASE("Constructor annotation: RUNTIME annotation on public constructor — 
 
 TEST_CASE("Stdlib @Target: annotation restricted to CLASS can be applied to class", "[annotation][stdlib][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_target_cls_ok__;
+        module gen_annotation_meta_59;
         import k;
         @k::annotations::Target({ElementType::CLASS})
         annotation MyMarker {}
@@ -1422,7 +1422,7 @@ TEST_CASE("Stdlib @Target: annotation restricted to CLASS can be applied to clas
 
 TEST_CASE("Stdlib @Target: annotation restricted to CLASS rejected on interface", "[annotation][stdlib][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_target_cls_iface_fail__;
+        module gen_annotation_meta_60;
         import k;
         @k::annotations::Target({ElementType::CLASS})
         annotation MyMarker {}
@@ -1437,7 +1437,7 @@ TEST_CASE("Stdlib @Target: annotation restricted to CLASS rejected on interface"
 
 TEST_CASE("Stdlib @Target: FUNCTION-only annotation allowed on function", "[annotation][stdlib][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_target_func_ok__;
+        module gen_annotation_meta_61;
         import k;
         @k::annotations::Target({ElementType::FUNCTION})
         annotation FuncOnly {}
@@ -1457,7 +1457,7 @@ TEST_CASE("Stdlib @Target: FUNCTION-only annotation allowed on function", "[anno
 
 TEST_CASE("Stdlib @Target: CONSTRUCTOR-only annotation allowed on constructor", "[annotation][stdlib][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_target_ctor_ok__;
+        module gen_annotation_meta_62;
         import k;
         @k::annotations::Target({ElementType::CONSTRUCTOR})
         annotation CtorOnly {}
@@ -1478,7 +1478,7 @@ TEST_CASE("Stdlib @Target: CONSTRUCTOR-only annotation allowed on constructor", 
 
 TEST_CASE("Stdlib @Inherited: annotation propagates from base to derived", "[annotation][stdlib][inherited]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_inherited__;
+        module gen_annotation_meta_63;
         import k;
         @k::annotations::Inherited
         annotation Tag { value : int; }
@@ -1520,7 +1520,7 @@ TEST_CASE("Stdlib @Inherited: annotation propagates from base to derived", "[ann
 
 TEST_CASE("Stdlib @Inherited: non-inherited annotation does NOT propagate", "[annotation][stdlib][inherited]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_no_inherit__;
+        module gen_annotation_meta_64;
         import k;
         annotation NoInherit { value : int; }
         @NoInherit(42)
@@ -1544,7 +1544,7 @@ TEST_CASE("Stdlib @Inherited: non-inherited annotation does NOT propagate", "[an
 
 TEST_CASE("Stdlib @Retention(SOURCE): is_source_retention() with real stdlib Retention", "[annotation][stdlib][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_retention_src__;
+        module gen_annotation_meta_65;
         import k;
         @k::annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
@@ -1572,7 +1572,7 @@ TEST_CASE("Stdlib @Retention(SOURCE): is_source_retention() with real stdlib Ret
 
 TEST_CASE("Stdlib @Retention: default (no @Retention) is RUNTIME", "[annotation][stdlib][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_retention_default__;
+        module gen_annotation_meta_66;
         import k;
         annotation RuntimeDefault {}
     )SRC");
@@ -1586,7 +1586,7 @@ TEST_CASE("Stdlib @Retention: default (no @Retention) is RUNTIME", "[annotation]
 TEST_CASE("Stdlib @Retention(SOURCE): annotation NOT emitted in IR", "[annotation][stdlib][retention]") {
     // Compile with compile_model_with_stdlib and dump IR
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_ret_src_ir__;
+        module gen_annotation_meta_67;
         import k;
         @k::annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
@@ -1612,7 +1612,7 @@ TEST_CASE("Stdlib @Retention(SOURCE): annotation NOT emitted in IR", "[annotatio
 
 TEST_CASE("Stdlib combined: @Target(CLASS) + @Inherited + @Retention(RUNTIME)", "[annotation][stdlib][meta]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_combined__;
+        module gen_annotation_meta_68;
         import k;
         @k::annotations::Target({ElementType::CLASS})
         @k::annotations::Inherited
@@ -1663,7 +1663,7 @@ TEST_CASE("Stdlib combined: @Target(CLASS) + @Inherited + @Retention(RUNTIME)", 
 
 TEST_CASE("Stdlib @Target(CLASS) + @Inherited: rejects when applied to interface", "[annotation][stdlib][meta]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_stdlib_target_inh_fail__;
+        module gen_annotation_meta_69;
         import k;
         @k::annotations::Target({ElementType::CLASS})
         @k::annotations::Inherited
@@ -1691,7 +1691,7 @@ TEST_CASE("Namespace collision: user-defined 'Retention' in local module trigger
     // value is currently recognized as a meta-annotation due to the raw_name
     // fallback.  This test documents that behavior.
     auto comp = compile_model(R"SRC(
-        module __test_ns_collision_ret__;
+        module gen_annotation_meta_70;
         annotation RetDef {
             enum Policy { SOURCE; RUNTIME; };
         }
@@ -1716,7 +1716,7 @@ TEST_CASE("Namespace collision: user-defined 'Inherited' in local module trigger
     // A user-defined annotation named "Inherited" is currently recognized
     // as a meta-annotation due to the raw_name fallback.
     auto comp = compile_model(R"SRC(
-        module __test_ns_collision_inh__;
+        module gen_annotation_meta_71;
         annotation InhDef {}
         @InhDef
         annotation Inherited {}
@@ -1744,7 +1744,7 @@ TEST_CASE("Namespace collision: user-defined 'Target' in local module triggers t
     // A user-defined annotation named "Target" is currently recognized
     // as a meta-annotation due to the raw_name fallback.
     auto comp = compile_model(R"SRC(
-        module __test_ns_collision_target__;
+        module gen_annotation_meta_72;
         annotation TargetDef {
             enum ElementType { CLASS; INTERFACE; ANNOTATION; };
         }

@@ -52,7 +52,7 @@ TEST_CASE("unit_name_to_lib_base: empty string", "[prod-lib][unit-name]") {
 TEST_CASE("Shared library: simple module without main produces a .so", "[prod-lib][shared]") {
     std::string so_path;
     REQUIRE_NOTHROW(so_path = build_shared_library(R"SRC(
-        module math::utils;
+        module math::utils_pl01;
 
         namespace math {
             namespace utils {
@@ -104,7 +104,7 @@ TEST_CASE("Shared library: compound module — symbol 'square' exported", "[prod
 TEST_CASE("Static library: module without main produces a .a", "[prod-lib][static]") {
     std::string a_path;
     REQUIRE_NOTHROW(a_path = build_static_library(R"SRC(
-        module math::utils;
+        module math::utils_pl02;
 
         namespace math {
             namespace utils {

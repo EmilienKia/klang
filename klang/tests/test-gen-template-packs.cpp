@@ -34,7 +34,7 @@
 
 TEST_CASE("template pack - simple forwarding two args", "[gen][template-packs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_packs_01;
 
         fun target(a: int, b: int) : int {
             return a + b;
@@ -56,7 +56,7 @@ TEST_CASE("template pack - simple forwarding two args", "[gen][template-packs]")
 
 TEST_CASE("template pack - forwarding three args", "[gen][template-packs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_packs_02;
 
         fun sum3(a: int, b: int, c: int) : int {
             return a + b + c;
@@ -78,7 +78,7 @@ TEST_CASE("template pack - forwarding three args", "[gen][template-packs]") {
 
 TEST_CASE("template pack - non-pack param before pack", "[gen][template-packs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_packs_03;
 
         fun add(a: int, b: int) : int {
             return a + b;
@@ -100,7 +100,7 @@ TEST_CASE("template pack - non-pack param before pack", "[gen][template-packs]")
 
 TEST_CASE("template pack - empty pack", "[gen][template-packs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_packs_04;
 
         fun no_args() : int {
             return 99;

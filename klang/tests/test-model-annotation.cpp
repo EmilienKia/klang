@@ -39,7 +39,7 @@
 
 TEST_CASE("Model: annotation type is created and flagged", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_1__;
+        module model_annotation_01;
         annotation MyAnnotation {
             value : int;
         }
@@ -55,7 +55,7 @@ TEST_CASE("Model: annotation type is created and flagged", "[model][annotation]"
 
 TEST_CASE("Model: empty annotation type", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_2__;
+        module model_annotation_02;
         annotation Empty {}
     )SRC");
     REQUIRE(comp != nullptr);
@@ -70,7 +70,7 @@ TEST_CASE("Model: empty annotation type", "[model][annotation]") {
 
 TEST_CASE("Model: annotation type with multiple members", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_3__;
+        module model_annotation_03;
         annotation Versioned {
             major : int;
             minor : int;
@@ -88,7 +88,7 @@ TEST_CASE("Model: annotation type with multiple members", "[model][annotation]")
 
 TEST_CASE("Model: annotation type appears in aggregate map", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_4__;
+        module model_annotation_04;
         annotation Info {
             value : int;
         }
@@ -124,7 +124,7 @@ TEST_CASE("Model: annotation type appears in aggregate map", "[model][annotation
 
 TEST_CASE("Model: annotated class has annotation instances", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_5__;
+        module model_annotation_05;
         annotation Deprecated {}
         @Deprecated
         class OldStuff {
@@ -143,7 +143,7 @@ TEST_CASE("Model: annotated class has annotation instances", "[model][annotation
 
 TEST_CASE("Model: class with multiple annotations", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_6__;
+        module model_annotation_06;
         annotation A {}
         annotation B {}
         @A @B
@@ -163,7 +163,7 @@ TEST_CASE("Model: class with multiple annotations", "[model][annotation]") {
 
 TEST_CASE("Model: struct without annotations has empty list", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_7__;
+        module model_annotation_07;
         struct Plain {
             x : int;
         }
@@ -177,7 +177,7 @@ TEST_CASE("Model: struct without annotations has empty list", "[model][annotatio
 
 TEST_CASE("Model: annotated class has annotation via find_klass", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_8__;
+        module model_annotation_08;
         annotation Tag {}
         @Tag
         class MyClass {
@@ -195,7 +195,7 @@ TEST_CASE("Model: annotated class has annotation via find_klass", "[model][annot
 
 TEST_CASE("Model: annotation with qualified name on class", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_9__;
+        module model_annotation_09;
         annotation Info {}
         @Info
         class Foo {
@@ -218,7 +218,7 @@ TEST_CASE("Model: annotation with qualified name on class", "[model][annotation]
 
 TEST_CASE("Model: annotation type can itself be annotated", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_10__;
+        module model_annotation_10;
         annotation Meta {}
         @Meta
         annotation Documented {}
@@ -240,7 +240,7 @@ TEST_CASE("Model: annotation type can itself be annotated", "[model][annotation]
 
 TEST_CASE("Model: annotation on struct is an error", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_err_1__;
+        module model_annotation_11;
         annotation Deprecated {}
         @Deprecated
         struct BadTarget {
@@ -258,7 +258,7 @@ TEST_CASE("Model: annotation on struct is an error", "[model][annotation]") {
 
 TEST_CASE("Model: annotated interface has annotation instances", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_iface_1__;
+        module model_annotation_12;
         annotation Tag {}
         @Tag
         interface Describable {
@@ -281,7 +281,7 @@ TEST_CASE("Model: annotated interface has annotation instances", "[model][annota
 
 TEST_CASE("Model: annotation type has vtable after resolution", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_vtable__;
+        module model_annotation_13;
         annotation Marker {}
     )SRC");
     REQUIRE(comp != nullptr);
@@ -296,7 +296,7 @@ TEST_CASE("Model: annotation type has vtable after resolution", "[model][annotat
 
 TEST_CASE("Model: annotation type has vptr field", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_vptr__;
+        module model_annotation_14;
         annotation Info { value : int; }
     )SRC");
     REQUIRE(comp != nullptr);
@@ -314,7 +314,7 @@ TEST_CASE("Model: annotation type has vptr field", "[model][annotation]") {
 
 TEST_CASE("Model: annotation instance resolved_type is set on class", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_resolve_1__;
+        module model_annotation_15;
         annotation Deprecated {}
         @Deprecated
         class Foo {
@@ -334,7 +334,7 @@ TEST_CASE("Model: annotation instance resolved_type is set on class", "[model][a
 
 TEST_CASE("Model: annotation instance resolved_type is set on interface", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_resolve_2__;
+        module model_annotation_16;
         annotation Tag {}
         @Tag
         interface Describable {
@@ -353,7 +353,7 @@ TEST_CASE("Model: annotation instance resolved_type is set on interface", "[mode
 
 TEST_CASE("Model: multiple annotations all resolved on class", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_resolve_multi__;
+        module model_annotation_17;
         annotation A { x : int; }
         annotation B {}
         @A @B
@@ -380,7 +380,7 @@ TEST_CASE("Model: multiple annotations all resolved on class", "[model][annotati
 
 TEST_CASE("Model: using a class as annotation is an error", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_err_cls__;
+        module model_annotation_18;
         class NotAnAnnotation {
             foo() : int { return 0; }
         }
@@ -395,7 +395,7 @@ TEST_CASE("Model: using a class as annotation is an error", "[model][annotation]
 
 TEST_CASE("Model: using a struct as annotation is an error", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_err_struct__;
+        module model_annotation_19;
         struct NotAnAnnotation {
             x : int;
         }
@@ -414,7 +414,7 @@ TEST_CASE("Model: using a struct as annotation is an error", "[model][annotation
 
 TEST_CASE("Model: annotation instance resolved_type is set on annotation type", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_resolve_meta_1__;
+        module model_annotation_20;
         annotation Meta {}
         @Meta
         annotation Documented {}
@@ -432,7 +432,7 @@ TEST_CASE("Model: annotation instance resolved_type is set on annotation type", 
 
 TEST_CASE("Model: multiple meta-annotations all resolved on annotation type", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_resolve_meta_multi__;
+        module model_annotation_21;
         annotation Alpha {}
         annotation Beta {}
         @Alpha @Beta
@@ -452,7 +452,7 @@ TEST_CASE("Model: multiple meta-annotations all resolved on annotation type", "[
 
 TEST_CASE("Model: meta-annotation with members has resolved_field_constants", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_resolve_meta_fields__;
+        module model_annotation_22;
         annotation Version { major : int; minor : int; }
         @Version(2, 5)
         annotation Documented {}
@@ -476,7 +476,7 @@ TEST_CASE("Model: meta-annotation with members has resolved_field_constants", "[
 
 TEST_CASE("Model: is_source_retention() returns false when no @Retention", "[model][annotation][retention]") {
     auto comp = compile_model(R"SRC(
-        module __test_src_ret_1__;
+        module model_annotation_23;
         annotation Marker {}
     )SRC");
     REQUIRE(comp != nullptr);
@@ -489,7 +489,7 @@ TEST_CASE("Model: is_source_retention() returns false when no @Retention", "[mod
 
 TEST_CASE("Model: is_source_retention() returns true for @Retention(Policy::SOURCE) positional", "[model][annotation][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_src_ret_2__;
+        module model_annotation_24;
         @annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
     )SRC");
@@ -502,7 +502,7 @@ TEST_CASE("Model: is_source_retention() returns true for @Retention(Policy::SOUR
 
 TEST_CASE("Model: is_source_retention() returns false for @Retention(Policy::RUNTIME) positional", "[model][annotation][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_src_ret_3__;
+        module model_annotation_25;
         @annotations::Retention(Policy::RUNTIME)
         annotation RunOnly {}
     )SRC");
@@ -515,7 +515,7 @@ TEST_CASE("Model: is_source_retention() returns false for @Retention(Policy::RUN
 
 TEST_CASE("Model: is_source_retention() returns true for @Retention{Policy::SOURCE} brace-init", "[model][annotation][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_src_ret_4__;
+        module model_annotation_26;
         @annotations::Retention{Policy::SOURCE}
         annotation BraceSource {}
     )SRC");
@@ -528,7 +528,7 @@ TEST_CASE("Model: is_source_retention() returns true for @Retention{Policy::SOUR
 
 TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy = Policy::SOURCE} designated", "[model][annotation][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_src_ret_5__;
+        module model_annotation_27;
         @annotations::Retention{.policy = Policy::SOURCE}
         annotation DesignSource {}
     )SRC");
@@ -541,7 +541,7 @@ TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy = Po
 
 TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy(Policy::SOURCE)} call form", "[model][annotation][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_src_ret_6__;
+        module model_annotation_28;
         @annotations::Retention{.policy(Policy::SOURCE)}
         annotation CallSource {}
     )SRC");
@@ -554,7 +554,7 @@ TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy(Poli
 
 TEST_CASE("Model: is_source_retention() returns false for @Retention{.policy = Policy::RUNTIME}", "[model][annotation][retention]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_src_ret_7__;
+        module model_annotation_29;
         @annotations::Retention{.policy = Policy::RUNTIME}
         annotation DesignRuntime {}
     )SRC");
@@ -567,7 +567,7 @@ TEST_CASE("Model: is_source_retention() returns false for @Retention{.policy = P
 
 TEST_CASE("Model: is_source_retention() on annotation with unrelated meta-annotations", "[model][annotation][retention]") {
     auto comp = compile_model(R"SRC(
-        module __test_src_ret_8__;
+        module model_annotation_30;
         annotation Unrelated {}
         @Unrelated
         annotation Foo {}

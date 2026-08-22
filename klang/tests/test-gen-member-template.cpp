@@ -34,7 +34,7 @@
 
 TEST_CASE("Member template method on non-template struct", "[gen][member-template]") {
     std::string src = R"SRC(
-        module __mt_01__;
+        module gen_member_template_01;
 
         struct Converter {
             template<typename T>
@@ -60,7 +60,7 @@ TEST_CASE("Member template method on non-template struct", "[gen][member-templat
 
 TEST_CASE("Member template method on template struct", "[gen][member-template]") {
     std::string src = R"SRC(
-        module __mt_02__;
+        module gen_member_template_02;
 
         template<typename T>
         struct Container {
@@ -90,7 +90,7 @@ TEST_CASE("Member template method on template struct", "[gen][member-template]")
 
 TEST_CASE("Member template with parameter pack", "[gen][member-template][pack]") {
     std::string src = R"SRC(
-        module __mt_03__;
+        module gen_member_template_03;
 
         struct Adder {
             template<typename...Args>
@@ -202,7 +202,7 @@ TEST_CASE("UniSlot member template construct zero-arg", "[gen][member-template][
 
 TEST_CASE("Member template with implicit deduction", "[gen][member-template][deduction]") {
     std::string src = R"SRC(
-        module __mt_06__;
+        module gen_member_template_04;
 
         struct Wrapper {
             template<typename T>
@@ -382,7 +382,7 @@ TEST_CASE("SimpleList emplaceFront with default constructor (zero args)", "[gen]
 // candidate(s) can be called").
 TEST_CASE("Template class method keeps its default parameter value after instantiation", "[gen][member-template][default-param][regression]") {
     auto jit = gen_jit(R"SRC(
-module __mt_default_param__;
+module gen_member_template_05;
 template<typename T>
 class Box {
     v: T;

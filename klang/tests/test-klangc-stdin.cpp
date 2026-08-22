@@ -38,7 +38,7 @@ TEST_CASE("stdin: compile from stdin alone produces executable", "[stdin][live]"
     ::close(fd);
 
     std::string src = R"(
-        module stdin_test;
+        module klangc_stdin_01;
         main() : int {
             return 42;
         }
@@ -80,7 +80,7 @@ TEST_CASE("stdin: --stdin with -c produces object file", "[stdin][live]") {
     std::filesystem::remove(out_file);
 
     std::string src = R"(
-        module stdin_obj;
+        module klangc_stdin_02;
         foo() : int {
             return 7;
         }
@@ -114,7 +114,7 @@ TEST_CASE("stdin: --stdin combined with input file", "[stdin][live]") {
     {
         std::ofstream ofs(k_file);
         ofs << R"(
-            module stdin_combo;
+            module klangc_stdin_03;
             helper() : int {
                 return 10;
             }
@@ -129,7 +129,7 @@ TEST_CASE("stdin: --stdin combined with input file", "[stdin][live]") {
     // The stdin source provides main() which returns a constant.
     // Both files are compiled together as the same module.
     std::string stdin_src = R"(
-        module stdin_combo;
+        module klangc_stdin_03; // <- Same module as helper.k
         main() : int {
             return 10;
         }
@@ -167,7 +167,7 @@ TEST_CASE("stdin: --stdin with -c and no -o defaults to stdin.o", "[stdin][live]
     TmpDir tmpdir;
 
     std::string src = R"(
-        module stdin_default_name;
+        module klangc_stdin_05;
         bar() : int {
             return 99;
         }

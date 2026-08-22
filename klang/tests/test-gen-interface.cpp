@@ -79,7 +79,7 @@ TEST_CASE("[A] Interface keyword produces a model::interface node", "[interface]
 
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-module __iface_model__;
+module gen_interface_01;
 interface Drawable {
     draw() : int;
 }
@@ -101,7 +101,7 @@ TEST_CASE("[B] Interface is implicitly abstract", "[interface][model]") {
     SECTION("Without explicit abstract specifier") {
         auto comp = k::compiler::create();
         comp->parse_source("", R"SRC(
-module __iface_implicit_abstract__;
+module gen_interface_02;
 interface Foo {
     bar() : int;
 }
@@ -116,7 +116,7 @@ interface Foo {
     SECTION("Even when interface has no methods") {
         auto comp = k::compiler::create();
         comp->parse_source("", R"SRC(
-module __iface_empty_abstract__;
+module gen_interface_03;
 interface Empty {
 }
 )SRC");
@@ -136,7 +136,7 @@ TEST_CASE("[C] Interface member functions are implicitly abstract", "[interface]
 
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-module __iface_func_abstract__;
+module gen_interface_04;
 interface Measurable {
     area()   : int;
     perimeter() : int;
@@ -167,7 +167,7 @@ TEST_CASE("[D] Redundant 'abstract' on interface declaration emits warning, stil
     // so we can inspect diagnostics.
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-module __iface_redundant_abstract__;
+module gen_interface_05;
 abstract interface Marker {
     check() : int;
 }
@@ -189,7 +189,7 @@ TEST_CASE("[E] Redundant 'abstract' on interface method emits warning, still com
 
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-module __iface_redundant_abstract_method__;
+module gen_interface_06;
 interface Printer {
     abstract print() : int;
 }
@@ -213,7 +213,7 @@ TEST_CASE("[F] Class implementing interface method: virtual dispatch works", "[i
 
     SECTION("Direct call on concrete class instance") {
         auto jit = gen_jit(R"SRC(
-module __iface_basic__;
+module gen_interface_07;
 interface Greeter {
     greet() : int;
 }
@@ -234,7 +234,7 @@ test() : int {
 
     SECTION("Virtual dispatch through interface reference") {
         auto jit = gen_jit(R"SRC(
-module __iface_dispatch_ref__;
+module gen_interface_08;
 interface Counter {
     count() : int;
 }
@@ -262,7 +262,7 @@ test() : int {
 TEST_CASE("[G] Class implementing all methods of an interface", "[interface][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __iface_multi_method__;
+module gen_interface_09;
 interface Shape {
     area()      : int;
     perimeter() : int;
@@ -296,7 +296,7 @@ test_sides()     : int { t: Triangle; return t.sides(); }
 TEST_CASE("[H] Multi-level: concrete subclass overrides interface method", "[interface][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __iface_multilevel__;
+module gen_interface_10;
 interface Base {
     value() : int;
 }
@@ -329,7 +329,7 @@ TEST_CASE("[I] Interface extending another interface", "[interface][inheritance]
 
     SECTION("Sub-interface adds methods; class implements all") {
         auto jit = gen_jit(R"SRC(
-module __iface_extends_iface__;
+module gen_interface_11;
 interface Identifiable {
     id() : int;
 }
@@ -357,7 +357,7 @@ test_name_hash() : int { e: Entity; return e.name_hash(); }
     SECTION("Model: sub-interface is still a model::interface") {
         auto comp = k::compiler::create();
         comp->parse_source("", R"SRC(
-module __iface_extends_iface_model__;
+module gen_interface_12;
 interface A {
     foo() : int;
 }
@@ -384,7 +384,7 @@ TEST_CASE("[J] Class implementing two interfaces via multiple inheritance", "[in
 
     SECTION("Direct calls on concrete instance work correctly") {
         auto jit = gen_jit(R"SRC(
-module __iface_multi_impl_direct__;
+module gen_interface_13;
 interface Readable {
     read() : int;
 }
@@ -409,7 +409,7 @@ test_write() : int { b: Buffer; return b.write(); }
 
     SECTION("Dispatch through primary interface reference works") {
         auto jit = gen_jit(R"SRC(
-module __iface_multi_impl_primary__;
+module gen_interface_14;
 interface Readable {
     read() : int;
 }
@@ -438,7 +438,7 @@ test_read() : int { b: Buffer; return call_read(b); }
 TEST_CASE("[K] Virtual dispatch through interface reference selects correct implementation", "[interface][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __iface_polymorphism__;
+module gen_interface_15;
 interface Processor {
     process() : int;
 }
@@ -470,7 +470,7 @@ test_slow() : int { s: Slow; return run(s); }
 TEST_CASE("[L] Abstract class partially implements interface; subclass completes it", "[interface][abstract]") {
 
     auto jit = gen_jit(R"SRC(
-module __iface_partial_impl__;
+module gen_interface_16;
 interface Vehicle {
     speed()  : int;
     wheels() : int;
@@ -509,7 +509,7 @@ TEST_CASE("[M] Interface nested inside a class compiles (model check)", "[interf
     // supported by the parser — test model-level acceptance only.
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-module __iface_nested__;
+module gen_interface_17;
 class Outer {
     Outer() {}
     interface Inner {
@@ -545,7 +545,7 @@ class Outer {
 TEST_CASE("[N] Direct instantiation of interface is an error", "[interface][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __iface_instantiate__;
+module gen_interface_18;
 interface Foo {
     bar() : int;
 }
@@ -563,7 +563,7 @@ test() : int {
 TEST_CASE("[O] Class with unimplemented interface methods must be abstract", "[interface][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __iface_missing_impl__;
+module gen_interface_19;
 interface Animal {
     sound() : int;
     legs()  : int;
@@ -582,7 +582,7 @@ class Dog : public Animal {
 TEST_CASE("[P] Interface method with a body is an error", "[interface][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __iface_method_with_body__;
+module gen_interface_20;
 interface Broken {
     foo() : int { return 0; }
 }
@@ -601,7 +601,7 @@ TEST_CASE("[Q] Static method in interface is an error (abstract+static conflict)
     // so this produces a valid (non-abstract, non-virtual) static method.
     // With 'abstract static': error.
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __iface_abstract_static__;
+module gen_interface_21;
 interface Broken {
     abstract static foo() : int;
 }
@@ -619,7 +619,7 @@ TEST_CASE("[R] 'final' method without body in interface is an error (no implemen
     // Without a body and without being abstract, it is a function with no implementation,
     // which is an error (0x00AB).
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __iface_final_method__;
+module gen_interface_22;
 interface HasFinal {
     final stamp() : int;
 }
@@ -633,7 +633,7 @@ interface HasFinal {
 TEST_CASE("[S] abstract+static on interface method is an error", "[interface][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __iface_abs_static__;
+module gen_interface_23;
 interface Bad {
     abstract static foo() : int;
 }
@@ -647,7 +647,7 @@ interface Bad {
 TEST_CASE("[T] abstract+final on interface method is an error", "[interface][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __iface_abs_final__;
+module gen_interface_24;
 interface Bad {
     abstract final foo() : int;
 }
@@ -661,7 +661,7 @@ interface Bad {
 TEST_CASE("[U] abstract method with body in interface is an error", "[interface][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __iface_abs_body__;
+module gen_interface_25;
 interface Bad {
     abstract foo() : int { return 1; }
 }
@@ -675,7 +675,7 @@ interface Bad {
 TEST_CASE("[V] abstract+private on interface method is an error", "[interface][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __iface_abs_private__;
+module gen_interface_26;
 interface Bad {
 private:
     abstract foo() : int;
@@ -690,7 +690,7 @@ private:
 TEST_CASE("[X1] Interface dispatch: three implementations, correct routing", "[interface][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __iface_three_impls__;
+module gen_interface_27;
 interface Sensor {
     read() : int;
 }
@@ -725,7 +725,7 @@ test_humidity() : int { h: Humidity; return sample(h); }
 TEST_CASE("[X2] Interface dispatch: overriding method at multiple levels", "[interface][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __iface_override_chain__;
+module gen_interface_28;
 interface Source {
     get() : int;
 }
@@ -762,7 +762,7 @@ TEST_CASE("[X3] Two interfaces, class implements both, dispatch through primary 
     // per-base vtable thunks which are not yet implemented. We verify direct
     // calls and dispatch through the primary interface only.
     auto jit = gen_jit(R"SRC(
-module __iface_dual_dispatch__;
+module gen_interface_29;
 interface Left {
     left() : int;
 }
@@ -804,7 +804,7 @@ test_via_left()     : int { b: Both; return via_left(b); }
 // the base one.
 TEST_CASE("Base getter and derived setter of same name are both reachable through the derived reference", "[interface][overload][regression]") {
     auto jit = gen_jit(R"SRC(
-module __iface_getter_setter_overload__;
+module gen_interface_30;
 interface Reader {
     const value() : const int&;
 }
@@ -846,7 +846,7 @@ test() : int {
 TEST_CASE("[P1] Diamond: concrete class missing secondary-branch abstract method must be rejected",
           "[interface][abstract][diamond][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __diamond_abstract_p1__;
+module gen_interface_31;
 template<typename T> interface Collection { size() : unsigned int; }
 template<typename T> interface OrderedCollection : public Collection<T> { first() : int; }
 template<typename T> interface MutableCollection : public Collection<T> { addOne(v: T) : bool; }
@@ -868,7 +868,7 @@ class Impl : public MutableOrderedSet<int> {
 TEST_CASE("[P2] Diamond: concrete class implementing all methods (incl. secondary branch) compiles and dispatches",
           "[interface][abstract][diamond]") {
     auto jit = gen_jit(R"SRC(
-module __diamond_abstract_p2__;
+module gen_interface_32;
 template<typename T> interface Collection { size() : unsigned int; }
 template<typename T> interface OrderedCollection : public Collection<T> { first() : int; }
 template<typename T> interface MutableCollection : public Collection<T> { addOne(v: T) : bool; }
@@ -899,7 +899,7 @@ test() : int {
 TEST_CASE("[P3] Diamond: abstract middle class leaving secondary method abstract; subclass provides it",
           "[interface][abstract][diamond]") {
     auto jit = gen_jit(R"SRC(
-module __diamond_abstract_p3__;
+module gen_interface_33;
 template<typename T> interface Collection { size() : unsigned int; }
 template<typename T> interface OrderedCollection : public Collection<T> { first() : int; }
 template<typename T> interface Set : public Collection<T> { contains(v: T) : bool; }
@@ -929,7 +929,7 @@ test() : int {
 TEST_CASE("[P4] Non-diamond: concrete class missing primary-chain abstract method still rejected",
           "[interface][abstract][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __diamond_abstract_p4__;
+module gen_interface_34;
 interface Base { foo() : int; }
 interface Mid : public Base { bar() : int; }
 class Concrete : public Mid {

@@ -23,7 +23,7 @@
 TEST_CASE( "byte signed arithmetic", "[gen][byte][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __int8__;
+        module gen_arithmetic_int_01;
         add(a : byte, b : byte) : byte {
             return a + b;
         }
@@ -267,7 +267,7 @@ TEST_CASE( "byte signed arithmetic", "[gen][byte][arithmetic]" ) {
 TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __uint8__;
+        module gen_arithmetic_int_02;
         add(a : byte, b : byte) : byte {
             return a + b;
         }
@@ -495,7 +495,7 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
 TEST_CASE( "unsigned byte arithmetic and conversions", "[gen][unsigned-byte][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __ubyte__;
+        module gen_arithmetic_int_03;
         add(a : unsigned byte, b : unsigned byte) : unsigned byte {
             return a + b;
         }
@@ -566,7 +566,7 @@ TEST_CASE( "unsigned byte arithmetic and conversions", "[gen][unsigned-byte][ari
 TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __int16__;
+        module gen_arithmetic_int_04;
         add(a : short, b : short) : short {
             return a + b;
         }
@@ -808,7 +808,7 @@ TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
 TEST_CASE( "uint16 arithmetic", "[gen][uint16][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __int16__;
+        module gen_arithmetic_int_05;
         add(a : unsigned short, b : unsigned short) : unsigned short {
             return a + b;
         }
@@ -993,7 +993,7 @@ TEST_CASE( "uint16 arithmetic", "[gen][uint16][arithmetic]" ) {
 TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __int32__;
+        module gen_arithmetic_int_06;
         add(a : int, b : int) : int {
             return a + b;
         }
@@ -1341,7 +1341,7 @@ TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
 TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __uint32__;
+        module gen_arithmetic_int_07;
         add(a : unsigned int, b : unsigned int) : unsigned int {
             return a + b;
         }
@@ -1525,7 +1525,7 @@ TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
 TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __int64__;
+        module gen_arithmetic_int_08;
         add(a : long, b : long) : long {
             return a + b;
         }
@@ -1767,7 +1767,7 @@ TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
 TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __uint64__;
+        module gen_arithmetic_int_09;
         add(a : unsigned long, b : unsigned long) : unsigned long {
             return a + b;
         }

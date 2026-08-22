@@ -60,7 +60,7 @@
 TEST_CASE("[A] M11: template function returns value param",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_a__;
+        module gen_template_value_params_01;
         template<int N>
         get_n() : int { return N; }
 
@@ -69,7 +69,7 @@ TEST_CASE("[A] M11: template function returns value param",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_a__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_014testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 42);
 }
@@ -81,7 +81,7 @@ TEST_CASE("[A] M11: template function returns value param",
 TEST_CASE("[B] M11: template function with type and value params",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_b__;
+        module gen_template_value_params_02;
         template<typename T, int N>
         add_n(x : T) : T { return x + N; }
 
@@ -90,7 +90,7 @@ TEST_CASE("[B] M11: template function with type and value params",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_b__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_024testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 42);
 }
@@ -102,7 +102,7 @@ TEST_CASE("[B] M11: template function with type and value params",
 TEST_CASE("[C] M11: template struct with value param in method",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_c__;
+        module gen_template_value_params_03;
         template<typename T, int N>
         struct Fixed {
             public val : T;
@@ -115,7 +115,7 @@ TEST_CASE("[C] M11: template struct with value param in method",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_c__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_034testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 5);
 }
@@ -127,7 +127,7 @@ TEST_CASE("[C] M11: template struct with value param in method",
 TEST_CASE("[D] M11: different value args produce distinct instances",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_d__;
+        module gen_template_value_params_04;
         template<int N>
         get_n() : int { return N; }
 
@@ -138,7 +138,7 @@ TEST_CASE("[D] M11: different value args produce distinct instances",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_d__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_044testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 30);
 }
@@ -150,7 +150,7 @@ TEST_CASE("[D] M11: different value args produce distinct instances",
 TEST_CASE("[E] M11: same value args use cache",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_e__;
+        module gen_template_value_params_05;
         template<int N>
         get_n() : int { return N; }
 
@@ -161,7 +161,7 @@ TEST_CASE("[E] M11: same value args use cache",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_e__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_054testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 14);
 }
@@ -173,7 +173,7 @@ TEST_CASE("[E] M11: same value args use cache",
 TEST_CASE("[F] M11: template function with value param default",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_f__;
+        module gen_template_value_params_06;
         template<int N = 100>
         get_n() : int { return N; }
 
@@ -182,7 +182,7 @@ TEST_CASE("[F] M11: template function with value param default",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_f__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_064testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 100);
 }
@@ -194,7 +194,7 @@ TEST_CASE("[F] M11: template function with value param default",
 TEST_CASE("[G] M11: value param in arithmetic expression",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_g__;
+        module gen_template_value_params_07;
         template<int N>
         double_n() : int { return N * 2; }
 
@@ -203,7 +203,7 @@ TEST_CASE("[G] M11: value param in arithmetic expression",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_g__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_074testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 42);
 }
@@ -215,7 +215,7 @@ TEST_CASE("[G] M11: value param in arithmetic expression",
 TEST_CASE("[H] M11: template struct value param in member init via method",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_h__;
+        module gen_template_value_params_08;
         template<typename T, int N>
         struct Container {
             public size : int;
@@ -228,7 +228,7 @@ TEST_CASE("[H] M11: template struct value param in member init via method",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_h__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_084testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 8);
 }
@@ -243,7 +243,7 @@ TEST_CASE("[H] M11: template struct value param in member init via method",
 TEST_CASE("[I] M11: zero value template argument",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_i__;
+        module gen_template_value_params_09;
         template<int N>
         get_n() : int { return N; }
 
@@ -252,7 +252,7 @@ TEST_CASE("[I] M11: zero value template argument",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_i__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_094testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 0);
 }
@@ -264,7 +264,7 @@ TEST_CASE("[I] M11: zero value template argument",
 TEST_CASE("[J] M11: mangling of value template argument",
           "[milestone11][template][value-param][mangling]") {
     auto comp = compile_model(R"SRC(
-        module __m11_j__;
+        module gen_template_value_params_10;
         template<int N>
         get_n() : int { return N; }
 
@@ -291,7 +291,7 @@ TEST_CASE("[J] M11: mangling of value template argument",
 TEST_CASE("[K] M11: template function with long value param",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_k__;
+        module gen_template_value_params_11;
         template<long N>
         get_n() : long { return N; }
 
@@ -300,7 +300,7 @@ TEST_CASE("[K] M11: template function with long value param",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<long(*)()>("_KFN9__m11_k__4testEv");
+    auto test_fn = jit->lookup_symbol<long(*)()>("_KFN28gen_template_value_params_114testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 100000L);
 }
@@ -312,7 +312,7 @@ TEST_CASE("[K] M11: template function with long value param",
 TEST_CASE("[L] M11: template function with short value param",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_l__;
+        module gen_template_value_params_12;
         template<short N>
         get_n() : short { return N; }
 
@@ -321,7 +321,7 @@ TEST_CASE("[L] M11: template function with short value param",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<short(*)()>("_KFN9__m11_l__4testEv");
+    auto test_fn = jit->lookup_symbol<short(*)()>("_KFN28gen_template_value_params_124testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 7);
 }
@@ -333,7 +333,7 @@ TEST_CASE("[L] M11: template function with short value param",
 TEST_CASE("[M] M11: template function with bool value param",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_m__;
+        module gen_template_value_params_13;
         template<bool B>
         get_b() : bool { return B; }
 
@@ -347,7 +347,7 @@ TEST_CASE("[M] M11: template function with bool value param",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_m__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_134testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 1);
 }
@@ -359,7 +359,7 @@ TEST_CASE("[M] M11: template function with bool value param",
 TEST_CASE("[N] M11: multiple value params with different types",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_n__;
+        module gen_template_value_params_14;
         template<int A, int B>
         sum() : int { return A + B; }
 
@@ -368,7 +368,7 @@ TEST_CASE("[N] M11: multiple value params with different types",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_n__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_144testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 42);
 }
@@ -380,7 +380,7 @@ TEST_CASE("[N] M11: multiple value params with different types",
 TEST_CASE("[O] M11: template function with long value param default",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_o__;
+        module gen_template_value_params_15;
         template<long N = 999L>
         get_n() : long { return N; }
 
@@ -389,7 +389,7 @@ TEST_CASE("[O] M11: template function with long value param default",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<long(*)()>("_KFN9__m11_o__4testEv");
+    auto test_fn = jit->lookup_symbol<long(*)()>("_KFN28gen_template_value_params_154testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 999L);
 }
@@ -401,7 +401,7 @@ TEST_CASE("[O] M11: template function with long value param default",
 TEST_CASE("[P] M11: template struct with bool value param",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_p__;
+        module gen_template_value_params_16;
         template<typename T, bool Signed>
         struct Config {
             public data : T;
@@ -418,7 +418,7 @@ TEST_CASE("[P] M11: template struct with bool value param",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_p__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_164testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 1);
 }
@@ -430,7 +430,7 @@ TEST_CASE("[P] M11: template struct with bool value param",
 TEST_CASE("[Q] M11: large int value param",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_q__;
+        module gen_template_value_params_17;
         template<int N>
         get_n() : int { return N; }
 
@@ -439,7 +439,7 @@ TEST_CASE("[Q] M11: large int value param",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_q__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_174testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 2000000);
 }
@@ -451,7 +451,7 @@ TEST_CASE("[Q] M11: large int value param",
 TEST_CASE("[R] M11: value param used in conditional",
           "[milestone11][template][value-param][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_r__;
+        module gen_template_value_params_18;
         template<int N>
         check() : int {
             if(N > 10) { return 1; }
@@ -465,7 +465,7 @@ TEST_CASE("[R] M11: value param used in conditional",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_r__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_184testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 10);
 }
@@ -477,7 +477,7 @@ TEST_CASE("[R] M11: value param used in conditional",
 TEST_CASE("[S] M11: negative literal value template argument",
           "[milestone11][template][value-param][constexpr][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_s__;
+        module gen_template_value_params_19;
         template<int N>
         get_n() : int { return N; }
 
@@ -486,7 +486,7 @@ TEST_CASE("[S] M11: negative literal value template argument",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_s__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_194testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == -5);
 }
@@ -498,7 +498,7 @@ TEST_CASE("[S] M11: negative literal value template argument",
 TEST_CASE("[T] M11: parenthesized constexpr arithmetic value arg",
           "[milestone11][template][value-param][constexpr][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_t__;
+        module gen_template_value_params_20;
         template<int N>
         get_n() : int { return N; }
 
@@ -507,7 +507,7 @@ TEST_CASE("[T] M11: parenthesized constexpr arithmetic value arg",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_t__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_204testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 20);
 }
@@ -519,7 +519,7 @@ TEST_CASE("[T] M11: parenthesized constexpr arithmetic value arg",
 TEST_CASE("[U] M11: ternary constexpr expression as value arg",
           "[milestone11][template][value-param][constexpr][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_u__;
+        module gen_template_value_params_21;
         template<int N>
         get_n() : int { return N; }
 
@@ -528,7 +528,7 @@ TEST_CASE("[U] M11: ternary constexpr expression as value arg",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_u__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_214testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 10);
 }
@@ -540,7 +540,7 @@ TEST_CASE("[U] M11: ternary constexpr expression as value arg",
 TEST_CASE("[V] M11: enum constant as value template argument",
           "[milestone11][template][value-param][constexpr][enum][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_v__;
+        module gen_template_value_params_22;
         enum Color { Red; Green; Blue; }
 
         template<Color C>
@@ -551,7 +551,7 @@ TEST_CASE("[V] M11: enum constant as value template argument",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_v__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_224testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 2);
 }
@@ -563,7 +563,7 @@ TEST_CASE("[V] M11: enum constant as value template argument",
 TEST_CASE("[W] M11: enum type mismatch in value template argument rejected",
           "[milestone11][template][value-param][constexpr][enum][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __m11_w__;
+        module gen_template_value_params_23;
         enum Color { Red; Green; Blue; }
         enum Fruit { Apple; Banana; }
 
@@ -583,7 +583,7 @@ TEST_CASE("[W] M11: enum type mismatch in value template argument rejected",
 TEST_CASE("[X] M11: dependent value param propagated to nested template",
           "[milestone11][template][value-param][constexpr][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_x__;
+        module gen_template_value_params_24;
         template<int N>
         struct Inner {
             getVal() : int { return N * 2; }
@@ -601,7 +601,7 @@ TEST_CASE("[X] M11: dependent value param propagated to nested template",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_x__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_244testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 10);
 }
@@ -613,7 +613,7 @@ TEST_CASE("[X] M11: dependent value param propagated to nested template",
 TEST_CASE("[Y] M11: division by zero in constexpr value arg rejected",
           "[milestone11][template][value-param][constexpr][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __m11_y__;
+        module gen_template_value_params_25;
         template<int N>
         get_n() : int { return N; }
 
@@ -630,7 +630,7 @@ TEST_CASE("[Y] M11: division by zero in constexpr value arg rejected",
 TEST_CASE("[Z] M11: non-constant value arg referencing a local is rejected",
           "[milestone11][template][value-param][constexpr][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __m11_z__;
+        module gen_template_value_params_26;
         template<int N>
         get_n() : int { return N; }
 
@@ -648,7 +648,7 @@ TEST_CASE("[Z] M11: non-constant value arg referencing a local is rejected",
 TEST_CASE("[AB] M11: enum constant as default value template parameter",
           "[milestone11][template][value-param][constexpr][enum][default][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_ab__;
+        module gen_template_value_params_27;
         enum Color { Red; Green; Blue; }
 
         template<Color C = Color::Blue>
@@ -659,7 +659,7 @@ TEST_CASE("[AB] M11: enum constant as default value template parameter",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN10__m11_ab__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_274testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 4);
 }
@@ -671,7 +671,7 @@ TEST_CASE("[AB] M11: enum constant as default value template parameter",
 TEST_CASE("[AA] M11: runtime ternary expression compiles and runs",
           "[milestone11][expression][ternary][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m11_aa__;
+        module gen_template_value_params_28;
 
         test() : int {
             return (1 == 1 ? 10 : 20) + (1 == 0 ? 30 : 40);

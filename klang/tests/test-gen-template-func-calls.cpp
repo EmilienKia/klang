@@ -41,7 +41,7 @@
 TEST_CASE("[A] M9: template function identity<int> call",
           "[milestone9][template][function][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m9_fn_a__;
+        module gen_template_func_calls_01;
         template<typename T>
         identity(x : T) : T { return x; }
 
@@ -50,7 +50,7 @@ TEST_CASE("[A] M9: template function identity<int> call",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN11__m9_fn_a__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN26gen_template_func_calls_014testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 42);
 }
@@ -62,7 +62,7 @@ TEST_CASE("[A] M9: template function identity<int> call",
 TEST_CASE("[B] M9: template function first<int, float>",
           "[milestone9][template][function][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m9_fn_b__;
+        module gen_template_func_calls_02;
         template<typename A, typename B>
         pick_first(a : A, b : B) : A { return a; }
 
@@ -71,7 +71,7 @@ TEST_CASE("[B] M9: template function first<int, float>",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN11__m9_fn_b__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN26gen_template_func_calls_024testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 7);
 }
@@ -83,7 +83,7 @@ TEST_CASE("[B] M9: template function first<int, float>",
 TEST_CASE("[C] M9: template function called twice with same args",
           "[milestone9][template][function][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m9_fn_c__;
+        module gen_template_func_calls_03;
         template<typename T>
         double_val(x : T) : T { return x + x; }
 
@@ -94,7 +94,7 @@ TEST_CASE("[C] M9: template function called twice with same args",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN11__m9_fn_c__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN26gen_template_func_calls_034testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 30); // 20 + 10
 }
@@ -106,7 +106,7 @@ TEST_CASE("[C] M9: template function called twice with same args",
 TEST_CASE("[D] M9: template function with different type args",
           "[milestone9][template][function][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m9_fn_d__;
+        module gen_template_func_calls_04;
         template<typename T>
         identity(x : T) : T { return x; }
 
@@ -120,11 +120,11 @@ TEST_CASE("[D] M9: template function with different type args",
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto test_int = jit->lookup_symbol<int(*)()>("_KFN11__m9_fn_d__8test_intEv");
+    auto test_int = jit->lookup_symbol<int(*)()>("_KFN26gen_template_func_calls_048test_intEv");
     REQUIRE(test_int != nullptr);
     CHECK(test_int() == 100);
 
-    auto test_float = jit->lookup_symbol<float(*)()>("_KFN11__m9_fn_d__10test_floatEv");
+    auto test_float = jit->lookup_symbol<float(*)()>("_KFN26gen_template_func_calls_0410test_floatEv");
     REQUIRE(test_float != nullptr);
     CHECK(test_float() == Catch::Approx(3.14f));
 }
@@ -136,7 +136,7 @@ TEST_CASE("[D] M9: template function with different type args",
 TEST_CASE("[E] M9: template function accepts explicit owner type argument",
           "[milestone9][template][function][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m9_fn_e__;
+        module gen_template_func_calls_05;
         class Boxed {
             public value : int;
             Boxed() : value(7) {}
@@ -150,7 +150,7 @@ TEST_CASE("[E] M9: template function accepts explicit owner type argument",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN11__m9_fn_e__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN26gen_template_func_calls_054testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 1);
 }
@@ -162,7 +162,7 @@ TEST_CASE("[E] M9: template function accepts explicit owner type argument",
 TEST_CASE("[F] M8: generic member return T& resolves to concrete type at call site",
           "[milestone8][generic][function][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m8_generic_member_ref__;
+        module gen_template_func_calls_06;
 
         class Dog {
             public value : int = 0;
@@ -188,7 +188,7 @@ TEST_CASE("[F] M8: generic member return T& resolves to concrete type at call si
 TEST_CASE("[G] M8: generic member return stays concrete through member receiver chain",
           "[milestone8][generic][function][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m8_generic_member_ptr__;
+        module gen_template_func_calls_07;
 
         class Dog {
             public value : int = 0;
@@ -218,7 +218,7 @@ TEST_CASE("[G] M8: generic member return stays concrete through member receiver 
 TEST_CASE("[H] M8: generic nested-node linked-list pattern executes in one module",
           "[milestone8][generic][function][jit][collections]") {
     auto jit = gen_jit(R"SRC(
-        module __m8_generic_linked_list__;
+        module gen_template_func_calls_08;
 
         template<typename T>
         struct Node {

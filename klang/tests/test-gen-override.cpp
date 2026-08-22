@@ -78,7 +78,7 @@ TEST_CASE("[A] override on concrete→concrete class method", "[override]") {
 
     SECTION("Direct call dispatches to derived implementation") {
         auto jit = gen_jit(R"SRC(
-module __override_a__;
+module gen_override_01;
 class Base {
     Base() {}
     val() : int { return 1; }
@@ -100,7 +100,7 @@ test() : int {
 
     SECTION("Virtual dispatch through base reference") {
         auto result = build_and_exec(R"SRC(
-module __override_a2__;
+module gen_override_02;
 class Base {
     Base() {}
     val() : int { return 10; }
@@ -127,7 +127,7 @@ main() : int {
 TEST_CASE("[B] override on implementation of abstract parent method", "[override][abstract]") {
 
     auto result = build_and_exec(R"SRC(
-module __override_b__;
+module gen_override_03;
 abstract class Shape {
     Shape() {}
     abstract area() : int;
@@ -154,7 +154,7 @@ TEST_CASE("[C] override on implementation of interface method", "[override][inte
 
     SECTION("Direct call") {
         auto jit = gen_jit(R"SRC(
-module __override_c__;
+module gen_override_04;
 interface Greeter {
     greet() : int;
 }
@@ -175,7 +175,7 @@ test() : int {
 
     SECTION("Virtual dispatch through interface reference") {
         auto result = build_and_exec(R"SRC(
-module __override_c2__;
+module gen_override_05;
 interface Counter {
     count() : int;
 }
@@ -201,7 +201,7 @@ main() : int {
 TEST_CASE("[D] Multi-level override chain A→B→C", "[override]") {
 
     auto result = build_and_exec(R"SRC(
-module __override_d__;
+module gen_override_06;
 class A {
     A() {}
     val() : int { return 1; }
@@ -232,7 +232,7 @@ TEST_CASE("[E] Override without 'override' emits warning", "[override][warning]"
 
     // This should compile successfully but emit a warning
     auto result = build_and_exec(R"SRC(
-module __override_e__;
+module gen_override_07;
 class Base {
     Base() {}
     val() : int { return 10; }
@@ -260,7 +260,7 @@ TEST_CASE("[F] override on non-overriding function is an error", "[override][err
 
     SECTION("Function not present in any parent") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __override_f__;
+module gen_override_08;
 class Base {
     Base() {}
     val() : int { return 1; }
@@ -274,7 +274,7 @@ class Derived : public Base {
 
     SECTION("No parent class at all") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __override_f2__;
+module gen_override_09;
 class Standalone {
     Standalone() {}
     override val() : int { return 1; }
@@ -291,7 +291,7 @@ class Standalone {
 TEST_CASE("[G] override on a final parent slot is an error", "[override][final][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __override_g__;
+module gen_override_10;
 class A {
     A() {}
     val() : int { return 1; }
@@ -315,7 +315,7 @@ class C : public B {
 TEST_CASE("[H] override + abstract is an error", "[override][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __override_h__;
+module gen_override_11;
 abstract class Base {
     Base() {}
     abstract val() : int;
@@ -335,7 +335,7 @@ abstract class Mid : public Base {
 TEST_CASE("[I] override + static is an error", "[override][static][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __override_i__;
+module gen_override_12;
 class Base {
     Base() {}
     val() : int { return 1; }
@@ -355,7 +355,7 @@ class Derived : public Base {
 TEST_CASE("[J] override in a struct is an error", "[override][struct][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __override_j__;
+module gen_override_13;
 struct Base {
     val() : int { return 1; }
 }
@@ -373,7 +373,7 @@ struct Derived : public Base {
 TEST_CASE("[K] override on constructor is an error", "[override][constructor][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __override_k__;
+module gen_override_14;
 class Base {
     Base() {}
 }
@@ -391,7 +391,7 @@ class Derived : public Base {
 TEST_CASE("[L] override on destructor is an error", "[override][destructor][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __override_l__;
+module gen_override_15;
 class Base {
     Base() {}
     ~Base() {}
@@ -412,7 +412,7 @@ TEST_CASE("[M] Mixed override specifiers: with and without", "[override]") {
 
     // Both overrides work, one with 'override', one without (warning only)
     auto result = build_and_exec(R"SRC(
-module __override_m__;
+module gen_override_16;
 class Base {
     Base() {}
     foo() : int { return 1; }
@@ -442,7 +442,7 @@ TEST_CASE("[N] override on virtual operator", "[override][operator]") {
 
     SECTION("Unary operator override") {
         auto result = build_and_exec(R"SRC(
-module __override_n1__;
+module gen_override_17;
 class Base {
     public v : int;
     Base() : v(0) {}
@@ -468,7 +468,7 @@ main() : int {
 
     SECTION("Binary operator override with virtual dispatch") {
         auto result = build_and_exec(R"SRC(
-module __override_n2__;
+module gen_override_18;
 class Base {
     public v : int;
     Base() : v(0) {}
@@ -499,7 +499,7 @@ main() : int {
 TEST_CASE("[O] override + final: seal a slot after overriding", "[override][final]") {
 
     auto result = build_and_exec(R"SRC(
-module __override_o__;
+module gen_override_19;
 class A {
     A() {}
     val() : int { return 1; }
@@ -525,7 +525,7 @@ main() : int {
 TEST_CASE("[P] override through interface and class chain", "[override][interface]") {
 
     auto result = build_and_exec(R"SRC(
-module __override_p__;
+module gen_override_20;
 interface Speakable {
     speak() : int;
 }

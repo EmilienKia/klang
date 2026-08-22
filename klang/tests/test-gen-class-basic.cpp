@@ -95,7 +95,7 @@ TEST_CASE("Class model: is_class flag", "[model][class]") {
 
     SECTION("struct keyword -> is_class() == false") {
         auto jit = gen_jit(R"SRC(
-module __cls_model_struct__;
+module gen_class_basic_01;
 struct S {
     x: int;
     get() : int { return x; }
@@ -106,7 +106,7 @@ struct S {
 
     SECTION("class keyword -> is_class() == true") {
         auto jit = gen_jit(R"SRC(
-module __cls_model_class__;
+module gen_class_basic_02;
 class C {
     x: int;
     get() : int { return x; }
@@ -124,7 +124,7 @@ TEST_CASE("Class default visibility: member variables PROTECTED", "[class][visib
 
     SECTION("Accessing class variable from outside should fail (PROTECTED default)") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __cls_vis_prot__;
+module gen_class_basic_03;
 class C {
     x: int;
     C() : x(42) {}
@@ -138,7 +138,7 @@ test() : int {
 
     SECTION("Accessing class variable from member function is OK") {
         auto jit = gen_jit(R"SRC(
-module __cls_vis_member_ok__;
+module gen_class_basic_04;
 class C {
     x: int;
     C() : x(42) {}
@@ -150,14 +150,14 @@ test() : int {
 }
 )SRC");
         REQUIRE(jit);
-        auto fn = jit->lookup_symbol<int(*)()>("_KFN21__cls_vis_member_ok__4testEv");
+        auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_044testEv");
         REQUIRE(fn);
         CHECK(fn() == 42);
     }
 
     SECTION("Class member functions are PUBLIC by default") {
         auto jit = gen_jit(R"SRC(
-module __cls_vis_func_pub__;
+module gen_class_basic_05;
 class C {
     x: int;
     C() : x(7) {}
@@ -169,7 +169,7 @@ test() : int {
 }
 )SRC");
         REQUIRE(jit);
-        auto fn = jit->lookup_symbol<int(*)()>("_KFN20__cls_vis_func_pub__4testEv");
+        auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_054testEv");
         REQUIRE(fn);
         CHECK(fn() == 7);
     }
@@ -182,7 +182,7 @@ test() : int {
 TEST_CASE("Simple class with constructor and methods", "[class][gen]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_simple__;
+module gen_class_basic_06;
 class Counter {
     count: int;
     Counter() : count(0) {}
@@ -198,7 +198,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__cls_simple__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_064testEv");
     REQUIRE(fn);
     CHECK(fn() == 3);
 }
@@ -211,7 +211,7 @@ TEST_CASE("Virtual dispatch - single inheritance", "[class][virtual][gen]") {
 
     SECTION("Base class method called on derived object through reference") {
         auto jit = gen_jit(R"SRC(
-module __cls_virt_single__;
+module gen_class_basic_07;
 class Animal {
     sound() : int { return 1; }
 }
@@ -227,7 +227,7 @@ test() : int {
 }
 )SRC");
         REQUIRE(jit);
-        auto fn = jit->lookup_symbol<int(*)()>("_KFN19__cls_virt_single__4testEv");
+        auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_074testEv");
         REQUIRE(fn);
         // Virtual dispatch: should call Dog::sound(), returning 2
         CHECK(fn() == 2);
@@ -235,7 +235,7 @@ test() : int {
 
     SECTION("Base method called directly on base object returns base result") {
         auto jit = gen_jit(R"SRC(
-module __cls_virt_base_direct__;
+module gen_class_basic_08;
 class Animal {
     sound() : int { return 1; }
 }
@@ -248,7 +248,7 @@ test() : int {
 }
 )SRC");
         REQUIRE(jit);
-        auto fn = jit->lookup_symbol<int(*)()>("_KFN24__cls_virt_base_direct__4testEv");
+        auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_084testEv");
         REQUIRE(fn);
         CHECK(fn() == 1);
     }
@@ -263,7 +263,7 @@ TEST_CASE("Non-virtual qualified call MyClass::method()", "[class][virtual][gen]
     // When calling Base::method(obj) explicitly, the call is non-virtual
     // and invokes Base::method directly, even if obj is a Derived.
     auto jit = gen_jit(R"SRC(
-module __cls_nonvirt_qual__;
+module gen_class_basic_09;
 class Base {
     value() : int { return 10; }
 }
@@ -279,7 +279,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN20__cls_nonvirt_qual__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_094testEv");
     REQUIRE(fn);
     // Should call Base::value directly (non-virtual), returning 10
     CHECK(fn() == 10);
@@ -292,7 +292,7 @@ test() : int {
 TEST_CASE("'final' on new function makes it non-virtual", "[class][final][gen]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_final_new__;
+module gen_class_basic_10;
 class C {
     final compute() : int { return 99; }
 }
@@ -302,7 +302,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__cls_final_new__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_104testEv");
     REQUIRE(fn);
     CHECK(fn() == 99);
 }
@@ -315,7 +315,7 @@ TEST_CASE("Private class function not accessible outside", "[class][visibility][
 
     SECTION("Calling private method from outside fails") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __cls_priv_func__;
+module gen_class_basic_11;
 class C {
     private helper() : int { return 1; }
     get() : int { return this.helper(); }
@@ -329,7 +329,7 @@ test() : int {
 
     SECTION("Private method callable from within class") {
         auto jit = gen_jit(R"SRC(
-module __cls_priv_internal__;
+module gen_class_basic_12;
 class C {
     private helper() : int { return 42; }
     get() : int { return this.helper(); }
@@ -340,7 +340,7 @@ test() : int {
 }
 )SRC");
         REQUIRE(jit);
-        auto fn = jit->lookup_symbol<int(*)()>("_KFN21__cls_priv_internal__4testEv");
+        auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_124testEv");
         REQUIRE(fn);
         CHECK(fn() == 42);
     }
@@ -353,7 +353,7 @@ test() : int {
 TEST_CASE("Multi-level class inheritance virtual dispatch", "[class][virtual][gen]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_multilevel__;
+module gen_class_basic_13;
 class A {
     val() : int { return 1; }
 }
@@ -372,7 +372,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN18__cls_multilevel__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_134testEv");
     REQUIRE(fn);
     // Virtual dispatch through 3 levels: should call C::val(), returning 3
     CHECK(fn() == 3);
@@ -385,7 +385,7 @@ test() : int {
 TEST_CASE("Class with explicit visibility sections", "[class][visibility][gen]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_vis_sections__;
+module gen_class_basic_14;
 class BankAccount {
     private:
         balance: int;
@@ -402,7 +402,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN20__cls_vis_sections__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_144testEv");
     REQUIRE(fn);
     CHECK(fn() == 150);
 }
@@ -412,17 +412,17 @@ TEST_CASE("static method can call private static member", "[gen][class][static][
     // functions entirely, so a private static helper was inaccessible even
     // from another static method of the same class.
     auto jit = gen_jit(R"SRC(
-module test;
+module gen_class_basic_15;
 class Counter {
 private:
     static impl_add(a: int, b: int) : int { return a + b; }
 public:
     static add(a: int, b: int) : int { return impl_add(a, b); }
 }
-test() : int { return Counter::add(21, 21); }
+gen_class_basic_15() : int { return Counter::add(21, 21); }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN4test4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("gen_class_basic_15");
     REQUIRE(fn);
     CHECK(fn() == 42);
 }
@@ -430,7 +430,7 @@ test() : int { return Counter::add(21, 21); }
 TEST_CASE("static method cannot access private member of another class", "[gen][class][static][visibility]") {
     // A static method of a *different* class must still be rejected.
     REQUIRE(compile_should_fail(R"SRC(
-module test;
+module gen_class_basic_16;
 class A {
 private:
     static secret() : int { return 1; }

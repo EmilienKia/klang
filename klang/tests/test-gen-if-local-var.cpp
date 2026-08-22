@@ -46,7 +46,7 @@
 TEST_CASE("if-local-var: int non-zero enters then",
           "[gen][if-local-var][int]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_int1__;
+        module gen_if_local_var_01;
 
         getval() : int {
             return 42;
@@ -68,7 +68,7 @@ TEST_CASE("if-local-var: int non-zero enters then",
 TEST_CASE("if-local-var: int zero enters else",
           "[gen][if-local-var][int]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_int2__;
+        module gen_if_local_var_02;
 
         getval() : int {
             return 0;
@@ -91,7 +91,7 @@ TEST_CASE("if-local-var: int zero enters else",
 TEST_CASE("if-local-var: int zero no else continues after if",
           "[gen][if-local-var][int]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_int3__;
+        module gen_if_local_var_03;
 
         getval() : int {
             return 0;
@@ -118,7 +118,7 @@ TEST_CASE("if-local-var: int zero no else continues after if",
 TEST_CASE("if-local-var: pointer non-null enters then",
           "[gen][if-local-var][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_ptr1__;
+        module gen_if_local_var_04;
 
         test() : int {
             val : int = 7;
@@ -137,7 +137,7 @@ TEST_CASE("if-local-var: pointer non-null enters then",
 TEST_CASE("if-local-var: pointer null enters else",
           "[gen][if-local-var][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_ptr2__;
+        module gen_if_local_var_05;
 
         test() : int {
             p_null : int* = null;
@@ -162,7 +162,7 @@ TEST_CASE("if-local-var: pointer null enters else",
 TEST_CASE("if-local-var: link from non-null enters then",
           "[gen][if-local-var][link]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_lnk1__;
+        module gen_if_local_var_06;
 
         test() : int {
             val : int = 55;
@@ -182,7 +182,7 @@ TEST_CASE("if-local-var: link from non-null enters then",
 TEST_CASE("if-local-var: link from null enters else (soft-fail)",
           "[gen][if-local-var][link][softfail]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_lnk2__;
+        module gen_if_local_var_07;
 
         test() : int {
             p : int* = null;
@@ -202,7 +202,7 @@ TEST_CASE("if-local-var: link from null enters else (soft-fail)",
 TEST_CASE("if-local-var: link from null no else continues after if",
           "[gen][if-local-var][link][softfail]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_lnk3__;
+        module gen_if_local_var_08;
 
         test() : int {
             p : int* = null;
@@ -226,7 +226,7 @@ TEST_CASE("if-local-var: link from null no else continues after if",
 TEST_CASE("if-local-var: destructor called at end of then block",
           "[gen][if-local-var][dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_dtor1__;
+        module gen_if_local_var_09;
 
         g_dtor_count : int = 0;
 
@@ -274,7 +274,7 @@ TEST_CASE("if-local-var: destructor called at end of then block",
 TEST_CASE("if-local-var: variable can be redeclared after if (scope test)",
           "[gen][if-local-var][scope]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_scope1__;
+        module gen_if_local_var_10;
 
         getval() : int {
             return 10;
@@ -302,7 +302,7 @@ TEST_CASE("if-local-var: variable can be redeclared after if (scope test)",
 TEST_CASE("if-local-var: nested if-local-var",
           "[gen][if-local-var][nested]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_nested1__;
+        module gen_if_local_var_11;
 
         test() : int {
             if(a : int = 3) {
@@ -327,7 +327,7 @@ TEST_CASE("if-local-var: nested if-local-var",
 TEST_CASE("if-local-var: union sub-type copy access mismatch enters else",
           "[gen][if-local-var][union][softfail]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_union1__;
+        module gen_if_local_var_12;
 
         union U {
             first: int;
@@ -353,7 +353,7 @@ TEST_CASE("if-local-var: union sub-type copy access mismatch enters else",
 TEST_CASE("if-local-var: union sub-type with else-if chain and pointer null soft-fail",
           "[gen][if-local-var][union][softfail][else-if]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_union2__;
+        module gen_if_local_var_13;
 
         struct S {
             x: int;
@@ -389,7 +389,7 @@ TEST_CASE("if-local-var: union sub-type with else-if chain and pointer null soft
 TEST_CASE("if-local-var: multi cond-vars union mismatch on second var soft-fails",
           "[gen][if-local-var][union][softfail][multi]") {
     auto jit = gen_jit(R"SRC(
-        module __ilv_union3__;
+        module gen_if_local_var_14;
 
         union U {
             first: int;
@@ -415,7 +415,7 @@ TEST_CASE("if-local-var: multi cond-vars union mismatch on second var soft-fails
 TEST_CASE("union mismatch remains fatal outside if-local-var",
           "[gen][if-local-var][union][fatal]") {
     auto result = build_and_exec(R"SRC(
-        module __ilv_union_fatal__;
+        module gen_if_local_var_15;
 
         union U {
             first: int;

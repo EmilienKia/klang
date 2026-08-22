@@ -46,7 +46,7 @@
 TEST_CASE("if-link soft-fail: rebind from non-null ptr, no else — enters then",
           "[gen][if-link][softfail][then]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_t1__;
+        module gen_if_link_softfail_01;
 
         test() : int {
             x : int = 42;
@@ -67,7 +67,7 @@ TEST_CASE("if-link soft-fail: rebind from non-null ptr, no else — enters then"
 TEST_CASE("if-link soft-fail: rebind from non-null ptr, with else — enters then",
           "[gen][if-link][softfail][then]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_t2__;
+        module gen_if_link_softfail_02;
 
         test() : int {
             x : int = 7;
@@ -95,7 +95,7 @@ TEST_CASE("if-link soft-fail: rebind from non-null ptr, with else — enters the
 TEST_CASE("if-link soft-fail: rebind from null ptr, no else — continues after if",
           "[gen][if-link][softfail][else]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_e1__;
+        module gen_if_link_softfail_03;
 
         test() : int {
             x : int = 10;
@@ -116,7 +116,7 @@ TEST_CASE("if-link soft-fail: rebind from null ptr, no else — continues after 
 TEST_CASE("if-link soft-fail: rebind from null ptr, with else — enters else",
           "[gen][if-link][softfail][else]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_e2__;
+        module gen_if_link_softfail_04;
 
         test() : int {
             x : int = 10;
@@ -138,7 +138,7 @@ TEST_CASE("if-link soft-fail: rebind from null ptr, with else — enters else",
 TEST_CASE("if-link soft-fail: rebind from null, link keeps old value",
           "[gen][if-link][softfail][else]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_e3__;
+        module gen_if_link_softfail_05;
 
         test() : int {
             x : int = 55;
@@ -165,7 +165,7 @@ TEST_CASE("if-link soft-fail: rebind from null, link keeps old value",
 TEST_CASE("if-link soft-fail: dynamic downcast to link, correct type — enters then",
           "[gen][if-link][softfail][dyncast][then]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_d1__;
+        module gen_if_link_softfail_06;
 
         class Base {
             public val : int;
@@ -203,7 +203,7 @@ TEST_CASE("if-link soft-fail: dynamic downcast to link, correct type — enters 
 TEST_CASE("if-link soft-fail: dynamic downcast to link, wrong type — enters else",
           "[gen][if-link][softfail][dyncast][else]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_d2__;
+        module gen_if_link_softfail_07;
 
         class Base {
             public val : int;
@@ -241,7 +241,7 @@ TEST_CASE("if-link soft-fail: dynamic downcast to link, wrong type — enters el
 TEST_CASE("if-link soft-fail: dynamic downcast to link, wrong type, no else — continues",
           "[gen][if-link][softfail][dyncast][else]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_d3__;
+        module gen_if_link_softfail_08;
 
         class Base {
             public val : int;
@@ -278,7 +278,7 @@ TEST_CASE("if-link soft-fail: dynamic downcast to link, wrong type, no else — 
 TEST_CASE("if-link soft-fail: dynamic downcast from null ptr — enters else",
           "[gen][if-link][softfail][dyncast][null]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_d4__;
+        module gen_if_link_softfail_09;
 
         class Base {
             public val : int;
@@ -316,7 +316,7 @@ TEST_CASE("if-link soft-fail: dynamic downcast from null ptr — enters else",
 TEST_CASE("if-link soft-fail: nested if, inner soft-fails, outer succeeds",
           "[gen][if-link][softfail][nested]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_n1__;
+        module gen_if_link_softfail_10;
 
         test() : int {
             x : int = 10;
@@ -349,7 +349,7 @@ TEST_CASE("if-link soft-fail: nested if, inner soft-fails, outer succeeds",
 TEST_CASE("if-link soft-fail: nested if, outer soft-fails",
           "[gen][if-link][softfail][nested]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_n2__;
+        module gen_if_link_softfail_11;
 
         test() : int {
             x : int = 10;
@@ -382,7 +382,7 @@ TEST_CASE("if-link soft-fail: nested if, outer soft-fails",
 TEST_CASE("Non-regression: link rebind from null outside if — still fatal",
           "[gen][if-link][softfail][regression]") {
     auto res = build_and_exec(R"SRC(
-        module __sf_r1__;
+        module gen_if_link_softfail_12;
 
         main() : int {
             x : int = 42;
@@ -398,7 +398,7 @@ TEST_CASE("Non-regression: link rebind from null outside if — still fatal",
 TEST_CASE("Non-regression: dynamic downcast link wrong type outside if — still fatal",
           "[gen][if-link][softfail][regression]") {
     auto res = build_and_exec(R"SRC(
-        module __sf_r2__;
+        module gen_if_link_softfail_13;
 
         class Base {
             public val : int;
@@ -435,7 +435,7 @@ TEST_CASE("Non-regression: dynamic downcast link wrong type outside if — still
 TEST_CASE("Non-regression: if(ptr) with non-null pointer — enters then",
           "[gen][if-link][softfail][regression][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_rp1__;
+        module gen_if_link_softfail_14;
 
         test() : int {
             x : int = 42;
@@ -453,7 +453,7 @@ TEST_CASE("Non-regression: if(ptr) with non-null pointer — enters then",
 TEST_CASE("Non-regression: if(ptr) with null pointer — enters else",
           "[gen][if-link][softfail][regression][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __sf_rp2__;
+        module gen_if_link_softfail_15;
 
         test() : int {
             p : int* = null;
@@ -470,7 +470,7 @@ TEST_CASE("Non-regression: if(ptr) with null pointer — enters else",
 TEST_CASE("Non-regression: pointer dereference null in if-condition — still fatal",
           "[gen][if-link][softfail][regression][deref]") {
     auto res = build_and_exec(R"SRC(
-        module __sf_rd__;
+        module gen_if_link_softfail_16;
 
         main() : int {
             p : int* = null;

@@ -50,7 +50,7 @@ using dispatch_kind = k::model::virtual_dispatch_info::dispatch_kind;
 
 TEST_CASE("[A] Phase3: free function call is annotated DIRECT", "[phase3][dispatch][direct]") {
     auto comp = compile_model(R"SRC(
-        module __p3_a__;
+        module phase3_dispatch_01;
         helper() : int { return 42; }
         caller() : int { return helper(); }
     )SRC");
@@ -75,7 +75,7 @@ TEST_CASE("[A] Phase3: free function call is annotated DIRECT", "[phase3][dispat
 
 TEST_CASE("[B] Phase3: non-virtual struct method call is annotated DIRECT", "[phase3][dispatch][direct]") {
     auto comp = compile_model(R"SRC(
-        module __p3_b__;
+        module phase3_dispatch_02;
         struct Point {
             public x : int;
             get_x() : int { return this.x; }
@@ -102,7 +102,7 @@ TEST_CASE("[B] Phase3: non-virtual struct method call is annotated DIRECT", "[ph
 
 TEST_CASE("[C] Phase3: virtual call via base ref → VTABLE with slot_index=0", "[phase3][dispatch][vtable]") {
     auto comp = compile_model(R"SRC(
-        module __p3_c__;
+        module phase3_dispatch_03;
         class Animal {
             speak() : int { return 0; }
         }
@@ -136,7 +136,7 @@ TEST_CASE("[C] Phase3: virtual call via base ref → VTABLE with slot_index=0", 
 
 TEST_CASE("[D] Phase3: qualified call bypasses vtable → DIRECT", "[phase3][dispatch][direct]") {
     auto comp = compile_model(R"SRC(
-        module __p3_d__;
+        module phase3_dispatch_04;
         class Base {
             value() : int { return 1; }
         }
@@ -167,7 +167,7 @@ TEST_CASE("[D] Phase3: qualified call bypasses vtable → DIRECT", "[phase3][dis
 
 TEST_CASE("[E] Phase3: abstract method call via base ref → VTABLE", "[phase3][dispatch][vtable][abstract]") {
     auto comp = compile_model(R"SRC(
-        module __p3_e__;
+        module phase3_dispatch_05;
         abstract class Shape {
             abstract area() : int;
         }
@@ -201,7 +201,7 @@ TEST_CASE("[E] Phase3: abstract method call via base ref → VTABLE", "[phase3][
 
 TEST_CASE("[F] Phase3: second virtual method has slot_index=1", "[phase3][dispatch][vtable]") {
     auto comp = compile_model(R"SRC(
-        module __p3_f__;
+        module phase3_dispatch_06;
         class Vehicle {
             start() : int { return 1; }
             stop()  : int { return 0; }
@@ -248,7 +248,7 @@ TEST_CASE("[F] Phase3: second virtual method has slot_index=1", "[phase3][dispat
 TEST_CASE("[G] Phase3: virtual call via secondary base ref → VTABLE with correct dispatch_class",
           "[phase3][dispatch][vtable][multiple_inheritance]") {
     auto comp = compile_model(R"SRC(
-        module __p3_g__;
+        module phase3_dispatch_07;
         class B {
             b_val() : int { return 10; }
         }
@@ -285,7 +285,7 @@ TEST_CASE("[G] Phase3: virtual call via secondary base ref → VTABLE with corre
 TEST_CASE("[H] Phase3: runtime JIT — virtual dispatch via annotated dispatch_info works",
           "[phase3][dispatch][runtime]") {
     auto jit = gen_jit(R"SRC(
-        module __p3_h__;
+        module phase3_dispatch_08;
         abstract class Shape {
             abstract area() : int;
         }

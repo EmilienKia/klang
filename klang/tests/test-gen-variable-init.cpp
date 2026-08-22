@@ -38,7 +38,7 @@
 TEST_CASE("Variable init: struct temporary to int is a type error",
           "[gen][variable-init][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __var_init_struct_temp__;
+        module gen_variable_init_01;
 
         struct Pair {
             a : int;
@@ -57,7 +57,7 @@ TEST_CASE("Variable init: struct temporary to int is a type error",
 TEST_CASE("Variable init: named struct value to int is a type error",
           "[gen][variable-init][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __var_init_struct_named__;
+        module gen_variable_init_02;
 
         struct Pair {
             a : int;
@@ -75,7 +75,7 @@ TEST_CASE("Variable init: named struct value to int is a type error",
 TEST_CASE("Variable init: compatible primitive init still compiles",
           "[gen][variable-init]") {
     auto jit = gen_jit(R"SRC(
-        module __var_init_ok__;
+        module gen_variable_init_03;
 
         test() : int {
             a : int = 40;

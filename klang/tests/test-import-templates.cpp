@@ -1789,7 +1789,7 @@ TEST_CASE("import instantiation diamond - user-declared Box<int> template in two
     std::vector<LibSpec> libs = {
         // lib[0]: the template-defining library (the template's true origin).
         { R"K(
-            module boxlib;
+            module boxlib_01;
 
             template<typename T>
             struct Box {
@@ -1799,9 +1799,9 @@ TEST_CASE("import instantiation diamond - user-declared Box<int> template in two
         // lib[1]: imports boxlib and instantiates ::boxlib::Box<int> itself.
         { R"K(
             module boxdiamond_a;
-            import boxlib;
+            import boxlib_01;
             makeBoxA() : int {
-                b : boxlib::Box<int>;
+                b : boxlib_01::Box<int>;
                 b.val = 40;
                 return b.val;
             }
@@ -1809,9 +1809,9 @@ TEST_CASE("import instantiation diamond - user-declared Box<int> template in two
         // lib[2]: imports boxlib and instantiates ::boxlib::Box<int> itself.
         { R"K(
             module boxdiamond_b;
-            import boxlib;
+            import boxlib_01;
             makeBoxB() : int {
-                b : boxlib::Box<int>;
+                b : boxlib_01::Box<int>;
                 b.val = 2;
                 return b.val;
             }
@@ -1821,11 +1821,11 @@ TEST_CASE("import instantiation diamond - user-declared Box<int> template in two
     auto result = build_exec_with_libs(libs,
         R"K(
             module boxdiamond_exec;
-            import boxlib;
+            import boxlib_01;
             import boxdiamond_a;
             import boxdiamond_b;
             main() : int {
-                b : boxlib::Box<int>;
+                b : boxlib_01::Box<int>;
                 b.val = 0;
                 return makeBoxA() + makeBoxB() + b.val;
             }
@@ -2158,7 +2158,7 @@ TEST_CASE("import struct — indirect members targeting an imported aggregate re
           "[import][e2e][import-struct-indirect-member]") {
     auto result = build_exec_with_lib(
         R"K(
-            module boxlib;
+            module boxlib_02;
 
             public struct Payload {
                 public value : int;
@@ -2171,8 +2171,8 @@ TEST_CASE("import struct — indirect members targeting an imported aggregate re
         )K",
         R"K(
             module main;
-            import boxlib;
-            using boxlib;
+            import boxlib_02;
+            using boxlib_02;
 
             // Only indirect members: nothing forces an early re-resolution pass.
             public struct OnlyIndirect {

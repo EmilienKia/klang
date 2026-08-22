@@ -49,7 +49,7 @@
 TEST_CASE("if-multi-cond-var: two int vars, test true",
           "[gen][if-multi-cond-var][basic]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_basic1__;
+        module gen_if_multi_cond_var_01;
 
         test() : int {
             if(a : int = 3; b : int = a + 1; b > 3) {
@@ -67,7 +67,7 @@ TEST_CASE("if-multi-cond-var: two int vars, test true",
 TEST_CASE("if-multi-cond-var: two int vars, test false enters else",
           "[gen][if-multi-cond-var][basic]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_basic2__;
+        module gen_if_multi_cond_var_02;
 
         test() : int {
             if(a : int = 3; b : int = a + 1; b > 10) {
@@ -91,7 +91,7 @@ TEST_CASE("if-multi-cond-var: two int vars, test false enters else",
 TEST_CASE("if-multi-cond-var: three vars with chain references",
           "[gen][if-multi-cond-var][three]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_three1__;
+        module gen_if_multi_cond_var_03;
 
         test() : int {
             if(a : int = 1; b : int = a + 1; c : int = b + 1; c == 3) {
@@ -114,7 +114,7 @@ TEST_CASE("if-multi-cond-var: three vars with chain references",
 TEST_CASE("if-multi-cond-var: all vars accessible in else",
           "[gen][if-multi-cond-var][else]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_else1__;
+        module gen_if_multi_cond_var_04;
 
         test() : int {
             if(a : int = 10; b : int = 20; a + b > 100) {
@@ -138,7 +138,7 @@ TEST_CASE("if-multi-cond-var: all vars accessible in else",
 TEST_CASE("if-multi-cond-var: struct vars with constructor",
           "[gen][if-multi-cond-var][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_struct1__;
+        module gen_if_multi_cond_var_05;
 
         struct S {
             val : int;
@@ -169,7 +169,7 @@ TEST_CASE("if-multi-cond-var: struct vars with constructor",
 TEST_CASE("if-multi-cond-var: brace init",
           "[gen][if-multi-cond-var][brace]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_brace1__;
+        module gen_if_multi_cond_var_06;
 
         struct S {
             a : int;
@@ -192,7 +192,7 @@ TEST_CASE("if-multi-cond-var: brace init",
 TEST_CASE("if-multi-cond-var: multi var with brace init",
           "[gen][if-multi-cond-var][brace]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_brace2__;
+        module gen_if_multi_cond_var_07;
 
         struct S {
             a : int;
@@ -220,7 +220,7 @@ TEST_CASE("if-multi-cond-var: multi var with brace init",
 TEST_CASE("if-multi-cond-var: destructors called for all vars in then",
           "[gen][if-multi-cond-var][dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_dtor1__;
+        module gen_if_multi_cond_var_08;
 
         g_dtor_count : int = 0;
 
@@ -254,7 +254,7 @@ TEST_CASE("if-multi-cond-var: destructors called for all vars in then",
 TEST_CASE("if-multi-cond-var: destructors called for all vars in else",
           "[gen][if-multi-cond-var][dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_dtor2__;
+        module gen_if_multi_cond_var_09;
 
         g_dtor_count : int = 0;
 
@@ -295,7 +295,7 @@ TEST_CASE("if-multi-cond-var: destructors called for all vars in else",
 TEST_CASE("if-multi-cond-var: variables can be redeclared after if",
           "[gen][if-multi-cond-var][scope]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_scope1__;
+        module gen_if_multi_cond_var_10;
 
         test() : int {
             if(a : int = 1; b : int = 2; a + b > 0) {
@@ -320,7 +320,7 @@ TEST_CASE("if-multi-cond-var: variables can be redeclared after if",
 TEST_CASE("if-multi-cond-var: nested multi-var if",
           "[gen][if-multi-cond-var][nested]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_nested1__;
+        module gen_if_multi_cond_var_11;
 
         test() : int {
             if(a : int = 1; b : int = 2; a + b > 0) {
@@ -345,7 +345,7 @@ TEST_CASE("if-multi-cond-var: nested multi-var if",
 TEST_CASE("if-multi-cond-var: single var still works",
           "[gen][if-multi-cond-var][single]") {
     auto jit = gen_jit(R"SRC(
-        module __imcv_single1__;
+        module gen_if_multi_cond_var_12;
 
         test() : int {
             if(x : int = 42; x > 0) {

@@ -66,7 +66,7 @@ TEST_CASE("Parse brace postfix — array temporary Point[]{...}", "[parser][brac
 
 TEST_CASE("Temporary brace init: struct as function argument", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_arg__;
+module gen_temporary_brace_init_01;
 
 struct Point {
     x : int;
@@ -89,7 +89,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: struct in return statement", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_return__;
+module gen_temporary_brace_init_02;
 
 struct Pair {
     a : int;
@@ -113,7 +113,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: ternary aggregate result", "[gen][temporary_brace_init][ternary]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_ternary__;
+module gen_temporary_brace_init_03;
 
 struct Point {
     x : int;
@@ -134,7 +134,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: partial init, remaining defaults to zero", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_partial__;
+module gen_temporary_brace_init_04;
 
 struct Trio {
     a : int;
@@ -159,7 +159,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: order independent", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_order__;
+module gen_temporary_brace_init_05;
 
 struct Point {
     x : int;
@@ -182,7 +182,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: float members", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_float__;
+module gen_temporary_brace_init_06;
 
 struct Vec {
     x : float;
@@ -205,7 +205,7 @@ test() : float {
 
 TEST_CASE("Temporary brace init: expression values", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_expr__;
+module gen_temporary_brace_init_07;
 
 struct Point {
     x : int;
@@ -228,7 +228,7 @@ make(a : int, b : int) : int {
 
 TEST_CASE("Temporary brace init: inherited member from base struct", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_inherited__;
+module gen_temporary_brace_init_08;
 
 struct Base {
     x : int;
@@ -254,7 +254,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: constructor form (.member(args))", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_ctor_form__;
+module gen_temporary_brace_init_09;
 
 struct Pair {
     x : int;
@@ -277,7 +277,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: destructor called", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_dtor__;
+module gen_temporary_brace_init_10;
 
 g_dtors : int = 0;
 
@@ -306,7 +306,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: two temporaries as args", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_two__;
+module gen_temporary_brace_init_11;
 
 struct Val {
     n : int;
@@ -328,7 +328,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: error on non-struct type", "[gen][temporary_brace_init]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __test_tmp_brace_err_nonst__;
+module gen_temporary_brace_init_12;
 
 get() : int {
     x : int = NotAType{.a = 1};
@@ -339,7 +339,7 @@ get() : int {
 
 TEST_CASE("Temporary brace init: nested struct designated init", "[gen][temporary_brace_init]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_brace_nested__;
+module gen_temporary_brace_init_13;
 
 struct Inner {
     a : int;
@@ -371,7 +371,7 @@ test() : int {
 
 TEST_CASE("Array brace init verification: local int array as func arg", "[gen][brace-init][verification]") {
     auto jit = gen_jit(R"SRC(
-module __test_arr_brace_verify__;
+module gen_temporary_brace_init_14;
 
 sum3(arr : int[3]&) : int {
     return arr[0] + arr[1] + arr[2];
@@ -390,7 +390,7 @@ test() : int {
 
 TEST_CASE("Array brace init verification: inferred size", "[gen][brace-init][verification]") {
     auto jit = gen_jit(R"SRC(
-module __test_arr_brace_inferred__;
+module gen_temporary_brace_init_15;
 
 test() : int {
     arr : int[] {100, 200, 300, 400};
@@ -409,7 +409,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: array temporary as function argument", "[gen][temporary_brace_init][array]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_arr_arg__;
+module gen_temporary_brace_init_16;
 
 struct Point {
     x : int;
@@ -431,7 +431,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: array temporary in return expression", "[gen][temporary_brace_init][array]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_arr_ret__;
+module gen_temporary_brace_init_17;
 
 struct Point {
     x : int;
@@ -454,7 +454,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: array temporary partial init keeps default values", "[gen][temporary_brace_init][array]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_arr_partial__;
+module gen_temporary_brace_init_18;
 
 struct Point {
     x : int;
@@ -476,7 +476,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: object array temporary with direct primitive values", "[gen][temporary_brace_init][array]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_arr_obj_prim_values__;
+module gen_temporary_brace_init_19;
 
 struct Box {
     v : int;
@@ -500,7 +500,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: object array temporary partial primitive direct values", "[gen][temporary_brace_init][array]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_arr_obj_prim_partial__;
+module gen_temporary_brace_init_20;
 
 struct Box {
     v : int;
@@ -523,7 +523,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: array temporary with constructor-style elements", "[gen][temporary_brace_init][array]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_arr_ctor_elems__;
+module gen_temporary_brace_init_21;
 
 struct Box {
     v : int;
@@ -546,7 +546,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: array temporary destructors are called", "[gen][temporary_brace_init][array]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_arr_dtor__;
+module gen_temporary_brace_init_22;
 
 g_dtors : int = 0;
 
@@ -575,7 +575,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: array temporary rejects unknown type", "[gen][temporary_brace_init][array]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __test_tmp_arr_bad_type__;
+module gen_temporary_brace_init_23;
 
 test() : int {
     x : int = NotAType[]{1};
@@ -586,7 +586,7 @@ test() : int {
 
 TEST_CASE("Temporary brace init: array temporary rejects designated members", "[gen][temporary_brace_init][array]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __test_tmp_arr_bad_desig__;
+module gen_temporary_brace_init_24;
 
 struct Point {
     x : int;

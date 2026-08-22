@@ -70,7 +70,7 @@ TEST_CASE("[A] Abstract method in abstract class compiles cleanly", "[class][abs
 
     SECTION("Abstract class with one abstract method parses and compiles") {
         auto jit = gen_jit(R"SRC(
-module __abstract_basic__;
+module gen_class_abstract_01;
 abstract class Shape {
     Shape() {}
     abstract area() : int;
@@ -81,7 +81,7 @@ abstract class Shape {
 
     SECTION("Abstract class with multiple abstract methods compiles") {
         auto jit = gen_jit(R"SRC(
-module __abstract_multi__;
+module gen_class_abstract_02;
 abstract class Animal {
     Animal() {}
     abstract sound() : int;
@@ -99,7 +99,7 @@ abstract class Animal {
 TEST_CASE("[B] Explicitly abstract class with no abstract methods compiles", "[class][abstract]") {
 
     auto jit = gen_jit(R"SRC(
-module __abstract_explicit__;
+module gen_class_abstract_03;
 abstract class Base {
     Base() {}
     value() : int { return 42; }
@@ -116,7 +116,7 @@ TEST_CASE("[C] Derived class implementing all abstract methods is instantiable",
 
     SECTION("Single abstract method, single level of derivation") {
         auto jit = gen_jit(R"SRC(
-module __abstract_derive_simple__;
+module gen_class_abstract_04;
 abstract class Shape {
     Shape() {}
     abstract area() : int;
@@ -138,7 +138,7 @@ test() : int {
 
     SECTION("Two abstract methods both implemented") {
         auto jit = gen_jit(R"SRC(
-module __abstract_derive_two__;
+module gen_class_abstract_05;
 abstract class Widget {
     Widget() {}
     abstract width() : int;
@@ -168,7 +168,7 @@ test_height() : int { b: Button; return b.height(); }
 TEST_CASE("[D] Grandchild implements inherited abstract method", "[class][abstract]") {
 
     auto jit = gen_jit(R"SRC(
-module __abstract_grandchild__;
+module gen_class_abstract_06;
 abstract class A {
     A() {}
     abstract value() : int;
@@ -199,7 +199,7 @@ TEST_CASE("[E] Virtual dispatch works through abstract base reference", "[class]
 
     SECTION("Single override dispatches correctly") {
         auto jit = gen_jit(R"SRC(
-module __abstract_dispatch__;
+module gen_class_abstract_07;
 abstract class Shape {
     Shape() {}
     abstract area() : int;
@@ -226,7 +226,7 @@ test_triangle() : int { tr: Triangle; return call_area(tr); }
 
     SECTION("Multi-level dispatch: grandchild override") {
         auto jit = gen_jit(R"SRC(
-module __abstract_dispatch_multi__;
+module gen_class_abstract_08;
 abstract class Base {
     Base() {}
     abstract id() : int;
@@ -255,7 +255,7 @@ test() : int { l: Leaf; return call_id(l); }
 TEST_CASE("[F] Abstract method in non-abstract class is an error", "[class][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_method_nonabstract_class__;
+module gen_class_abstract_09;
 class Broken {
     Broken() {}
     abstract foo() : int;
@@ -271,7 +271,7 @@ class Broken {
 TEST_CASE("[G] Derived class with unimplemented abstract method must be abstract", "[class][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_unimplemented__;
+module gen_class_abstract_10;
 abstract class Base {
     Base() {}
     abstract value() : int;
@@ -289,7 +289,7 @@ class Derived : public Base {
 TEST_CASE("[H] Direct instantiation of abstract class is an error", "[class][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_instantiate__;
+module gen_class_abstract_11;
 abstract class Shape {
     Shape() {}
     abstract area() : int;
@@ -309,7 +309,7 @@ test() : int {
 TEST_CASE("[I] Explicit abstract class (no abstract methods) cannot be instantiated", "[class][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_explicit_instantiate__;
+module gen_class_abstract_12;
 abstract class Singleton {
     Singleton() {}
     value() : int { return 1; }
@@ -328,7 +328,7 @@ test() : int {
 TEST_CASE("[J] abstract specifier on struct is an error", "[struct][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_on_struct__;
+module gen_class_abstract_13;
 abstract struct S {
     S() {}
 }
@@ -342,7 +342,7 @@ abstract struct S {
 TEST_CASE("[K] abstract specifier on static function is an error", "[class][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_static__;
+module gen_class_abstract_14;
 abstract class C {
     C() {}
     abstract static foo() : int;
@@ -357,7 +357,7 @@ abstract class C {
 TEST_CASE("[L] abstract specifier on final function is an error", "[class][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_final__;
+module gen_class_abstract_15;
 abstract class C {
     C() {}
     abstract final foo() : int;
@@ -372,7 +372,7 @@ abstract class C {
 TEST_CASE("[M] abstract method with a body is an error", "[class][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_with_body__;
+module gen_class_abstract_16;
 abstract class C {
     C() {}
     abstract foo() : int { return 1; }
@@ -387,7 +387,7 @@ abstract class C {
 TEST_CASE("[N] abstract method inside a struct is an error", "[struct][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_method_in_struct__;
+module gen_class_abstract_17;
 struct S {
     abstract foo() : int;
 }
@@ -401,7 +401,7 @@ struct S {
 TEST_CASE("[P] abstract specifier on private method is an error", "[class][abstract][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __abstract_private__;
+module gen_class_abstract_18;
 abstract class C {
     C() {}
 private:

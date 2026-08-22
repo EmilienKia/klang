@@ -52,7 +52,7 @@ find_function(const std::shared_ptr<k::compiler>& comp, const std::string& name)
 TEST_CASE("[A] M3: template function compiles without error",
           "[milestone3][template][function]") {
     auto comp = compile_model(R"SRC(
-        module __m3_fn_a__;
+        module gen_template_functions_01;
         template<typename T>
         identity(x : T) : T { return x; }
     )SRC");
@@ -66,7 +66,7 @@ TEST_CASE("[A] M3: template function compiles without error",
 TEST_CASE("[B] M3: template function is marked is_template()",
           "[milestone3][template][function]") {
     auto comp = compile_model(R"SRC(
-        module __m3_fn_b__;
+        module gen_template_functions_02;
         template<typename T>
         identity(x : T) : T { return x; }
     )SRC");
@@ -83,7 +83,7 @@ TEST_CASE("[B] M3: template function is marked is_template()",
 TEST_CASE("[C] M3: template function tpl_info has correct params",
           "[milestone3][template][function]") {
     auto comp = compile_model(R"SRC(
-        module __m3_fn_c__;
+        module gen_template_functions_03;
         template<typename T>
         identity(x : T) : T { return x; }
     )SRC");
@@ -108,7 +108,7 @@ TEST_CASE("[D] M3: template function is not emitted as LLVM IR",
     // A template function with no instantiation should still compile,
     // and a non-template function alongside it should still work via JIT.
     auto jit = gen_jit(R"SRC(
-        module __m3_fn_d__;
+        module gen_template_functions_04;
         template<typename T>
         identity(x : T) : T { return x; }
         concrete() : int { return 42; }
@@ -131,7 +131,7 @@ TEST_CASE("[D] M3: template function is not emitted as LLVM IR",
 TEST_CASE("[E] M3: non-template function alongside template works",
           "[milestone3][template][function]") {
     auto comp = compile_model(R"SRC(
-        module __m3_fn_e__;
+        module gen_template_functions_05;
         template<typename T>
         swap(a : T, b : T) : T { return b; }
         add(a : int, b : int) : int { return a + b; }
@@ -154,7 +154,7 @@ TEST_CASE("[E] M3: non-template function alongside template works",
 TEST_CASE("[F] M3: template function with multiple type params",
           "[milestone3][template][function]") {
     auto comp = compile_model(R"SRC(
-        module __m3_fn_f__;
+        module gen_template_functions_06;
         template<typename A, typename B>
         make_pair(a : A, b : B) : A { return a; }
     )SRC");
@@ -179,7 +179,7 @@ TEST_CASE("[F] M3: template function with multiple type params",
 TEST_CASE("[G] M3: template function with value parameter",
           "[milestone3][template][function]") {
     auto comp = compile_model(R"SRC(
-        module __m3_fn_g__;
+        module gen_template_functions_07;
         template<typename T, unsigned int N>
         repeat(x : T) : T { return x; }
     )SRC");

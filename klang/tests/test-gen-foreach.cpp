@@ -36,9 +36,9 @@
 
 TEST_CASE("Foreach array — sum elements via copy", "[gen][foreach][array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_01;
 
-        test() : int {
+        gen_foreach_01() : int {
             arr : int[5]{1, 2, 3, 4, 5};
             sum : int = 0;
             for(x : int = arr) {
@@ -48,16 +48,16 @@ TEST_CASE("Foreach array — sum elements via copy", "[gen][foreach][array]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_01");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 15);
 }
 
 TEST_CASE("Foreach array — copy does not mutate source array", "[gen][foreach][array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_02;
 
-        test() : int {
+        gen_foreach_02() : int {
             arr : int[3]{1, 2, 3};
             for(x : int = arr) {
                 x *= 100;
@@ -66,7 +66,7 @@ TEST_CASE("Foreach array — copy does not mutate source array", "[gen][foreach]
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_02");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 6); // unchanged: 1 + 2 + 3
 }
@@ -77,9 +77,9 @@ TEST_CASE("Foreach array — copy does not mutate source array", "[gen][foreach]
 
 TEST_CASE("Foreach array — mutate elements via reference", "[gen][foreach][array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_03;
 
-        test() : int {
+        gen_foreach_03() : int {
             arr : int[4]{1, 2, 3, 4};
             for(x : int& = arr) {
                 x *= 10;
@@ -88,16 +88,16 @@ TEST_CASE("Foreach array — mutate elements via reference", "[gen][foreach][arr
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_03");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 100); // (1+2+3+4)*10
 }
 
 TEST_CASE("Foreach array — const array requires const reference", "[gen][foreach][array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_04;
 
-        test() : int {
+        gen_foreach_04() : int {
             const arr : int[3]{5, 6, 7};
             sum : int = 0;
             for(x : const int& = arr) {
@@ -107,7 +107,7 @@ TEST_CASE("Foreach array — const array requires const reference", "[gen][forea
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_04");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 18);
 }
@@ -126,9 +126,9 @@ TEST_CASE("Foreach array — const array requires const reference", "[gen][forea
 TEST_CASE("Foreach array — iterates over a primitive array temporary literal by copy",
           "[gen][foreach][array][temporary]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_05;
 
-        test() : int {
+        gen_foreach_05() : int {
             sum : int = 0;
             for(x : int = int[]{1, 2, 30}) {
                 sum += x;
@@ -137,7 +137,7 @@ TEST_CASE("Foreach array — iterates over a primitive array temporary literal b
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_05");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 33);
 }
@@ -145,9 +145,9 @@ TEST_CASE("Foreach array — iterates over a primitive array temporary literal b
 TEST_CASE("Foreach array — reference loop variable can bind to a primitive array temporary literal",
           "[gen][foreach][array][temporary]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_06;
 
-        test() : int {
+        gen_foreach_06() : int {
             sum : int = 0;
             for(x : int& = int[]{1, 2, 30}) {
                 sum += x;
@@ -156,7 +156,7 @@ TEST_CASE("Foreach array — reference loop variable can bind to a primitive arr
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_06");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 33);
 }
@@ -164,9 +164,9 @@ TEST_CASE("Foreach array — reference loop variable can bind to a primitive arr
 TEST_CASE("Foreach array — owner loop variable is still forbidden with a temporary array literal source",
           "[gen][foreach][array][temporary][errors]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module __foreach_temp_owner_forbidden__;
+        module gen_foreach_07;
 
-        test() : void {
+        gen_foreach_06() : void {
             for(x : int! = int[]{1, 2, 3}) {
             }
         }
@@ -185,7 +185,7 @@ TEST_CASE("Foreach array — array literal source expression is evaluated exactl
     // rebuilt more than once, `get_call_count()` would read a value far above 3 and
     // `sum` would reflect stale/inconsistent element values across iterations.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_08;
 
         struct Counter {
             static call_count : int = 0;
@@ -196,7 +196,7 @@ TEST_CASE("Foreach array — array literal source expression is evaluated exactl
             return Counter::call_count;
         }
 
-        test() : int {
+        gen_foreach_08() : int {
             sum : int = 0;
             for(x : int = int[]{next(), next(), next()}) {
                 sum += x;
@@ -209,7 +209,7 @@ TEST_CASE("Foreach array — array literal source expression is evaluated exactl
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_08");
     auto get_call_count = jit->lookup_symbol<int(*)()>("get_call_count");
     REQUIRE(test != nullptr);
     REQUIRE(get_call_count != nullptr);
@@ -236,7 +236,7 @@ TEST_CASE("Foreach over an unsized array reference parameter (sized→unsized wi
     // See `klang/tests/test-gen-array-unsized-conv.cpp` for focused coverage
     // of every indirection kind; this test keeps the original foreach repro.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_09;
 
         sumArr(arr : int[]&) : int {
             sum : int = 0;
@@ -246,13 +246,13 @@ TEST_CASE("Foreach over an unsized array reference parameter (sized→unsized wi
             return sum;
         }
 
-        test() : int {
+        gen_foreach_09() : int {
             a : int[4]{1, 2, 3, 4};
             return sumArr(a);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_09");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 10);
 }
@@ -263,9 +263,9 @@ TEST_CASE("Foreach over an unsized array reference parameter (sized→unsized wi
 
 TEST_CASE("Foreach array — break stops iteration early", "[gen][foreach][array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_10;
 
-        test() : int {
+        gen_foreach_10() : int {
             arr : int[5]{1, 2, 3, 4, 5};
             sum : int = 0;
             for(x : int = arr) {
@@ -278,16 +278,16 @@ TEST_CASE("Foreach array — break stops iteration early", "[gen][foreach][array
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_10");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 6); // 1 + 2 + 3
 }
 
 TEST_CASE("Foreach array — continue skips one element", "[gen][foreach][array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_11;
 
-        test() : int {
+        gen_foreach_11() : int {
             arr : int[5]{1, 2, 3, 4, 5};
             sum : int = 0;
             for(x : int = arr) {
@@ -300,7 +300,7 @@ TEST_CASE("Foreach array — continue skips one element", "[gen][foreach][array]
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_11");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 12); // 1 + 2 + 4 + 5
 }
@@ -311,9 +311,9 @@ TEST_CASE("Foreach array — continue skips one element", "[gen][foreach][array]
 
 TEST_CASE("Foreach array — nullable pointer elements can be null", "[gen][foreach][array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_12;
 
-        test() : int {
+        gen_foreach_12() : int {
             a : int = 1;
             b : int = 2;
             arr : int*[3]{ &a, null, &b };
@@ -329,7 +329,7 @@ TEST_CASE("Foreach array — nullable pointer elements can be null", "[gen][fore
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_12");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 103); // 1 + 100 + 2
 }
@@ -340,9 +340,9 @@ TEST_CASE("Foreach array — nullable pointer elements can be null", "[gen][fore
 
 TEST_CASE("Foreach array — classic for loop is unaffected", "[gen][foreach][array][regression]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_13;
 
-        test() : int {
+        gen_foreach_13() : int {
             sum : int = 0;
             for(i : int = 0; i < 5; i++) {
                 sum += i;
@@ -351,7 +351,7 @@ TEST_CASE("Foreach array — classic for loop is unaffected", "[gen][foreach][ar
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_13");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 10); // 0+1+2+3+4
 }
@@ -362,7 +362,7 @@ TEST_CASE("Foreach array — classic for loop is unaffected", "[gen][foreach][ar
 
 TEST_CASE("Foreach array — loop variable constructed/destructed each iteration", "[gen][foreach][array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_14;
 
         struct Counter {
             static ctor_count : int = 0;
@@ -413,12 +413,12 @@ TEST_CASE("Foreach array — loop variable constructed/destructed each iteration
 
 TEST_CASE("Foreach array — owner loop variable is forbidden", "[gen][foreach][array][errors]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module __foreach_owner_forbidden__;
+        module gen_foreach_15;
         struct Widget {
             v : int;
             Widget(x : int) { v = x; }
         }
-        test() : int {
+        gen_foreach_14() : int {
             arr : Widget[2]{ Widget(1), Widget(2) };
             for(w : Widget! = arr) {
             }
@@ -429,12 +429,12 @@ TEST_CASE("Foreach array — owner loop variable is forbidden", "[gen][foreach][
 
 TEST_CASE("Foreach array — drain loop variable is forbidden", "[gen][foreach][array][errors]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module __foreach_drain_forbidden__;
+        module gen_foreach_16;
         struct Widget {
             v : int;
             Widget(x : int) { v = x; }
         }
-        test() : int {
+        gen_foreach_14() : int {
             arr : Widget[2]{ Widget(1), Widget(2) };
             for(w : Widget# = arr) {
             }
@@ -445,8 +445,8 @@ TEST_CASE("Foreach array — drain loop variable is forbidden", "[gen][foreach][
 
 TEST_CASE("Foreach array — non-iterable source is rejected", "[gen][foreach][array][errors]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module __foreach_not_iterable__;
-        test() : int {
+        module gen_foreach_17;
+        gen_foreach_14() : int {
             v : int = 42;
             for(x : int = v) {
             }
@@ -462,9 +462,9 @@ TEST_CASE("Foreach array — non-iterable source is rejected", "[gen][foreach][a
 
 TEST_CASE("Foreach sequence — sum Vector<int> via copy", "[gen][foreach][sequence]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_18;
 
-        test() : int {
+        gen_foreach_18() : int {
             vec : Vector<int>;
             vec.append(1);
             vec.append(2);
@@ -477,16 +477,16 @@ TEST_CASE("Foreach sequence — sum Vector<int> via copy", "[gen][foreach][seque
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_18");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 6);
 }
 
 TEST_CASE("Foreach iterator — direct Iterator<T> object", "[gen][foreach][iterator]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_19;
 
-        test() : int {
+        gen_foreach_19() : int {
             vec : Vector<int>;
             vec.append(10);
             vec.append(20);
@@ -500,16 +500,16 @@ TEST_CASE("Foreach iterator — direct Iterator<T> object", "[gen][foreach][iter
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_19");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 60);
 }
 
 TEST_CASE("Foreach sequence — mutable in-place via reference", "[gen][foreach][sequence]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_20;
 
-        test() : int {
+        gen_foreach_20() : int {
             vec : Vector<int>;
             vec.append(1);
             vec.append(2);
@@ -525,16 +525,16 @@ TEST_CASE("Foreach sequence — mutable in-place via reference", "[gen][foreach]
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_20");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 60);
 }
 
 TEST_CASE("Foreach sequence — break and continue", "[gen][foreach][sequence]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_21;
 
-        test() : int {
+        gen_foreach_21() : int {
             vec : Vector<int>;
             vec.append(1);
             vec.append(2);
@@ -551,16 +551,16 @@ TEST_CASE("Foreach sequence — break and continue", "[gen][foreach][sequence]")
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_21");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 1 + 3 + 4);
 }
 
 TEST_CASE("Foreach sequence — empty sequence never enters body", "[gen][foreach][sequence]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_22;
 
-        test() : int {
+        gen_foreach_22() : int {
             vec : Vector<int>;
             sum : int = 0;
             for(x : int = vec) {
@@ -570,7 +570,7 @@ TEST_CASE("Foreach sequence — empty sequence never enters body", "[gen][foreac
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_22");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 0);
 }
@@ -585,9 +585,9 @@ std::shared_ptr<k::path_lookup_file_resolver> stdlib_search_resolver() {
 
 TEST_CASE("Foreach iterator — const source: mutable ref forbidden", "[gen][foreach][iterator][errors]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_foreach_23;
 
-        test() : int {
+        gen_foreach_23() : int {
             vec : Vector<int>;
             vec.append(1);
             cv : const Vector<int>& = vec;
@@ -601,9 +601,9 @@ TEST_CASE("Foreach iterator — const source: mutable ref forbidden", "[gen][for
 
 TEST_CASE("Foreach iterator — owner loop var forbidden on sequence", "[gen][foreach][sequence][errors]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_foreach_24;
 
-        test() : int {
+        gen_foreach_24() : int {
             vec : Vector<int>;
             vec.append(1);
             for(x : int! = vec) {
@@ -615,9 +615,9 @@ TEST_CASE("Foreach iterator — owner loop var forbidden on sequence", "[gen][fo
 
 TEST_CASE("Foreach iterator — const source sums via copy (constIterator)", "[gen][foreach][iterator]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_25;
 
-        test() : int {
+        gen_foreach_25() : int {
             vec : Vector<int>;
             vec.append(1);
             vec.append(2);
@@ -631,14 +631,14 @@ TEST_CASE("Foreach iterator — const source sums via copy (constIterator)", "[g
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_foreach_25");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 6);
 }
 
 TEST_CASE("Foreach sequence — iterator() called exactly once, destroyed once (full loop)", "[gen][foreach][sequence]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_26;
 
         class CountingIter : public ConstIterator<int> {
             static dtor_count : int = 0;
@@ -698,7 +698,7 @@ TEST_CASE("Foreach sequence — iterator() called exactly once, destroyed once (
 
 TEST_CASE("Foreach sequence — hidden iterator destroyed once on break", "[gen][foreach][sequence]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_foreach_27;
 
         class CountingIter : public ConstIterator<int> {
             static dtor_count : int = 0;

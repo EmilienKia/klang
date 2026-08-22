@@ -50,7 +50,7 @@
 TEST_CASE("if-multi-softfail: two pointers both non-null enters then",
           "[gen][if-multi-softfail][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_ptr1__;
+        module gen_if_multi_softfail_01;
 
         test() : int {
             a : int = 10;
@@ -70,7 +70,7 @@ TEST_CASE("if-multi-softfail: two pointers both non-null enters then",
 TEST_CASE("if-multi-softfail: second pointer null enters else",
           "[gen][if-multi-softfail][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_ptr2__;
+        module gen_if_multi_softfail_02;
 
         test() : int {
             a : int = 10;
@@ -90,7 +90,7 @@ TEST_CASE("if-multi-softfail: second pointer null enters else",
 TEST_CASE("if-multi-softfail: first pointer null enters else",
           "[gen][if-multi-softfail][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_ptr3__;
+        module gen_if_multi_softfail_03;
 
         test() : int {
             b : int = 20;
@@ -110,7 +110,7 @@ TEST_CASE("if-multi-softfail: first pointer null enters else",
 TEST_CASE("if-multi-softfail: pointer null no else continues after if",
           "[gen][if-multi-softfail][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_ptr4__;
+        module gen_if_multi_softfail_04;
 
         test() : int {
             if(p1 : int* = null; p2 : int* = null) {
@@ -133,7 +133,7 @@ TEST_CASE("if-multi-softfail: pointer null no else continues after if",
 TEST_CASE("if-multi-softfail: two links both non-null enters then",
           "[gen][if-multi-softfail][link]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_link1__;
+        module gen_if_multi_softfail_05;
 
         test() : int {
             a : int = 10;
@@ -155,7 +155,7 @@ TEST_CASE("if-multi-softfail: two links both non-null enters then",
 TEST_CASE("if-multi-softfail: second link null enters else",
           "[gen][if-multi-softfail][link]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_link2__;
+        module gen_if_multi_softfail_06;
 
         test() : int {
             a : int = 10;
@@ -177,7 +177,7 @@ TEST_CASE("if-multi-softfail: second link null enters else",
 TEST_CASE("if-multi-softfail: first link null enters else",
           "[gen][if-multi-softfail][link]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_link3__;
+        module gen_if_multi_softfail_07;
 
         test() : int {
             pn : int* = null;
@@ -204,7 +204,7 @@ TEST_CASE("if-multi-softfail: first link null enters else",
 TEST_CASE("if-multi-softfail: single view non-null enters then",
           "[gen][if-multi-softfail][view]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_view1__;
+        module gen_if_multi_softfail_08;
 
         test() : int {
             val : int = 7;
@@ -223,7 +223,7 @@ TEST_CASE("if-multi-softfail: single view non-null enters then",
 TEST_CASE("if-multi-softfail: single view null enters else",
           "[gen][if-multi-softfail][view]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_view2__;
+        module gen_if_multi_softfail_09;
 
         test() : int {
             p : int* = null;
@@ -248,7 +248,7 @@ TEST_CASE("if-multi-softfail: single view null enters else",
 TEST_CASE("if-multi-softfail: chained pointer dereference, all valid",
           "[gen][if-multi-softfail][chain]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_chain1__;
+        module gen_if_multi_softfail_10;
 
         getPtr(p : int*) : int* {
             return p;
@@ -272,7 +272,7 @@ TEST_CASE("if-multi-softfail: chained pointer dereference, all valid",
 TEST_CASE("if-multi-softfail: chained pointer dereference, second null",
           "[gen][if-multi-softfail][chain]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_chain2__;
+        module gen_if_multi_softfail_11;
 
         getNull() : int* {
             p : int* = null;
@@ -302,7 +302,7 @@ TEST_CASE("if-multi-softfail: chained pointer dereference, second null",
 TEST_CASE("if-multi-softfail: int var + pointer, pointer non-null",
           "[gen][if-multi-softfail][mixed]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_mixed1__;
+        module gen_if_multi_softfail_12;
 
         test() : int {
             val : int = 42;
@@ -321,7 +321,7 @@ TEST_CASE("if-multi-softfail: int var + pointer, pointer non-null",
 TEST_CASE("if-multi-softfail: int var + pointer, pointer null enters else",
           "[gen][if-multi-softfail][mixed]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_mixed2__;
+        module gen_if_multi_softfail_13;
 
         test() : int {
             if(x : int = 5; p : int* = null) {
@@ -340,7 +340,7 @@ TEST_CASE("if-multi-softfail: int var + pointer, pointer null enters else",
 TEST_CASE("if-multi-softfail: three vars with mixed types",
           "[gen][if-multi-softfail][mixed]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_mixed3__;
+        module gen_if_multi_softfail_14;
 
         test() : int {
             a : int = 10;
@@ -365,7 +365,7 @@ TEST_CASE("if-multi-softfail: three vars with mixed types",
 TEST_CASE("if-multi-softfail: dtor called for initialized vars on soft-fail",
           "[gen][if-multi-softfail][dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_dtor1__;
+        module gen_if_multi_softfail_15;
 
         g_dtor_count : int = 0;
 
@@ -402,7 +402,7 @@ TEST_CASE("if-multi-softfail: dtor called for initialized vars on soft-fail",
 TEST_CASE("if-multi-softfail: dtor called for all vars in then branch",
           "[gen][if-multi-softfail][dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_dtor2__;
+        module gen_if_multi_softfail_16;
 
         g_dtor_count : int = 0;
 
@@ -442,7 +442,7 @@ TEST_CASE("if-multi-softfail: dtor called for all vars in then branch",
 TEST_CASE("if-multi-softfail: variables can be redeclared after if",
           "[gen][if-multi-softfail][scope]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_scope1__;
+        module gen_if_multi_softfail_17;
 
         test() : int {
             a : int = 10;
@@ -468,7 +468,7 @@ TEST_CASE("if-multi-softfail: variables can be redeclared after if",
 TEST_CASE("if-multi-softfail: nested soft-fail, inner fails",
           "[gen][if-multi-softfail][nested]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_nested1__;
+        module gen_if_multi_softfail_18;
 
         test() : int {
             a : int = 10;
@@ -492,7 +492,7 @@ TEST_CASE("if-multi-softfail: nested soft-fail, inner fails",
 TEST_CASE("if-multi-softfail: nested soft-fail, outer fails",
           "[gen][if-multi-softfail][nested]") {
     auto jit = gen_jit(R"SRC(
-        module __imsf_nested2__;
+        module gen_if_multi_softfail_19;
 
         test() : int {
             if(p1 : int* = null; p2 : int* = null) {

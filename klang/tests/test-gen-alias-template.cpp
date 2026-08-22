@@ -31,7 +31,7 @@
 
 TEST_CASE("template alias — renames a template aggregate", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_01;
         template<typename T>
         struct Box { v : T; }
         template<typename T> alias BoxOf : Box<T>;
@@ -48,7 +48,7 @@ TEST_CASE("template alias — renames a template aggregate", "[gen][alias][templ
 
 TEST_CASE("template alias — renames a bare parameter", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_02;
         template<typename T> alias Same : T;
         f(v : Same<int>) : Same<int> { return v * 2; }
         g() : int { return f(21); }
@@ -60,7 +60,7 @@ TEST_CASE("template alias — renames a bare parameter", "[gen][alias][template]
 
 TEST_CASE("template alias — renames an addresser of a parameter", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_03;
         template<typename T> alias Ptr : T*;
         f() : int {
             v : int = 42;
@@ -75,7 +75,7 @@ TEST_CASE("template alias — renames an addresser of a parameter", "[gen][alias
 
 TEST_CASE("template alias — renames an array of a parameter", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_04;
         template<typename T> alias Arr : T[3];
         f() : int {
             a : Arr<int>;
@@ -91,7 +91,7 @@ TEST_CASE("template alias — renames an array of a parameter", "[gen][alias][te
 
 TEST_CASE("template alias — partially applies a multi-parameter template", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_05;
         template<typename T, typename U>
         struct Pair { a : T; b : U; }
         template<typename U> alias IntPair : Pair<int, U>;
@@ -110,7 +110,7 @@ TEST_CASE("template alias — partially applies a multi-parameter template", "[g
 
 TEST_CASE("template alias — several parameters are substituted positionally", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_06;
         template<typename T, typename U>
         struct Pair { a : T; b : U; }
         template<typename A, typename B> alias P : Pair<B, A>;
@@ -128,7 +128,7 @@ TEST_CASE("template alias — several parameters are substituted positionally", 
 
 TEST_CASE("template alias — a default template argument is applied", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_07;
         template<typename T>
         struct Box { v : T; }
         template<typename T = int> alias BoxOf : Box<T>;
@@ -145,7 +145,7 @@ TEST_CASE("template alias — a default template argument is applied", "[gen][al
 
 TEST_CASE("template alias — renames another parameterised alias", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_08;
         template<typename T> alias Ptr : T*;
         template<typename T> alias Handle : Ptr<T>;
         f() : int {
@@ -161,7 +161,7 @@ TEST_CASE("template alias — renames another parameterised alias", "[gen][alias
 
 TEST_CASE("template alias — a nested template argument is substituted", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_09;
         template<typename T> struct Box { v : T; }
         template<typename T, typename U> struct Pair { a : T; b : U; }
         template<typename T> alias BoxPair : Pair<Box<T>, int>;
@@ -179,7 +179,7 @@ TEST_CASE("template alias — a nested template argument is substituted", "[gen]
 
 TEST_CASE("template alias — a nested alias argument is substituted", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_10;
         template<typename T> struct Box { v : T; }
         template<typename T> alias BoxOf : Box<T>;
         template<typename T> alias BoxOfBox : BoxOf<Box<T>>;
@@ -196,7 +196,7 @@ TEST_CASE("template alias — a nested alias argument is substituted", "[gen][al
 
 TEST_CASE("template typedef — an explicit cast converts from the renamed type", "[gen][typedef][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_11;
         template<typename T> typedef Id : T;
         f() : int {
             n : int = 40;
@@ -212,7 +212,7 @@ TEST_CASE("template typedef — an explicit cast converts from the renamed type"
 
 TEST_CASE("template typedef — the renamed type accepts the strong alias without a cast", "[gen][typedef][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_alias_template_12;
         template<typename T> typedef Id : T;
         f() : int {
             a : Id<int> = 42;
@@ -227,7 +227,7 @@ TEST_CASE("template typedef — the renamed type accepts the strong alias withou
 
 TEST_CASE("template alias — too many template arguments are rejected", "[gen][alias][template]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_alias_template_13;
         template<typename T> alias Same : T;
         f(v : Same<int, long>) : int { return 0; }
     )SRC"), k::log::compiler_error);
@@ -235,7 +235,7 @@ TEST_CASE("template alias — too many template arguments are rejected", "[gen][
 
 TEST_CASE("template alias — a missing template argument is rejected", "[gen][alias][template]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_alias_template_14;
         template<typename T, typename U> alias Two : T;
         f(v : Two<int>) : int { return 0; }
     )SRC"), k::log::compiler_error);
@@ -243,7 +243,7 @@ TEST_CASE("template alias — a missing template argument is rejected", "[gen][a
 
 TEST_CASE("template alias — arguments given to a plain alias are rejected", "[gen][alias][template]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_alias_template_15;
         alias Plain : int;
         f(v : Plain<int>) : int { return 0; }
     )SRC"), k::log::compiler_error);
@@ -251,7 +251,7 @@ TEST_CASE("template alias — arguments given to a plain alias are rejected", "[
 
 TEST_CASE("template alias — a value template parameter is rejected", "[gen][alias][template]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_alias_template_16;
         template<int N> alias Buf : int;
         f(v : Buf<4>) : int { return 0; }
     )SRC"), k::log::compiler_error);
@@ -259,7 +259,7 @@ TEST_CASE("template alias — a value template parameter is rejected", "[gen][al
 
 TEST_CASE("template alias — an unknown target is rejected", "[gen][alias][template]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_alias_template_17;
         template<typename T> alias Nope : DoesNotExist<T>;
         f(v : Nope<int>) : int { return 0; }
     )SRC"), k::log::compiler_error);

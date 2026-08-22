@@ -41,7 +41,7 @@
 TEST_CASE("[A] M3: template struct compiles without error",
           "[milestone3][template][aggregate]") {
     auto comp = compile_model(R"SRC(
-        module __m3_agg_a__;
+        module gen_template_aggregates_01;
         template<typename T>
         struct Box {
             public value : T;
@@ -57,7 +57,7 @@ TEST_CASE("[A] M3: template struct compiles without error",
 TEST_CASE("[B] M3: template struct is marked is_template()",
           "[milestone3][template][aggregate]") {
     auto comp = compile_model(R"SRC(
-        module __m3_agg_b__;
+        module gen_template_aggregates_02;
         template<typename T>
         struct Wrapper {
             public inner : T;
@@ -76,7 +76,7 @@ TEST_CASE("[B] M3: template struct is marked is_template()",
 TEST_CASE("[C] M3: template struct tpl_info has correct params",
           "[milestone3][template][aggregate]") {
     auto comp = compile_model(R"SRC(
-        module __m3_agg_c__;
+        module gen_template_aggregates_03;
         template<typename T>
         struct Container {
             public data : T;
@@ -102,7 +102,7 @@ TEST_CASE("[D] M3: template struct is not emitted as LLVM IR",
           "[milestone3][template][aggregate]") {
     // A template struct has no struct_type (the symbol_resolver skips it)
     auto comp = compile_model(R"SRC(
-        module __m3_agg_d__;
+        module gen_template_aggregates_04;
         template<typename T>
         struct Phantom {
             public x : T;
@@ -123,7 +123,7 @@ TEST_CASE("[D] M3: template struct is not emitted as LLVM IR",
 TEST_CASE("[E] M3: non-template aggregate alongside template is processed normally",
           "[milestone3][template][aggregate]") {
     auto comp = compile_model(R"SRC(
-        module __m3_agg_e__;
+        module gen_template_aggregates_05;
         template<typename T>
         struct TplBox {
             public value : T;
@@ -152,7 +152,7 @@ TEST_CASE("[E] M3: non-template aggregate alongside template is processed normal
 TEST_CASE("[F] M3: template class with multiple type params",
           "[milestone3][template][aggregate]") {
     auto comp = compile_model(R"SRC(
-        module __m3_agg_f__;
+        module gen_template_aggregates_06;
         template<typename K, typename V>
         struct Pair {
             public first : K;
@@ -180,7 +180,7 @@ TEST_CASE("[F] M3: template class with multiple type params",
 TEST_CASE("[G] M3: template struct with value parameter",
           "[milestone3][template][aggregate]") {
     auto comp = compile_model(R"SRC(
-        module __m3_agg_g__;
+        module gen_template_aggregates_07;
         template<typename T, unsigned int N>
         struct FixedArray {
             public data : T;

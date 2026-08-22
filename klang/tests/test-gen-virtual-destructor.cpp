@@ -60,7 +60,7 @@
 
 TEST_CASE("Virtual destructor: class destructor occupies universal vtable slot 0", "[model][vdtor]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_vdtor_slot0__;
+        module gen_virtual_destructor_01;
         class Foo {
             ~Foo() {}
         }
@@ -78,7 +78,7 @@ TEST_CASE("Virtual destructor: class destructor occupies universal vtable slot 0
 
 TEST_CASE("Virtual destructor: compiler-generated destructor is also virtual at slot 0", "[model][vdtor]") {
     auto comp = compile_model_with_stdlib(R"SRC(
-        module __test_vdtor_slot0_implicit__;
+        module gen_virtual_destructor_02;
         class Foo {
             dummy() : int { return 0; }
         }
@@ -100,7 +100,7 @@ TEST_CASE("Virtual destructor: compiler-generated destructor is also virtual at 
 
 TEST_CASE("Virtual destructor: destroying through Object! owner calls derived dtor", "[gen][vdtor]") {
     auto jit = gen_jit(R"SRC(
-        module __test_vdtor_object_owner__;
+        module gen_virtual_destructor_03;
 
         dtor_ran : int = 0;
 
@@ -128,7 +128,7 @@ TEST_CASE("Virtual destructor: destroying through Object! owner calls derived dt
 
 TEST_CASE("Virtual destructor: destroying through interface owner calls derived dtor exactly once", "[gen][vdtor]") {
     auto jit = gen_jit(R"SRC(
-        module __test_vdtor_interface_owner__;
+        module gen_virtual_destructor_04;
 
         dtor_count : int = 0;
 
@@ -160,7 +160,7 @@ TEST_CASE("Virtual destructor: destroying through interface owner calls derived 
 
 TEST_CASE("Virtual destructor: 3-level chain destroyed most-derived first", "[gen][vdtor]") {
     auto jit = gen_jit(R"SRC(
-        module __test_vdtor_chain__;
+        module gen_virtual_destructor_05;
 
         dtor_log : int = 0;
 
@@ -194,7 +194,7 @@ TEST_CASE("Virtual destructor: 3-level chain destroyed most-derived first", "[ge
 
 TEST_CASE("Virtual destructor: destroying through secondary interface base still calls derived dtor once", "[gen][vdtor]") {
     auto jit = gen_jit(R"SRC(
-        module __test_vdtor_secondary_base__;
+        module gen_virtual_destructor_06;
 
         dtor_count : int = 0;
         dtor_field_sum : int = 0;
@@ -247,7 +247,7 @@ TEST_CASE("Virtual destructor: destroying through secondary interface base still
 
 TEST_CASE("Virtual destructor: secondary base still resolves through a multi-level chain", "[gen][vdtor]") {
     auto jit = gen_jit(R"SRC(
-        module __test_vdtor_secondary_base_chain__;
+        module gen_virtual_destructor_07;
 
         dtor_log : int = 0;
 
@@ -287,7 +287,7 @@ TEST_CASE("Virtual destructor: secondary base still resolves through a multi-lev
 
 TEST_CASE("Virtual destructor: secondary base still resolves for a template-instantiated hierarchy", "[gen][vdtor][templates]") {
     auto jit = gen_jit(R"SRC(
-        module __test_vdtor_secondary_base_template__;
+        module gen_virtual_destructor_08;
 
         dtor_log : int = 0;
 

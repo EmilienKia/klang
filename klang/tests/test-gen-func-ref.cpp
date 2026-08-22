@@ -41,7 +41,7 @@ TEST_CASE("Function reference type: member function pointer type declaration",
     // Verify that Counter::*(int):int is properly declared as a local variable
     // and that Counter::add is resolved as its initializer.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_01;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -64,13 +64,13 @@ TEST_CASE("Function reference type: call member function via .* on local object"
 {
     // .* on a locally-declared struct variable
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_02;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
             mul(x : int) : int { return value * x; }
         }
-        test() : int {
+        gen_func_ref_02() : int {
             add_mfp : Counter::*(int):int = Counter::add;
             mul_mfp : Counter::*(int):int = Counter::mul;
             c : Counter;
@@ -91,7 +91,7 @@ TEST_CASE("Function reference type: call member function via .* operator",
 {
     // Standard .* invocation: (obj.*mfp)(args)
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_03;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -114,7 +114,7 @@ TEST_CASE("Function reference type: pass member function pointer as parameter an
 {
     // Pass a Counter::*(int):int as function parameter, call via .*
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_04;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -142,7 +142,7 @@ TEST_CASE("Function reference type: call member function via ->* on a link",
     // lnk : Counter+ = c  → lnk is a non-null reference (link) to c
     // (lnk->*mfp)(2) invokes add through the link
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_05;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -166,7 +166,7 @@ TEST_CASE("Function reference type: pass mfp and link as parameters, call via ->
 {
     // Pass mfp + link parameter, call via ->*
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_06;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -193,7 +193,7 @@ TEST_CASE("Function reference type: disambiguate overloaded member function via 
     // Two overloads of 'compute' in Counter.
     // The mfp type Counter::*(int):int must select the int overload.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_07;
         struct Counter {
             value : int;
             compute(x : int) : int { return value + x; }
@@ -218,7 +218,7 @@ TEST_CASE("Function reference type: member function pointer with klass",
     // Counter::*(int):int works with class (klass) not just struct
     // Use a setter to initialize the protected value field
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_08;
         class Counter {
             value : int;
             set_value(v : int) { value = v; }
@@ -244,7 +244,7 @@ TEST_CASE("Function reference type: ->* on a pointer (Counter*)",
 {
     // ->* with a raw pointer: ptr : Counter* = c; (ptr->*mfp)(2)
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_09;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -267,7 +267,7 @@ TEST_CASE("Function reference type: ->* on a pin (Counter?)",
 {
     // ->* with a view pointer: pin : Counter? = c; (pin->*mfp)(2)
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_10;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -290,7 +290,7 @@ TEST_CASE("Function reference type: return member function pointer from function
 {
     // A function returns a Counter::*(int):int; caller uses it via .*
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_11;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -313,7 +313,7 @@ TEST_CASE("Function reference type: view member function pointer Counter::?(int)
 {
     // Counter::?(int):int is a view (non-null, non-reassignable) member function pointer
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_12;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -335,7 +335,7 @@ TEST_CASE("Function reference type: link member function pointer Counter::+(int)
 {
     // Counter::+(int):int is a link (non-null) member function pointer
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_13;
         struct Counter {
             value : int;
             add(x : int) : int { return value + x; }
@@ -357,7 +357,7 @@ TEST_CASE("Function reference type: member function pointer with multiple parame
 {
     // Counter::*(int, int):int — member function pointer with two explicit parameters
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_func_ref_14;
         struct Counter {
             value : int;
             add2(a : int, b : int) : int { return value + a + b; }

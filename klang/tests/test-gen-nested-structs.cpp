@@ -39,7 +39,7 @@
 
 TEST_CASE("Static nested struct: basic use as a scoped type", "[gen][nested][static]") {
     auto jit = gen_jit(R"SRC(
-        module __nested_static__;
+        module gen_nested_structs_01;
 
         struct Outer {
             value : int = 10;
@@ -82,7 +82,7 @@ TEST_CASE("Static nested struct: basic use as a scoped type", "[gen][nested][sta
 
 TEST_CASE("Non-static inner struct: construct from within outer method, read inner field", "[gen][nested][inner]") {
     auto jit = gen_jit(R"SRC(
-        module __nested_inner_basic__;
+        module gen_nested_structs_02;
 
         struct Outer {
             outer_val : int = 100;
@@ -116,7 +116,7 @@ TEST_CASE("Non-static inner struct: construct from within outer method, read inn
 
 TEST_CASE("Non-static inner struct: inner method reads outer struct field via __parent__", "[gen][nested][inner][parent-access]") {
     auto jit = gen_jit(R"SRC(
-        module __nested_inner_parent__;
+        module gen_nested_structs_03;
 
         struct Outer {
             outer_val : int = 55;
@@ -167,7 +167,7 @@ TEST_CASE("Non-static inner struct: inner method reads outer struct field via __
 
 TEST_CASE("Non-static inner struct: inner field shadows outer field with same name", "[gen][nested][inner][shadowing]") {
     auto jit = gen_jit(R"SRC(
-        module __nested_shadow__;
+        module gen_nested_structs_04;
 
         struct Outer {
             value : int = 10;
@@ -217,7 +217,7 @@ TEST_CASE("Non-static inner struct: inner field shadows outer field with same na
 
 TEST_CASE("Multi-level nested structs: access grandparent field from innermost method", "[gen][nested][inner][multilevel]") {
     auto jit = gen_jit(R"SRC(
-        module __nested_multi__;
+        module gen_nested_structs_05;
 
         struct Outer {
             outer_val : int = 1;
@@ -265,7 +265,7 @@ TEST_CASE("Multi-level nested structs: access grandparent field from innermost m
 
 TEST_CASE("Non-static inner struct: compiler-generated default constructor", "[gen][nested][inner][default-ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __nested_default_ctor__;
+        module gen_nested_structs_06;
 
         struct Outer {
             outer_val : int = 7;
@@ -299,7 +299,7 @@ TEST_CASE("Non-static inner struct: compiler-generated default constructor", "[g
 
 TEST_CASE("Nested static struct inside template: member variable of nested type", "[gen][nested][template]") {
     auto jit = gen_jit(R"SRC(
-        module __nested_tpl_static__;
+        module gen_nested_structs_07;
 
         template<typename T>
         struct Wrapper {
@@ -331,7 +331,7 @@ TEST_CASE("Nested static struct inside template: member variable of nested type"
 
 TEST_CASE("Nested static struct inside template: constructor with init value", "[gen][nested][template]") {
     auto jit = gen_jit(R"SRC(
-        module __nested_tpl_init__;
+        module gen_nested_structs_08;
 
         template<typename T>
         struct Container {
@@ -363,7 +363,7 @@ TEST_CASE("Nested static struct inside template: constructor with init value", "
 
 TEST_CASE("Template struct method with while loop and local variable", "[gen][nested][while-bug]") {
     auto jit = gen_jit(R"SRC(
-module __while_tpl_bug__;
+module gen_nested_structs_09;
 
 template<typename T>
 struct Container {

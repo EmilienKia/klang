@@ -25,16 +25,16 @@
 
 TEST_CASE( "Fibonacci 8", "[gen]" ) {
     auto res = build_and_exec(R"SRC(
-        module fibo;
+        module klangc_run_01;
 
-        fibo(i: unsigned short) : unsigned int {
+        klangc_run_01(i: unsigned short) : unsigned int {
             if(i==0) return 1;
             else if(i==1) return 1;
-            return fibo(i-1) + fibo(i-2);
+            return klangc_run_01(i-1) + klangc_run_01(i-2);
         }
 
         main() : int {
-            return fibo(8);
+            return klangc_run_01(8);
         }
     )SRC");
 

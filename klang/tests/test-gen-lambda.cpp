@@ -26,7 +26,7 @@
 
 TEST_CASE("Lambda: capture-free lambda binds to a callable", "[gen][lambda]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_lambda_01;
         apply(f : *(int):int, x : int) : int { return f(x); }
         test() : int {
             return apply([](x : int) { return x + 1; }, 41);

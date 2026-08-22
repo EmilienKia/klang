@@ -81,7 +81,7 @@ TEST_CASE("Callable variance: identical signatures bind and call",
     "[gen][callable][variance]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_variance_01;
         add_one(x : int) : int { return x + 1; }
         test() : int {
             f : *(int):int = add_one;
@@ -100,7 +100,7 @@ TEST_CASE("Callable variance: the compatible overload is selected, not the first
     // Symbol resolution finds the *first* declaration carrying the name; the
     // callable binding must re-select the overload that actually fits.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_variance_02;
         pick(x : long) : long { return x + 100; }
         pick(x : int) : int { return x + 1; }
         test() : int {
@@ -126,7 +126,7 @@ TEST_CASE("Callable variance: return covariance succeeds when the base is at off
     // `Base+` view of it share the very same address: the indirect call needs no
     // adjustment and the covariant binding is safe.
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_03;
         struct Base { a : int; }
         struct Derived : public Base { b : int; }
         identity(d : Derived+) : Derived+ { return d; }
@@ -154,7 +154,7 @@ TEST_CASE("Callable variance: return covariance through a second base is rejecte
     // 'C+' address is not a valid 'B+' address without an adjustment that an
     // indirect call cannot perform.
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_04;
         struct A { a : int; }
         struct B { b : int; }
         struct C : public A, public B { c : int; }
@@ -172,7 +172,7 @@ TEST_CASE("Callable variance: return covariance through a class base is rejected
     // A K class stores its vptr at field 0, so *no* base sub-object of a class is
     // ever at offset 0 — class covariance always needs an adjustment.
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_05;
         class Shape { public: Shape() {} area() : int { return 1; } }
         class Circle : public Shape { public: Circle() {} area() : int { return 2; } }
         identity(c : Circle+) : Circle+ { return c; }
@@ -187,7 +187,7 @@ TEST_CASE("Callable variance: parameter contravariance through a second base is 
     "[gen][callable][variance][contravariance]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_06;
         struct A { a : int; }
         struct B { b : int; }
         struct C : public A, public B { c : int; }
@@ -210,7 +210,7 @@ TEST_CASE("Callable variance: parameter contravariance succeeds at offset 0",
     // The callable promises to pass a 'Derived+'; the target only needs a 'Base+',
     // which the very same address already is.
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_07;
         struct Base { a : int; }
         struct Derived : public Base { b : int; }
         takeBase(x : Base+) : int { return x->a; }
@@ -230,7 +230,7 @@ TEST_CASE("Callable variance: the wrong contravariance direction is rejected",
     // The callable only promises a 'Base+', but the target dereferences it as a
     // 'Derived+' — the substitution is unsound in that direction.
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_08;
         struct Base { a : int; }
         struct Derived : public Base { b : int; }
         takeDerived(x : Derived+) : int { return x->b; }
@@ -250,7 +250,7 @@ TEST_CASE("Callable variance: an int return bound to a long callable is rejected
     "[gen][callable][variance][primitive]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_09;
         narrow(x : int) : int { return x; }
         test() : int {
             f : *(int):long = narrow;
@@ -263,7 +263,7 @@ TEST_CASE("Callable variance: a long return bound to an int callable is rejected
     "[gen][callable][variance][primitive]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_10;
         wide(x : int) : long { return x; }
         test() : int {
             f : *(int):int = wide;
@@ -276,7 +276,7 @@ TEST_CASE("Callable variance: a float/double parameter mismatch is rejected",
     "[gen][callable][variance][primitive]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_11;
         scale(x : float) : float { return x; }
         test() : int {
             f : *(double):float = scale;
@@ -289,7 +289,7 @@ TEST_CASE("Callable variance: an int parameter bound to a long callable is rejec
     "[gen][callable][variance][primitive]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_12;
         takeInt(x : int) : int { return x; }
         test() : int {
             f : *(long):int = takeInt;
@@ -307,7 +307,7 @@ TEST_CASE("Callable variance: a different addresser in the return type is reject
     "[gen][callable][variance][addresser]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_13;
         struct Base { a : int; }
         make(b : Base+) : Base+ { return b; }
         test() : int {
@@ -321,7 +321,7 @@ TEST_CASE("Callable variance: a different addresser in a parameter is rejected",
     "[gen][callable][variance][addresser]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_14;
         struct Base { a : int; }
         take(b : Base+) : int { return b->a; }
         test() : int {
@@ -340,7 +340,7 @@ TEST_CASE("Callable variance: too few parameters is rejected",
     "[gen][callable][variance][arity]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_15;
         one(x : int) : int { return x; }
         test() : int {
             f : *(int, int):int = one;
@@ -353,7 +353,7 @@ TEST_CASE("Callable variance: too many parameters is rejected",
     "[gen][callable][variance][arity]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_16;
         two(x : int, y : int) : int { return x + y; }
         test() : int {
             f : *(int):int = two;
@@ -372,7 +372,7 @@ TEST_CASE("Callable variance: a live '*' callable initialises a '+' callable",
 {
     // The null-check passes: the guarded conversion must be transparent.
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_17;
         add_one(x : int) : int { return x + 1; }
         main() : int {
             fp : *(int):int = add_one;
@@ -389,7 +389,7 @@ TEST_CASE("Callable variance: initialising a '+' callable from a null '*' callab
     // A '+' callable is non-null by construction, so its call site skips the null
     // check — the guard has to be at the binding point instead.
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_18;
         main() : int {
             fp : *(int):int = null;
             lnk : +(int):int = fp;
@@ -404,7 +404,7 @@ TEST_CASE("Callable variance: rebinding a '+' callable from a null '*' callable 
     "[gen][callable][variance][null][run]")
 {
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_19;
         add_one(x : int) : int { return x + 1; }
         main() : int {
             fp : *(int):int = add_one;
@@ -422,7 +422,7 @@ TEST_CASE("Callable variance: 'null' cannot initialise a non-null callable",
     "[gen][callable][variance][null]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_20;
         test() : int {
             lnk : +(int):int = null;
             return 0;
@@ -434,7 +434,7 @@ TEST_CASE("Callable variance: 'null' initialises a nullable callable",
     "[gen][callable][variance][null]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_variance_21;
         test() : int {
             fp : *(int):int = null;
             if (fp == null) { return 42; }
@@ -457,7 +457,7 @@ TEST_CASE("Callable variance: a '?' callable is initialisable but not rebindable
 {
     // Construction-time initialisation is accepted…
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_variance_22;
         add_one(x : int) : int { return x + 1; }
         test() : int {
             f : ?(int):int = add_one;
@@ -471,7 +471,7 @@ TEST_CASE("Callable variance: a '?' callable is initialisable but not rebindable
 
     // …but a later assignment is not.
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_23;
         add_one(x : int) : int { return x + 1; }
         add_two(x : int) : int { return x + 2; }
         test() : int {
@@ -486,7 +486,7 @@ TEST_CASE("Callable variance: a '&' callable is initialisable but not rebindable
     "[gen][callable][variance][rebind]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_variance_24;
         add_one(x : int) : int { return x + 1; }
         test() : int {
             f : &(int):int = add_one;
@@ -499,7 +499,7 @@ TEST_CASE("Callable variance: a '&' callable is initialisable but not rebindable
     REQUIRE(test_fn() == 42);
 
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_25;
         add_one(x : int) : int { return x + 1; }
         add_two(x : int) : int { return x + 2; }
         test() : int {
@@ -514,7 +514,7 @@ TEST_CASE("Callable variance: '*' and '+' callables are rebindable",
     "[gen][callable][variance][rebind]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_variance_26;
         add_one(x : int) : int { return x + 1; }
         add_two(x : int) : int { return x + 2; }
         test() : int {
@@ -535,7 +535,7 @@ TEST_CASE("Callable variance: a const callable cannot be rebound",
     "[gen][callable][variance][rebind][const]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_27;
         add_one(x : int) : int { return x + 1; }
         add_two(x : int) : int { return x + 2; }
         test() : int {
@@ -550,7 +550,7 @@ TEST_CASE("Callable variance: a const callable is still invocable",
     "[gen][callable][variance][const]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_variance_28;
         add_one(x : int) : int { return x + 1; }
         test() : int {
             const f : *(int):int = add_one;
@@ -573,7 +573,7 @@ TEST_CASE("Callable variance: a soft alias is transparent in a callable prototyp
 {
     // 'alias' introduces a *name*, not a type: the prototype is identical.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_variance_29;
         alias Feet : int;
         f(x : int) : int { return x; }
         test() : int {
@@ -594,7 +594,7 @@ TEST_CASE("Callable variance: a typedef stays nominally distinct in a callable r
     // satisfy a 'Meters'-returning callable, and the callable check must not
     // canonicalise the alias away.
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_30;
         typedef Meters : int;
         f(x : int) : int { return x; }
         test() : int {
@@ -608,7 +608,7 @@ TEST_CASE("Callable variance: a typedef stays nominally distinct in a callable p
     "[gen][callable][variance][alias][typedef]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_31;
         typedef Meters : int;
         f(x : int) : int { return x; }
         test() : int {
@@ -622,7 +622,7 @@ TEST_CASE("Callable variance: a typedef binds to a callable declared with the sa
     "[gen][callable][variance][alias][typedef]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_variance_32;
         typedef Meters : int;
         f(x : Meters) : Meters { return x; }
         test() : int {
@@ -645,7 +645,7 @@ TEST_CASE("Callable variance: the same throws set is accepted",
     "[gen][callable][variance][throws][run]")
 {
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_33;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         may_throw(x : int) : int throws Boom {
             if (x < 0) { throw Boom(1); }
@@ -663,7 +663,7 @@ TEST_CASE("Callable variance: a throws subset is accepted",
     "[gen][callable][variance][throws][run]")
 {
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_34;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         class Bang : public Exception { public: Bang(c : int) : Exception(c) {} }
         may_throw(x : int) : int throws Boom {
@@ -682,7 +682,7 @@ TEST_CASE("Callable variance: a throws base class covers a derived thrown type",
     "[gen][callable][variance][throws][run]")
 {
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_35;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         class Bigger : public Boom { public: Bigger(c : int) : Boom(c) {} }
         may_throw(x : int) : int throws Bigger {
@@ -701,7 +701,7 @@ TEST_CASE("Callable variance: a throws superset is rejected",
     "[gen][callable][variance][throws]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_36;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         class Bang : public Exception { public: Bang(c : int) : Exception(c) {} }
         may_throw(x : int) : int throws Boom, Bang {
@@ -719,7 +719,7 @@ TEST_CASE("Callable variance: a missing throws clause on the callable is rejecte
     "[gen][callable][variance][throws]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_37;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         may_throw(x : int) : int throws Boom {
             if (x < 0) { throw Boom(1); }
@@ -737,7 +737,7 @@ TEST_CASE("Callable variance: a non-throwing target binds to a throwing callable
 {
     // The empty set is a subset of every set.
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_38;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         safe(x : int) : int { return x; }
         main() : int {
@@ -753,7 +753,7 @@ TEST_CASE("Callable variance: a callable-to-callable throws superset is rejected
 {
     // The conversion check also runs when the source is another callable value.
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_39;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         may_throw(x : int) : int throws Boom {
             if (x < 0) { throw Boom(1); }
@@ -776,7 +776,7 @@ TEST_CASE("Callable variance: a callable-to-callable signature mismatch is rejec
     "[gen][callable][variance]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_40;
         wide(x : long) : long { return x; }
         test() : int {
             a : *(long):long = wide;
@@ -790,7 +790,7 @@ TEST_CASE("Callable variance: a callable-to-callable copy keeping the prototype 
     "[gen][callable][variance][run]")
 {
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_41;
         add_one(x : int) : int { return x + 1; }
         main() : int {
             a : *(int):int = add_one;
@@ -805,7 +805,7 @@ TEST_CASE("Callable variance: a callable argument is checked at the call site",
     "[gen][callable][variance]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_42;
         wide(x : int) : long { return x; }
         apply(f : *(int):int, x : int) : int { return f(x); }
         test() : int { return apply(wide, 41); }
@@ -821,7 +821,7 @@ TEST_CASE("Callable variance: a bound member function must satisfy the throws ru
     "[gen][callable][variance][member][throws]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_43;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         struct Thrower {
             base : int;
@@ -839,7 +839,7 @@ TEST_CASE("Callable variance: a bound member function must satisfy the primitive
     "[gen][callable][variance][member][primitive]")
 {
     expect_diag(R"SRC(
-        module test;
+        module gen_callable_variance_44;
         struct Widener {
             base : long;
             go(x : int) : long { return base + x; }
@@ -856,7 +856,7 @@ TEST_CASE("Callable variance: a bound member function benefits from offset-0 cov
     "[gen][callable][variance][member][covariance][run]")
 {
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_variance_45;
         struct Base { a : int; }
         struct Derived : public Base { b : int; }
         struct Factory {

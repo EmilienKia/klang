@@ -99,7 +99,7 @@ TEST_CASE("[A] struct methods are NOT virtual", "[struct][virtuality]") {
         // Unlike class, struct has no vtable: calling through a Base& calls Base::method,
         // even if the object is actually a Derived.
         auto jit = gen_jit(R"SRC(
-module __struct_no_virt_dispatch__;
+module gen_class_virtuality_01;
 struct Base {
     value() : int { return 1; }
 }
@@ -123,7 +123,7 @@ test() : int {
 
     SECTION("Struct method can still be called directly on derived") {
         auto jit = gen_jit(R"SRC(
-module __struct_direct_call__;
+module gen_class_virtuality_02;
 struct Base {
     compute() : int { return 10; }
 }
@@ -165,7 +165,7 @@ TEST_CASE("[C/D] cross-struct/class inheritance is forbidden", "[struct][class][
 
     SECTION("[C] class inheriting from struct → error") {
         REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-module __class_from_struct_err__;
+module gen_class_virtuality_03;
 struct S { S() {} }
 class C : public S { C() {} }
 )SRC", false, false), k::model::gen::resolution_error);
@@ -173,7 +173,7 @@ class C : public S { C() {} }
 
     SECTION("[D] struct inheriting from class → error") {
         REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-module __struct_from_class_err__;
+module gen_class_virtuality_04;
 class C { C() {} }
 struct S : public C { S() {} }
 )SRC", false, false), k::model::gen::resolution_error);
@@ -181,7 +181,7 @@ struct S : public C { S() {} }
 
     SECTION("struct inheriting from struct is OK") {
         auto jit = gen_jit(R"SRC(
-module __struct_from_struct_ok__;
+module gen_class_virtuality_05;
 struct A { x: int; A() : x(5) {} }
 struct B : public A { y: int; B() : y(3) {} }
 test() : int {
@@ -197,7 +197,7 @@ test() : int {
 
     SECTION("class inheriting from class is OK") {
         auto jit = gen_jit(R"SRC(
-module __class_from_class_ok__;
+module gen_class_virtuality_06;
 class A {
     val() : int { return 1; }
 }
@@ -224,7 +224,7 @@ TEST_CASE("[E] public class methods are automatically virtual", "[class][virtual
 
     SECTION("public method in base class gets vtable slot") {
         auto jit = gen_jit(R"SRC(
-module __cls_pub_auto_virt__;
+module gen_class_virtuality_07;
 class Animal {
     sound() : int { return 1; }
 }
@@ -259,7 +259,7 @@ test_cat() : int {
 TEST_CASE("[F] virtual dispatch through base reference", "[class][virtuality]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_virt_dispatch__;
+module gen_class_virtuality_08;
 class Shape {
     area() : int { return 0; }
 }
@@ -303,7 +303,7 @@ test_shape() : int {
 TEST_CASE("[G] multi-level class virtual dispatch (3 levels)", "[class][virtuality]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_multilevel_dispatch__;
+module gen_class_virtuality_09;
 class A {
     id() : int { return 1; }
 }
@@ -337,7 +337,7 @@ TEST_CASE("[H] protected class methods are automatically virtual", "[class][virt
 
     SECTION("protected method gets vtable slot and dispatches virtually") {
         auto jit = gen_jit(R"SRC(
-module __cls_prot_auto_virt__;
+module gen_class_virtuality_10;
 class Base {
 protected:
     compute() : int { return 10; }
@@ -373,7 +373,7 @@ test_derived() : int {
 TEST_CASE("[I] protected virtual dispatch through run() bridge", "[class][virtuality]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_prot_virt_dispatch__;
+module gen_class_virtuality_11;
 class Formatter {
 protected:
     format_val() : int { return 0; }
@@ -417,7 +417,7 @@ TEST_CASE("[J] private class method is NOT virtual", "[class][virtuality]") {
         // A derived class can define a method with the same name: it is also
         // a new non-virtual function, not an override.
         auto jit = gen_jit(R"SRC(
-module __cls_priv_not_virt__;
+module gen_class_virtuality_12;
 class Base {
     private helper() : int { return 1; }
     public run() : int { return this.helper(); }
@@ -451,7 +451,7 @@ TEST_CASE("[K] private method in derived cannot override virtual of same name", 
 
     SECTION("private function with same signature as inherited virtual → error") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __cls_priv_override_err__;
+module gen_class_virtuality_13;
 class Base {
     foo() : int { return 1; }
 }
@@ -469,7 +469,7 @@ class Derived : public Base {
 TEST_CASE("[L] static class methods are NOT virtual", "[class][virtuality]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_static_not_virt__;
+module gen_class_virtuality_14;
 class Counter {
     static count: int;
     static reset() { count = 0; }
@@ -501,7 +501,7 @@ TEST_CASE("[N] 'final' new method in class is NOT virtual", "[class][virtuality]
         // When called through a Base& on a Derived object, the static type determines
         // which function is called (Base::compute for Base&).
         auto jit = gen_jit(R"SRC(
-module __cls_final_new_not_virt__;
+module gen_class_virtuality_15;
 class Base {
     final compute() : int { return 10; }
 }
@@ -531,7 +531,7 @@ test_derived_compute() : int {
 TEST_CASE("[O] 'final' new method is callable directly", "[class][virtuality][final]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_final_direct_call__;
+module gen_class_virtuality_16;
 class C {
     final compute() : int { return 42; }
 }
@@ -554,7 +554,7 @@ TEST_CASE("[P] overriding 'final' method IS virtual but sealed", "[class][virtua
 
     SECTION("final override is dispatched virtually") {
         auto jit = gen_jit(R"SRC(
-module __cls_final_override_virt__;
+module gen_class_virtuality_17;
 class A {
     val() : int { return 1; }
 }
@@ -584,7 +584,7 @@ TEST_CASE("[Q] overriding a 'final' virtual in grandchild: warning + new vtable 
     // - dispatch through A& or B& still uses the original sealed slot → B::val = 2
     // - C::val is only reachable through its own new slot (direct call or via C's vtable)
     auto jit = gen_jit(R"SRC(
-module __cls_final_override_branch__;
+module gen_class_virtuality_18;
 class A {
     val() : int { return 1; }
 }
@@ -628,7 +628,7 @@ TEST_CASE("[Y] override matching ignores parameter names and enforces parameter 
 
     SECTION("Different parameter names still override when types match") {
         auto jit = gen_jit(R"SRC(
-module __cls_override_param_names_ignored__;
+module gen_class_virtuality_19;
 class Base {
     mix(left: int, right: int) : int { return left + right; }
 }
@@ -646,7 +646,7 @@ test() : int { d: Derived; return call_mix(d); }
 
     SECTION("Different parameter type with override specifier is rejected") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __cls_override_param_types_must_match__;
+module gen_class_virtuality_20;
 class Base {
     mix(left: int, right: int) : int { return left + right; }
 }
@@ -664,7 +664,7 @@ class Derived : public Base {
 TEST_CASE("[R] non-virtual qualified call Base::method(obj) bypasses dispatch", "[class][virtuality]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_nonvirt_qual_call__;
+module gen_class_virtuality_21;
 class Base {
     value() : int { return 10; }
 }
@@ -706,7 +706,7 @@ test_dispatch() : int {
 TEST_CASE("[S] Base::method(this) from inside an override calls base non-virtually", "[class][virtuality][super]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_super_explicit__;
+module gen_class_virtuality_22;
 class Base {
     value() : int { return 10; }
 }
@@ -739,7 +739,7 @@ test_virtual() : int {
 TEST_CASE("[T] this.Base::method() from inside an override calls base non-virtually", "[class][virtuality][super]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_super_dot__;
+module gen_class_virtuality_23;
 class Base {
     value() : int { return 10; }
 }
@@ -772,7 +772,7 @@ test_virtual() : int {
 TEST_CASE("[U] Base::method() with implicit this from inside an override", "[class][virtuality][super]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_super_implicit__;
+module gen_class_virtuality_24;
 class Base {
     value() : int { return 10; }
 }
@@ -807,7 +807,7 @@ TEST_CASE("[S/T/U] Multi-level: grandchild calls grandparent via qualified call"
     // A → B → C, each overrides value().
     // C::value calls B::value() (not A's), B::value calls A::value().
     auto jit = gen_jit(R"SRC(
-module __cls_super_multilevel__;
+module gen_class_virtuality_25;
 class A {
     value() : int { return 1; }
 }
@@ -841,7 +841,7 @@ test_dispatch() : int {
 TEST_CASE("[S/T/U] Base::method() with arguments from inside an override", "[class][virtuality][super]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_super_args__;
+module gen_class_virtuality_26;
 class Calc {
     add(a: int, b: int) : int { return a + b; }
 }
@@ -870,7 +870,7 @@ test() : int {
 TEST_CASE("Class with mixed visibility sections — virtual/non-virtual", "[class][virtuality]") {
 
     auto jit = gen_jit(R"SRC(
-module __cls_mixed_vis_virt__;
+module gen_class_virtuality_27;
 class Engine {
 public:
     start() : int { return this.init() + this.run_loop(); }
@@ -916,7 +916,7 @@ TEST_CASE("Class default visibility: variables PROTECTED, functions PUBLIC", "[c
 
     SECTION("Class variable accessed from outside (PROTECTED default) → error") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __cls_defvis_prot__;
+module gen_class_virtuality_28;
 class C {
     x: int;
     C() : x(0) {}
@@ -930,7 +930,7 @@ test() : int {
 
     SECTION("Class function public by default → callable from outside") {
         auto jit = gen_jit(R"SRC(
-module __cls_defvis_pub_fn__;
+module gen_class_virtuality_29;
 class C {
     x: int;
     C() : x(42) {}
@@ -971,7 +971,7 @@ TEST_CASE("[BUG] Diamond class: override in D not reached via secondary base C&"
     // Expected (correct): call_via_c(d) == 42  (D::foo reached through C&)
 
     auto jit = gen_jit(R"SRC(
-module __bug_virt_diamond_secondary__;
+module gen_class_virtuality_30;
 class A { foo() : int { return 0; } }
 class B : public A {}
 class C : public A { foo() : int { return 1; } }
@@ -1000,7 +1000,7 @@ TEST_CASE("[BUG] Diamond class: two overrides in B and C — D wins via both ref
     // The C& path requires the thunk mechanism described above.
 
     auto jit = gen_jit(R"SRC(
-module __bug_virt_diamond_both_override__;
+module gen_class_virtuality_31;
 class A { foo() : int { return 0; } }
 class B : public A { foo() : int { return 1; } }
 class C : public A { foo() : int { return 2; } }
@@ -1036,7 +1036,7 @@ TEST_CASE("[EXPECTED] Diamond class: dispatch via primary B& reaches D override"
     // directly reachable through a B& reference.
 
     auto jit = gen_jit(R"SRC(
-module __exp_virt_diamond_primary__;
+module gen_class_virtuality_32;
 class A { foo() : int { return 0; } }
 class B : public A { foo() : int { return 1; } }
 class C : public A {}
@@ -1056,7 +1056,7 @@ TEST_CASE("[EXPECTED] Diamond class: dispatch via secondary C& reaches D overrid
     // After the fix, calling foo() via C& on a D object must return 42.
 
     auto jit = gen_jit(R"SRC(
-module __exp_virt_diamond_secondary__;
+module gen_class_virtuality_33;
 class A { foo() : int { return 0; } }
 class B : public A {}
 class C : public A { foo() : int { return 1; } }
@@ -1076,7 +1076,7 @@ TEST_CASE("[EXPECTED] Diamond class: dispatch via virtual base A& reaches D over
     // base, A's vtable slot must point to D::foo after D is constructed.
 
     auto jit = gen_jit(R"SRC(
-module __exp_virt_diamond_via_a__;
+module gen_class_virtuality_34;
 class A { foo() : int { return 0; } }
 class B : public A {}
 class C : public A {}
@@ -1096,7 +1096,7 @@ TEST_CASE("[EXPECTED] Diamond class: multi-level — E inherits from B and C, ea
     // E overrides foo(); dispatch via B&, C& and A& must all reach E::foo.
 
     auto jit = gen_jit(R"SRC(
-module __exp_virt_multi_diamond__;
+module gen_class_virtuality_35;
 class A { foo() : int { return 0; } }
 class B : public A { foo() : int { return 1; } }
 class C : public A { foo() : int { return 2; } }
@@ -1123,7 +1123,7 @@ TEST_CASE("[EXPECTED] Diamond class: interface + virtual base — dispatch via I
     // overrides method().  Dispatch via I& on a D object must call D::method.
 
     auto jit = gen_jit(R"SRC(
-module __exp_virt_diamond_interface__;
+module gen_class_virtuality_36;
 interface I { method() : int; }
 class A : public I { method() : int { return 0; } }
 class B : public A {}
@@ -1144,7 +1144,7 @@ TEST_CASE("[EXPECTED] Diamond class: final override in B is sealed — C and D c
     // C and D cannot further override it.
 
     auto jit = gen_jit(R"SRC(
-module __exp_virt_diamond_final__;
+module gen_class_virtuality_37;
 class A { foo() : int { return 0; } }
 class B : public A { final foo() : int { return 10; } }
 class C : public A {}
@@ -1176,7 +1176,7 @@ test_a() : int { d: D; return call_via_a(d); }
 TEST_CASE("Struct with multiple inheritance — no virtual dispatch", "[struct][virtuality]") {
 
     auto jit = gen_jit(R"SRC(
-module __struct_multi_no_virt__;
+module gen_class_virtuality_38;
 struct A {
     who() : int { return 1; }
 }
@@ -1211,7 +1211,7 @@ test_c() : int { d: D; return call_c(d); }
 TEST_CASE("[V] final on a class constructor is an error", "[class][virtuality][final][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __cls_final_on_ctor__;
+module gen_class_virtuality_39;
 class Foo {
     final Foo() {}
 }
@@ -1221,7 +1221,7 @@ class Foo {
 TEST_CASE("[W] final on a class destructor is an error", "[class][virtuality][final][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __cls_final_on_dtor__;
+module gen_class_virtuality_40;
 class Foo {
     Foo() {}
     final ~Foo() {}
@@ -1232,7 +1232,7 @@ class Foo {
 TEST_CASE("[X] final on a struct constructor is an error", "[struct][virtuality][final][error]") {
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __struct_final_on_ctor__;
+module gen_class_virtuality_41;
 struct Foo {
     final Foo() {}
 }

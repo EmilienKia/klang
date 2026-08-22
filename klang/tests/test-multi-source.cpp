@@ -27,19 +27,19 @@
 TEST_CASE("Multi-source: two files, same module, cross-file call", "[multi-source]") {
     // File A defines a function, File B calls it. Both declare the same module.
     std::string file_a = R"(
-        module mymod;
+        module multi_source_01;
         get_value() : int {
             return 42;
         }
     )";
     std::string file_b = R"(
-        module mymod;
+        module multi_source_01; // <- Same module name
         call_get() : int {
             return get_value();
         }
     )";
 
-    auto jit = gen_jit_multi({{"a.k", file_a}, {"b.k", file_b}});
+    auto jit = gen_jit_multi({{"multi_source_01.a.k", file_a}, {"multi_source_01.b.k", file_b}});
     REQUIRE(jit);
 
     auto call_get = jit->lookup_symbol<int(*)()>("call_get");
@@ -51,7 +51,7 @@ TEST_CASE("Multi-source: single file with module decl, other without", "[multi-s
     // Only file A has a module declaration. File B has none.
     // This is the normal case — file A's module name applies to the whole unit.
     std::string file_a = R"(
-        module mymod;
+        module multi_source_03;
         get_value() : int {
             return 100;
         }
@@ -62,7 +62,7 @@ TEST_CASE("Multi-source: single file with module decl, other without", "[multi-s
         }
     )";
 
-    auto jit = gen_jit_multi({{"a.k", file_a}, {"b.k", file_b}});
+    auto jit = gen_jit_multi({{"multi_source_03.a.k", file_a}, {"multi_source_03.b.k", file_b}});
     REQUIRE(jit);
 
     auto double_it = jit->lookup_symbol<int(*)()>("double_it");
@@ -73,16 +73,16 @@ TEST_CASE("Multi-source: single file with module decl, other without", "[multi-s
 TEST_CASE("Multi-source: conflicting module declarations", "[multi-source]") {
     // Two files declare different module names — must fail.
     std::string file_a = R"(
-        module alpha;
+        module multi_source_04;
         foo() : int { return 1; }
     )";
     std::string file_b = R"(
-        module beta;
+        module multi_source_05;
         bar() : int { return 2; }
     )";
 
     REQUIRE_THROWS_AS(
-        gen_jit_multi_throws({{"a.k", file_a}, {"b.k", file_b}}),
+        gen_jit_multi_throws({{"multi_source_07.a.k", file_a}, {"multi_source_07.b.k", file_b}}),
         k::log::compiler_error
     );
 }
@@ -97,7 +97,7 @@ TEST_CASE("Multi-source: no module declaration in any file", "[multi-source]") {
         get_b() : int { return get_a() + 20; }
     )";
 
-    auto jit = gen_jit_multi({{"a.k", file_a}, {"b.k", file_b}});
+    auto jit = gen_jit_multi({{"multi_source_18.a.k", file_a}, {"multi_source_18.b.k", file_b}});
     REQUIRE(jit);
 
     auto get_b = jit->lookup_symbol<int(*)()>("get_b");
@@ -115,7 +115,7 @@ TEST_CASE("Multi-source: forced module name via CLI override", "[multi-source]")
     )";
 
     auto comp = k::compiler::create();
-    comp->parse_sources({{"a.k", file_a}, {"b.k", file_b}}, true, false, "forced_mod");
+    comp->parse_sources({{"multi_source_11.a.k", file_a}, {"multi_source_11.b.k", file_b}}, true, false, "forced_mod");
 
     // Verify the module name is the forced one
     REQUIRE(comp->get_unit()->get_unit_name().to_string() == "forced_mod");
@@ -132,12 +132,12 @@ TEST_CASE("Multi-source: forced module name overrides source declaration", "[mul
     // File A declares module 'src_mod', but CLI forces 'cli_mod'.
     // Verify both that the function works AND that the actual module name is 'cli_mod'.
     std::string file_a = R"(
-        module src_mod;
+        module multi_source_06;
         get_val() : int { return 55; }
     )";
 
     auto comp = k::compiler::create();
-    comp->parse_sources({{"a.k", file_a}}, true, false, "cli_mod");
+    comp->parse_sources({{"multi_source_06.k", file_a}}, true, false, "cli_mod");
 
     // Verify the module name is the forced one, not the source-level one
     REQUIRE(comp->get_unit()->get_unit_name().to_string() == "cli_mod");
@@ -157,11 +157,11 @@ TEST_CASE("Multi-source: duplicate function definition is an error", "[multi-sou
     // reject duplicate function definitions, so we just verify the compilation
     // does not crash.
     std::string file_a = R"(
-        module dup;
+        module multi_source_07;
         foo() : int { return 1; }
     )";
     std::string file_b = R"(
-        module dup;
+        module multi_source_08;
         foo() : int { return 2; }
     )";
 
@@ -169,7 +169,7 @@ TEST_CASE("Multi-source: duplicate function definition is an error", "[multi-sou
     // so compilation may succeed or fail depending on internal ordering.
     // We just ensure no crash.
     try {
-        auto jit = gen_jit_multi_throws({{"a.k", file_a}, {"b.k", file_b}});
+        auto jit = gen_jit_multi_throws({{"multi_source_07.a.k", file_a}, {"multi_source_07.b.k", file_b}});
         // If it succeeds, that's the current (imperfect) behavior.
     } catch (const k::log::compiler_error&) {
         // If it fails, that's also acceptable (future behavior).
@@ -179,7 +179,7 @@ TEST_CASE("Multi-source: duplicate function definition is an error", "[multi-sou
 TEST_CASE("Multi-source: global visibility across files", "[multi-source]") {
     // A struct defined in file A should be usable in file B (no file-private).
     std::string file_a = R"(
-        module vis;
+        module multi_source_09;
         struct Point {
             x : int = 0;
             y : int = 0;
@@ -188,14 +188,14 @@ TEST_CASE("Multi-source: global visibility across files", "[multi-source]") {
         }
     )";
     std::string file_b = R"(
-        module vis;
+        module multi_source_09; // <- Same module, different file name
         make_point_sum() : int {
             p : Point(3, 4);
             return p.sum();
         }
     )";
 
-    auto jit = gen_jit_multi({{"a.k", file_a}, {"b.k", file_b}});
+    auto jit = gen_jit_multi({{"multi_source_09.k", file_a}, {"multi_source_10.k", file_b}});
     REQUIRE(jit);
 
     auto make_point_sum = jit->lookup_symbol<int(*)()>("make_point_sum");
@@ -209,27 +209,27 @@ TEST_CASE("Multi-source: same import in multiple files is deduplicated", "[multi
     // (We don't actually have the imported module, so we just ensure no crash
     //  from duplicate import registration.)
     std::string file_a = R"(
-        module dedup;
+        module multi_source_11;
         get_a() : int { return 1; }
     )";
     std::string file_b = R"(
-        module dedup;
+        module multi_source_11; // <- Same module, different file name
         get_b() : int { return get_a() + 1; }
     )";
 
-    auto jit = gen_jit_multi({{"a.k", file_a}, {"b.k", file_b}});
+    auto jit = gen_jit_multi({{"multi_source_11.k", file_a}, {"multi_source_12.k", file_b}});
     REQUIRE(jit);
 }
 
 TEST_CASE("Multi-source: backward compat — single file still works", "[multi-source]") {
     // Ensure a single file via parse_sources (1-element vector) works fine.
     std::string src = R"(
-        module single;
+        module multi_source_13;
         single_fn() : int { return 99; }
     )";
 
     auto comp = k::compiler::create();
-    comp->parse_sources({{"test.k", src}}, true, false);
+    comp->parse_sources({{"multi_source_13.k", src}}, true, false);
     auto jit = comp->to_jit();
     REQUIRE(jit);
 
@@ -247,11 +247,11 @@ TEST_CASE("Multi-source: comments before module declaration in lookup", "[multi-
          * Lorem ipsum dolor sit amet, consectetur adipiscing elit.
          * End of copyright notice.
          */
-        module commented;
+        module multi_source_14;
         get_commented() : int { return 77; }
     )";
 
-    auto jit = gen_jit_multi({{"a.k", file_a}});
+    auto jit = gen_jit_multi({{"multi_source_14.k", file_a}});
     REQUIRE(jit);
 
     auto fn = jit->lookup_symbol<int(*)()>("get_commented");
@@ -262,19 +262,19 @@ TEST_CASE("Multi-source: comments before module declaration in lookup", "[multi-
 TEST_CASE("Multi-source: three files, chain of calls", "[multi-source]") {
     // Three files contributing to the same module with call chains.
     std::string file_a = R"(
-        module chain;
+        module multi_source_15;
         base_val() : int { return 10; }
     )";
     std::string file_b = R"(
-        module chain;
+        module multi_source_15;
         mid_val() : int { return base_val() + 5; }
     )";
     std::string file_c = R"(
-        module chain;
+        module multi_source_15;
         top_val() : int { return mid_val() * 2; }
     )";
 
-    auto jit = gen_jit_multi({{"a.k", file_a}, {"b.k", file_b}, {"c.k", file_c}});
+    auto jit = gen_jit_multi({{"multi_source_15.a.k", file_a}, {"multi_source_15.b.k", file_b}, {"multi_source_15.c.k", file_c}});
     REQUIRE(jit);
 
     auto top_val = jit->lookup_symbol<int(*)()>("top_val");
@@ -285,12 +285,12 @@ TEST_CASE("Multi-source: three files, chain of calls", "[multi-source]") {
 TEST_CASE("Multi-source: empty file in source list", "[multi-source]") {
     // An empty file should not prevent compilation.
     std::string file_a = R"(
-        module emp;
+        module multi_source_18;
         get_emp() : int { return 42; }
     )";
     std::string file_b = "";  // completely empty
 
-    auto jit = gen_jit_multi({{"a.k", file_a}, {"b.k", file_b}});
+    auto jit = gen_jit_multi({{"multi_source_18.a.k", file_a}, {"multi_source_18.b.k", file_b}});
     REQUIRE(jit);
 
     auto get_emp = jit->lookup_symbol<int(*)()>("get_emp");
@@ -301,15 +301,15 @@ TEST_CASE("Multi-source: empty file in source list", "[multi-source]") {
 TEST_CASE("Multi-source: global variable shared across files", "[multi-source]") {
     // A global variable defined in file A should be accessible from file B.
     std::string file_a = R"(
-        module gvar;
+        module multi_source_19;
         g : int = 100;
     )";
     std::string file_b = R"(
-        module gvar;
+        module multi_source_19;
         read_g() : int { return g; }
     )";
 
-    auto jit = gen_jit_multi({{"a.k", file_a}, {"b.k", file_b}});
+    auto jit = gen_jit_multi({{"multi_source_19.a.k", file_a}, {"multi_source_19.b.k", file_b}});
     REQUIRE(jit);
 
     auto read_g = jit->lookup_symbol<int(*)()>("read_g");
@@ -321,16 +321,16 @@ TEST_CASE("Multi-source: forced module name with multiple files, some with modul
     // File A declares 'alpha', File B declares 'alpha', CLI forces 'override'.
     // The forced name should win.
     std::string file_a = R"(
-        module alpha;
+        module multi_source_21;
         fa() : int { return 1; }
     )";
     std::string file_b = R"(
-        module alpha;
+        module multi_source_22;
         fb() : int { return fa() + 1; }
     )";
 
     auto comp = k::compiler::create();
-    comp->parse_sources({{"a.k", file_a}, {"b.k", file_b}}, true, false, "override");
+    comp->parse_sources({{"multi_source_21.a.k", file_a}, {"multi_source_21.b.k", file_b}}, true, false, "override");
 
     REQUIRE(comp->get_unit()->get_unit_name().to_string() == "override");
 

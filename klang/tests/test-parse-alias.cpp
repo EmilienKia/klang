@@ -234,7 +234,7 @@ TEST_CASE("Alias declaration without a trailing semicolon is rejected", "[parser
 TEST_CASE("Alias and typedef are parsed as unit declarations", "[parser][alias]") {
     test_logger log;
     k::source src{R"(
-        module test;
+        module parse_alias_01;
         alias Short : Long;
         typedef identifier : int;
     )"};
@@ -258,7 +258,7 @@ TEST_CASE("Alias and typedef are parsed as unit declarations", "[parser][alias]"
 TEST_CASE("Alias and typedef are parsed inside a namespace", "[parser][alias]") {
     test_logger log;
     k::source src{R"(
-        module test;
+        module parse_alias_02;
         namespace inner {
             typedef identifier : int;
         }
@@ -277,7 +277,7 @@ TEST_CASE("Alias and typedef are parsed inside a namespace", "[parser][alias]") 
 TEST_CASE("Alias and typedef are parsed inside a statement block", "[parser][alias]") {
     test_logger log;
     k::source src{R"(
-        module test;
+        module parse_alias_03;
         f() : int {
             typedef identifier : int;
             alias Short : Long;
@@ -300,7 +300,7 @@ TEST_CASE("Alias and typedef are parsed inside a statement block", "[parser][ali
 TEST_CASE("A parameterised alias is parsed", "[parser][alias][template]") {
     test_logger log;
     k::source src{R"(
-        module test;
+        module parse_alias_04;
         template<typename T> alias Vec : Array<T, 16>;
         template<typename T, typename U> typedef Pair : Tuple<T, U>;
     )"};
@@ -328,7 +328,7 @@ TEST_CASE("A parameterised alias is parsed", "[parser][alias][template]") {
 TEST_CASE("A non-parameterised alias carries no template parameter", "[parser][alias][template]") {
     test_logger log;
     k::source src{R"(
-        module test;
+        module parse_alias_05;
         alias Short : Long;
     )"};
     k::parse::parser parser(log, src);

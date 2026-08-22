@@ -34,39 +34,39 @@
 
 TEST_CASE("Subscript through reference — read", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_01;
 
         get(a : int[3]&, i : int) : int {
             return a[i];
         }
 
-        test() : int {
+        gen_array_subscript_indirection_01() : int {
             arr : int[3]{10, 20, 30};
             return get(arr, 1);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_01");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 20);
 }
 
 TEST_CASE("Subscript through reference — write", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_02;
 
         set(a : int[3]&, i : int, v : int) {
             a[i] = v;
         }
 
-        test() : int {
+        gen_array_subscript_indirection_02() : int {
             arr : int[3]{10, 20, 30};
             set(arr, 1, 99);
             return arr[1];
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_02");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 99);
 }
@@ -77,9 +77,9 @@ TEST_CASE("Subscript through reference — write", "[gen][subscript-indirection]
 
 TEST_CASE("Subscript through owner — read", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_03;
 
-        test() : int {
+        gen_array_subscript_indirection_03() : int {
             arr : int[3]! = new int[3]{10, 20, 30};
             r : int = arr[2];
             delete arr;
@@ -87,16 +87,16 @@ TEST_CASE("Subscript through owner — read", "[gen][subscript-indirection]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_03");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 30);
 }
 
 TEST_CASE("Subscript through owner — write", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_04;
 
-        test() : int {
+        gen_array_subscript_indirection_04() : int {
             arr : int[3]! = new int[3]{10, 20, 30};
             arr[1] = 99;
             r : int = arr[1];
@@ -105,7 +105,7 @@ TEST_CASE("Subscript through owner — write", "[gen][subscript-indirection]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_04");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 99);
 }
@@ -116,33 +116,33 @@ TEST_CASE("Subscript through owner — write", "[gen][subscript-indirection]") {
 
 TEST_CASE("Subscript through pointer — read", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_05;
 
         get(p : int[3]*, i : int) : int {
             return p[i];
         }
 
-        test() : int {
+        gen_array_subscript_indirection_05() : int {
             arr : int[3]{10, 20, 30};
             p : int[3]* = &arr;
             return get(p, 2);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_05");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 30);
 }
 
 TEST_CASE("Subscript through pointer — write modifies original", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_06;
 
         set(p : int[3]*, i : int, v : int) {
             p[i] = v;
         }
 
-        test() : int {
+        gen_array_subscript_indirection_06() : int {
             arr : int[3]{10, 20, 30};
             p : int[3]* = &arr;
             set(p, 0, 77);
@@ -150,7 +150,7 @@ TEST_CASE("Subscript through pointer — write modifies original", "[gen][subscr
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_06");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 77);
 }
@@ -161,33 +161,33 @@ TEST_CASE("Subscript through pointer — write modifies original", "[gen][subscr
 
 TEST_CASE("Subscript through link — read", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_07;
 
         get(l : int[3]+, i : int) : int {
             return l[i];
         }
 
-        test() : int {
+        gen_array_subscript_indirection_07() : int {
             arr : int[3]{10, 20, 30};
             l : int[3]+ = &arr;
             return get(l, 1);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_07");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 20);
 }
 
 TEST_CASE("Subscript through link — write modifies original", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_08;
 
         set(l : int[3]+, i : int, v : int) {
             l[i] = v;
         }
 
-        test() : int {
+        gen_array_subscript_indirection_08() : int {
             arr : int[3]{10, 20, 30};
             l : int[3]+ = &arr;
             set(l, 0, 55);
@@ -195,7 +195,7 @@ TEST_CASE("Subscript through link — write modifies original", "[gen][subscript
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_08");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 55);
 }
@@ -206,20 +206,20 @@ TEST_CASE("Subscript through link — write modifies original", "[gen][subscript
 
 TEST_CASE("Subscript through view — read", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_09;
 
         get(q : int[3]?, i : int) : int {
             return q[i];
         }
 
-        test() : int {
+        gen_array_subscript_indirection_09() : int {
             arr : int[3]{10, 20, 30};
             q : int[3]? = &arr;
             return get(q, 2);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_09");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 30);
 }
@@ -230,14 +230,14 @@ TEST_CASE("Subscript through view — read", "[gen][subscript-indirection]") {
 
 TEST_CASE("Subscript through pointer — struct member access", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_10;
 
         struct Point {
             x : int = 0;
             y : int = 0;
         }
 
-        test() : int {
+        gen_array_subscript_indirection_10() : int {
             arr : Point[2];
             arr[0].x = 10;
             arr[0].y = 20;
@@ -248,21 +248,21 @@ TEST_CASE("Subscript through pointer — struct member access", "[gen][subscript
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_10");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 50); // 10 + 40
 }
 
 TEST_CASE("Subscript through link — struct member access", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_11;
 
         struct Point {
             x : int = 0;
             y : int = 0;
         }
 
-        test() : int {
+        gen_array_subscript_indirection_11() : int {
             arr : Point[2];
             arr[0].x = 5;
             arr[1].x = 15;
@@ -271,7 +271,7 @@ TEST_CASE("Subscript through link — struct member access", "[gen][subscript-in
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_11");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 20); // 5 + 15
 }
@@ -282,9 +282,9 @@ TEST_CASE("Subscript through link — struct member access", "[gen][subscript-in
 
 TEST_CASE("Subscript through owner — dynamic size", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_12;
 
-        test(n : unsigned int) : int {
+        gen_array_subscript_indirection_12(n : unsigned int) : int {
             arr : int[]! = new int(42)[n];
             r : int = arr[0];
             delete arr;
@@ -292,7 +292,7 @@ TEST_CASE("Subscript through owner — dynamic size", "[gen][subscript-indirecti
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)(unsigned int)>("test");
+    auto test = jit->lookup_symbol<int(*)(unsigned int)>("gen_array_subscript_indirection_12");
     REQUIRE(test != nullptr);
     REQUIRE(test(5) == 42);
 }
@@ -303,9 +303,9 @@ TEST_CASE("Subscript through owner — dynamic size", "[gen][subscript-indirecti
 
 TEST_CASE("Subscript on non-array pointer — error", "[gen][subscript-indirection][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_13;
 
-        test() : int {
+        gen_array_subscript_indirection_13() : int {
             x : int = 42;
             p : int* = &x;
             return p[0];
@@ -319,9 +319,9 @@ TEST_CASE("Subscript on non-array pointer — error", "[gen][subscript-indirecti
 
 TEST_CASE("Array of links — read", "[gen][subscript-indirection][array-of-indir]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_14;
 
-        test() : int {
+        gen_array_subscript_indirection_14() : int {
             a : int = 3;
             b : int = 5;
             c : int = 7;
@@ -330,16 +330,16 @@ TEST_CASE("Array of links — read", "[gen][subscript-indirection][array-of-indi
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_14");
     REQUIRE(test != nullptr);
     REQUIRE(test() == (3+5+7));
 }
 
 TEST_CASE("Array of links — write-through", "[gen][subscript-indirection][array-of-indir]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_15;
 
-        test() : int {
+        gen_array_subscript_indirection_15() : int {
             a : int = 1;
             b : int = 2;
             arr : int+[]{&a, &b};
@@ -349,7 +349,7 @@ TEST_CASE("Array of links — write-through", "[gen][subscript-indirection][arra
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_15");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 30);
 }
@@ -360,9 +360,9 @@ TEST_CASE("Array of links — write-through", "[gen][subscript-indirection][arra
 
 TEST_CASE("Array of pointers — read", "[gen][subscript-indirection][array-of-indir]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_16;
 
-        test() : int {
+        gen_array_subscript_indirection_16() : int {
             a : int = 10;
             b : int = 20;
             c : int = 30;
@@ -371,16 +371,16 @@ TEST_CASE("Array of pointers — read", "[gen][subscript-indirection][array-of-i
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_16");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 60);
 }
 
 TEST_CASE("Array of pointers — write-through", "[gen][subscript-indirection][array-of-indir]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_17;
 
-        test() : int {
+        gen_array_subscript_indirection_17() : int {
             a : int = 1;
             b : int = 2;
             arr : int*[]{&a, &b};
@@ -390,7 +390,7 @@ TEST_CASE("Array of pointers — write-through", "[gen][subscript-indirection][a
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_17");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 300);
 }
@@ -401,9 +401,9 @@ TEST_CASE("Array of pointers — write-through", "[gen][subscript-indirection][a
 
 TEST_CASE("Array of view — read", "[gen][subscript-indirection][array-of-indir]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_18;
 
-        test() : int {
+        gen_array_subscript_indirection_18() : int {
             a : int = 4;
             b : int = 5;
             c : int = 6;
@@ -412,7 +412,7 @@ TEST_CASE("Array of view — read", "[gen][subscript-indirection][array-of-indir
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_18");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 15);
 }
@@ -423,9 +423,9 @@ TEST_CASE("Array of view — read", "[gen][subscript-indirection][array-of-indir
 
 TEST_CASE("Array of owners — read", "[gen][subscript-indirection][array-of-indir]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_19;
 
-        test() : int {
+        gen_array_subscript_indirection_19() : int {
             arr : int![]{new int(10), new int(20), new int(30)};
             r : int = *arr[0] + *arr[1] + *arr[2];
             delete arr[0];
@@ -435,16 +435,16 @@ TEST_CASE("Array of owners — read", "[gen][subscript-indirection][array-of-ind
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_19");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 60);
 }
 
 TEST_CASE("Array of owners — write-through", "[gen][subscript-indirection][array-of-indir]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_subscript_indirection_20;
 
-        test() : int {
+        gen_array_subscript_indirection_20() : int {
             arr : int![]{new int(1), new int(2)};
             *arr[0] = 50;
             *arr[1] = 60;
@@ -455,7 +455,7 @@ TEST_CASE("Array of owners — write-through", "[gen][subscript-indirection][arr
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_subscript_indirection_20");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 110);
 }
@@ -471,7 +471,7 @@ TEST_CASE("Array of owners — write-through", "[gen][subscript-indirection][arr
 
 TEST_CASE("Subscript on owner array member — external access", "[gen][subscript-indirection][owner-member]") {
     auto jit = gen_jit(R"SRC(
-        module __ext_owner_subscript__;
+        module gen_array_subscript_indirection_21;
 
         struct Holder {
             _buf : char[]!;
@@ -501,7 +501,7 @@ TEST_CASE("Subscript on owner array member — external access", "[gen][subscrip
 
 TEST_CASE("Subscript on owner array member via non-const method (implicit this)", "[gen][subscript-indirection][owner-member]") {
     auto jit = gen_jit(R"SRC(
-        module __const_owner_subscript__;
+        module gen_array_subscript_indirection_22;
 
         struct Holder {
             _buf : char[]!;
@@ -533,7 +533,7 @@ TEST_CASE("Subscript on owner array member via non-const method (implicit this)"
 
 TEST_CASE("Subscript on owner int array member via const method", "[gen][subscript-indirection][owner-member]") {
     auto jit = gen_jit(R"SRC(
-        module __const_owner_int_subscript__;
+        module gen_array_subscript_indirection_23;
 
         struct IntArray {
             _data : int[]!;
@@ -561,7 +561,7 @@ TEST_CASE("Subscript on owner int array member via const method", "[gen][subscri
 
 TEST_CASE("Subscript on owner array member via non-const method (mutable write)", "[gen][subscript-indirection][owner-member]") {
     auto jit = gen_jit(R"SRC(
-        module __mut_owner_subscript__;
+        module gen_array_subscript_indirection_24;
 
         struct Buffer {
             _buf : char[]!;

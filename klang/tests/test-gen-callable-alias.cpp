@@ -36,7 +36,7 @@
 TEST_CASE("callable alias — bare prototype re-addressed at the use site",
           "[gen][callable][alias]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_01;
         alias F : (int):bool;
         isPos(x: int) : bool { return x > 0; }
         apply(f: F&, v: int) : bool { return f(v); }
@@ -54,7 +54,7 @@ TEST_CASE("callable alias — bare prototype re-addressed at the use site",
 TEST_CASE("callable alias — every addresser can be applied to a bare prototype",
           "[gen][callable][alias]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_02;
         alias F : (int):int;
         twice(x: int) : int { return x * 2; }
         run() : int {
@@ -73,7 +73,7 @@ TEST_CASE("callable alias — every addresser can be applied to a bare prototype
 TEST_CASE("callable alias — alias of an already addressed callable",
           "[gen][callable][alias]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_03;
         alias P : *(int):int;
         thrice(x: int) : int { return x * 3; }
         apply(p: P, v: int) : int { return p(v); }
@@ -89,7 +89,7 @@ TEST_CASE("callable alias — alias of an already addressed callable",
 
 TEST_CASE("callable alias — const alias of a callable", "[gen][callable][alias]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_04;
         alias F : (int):int;
         twice(x: int) : int { return x * 2; }
         run() : int {
@@ -105,7 +105,7 @@ TEST_CASE("callable alias — const alias of a callable", "[gen][callable][alias
 TEST_CASE("callable alias — alias over a callable returning a callable",
           "[gen][callable][alias]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_05;
         alias IntFn : *(int):int;
         alias Factory : *():IntFn;
         twice(x: int) : int { return x * 2; }
@@ -128,7 +128,7 @@ TEST_CASE("callable alias — alias over a callable returning a callable",
 TEST_CASE("callable typedef — usable like the renamed callable",
           "[gen][callable][alias][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_06;
         typedef G : *(int):bool;
         isPos(x: int) : bool { return x > 0; }
         takes(g: G) : bool { return g(3); }
@@ -146,7 +146,7 @@ TEST_CASE("callable typedef — usable like the renamed callable",
 TEST_CASE("callable typedef — explicit cast from the underlying callable",
           "[gen][callable][alias][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_07;
         typedef G : *(int):bool;
         isPos(x: int) : bool { return x > 0; }
         takes(g: G) : bool { return g(3); }
@@ -166,7 +166,7 @@ TEST_CASE("callable typedef — a soft alias still flows into a typedef paramete
     // underlying callable: it is accepted (with a nominality warning) where the
     // typedef is expected, unlike an unrelated struct type.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_08;
         alias F : *(int):bool;
         typedef G : *(int):bool;
         isPos(x: int) : bool { return x > 0; }
@@ -186,7 +186,7 @@ TEST_CASE("callable typedef — a bare prototype cannot be re-addressed",
     // A typedef interns exactly one nominal type per declaration, so it cannot
     // gain an addresser at the use site: the declaration itself must carry it.
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_callable_alias_09;
         typedef G : (int):bool;
         isPos(x: int) : bool { return x > 0; }
         run() : int {
@@ -203,7 +203,7 @@ TEST_CASE("callable typedef — a bare prototype cannot be re-addressed",
 TEST_CASE("callable template alias — Fn<T,R> renames a callable family",
           "[gen][callable][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_10;
         template<typename T, typename R> alias Fn : (T):R;
         isPos(x: int) : bool { return x > 0; }
         apply(f: Fn<int,bool>&, v: int) : bool { return f(v); }
@@ -221,7 +221,7 @@ TEST_CASE("callable template alias — Fn<T,R> renames a callable family",
 TEST_CASE("callable template alias — chaining Predicate<T> = Fn<T,bool>",
           "[gen][callable][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_11;
         template<typename T, typename R> alias Fn : (T):R;
         template<typename T> alias Predicate : Fn<T,bool>;
         isPos(x: int) : bool { return x > 0; }
@@ -240,7 +240,7 @@ TEST_CASE("callable template alias — chaining Predicate<T> = Fn<T,bool>",
 TEST_CASE("callable template alias — substituted parameter inside a nested type",
           "[gen][callable][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_12;
         template<typename T> alias Consumer : *(T);
         acc : int = 0;
         add(x: int) { acc += x; }
@@ -259,7 +259,7 @@ TEST_CASE("callable template alias — substituted parameter inside a nested typ
 TEST_CASE("callable template alias — addressed target keeps its addresser",
           "[gen][callable][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_13;
         template<typename T, typename R> alias Fn : *(T):R;
         twice(x: int) : int { return x * 2; }
         run() : int {
@@ -277,7 +277,7 @@ TEST_CASE("callable template alias — addressed target keeps its addresser",
 TEST_CASE("callable template alias — a member method behind a template alias",
           "[gen][callable][alias][template]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_14;
         template<typename T, typename R> alias Fn : *(T):R;
         struct Adder {
             base : int = 40;
@@ -302,7 +302,7 @@ TEST_CASE("callable alias — mangling is driven by the canonical callable",
           "[gen][callable][alias][mangling]") {
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-        module test;
+        module gen_callable_alias_15;
         alias F : *(int):bool;
         typedef G : *(int):bool;
         viaAlias(f: F) : bool { return f(1); }
@@ -328,14 +328,14 @@ TEST_CASE("callable alias — mangling is driven by the canonical callable",
     // An alias is a pure renaming: it never reaches the mangled name.
     CHECK(param_part(mangled("viaAlias")) == param_part(mangled("viaRaw")));
     CHECK(param_part(mangled("viaTypedef")) == param_part(mangled("viaRaw")));
-    CHECK(mangled("viaRaw") == "_KFN4test6viaRawEPFiYbE");
+    CHECK(mangled("viaRaw") == "_KFN21gen_callable_alias_156viaRawEPFiYbE");
 }
 
 TEST_CASE("callable mangling — addresser, return type and throws are all encoded",
           "[gen][callable][mangling]") {
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-        module test;
+        module gen_callable_alias_16;
         class Err { }
         byPtr(f: *(int):int) : void { }
         byRef(f: &(int):int) : void { }
@@ -380,7 +380,7 @@ TEST_CASE("callable mangling — addresser, return type and throws are all encod
 TEST_CASE("callable throws clause in a parameter list is greedy",
           "[.][gen][callable][throws][parser-limitation]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_alias_17;
         class Boom { }
         twice(x: int) : int { return x * 2; }
         call(f: *(int):int throws Boom, v: int) : int throws Boom { return f(v); }

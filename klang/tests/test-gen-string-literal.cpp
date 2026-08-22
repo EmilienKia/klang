@@ -34,7 +34,7 @@
 
 TEST_CASE("Char literal — basic value", "[gen][literal][char]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_01;
 
         test() : char {
             c : char = 'A';
@@ -49,7 +49,7 @@ TEST_CASE("Char literal — basic value", "[gen][literal][char]") {
 
 TEST_CASE("Char literal — comparison", "[gen][literal][char]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_02;
 
         test() : bool {
             c : char = 'B';
@@ -64,7 +64,7 @@ TEST_CASE("Char literal — comparison", "[gen][literal][char]") {
 
 TEST_CASE("Char literal — escape sequences decode correctly", "[gen][literal][char]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_03;
 
         newline() : char { return '\n'; }
         tab()     : char { return '\t'; }
@@ -88,7 +88,7 @@ TEST_CASE("Char literal — escape sequences decode correctly", "[gen][literal][
 
 TEST_CASE("UTF-8 prefixed string literal — element type unsigned byte", "[gen][literal][string][prefix]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_04;
 
         get_size(s : const unsigned byte[]) : unsigned int { return s.size; }
         first(s : const unsigned byte[]) : unsigned byte { return s[0]; }
@@ -104,7 +104,7 @@ TEST_CASE("UTF-8 prefixed string literal — element type unsigned byte", "[gen]
 
 TEST_CASE("UTF-16 prefixed string literal — element type unsigned short", "[gen][literal][string][prefix]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_05;
 
         get_size(s : const unsigned short[]) : unsigned int { return s.size; }
         first(s : const unsigned short[]) : unsigned short { return s[0]; }
@@ -120,7 +120,7 @@ TEST_CASE("UTF-16 prefixed string literal — element type unsigned short", "[ge
 
 TEST_CASE("UTF-32 prefixed string literal — element type char", "[gen][literal][string][prefix]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_06;
 
         get_size(s : const char[]) : unsigned int { return s.size; }
         first(s : const char[]) : char { return s[0]; }
@@ -136,7 +136,7 @@ TEST_CASE("UTF-32 prefixed string literal — element type char", "[gen][literal
 
 TEST_CASE("Prefixed character literals — element types", "[gen][literal][char][prefix]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_07;
 
         u8_char()  : unsigned byte  { return u8'A'; }
         u16_char() : unsigned short { return u'A'; }
@@ -151,7 +151,7 @@ TEST_CASE("Prefixed character literals — element types", "[gen][literal][char]
 
 TEST_CASE("Unprefixed string literal — context selects unsigned byte element", "[gen][literal][string][context]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_08;
 
         get_size(s : const unsigned byte[]) : unsigned int { return s.size; }
         first(s : const unsigned byte[]) : unsigned byte { return s[0]; }
@@ -166,7 +166,7 @@ TEST_CASE("Unprefixed string literal — context selects unsigned byte element",
 
 TEST_CASE("Unprefixed string literal — context selects unsigned short element", "[gen][literal][string][context]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_09;
 
         get_size(s : const unsigned short[]) : unsigned int { return s.size; }
         first(s : const unsigned short[]) : unsigned short { return s[0]; }
@@ -182,7 +182,7 @@ TEST_CASE("Unprefixed string literal — context selects unsigned short element"
 
 TEST_CASE("String literal — passed to const char[] parameter, read size", "[gen][literal][string]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_10;
 
         get_size(s : const char[]) : unsigned int {
             return s.size;
@@ -201,7 +201,7 @@ TEST_CASE("String literal — passed to const char[] parameter, read size", "[ge
 
 TEST_CASE("String literal — subscript access", "[gen][literal][string]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_11;
 
         first_char(s : const char[]) : char {
             return s[0];
@@ -219,7 +219,7 @@ TEST_CASE("String literal — subscript access", "[gen][literal][string]") {
 
 TEST_CASE("String literal — empty string", "[gen][literal][string]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_12;
 
         get_size(s : const char[]) : unsigned int {
             return s.size;
@@ -238,7 +238,7 @@ TEST_CASE("String literal — empty string", "[gen][literal][string]") {
 
 TEST_CASE("String literal — deduplication (same string used twice)", "[gen][literal][string]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_13;
 
         first_char(s : const char[]) : char {
             return s[0];
@@ -259,7 +259,7 @@ TEST_CASE("String literal — deduplication (same string used twice)", "[gen][li
 
 TEST_CASE("String literal — null terminator present", "[gen][literal][string]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_string_literal_14;
 
         get_size(s : const char[]) : unsigned int {
             return s.size;

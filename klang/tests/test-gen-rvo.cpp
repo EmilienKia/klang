@@ -51,7 +51,7 @@ TEST_CASE("RVO-1: Simple factory — exactly 1 ctor, 1 dtor", "[gen][rvo][rvo1]"
     // With NRVO+sret: the local is constructed directly into caller's destination.
     // Expected: exactly 1 constructor call, exactly 1 destructor call.
     auto jit = gen_jit(R"SRC(
-        module __rvo1_basic__;
+        module gen_rvo_01;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -92,7 +92,7 @@ TEST_CASE("RVO-1: Simple factory — exactly 1 ctor, 1 dtor", "[gen][rvo][rvo1]"
 
 TEST_CASE("RVO-1: Factory with multiple-field struct", "[gen][rvo][rvo1]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo1_multi_args__;
+        module gen_rvo_02;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -133,7 +133,7 @@ TEST_CASE("RVO-1: Factory with multiple-field struct", "[gen][rvo][rvo1]") {
 
 TEST_CASE("RVO-1: Factory with default-constructed struct", "[gen][rvo][rvo1]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo1_default__;
+        module gen_rvo_03;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -178,7 +178,7 @@ TEST_CASE("RVO-1: Factory with default-constructed struct", "[gen][rvo][rvo1]") 
 TEST_CASE("RVO-2: NRVO basic — return named local, exactly 1 ctor, 1 dtor", "[gen][rvo][rvo2]") {
     // o : Obj(42); return o; should use the caller's destination as o's storage.
     auto jit = gen_jit(R"SRC(
-        module __rvo2_basic__;
+        module gen_rvo_04;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -219,7 +219,7 @@ TEST_CASE("RVO-2: NRVO basic — return named local, exactly 1 ctor, 1 dtor", "[
 
 TEST_CASE("RVO-2: NRVO — local modified before return", "[gen][rvo][rvo2]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo2_modified__;
+        module gen_rvo_05;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -260,7 +260,7 @@ TEST_CASE("RVO-2: NRVO — local modified before return", "[gen][rvo][rvo2]") {
 
 TEST_CASE("RVO-2: NRVO — member function called on local before return", "[gen][rvo][rvo2]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo2_method__;
+        module gen_rvo_06;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -303,7 +303,7 @@ TEST_CASE("RVO-2: NRVO — member function called on local before return", "[gen
 TEST_CASE("RVO-2: NRVO — single return at end of function", "[gen][rvo][rvo2]") {
     // Simplest NRVO case: single local, single return at end.
     auto jit = gen_jit(R"SRC(
-        module __rvo2_single_ret__;
+        module gen_rvo_07;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -349,7 +349,7 @@ TEST_CASE("RVO-2: NRVO — single return at end of function", "[gen][rvo][rvo2]"
 TEST_CASE("RVO-3: Assigned to local — no intermediate temporary", "[gen][rvo][rvo3]") {
     // r : Obj = make(42); → make() should write directly into r's alloca.
     auto jit = gen_jit(R"SRC(
-        module __rvo3_assign__;
+        module gen_rvo_08;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -390,7 +390,7 @@ TEST_CASE("RVO-3: Assigned to local — no intermediate temporary", "[gen][rvo][
 
 TEST_CASE("RVO-3: Two assigned locals from same factory function", "[gen][rvo][rvo3]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo3_two__;
+        module gen_rvo_09;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -433,7 +433,7 @@ TEST_CASE("RVO-3: Two assigned locals from same factory function", "[gen][rvo][r
 TEST_CASE("RVO-3: Assigned from chained factory — make_outer(make_inner())", "[gen][rvo][rvo3]") {
     // A factory function that takes a struct by value from another factory.
     auto jit = gen_jit(R"SRC(
-        module __rvo3_chain_factory__;
+        module gen_rvo_10;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -486,7 +486,7 @@ TEST_CASE("RVO-3: Assigned from chained factory — make_outer(make_inner())", "
 
 TEST_CASE("RVO-4: Discarded struct return — temporary created and destroyed", "[gen][rvo][rvo4]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo4_discard__;
+        module gen_rvo_11;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -529,7 +529,7 @@ TEST_CASE("RVO-4: Discarded struct return — temporary created and destroyed", 
 
 TEST_CASE("RVO-4: Member access on temporary — correct value, temp destroyed", "[gen][rvo][rvo4]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo4_member__;
+        module gen_rvo_12;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -570,7 +570,7 @@ TEST_CASE("RVO-4: Member access on temporary — correct value, temp destroyed",
 
 TEST_CASE("RVO-4: Method call on temporary — correct value, temp destroyed", "[gen][rvo][rvo4]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo4_method__;
+        module gen_rvo_13;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -615,7 +615,7 @@ TEST_CASE("RVO-4: Method call on temporary — correct value, temp destroyed", "
 
 TEST_CASE("RVO-5: Chained method returning struct — all intermediates are temps", "[gen][rvo][rvo5]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo5_chain__;
+        module gen_rvo_14;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -662,7 +662,7 @@ TEST_CASE("RVO-5: Chained method returning struct — all intermediates are temp
 
 TEST_CASE("RVO-5: Deep chain with different struct types", "[gen][rvo][rvo5]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo5_deep_types__;
+        module gen_rvo_15;
 
         g_order : int = 0;
         g_ctors : int = 0;
@@ -716,7 +716,7 @@ TEST_CASE("RVO-5: Deep chain with different struct types", "[gen][rvo][rvo5]") {
 
 TEST_CASE("RVO-5: Chained call result assigned to variable", "[gen][rvo][rvo5]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo5_chain_assign__;
+        module gen_rvo_16;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -767,7 +767,7 @@ TEST_CASE("RVO-5: Chained call result assigned to variable", "[gen][rvo][rvo5]")
 
 TEST_CASE("RVO-6: Struct return passed by value to another function", "[gen][rvo][rvo6]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo6_nested__;
+        module gen_rvo_17;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -814,7 +814,7 @@ TEST_CASE("RVO-6: Struct return passed by value to another function", "[gen][rvo
 
 TEST_CASE("RVO-6: Struct return assigned then passed by value", "[gen][rvo][rvo6]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo6_assign_pass__;
+        module gen_rvo_18;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -861,7 +861,7 @@ TEST_CASE("RVO-6: Struct return assigned then passed by value", "[gen][rvo][rvo6
 TEST_CASE("RVO-6: Struct return from nested factory calls", "[gen][rvo][rvo6]") {
     // wrap(make(42)) where wrap also returns a struct
     auto jit = gen_jit(R"SRC(
-        module __rvo6_nested_factory__;
+        module gen_rvo_19;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -915,7 +915,7 @@ TEST_CASE("RVO-6: Struct return from nested factory calls", "[gen][rvo][rvo6]") 
 
 TEST_CASE("RVO-7: Multiple returns of same variable — NRVO eligible", "[gen][rvo][rvo7]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo7_same_var__;
+        module gen_rvo_20;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -962,7 +962,7 @@ TEST_CASE("RVO-7: Multiple returns of different variables — NRVO ineligible, s
     // Different named locals returned from different branches → NRVO not possible.
     // Should still use sret (copy into sret at each return), but cannot eliminate all copies.
     auto jit = gen_jit(R"SRC(
-        module __rvo7_diff_var__;
+        module gen_rvo_21;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1020,7 +1020,7 @@ TEST_CASE("RVO-7: Multiple returns of different variables — NRVO ineligible, s
 TEST_CASE("RVO-7: Return from different scopes — NRVO-eligible with same variable name", "[gen][rvo][rvo7]") {
     // Same variable name in both branches — each branch constructs, returns
     auto jit = gen_jit(R"SRC(
-        module __rvo7_mixed__;
+        module gen_rvo_22;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1077,7 +1077,7 @@ TEST_CASE("RVO-7: Return from different scopes — NRVO-eligible with same varia
 
 TEST_CASE("RVO-8: Operator+ returning struct by value", "[gen][rvo][rvo8]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo8_op_plus__;
+        module gen_rvo_23;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1122,7 +1122,7 @@ TEST_CASE("RVO-8: Operator+ returning struct by value", "[gen][rvo][rvo8]") {
 TEST_CASE("RVO-8: Chained operator returning struct — a + b + c", "[gen][rvo][rvo8]") {
     // With left-associativity fixed, a + b + c is now parsed as (a + b) + c.
     auto jit = gen_jit(R"SRC(
-        module __rvo8_chain_op__;
+        module gen_rvo_24;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1173,7 +1173,7 @@ TEST_CASE("RVO-8: Chained operator returning struct — a + b + c", "[gen][rvo][
 
 TEST_CASE("RVO-9: Virtual method returning struct by value", "[gen][rvo][rvo9]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo9_virtual__;
+        module gen_rvo_25;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1232,7 +1232,7 @@ TEST_CASE("RVO-9: Virtual method returning struct by value", "[gen][rvo][rvo9]")
 
 TEST_CASE("RVO-10: Struct return without destructor — correct value", "[gen][rvo][rvo10]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo10_no_dtor__;
+        module gen_rvo_26;
 
         struct Plain {
             val : int;
@@ -1258,7 +1258,7 @@ TEST_CASE("RVO-10: Struct return without destructor — correct value", "[gen][r
 
 TEST_CASE("RVO-10: Chained calls without destructor — no crash", "[gen][rvo][rvo10]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo10_chain_no_dtor__;
+        module gen_rvo_27;
 
         struct Obj {
             val : int;
@@ -1288,7 +1288,7 @@ TEST_CASE("RVO-10: Chained calls without destructor — no crash", "[gen][rvo][r
 
 TEST_CASE("RVO-10: Multiple-field struct return without destructor", "[gen][rvo][rvo10]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo10_multi_field__;
+        module gen_rvo_28;
 
         struct Rect {
             w : int;
@@ -1320,7 +1320,7 @@ TEST_CASE("RVO-10: Multiple-field struct return without destructor", "[gen][rvo]
 
 TEST_CASE("RVO-11: Struct return used in if-condition via method", "[gen][rvo][rvo11]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo11_if_cond__;
+        module gen_rvo_29;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1368,7 +1368,7 @@ TEST_CASE("RVO-11: Struct return used in if-condition via method", "[gen][rvo][r
 
 TEST_CASE("RVO-11: Struct return in for-loop condition", "[gen][rvo][rvo11]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo11_for__;
+        module gen_rvo_30;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1416,7 +1416,7 @@ TEST_CASE("RVO-11: Struct return in for-loop condition", "[gen][rvo][rvo11]") {
 
 TEST_CASE("RVO-11: Struct return in while-loop condition", "[gen][rvo][rvo11]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo11_while__;
+        module gen_rvo_31;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1468,7 +1468,7 @@ TEST_CASE("RVO-11: Struct return in while-loop condition", "[gen][rvo][rvo11]") 
 
 TEST_CASE("RVO-12: Return struct containing struct member", "[gen][rvo][rvo12]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo12_nested__;
+        module gen_rvo_32;
 
         g_inner_ctors : int = 0;
         g_inner_dtors : int = 0;
@@ -1530,7 +1530,7 @@ TEST_CASE("RVO-12: Return struct containing struct member", "[gen][rvo][rvo12]")
 
 TEST_CASE("RVO: Struct return value used in arithmetic expression", "[gen][rvo]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo_arith__;
+        module gen_rvo_33;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1571,7 +1571,7 @@ TEST_CASE("RVO: Struct return value used in arithmetic expression", "[gen][rvo]"
 
 TEST_CASE("RVO: Multiple sequential struct returns — independent lifetimes", "[gen][rvo]") {
     auto jit = gen_jit(R"SRC(
-        module __rvo_sequential__;
+        module gen_rvo_34;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1616,7 +1616,7 @@ TEST_CASE("RVO: Struct return from function with other locals — dtor ordering 
     // The other locals must be destroyed, but the NRVO candidate must NOT be
     // destroyed by the callee (it lives in caller's storage now).
     auto jit = gen_jit(R"SRC(
-        module __rvo_other_locals__;
+        module gen_rvo_35;
 
         g_order : int = 0;
         g_ctors : int = 0;
@@ -1670,7 +1670,7 @@ TEST_CASE("RVO: Struct return from function with other locals — dtor ordering 
 TEST_CASE("RVO: Struct factory called in return statement of another function", "[gen][rvo]") {
     // Chained RVO: test() returns make(42)
     auto jit = gen_jit(R"SRC(
-        module __rvo_chain_return__;
+        module gen_rvo_36;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1717,7 +1717,7 @@ TEST_CASE("RVO: Struct factory called in return statement of another function", 
 TEST_CASE("RVO: Destructor side effect preserved — dtor runs exactly once per object", "[gen][rvo]") {
     // Verify that side effects in the destructor happen exactly once per constructed object.
     auto jit = gen_jit(R"SRC(
-        module __rvo_side_effect__;
+        module gen_rvo_37;
 
         g_sum : int = 0;
 
@@ -1761,7 +1761,7 @@ TEST_CASE("RVO-13: NRVO bypasses copy constructor — no copy ctor call", "[gen]
     // If NRVO is applied, the copy constructor should NOT be called.
     // The local is constructed directly into the caller's destination.
     auto jit = gen_jit(R"SRC(
-        module __rvo13_copy_ctor__;
+        module gen_rvo_38;
 
         g_ctors : int = 0;
         g_copy_ctors : int = 0;
@@ -1814,7 +1814,7 @@ TEST_CASE("RVO-14: NRVO — non-NRVO locals destroyed, NRVO candidate preserved"
     // The NRVO candidate should not be destroyed by the callee, but other
     // locals in the same or nested scopes should be destroyed normally.
     auto jit = gen_jit(R"SRC(
-        module __rvo14_cleanup__;
+        module gen_rvo_39;
 
         g_ctor_ids : int = 0;
         g_dtor_ids : int = 0;
@@ -1868,7 +1868,7 @@ TEST_CASE("RVO-14: NRVO — return from if-else with helper locals in each branc
     // Both branches return the same NRVO candidate, but each branch has
     // a helper local that must be destroyed before the return.
     auto jit = gen_jit(R"SRC(
-        module __rvo14_if_cleanup__;
+        module gen_rvo_40;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1935,7 +1935,7 @@ TEST_CASE("RVO-14: NRVO — return from if-else with helper locals in each branc
 TEST_CASE("RVO-15: Class return by value — sret + NRVO works for classes", "[gen][rvo][rvo15]") {
     // Classes (with vtables) also use sret for return by value.
     auto jit = gen_jit(R"SRC(
-        module __rvo15_class__;
+        module gen_rvo_41;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1981,7 +1981,7 @@ TEST_CASE("RVO-16: Recursive factory — correct value through recursive sret ch
     // A recursive function that returns a struct. At the base case it constructs
     // one, at recursive cases it calls itself. Sret must be threaded correctly.
     auto jit = gen_jit(R"SRC(
-        module __rvo16_recursive__;
+        module gen_rvo_42;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -2051,7 +2051,7 @@ TEST_CASE("RVO-17: Converting-constructor variable init from a different-typed s
     // `OptionalRef<V>` result and converted it via
     // `OptionalConstRef(other: const OptionalRef<V>&)`.
     auto jit = gen_jit(R"SRC(
-        module __rvo17_ctor_arg_sret_alias__;
+        module gen_rvo_43;
 
         struct Inner {
             val : int;

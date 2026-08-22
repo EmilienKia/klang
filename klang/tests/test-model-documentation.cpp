@@ -27,7 +27,7 @@ TEST_CASE("Model docs: module doc-comment attaches to unit", "[model][documentat
         /// Unit brief
         ///
         /// Unit description.
-        module docs_unit;
+        module model_documentation_01;
         struct Dummy {}
     )SRC");
     REQUIRE(comp != nullptr);
@@ -41,7 +41,7 @@ TEST_CASE("Model docs: module doc-comment attaches to unit", "[model][documentat
 
 TEST_CASE("Model docs: namespace/aggregate/enum/variable/function docs are attached", "[model][documentation]") {
     auto comp = compile_model(R"SRC(
-        module docs_all;
+        module model_documentation_02;
 
         /// Namespace brief
         namespace N {
@@ -124,7 +124,7 @@ TEST_CASE("Model docs: namespace/aggregate/enum/variable/function docs are attac
 
 TEST_CASE("Model docs: backward doc-comment attaches to variable doc", "[model][documentation]") {
     auto comp = compile_model(R"SRC(
-        module docs_backward;
+        module model_documentation_03;
         x : int; //! backward variable doc
     )SRC");
     REQUIRE(comp != nullptr);

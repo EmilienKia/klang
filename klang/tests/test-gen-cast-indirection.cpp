@@ -67,7 +67,7 @@
 // =============================================================================
 TEST_CASE("Explicit cast: (Base*) ptr<Derived> is static upcast", "[gen][cast][explicit][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __ec_ptr_upcast__;
+        module gen_cast_indirection_01;
 
         struct Base {
             val : int;
@@ -97,7 +97,7 @@ TEST_CASE("Explicit cast: (Base*) ptr<Derived> is static upcast", "[gen][cast][e
 // =============================================================================
 TEST_CASE("Explicit cast: (Base+) lnk<Derived> is static upcast", "[gen][cast][explicit][lnk]") {
     auto jit = gen_jit(R"SRC(
-        module __ec_lnk_upcast__;
+        module gen_cast_indirection_02;
 
         struct Base {
             val : int;
@@ -127,7 +127,7 @@ TEST_CASE("Explicit cast: (Base+) lnk<Derived> is static upcast", "[gen][cast][e
 // =============================================================================
 TEST_CASE("Explicit cast: (Base?) pin<Derived> is static upcast", "[gen][cast][explicit][view]") {
     auto jit = gen_jit(R"SRC(
-        module __ec_pin_upcast__;
+        module gen_cast_indirection_03;
 
         struct Base {
             val : int;
@@ -157,7 +157,7 @@ TEST_CASE("Explicit cast: (Base?) pin<Derived> is static upcast", "[gen][cast][e
 // =============================================================================
 TEST_CASE("Explicit cast: (Base&) ref<Derived> is static upcast", "[gen][cast][explicit][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __ec_ref_upcast__;
+        module gen_cast_indirection_04;
 
         struct Base {
             val : int;
@@ -188,7 +188,7 @@ TEST_CASE("Explicit cast: (Base&) ref<Derived> is static upcast", "[gen][cast][e
 // =============================================================================
 TEST_CASE("Explicit cast: (Base*) lnk<Derived> cross-kind upcast", "[gen][cast][explicit][lnk][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __ec_lnk_to_ptr_upcast__;
+        module gen_cast_indirection_05;
 
         struct Base {
             val : int;
@@ -218,7 +218,7 @@ TEST_CASE("Explicit cast: (Base*) lnk<Derived> cross-kind upcast", "[gen][cast][
 // =============================================================================
 TEST_CASE("Explicit cast: (Base*) pin<Derived> cross-kind upcast", "[gen][cast][explicit][view][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __ec_pin_to_ptr_upcast__;
+        module gen_cast_indirection_06;
 
         struct Base {
             val : int;
@@ -248,7 +248,7 @@ TEST_CASE("Explicit cast: (Base*) pin<Derived> cross-kind upcast", "[gen][cast][
 // =============================================================================
 TEST_CASE("Explicit cast: (Derived*) ptr<Base> dynamic downcast — correct type succeeds", "[gen][cast][explicit][dyncast][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __ed_ptr_ok__;
+        module gen_cast_indirection_07;
 
         class Base {
             public val : int;
@@ -282,7 +282,7 @@ TEST_CASE("Explicit cast: (Derived*) ptr<Base> dynamic downcast — correct type
 // =============================================================================
 TEST_CASE("Explicit cast: (Derived*) ptr<Base> wrong type → null → crash", "[gen][cast][explicit][dyncast][ptr][null]") {
     auto res = build_and_exec(R"SRC(
-        module __ed_ptr_null__;
+        module gen_cast_indirection_08;
 
         class Base {
             public val : int;
@@ -317,7 +317,7 @@ TEST_CASE("Explicit cast: (Derived*) ptr<Base> wrong type → null → crash", "
 // =============================================================================
 TEST_CASE("Explicit cast: (Derived+) lnk<Base> dynamic downcast correct type succeeds", "[gen][cast][explicit][dyncast][lnk]") {
     auto jit = gen_jit(R"SRC(
-        module __ed_lnk_ok__;
+        module gen_cast_indirection_09;
 
         class Base {
             public val : int;
@@ -351,7 +351,7 @@ TEST_CASE("Explicit cast: (Derived+) lnk<Base> dynamic downcast correct type suc
 // =============================================================================
 TEST_CASE("Explicit cast: (Derived+) ptr<Base> wrong type → fatal trap", "[gen][cast][explicit][dyncast][lnk][fatal]") {
     auto res = build_and_exec(R"SRC(
-        module __ed_lnk_fatal__;
+        module gen_cast_indirection_10;
 
         class Base {
             public val : int;
@@ -383,7 +383,7 @@ TEST_CASE("Explicit cast: (Derived+) ptr<Base> wrong type → fatal trap", "[gen
 // =============================================================================
 TEST_CASE("Explicit cast: (Derived?) ptr<Base> dynamic downcast correct type succeeds", "[gen][cast][explicit][dyncast][view]") {
     auto jit = gen_jit(R"SRC(
-        module __ed_pin_ok__;
+        module gen_cast_indirection_11;
 
         class Base {
             public val : int;
@@ -417,7 +417,7 @@ TEST_CASE("Explicit cast: (Derived?) ptr<Base> dynamic downcast correct type suc
 // =============================================================================
 TEST_CASE("Explicit cast: (Derived?) ptr<Base> wrong type → null → crash", "[gen][cast][explicit][dyncast][view][null]") {
     auto res = build_and_exec(R"SRC(
-        module __ed_pin_null__;
+        module gen_cast_indirection_12;
 
         class Base {
             public val : int;
@@ -452,7 +452,7 @@ TEST_CASE("Explicit cast: (Derived?) ptr<Base> wrong type → null → crash", "
 // =============================================================================
 TEST_CASE("Explicit cast: (Derived&) ref<Base> dynamic downcast correct type succeeds", "[gen][cast][explicit][dyncast][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __ed_ref_ok__;
+        module gen_cast_indirection_13;
 
         class Base {
             public val : int;
@@ -486,7 +486,7 @@ TEST_CASE("Explicit cast: (Derived&) ref<Base> dynamic downcast correct type suc
 // =============================================================================
 TEST_CASE("Explicit cast: (Derived*) ptr<interface> dynamic downcast via interface", "[gen][cast][explicit][dyncast][interface]") {
     auto jit = gen_jit(R"SRC(
-        module __ed_iface__;
+        module gen_cast_indirection_14;
 
         interface IBase {
             get_val() : int;
@@ -519,7 +519,7 @@ TEST_CASE("Explicit cast: (Derived*) ptr<interface> dynamic downcast via interfa
 // =============================================================================
 TEST_CASE("Explicit cast error: ptr<Base>→ptr<Unrelated> is rejected", "[gen][cast][explicit][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __ee_ptr_unrelated__;
+        module gen_cast_indirection_15;
 
         struct Base { val : int; Base() : val(0) {} }
         struct Unrelated { data : int; Unrelated() : data(0) {} }
@@ -538,7 +538,7 @@ TEST_CASE("Explicit cast error: ptr<Base>→ptr<Unrelated> is rejected", "[gen][
 // =============================================================================
 TEST_CASE("Explicit cast error: lnk<Base>→lnk<Unrelated> is rejected", "[gen][cast][explicit][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __ee_lnk_unrelated__;
+        module gen_cast_indirection_16;
 
         struct Base { val : int; Base() : val(0) {} }
         struct Unrelated { data : int; Unrelated() : data(0) {} }
@@ -557,7 +557,7 @@ TEST_CASE("Explicit cast error: lnk<Base>→lnk<Unrelated> is rejected", "[gen][
 // =============================================================================
 TEST_CASE("Explicit cast error: dynamic downcast to struct (no RTTI) is rejected", "[gen][cast][explicit][error][struct]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __ee_struct_downcast__;
+        module gen_cast_indirection_17;
 
         struct Base { val : int; Base() : val(0) {} }
         struct Derived : public Base { extra : int; Derived() : Base(), extra(0) {} }
@@ -576,7 +576,7 @@ TEST_CASE("Explicit cast error: dynamic downcast to struct (no RTTI) is rejected
 // =============================================================================
 TEST_CASE("Implicit upcast: f(Base*) called with ptr<Derived> — succeeds", "[gen][cast][implicit][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __ic_ptr__;
+        module gen_cast_indirection_18;
 
         struct Base {
             val : int;
@@ -607,7 +607,7 @@ TEST_CASE("Implicit upcast: f(Base*) called with ptr<Derived> — succeeds", "[g
 // =============================================================================
 TEST_CASE("Implicit upcast: f(Base+) called with lnk<Derived> — succeeds", "[gen][cast][implicit][lnk]") {
     auto jit = gen_jit(R"SRC(
-        module __ic_lnk__;
+        module gen_cast_indirection_19;
 
         struct Base {
             val : int;
@@ -638,7 +638,7 @@ TEST_CASE("Implicit upcast: f(Base+) called with lnk<Derived> — succeeds", "[g
 // =============================================================================
 TEST_CASE("Implicit upcast: f(Base?) called with pin<Derived> — succeeds", "[gen][cast][implicit][view]") {
     auto jit = gen_jit(R"SRC(
-        module __ic_pin__;
+        module gen_cast_indirection_20;
 
         struct Base {
             val : int;
@@ -669,7 +669,7 @@ TEST_CASE("Implicit upcast: f(Base?) called with pin<Derived> — succeeds", "[g
 // =============================================================================
 TEST_CASE("Implicit upcast: f(Base&) called with Derived object (ref implicit) — succeeds", "[gen][cast][implicit][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __ic_ref__;
+        module gen_cast_indirection_21;
 
         struct Base {
             val : int;
@@ -699,7 +699,7 @@ TEST_CASE("Implicit upcast: f(Base&) called with Derived object (ref implicit) �
 // =============================================================================
 TEST_CASE("Implicit upcast: f(Base*) called with ref<ptr<Derived>> — load+upcast", "[gen][cast][implicit][ref][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __ic_ref_ptr__;
+        module gen_cast_indirection_22;
 
         struct Base {
             val : int;
@@ -730,7 +730,7 @@ TEST_CASE("Implicit upcast: f(Base*) called with ref<ptr<Derived>> — load+upca
 // =============================================================================
 TEST_CASE("Implicit upcast: f(Base+) called with ref<lnk<Derived>> — load+upcast", "[gen][cast][implicit][ref][lnk]") {
     auto jit = gen_jit(R"SRC(
-        module __ic_ref_lnk__;
+        module gen_cast_indirection_23;
 
         struct Base {
             val : int;
@@ -761,7 +761,7 @@ TEST_CASE("Implicit upcast: f(Base+) called with ref<lnk<Derived>> — load+upca
 // =============================================================================
 TEST_CASE("Explicit cast: write through (Base*) ptr<Derived> modifies Base field", "[gen][cast][explicit][write]") {
     auto jit = gen_jit(R"SRC(
-        module __ec_write__;
+        module gen_cast_indirection_24;
 
         struct Base {
             val : int;
@@ -791,7 +791,7 @@ TEST_CASE("Explicit cast: write through (Base*) ptr<Derived> modifies Base field
 // =============================================================================
 TEST_CASE("Explicit cast: chain lnk<Derived>→ptr<Base>→lnk<Base> via intermediate", "[gen][cast][explicit][chain]") {
     auto jit = gen_jit(R"SRC(
-        module __ec_chain__;
+        module gen_cast_indirection_25;
 
         struct Base {
             val : int;
@@ -822,7 +822,7 @@ TEST_CASE("Explicit cast: chain lnk<Derived>→ptr<Base>→lnk<Base> via interme
 // =============================================================================
 TEST_CASE("Implicit upcast: f(IFace&) called with class ref implementing IFace", "[gen][cast][implicit][interface]") {
     auto jit = gen_jit(R"SRC(
-        module __ic_iface__;
+        module gen_cast_indirection_26;
 
         interface IAnimal {
             speak() : int;

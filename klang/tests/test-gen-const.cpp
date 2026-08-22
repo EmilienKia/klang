@@ -30,7 +30,7 @@
 // A const local variable can be read normally.
 TEST_CASE("Const local variable read", "[gen][const]") {
     auto jit = gen_jit(R"SRC(
-        module __const_local_read__;
+        module gen_const_01;
 
         test() : int {
             const x : int = 42;
@@ -46,7 +46,7 @@ TEST_CASE("Const local variable read", "[gen][const]") {
 // A const local variable cannot be assigned after construction.
 TEST_CASE("Const local variable assignment rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_local_assign__;
+        module gen_const_02;
 
         test() {
             const x : int = 1;
@@ -58,7 +58,7 @@ TEST_CASE("Const local variable assignment rejected", "[gen][const][error]") {
 // Prefix ++ forbidden on const variable.
 TEST_CASE("Const prefix increment rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_prefix_inc__;
+        module gen_const_03;
 
         test() {
             const x : int = 1;
@@ -70,7 +70,7 @@ TEST_CASE("Const prefix increment rejected", "[gen][const][error]") {
 // Prefix -- forbidden on const variable.
 TEST_CASE("Const prefix decrement rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_prefix_dec__;
+        module gen_const_04;
 
         test() {
             const x : int = 1;
@@ -82,7 +82,7 @@ TEST_CASE("Const prefix decrement rejected", "[gen][const][error]") {
 // Postfix ++ forbidden on const variable.
 TEST_CASE("Const postfix increment rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_postfix_inc__;
+        module gen_const_05;
 
         test() {
             const x : int = 1;
@@ -94,7 +94,7 @@ TEST_CASE("Const postfix increment rejected", "[gen][const][error]") {
 // Postfix -- forbidden on const variable.
 TEST_CASE("Const postfix decrement rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_postfix_dec__;
+        module gen_const_06;
 
         test() {
             const x : int = 1;
@@ -110,7 +110,7 @@ TEST_CASE("Const postfix decrement rejected", "[gen][const][error]") {
 // A const global variable can be read normally.
 TEST_CASE("Const global variable read", "[gen][const]") {
     auto jit = gen_jit(R"SRC(
-        module __const_global_read__;
+        module gen_const_07;
 
         const ANSWER : int = 42;
 
@@ -127,7 +127,7 @@ TEST_CASE("Const global variable read", "[gen][const]") {
 // A const global variable cannot be assigned.
 TEST_CASE("Const global variable assignment rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_global_assign__;
+        module gen_const_08;
 
         const G : int = 10;
 
@@ -144,7 +144,7 @@ TEST_CASE("Const global variable assignment rejected", "[gen][const][error]") {
 // A const parameter can be read; it is passed by value with a const flag.
 TEST_CASE("Const parameter read", "[gen][const]") {
     auto jit = gen_jit(R"SRC(
-        module __const_param_read__;
+        module gen_const_09;
 
         double_it(const n : int) : int {
             return n + n;
@@ -163,7 +163,7 @@ TEST_CASE("Const parameter read", "[gen][const]") {
 // A const parameter cannot be assigned inside the function.
 TEST_CASE("Const parameter assignment rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_param_assign__;
+        module gen_const_10;
 
         bad(const n : int) {
             n = 99;
@@ -176,7 +176,7 @@ TEST_CASE("Const parameter assignment rejected", "[gen][const][error]") {
 // Calling pick(0) is therefore ambiguous, and the compiler must report an error.
 TEST_CASE("Const parameter overload is ambiguous", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_param_overload__;
+        module gen_const_11;
 
         pick(n : int) : int { return 1; }
         pick(const n : int) : int { return 2; }
@@ -194,7 +194,7 @@ TEST_CASE("Const parameter overload is ambiguous", "[gen][const][error]") {
 // A mutable pointer can be assigned to a pointer-to-const (widening).
 TEST_CASE("Mutable pointer to const pointer widening", "[gen][const]") {
     auto jit = gen_jit(R"SRC(
-        module __const_ptr_widen__;
+        module gen_const_12;
 
         test() : int {
             x   : int  = 7;
@@ -212,7 +212,7 @@ TEST_CASE("Mutable pointer to const pointer widening", "[gen][const]") {
 // A pointer-to-const cannot be assigned to a mutable pointer.
 TEST_CASE("Const pointer to mutable pointer rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_ptr_narrow__;
+        module gen_const_13;
 
         test() {
             x   : int      = 5;
@@ -225,7 +225,7 @@ TEST_CASE("Const pointer to mutable pointer rejected", "[gen][const][error]") {
 // A mutable link can be assigned to a link-to-const (widening).
 TEST_CASE("Mutable link to const link widening", "[gen][const]") {
     auto jit = gen_jit(R"SRC(
-        module __const_link_widen__;
+        module gen_const_14;
 
         test() : int {
             x   : int  = 9;
@@ -243,7 +243,7 @@ TEST_CASE("Mutable link to const link widening", "[gen][const]") {
 // A link-to-const cannot be rebound to a mutable link.
 TEST_CASE("Const link to mutable link rebind rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_link_rebind__;
+        module gen_const_15;
 
         test() {
             x    : int      = 3;
@@ -256,7 +256,7 @@ TEST_CASE("Const link to mutable link rebind rejected", "[gen][const][error]") {
 // address-of a const variable yields a const link.
 TEST_CASE("Address of const variable yields const link", "[gen][const]") {
     auto jit = gen_jit(R"SRC(
-        module __const_addr_of__;
+        module gen_const_16;
 
         test() : int {
             const x : int = 55;
@@ -273,7 +273,7 @@ TEST_CASE("Address of const variable yields const link", "[gen][const]") {
 // Cannot take the address of a const variable and store it in a mutable link.
 TEST_CASE("Address of const variable to mutable link rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_addr_mutable_link__;
+        module gen_const_17;
 
         test() {
             const x : int = 1;
@@ -292,7 +292,7 @@ TEST_CASE("Address of const variable to mutable link rejected", "[gen][const][er
 TEST_CASE("Const form equivalence — specifier side", "[gen][const]") {
     // Form 1: const on the specifier side  →  const x : int
     auto jit = gen_jit(R"SRC(
-        module __const_equiv_spec__;
+        module gen_const_18;
         test() : int {
             const x : int = 7;
             return x;
@@ -307,7 +307,7 @@ TEST_CASE("Const form equivalence — specifier side", "[gen][const]") {
 TEST_CASE("Const form equivalence — type side", "[gen][const]") {
     // Form 2: const on the type side  →  x : const int
     auto jit = gen_jit(R"SRC(
-        module __const_equiv_type__;
+        module gen_const_19;
         test() : int {
             x : const int = 7;
             return x;
@@ -322,7 +322,7 @@ TEST_CASE("Const form equivalence — type side", "[gen][const]") {
 TEST_CASE("Const form equivalence — both sides", "[gen][const]") {
     // Form 3: const on both sides  →  const x : const int
     auto jit = gen_jit(R"SRC(
-        module __const_equiv_both__;
+        module gen_const_20;
         test() : int {
             const x : const int = 7;
             return x;
@@ -337,7 +337,7 @@ TEST_CASE("Const form equivalence — both sides", "[gen][const]") {
 TEST_CASE("Const form equivalence — type side assignment rejected", "[gen][const][error]") {
     // "x : const int" must also reject assignment
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_equiv_type_assign__;
+        module gen_const_21;
         test() {
             x : const int = 5;
             x = 6;   // must be rejected
@@ -348,7 +348,7 @@ TEST_CASE("Const form equivalence — type side assignment rejected", "[gen][con
 TEST_CASE("Const form equivalence — param specifier side", "[gen][const]") {
     // Param: const n : int
     auto jit = gen_jit(R"SRC(
-        module __const_equiv_param_spec__;
+        module gen_const_22;
         f(const n : int) : int { return n; }
         test() : int { return f(99); }
     )SRC");
@@ -361,7 +361,7 @@ TEST_CASE("Const form equivalence — param specifier side", "[gen][const]") {
 TEST_CASE("Const form equivalence — param type side", "[gen][const]") {
     // Param: n : const int
     auto jit = gen_jit(R"SRC(
-        module __const_equiv_param_type__;
+        module gen_const_23;
         f(n : const int) : int { return n; }
         test() : int { return f(99); }
     )SRC");
@@ -374,7 +374,7 @@ TEST_CASE("Const form equivalence — param type side", "[gen][const]") {
 TEST_CASE("Const form equivalence — param both sides", "[gen][const]") {
     // Param: const n : const int
     auto jit = gen_jit(R"SRC(
-        module __const_equiv_param_both__;
+        module gen_const_24;
         f(const n : const int) : int { return n; }
         test() : int { return f(99); }
     )SRC");
@@ -387,7 +387,7 @@ TEST_CASE("Const form equivalence — param both sides", "[gen][const]") {
 // The three forms of a const link are equivalent: all forbid writing through the link.
 TEST_CASE("Const link form equivalence — specifier side write rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_link_spec_write__;
+        module gen_const_25;
         test() {
             x : int = 3;
             const lnk : int+ = &x;
@@ -398,7 +398,7 @@ TEST_CASE("Const link form equivalence — specifier side write rejected", "[gen
 
 TEST_CASE("Const link form equivalence — type side write rejected", "[gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_link_type_write__;
+        module gen_const_26;
         test() {
             x : int = 3;
             lnk : const int+ = &x;
@@ -414,7 +414,7 @@ TEST_CASE("Const link form equivalence — type side write rejected", "[gen][con
 // A const member function can be called on a mutable object.
 TEST_CASE("Const member function — call on mutable object", "[gen][const][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __const_mfn_mutable_obj__;
+        module gen_const_27;
         struct Counter {
             value : int;
             Counter(v : int) : value(v) {}
@@ -434,7 +434,7 @@ TEST_CASE("Const member function — call on mutable object", "[gen][const][stru
 // A const member function can be called on a const object.
 TEST_CASE("Const member function — call on const object (by ref)", "[gen][const][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __const_mfn_const_obj__;
+        module gen_const_28;
         struct Point {
             x : int;
             y : int;
@@ -458,7 +458,7 @@ TEST_CASE("Const member function — call on const object (by ref)", "[gen][cons
 // A mutable member function cannot be called on a const object.
 TEST_CASE("Mutable member function call on const object rejected", "[gen][const][struct][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_mfn_mutable_on_const__;
+        module gen_const_29;
         struct Counter {
             value : int;
             Counter() : value(0) {}
@@ -473,7 +473,7 @@ TEST_CASE("Mutable member function call on const object rejected", "[gen][const]
 // A const member function cannot assign to a member field.
 TEST_CASE("Const member function cannot assign to field", "[gen][const][struct][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_mfn_assign_field__;
+        module gen_const_30;
         struct Counter {
             value : int;
             Counter() : value(0) {}
@@ -485,7 +485,7 @@ TEST_CASE("Const member function cannot assign to field", "[gen][const][struct][
 // Const member function can read a field.
 TEST_CASE("Const member function can read field via this", "[gen][const][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __const_mfn_read_field__;
+        module gen_const_31;
         struct Box {
             size : int;
             Box(s : int) : size(s) {}
@@ -505,7 +505,7 @@ TEST_CASE("Const member function can read field via this", "[gen][const][struct]
 // const local variable of struct type: only const methods can be called.
 TEST_CASE("Const local struct variable — only const methods callable", "[gen][const][struct][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_local_struct_mutable_call__;
+        module gen_const_32;
         struct Counter {
             value : int;
             Counter() : value(0) {}
@@ -521,7 +521,7 @@ TEST_CASE("Const local struct variable — only const methods callable", "[gen][
 // const local variable of struct type: can read field.
 TEST_CASE("Const local struct variable — field is read-only", "[gen][const][struct][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_local_struct_field_assign__;
+        module gen_const_33;
         struct Point {
             x : int;
             Point(v : int) : x(v) {}
@@ -536,7 +536,7 @@ TEST_CASE("Const local struct variable — field is read-only", "[gen][const][st
 // const local variable of struct type: const method call succeeds.
 TEST_CASE("Const local struct variable — const method callable", "[gen][const][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __const_local_struct_const_call__;
+        module gen_const_34;
         struct Point {
             x : int;
             y : int;
@@ -566,7 +566,7 @@ TEST_CASE("Const struct with implicit-const method emits warning and compiles", 
     // Note: direct field assignment inside the promoted method that uses the direct-symbol
     // path (not this.x) may not yet be blocked by const checking — that is a separate issue.
     auto jit = gen_jit(R"SRC(
-        module __const_struct_implicit_const__;
+        module gen_const_35;
         const struct Frozen {
             x : int;
             Frozen(v : int) : x(v) {}
@@ -587,7 +587,7 @@ TEST_CASE("Const struct with implicit-const method emits warning and compiles", 
 // A const struct with only const methods compiles fine.
 TEST_CASE("Const struct — all const methods — compiles and runs", "[gen][const][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __const_struct_ok__;
+        module gen_const_36;
         const struct Frozen {
             x : int;
             Frozen(v : int) : x(v) {}
@@ -607,7 +607,7 @@ TEST_CASE("Const struct — all const methods — compiles and runs", "[gen][con
 // A const struct cannot inherit from a mutable struct.
 TEST_CASE("Const struct cannot inherit from mutable struct", "[gen][const][struct][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_struct_bad_inherit__;
+        module gen_const_37;
         struct Mutable {
             x : int;
             Mutable(v : int) : x(v) {}
@@ -622,7 +622,7 @@ TEST_CASE("Const struct cannot inherit from mutable struct", "[gen][const][struc
 // A mutable struct can inherit from a const struct.
 TEST_CASE("Mutable struct can inherit from const struct", "[gen][const][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __mutable_struct_inherit_const__;
+        module gen_const_38;
         const struct ReadOnly {
             x : int;
             ReadOnly(v : int) : x(v) {}
@@ -649,7 +649,7 @@ TEST_CASE("Mutable struct can inherit from const struct", "[gen][const][struct]"
 // Const and static are not compatible on a member function.
 TEST_CASE("Const static member function rejected", "[gen][const][struct][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_static_method__;
+        module gen_const_39;
         struct Bad {
             const static make() : int { return 1; }
         }
@@ -663,7 +663,7 @@ TEST_CASE("Const static member function rejected", "[gen][const][struct][error]"
 // A const method of a class can read fields.
 TEST_CASE("Class: const method can read field", "[gen][const][class]") {
     auto jit = gen_jit(R"SRC(
-        module __cls_const_read__;
+        module gen_const_40;
         class Box {
             public size : int;
             Box(s : int) : size(s) {}
@@ -683,7 +683,7 @@ TEST_CASE("Class: const method can read field", "[gen][const][class]") {
 // A const method of a class cannot assign to a field.
 TEST_CASE("Class: const method cannot assign to field", "[gen][const][class][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __cls_const_assign__;
+        module gen_const_41;
         class C {
             public x : int;
             C() : x(0) {}
@@ -695,7 +695,7 @@ TEST_CASE("Class: const method cannot assign to field", "[gen][const][class][err
 // A const method of a class cannot call a mutable method on this.
 TEST_CASE("Class: const method cannot call mutable method on this", "[gen][const][class][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __cls_const_call_mut__;
+        module gen_const_42;
         class C {
             public x : int;
             C() : x(0) {}
@@ -708,7 +708,7 @@ TEST_CASE("Class: const method cannot call mutable method on this", "[gen][const
 // A const method of a class can call another const method on this.
 TEST_CASE("Class: const method can call another const method", "[gen][const][class]") {
     auto jit = gen_jit(R"SRC(
-        module __cls_const_call_const__;
+        module gen_const_43;
         class C {
             public x : int;
             C() : x(5) {}
@@ -729,7 +729,7 @@ TEST_CASE("Class: const method can call another const method", "[gen][const][cla
 // A mutable method cannot be called on a const local class variable.
 TEST_CASE("Class: mutable method on const local variable rejected", "[gen][const][class][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __cls_const_local_mut__;
+        module gen_const_44;
         class C {
             public x : int;
             C() : x(0) {}
@@ -745,7 +745,7 @@ TEST_CASE("Class: mutable method on const local variable rejected", "[gen][const
 // A const method can be called on a const local class variable.
 TEST_CASE("Class: const method on const local variable allowed", "[gen][const][class]") {
     auto jit = gen_jit(R"SRC(
-        module __cls_const_local_const__;
+        module gen_const_45;
         class C {
             public x : int;
             C() : x(7) {}
@@ -765,7 +765,7 @@ TEST_CASE("Class: const method on const local variable allowed", "[gen][const][c
 // A mutable method cannot be called on a const reference parameter to a class.
 TEST_CASE("Class: mutable method on const ref parameter rejected", "[gen][const][class][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __cls_const_ref_mut__;
+        module gen_const_46;
         class C {
             public x : int;
             C() : x(0) {}
@@ -778,7 +778,7 @@ TEST_CASE("Class: mutable method on const ref parameter rejected", "[gen][const]
 // A const method can be called on a const reference parameter.
 TEST_CASE("Class: const method on const ref parameter allowed", "[gen][const][class]") {
     auto jit = gen_jit(R"SRC(
-        module __cls_const_ref_const__;
+        module gen_const_47;
         class C {
             public x : int;
             C() : x(9) {}
@@ -803,7 +803,7 @@ TEST_CASE("Class: const method on const ref parameter allowed", "[gen][const][cl
 // On a mutable object, the mutable overload is preferred over the const overload.
 TEST_CASE("Class: mutable overload preferred on mutable object", "[gen][const][class][overload]") {
     auto jit = gen_jit(R"SRC(
-        module __cls_overload_mut__;
+        module gen_const_48;
         class C {
             public x : int;
             C() : x(5) {}
@@ -824,7 +824,7 @@ TEST_CASE("Class: mutable overload preferred on mutable object", "[gen][const][c
 // On a const object, the const overload is selected.
 TEST_CASE("Class: const overload selected on const object", "[gen][const][class][overload]") {
     auto jit = gen_jit(R"SRC(
-        module __cls_overload_const__;
+        module gen_const_49;
         class C {
             public x : int;
             C() : x(5) {}
@@ -849,7 +849,7 @@ TEST_CASE("Class: const overload selected on const object", "[gen][const][class]
 // A const method is virtual in a class and dispatches correctly.
 TEST_CASE("Class: const method is virtual and dispatches correctly", "[gen][const][class][virtual]") {
     auto jit = gen_jit(R"SRC(
-        module __cls_const_virt__;
+        module gen_const_50;
         class Base {
             public x : int;
             Base() : x(1) {}
@@ -875,7 +875,7 @@ TEST_CASE("Class: const method is virtual and dispatches correctly", "[gen][cons
 // they are distinct vtable slots (different this-constness = different signature).
 TEST_CASE("Class: mutable method does not override const base method", "[gen][const][class][virtual]") {
     auto jit = gen_jit(R"SRC(
-        module __cls_const_no_override__;
+        module gen_const_51;
         class Base {
             public x : int;
             Base() : x(1) {}
@@ -912,7 +912,7 @@ TEST_CASE("Class: mutable method does not override const base method", "[gen][co
 // Derived const method can call base const method.
 TEST_CASE("Class: derived const method can call base const method", "[gen][const][class][inheritance]") {
     auto jit = gen_jit(R"SRC(
-        module __cls_const_inherit__;
+        module gen_const_52;
         class B {
             public x : int;
             B() : x(3) {}
@@ -936,7 +936,7 @@ TEST_CASE("Class: derived const method can call base const method", "[gen][const
 // Derived const method cannot call base mutable method.
 TEST_CASE("Class: derived const method cannot call base mutable method", "[gen][const][class][inheritance][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __cls_const_inherit_err__;
+        module gen_const_53;
         class B {
             public x : int;
             B() : x(0) {}
@@ -970,7 +970,7 @@ TEST_CASE("Class: derived const method cannot call base mutable method", "[gen][
 TEST_CASE("Const pointer-to-container field: get() returning const T& where T is a pointer, called via '->'",
           "[gen][const][pointer][regression]") {
     auto jit = gen_jit(R"SRC(
-        module __const_ptr_ref_pointer_return__;
+        module gen_const_54;
 
         struct Box {
             v : int = 0;

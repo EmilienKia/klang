@@ -68,7 +68,7 @@
 // =============================================================================
 TEST_CASE("Explicit cast: (int) bool true → 1", "[gen][cast][primitive][bool][int]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_b2i_true__;
+        module gen_cast_01;
         test() : int {
             b : bool = true;
             return (int) b;
@@ -82,7 +82,7 @@ TEST_CASE("Explicit cast: (int) bool true → 1", "[gen][cast][primitive][bool][
 
 TEST_CASE("Explicit cast: (int) bool false → 0", "[gen][cast][primitive][bool][int]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_b2i_false__;
+        module gen_cast_02;
         test() : int {
             b : bool = false;
             return (int) b;
@@ -99,7 +99,7 @@ TEST_CASE("Explicit cast: (int) bool false → 0", "[gen][cast][primitive][bool]
 // =============================================================================
 TEST_CASE("Explicit cast: (long) bool true → 1L", "[gen][cast][primitive][bool][long]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_b2l__;
+        module gen_cast_03;
         test() : long {
             b : bool = true;
             return (long) b;
@@ -116,7 +116,7 @@ TEST_CASE("Explicit cast: (long) bool true → 1L", "[gen][cast][primitive][bool
 // =============================================================================
 TEST_CASE("Explicit cast: (float) bool true → 1.0f", "[gen][cast][primitive][bool][float]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_b2f__;
+        module gen_cast_04;
         test() : float {
             b : bool = true;
             return (float) b;
@@ -130,7 +130,7 @@ TEST_CASE("Explicit cast: (float) bool true → 1.0f", "[gen][cast][primitive][b
 
 TEST_CASE("Explicit cast: (float) bool false → 0.0f", "[gen][cast][primitive][bool][float]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_b2f_false__;
+        module gen_cast_05;
         test() : float {
             b : bool = false;
             return (float) b;
@@ -147,7 +147,7 @@ TEST_CASE("Explicit cast: (float) bool false → 0.0f", "[gen][cast][primitive][
 // =============================================================================
 TEST_CASE("Explicit cast: (double) bool true → 1.0", "[gen][cast][primitive][bool][double]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_b2d__;
+        module gen_cast_06;
         test() : double {
             b : bool = true;
             return (double) b;
@@ -164,7 +164,7 @@ TEST_CASE("Explicit cast: (double) bool true → 1.0", "[gen][cast][primitive][b
 // =============================================================================
 TEST_CASE("Explicit cast: (bool) nonzero int → true", "[gen][cast][primitive][int][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2b_nonzero__;
+        module gen_cast_07;
         test() : int {
             v : int = 42;
             b : bool = (bool) v;
@@ -180,7 +180,7 @@ TEST_CASE("Explicit cast: (bool) nonzero int → true", "[gen][cast][primitive][
 
 TEST_CASE("Explicit cast: (bool) zero int → false", "[gen][cast][primitive][int][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2b_zero__;
+        module gen_cast_08;
         test() : int {
             v : int = 0;
             b : bool = (bool) v;
@@ -196,7 +196,7 @@ TEST_CASE("Explicit cast: (bool) zero int → false", "[gen][cast][primitive][in
 
 TEST_CASE("Explicit cast: (bool) negative int → true", "[gen][cast][primitive][int][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2b_neg__;
+        module gen_cast_09;
         test() : int {
             v : int = -5;
             b : bool = (bool) v;
@@ -215,7 +215,7 @@ TEST_CASE("Explicit cast: (bool) negative int → true", "[gen][cast][primitive]
 // =============================================================================
 TEST_CASE("Explicit cast: (short) int narrowing", "[gen][cast][primitive][int][short]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2s__;
+        module gen_cast_10;
         test() : short {
             v : int = 300;
             return (short) v;
@@ -229,7 +229,7 @@ TEST_CASE("Explicit cast: (short) int narrowing", "[gen][cast][primitive][int][s
 
 TEST_CASE("Explicit cast: (short) int truncation", "[gen][cast][primitive][int][short][trunc]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2s_trunc__;
+        module gen_cast_11;
         test() : short {
             v : int = 70000;
             return (short) v;   // 70000 & 0xFFFF = 4464, signed: 4464
@@ -246,7 +246,7 @@ TEST_CASE("Explicit cast: (short) int truncation", "[gen][cast][primitive][int][
 // =============================================================================
 TEST_CASE("Explicit cast: (long) int widening", "[gen][cast][primitive][int][long]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2l__;
+        module gen_cast_12;
         test() : long {
             v : int = 123456;
             return (long) v;
@@ -260,7 +260,7 @@ TEST_CASE("Explicit cast: (long) int widening", "[gen][cast][primitive][int][lon
 
 TEST_CASE("Explicit cast: (long) negative int widening preserves sign", "[gen][cast][primitive][int][long]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2l_neg__;
+        module gen_cast_13;
         test() : long {
             v : int = -42;
             return (long) v;
@@ -277,7 +277,7 @@ TEST_CASE("Explicit cast: (long) negative int widening preserves sign", "[gen][c
 // =============================================================================
 TEST_CASE("Explicit cast: (float) int", "[gen][cast][primitive][int][float]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2f__;
+        module gen_cast_14;
         test() : float {
             v : int = 42;
             return (float) v;
@@ -294,7 +294,7 @@ TEST_CASE("Explicit cast: (float) int", "[gen][cast][primitive][int][float]") {
 // =============================================================================
 TEST_CASE("Explicit cast: (double) int", "[gen][cast][primitive][int][double]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2d__;
+        module gen_cast_15;
         test() : double {
             v : int = 99;
             return (double) v;
@@ -311,7 +311,7 @@ TEST_CASE("Explicit cast: (double) int", "[gen][cast][primitive][int][double]") 
 // =============================================================================
 TEST_CASE("Explicit cast: (bool) nonzero float → true", "[gen][cast][primitive][float][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_f2b_nonzero__;
+        module gen_cast_16;
         test() : int {
             f : float = 3.14f;
             b : bool = (bool) f;
@@ -327,7 +327,7 @@ TEST_CASE("Explicit cast: (bool) nonzero float → true", "[gen][cast][primitive
 
 TEST_CASE("Explicit cast: (bool) zero float → false", "[gen][cast][primitive][float][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_f2b_zero__;
+        module gen_cast_17;
         test() : int {
             f : float = 0.0f;
             b : bool = (bool) f;
@@ -346,7 +346,7 @@ TEST_CASE("Explicit cast: (bool) zero float → false", "[gen][cast][primitive][
 // =============================================================================
 TEST_CASE("Explicit cast: (int) float truncates toward zero", "[gen][cast][primitive][float][int]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_f2i__;
+        module gen_cast_18;
         test() : int {
             f : float = 3.75f;
             return (int) f;
@@ -360,7 +360,7 @@ TEST_CASE("Explicit cast: (int) float truncates toward zero", "[gen][cast][primi
 
 TEST_CASE("Explicit cast: (int) negative float truncates toward zero", "[gen][cast][primitive][float][int]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_f2i_neg__;
+        module gen_cast_19;
         test() : int {
             f : float = -2.9f;
             return (int) f;
@@ -377,7 +377,7 @@ TEST_CASE("Explicit cast: (int) negative float truncates toward zero", "[gen][ca
 // =============================================================================
 TEST_CASE("Explicit cast: (double) float widening", "[gen][cast][primitive][float][double]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_f2d__;
+        module gen_cast_20;
         test() : double {
             f : float = 1.5f;
             return (double) f;
@@ -394,7 +394,7 @@ TEST_CASE("Explicit cast: (double) float widening", "[gen][cast][primitive][floa
 // =============================================================================
 TEST_CASE("Explicit cast: (bool) nonzero double → true", "[gen][cast][primitive][double][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_d2b_nonzero__;
+        module gen_cast_21;
         test() : int {
             d : double = 0.001d;
             b : bool = (bool) d;
@@ -410,7 +410,7 @@ TEST_CASE("Explicit cast: (bool) nonzero double → true", "[gen][cast][primitiv
 
 TEST_CASE("Explicit cast: (bool) zero double → false", "[gen][cast][primitive][double][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_d2b_zero__;
+        module gen_cast_22;
         test() : int {
             d : double = 0.0d;
             b : bool = (bool) d;
@@ -429,7 +429,7 @@ TEST_CASE("Explicit cast: (bool) zero double → false", "[gen][cast][primitive]
 // =============================================================================
 TEST_CASE("Explicit cast: (int) double truncates", "[gen][cast][primitive][double][int]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_d2i__;
+        module gen_cast_23;
         test() : int {
             d : double = 99.99d;
             return (int) d;
@@ -446,7 +446,7 @@ TEST_CASE("Explicit cast: (int) double truncates", "[gen][cast][primitive][doubl
 // =============================================================================
 TEST_CASE("Explicit cast: (float) double narrowing", "[gen][cast][primitive][double][float]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_d2f__;
+        module gen_cast_24;
         test() : float {
             d : double = 2.5d;
             return (float) d;
@@ -463,7 +463,7 @@ TEST_CASE("Explicit cast: (float) double narrowing", "[gen][cast][primitive][dou
 // =============================================================================
 TEST_CASE("Explicit cast: (int) byte unsigned → int signed widening", "[gen][cast][primitive][byte][int]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_u2i__;
+        module gen_cast_25;
         test() : int {
             b : unsigned byte = 200;
             return (int) b;
@@ -480,7 +480,7 @@ TEST_CASE("Explicit cast: (int) byte unsigned → int signed widening", "[gen][c
 // =============================================================================
 TEST_CASE("Explicit cast: (byte) int signed → byte unsigned narrowing", "[gen][cast][primitive][int][byte]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_i2u__;
+        module gen_cast_26;
         test() : int {
             v : int = 257;
             b : byte = (byte) v;
@@ -498,7 +498,7 @@ TEST_CASE("Explicit cast: (byte) int signed → byte unsigned narrowing", "[gen]
 // =============================================================================
 TEST_CASE("Explicit cast: (long) short widening", "[gen][cast][primitive][short][long]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_s2l__;
+        module gen_cast_27;
         test() : long {
             s : short = -1000;
             return (long) s;
@@ -515,7 +515,7 @@ TEST_CASE("Explicit cast: (long) short widening", "[gen][cast][primitive][short]
 // =============================================================================
 TEST_CASE("Explicit cast: (short) long narrowing truncates", "[gen][cast][primitive][long][short]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_l2s__;
+        module gen_cast_28;
         test() : short {
             l : long = 32767;
             return (short) l;
@@ -532,7 +532,7 @@ TEST_CASE("Explicit cast: (short) long narrowing truncates", "[gen][cast][primit
 // =============================================================================
 TEST_CASE("Explicit cast: (int) int identity is no-op", "[gen][cast][primitive][identity]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_identity__;
+        module gen_cast_29;
         test() : int {
             v : int = 77;
             return (int) v;
@@ -549,7 +549,7 @@ TEST_CASE("Explicit cast: (int) int identity is no-op", "[gen][cast][primitive][
 // =============================================================================
 TEST_CASE("Explicit cast: chained (int)(double) float", "[gen][cast][primitive][chained]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_chained__;
+        module gen_cast_30;
         test() : int {
             f : float = 7.9f;
             return (int)(double) f;
@@ -566,7 +566,7 @@ TEST_CASE("Explicit cast: chained (int)(double) float", "[gen][cast][primitive][
 // =============================================================================
 TEST_CASE("Explicit cast: cast inside arithmetic expression", "[gen][cast][primitive][expr]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_in_expr__;
+        module gen_cast_31;
         test() : int {
             d : double = 10.7d;
             i : int = 3;
@@ -584,7 +584,7 @@ TEST_CASE("Explicit cast: cast inside arithmetic expression", "[gen][cast][primi
 // =============================================================================
 TEST_CASE("Explicit cast: cast of function return value", "[gen][cast][primitive][func]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_func_ret__;
+        module gen_cast_32;
         get_pi() : double {
             return 3.14159d;
         }
@@ -603,7 +603,7 @@ TEST_CASE("Explicit cast: cast of function return value", "[gen][cast][primitive
 // =============================================================================
 TEST_CASE("Explicit cast: (long) integer literal", "[gen][cast][primitive][literal]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_literal__;
+        module gen_cast_33;
         test() : long {
             return (long) 42;
         }
@@ -619,7 +619,7 @@ TEST_CASE("Explicit cast: (long) integer literal", "[gen][cast][primitive][liter
 // =============================================================================
 TEST_CASE("Explicit cast: (int) enum value", "[gen][cast][enum][int]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_e2i__;
+        module gen_cast_34;
         enum Color {
             RED = 0;
             GREEN = 10;
@@ -638,7 +638,7 @@ TEST_CASE("Explicit cast: (int) enum value", "[gen][cast][enum][int]") {
 
 TEST_CASE("Explicit cast: (int) enum value RED=0", "[gen][cast][enum][int]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_e2i_red__;
+        module gen_cast_35;
         enum Color {
             RED;
             GREEN;
@@ -660,7 +660,7 @@ TEST_CASE("Explicit cast: (int) enum value RED=0", "[gen][cast][enum][int]") {
 // =============================================================================
 TEST_CASE("Explicit cast: cast as function argument", "[gen][cast][primitive][arg]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_arg__;
+        module gen_cast_36;
         square(x : int) : int {
             return x * x;
         }
@@ -680,7 +680,7 @@ TEST_CASE("Explicit cast: cast as function argument", "[gen][cast][primitive][ar
 // =============================================================================
 TEST_CASE("Explicit cast: (float) byte unsigned → float", "[gen][cast][primitive][byte][float]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_u2f__;
+        module gen_cast_37;
         test() : float {
             b : unsigned byte = 200;
             return (float) b;
@@ -697,7 +697,7 @@ TEST_CASE("Explicit cast: (float) byte unsigned → float", "[gen][cast][primiti
 // =============================================================================
 TEST_CASE("Explicit cast: (byte) float → byte unsigned", "[gen][cast][primitive][float][byte]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_f2u__;
+        module gen_cast_38;
         test() : int {
             f : float = 100.9f;
             b : byte = (byte) f;
@@ -715,7 +715,7 @@ TEST_CASE("Explicit cast: (byte) float → byte unsigned", "[gen][cast][primitiv
 // =============================================================================
 TEST_CASE("Explicit cast: (double) long", "[gen][cast][primitive][long][double]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_l2d__;
+        module gen_cast_39;
         test() : double {
             l : long = 1000000;
             return (double) l;
@@ -732,7 +732,7 @@ TEST_CASE("Explicit cast: (double) long", "[gen][cast][primitive][long][double]"
 // =============================================================================
 TEST_CASE("Explicit cast: (long) double", "[gen][cast][primitive][double][long]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_d2l__;
+        module gen_cast_40;
         test() : long {
             d : double = 999999.99d;
             return (long) d;
@@ -750,7 +750,7 @@ TEST_CASE("Explicit cast: (long) double", "[gen][cast][primitive][double][long]"
 TEST_CASE("Implicit cast: user-defined cast operator applies for init and args",
           "[gen][cast][implicit][operator]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_udc_implicit__;
+        module gen_cast_41;
 
         class Wrapper {
             public value : int;
@@ -781,7 +781,7 @@ TEST_CASE("Implicit cast: user-defined cast operator applies for init and args",
 
 TEST_CASE("Constant integer casts: safe constant casts evaluate correctly", "[gen][cast][constant]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_const_safe__;
+        module gen_cast_42;
 
         test() : int {
             // Unsigned to signed safe
@@ -802,7 +802,7 @@ TEST_CASE("Constant integer casts: safe constant casts evaluate correctly", "[ge
 
 TEST_CASE("Constant integer casts: various integer widths safe casts", "[gen][cast][constant]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_const_widths__;
+        module gen_cast_43;
 
         test() : int {
             // byte -> unsigned byte

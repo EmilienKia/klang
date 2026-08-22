@@ -32,7 +32,7 @@ using namespace k::parse::ast;
 
 TEST_CASE("Parse enum — simple enum with explicit values", "[parser][enum]") {
     test_logger log;
-    k::source src{"enum Color { RED = 0; GREEN = 1; BLUE = 2; };"};
+    k::source src{"enum Color { RED = 0; GREEN = 1; BLUE = 2; }"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
@@ -48,7 +48,7 @@ TEST_CASE("Parse enum — simple enum with explicit values", "[parser][enum]") {
 
 TEST_CASE("Parse enum — auto-increment values", "[parser][enum]") {
     test_logger log;
-    k::source src{"enum Dir { NORTH; SOUTH; EAST; WEST; };"};
+    k::source src{"enum Dir { NORTH; SOUTH; EAST; WEST; }"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
@@ -61,7 +61,7 @@ TEST_CASE("Parse enum — auto-increment values", "[parser][enum]") {
 
 TEST_CASE("Parse enum — default keyword", "[parser][enum]") {
     test_logger log;
-    k::source src{"enum Status { OK = 0; ERR = 1 default; WARN = 2; };"};
+    k::source src{"enum Status { OK = 0; ERR = 1 default; WARN = 2; }"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
@@ -73,7 +73,7 @@ TEST_CASE("Parse enum — default keyword", "[parser][enum]") {
 
 TEST_CASE("Parse enum — reference to another entry", "[parser][enum]") {
     test_logger log;
-    k::source src{"enum X { A = 1; B = A; };"};
+    k::source src{"enum X { A = 1; B = A; }"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
@@ -84,7 +84,7 @@ TEST_CASE("Parse enum — reference to another entry", "[parser][enum]") {
 
 TEST_CASE("Parse enum — empty enum", "[parser][enum]") {
     test_logger log;
-    k::source src{"enum Empty { };"};
+    k::source src{"enum Empty { }"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
@@ -94,6 +94,16 @@ TEST_CASE("Parse enum — empty enum", "[parser][enum]") {
 TEST_CASE("Parse enum — no trailing semicolon required", "[parser][enum]") {
     test_logger log;
     k::source src{"enum Color { RED = 0; GREEN = 1; BLUE = 2; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_enum_decl();
+    REQUIRE(decl);
+    CHECK(std::string{decl->name.content} == "Color");
+    REQUIRE(decl->entries.size() == 3);
+}
+
+TEST_CASE("Parse enum — optional trailing semicolon", "[parser][enum]") {
+    test_logger log;
+    k::source src{"enum Color { RED = 0; GREEN = 1; BLUE = 2; };"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
@@ -184,12 +194,12 @@ TEST_CASE("Parse — required ';' of non-block declarations is not warned", "[pa
 
 TEST_CASE("Enum — qualified access MonEnum::entry", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_01;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         get_red() : int {
             c : Color = Color::RED;
             return c;
@@ -217,12 +227,12 @@ TEST_CASE("Enum — qualified access MonEnum::entry", "[gen][enum]") {
 
 TEST_CASE("Enum — constructor with entry name MonEnum(entry)", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_02;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         get() : int {
             c : Color(GREEN);
             return c;
@@ -236,12 +246,12 @@ TEST_CASE("Enum — constructor with entry name MonEnum(entry)", "[gen][enum]") 
 
 TEST_CASE("Enum — constructor with numeric value MonEnum(3)", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_03;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         get() : int {
             c : Color(2);
             return c;
@@ -255,12 +265,12 @@ TEST_CASE("Enum — constructor with numeric value MonEnum(3)", "[gen][enum]") {
 
 TEST_CASE("Enum — default construction", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_04;
         enum Status {
             OK = 0;
             ERR = 1 default;
             WARN = 2;
-        };
+        }
         get() : int {
             s : Status;
             return s;
@@ -274,12 +284,12 @@ TEST_CASE("Enum — default construction", "[gen][enum]") {
 
 TEST_CASE("Enum — default construction uses first entry when no explicit default", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_05;
         enum Color {
             RED = 10;
             GREEN = 20;
             BLUE = 30;
-        };
+        }
         get() : int {
             c : Color;
             return c;
@@ -293,12 +303,12 @@ TEST_CASE("Enum — default construction uses first entry when no explicit defau
 
 TEST_CASE("Enum — assignment from numeric value", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_06;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         get() : int {
             c : Color = 2;
             return c;
@@ -316,13 +326,13 @@ TEST_CASE("Enum — assignment from numeric value", "[gen][enum]") {
 
 TEST_CASE("Enum — auto-increment values", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_07;
         enum Dir {
             NORTH;
             SOUTH;
             EAST;
             WEST;
-        };
+        }
         get_north() : int { return Dir::NORTH; }
         get_south() : int { return Dir::SOUTH; }
         get_east() : int { return Dir::EAST; }
@@ -345,14 +355,14 @@ TEST_CASE("Enum — auto-increment values", "[gen][enum]") {
 
 TEST_CASE("Enum — auto-increment after explicit value", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_08;
         enum E {
             A = 5;
             B;
             C;
             D = 10;
             E_;
-        };
+        }
         get_a() : int { return E::A; }
         get_b() : int { return E::B; }
         get_c() : int { return E::C; }
@@ -369,11 +379,11 @@ TEST_CASE("Enum — auto-increment after explicit value", "[gen][enum]") {
 
 TEST_CASE("Enum — alias entries (same value)", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_09;
         enum E {
             A = 1;
             B = A;
-        };
+        }
         get_a() : int { return E::A; }
         get_b() : int { return E::B; }
         check_equal() : int {
@@ -395,12 +405,12 @@ TEST_CASE("Enum — alias entries (same value)", "[gen][enum]") {
 
 TEST_CASE("Enum — equality operator", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_10;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         test_eq() : int {
             a : Color = Color::RED;
             b : Color = Color::RED;
@@ -421,12 +431,12 @@ TEST_CASE("Enum — equality operator", "[gen][enum]") {
 
 TEST_CASE("Enum — relational operators", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_11;
         enum Priority {
             LOW = 1;
             MEDIUM = 5;
             HIGH = 10;
-        };
+        }
         test_less() : int {
             a : Priority = Priority::LOW;
             b : Priority = Priority::HIGH;
@@ -465,12 +475,12 @@ TEST_CASE("Enum — relational operators", "[gen][enum]") {
 
 TEST_CASE("Enum — implicit conversion to int", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_12;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         to_int() : int {
             c : Color = Color::BLUE;
             result : int = c;
@@ -483,12 +493,12 @@ TEST_CASE("Enum — implicit conversion to int", "[gen][enum]") {
 
 TEST_CASE("Enum — pass enum to function expecting int", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_13;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         identity(x : int) : int { return x; }
         get() : int {
             c : Color = Color::GREEN;
@@ -501,12 +511,12 @@ TEST_CASE("Enum — pass enum to function expecting int", "[gen][enum]") {
 
 TEST_CASE("Enum — return enum from function returning int", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_14;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         get_color() : Color {
             return Color::BLUE;
         }
@@ -525,12 +535,12 @@ TEST_CASE("Enum — return enum from function returning int", "[gen][enum]") {
 
 TEST_CASE("Enum — use in if-else chain", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_15;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         describe(c : Color) : int {
             if (c == Color::RED) { return 10; }
             if (c == Color::GREEN) { return 20; }
@@ -549,12 +559,12 @@ TEST_CASE("Enum — use in if-else chain", "[gen][enum]") {
 
 TEST_CASE("Enum — constructor form with qualified entry", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_16;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         get() : int {
             c : Color = Color::GREEN;
             return c;
@@ -566,15 +576,15 @@ TEST_CASE("Enum — constructor form with qualified entry", "[gen][enum]") {
 
 TEST_CASE("Enum — multiple enums in same module", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_17;
         enum Color {
             RED = 0;
             GREEN = 1;
-        };
+        }
         enum Shape {
             CIRCLE = 10;
             SQUARE = 20;
-        };
+        }
         get_color() : int {
             c : Color = Color::GREEN;
             return c;
@@ -591,12 +601,12 @@ TEST_CASE("Enum — multiple enums in same module", "[gen][enum]") {
 
 TEST_CASE("Enum — entry with default and explicit value", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_18;
         enum E {
             A = 10;
             B = 20 default;
             C = 30;
-        };
+        }
         get_default() : int {
             e : E;
             return e;
@@ -614,13 +624,13 @@ TEST_CASE("Enum — entry with default and explicit value", "[gen][enum]") {
 
 TEST_CASE("Enum — auto-increment produces duplicate values (allowed)", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_19;
         enum E {
             A = 1;
             B;
             C = 1;
             D;
-        };
+        }
         get_a() : int { return E::A; }
         get_b() : int { return E::B; }
         get_c() : int { return E::C; }
@@ -635,12 +645,12 @@ TEST_CASE("Enum — auto-increment produces duplicate values (allowed)", "[gen][
 
 TEST_CASE("Enum — comparison between enum and integer literal", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_20;
         enum Color {
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
         check() : int {
             c : Color = Color::GREEN;
             if (c == 1) { return 1; }
@@ -657,7 +667,7 @@ TEST_CASE("Enum — comparison between enum and integer literal", "[gen][enum]")
 
 TEST_CASE("Parse enum — derivation clause", "[parser][enum]") {
     test_logger log;
-    k::source src{"enum Derived : Base { X = 10; };"};
+    k::source src{"enum Derived : Base { X = 10; }"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
@@ -669,7 +679,7 @@ TEST_CASE("Parse enum — derivation clause", "[parser][enum]") {
 
 TEST_CASE("Parse enum — derivation with qualified base name", "[parser][enum]") {
     test_logger log;
-    k::source src{"enum D : ns::Base { X; };"};
+    k::source src{"enum D : ns::Base { X; }"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
@@ -679,7 +689,7 @@ TEST_CASE("Parse enum — derivation with qualified base name", "[parser][enum]"
 
 TEST_CASE("Parse enum — no derivation clause", "[parser][enum]") {
     test_logger log;
-    k::source src{"enum E { A; B; };"};
+    k::source src{"enum E { A; B; }"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
@@ -692,9 +702,9 @@ TEST_CASE("Parse enum — no derivation clause", "[parser][enum]") {
 
 TEST_CASE("Enum derivation — inherited entries accessible", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; B = 2; };
-        enum Derived : Base { C = 3; };
+        module gen_enum_21;
+        enum Base { A = 1; B = 2; }
+        enum Derived : Base { C = 3; }
         get_a() : int { return Derived::A; }
         get_b() : int { return Derived::B; }
         get_c() : int { return Derived::C; }
@@ -707,9 +717,9 @@ TEST_CASE("Enum derivation — inherited entries accessible", "[gen][enum]") {
 
 TEST_CASE("Enum derivation — auto-increment continues from base", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 5; B = 6; };
-        enum Derived : Base { C; D; };
+        module gen_enum_22;
+        enum Base { A = 5; B = 6; }
+        enum Derived : Base { C; D; }
         get_c() : int { return Derived::C; }
         get_d() : int { return Derived::D; }
     )");
@@ -720,9 +730,9 @@ TEST_CASE("Enum derivation — auto-increment continues from base", "[gen][enum]
 
 TEST_CASE("Enum derivation — new entry references base entry", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 10; B = 20; };
-        enum Derived : Base { C = A; D = B; };
+        module gen_enum_23;
+        enum Base { A = 10; B = 20; }
+        enum Derived : Base { C = A; D = B; }
         get_c() : int { return Derived::C; }
         get_d() : int { return Derived::D; }
     )");
@@ -733,9 +743,9 @@ TEST_CASE("Enum derivation — new entry references base entry", "[gen][enum]") 
 
 TEST_CASE("Enum derivation — inherits default from base", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; B = 2 default; };
-        enum Derived : Base { C = 3; };
+        module gen_enum_24;
+        enum Base { A = 1; B = 2 default; }
+        enum Derived : Base { C = 3; }
         get_default() : int {
             d : Derived;
             return d;
@@ -747,9 +757,9 @@ TEST_CASE("Enum derivation — inherits default from base", "[gen][enum]") {
 
 TEST_CASE("Enum derivation — override default in derived", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; B = 2 default; };
-        enum Derived : Base { C = 3 default; };
+        module gen_enum_25;
+        enum Base { A = 1; B = 2 default; }
+        enum Derived : Base { C = 3 default; }
         get_default() : int {
             d : Derived;
             return d;
@@ -761,9 +771,9 @@ TEST_CASE("Enum derivation — override default in derived", "[gen][enum]") {
 
 TEST_CASE("Enum derivation — default is first entry when no explicit default", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; B = 2; };
-        enum Derived : Base { C = 3; };
+        module gen_enum_26;
+        enum Base { A = 1; B = 2; }
+        enum Derived : Base { C = 3; }
         get_default() : int {
             d : Derived;
             return d;
@@ -775,9 +785,9 @@ TEST_CASE("Enum derivation — default is first entry when no explicit default",
 
 TEST_CASE("Enum derivation — constructor with inherited entry name", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 10; B = 20; };
-        enum Derived : Base { C = 30; };
+        module gen_enum_27;
+        enum Base { A = 10; B = 20; }
+        enum Derived : Base { C = 30; }
         get_val() : int {
             d : Derived(A);
             return d;
@@ -789,9 +799,9 @@ TEST_CASE("Enum derivation — constructor with inherited entry name", "[gen][en
 
 TEST_CASE("Enum derivation — constructor with numeric value", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; };
-        enum Derived : Base { B = 2; };
+        module gen_enum_28;
+        enum Base { A = 1; }
+        enum Derived : Base { B = 2; }
         get_val() : int {
             d : Derived(1);
             return d;
@@ -803,10 +813,10 @@ TEST_CASE("Enum derivation — constructor with numeric value", "[gen][enum]") {
 
 TEST_CASE("Enum derivation — multi-level inheritance", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum A { X = 1; };
-        enum B : A { Y = 2; };
-        enum C : B { Z = 3; };
+        module gen_enum_29;
+        enum A { X = 1; }
+        enum B : A { Y = 2; }
+        enum C : B { Z = 3; }
         get_x() : int { return C::X; }
         get_y() : int { return C::Y; }
         get_z() : int { return C::Z; }
@@ -819,10 +829,10 @@ TEST_CASE("Enum derivation — multi-level inheritance", "[gen][enum]") {
 
 TEST_CASE("Enum derivation — multi-level auto-increment", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum A { X = 1; };
-        enum B : A { Y; };
-        enum C : B { Z; };
+        module gen_enum_30;
+        enum A { X = 1; }
+        enum B : A { Y; }
+        enum C : B { Z; }
         get_y() : int { return C::Y; }
         get_z() : int { return C::Z; }
     )");
@@ -833,9 +843,9 @@ TEST_CASE("Enum derivation — multi-level auto-increment", "[gen][enum]") {
 
 TEST_CASE("Enum derivation — duplicate values with base (alias)", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; };
-        enum Derived : Base { B = 1; };
+        module gen_enum_31;
+        enum Base { A = 1; }
+        enum Derived : Base { B = 1; }
         get_a() : int { return Derived::A; }
         get_b() : int { return Derived::B; }
     )");
@@ -846,9 +856,9 @@ TEST_CASE("Enum derivation — duplicate values with base (alias)", "[gen][enum]
 
 TEST_CASE("Enum derivation — Derived to int conversion", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; B = 2; };
-        enum Derived : Base { C = 3; };
+        module gen_enum_32;
+        enum Base { A = 1; B = 2; }
+        enum Derived : Base { C = 3; }
         get_val() : int {
             d : Derived = Derived::C;
             return d;
@@ -860,9 +870,9 @@ TEST_CASE("Enum derivation — Derived to int conversion", "[gen][enum]") {
 
 TEST_CASE("Enum derivation — comparison between inherited and new entries", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; B = 2; };
-        enum Derived : Base { C = 3; };
+        module gen_enum_33;
+        enum Base { A = 1; B = 2; }
+        enum Derived : Base { C = 3; }
         check_eq() : int {
             d : Derived = Derived::A;
             if (d == Derived::A) { return 1; }
@@ -881,9 +891,9 @@ TEST_CASE("Enum derivation — comparison between inherited and new entries", "[
 
 TEST_CASE("Enum derivation — forward declaration order (base after derived)", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Derived : Base { C = 3; };
-        enum Base { A = 1; B = 2; };
+        module gen_enum_34;
+        enum Derived : Base { C = 3; }
+        enum Base { A = 1; B = 2; }
         get_a() : int { return Derived::A; }
         get_c() : int { return Derived::C; }
     )");
@@ -894,10 +904,10 @@ TEST_CASE("Enum derivation — forward declaration order (base after derived)", 
 
 TEST_CASE("Enum derivation — multiple derived enums from same base", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; };
-        enum D1 : Base { B = 2; };
-        enum D2 : Base { C = 3; };
+        module gen_enum_35;
+        enum Base { A = 1; }
+        enum D1 : Base { B = 2; }
+        enum D2 : Base { C = 3; }
         get_d1b() : int { return D1::B; }
         get_d2c() : int { return D2::C; }
         get_d1a() : int { return D1::A; }
@@ -913,24 +923,24 @@ TEST_CASE("Enum derivation — multiple derived enums from same base", "[gen][en
 TEST_CASE("Enum derivation — cycle detection", "[gen][enum]") {
     // This should fail with a circular derivation error
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
-        enum A : B { X = 1; };
-        enum B : A { Y = 2; };
+        module gen_enum_36;
+        enum A : B { X = 1; }
+        enum B : A { Y = 2; }
     )"));
 }
 
 TEST_CASE("Enum derivation — base not found error", "[gen][enum]") {
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
-        enum D : NonExistent { X = 1; };
+        module gen_enum_37;
+        enum D : NonExistent { X = 1; }
     )"));
 }
 
 TEST_CASE("Enum derivation — Derived to Base implicit conversion", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; B = 2; };
-        enum Derived : Base { C = 3; };
+        module gen_enum_38;
+        enum Base { A = 1; B = 2; }
+        enum Derived : Base { C = 3; }
         accept_base(b : Base) : int { return b; }
         test_upcast() : int {
             d : Derived = Derived::C;
@@ -943,9 +953,9 @@ TEST_CASE("Enum derivation — Derived to Base implicit conversion", "[gen][enum
 
 TEST_CASE("Enum derivation — empty derived enum", "[gen][enum]") {
     auto jit = gen_jit(R"(
-        module test;
-        enum Base { A = 1; B = 2 default; };
-        enum Derived : Base { };
+        module gen_enum_39;
+        enum Base { A = 1; B = 2 default; }
+        enum Derived : Base { }
         get_a() : int { return Derived::A; }
         get_default() : int {
             d : Derived;
@@ -970,7 +980,7 @@ TEST_CASE("Typed enum — parser supports object-backed entry forms", "[parser][
             SECOND_VALUE() default;
             THIRD_VALUE{.a = 42};
             ANOTHER_SECOND_VALUE = SECOND_VALUE;
-        };
+        }
     )"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
@@ -1010,7 +1020,7 @@ TEST_CASE("Typed enum — parser parses class-backed implicit entries", "[parser
             A;
             B;
             C;
-        };
+        }
     )"};
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
@@ -1032,11 +1042,11 @@ TEST_CASE("Typed enum — parser parses class-backed implicit entries", "[parser
 
 TEST_CASE("Typed enum — explicit integer underlying keeps classic behavior", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_40;
         enum Small : unsigned byte {
             A = 1;
             B = 2;
-        };
+        }
         test() : int {
             v : Small = Small::B;
             return v;
@@ -1048,14 +1058,14 @@ TEST_CASE("Typed enum — explicit integer underlying keeps classic behavior", "
 
 TEST_CASE("Typed enum — derived enum inherits explicit integer underlying", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_41;
         enum Small : unsigned byte {
             A = 250;
             B;
-        };
+        }
         enum SmallMore : Small {
             C;
-        };
+        }
         get_a() : int { return SmallMore::A; }
         get_b() : int { return SmallMore::B; }
         get_c() : int { return SmallMore::C; }
@@ -1068,14 +1078,14 @@ TEST_CASE("Typed enum — derived enum inherits explicit integer underlying", "[
 
 TEST_CASE("Typed enum — object-backed zero-init entry", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_42;
         struct Vec2 {
             x : int;
             y : int;
         }
         enum Dir : Vec2 {
             UP;
-        };
+        }
         test() : int {
             p: const Vec2& = Dir::UP;
             return p.x + p.y;
@@ -1087,7 +1097,7 @@ TEST_CASE("Typed enum — object-backed zero-init entry", "[gen][enum][typed][ex
 
 TEST_CASE("Typed enum — class-backed implicit auto-increment values", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_43;
         class Marker {
             public id : int;
         }
@@ -1095,7 +1105,7 @@ TEST_CASE("Typed enum — class-backed implicit auto-increment values", "[gen][e
             FIRST;
             SECOND;
             THIRD;
-        };
+        }
         get_first() : int { return Kind::FIRST; }
         get_second() : int { return Kind::SECOND; }
         get_third() : int { return Kind::THIRD; }
@@ -1108,7 +1118,7 @@ TEST_CASE("Typed enum — class-backed implicit auto-increment values", "[gen][e
 
 TEST_CASE("Typed enum — class-backed implicit ++ from previous value", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_44;
         class Counter {
             public value : int;
             public Counter() : value(0) {}
@@ -1118,7 +1128,7 @@ TEST_CASE("Typed enum — class-backed implicit ++ from previous value", "[gen][
             TEN{.value = 10};
             ELEVEN;
             TWELVE;
-        };
+        }
         get_eleven_value() : int {
             c : const Counter& = Numbers::ELEVEN;
             return c.value;
@@ -1135,7 +1145,7 @@ TEST_CASE("Typed enum — class-backed implicit ++ from previous value", "[gen][
 
 TEST_CASE("Typed enum — enum entry to const underlying reference", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_45;
         struct Vec2 {
             x: int;
             y: int;
@@ -1143,7 +1153,7 @@ TEST_CASE("Typed enum — enum entry to const underlying reference", "[gen][enum
         enum Dir : Vec2 {
             UP{.x = 0, .y = 1};
             RIGHT{.x = 1, .y = 0};
-        };
+        }
         sum_right() : int {
             p: const Vec2& = Dir::RIGHT;
             return p.x + p.y;
@@ -1155,7 +1165,7 @@ TEST_CASE("Typed enum — enum entry to const underlying reference", "[gen][enum
 
 TEST_CASE("Typed enum — object to enum conversion and soft-fail in if", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_46;
         struct S {
             a: int;
             equals(other: S&) : bool { return a == other.a; }
@@ -1163,7 +1173,7 @@ TEST_CASE("Typed enum — object to enum conversion and soft-fail in if", "[gen]
         enum E : S {
             V1{.a = 1} default;
             V2{.a = 2};
-        };
+        }
         test_match() : int {
             s : S{.a = 2};
             e : E = s;
@@ -1185,7 +1195,7 @@ TEST_CASE("Typed enum — object to enum conversion and soft-fail in if", "[gen]
 
 TEST_CASE("Typed enum — object to enum conversion hard-fails outside if", "[gen][enum][typed][expected]") {
     auto res = build_and_exec(R"(
-        module test;
+        module gen_enum_47;
         struct S {
             a: int;
             equals(other: S&) : bool { return a == other.a; }
@@ -1193,7 +1203,7 @@ TEST_CASE("Typed enum — object to enum conversion hard-fails outside if", "[ge
         enum E : S {
             V1{.a = 1} default;
             V2{.a = 2};
-        };
+        }
         main() : int {
             s : S{.a = 99};
             e : E = s;
@@ -1205,14 +1215,14 @@ TEST_CASE("Typed enum — object to enum conversion hard-fails outside if", "[ge
 
 TEST_CASE("Typed enum — constructor entry args initialize backing object", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_48;
         struct Point {
             x: int;
             y: int;
         }
         enum Dir : Point {
             UP(0, 1);
-        };
+        }
         get_y() : int {
             p : const Point& = Dir::UP;
             return p.y;
@@ -1224,14 +1234,14 @@ TEST_CASE("Typed enum — constructor entry args initialize backing object", "[g
 
 TEST_CASE("Typed enum — alias shares backing object slot", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_49;
         struct S {
             a: int;
         }
         enum E : S {
             V1{.a = 10};
             A1 = V1;
-        };
+        }
         read_alias() : int {
             s : const S& = E::A1;
             return s.a;
@@ -1243,13 +1253,13 @@ TEST_CASE("Typed enum — alias shares backing object slot", "[gen][enum][typed]
 
 TEST_CASE("Typed enum — object to enum conversion requires equality", "[gen][enum][typed][expected]") {
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
+        module gen_enum_50;
         struct S {
             a: int;
         }
         enum E : S {
             V1{.a = 1} default;
-        };
+        }
         main() : int {
             s : S{.a = 1};
             e : E = s;
@@ -1278,7 +1288,7 @@ TEST_CASE("Typed enum — object to enum conversion requires equality", "[gen][e
 TEST_CASE("Enum member default init keeps underlying width (no stack corruption)",
           "[gen][enum][default-init][regression]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_51;
         enum Status { Idle; Running = 5; Done; }
         struct Task {
             id : unsigned int;
@@ -1319,7 +1329,7 @@ TEST_CASE("Enum member default init keeps underlying width (no stack corruption)
 TEST_CASE("Enum template-argument member default init keeps underlying width",
           "[gen][enum][default-init][template][regression]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_enum_52;
         enum Err { OutOfData; Closed; }
 
         template<typename R, typename E>
@@ -1365,7 +1375,7 @@ TEST_CASE("Enum template-argument member default init keeps underlying width",
 TEST_CASE("Enum explicit underlying type is honored, not the smallest-fit type",
           "[gen][enum][underlying][regression]") {
     auto comp = compile_model(R"(
-        module test;
+        module gen_enum_53;
         enum ErrA : byte { A; B; }
         enum ErrB : long { A; B; }
     )");
@@ -1391,7 +1401,7 @@ TEST_CASE("Struct fields keep distinct enum underlying widths (no layout collisi
     // emit `%Holder = type { i8, i8 }` for both fields regardless of ErrB's
     // explicit 'long' underlying type.
     auto comp = compile_model(R"(
-        module test;
+        module gen_enum_54;
         enum ErrA : byte { A; B; }
         enum ErrB : long { A; B; }
         struct Holder {
@@ -1418,7 +1428,7 @@ TEST_CASE("Enum explicit underlying type still applies when it matches the small
     // Sanity check: the explicit-type path must not regress the common case
     // where the declared type happens to be the smallest fit anyway.
     auto comp = compile_model(R"(
-        module test;
+        module gen_enum_55;
         enum Flag : byte { On; Off; }
     )");
     REQUIRE(comp != nullptr);
@@ -1432,7 +1442,7 @@ TEST_CASE("Enum explicit underlying type still applies when it matches the small
 TEST_CASE("Enum explicit underlying type rejects out-of-range entry values",
           "[gen][enum][underlying][regression]") {
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
+        module gen_enum_56;
         enum TooSmall : byte { A = 1000; }
     )"));
 }

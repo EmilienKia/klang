@@ -26,7 +26,7 @@
 TEST_CASE("[A12] M12: designated aggregate value template argument compiles",
           "[milestone12][template][value-param][aggregate][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m12_a__;
+        module gen_template_aggregate_values_01;
 
         struct Point {
             x : int;
@@ -42,7 +42,7 @@ TEST_CASE("[A12] M12: designated aggregate value template argument compiles",
     )SRC");
 
     REQUIRE(jit != nullptr);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN9__m12_a__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN32gen_template_aggregate_values_014testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 1);
 }
@@ -50,7 +50,7 @@ TEST_CASE("[A12] M12: designated aggregate value template argument compiles",
 TEST_CASE("[B12] M12: nested designated aggregate value template argument compiles",
           "[milestone12][template][value-param][aggregate][nested][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m12_b__;
+        module gen_template_aggregate_values_02;
 
         struct Point {
             x : int;
@@ -71,7 +71,7 @@ TEST_CASE("[B12] M12: nested designated aggregate value template argument compil
     )SRC");
 
     REQUIRE(jit != nullptr);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN9__m12_b__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN32gen_template_aggregate_values_024testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 1);
 }
@@ -79,7 +79,7 @@ TEST_CASE("[B12] M12: nested designated aggregate value template argument compil
 TEST_CASE("[C12] M12: positional aggregate value template argument is rejected",
           "[milestone12][template][value-param][aggregate][error]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module __m12_c__;
+        module gen_template_aggregate_values_03;
 
         struct Point {
             x : int;
@@ -98,7 +98,7 @@ TEST_CASE("[C12] M12: positional aggregate value template argument is rejected",
 TEST_CASE("[D12] M12: unknown designated member is rejected",
           "[milestone12][template][value-param][aggregate][error]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module __m12_d__;
+        module gen_template_aggregate_values_04;
 
         struct Point {
             x : int;
@@ -117,7 +117,7 @@ TEST_CASE("[D12] M12: unknown designated member is rejected",
 TEST_CASE("[E12] M12: missing designated member is rejected",
           "[milestone12][template][value-param][aggregate][error]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module __m12_e__;
+        module gen_template_aggregate_values_05;
 
         struct Point {
             x : int;
@@ -166,7 +166,7 @@ TEST_CASE("[F12] M12: aggregate values are encoded distinctly in instantiation k
 TEST_CASE("[G12] M12: aggregate value parameter defaults",
           "[milestone12][template][value-param][aggregate][default][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m12_g__;
+        module gen_template_aggregate_values_06;
 
         struct Point {
             x : int;
@@ -182,7 +182,7 @@ TEST_CASE("[G12] M12: aggregate value parameter defaults",
     )SRC");
 
     REQUIRE(jit != nullptr);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN9__m12_g__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN32gen_template_aggregate_values_064testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 2);
 }
@@ -190,7 +190,7 @@ TEST_CASE("[G12] M12: aggregate value parameter defaults",
 TEST_CASE("[H12] M12: aggregate value parameter member access",
           "[milestone12][template][value-param][aggregate][member][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m12_h__;
+        module gen_template_aggregate_values_07;
 
         struct Point {
             x : int;
@@ -213,7 +213,7 @@ TEST_CASE("[H12] M12: aggregate value parameter member access",
     )SRC");
 
     REQUIRE(jit != nullptr);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN9__m12_h__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN32gen_template_aggregate_values_074testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 12);
 }
@@ -221,7 +221,7 @@ TEST_CASE("[H12] M12: aggregate value parameter member access",
 TEST_CASE("[I12] M12: aggregate value parameter direct usage",
           "[milestone12][template][value-param][aggregate][direct][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m12_i__;
+        module gen_template_aggregate_values_08;
 
         struct Point {
             x : int;
@@ -254,7 +254,7 @@ TEST_CASE("[I12] M12: aggregate value parameter direct usage",
     )SRC");
 
     REQUIRE(jit != nullptr);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN9__m12_i__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN32gen_template_aggregate_values_084testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 30);
 }
@@ -262,7 +262,7 @@ TEST_CASE("[I12] M12: aggregate value parameter direct usage",
 TEST_CASE("[J12] M12: aggregate member value used as full aggregate",
           "[milestone12][template][value-param][aggregate][member][direct][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m12_j__;
+        module gen_template_aggregate_values_09;
 
         struct Point {
             x : int;
@@ -286,7 +286,7 @@ TEST_CASE("[J12] M12: aggregate member value used as full aggregate",
     )SRC");
 
     REQUIRE(jit != nullptr);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN9__m12_j__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN32gen_template_aggregate_values_094testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 15);
 }
@@ -294,7 +294,7 @@ TEST_CASE("[J12] M12: aggregate member value used as full aggregate",
 TEST_CASE("[K12] M12: aggregate default value direct local usage",
           "[milestone12][template][value-param][aggregate][default][direct][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m12_k__;
+        module gen_template_aggregate_values_10;
 
         struct Point {
             x : int;
@@ -313,7 +313,7 @@ TEST_CASE("[K12] M12: aggregate default value direct local usage",
     )SRC");
 
     REQUIRE(jit != nullptr);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN9__m12_k__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN32gen_template_aggregate_values_104testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 6);
 }

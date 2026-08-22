@@ -27,13 +27,13 @@ using namespace k::parse::ast;
 
 TEST_CASE("Template union basic instantiation", "[gen][union][template]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_template_01;
         template<typename T>
         union MaybeVal {
             value: T;
             none: byte;
         }
-        fun get_value() : int {
+        get_value() : int {
             o : MaybeVal<int>;
             o.value = 42;
             return o.value;
@@ -47,18 +47,18 @@ TEST_CASE("Template union basic instantiation", "[gen][union][template]") {
 
 TEST_CASE("Template union multiple type params", "[gen][union][template]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_template_02;
         template<typename T, typename U>
         union Either {
             left: T;
             right: U;
         }
-        fun get_left() : int {
+        get_left() : int {
             e : Either<int, long>;
             e.left = 10;
             return e.left;
         }
-        fun get_right() : long {
+        get_right() : long {
             e : Either<int, long>;
             e.right = 99;
             return e.right;
@@ -75,18 +75,18 @@ TEST_CASE("Template union multiple type params", "[gen][union][template]") {
 
 TEST_CASE("Template union distinct instantiations are different types", "[gen][union][template]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_template_03;
         template<typename T>
         union Opt {
             value: T;
             none: byte;
         }
-        fun test_int() : int {
+        test_int() : int {
             o : Opt<int>;
             o.value = 7;
             return o.value;
         }
-        fun test_long() : long {
+        test_long() : long {
             o : Opt<long>;
             o.value = 123;
             return o.value;
@@ -103,13 +103,13 @@ TEST_CASE("Template union distinct instantiations are different types", "[gen][u
 
 TEST_CASE("Template union discriminant tracking", "[gen][union][template]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_template_04;
         template<typename T>
         union Opt {
             value: T;
             none: byte;
         }
-        fun test_disc() : int {
+        test_disc() : int {
             o : Opt<int>;
             o.value = 42;
             val : int = o.value;
@@ -125,16 +125,16 @@ TEST_CASE("Template union discriminant tracking", "[gen][union][template]") {
 
 TEST_CASE("Template union pass by reference", "[gen][union][template]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_template_05;
         template<typename T>
         union Opt {
             value: T;
             none: byte;
         }
-        fun read_opt(o: Opt<int>&) : int {
+        read_opt(o: Opt<int>&) : int {
             return o.value;
         }
-        fun test_ref() : int {
+        test_ref() : int {
             o : Opt<int>;
             o.value = 55;
             return read_opt(o);
@@ -152,23 +152,23 @@ TEST_CASE("Template union pass by reference", "[gen][union][template]") {
 
 TEST_CASE("Template union exported and instantiated cross-module", "[gen][union][template][import]") {
     auto result = build_exec_with_lib(R"(
-        module mylib;
+        module gen_union_template_06;
         public:
         template<typename T>
         union MaybeVal {
             value: T;
             none: byte;
         }
-        fun get_opt_value() : int {
+        get_opt_value() : int {
             o : MaybeVal<int>;
             o.value = 77;
             return o.value;
         }
     )", R"(
-        module main;
-        import mylib;
-        fun main() : int {
-            return mylib::get_opt_value();
+        module gen_union_template_07;
+        import gen_union_template_06;
+        main() : int {
+            return gen_union_template_06::get_opt_value();
         }
     )");
     REQUIRE(result.exit_code == 77);
@@ -176,18 +176,18 @@ TEST_CASE("Template union exported and instantiated cross-module", "[gen][union]
 
 TEST_CASE("Template union definition imported and instantiated by consumer", "[gen][union][template][import]") {
     auto result = build_exec_with_lib(R"(
-        module mylib;
+        module gen_union_template_08;
         public:
         template<typename T>
         union Wrapper {
             val: T;
             empty: byte;
         }
-        fun dummy() : int { return 0; }
+        dummy() : int { return 0; }
     )", R"(
-        module main;
-        import mylib;
-        fun main() : int {
+        module gen_union_template_09;
+        import gen_union_template_08;
+        main() : int {
             w : Wrapper<int>;
             w.val = 33;
             return w.val;
@@ -213,7 +213,7 @@ TEST_CASE("Template union definition imported and instantiated by consumer", "[g
 TEST_CASE("Nested union in a template: sibling instantiations keep their own layout",
           "[gen][union][template][nested-layout]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_template_10;
         template<typename R, typename E>
         struct Holder {
             private:
@@ -259,7 +259,7 @@ TEST_CASE("Nested union in a template: sibling instantiations keep their own lay
 TEST_CASE("Nested union in a template: three payload sizes coexist",
           "[gen][union][template][nested-layout]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_template_11;
         template<typename R>
         struct Box {
             private:
@@ -298,7 +298,7 @@ TEST_CASE("Nested union in a template survives a KDI export/import round-trip",
     // because every instantiation's union was the anonymous `%_union`, all of them collapsed
     // onto a single 4-byte layout in the consumer.
     auto result = build_exec_with_lib(R"(
-        module mylib;
+        module gen_union_template_12;
         public:
         template<typename R, typename E>
         struct Holder {
@@ -324,12 +324,12 @@ TEST_CASE("Nested union in a template survives a KDI export/import round-trip",
             return h.getResult();
         }
     )", R"(
-        module main;
-        import mylib;
+        module gen_union_template_13;
+        import gen_union_template_12;
         main() : int {
-            if (mylib::make_small(7) != 7) return 1;
-            if (mylib::make_big(-1) != -1) return 2;
-            if (mylib::make_big(1234567890123) != 1234567890123) return 3;
+            if (gen_union_template_12::make_small(7) != 7) return 1;
+            if (gen_union_template_12::make_big(-1) != -1) return 2;
+            if (gen_union_template_12::make_big(1234567890123) != 1234567890123) return 3;
             return 0;
         }
     )");

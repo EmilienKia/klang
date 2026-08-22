@@ -50,7 +50,7 @@ TEST_CASE("Mutually-recursive template base instantiation is bounded and diagnos
           "[template][instantiation][recursion-guard]") {
     REQUIRE_THROWS_AS(
         gen_jit_throws(R"SRC(
-            module __tpl_recursion_guard__;
+            module gen_template_recursion_guard_01;
 
             template<typename T>
             class A : public B<T> {

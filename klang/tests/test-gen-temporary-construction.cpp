@@ -37,7 +37,7 @@
 
 TEST_CASE("Temporary construction: struct as function argument", "[gen][temporary_ctor]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_ctor_arg__;
+module gen_temporary_construction_01;
 
 struct Point {
     x : int;
@@ -65,7 +65,7 @@ test() : int {
 
 TEST_CASE("Temporary construction: struct in return statement", "[gen][temporary_ctor]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_ctor_return__;
+module gen_temporary_construction_02;
 
 struct Pair {
     a : int;
@@ -94,7 +94,7 @@ test() : int {
 
 TEST_CASE("Temporary construction: default ctor (no args)", "[gen][temporary_ctor]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_ctor_default__;
+module gen_temporary_construction_03;
 
 struct Counter {
     val : int;
@@ -121,7 +121,7 @@ test() : int {
 
 TEST_CASE("Temporary construction: destructor called", "[gen][temporary_ctor]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_ctor_dtor__;
+module gen_temporary_construction_04;
 
 g_dtors : int = 0;
 
@@ -156,7 +156,7 @@ test() : int {
 
 TEST_CASE("Temporary construction: two temporaries as args", "[gen][temporary_ctor]") {
     auto jit = gen_jit(R"SRC(
-module __test_tmp_ctor_two__;
+module gen_temporary_construction_05;
 
 struct Val {
     n : int;
@@ -183,7 +183,7 @@ test() : int {
 
 TEST_CASE("Temporary construction: abstract class rejected", "[gen][temporary_ctor]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __test_tmp_ctor_abstract__;
+module gen_temporary_construction_06;
 
 abstract class Base {
     Base() {}

@@ -78,6 +78,7 @@ fs::path build_static_lib(const fs::path& klangc, const fs::path& dir,
     return archive;
 }
 } // namespace
+
 TEST_CASE("klangc: static-link diamond of a libk template instantiation",
           "[klangc][instantiation-diamond-static]") {
     auto klangc = find_klangc();
@@ -89,8 +90,8 @@ TEST_CASE("klangc: static-link diamond of a libk template instantiation",
     fs::create_directories(dir, ec);
     REQUIRE(!ec);
     // Libraries A and B both instantiate ::k::Optional<int> (k auto-imported).
-    build_static_lib(klangc, dir, "liba", R"K(
-        module liba;
+    build_static_lib(klangc, dir, "klangc_static_diamond_01", R"K(
+        module klangc_static_diamond_01;
         makeA() : int {
             v : int = 40;
             z : int = 0;
@@ -99,8 +100,8 @@ TEST_CASE("klangc: static-link diamond of a libk template instantiation",
             return o.getOr(z);
         }
     )K");
-    build_static_lib(klangc, dir, "libb", R"K(
-        module libb;
+    build_static_lib(klangc, dir, "klangc_static_diamond_02", R"K(
+        module klangc_static_diamond_02;
         makeB() : int {
             v : int = 2;
             z : int = 0;
@@ -111,9 +112,9 @@ TEST_CASE("klangc: static-link diamond of a libk template instantiation",
     )K");
     // Executable C imports both and also instantiates ::k::Optional<int>.
     write_file(dir, "mainc.k", R"K(
-        module mainc;
-        import liba;
-        import libb;
+        module klangc_static_diamond_03;
+        import klangc_static_diamond_01;
+        import klangc_static_diamond_02;
         main() : int {
             z : int = 0;
             o : Optional<int>;
@@ -172,8 +173,8 @@ TEST_CASE("klangc: static-link diamond of a user-declared template instantiation
     REQUIRE(!ec);
     // The template-defining library (the template's true origin). It is never
     // instantiated here -- each consumer re-synthesises ::boxlib::Box<int> itself.
-    build_static_lib(klangc, dir, "boxlib", R"K(
-        module boxlib;
+    build_static_lib(klangc, dir, "klangc_static_diamond_04", R"K(
+        module klangc_static_diamond_04;
         template<typename T>
         struct Box {
             val : T;
@@ -182,32 +183,32 @@ TEST_CASE("klangc: static-link diamond of a user-declared template instantiation
     )K");
     // Libraries A and B both import boxlib and instantiate ::boxlib::Box<int>.
     // -I dir lets them resolve boxlib.kdi.
-    build_static_lib(klangc, dir, "boxa", R"K(
-        module boxa;
-        import boxlib;
+    build_static_lib(klangc, dir, "klangc_static_diamond_05", R"K(
+        module klangc_static_diamond_05;
+        import klangc_static_diamond_04;
         makeBoxA() : int {
-            b : boxlib::Box<int>;
+            b : klangc_static_diamond_04::Box<int>;
             b.val = 40;
             return b.val;
         }
     )K", {"-I", dir.string()});
-    build_static_lib(klangc, dir, "boxb", R"K(
-        module boxb;
-        import boxlib;
+    build_static_lib(klangc, dir, "klangc_static_diamond_06", R"K(
+        module klangc_static_diamond_06;
+        import klangc_static_diamond_04;
         makeBoxB() : int {
-            b : boxlib::Box<int>;
+            b : klangc_static_diamond_04::Box<int>;
             b.val = 2;
             return b.val;
         }
     )K", {"-I", dir.string()});
     // Executable imports boxlib + both A and B and also instantiates Box<int>.
     write_file(dir, "boxmain.k", R"K(
-        module boxmain;
-        import boxlib;
-        import boxa;
-        import boxb;
+        module klangc_static_diamond_07;
+        import klangc_static_diamond_04;
+        import klangc_static_diamond_05;
+        import klangc_static_diamond_06;
         main() : int {
-            b : boxlib::Box<int>;
+            b : klangc_static_diamond_04::Box<int>;
             b.val = 0;
             return makeBoxA() + makeBoxB() + b.val;
         }

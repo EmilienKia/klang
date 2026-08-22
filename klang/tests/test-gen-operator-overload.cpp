@@ -166,7 +166,7 @@ struct B {
 
 TEST_CASE("Struct member operator + overload", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_add__;
+module gen_operator_overload_01;
 struct Vec2 {
     x: int;
     y: int;
@@ -182,14 +182,14 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN10__op_add__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_014testEv");
     REQUIRE(fn);
     CHECK(fn() == 10);
 }
 
 TEST_CASE("Struct member operator - overload", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_sub__;
+module gen_operator_overload_02;
 struct Vec2 {
     x: int;
     y: int;
@@ -205,14 +205,14 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN10__op_sub__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_024testEv");
     REQUIRE(fn);
     CHECK(fn() == 22);
 }
 
 TEST_CASE("Struct member operator * / % overloads", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_muldiv__;
+module gen_operator_overload_03;
 struct Num {
     v: int;
     Num(av: int) : v(av) {}
@@ -225,11 +225,11 @@ test_div() : int { a: Num(42); b: Num(6); return a / b; }
 test_mod() : int { a: Num(17); b: Num(5); return a % b; }
 )SRC");
     REQUIRE(jit);
-    auto fn_mul = jit->lookup_symbol<int(*)()>("_KFN13__op_muldiv__8test_mulEv");
+    auto fn_mul = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_038test_mulEv");
     REQUIRE(fn_mul); CHECK(fn_mul() == 42);
-    auto fn_div = jit->lookup_symbol<int(*)()>("_KFN13__op_muldiv__8test_divEv");
+    auto fn_div = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_038test_divEv");
     REQUIRE(fn_div); CHECK(fn_div() == 7);
-    auto fn_mod = jit->lookup_symbol<int(*)()>("_KFN13__op_muldiv__8test_modEv");
+    auto fn_mod = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_038test_modEv");
     REQUIRE(fn_mod); CHECK(fn_mod() == 2);
 }
 
@@ -239,7 +239,7 @@ test_mod() : int { a: Num(17); b: Num(5); return a % b; }
 
 TEST_CASE("Struct member bitwise operator overloads", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_bit__;
+module gen_operator_overload_04;
 struct Bits {
     v: int;
     Bits(av: int) : v(av) {}
@@ -264,17 +264,17 @@ test_xor() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_or = jit->lookup_symbol<int(*)()>("_KFN10__op_bit__7test_orEv");
+    auto fn_or = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_047test_orEv");
     REQUIRE(fn_or); CHECK(fn_or() == 7);
-    auto fn_and = jit->lookup_symbol<int(*)()>("_KFN10__op_bit__8test_andEv");
+    auto fn_and = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_048test_andEv");
     REQUIRE(fn_and); CHECK(fn_and() == 1);
-    auto fn_xor = jit->lookup_symbol<int(*)()>("_KFN10__op_bit__8test_xorEv");
+    auto fn_xor = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_048test_xorEv");
     REQUIRE(fn_xor); CHECK(fn_xor() == 6);
 }
 
 TEST_CASE("Struct member shift operator overloads", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_shift__;
+module gen_operator_overload_05;
 struct Sh {
     v: int;
     Sh(av: int) : v(av) {}
@@ -285,9 +285,9 @@ test_shl() : int { a: Sh(1); b: Sh(3); return a << b; }
 test_shr() : int { a: Sh(24); b: Sh(2); return a >> b; }
 )SRC");
     REQUIRE(jit);
-    auto fn_shl = jit->lookup_symbol<int(*)()>("_KFN12__op_shift__8test_shlEv");
+    auto fn_shl = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_058test_shlEv");
     REQUIRE(fn_shl); CHECK(fn_shl() == 8);
-    auto fn_shr = jit->lookup_symbol<int(*)()>("_KFN12__op_shift__8test_shrEv");
+    auto fn_shr = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_058test_shrEv");
     REQUIRE(fn_shr); CHECK(fn_shr() == 6);
 }
 
@@ -297,7 +297,7 @@ test_shr() : int { a: Sh(24); b: Sh(2); return a >> b; }
 
 TEST_CASE("Struct member comparison operator overloads", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_cmp__;
+module gen_operator_overload_06;
 struct Cmp {
     v: int;
     Cmp(av: int) : v(av) {}
@@ -316,17 +316,17 @@ test_le()  : bool { a: Cmp(5); b: Cmp(5); return a <= b; }
 test_ge()  : bool { a: Cmp(5); b: Cmp(5); return a >= b; }
 )SRC");
     REQUIRE(jit);
-    auto fn_eq = jit->lookup_symbol<bool(*)()>("_KFN10__op_cmp__7test_eqEv");
+    auto fn_eq = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_067test_eqEv");
     REQUIRE(fn_eq); CHECK(fn_eq() == true);
-    auto fn_ne = jit->lookup_symbol<bool(*)()>("_KFN10__op_cmp__7test_neEv");
+    auto fn_ne = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_067test_neEv");
     REQUIRE(fn_ne); CHECK(fn_ne() == true);
-    auto fn_lt = jit->lookup_symbol<bool(*)()>("_KFN10__op_cmp__7test_ltEv");
+    auto fn_lt = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_067test_ltEv");
     REQUIRE(fn_lt); CHECK(fn_lt() == true);
-    auto fn_gt = jit->lookup_symbol<bool(*)()>("_KFN10__op_cmp__7test_gtEv");
+    auto fn_gt = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_067test_gtEv");
     REQUIRE(fn_gt); CHECK(fn_gt() == true);
-    auto fn_le = jit->lookup_symbol<bool(*)()>("_KFN10__op_cmp__7test_leEv");
+    auto fn_le = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_067test_leEv");
     REQUIRE(fn_le); CHECK(fn_le() == true);
-    auto fn_ge = jit->lookup_symbol<bool(*)()>("_KFN10__op_cmp__7test_geEv");
+    auto fn_ge = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_067test_geEv");
     REQUIRE(fn_ge); CHECK(fn_ge() == true);
 }
 
@@ -336,7 +336,7 @@ test_ge()  : bool { a: Cmp(5); b: Cmp(5); return a >= b; }
 
 TEST_CASE("Struct member unary operator overloads", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_unary__;
+module gen_operator_overload_07;
 struct Val {
     v: int;
     Val(av: int) : v(av) {}
@@ -349,17 +349,17 @@ test_pos() : int { a: Val(7); return +a; }
 test_bnot() : int { a: Val(0); return ~a; }
 )SRC");
     REQUIRE(jit);
-    auto fn_neg = jit->lookup_symbol<int(*)()>("_KFN12__op_unary__8test_negEv");
+    auto fn_neg = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_078test_negEv");
     REQUIRE(fn_neg); CHECK(fn_neg() == -7);
-    auto fn_pos = jit->lookup_symbol<int(*)()>("_KFN12__op_unary__8test_posEv");
+    auto fn_pos = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_078test_posEv");
     REQUIRE(fn_pos); CHECK(fn_pos() == 7);
-    auto fn_bnot = jit->lookup_symbol<int(*)()>("_KFN12__op_unary__9test_bnotEv");
+    auto fn_bnot = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_079test_bnotEv");
     REQUIRE(fn_bnot); CHECK(fn_bnot() == -1);  // ~0 == -1 in two's complement
 }
 
 TEST_CASE("Struct member logical operator overloads", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_logic__;
+module gen_operator_overload_08;
 struct Logic {
     v: bool;
     Logic(av: bool) : v(av) {}
@@ -375,17 +375,17 @@ test_not_t()  : bool { a: Logic(true);  return !a; }
 test_not_f()  : bool { a: Logic(false); return !a; }
 )SRC");
     REQUIRE(jit);
-    auto fn_and_tt = jit->lookup_symbol<bool(*)()>("_KFN12__op_logic__11test_and_ttEv");
+    auto fn_and_tt = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_0811test_and_ttEv");
     REQUIRE(fn_and_tt); CHECK(fn_and_tt() == true);
-    auto fn_and_tf = jit->lookup_symbol<bool(*)()>("_KFN12__op_logic__11test_and_tfEv");
+    auto fn_and_tf = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_0811test_and_tfEv");
     REQUIRE(fn_and_tf); CHECK(fn_and_tf() == false);
-    auto fn_or_ff = jit->lookup_symbol<bool(*)()>("_KFN12__op_logic__10test_or_ffEv");
+    auto fn_or_ff = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_0810test_or_ffEv");
     REQUIRE(fn_or_ff); CHECK(fn_or_ff() == false);
-    auto fn_or_tf = jit->lookup_symbol<bool(*)()>("_KFN12__op_logic__10test_or_tfEv");
+    auto fn_or_tf = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_0810test_or_tfEv");
     REQUIRE(fn_or_tf); CHECK(fn_or_tf() == true);
-    auto fn_not_t = jit->lookup_symbol<bool(*)()>("_KFN12__op_logic__10test_not_tEv");
+    auto fn_not_t = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_0810test_not_tEv");
     REQUIRE(fn_not_t); CHECK(fn_not_t() == false);
-    auto fn_not_f = jit->lookup_symbol<bool(*)()>("_KFN12__op_logic__10test_not_fEv");
+    auto fn_not_f = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_0810test_not_fEv");
     REQUIRE(fn_not_f); CHECK(fn_not_f() == true);
 }
 
@@ -395,7 +395,7 @@ test_not_f()  : bool { a: Logic(false); return !a; }
 
 TEST_CASE("Multiple operator overloads on same struct", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_multi__;
+module gen_operator_overload_09;
 struct Counter {
     val: int;
     Counter(v: int) : val(v) {}
@@ -426,13 +426,13 @@ test_eq() : bool {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_add = jit->lookup_symbol<int(*)()>("_KFN12__op_multi__8test_addEv");
+    auto fn_add = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_098test_addEv");
     REQUIRE(fn_add); CHECK(fn_add() == 10);
-    auto fn_sub = jit->lookup_symbol<int(*)()>("_KFN12__op_multi__8test_subEv");
+    auto fn_sub = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_098test_subEv");
     REQUIRE(fn_sub); CHECK(fn_sub() == 6);
-    auto fn_mul = jit->lookup_symbol<int(*)()>("_KFN12__op_multi__8test_mulEv");
+    auto fn_mul = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_098test_mulEv");
     REQUIRE(fn_mul); CHECK(fn_mul() == 30);
-    auto fn_eq = jit->lookup_symbol<bool(*)()>("_KFN12__op_multi__7test_eqEv");
+    auto fn_eq = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_097test_eqEv");
     REQUIRE(fn_eq); CHECK(fn_eq() == true);
 }
 
@@ -442,7 +442,7 @@ test_eq() : bool {
 
 TEST_CASE("Non-member operator + overload on struct", "[operator][gen][non-member]") {
     auto jit = gen_jit(R"SRC(
-module __op_ext__;
+module gen_operator_overload_10;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -456,14 +456,14 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN10__op_ext__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_104testEv");
     REQUIRE(fn);
     CHECK(fn() == 42);
 }
 
 TEST_CASE("Non-member comparison operator on struct", "[operator][gen][non-member]") {
     auto jit = gen_jit(R"SRC(
-module __op_ext_eq__;
+module gen_operator_overload_11;
 struct Pt {
     x: int;
     Pt(ax: int) : x(ax) {}
@@ -482,9 +482,9 @@ test_neq() : bool {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_eq = jit->lookup_symbol<bool(*)()>("_KFN13__op_ext_eq__7test_eqEv");
+    auto fn_eq = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_117test_eqEv");
     REQUIRE(fn_eq); CHECK(fn_eq() == true);
-    auto fn_neq = jit->lookup_symbol<bool(*)()>("_KFN13__op_ext_eq__8test_neqEv");
+    auto fn_neq = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_118test_neqEv");
     REQUIRE(fn_neq); CHECK(fn_neq() == false);
 }
 
@@ -494,7 +494,7 @@ test_neq() : bool {
 
 TEST_CASE("Class operator overload with virtual dispatch", "[operator][gen][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_cls__;
+module gen_operator_overload_12;
 class Base {
     v: int;
     Base() : v(0) {}
@@ -520,15 +520,15 @@ test_derived() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_base = jit->lookup_symbol<int(*)()>("_KFN10__op_cls__9test_baseEv");
+    auto fn_base = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_129test_baseEv");
     REQUIRE(fn_base); CHECK(fn_base() == 7);
-    auto fn_derived = jit->lookup_symbol<int(*)()>("_KFN10__op_cls__12test_derivedEv");
+    auto fn_derived = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_1212test_derivedEv");
     REQUIRE(fn_derived); CHECK(fn_derived() == 70);
 }
 
 TEST_CASE("Class operator == with virtual dispatch", "[operator][gen][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_cls_eq__;
+module gen_operator_overload_13;
 class Shape {
     id: int;
     Shape() : id(0) {}
@@ -555,9 +555,9 @@ test_circle_always_false() : bool {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn1 = jit->lookup_symbol<bool(*)()>("_KFN13__op_cls_eq__13test_shape_eqEv");
+    auto fn1 = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_1313test_shape_eqEv");
     REQUIRE(fn1); CHECK(fn1() == true);
-    auto fn2 = jit->lookup_symbol<bool(*)()>("_KFN13__op_cls_eq__24test_circle_always_falseEv");
+    auto fn2 = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_1324test_circle_always_falseEv");
     REQUIRE(fn2); CHECK(fn2() == false);
 }
 
@@ -570,7 +570,7 @@ TEST_CASE("import — struct operator overload across module boundary",
     auto result = build_exec_with_lib(
         // ── Library ──
         R"K(
-            module oplib;
+            module gen_operator_overload_14;
             struct Vec2 {
                 x: int;
                 y: int;
@@ -585,12 +585,12 @@ TEST_CASE("import — struct operator overload across module boundary",
         )K",
         // ── Executable ──
         R"K(
-            module opexec;
-            import oplib;
+            module gen_operator_overload_15;
+            import gen_operator_overload_14;
 
             main() : int {
-                a : oplib::Vec2(10, 20);
-                b : oplib::Vec2(5, 7);
+                a : gen_operator_overload_14::Vec2(10, 20);
+                b : gen_operator_overload_14::Vec2(5, 7);
                 return a + b;
             }
         )K");
@@ -605,7 +605,7 @@ TEST_CASE("import — class operator overload with virtual dispatch across modul
     auto result = build_exec_with_lib(
         // ── Library ──
         R"K(
-            module opvirtlib;
+            module gen_operator_overload_16;
             class Base {
                 v: int;
                 Base() : v(0) {}
@@ -620,15 +620,15 @@ TEST_CASE("import — class operator overload with virtual dispatch across modul
         )K",
         // ── Executable ──
         R"K(
-            module opvirtexec;
-            import opvirtlib;
+            module gen_operator_overload_17;
+            import gen_operator_overload_16;
 
-            call_add(a: opvirtlib::Base&, b: opvirtlib::Base&) : int {
+            call_add(a: gen_operator_overload_16::Base&, b: gen_operator_overload_16::Base&) : int {
                 return a + b;
             }
             main() : int {
-                d : opvirtlib::Derived(3);
-                b : opvirtlib::Base(4);
+                d : gen_operator_overload_16::Derived(3);
+                b : gen_operator_overload_16::Base(4);
                 return call_add(d, b) / 100;
             }
         )K");
@@ -644,7 +644,7 @@ TEST_CASE("import — class operator overload with virtual dispatch across modul
 
 TEST_CASE("Struct prefix increment operator overload", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_preinc__;
+module gen_operator_overload_18;
 struct Counter {
     v: int;
     Counter(av: int) : v(av) {}
@@ -659,14 +659,14 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__op_preinc__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_184testEv");
     REQUIRE(fn);
     CHECK(fn() == 11);
 }
 
 TEST_CASE("Struct prefix decrement operator overload", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_predec__;
+module gen_operator_overload_19;
 struct Counter {
     v: int;
     Counter(av: int) : v(av) {}
@@ -681,14 +681,14 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__op_predec__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_194testEv");
     REQUIRE(fn);
     CHECK(fn() == 9);
 }
 
 TEST_CASE("Struct postfix increment operator overload", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_postinc__;
+module gen_operator_overload_20;
 struct Counter {
     v: int;
     Counter(av: int) : v(av) {}
@@ -704,14 +704,14 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__op_postinc__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_204testEv");
     REQUIRE(fn);
     CHECK(fn() == 10);
 }
 
 TEST_CASE("Struct postfix decrement operator overload", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_postdec__;
+module gen_operator_overload_21;
 struct Counter {
     v: int;
     Counter(av: int) : v(av) {}
@@ -727,7 +727,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__op_postdec__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_214testEv");
     REQUIRE(fn);
     CHECK(fn() == 10);
 }
@@ -738,7 +738,7 @@ test() : int {
 
 TEST_CASE("Operator chaining (a + b + c)", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_chain__;
+module gen_operator_overload_22;
 struct Val {
     v: int;
     Val(av: int) : v(av) {}
@@ -752,7 +752,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__op_chain__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_224testEv");
     REQUIRE(fn);
     CHECK(fn() == 7);
 }
@@ -763,7 +763,7 @@ test() : int {
 
 TEST_CASE("Non-member unary operator - overload", "[operator][gen][non-member]") {
     auto jit = gen_jit(R"SRC(
-module __op_ext_unary__;
+module gen_operator_overload_23;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -776,7 +776,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__op_ext_unary__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_234testEv");
     REQUIRE(fn);
     CHECK(fn() == -42);
 }
@@ -787,7 +787,7 @@ test() : int {
 
 TEST_CASE("Operator with primitive right-hand side parameter", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_mixed__;
+module gen_operator_overload_24;
 struct Counter {
     v: int;
     Counter(av: int) : v(av) {}
@@ -798,9 +798,9 @@ test_add() : int { c: Counter(10); return c + 5; }
 test_mul() : int { c: Counter(7); return c * 6; }
 )SRC");
     REQUIRE(jit);
-    auto fn_add = jit->lookup_symbol<int(*)()>("_KFN12__op_mixed__8test_addEv");
+    auto fn_add = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_248test_addEv");
     REQUIRE(fn_add); CHECK(fn_add() == 15);
-    auto fn_mul = jit->lookup_symbol<int(*)()>("_KFN12__op_mixed__8test_mulEv");
+    auto fn_mul = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_248test_mulEv");
     REQUIRE(fn_mul); CHECK(fn_mul() == 42);
 }
 
@@ -810,7 +810,7 @@ test_mul() : int { c: Counter(7); return c * 6; }
 
 TEST_CASE("Member operator takes priority over non-member", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_prio__;
+module gen_operator_overload_25;
 struct Val {
     v: int;
     Val(av: int) : v(av) {}
@@ -825,7 +825,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__op_prio__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_254testEv");
     REQUIRE(fn);
     // Member operator adds 100, non-member doesn't => expect 103 if member is prioritized
     CHECK(fn() == 103);
@@ -837,7 +837,7 @@ test() : int {
 
 TEST_CASE("Interface operator declaration with class implementation", "[operator][gen][interface]") {
     auto jit = gen_jit(R"SRC(
-module __op_iface__;
+module gen_operator_overload_26;
 interface Addable {
     operator +(other: Addable&) : int;
 }
@@ -856,7 +856,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__op_iface__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_264testEv");
     REQUIRE(fn);
     CHECK(fn() == 1042);
 }
@@ -867,7 +867,7 @@ test() : int {
 
 TEST_CASE("Operator on dereferenced owner pointer", "[operator][gen][struct]") {
     auto jit = gen_jit(R"SRC(
-module __op_deref__;
+module gen_operator_overload_27;
 struct Num {
     v: int;
     Num(av: int) : v(av) {}
@@ -882,7 +882,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__op_deref__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_274testEv");
     REQUIRE(fn);
     CHECK(fn() == 42);
 }
@@ -893,7 +893,7 @@ test() : int {
 
 TEST_CASE("Non-member prefix increment operator on struct", "[operator][gen][non-member]") {
     auto jit = gen_jit(R"SRC(
-module __op_ext_preinc__;
+module gen_operator_overload_28;
 struct Counter {
     v: int;
     Counter(av: int) : v(av) {}
@@ -908,7 +908,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__op_ext_preinc__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_284testEv");
     REQUIRE(fn);
     CHECK(fn() == 11);
 }
@@ -919,7 +919,7 @@ test() : int {
 
 TEST_CASE("Operator implicit cast: short widened to int", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_widen__;
+module gen_operator_overload_29;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -932,7 +932,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__op_cast_widen__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_294testEv");
     REQUIRE(fn);
     CHECK(fn() == 42);
 }
@@ -943,7 +943,7 @@ test() : int {
 
 TEST_CASE("Operator implicit cast: int widened to long", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_long__;
+module gen_operator_overload_30;
 struct Accum {
     v: long;
     Accum(av: long) : v(av) {}
@@ -956,7 +956,7 @@ test() : long {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<long(*)()>("_KFN16__op_cast_long__4testEv");
+    auto fn = jit->lookup_symbol<long(*)()>("_KFN24gen_operator_overload_304testEv");
     REQUIRE(fn);
     CHECK(fn() == 1000000042L);
 }
@@ -967,7 +967,7 @@ test() : long {
 
 TEST_CASE("Operator overload resolution: exact match preferred over widening", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_best__;
+module gen_operator_overload_31;
 struct Val {
     v: int;
     Val(av: int) : v(av) {}
@@ -986,10 +986,10 @@ test_widened() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_exact = jit->lookup_symbol<int(*)()>("_KFN16__op_cast_best__10test_exactEv");
+    auto fn_exact = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_3110test_exactEv");
     REQUIRE(fn_exact);
     CHECK(fn_exact() == 15);  // Exact match: int + int
-    auto fn_widened = jit->lookup_symbol<int(*)()>("_KFN16__op_cast_best__12test_widenedEv");
+    auto fn_widened = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_3112test_widenedEv");
     REQUIRE(fn_widened);
     CHECK(fn_widened() == 1010);  // Exact match: long version
 }
@@ -1000,7 +1000,7 @@ test_widened() : int {
 
 TEST_CASE("Operator implicit cast: Derived ref to Base ref parameter", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_up__;
+module gen_operator_overload_32;
 class Base {
   public:
     v: int;
@@ -1023,7 +1023,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__op_cast_up__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_324testEv");
     REQUIRE(fn);
     CHECK(fn() == 142);
 }
@@ -1034,7 +1034,7 @@ test() : int {
 
 TEST_CASE("Comparison operator implicit cast: short compared to int param", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_cmp__;
+module gen_operator_overload_33;
 struct Num {
     v: int;
     Num(av: int) : v(av) {}
@@ -1052,10 +1052,10 @@ test_false() : bool {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_true = jit->lookup_symbol<bool(*)()>("_KFN15__op_cast_cmp__9test_trueEv");
+    auto fn_true = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_339test_trueEv");
     REQUIRE(fn_true);
     CHECK(fn_true() == true);
-    auto fn_false = jit->lookup_symbol<bool(*)()>("_KFN15__op_cast_cmp__10test_falseEv");
+    auto fn_false = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_3310test_falseEv");
     REQUIRE(fn_false);
     CHECK(fn_false() == false);
 }
@@ -1066,7 +1066,7 @@ test_false() : bool {
 
 TEST_CASE("Non-member operator implicit cast: widening right operand", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_ext__;
+module gen_operator_overload_34;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1080,7 +1080,7 @@ test() : long {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<long(*)()>("_KFN15__op_cast_ext__4testEv");
+    auto fn = jit->lookup_symbol<long(*)()>("_KFN24gen_operator_overload_344testEv");
     REQUIRE(fn);
     CHECK(fn() == 142L);
 }
@@ -1091,7 +1091,7 @@ test() : long {
 
 TEST_CASE("Operator overload resolution: member preferred at same cast weight", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_mprio__;
+module gen_operator_overload_35;
 struct Val {
     v: int;
     Val(av: int) : v(av) {}
@@ -1105,7 +1105,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__op_cast_mprio__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_354testEv");
     REQUIRE(fn);
     // Member adds 500, non-member doesn't => expect 515 if member is prioritized
     CHECK(fn() == 515);
@@ -1117,7 +1117,7 @@ test() : int {
 
 TEST_CASE("Operator overload resolution: non-member wins with better cast score", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_nwin__;
+module gen_operator_overload_36;
 struct Val {
     v: int;
     Val(av: int) : v(av) {}
@@ -1132,7 +1132,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__op_cast_nwin__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_364testEv");
     REQUIRE(fn);
     // Non-member has exact match (int), member requires widening (int→long)
     // Non-member should win: 10 + 5 = 15
@@ -1145,7 +1145,7 @@ test() : int {
 
 TEST_CASE("Logical operator implicit cast: widening parameter", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_log__;
+module gen_operator_overload_37;
 struct Cond {
     v: int;
     Cond(av: int) : v(av) {}
@@ -1163,10 +1163,10 @@ test_tf() : bool {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_tt = jit->lookup_symbol<bool(*)()>("_KFN15__op_cast_log__7test_ttEv");
+    auto fn_tt = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_377test_ttEv");
     REQUIRE(fn_tt);
     CHECK(fn_tt() == true);
-    auto fn_tf = jit->lookup_symbol<bool(*)()>("_KFN15__op_cast_log__7test_tfEv");
+    auto fn_tf = jit->lookup_symbol<bool(*)()>("_KFN24gen_operator_overload_377test_tfEv");
     REQUIRE(fn_tf);
     CHECK(fn_tf() == false);
 }
@@ -1177,7 +1177,7 @@ test_tf() : bool {
 
 TEST_CASE("Bitwise operator implicit cast: short widened to int", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_bit__;
+module gen_operator_overload_38;
 struct Mask {
     v: int;
     Mask(av: int) : v(av) {}
@@ -1196,10 +1196,10 @@ test_and() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_or = jit->lookup_symbol<int(*)()>("_KFN15__op_cast_bit__7test_orEv");
+    auto fn_or = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_387test_orEv");
     REQUIRE(fn_or);
     CHECK(fn_or() == 0xFF);
-    auto fn_and = jit->lookup_symbol<int(*)()>("_KFN15__op_cast_bit__8test_andEv");
+    auto fn_and = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_388test_andEv");
     REQUIRE(fn_and);
     CHECK(fn_and() == 0x0F);
 }
@@ -1210,7 +1210,7 @@ test_and() : int {
 
 TEST_CASE("Non-member operator: left param type correctly filters candidates", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_filt__;
+module gen_operator_overload_39;
 struct Alpha {
     v: int;
     Alpha(av: int) : v(av) {}
@@ -1232,10 +1232,10 @@ test_beta() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_a = jit->lookup_symbol<int(*)()>("_KFN16__op_cast_filt__10test_alphaEv");
+    auto fn_a = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_3910test_alphaEv");
     REQUIRE(fn_a);
     CHECK(fn_a() == 115);  // Alpha operator: 10 + 5 + 100
-    auto fn_b = jit->lookup_symbol<int(*)()>("_KFN16__op_cast_filt__9test_betaEv");
+    auto fn_b = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_399test_betaEv");
     REQUIRE(fn_b);
     CHECK(fn_b() == 215);  // Beta operator: 10 + 5 + 200
 }
@@ -1246,7 +1246,7 @@ test_beta() : int {
 
 TEST_CASE("Operator implicit cast: ref variable widened", "[operator][gen][cast]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_refv__;
+module gen_operator_overload_40;
 struct Acc {
     v: long;
     Acc(av: long) : v(av) {}
@@ -1259,7 +1259,7 @@ test() : long {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<long(*)()>("_KFN16__op_cast_refv__4testEv");
+    auto fn = jit->lookup_symbol<long(*)()>("_KFN24gen_operator_overload_404testEv");
     REQUIRE(fn);
     CHECK(fn() == 107L);
 }
@@ -1272,7 +1272,7 @@ test() : long {
 // short→int is CAST_WIDENING, short→long is CAST_WIDENING → ambiguous.
 TEST_CASE("Ambiguous binary operator: two member overloads with equal cast weight", "[operator][gen][ambiguity]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ambig01__;
+        module gen_operator_overload_41;
         struct Vec {
             v: int;
             Vec(av: int) : v(av) {}
@@ -1290,7 +1290,7 @@ TEST_CASE("Ambiguous binary operator: two member overloads with equal cast weigh
 // Two non-member operator+ with equal overall score (both WIDENING for right).
 TEST_CASE("Ambiguous binary operator: two non-member overloads with equal cast weight", "[operator][gen][ambiguity]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ambig02__;
+        module gen_operator_overload_42;
         struct Vec {
             v: int;
             Vec(av: int) : v(av) {}
@@ -1308,7 +1308,7 @@ TEST_CASE("Ambiguous binary operator: two non-member overloads with equal cast w
 // operator+(int) is exact match for int arg; operator+(long) is widening → no ambiguity.
 TEST_CASE("No ambiguity: member operator with exact match wins over widening", "[operator][gen][ambiguity]") {
     auto jit = gen_jit(R"SRC(
-module __noambig01__;
+module gen_operator_overload_43;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1321,7 +1321,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__noambig01__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_434testEv");
     REQUIRE(fn);
     CHECK(fn() == 115); // Exact match: 10 + 5 + 100
 }
@@ -1330,7 +1330,7 @@ test() : int {
 // but member is preferred → no ambiguity.
 TEST_CASE("No ambiguity: member operator preferred over non-member with same score", "[operator][gen][ambiguity]") {
     auto jit = gen_jit(R"SRC(
-module __noambig02__;
+module gen_operator_overload_44;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1343,7 +1343,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__noambig02__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_444testEv");
     REQUIRE(fn);
     CHECK(fn() == 115); // Member wins: 10 + 5 + 100
 }
@@ -1355,7 +1355,7 @@ test() : int {
 // Two non-member operator-() that both accept Vec& (exact match) → ambiguous.
 TEST_CASE("Ambiguous unary operator: two non-member overloads for unary minus", "[operator][gen][ambiguity]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ambig03__;
+        module gen_operator_overload_45;
         struct Vec {
             v: int;
             Vec(av: int) : v(av) {}
@@ -1372,7 +1372,7 @@ TEST_CASE("Ambiguous unary operator: two non-member overloads for unary minus", 
 // Member operator-() and non-member operator-(Vec&): member preferred → no ambiguity.
 TEST_CASE("No ambiguity: member unary operator preferred over non-member", "[operator][gen][ambiguity]") {
     auto jit = gen_jit(R"SRC(
-module __noambig03__;
+module gen_operator_overload_46;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1385,7 +1385,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__noambig03__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_464testEv");
     REQUIRE(fn);
     CHECK(fn() == 90); // Member wins: -10 + 100
 }
@@ -1398,7 +1398,7 @@ test() : int {
 // short→int is WIDENING, short→long is WIDENING → ambiguous.
 TEST_CASE("Ambiguous comparison operator: two member == with equal cast weight", "[operator][gen][ambiguity]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ambig04__;
+        module gen_operator_overload_47;
         struct Val {
             v: int;
             Val(av: int) : v(av) {}
@@ -1420,7 +1420,7 @@ TEST_CASE("Ambiguous comparison operator: two member == with equal cast weight",
 // operator&&(int) and operator&&(long): calling with short arg → ambiguous.
 TEST_CASE("Ambiguous logical operator: two member && with equal cast weight", "[operator][gen][ambiguity]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ambig05__;
+        module gen_operator_overload_48;
         struct Flag {
             v: int;
             Flag(av: int) : v(av) {}
@@ -1442,7 +1442,7 @@ TEST_CASE("Ambiguous logical operator: two member && with equal cast weight", "[
 // operator|(int) and operator|(long): calling with short arg → ambiguous.
 TEST_CASE("Ambiguous bitwise operator: two member | with equal cast weight", "[operator][gen][ambiguity]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ambig06__;
+        module gen_operator_overload_49;
         struct Bits {
             v: int;
             Bits(av: int) : v(av) {}
@@ -1464,7 +1464,7 @@ TEST_CASE("Ambiguous bitwise operator: two member | with equal cast weight", "[o
 // operator+(short) exact vs operator+(long) widening for short argument.
 TEST_CASE("No ambiguity: exact match wins over widening for binary operator", "[operator][gen][ambiguity]") {
     auto jit = gen_jit(R"SRC(
-module __noambig04__;
+module gen_operator_overload_50;
 struct Acc {
     v: int;
     Acc(av: int) : v(av) {}
@@ -1478,7 +1478,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__noambig04__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_504testEv");
     REQUIRE(fn);
     CHECK(fn() == 1013); // Exact match for short: 10 + 3 + 1000
 }
@@ -1490,7 +1490,7 @@ test() : int {
 // A const binary operator can be called on a mutable object.
 TEST_CASE("Const binary operator on mutable object", "[operator][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __const_op01__;
+module gen_operator_overload_51;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1502,7 +1502,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__const_op01__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_514testEv");
     REQUIRE(fn);
     CHECK(fn() == 15);
 }
@@ -1510,7 +1510,7 @@ test() : int {
 // A const binary operator can be called on a const object (via const ref parameter).
 TEST_CASE("Const binary operator on const object", "[operator][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __const_op02__;
+module gen_operator_overload_52;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1525,7 +1525,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__const_op02__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_524testEv");
     REQUIRE(fn);
     CHECK(fn() == 15);
 }
@@ -1533,7 +1533,7 @@ test() : int {
 // A mutable binary operator CANNOT be called on a const object → error.
 TEST_CASE("Mutable binary operator on const object rejected", "[operator][gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_op03__;
+        module gen_operator_overload_53;
         struct Vec {
             v: int;
             Vec(av: int) : v(av) {}
@@ -1548,7 +1548,7 @@ TEST_CASE("Mutable binary operator on const object rejected", "[operator][gen][c
 // A mutable binary operator on a mutable object still works.
 TEST_CASE("Mutable binary operator on mutable object", "[operator][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __const_op04__;
+module gen_operator_overload_54;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1560,7 +1560,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__const_op04__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_544testEv");
     REQUIRE(fn);
     CHECK(fn() == 15);
 }
@@ -1568,7 +1568,7 @@ test() : int {
 // Non-member operator on const object succeeds (no this constraint).
 TEST_CASE("Non-member binary operator on const object", "[operator][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __const_op05__;
+module gen_operator_overload_55;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1583,7 +1583,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__const_op05__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_554testEv");
     REQUIRE(fn);
     CHECK(fn() == 15);
 }
@@ -1595,7 +1595,7 @@ test() : int {
 // A const unary operator can be called on a const object.
 TEST_CASE("Const unary operator on const object", "[operator][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __const_op06__;
+module gen_operator_overload_56;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1610,7 +1610,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__const_op06__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_564testEv");
     REQUIRE(fn);
     CHECK(fn() == -10);
 }
@@ -1618,7 +1618,7 @@ test() : int {
 // A mutable unary operator CANNOT be called on a const object → error.
 TEST_CASE("Mutable unary operator on const object rejected", "[operator][gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_op07__;
+        module gen_operator_overload_57;
         struct Vec {
             v: int;
             Vec(av: int) : v(av) {}
@@ -1637,7 +1637,7 @@ TEST_CASE("Mutable unary operator on const object rejected", "[operator][gen][co
 // A const comparison operator on a mutable object works.
 TEST_CASE("Const comparison operator on mutable object", "[operator][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __const_op08__;
+module gen_operator_overload_58;
 struct Val {
     v: int;
     Val(av: int) : v(av) {}
@@ -1652,7 +1652,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__const_op08__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_584testEv");
     REQUIRE(fn);
     CHECK(fn() == 1);
 }
@@ -1660,7 +1660,7 @@ test() : int {
 // A const comparison operator on a const object works.
 TEST_CASE("Const comparison operator on const object", "[operator][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __const_op09__;
+module gen_operator_overload_59;
 struct Val {
     v: int;
     Val(av: int) : v(av) {}
@@ -1675,7 +1675,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__const_op09__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_594testEv");
     REQUIRE(fn);
     CHECK(fn() == 1);
 }
@@ -1683,7 +1683,7 @@ test() : int {
 // A mutable comparison operator on const object → error.
 TEST_CASE("Mutable comparison operator on const object rejected", "[operator][gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_op10__;
+        module gen_operator_overload_60;
         struct Val {
             v: int;
             Val(av: int) : v(av) {}
@@ -1702,7 +1702,7 @@ TEST_CASE("Mutable comparison operator on const object rejected", "[operator][ge
 // Const logical && on const object.
 TEST_CASE("Const logical operator on const object", "[operator][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __const_op11__;
+module gen_operator_overload_61;
 struct Flag {
     v: int;
     Flag(av: int) : v(av) {}
@@ -1723,10 +1723,10 @@ test_false() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_true = jit->lookup_symbol<int(*)()>("_KFN14__const_op11__9test_trueEv");
+    auto fn_true = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_619test_trueEv");
     REQUIRE(fn_true);
     CHECK(fn_true() == 1);
-    auto fn_false = jit->lookup_symbol<int(*)()>("_KFN14__const_op11__10test_falseEv");
+    auto fn_false = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_6110test_falseEv");
     REQUIRE(fn_false);
     CHECK(fn_false() == 0);
 }
@@ -1734,7 +1734,7 @@ test_false() : int {
 // Mutable logical && on const object → error.
 TEST_CASE("Mutable logical operator on const object rejected", "[operator][gen][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __const_op12__;
+        module gen_operator_overload_62;
         struct Flag {
             v: int;
             Flag(av: int) : v(av) {}
@@ -1752,7 +1752,7 @@ TEST_CASE("Mutable logical operator on const object rejected", "[operator][gen][
 
 TEST_CASE("Const virtual operator on const class object", "[operator][gen][const][class]") {
     auto jit = gen_jit(R"SRC(
-module __const_op38__;
+module gen_operator_overload_63;
 class Base {
     v: int;
     Base() : v(0) {}
@@ -1777,10 +1777,10 @@ test_derived() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn_base = jit->lookup_symbol<int(*)()>("_KFN14__const_op38__9test_baseEv");
+    auto fn_base = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_639test_baseEv");
     REQUIRE(fn_base);
     CHECK(fn_base() == 15);  // Base: 10 + 5
-    auto fn_derived = jit->lookup_symbol<int(*)()>("_KFN14__const_op38__12test_derivedEv");
+    auto fn_derived = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_6312test_derivedEv");
     REQUIRE(fn_derived);
     CHECK(fn_derived() == 115);  // Derived: 10 + 5 + 100
 }
@@ -1793,7 +1793,7 @@ TEST_CASE("Non-member unary operator on const object", "[operator][gen][const][n
     // Verify the non-member unary operator is found and called (not the primitive path)
     // by using a return value that differs from the primitive negation.
     auto jit = gen_jit(R"SRC(
-module __const_op39__;
+module gen_operator_overload_64;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -1805,7 +1805,7 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__const_op39__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN24gen_operator_overload_644testEv");
     REQUIRE(fn);
     CHECK(fn() == 1041);  // Non-member called: 42 + 999 = 1041 (not primitive -42)
 }
@@ -1818,7 +1818,7 @@ test() : int {
 
 TEST_CASE("Binary operator returning a different struct by value — sret direct call", "[gen][operator][sret]") {
     auto jit = gen_jit(R"SRC(
-        module __op_sret_diff_type__;
+        module gen_operator_overload_65;
 
         struct Result {
             val : int;
@@ -1857,7 +1857,7 @@ TEST_CASE("Binary operator returning a different struct by value — sret direct
 
 TEST_CASE("Const binary operator on class returning different type via sret", "[gen][operator][sret][const][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_sret_const_class__;
+module gen_operator_overload_66;
 
         struct Info {
             code : int;
@@ -1894,7 +1894,7 @@ module __op_sret_const_class__;
 
 TEST_CASE("Const binary operator on class with sret — direct call", "[gen][operator][sret][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_sret_cls_direct__;
+module gen_operator_overload_67;
 
         struct Result {
             val : int;
@@ -1932,7 +1932,7 @@ module __op_sret_cls_direct__;
 
 TEST_CASE("Const unary operator on class returning different struct — sret", "[gen][operator][sret][unary][const][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_sret_unary_const_class__;
+module gen_operator_overload_68;
 
         struct Negated {
             val : int;
@@ -1968,7 +1968,7 @@ module __op_sret_unary_const_class__;
 
 TEST_CASE("Binary operator sret result used in expression", "[gen][operator][sret]") {
     auto jit = gen_jit(R"SRC(
-module __op_sret_expr_use__;
+module gen_operator_overload_69;
 
         struct Summary {
             total : int;
@@ -2006,7 +2006,7 @@ module __op_sret_expr_use__;
 
 TEST_CASE("Subscript operator[] read on struct", "[operator][subscript][gen]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_read__;
+module gen_operator_overload_70;
 struct Vec3 {
     data : int[3];
     Vec3() { data[0] = 10; data[1] = 20; data[2] = 30; }
@@ -2027,7 +2027,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] write through ref return", "[operator][subscript][gen]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_write__;
+module gen_operator_overload_71;
 struct Arr {
     data : int[4];
     Arr() { data[0] = 0; data[1] = 0; data[2] = 0; data[3] = 0; }
@@ -2051,7 +2051,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] return by value", "[operator][subscript][gen]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_val__;
+module gen_operator_overload_72;
 struct Lookup {
     data : int[3];
     Lookup() { data[0] = 5; data[1] = 15; data[2] = 25; }
@@ -2072,7 +2072,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] const version", "[operator][subscript][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_const__;
+module gen_operator_overload_73;
 struct ConstArr {
     data : int[3];
     ConstArr() { data[0] = 7; data[1] = 14; data[2] = 21; }
@@ -2096,7 +2096,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] with non-integer index type", "[operator][subscript][gen]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_longidx__;
+module gen_operator_overload_74;
 struct LongArr {
     data : int[3];
     LongArr() { data[0] = 1; data[1] = 2; data[2] = 3; }
@@ -2119,7 +2119,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] on class with virtual dispatch", "[operator][subscript][gen][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_virt__;
+module gen_operator_overload_75;
 class Base {
 public:
     Base() {}
@@ -2150,7 +2150,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] on template struct", "[operator][subscript][gen][template]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_tpl__;
+module gen_operator_overload_76;
 template<typename T>
 struct Container {
     data : T[4];
@@ -2175,7 +2175,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] compound assignment through ref", "[operator][subscript][gen][aggregate]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_cmpd__;
+module gen_operator_overload_77;
 struct Buf {
     data : int[3];
     Buf() {
@@ -2202,7 +2202,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] returning struct ref on class — virtual dispatch", "[operator][subscript][gen][aggregate][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_agg_cls__;
+module gen_operator_overload_78;
 struct Item {
     a : int;
     b : int;
@@ -2235,7 +2235,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] returning struct ref — copy from subscript to local", "[operator][subscript][gen][aggregate]") {
     auto jit = gen_jit(R"SRC(
-module __op_subscript_agg_copy__;
+module gen_operator_overload_79;
 struct Color {
     r : int;
     g : int;
@@ -2266,7 +2266,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] — const/mutable on class with virtual dispatch", "[operator][subscript][gen][const][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_ix_dual_virt__;
+module gen_operator_overload_80;
 class Base {
     public data : int[4];
     Base() {
@@ -2315,7 +2315,7 @@ test_derived_const() : int {
 TEST_CASE("Subscript operator[] — compound assignment through mutable version with const/mutable coexist", "[operator][subscript][gen][const]") {
     // Compound assignment (+=) should use the mutable operator[].
     auto jit = gen_jit(R"SRC(
-module __op_ix_dual_compound__;
+module gen_operator_overload_81;
 struct Arr {
     data : int[3];
     Arr() { data[0] = 10; data[1] = 20; data[2] = 30; }
@@ -2342,7 +2342,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] — both const and mutable on class, mutable object", "[operator][subscript][gen][const][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_ix_dual_cls_mut__;
+module gen_operator_overload_82;
 class Container {
     public data : int[4];
     Container() {
@@ -2370,7 +2370,7 @@ test() : int {
 
 TEST_CASE("Subscript operator[] — both const and mutable on class, const ref", "[operator][subscript][gen][const][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_ix_dual_cls_const__;
+module gen_operator_overload_83;
 class Container {
     public data : int[4];
     Container() {
@@ -2401,7 +2401,7 @@ test() : int {
 TEST_CASE("Subscript operator[] — const-only version works on mutable object", "[operator][subscript][gen][const]") {
     // Only const operator[] exists; calling on mutable object should still work.
     auto jit = gen_jit(R"SRC(
-module __op_ix_const_only_on_mut__;
+module gen_operator_overload_84;
 struct Buf {
     data : int[2];
     Buf() { data[0] = 7; data[1] = 8; }
@@ -2424,7 +2424,7 @@ test() : int {
 TEST_CASE("Subscript operator[] — mutable-only on const object rejected", "[operator][subscript][gen][const][error]") {
     // Only mutable operator[] exists; calling on const object should be an error.
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-module __op_ix_mut_only_on_const__;
+module gen_operator_overload_85;
 struct Buf {
     data : int[2];
     Buf() { data[0] = 7; data[1] = 8; }
@@ -2440,7 +2440,7 @@ read(b: const Buf&) : int {
 
 TEST_CASE("Subscript operator[] — const/mutable on struct, const local variable", "[operator][subscript][gen][const]") {
     auto jit = gen_jit(R"SRC(
-module __op_ix_dual_const_local__;
+module gen_operator_overload_86;
 struct Buf {
     data : int[2];
     Buf() { data[0] = 42; data[1] = 58; }
@@ -2463,7 +2463,7 @@ test() : int {
 }
 TEST_CASE("Subscript operator[] — const/mutable on struct returning aggregate refs", "[operator][subscript][gen][const][aggregate]") {
     auto jit = gen_jit(R"SRC(
-module __op_ix_dual_agg_ref__;
+module gen_operator_overload_87;
 struct Point {
     x : int;
     y : int;
@@ -2519,7 +2519,7 @@ test() : int {
 // ─────────────────────────────────────────────────────────────────────────────
 TEST_CASE("Comparison against member-call result with const/mutable overload pair does not corrupt expression tree", "[operator][comparison][gen][regression]") {
     auto jit = gen_jit(R"SRC(
-module __op_cmp_member_call_regression__;
+module gen_operator_overload_88;
 struct StringLike {
     tag : int;
     operator ==(other: const StringLike&) : bool {

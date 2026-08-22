@@ -41,7 +41,7 @@
 
 TEST_CASE("Lifecycle Cat1: Multiple locals, reverse destruction order", "[gen][lifecycle][cat1]") {
     auto jit = gen_jit(R"SRC(
-        module __lc1_reverse__;
+        module gen_lifecycle_01;
 
         g_order : int = 0;
 
@@ -75,7 +75,7 @@ TEST_CASE("Lifecycle Cat1: Multiple locals, reverse destruction order", "[gen][l
 
 TEST_CASE("Lifecycle Cat1: Nested blocks — inner scope dtor before outer", "[gen][lifecycle][cat1]") {
     auto jit = gen_jit(R"SRC(
-        module __lc1_nested__;
+        module gen_lifecycle_02;
 
         g_log : int = 0;
 
@@ -112,7 +112,7 @@ TEST_CASE("Lifecycle Cat1: Nested blocks — inner scope dtor before outer", "[g
 
 TEST_CASE("Lifecycle Cat1: Return captures value before dtors (two variables)", "[gen][lifecycle][cat1]") {
     auto jit = gen_jit(R"SRC(
-        module __lc1_ret2__;
+        module gen_lifecycle_03;
 
         g_count : int = 0;
 
@@ -143,7 +143,7 @@ TEST_CASE("Lifecycle Cat1: Return captures value before dtors (two variables)", 
 
 TEST_CASE("Lifecycle Cat1: Constructor with member-init list + dtor", "[gen][lifecycle][cat1]") {
     auto jit = gen_jit(R"SRC(
-        module __lc1_minit__;
+        module gen_lifecycle_04;
 
         g_val : int = 0;
 
@@ -174,7 +174,7 @@ TEST_CASE("Lifecycle Cat1: Constructor with member-init list + dtor", "[gen][lif
 
 TEST_CASE("Lifecycle Cat1: Virtual call in constructor body uses the class vptr", "[gen][lifecycle][cat1][vptr]") {
     auto jit = gen_jit(R"SRC(
-        module __lc1_ctor_vptr__;
+        module gen_lifecycle_05;
 
         class Base {
             value : int;
@@ -208,7 +208,7 @@ TEST_CASE("Lifecycle Cat1: Virtual call in constructor body uses the class vptr"
 
 TEST_CASE("Lifecycle Cat2: Owner of struct with dtor — delete then delete-null", "[gen][lifecycle][cat2]") {
     auto jit = gen_jit(R"SRC(
-        module __lc2_deldel__;
+        module gen_lifecycle_06;
 
         g_dtors : int = 0;
 
@@ -235,7 +235,7 @@ TEST_CASE("Lifecycle Cat2: Owner of struct with dtor — delete then delete-null
 
 TEST_CASE("Lifecycle Cat2: Owner in conditional branch only", "[gen][lifecycle][cat2]") {
     auto jit = gen_jit(R"SRC(
-        module __lc2_cond__;
+        module gen_lifecycle_07;
 
         g_dtors : int = 0;
 
@@ -267,7 +267,7 @@ TEST_CASE("Lifecycle Cat2: Owner in conditional branch only", "[gen][lifecycle][
 
 TEST_CASE("Lifecycle Cat3: Struct passed by value — dtor called on copy at function exit", "[gen][lifecycle][cat3]") {
     auto jit = gen_jit(R"SRC(
-        module __lc3_byval__;
+        module gen_lifecycle_08;
 
         g_dtors : int = 0;
 
@@ -304,7 +304,7 @@ TEST_CASE("Lifecycle Cat3: Struct passed by value — dtor called on copy at fun
 
 TEST_CASE("Lifecycle Cat3: Struct passed by reference — no copy, no extra dtor", "[gen][lifecycle][cat3]") {
     auto jit = gen_jit(R"SRC(
-        module __lc3_byref__;
+        module gen_lifecycle_09;
 
         g_dtors : int = 0;
 
@@ -345,7 +345,7 @@ TEST_CASE("Lifecycle Cat3: Struct passed by reference — no copy, no extra dtor
 
 TEST_CASE("Lifecycle Cat4: Function returning struct by value, assigned to local", "[gen][lifecycle][cat4]") {
     auto jit = gen_jit(R"SRC(
-        module __lc4_retval__;
+        module gen_lifecycle_10;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -391,7 +391,7 @@ TEST_CASE("Lifecycle Cat4: Function returning struct by value, assigned to local
 
 TEST_CASE("Lifecycle Cat6: Outer struct with inner struct member — inner dtor called", "[gen][lifecycle][cat6]") {
     auto jit = gen_jit(R"SRC(
-        module __lc6_inner__;
+        module gen_lifecycle_11;
 
         g_log : int = 0;
 
@@ -423,7 +423,7 @@ TEST_CASE("Lifecycle Cat6: Outer struct with inner struct member — inner dtor 
 
 TEST_CASE("Lifecycle Cat6: Multiple struct members — reverse destruction order", "[gen][lifecycle][cat6]") {
     auto jit = gen_jit(R"SRC(
-        module __lc6_multi__;
+        module gen_lifecycle_12;
 
         g_order : int = 0;
 
@@ -461,7 +461,7 @@ TEST_CASE("Lifecycle Cat6: Multiple struct members — reverse destruction order
 
 TEST_CASE("Lifecycle Cat6: Nested aggregation depth 3", "[gen][lifecycle][cat6]") {
     auto jit = gen_jit(R"SRC(
-        module __lc6_deep__;
+        module gen_lifecycle_13;
 
         g_order : int = 0;
 
@@ -505,7 +505,7 @@ TEST_CASE("Lifecycle Cat6: Nested aggregation depth 3", "[gen][lifecycle][cat6]"
 
 TEST_CASE("Lifecycle Cat4: Function returning struct by value, assigned to local var", "[gen][lifecycle][cat4]") {
     auto jit = gen_jit(R"SRC(
-        module __lc4_struct_ret__;
+        module gen_lifecycle_14;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -548,7 +548,7 @@ TEST_CASE("Lifecycle Cat4: Function returning struct by value, assigned to local
 
 TEST_CASE("Lifecycle Cat4: Struct return value used in expression then discarded", "[gen][lifecycle][cat4]") {
     auto jit = gen_jit(R"SRC(
-        module __lc4_discard__;
+        module gen_lifecycle_15;
 
         g_dtors : int = 0;
 
@@ -590,7 +590,7 @@ TEST_CASE("Lifecycle Cat5: Temporary struct from function call, result discarded
     // A bare expression-statement calling a function that returns a struct.
     // The temporary must be destroyed at the end of the statement.
     auto jit = gen_jit(R"SRC(
-        module __lc5_discard__;
+        module gen_lifecycle_16;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -639,7 +639,7 @@ TEST_CASE("Lifecycle Cat5: Member access on temporary struct return value", "[ge
     // make().val — the temporary must stay alive during member access,
     // then be destroyed at the end of the full expression.
     auto jit = gen_jit(R"SRC(
-        module __lc5_member__;
+        module gen_lifecycle_17;
 
         g_dtors : int = 0;
 
@@ -679,7 +679,7 @@ TEST_CASE("Lifecycle Cat5: Chained method call on temporary", "[gen][lifecycle][
     // The temporary must survive until after get_val() completes,
     // then be destroyed at end of full expression.
     auto jit = gen_jit(R"SRC(
-        module __lc5_chain__;
+        module gen_lifecycle_18;
 
         g_dtors : int = 0;
 
@@ -718,7 +718,7 @@ TEST_CASE("Lifecycle Cat5: Multiple temporaries in one expression, reverse destr
     // f1().val + f2().val — two temporaries created; both destroyed at end
     // of the full expression, in reverse creation order.
     auto jit = gen_jit(R"SRC(
-        module __lc5_multi__;
+        module gen_lifecycle_19;
 
         g_order : int = 0;
 
@@ -779,7 +779,7 @@ TEST_CASE("Lifecycle Cat5: Deep chaining — two struct intermediaries", "[gen][
     // make().transform().get_val() with two struct temporaries.
     // Both must survive until end of full expression, then destroyed in reverse.
     auto jit = gen_jit(R"SRC(
-        module __lc5_deep__;
+        module gen_lifecycle_20;
 
         g_order : int = 0;
 
@@ -840,7 +840,7 @@ TEST_CASE("Lifecycle Cat7: Temporary struct in if-condition", "[gen][lifecycle][
     // if (make(x).is_valid()) — temporary created for condition,
     // must be destroyed after condition evaluation (before or after the body).
     auto jit = gen_jit(R"SRC(
-        module __lc7_if__;
+        module gen_lifecycle_21;
 
         g_dtors : int = 0;
 
@@ -888,7 +888,7 @@ TEST_CASE("Lifecycle Cat7: Temporary struct in while-condition", "[gen][lifecycl
     // while (make_counter().has_next()) — temporary created each iteration,
     // must be destroyed after each condition evaluation.
     auto jit = gen_jit(R"SRC(
-        module __lc7_while__;
+        module gen_lifecycle_22;
 
         g_dtors : int = 0;
         g_counter : int = 0;
@@ -937,7 +937,7 @@ TEST_CASE("Lifecycle Cat7: Temporary struct in for-condition", "[gen][lifecycle]
     // for (i:=0; make_limit(n).above(i) > 0; i = i + 1)
     // Temporary created at each condition check, must be destroyed after each.
     auto jit = gen_jit(R"SRC(
-        module __lc7_for__;
+        module gen_lifecycle_23;
 
         g_dtors : int = 0;
 
@@ -986,7 +986,7 @@ TEST_CASE("Lifecycle Cat7: Temporary struct in for-condition", "[gen][lifecycle]
 
 TEST_CASE("Lifecycle Cat1: Early return in middle of block — all locals destroyed", "[gen][lifecycle][cat1]") {
     auto jit = gen_jit(R"SRC(
-        module __lc1_early__;
+        module gen_lifecycle_24;
 
         g_dtors : int = 0;
 
@@ -1026,7 +1026,7 @@ TEST_CASE("Lifecycle Cat1: Early return in middle of block — all locals destro
 
 TEST_CASE("Lifecycle Cat2: Owner auto-cleanup at scope exit — dtor called exactly once", "[gen][lifecycle][cat2]") {
     auto jit = gen_jit(R"SRC(
-        module __lc2_auto__;
+        module gen_lifecycle_25;
 
         g_dtors : int = 0;
 
@@ -1061,7 +1061,7 @@ TEST_CASE("Lifecycle Cat2: Owner auto-cleanup at scope exit — dtor called exac
 
 TEST_CASE("Lifecycle Cat3: Multiple by-value params — all destroyed at function exit", "[gen][lifecycle][cat3]") {
     auto jit = gen_jit(R"SRC(
-        module __lc3_multi__;
+        module gen_lifecycle_26;
 
         g_dtors : int = 0;
 
@@ -1106,7 +1106,7 @@ TEST_CASE("Lifecycle Cat4: Struct return as bare expression-statement (no use)",
     // make(); — return value is a struct, entirely discarded.
     // The temporary must still be destroyed at end of the expression-statement.
     auto jit = gen_jit(R"SRC(
-        module __lc4_bare__;
+        module gen_lifecycle_27;
 
         g_dtors : int = 0;
 
@@ -1146,7 +1146,7 @@ TEST_CASE("Lifecycle Cat5: Temporary in assignment expression", "[gen][lifecycle
     // x = make(42).val; where x is already declared.
     // Temporary must be destroyed at end of expression-statement.
     auto jit = gen_jit(R"SRC(
-        module __lc5_assign__;
+        module gen_lifecycle_28;
 
         g_dtors : int = 0;
 
@@ -1185,7 +1185,7 @@ TEST_CASE("Lifecycle Cat5: Struct return passed by value as function argument", 
     // consume(make(42)) — make() returns a struct by value, passed to consume()
     // by value (copy). All copies and temporaries must be properly destroyed.
     auto jit = gen_jit(R"SRC(
-        module __lc5_nested_call__;
+        module gen_lifecycle_29;
 
         g_dtors : int = 0;
 
@@ -1231,7 +1231,7 @@ TEST_CASE("Lifecycle Cat5: Struct return passed by value as function argument", 
 TEST_CASE("Lifecycle Cat1: Struct without destructor — no crash", "[gen][lifecycle][cat1]") {
     // Verify that structs without destructors don't cause issues.
     auto jit = gen_jit(R"SRC(
-        module __lc1_no_dtor__;
+        module gen_lifecycle_30;
 
         struct Plain {
             val : int;
@@ -1252,7 +1252,7 @@ TEST_CASE("Lifecycle Cat1: Struct without destructor — no crash", "[gen][lifec
 
 TEST_CASE("Lifecycle Cat1: Struct return by value without destructor — no crash", "[gen][lifecycle][cat1]") {
     auto jit = gen_jit(R"SRC(
-        module __lc1_ret_no_dtor__;
+        module gen_lifecycle_31;
 
         struct Plain {
             val : int;
@@ -1282,7 +1282,7 @@ TEST_CASE("Lifecycle Cat1: Struct return by value without destructor — no cras
 
 TEST_CASE("Lifecycle Cat4: Struct copy from local to local", "[gen][lifecycle][cat4]") {
     auto jit = gen_jit(R"SRC(
-        module __lc4_copy_local__;
+        module gen_lifecycle_32;
 
         g_dtors : int = 0;
 
@@ -1328,7 +1328,7 @@ TEST_CASE("Lifecycle Cat4: Struct copy from local to local", "[gen][lifecycle][c
 TEST_CASE("Lifecycle Cat8: prvalue temporary passed by value is moved, not double-destroyed",
           "[gen][lifecycle][cat8][value-semantics]") {
     auto jit = gen_jit(R"SRC(
-        module __lc8_byval_move__;
+        module gen_lifecycle_33;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1368,7 +1368,7 @@ TEST_CASE("Lifecycle Cat8: prvalue temporary passed by value is moved, not doubl
 TEST_CASE("Lifecycle Cat8: prvalue temporary returned by value is moved, not double-destroyed",
           "[gen][lifecycle][cat8][value-semantics]") {
     auto jit = gen_jit(R"SRC(
-        module __lc8_ret_move__;
+        module gen_lifecycle_34;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -1416,7 +1416,7 @@ TEST_CASE("Lifecycle Cat8: lvalue copy of non-copyable struct is rejected",
           "[gen][lifecycle][cat8][value-semantics][error]") {
     test_logger logger;
     bool ok = compile_collect_diagnostics(R"SRC(
-        module __lc8_not_copyable__;
+        module gen_lifecycle_35;
 
         struct Box {
             payload : int!;
@@ -1454,7 +1454,7 @@ TEST_CASE("Lifecycle Cat8: lvalue copy of non-copyable struct is rejected",
 TEST_CASE("Lifecycle Cat8: lvalue copied into variable initialisation (site 2)",
           "[gen][lifecycle][cat8][value-semantics]") {
     auto jit = gen_jit(R"SRC(
-        module __lc8_varinit_copy__;
+        module gen_lifecycle_36;
 
         g_ctors  : int = 0;
         g_copies : int = 0;
@@ -1501,7 +1501,7 @@ TEST_CASE("Lifecycle Cat8: lvalue copied into variable initialisation (site 2)",
 TEST_CASE("Lifecycle Cat8: lvalue passed by value to function (site 3)",
           "[gen][lifecycle][cat8][value-semantics]") {
     auto jit = gen_jit(R"SRC(
-        module __lc8_byval_lval_copy__;
+        module gen_lifecycle_37;
 
         g_ctors  : int = 0;
         g_copies : int = 0;
@@ -1549,7 +1549,7 @@ TEST_CASE("Lifecycle Cat8: lvalue passed by value to function (site 3)",
 TEST_CASE("Lifecycle Cat8: lvalue returned by value from function (site 4)",
           "[gen][lifecycle][cat8][value-semantics]") {
     auto jit = gen_jit(R"SRC(
-        module __lc8_retval_lval_copy__;
+        module gen_lifecycle_38;
 
         g_ctors  : int = 0;
         g_copies : int = 0;
@@ -1607,7 +1607,7 @@ TEST_CASE("Lifecycle Cat8: lvalue init of non-copyable struct is rejected (site 
           "[gen][lifecycle][cat8][value-semantics][error]") {
     test_logger logger;
     bool ok = compile_collect_diagnostics(R"SRC(
-        module __lc8_nocopy_init__;
+        module gen_lifecycle_39;
 
         struct Box {
             payload : int!;

@@ -57,7 +57,7 @@
 
 TEST_CASE("Friend aggregate — access protected member variable via dot", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_dot__;
+        module gen_friend_01;
         struct Secret {
             friend Buddy;
         protected:
@@ -87,7 +87,7 @@ TEST_CASE("Friend aggregate — access protected member variable via dot", "[gen
 
 TEST_CASE("Friend aggregate — access protected member variable via arrow", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_arrow__;
+        module gen_friend_02;
         struct Secret {
             friend Buddy;
         protected:
@@ -117,7 +117,7 @@ TEST_CASE("Friend aggregate — access protected member variable via arrow", "[g
 
 TEST_CASE("Friend aggregate — access protected member function", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_func__;
+        module gen_friend_03;
         struct Secret {
             friend Buddy;
         protected:
@@ -145,7 +145,7 @@ TEST_CASE("Friend aggregate — access protected member function", "[gen][friend
 
 TEST_CASE("Friend aggregate — access protected constructor", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_ctor__;
+        module gen_friend_04;
         struct Secret {
             friend Builder;
         protected:
@@ -176,7 +176,7 @@ TEST_CASE("Friend aggregate — access protected constructor", "[gen][friend]") 
 
 TEST_CASE("Friend free function — access protected member variable", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_free_func__;
+        module gen_friend_05;
         struct Secret {
             friend peek;
         protected:
@@ -203,7 +203,7 @@ TEST_CASE("Friend free function — access protected member variable", "[gen][fr
 
 TEST_CASE("Friend with struct filter — match correct type", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_filter_ok__;
+        module gen_friend_06;
         struct Secret {
             friend struct Buddy;
         protected:
@@ -233,7 +233,7 @@ TEST_CASE("Friend with struct filter — match correct type", "[gen][friend]") {
 
 TEST_CASE("Friend with struct filter — mismatch rejects access", "[gen][friend][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __friend_filter_mismatch__;
+        module gen_friend_07;
         struct Secret {
             friend struct Impostor;
         protected:
@@ -255,7 +255,7 @@ TEST_CASE("Friend with struct filter — mismatch rejects access", "[gen][friend
 
 TEST_CASE("Friendship does NOT inherit — subclass of friend denied", "[gen][friend][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __friend_no_inherit__;
+        module gen_friend_08;
         struct Secret {
             friend Buddy;
         protected:
@@ -281,7 +281,7 @@ TEST_CASE("Friendship does NOT inherit — subclass of friend denied", "[gen][fr
 
 TEST_CASE("Subclass of declaring aggregate does NOT inherit friendship", "[gen][friend][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __friend_no_propagate__;
+        module gen_friend_09;
         struct Base {
             friend Buddy;
         protected:
@@ -307,7 +307,7 @@ TEST_CASE("Subclass of declaring aggregate does NOT inherit friendship", "[gen][
 
 TEST_CASE("Nested aggregate of friend has no access", "[gen][friend][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __friend_no_nested__;
+        module gen_friend_10;
         struct Secret {
             friend Buddy;
         protected:
@@ -329,7 +329,7 @@ TEST_CASE("Nested aggregate of friend has no access", "[gen][friend][error]") {
 
 TEST_CASE("Non-friend struct rejected — baseline", "[gen][friend][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __friend_baseline__;
+        module gen_friend_11;
         struct Secret {
         protected:
             val : int;
@@ -348,7 +348,7 @@ TEST_CASE("Non-friend struct rejected — baseline", "[gen][friend][error]") {
 
 TEST_CASE("Friend with qualified name — namespace::Struct", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_qualified__;
+        module gen_friend_12;
         namespace helpers {
             struct Buddy {
                 peek(s : Secret&) : int {
@@ -380,7 +380,7 @@ TEST_CASE("Friend with qualified name — namespace::Struct", "[gen][friend]") {
 
 TEST_CASE("Friend with class filter — match correct type", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_class_filter__;
+        module gen_friend_13;
         struct Secret {
             friend class Ally;
         protected:
@@ -412,7 +412,7 @@ TEST_CASE("Friend with class filter — match correct type", "[gen][friend]") {
 
 TEST_CASE("Friend aggregate — static member accesses protected member", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_static__;
+        module gen_friend_14;
         struct Secret {
             friend Buddy;
         protected:
@@ -441,7 +441,7 @@ TEST_CASE("Friend aggregate — static member accesses protected member", "[gen]
 
 TEST_CASE("Friend aggregate — access protected member function via arrow", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_arrow_func__;
+        module gen_friend_15;
         struct Secret {
             friend Buddy;
         protected:
@@ -469,7 +469,7 @@ TEST_CASE("Friend aggregate — access protected member function via arrow", "[g
 
 TEST_CASE("Multiple friend declarations — both friends have access", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_multi__;
+        module gen_friend_16;
         struct Secret {
             friend AllyA;
             friend AllyB;
@@ -507,7 +507,7 @@ TEST_CASE("Multiple friend declarations — both friends have access", "[gen][fr
 
 TEST_CASE("Friend declaration at namespace scope — error", "[gen][friend][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __friend_ns_error__;
+        module gen_friend_17;
         friend SomeStruct;
         struct SomeStruct {
             val : int;
@@ -519,7 +519,7 @@ TEST_CASE("Friend declaration at namespace scope — error", "[gen][friend][erro
 
 TEST_CASE("Friend of Base accesses inherited protected member via Derived ref", "[gen][friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_inherited_access__;
+        module gen_friend_18;
         struct Base {
             friend Buddy;
         protected:
@@ -554,7 +554,7 @@ TEST_CASE("Friend of Base accesses inherited protected member via Derived ref", 
 
 TEST_CASE("Template friend — access private member via friend Getter<T>", "[gen][friend][template-friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_tpl_private__;
+        module gen_friend_19;
         template<typename T>
         struct Box {
             private:
@@ -582,7 +582,7 @@ TEST_CASE("Template friend — access private member via friend Getter<T>", "[ge
 
 TEST_CASE("Template friend — friend declaration with struct filter", "[gen][friend][template-friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_tpl_filter__;
+        module gen_friend_20;
         template<typename T>
         struct Box {
             private:
@@ -610,7 +610,7 @@ TEST_CASE("Template friend — friend declaration with struct filter", "[gen][fr
 
 TEST_CASE("Template friend — unparameterized friend grants access to all instantiations", "[gen][friend][template-friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_tpl_unparameterized__;
+        module gen_friend_21;
         template<typename T>
         struct Box {
             private:
@@ -638,7 +638,7 @@ TEST_CASE("Template friend — unparameterized friend grants access to all insta
 
 TEST_CASE("Friend declaration — access private (non-template) member", "[gen][friend][private]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_private__;
+        module gen_friend_22;
         struct Secret {
             private:
             _x : int;
@@ -664,7 +664,7 @@ TEST_CASE("Friend declaration — access private (non-template) member", "[gen][
 
 TEST_CASE("Template friend — non-friend cannot access private member", "[gen][friend][template-friend]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module __friend_tpl_negative__;
+        module gen_friend_23;
         template<typename T>
         struct Box {
             private:
@@ -689,7 +689,7 @@ TEST_CASE("Template friend — non-friend cannot access private member", "[gen][
 
 TEST_CASE("Template friend — non-template struct, explicit concrete arg grants access", "[gen][friend][template-friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_nontpl_concrete_pos__;
+        module gen_friend_24;
         struct Secret {
             private:
             _x : int;
@@ -716,7 +716,7 @@ TEST_CASE("Template friend — non-template struct, explicit concrete arg grants
 
 TEST_CASE("Template friend — non-template struct, wrong concrete arg rejects access", "[gen][friend][template-friend]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module __friend_nontpl_concrete_neg__;
+        module gen_friend_25;
         struct Secret {
             private:
             _x : int;
@@ -740,7 +740,7 @@ TEST_CASE("Template friend — non-template struct, wrong concrete arg rejects a
 
 TEST_CASE("Template friend — free function template with inherited param grants access", "[gen][friend][template-friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_freefn_tpl_pos__;
+        module gen_friend_26;
         template<typename T>
         struct Box {
             private:
@@ -765,7 +765,7 @@ TEST_CASE("Template friend — free function template with inherited param grant
 
 TEST_CASE("Template friend — unparameterized free function friend grants access to all instantiations", "[gen][friend][template-friend]") {
     auto jit = gen_jit(R"SRC(
-        module __friend_freefn_unparameterized__;
+        module gen_friend_27;
         template<typename T>
         struct Box {
             private:
@@ -792,7 +792,7 @@ TEST_CASE("Template friend — free function template wrong param rejects access
     // Only peek<int> is declared as friend; peek<long> must be rejected.
     // Use long (not double) to avoid cast syntax issues in constructor args.
     REQUIRE(compile_should_fail(R"SRC(
-        module __friend_freefn_tpl_neg__;
+        module gen_friend_28;
         template<typename T>
         struct Box {
             private:

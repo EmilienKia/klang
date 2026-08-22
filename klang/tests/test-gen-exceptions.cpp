@@ -35,7 +35,7 @@ TEST_CASE("Exception: try-catch parses without error", "[gen][exceptions]") {
     // Verify that the pipeline accepts try-catch syntax and executes the try body
     // normally when no exception is thrown.
     auto jit = gen_jit(R"(
-        module __test_exc_1__;
+        module gen_exceptions_01;
 
         try_but_no_throw() : int {
             result : int = 0;
@@ -55,7 +55,7 @@ TEST_CASE("Exception: try-catch parses without error", "[gen][exceptions]") {
 
 TEST_CASE("Exception: multiple catch clauses parse", "[gen][exceptions]") {
     auto jit = gen_jit(R"(
-        module __test_exc_2__;
+        module gen_exceptions_02;
 
         class ErrA : public Exception { }
         class ErrB : public Exception { }
@@ -80,7 +80,7 @@ TEST_CASE("Exception: multiple catch clauses parse", "[gen][exceptions]") {
 
 TEST_CASE("Exception: throws clause on function declaration", "[gen][exceptions]") {
     auto jit = gen_jit(R"(
-        module __test_exc_3__;
+        module gen_exceptions_03;
 
         class MyError : public Exception { }
 
@@ -96,7 +96,7 @@ TEST_CASE("Exception: throws clause on function declaration", "[gen][exceptions]
 
 TEST_CASE("Exception: throws clause with multiple types", "[gen][exceptions]") {
     auto jit = gen_jit(R"(
-        module __test_exc_4__;
+        module gen_exceptions_04;
 
         class ErrorA : public Exception { }
         class ErrorB : public Exception { }
@@ -118,7 +118,7 @@ TEST_CASE("Exception: throws clause with multiple types", "[gen][exceptions]") {
 TEST_CASE("Exception: throws clause type resolution — model inspection", "[gen][exceptions][resolution]") {
     // Verify that the throws spec raw names are resolved to actual types
     auto comp = compile_model_with_stdlib(R"(
-        module __test_exc_res_1__;
+        module gen_exceptions_05;
 
         class MyException : public Exception { }
 
@@ -146,7 +146,7 @@ TEST_CASE("Exception: throws clause type resolution — model inspection", "[gen
 TEST_CASE("Exception: throws clause unknown type fails", "[gen][exceptions][resolution]") {
     // A throws clause referencing a non-existent type should fail compilation
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
-        module __test_exc_res_2__;
+        module gen_exceptions_06;
 
         bad_throws() : int throws NonExistentType {
             return 0;
@@ -161,7 +161,7 @@ TEST_CASE("Exception: throws clause unknown type fails", "[gen][exceptions][reso
 TEST_CASE("Exception: throw statement compiles", "[gen][exceptions]") {
     // Verify that a throw of an Exception-derived class compiles correctly.
     auto jit = gen_jit(R"(
-        module __test_exc_throw_1__;
+        module gen_exceptions_07;
 
         class Err : public Exception { }
 
@@ -182,7 +182,7 @@ TEST_CASE("Exception: throw statement compiles", "[gen][exceptions]") {
 
 TEST_CASE("Exception: try-catch with throw in try body compiles", "[gen][exceptions]") {
     auto jit = gen_jit(R"(
-        module __test_exc_trycatch_1__;
+        module gen_exceptions_08;
 
         class Problem : public Exception { }
 
@@ -208,7 +208,7 @@ TEST_CASE("Exception: try-catch with throw in try body compiles", "[gen][excepti
 
 TEST_CASE("Exception: throw inside try-catch is caught at runtime", "[gen][exceptions][run]") {
     auto jit = gen_jit(R"(
-        module __test_exc_runtime_1__;
+        module gen_exceptions_09;
 
         class MyErr : public Exception { }
 
@@ -236,7 +236,7 @@ TEST_CASE("Exception: throw inside try-catch is caught at runtime", "[gen][excep
 
 TEST_CASE("Exception: throw in called function caught by caller via invoke", "[gen][exceptions][run][invoke]") {
     auto jit = gen_jit(R"(
-        module __test_exc_invoke_1__;
+        module gen_exceptions_10;
 
         class AppError : public Exception { }
 
@@ -268,7 +268,7 @@ TEST_CASE("Exception: throw in called function caught by caller via invoke", "[g
 
 TEST_CASE("Exception: type-based catch dispatch selects correct handler", "[gen][exceptions][run][dispatch]") {
     auto jit = gen_jit(R"(
-        module __test_exc_dispatch_1__;
+        module gen_exceptions_11;
 
         class ErrA : public Exception { }
         class ErrB : public Exception { }
@@ -299,7 +299,7 @@ TEST_CASE("Exception: type-based catch dispatch selects correct handler", "[gen]
 
 TEST_CASE("Exception: first matching catch clause wins", "[gen][exceptions][run][dispatch]") {
     auto jit = gen_jit(R"(
-        module __test_exc_dispatch_2__;
+        module gen_exceptions_12;
 
         class ErrA : public Exception { }
         class ErrB : public Exception { }
@@ -330,7 +330,7 @@ TEST_CASE("Exception: first matching catch clause wins", "[gen][exceptions][run]
 
 TEST_CASE("Exception: unmatched type resumes unwinding to outer try-catch", "[gen][exceptions][run][dispatch]") {
     auto jit = gen_jit(R"(
-        module __test_exc_dispatch_3__;
+        module gen_exceptions_13;
 
         class ErrA : public Exception { }
         class ErrC : public Exception { }
@@ -367,7 +367,7 @@ TEST_CASE("Exception: unmatched type resumes unwinding to outer try-catch", "[ge
 
 TEST_CASE("Exception: nested try-catch blocks", "[gen][exceptions][run][nested]") {
     auto jit = gen_jit(R"(
-        module __test_exc_nested_1__;
+        module gen_exceptions_14;
 
         class ErrA : public Exception { }
 
@@ -400,7 +400,7 @@ TEST_CASE("Exception contract: throw undeclared type in function with throws cla
           "[gen][exceptions][contract]") {
     // Function declares 'throws ErrA' but throws ErrB → should fail
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
-        module __test_exc_contract_1__;
+        module gen_exceptions_15;
 
         class ErrA : public Exception { }
         class ErrB : public Exception { }
@@ -415,7 +415,7 @@ TEST_CASE("Exception contract: throw undeclared type in function with throws cla
 TEST_CASE("Exception contract: throw declared type in function with throws clause passes",
           "[gen][exceptions][contract]") {
     auto jit = gen_jit(R"(
-        module __test_exc_contract_2__;
+        module gen_exceptions_16;
 
         class ErrA : public Exception { }
 
@@ -435,7 +435,7 @@ TEST_CASE("Exception contract: throw declared type in function with throws claus
 TEST_CASE("Exception contract: throw inside try-catch does not require throws clause",
           "[gen][exceptions][contract]") {
     auto jit = gen_jit(R"(
-        module __test_exc_contract_3__;
+        module gen_exceptions_17;
 
         class ErrA : public Exception { }
         class ErrB : public Exception { }
@@ -460,7 +460,7 @@ TEST_CASE("Exception contract: throw inside try-catch does not require throws cl
 TEST_CASE("Exception contract: call to throwing function not handled fails",
           "[gen][exceptions][contract]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
-        module __test_exc_contract_4__;
+        module gen_exceptions_18;
 
         class ErrA : public Exception { }
         class ErrB : public Exception { }
@@ -479,7 +479,7 @@ TEST_CASE("Exception contract: call to throwing function not handled fails",
 TEST_CASE("Exception contract: call to throwing function propagated via throws clause passes",
           "[gen][exceptions][contract]") {
     auto jit = gen_jit(R"(
-        module __test_exc_contract_5__;
+        module gen_exceptions_19;
 
         class ErrB : public Exception { }
 
@@ -503,7 +503,7 @@ TEST_CASE("Exception contract: call to throwing function propagated via throws c
 TEST_CASE("Exception contract: call to throwing function caught in try-catch passes",
           "[gen][exceptions][contract]") {
     auto jit = gen_jit(R"(
-        module __test_exc_contract_6__;
+        module gen_exceptions_20;
 
         class ErrA : public Exception { }
         class ErrB : public Exception { }
@@ -532,7 +532,7 @@ TEST_CASE("Exception contract: call to throwing function caught in try-catch pas
 TEST_CASE("Exception contract: function without throws clause can throw freely",
           "[gen][exceptions][contract]") {
     auto jit = gen_jit(R"(
-        module __test_exc_contract_7__;
+        module gen_exceptions_21;
 
         class AnyErr : public Exception { }
 
@@ -552,7 +552,7 @@ TEST_CASE("Exception contract: function without throws clause can throw freely",
 TEST_CASE("Exception contract: calling unspec function from throws function needs no handling",
           "[gen][exceptions][contract]") {
     auto jit = gen_jit(R"(
-        module __test_exc_contract_8__;
+        module gen_exceptions_22;
 
         class ErrA : public Exception { }
 
@@ -578,7 +578,7 @@ TEST_CASE("Exception contract: calling unspec function from throws function need
 TEST_CASE("Exception: throwing a non-Exception struct fails compilation",
           "[gen][exceptions][contract]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
-        module __test_exc_reject_struct__;
+        module gen_exceptions_23;
 
         struct NotAnException {
             code : int;
@@ -594,7 +594,7 @@ TEST_CASE("Exception: throwing a non-Exception struct fails compilation",
 TEST_CASE("Exception: throwing a non-Exception class fails compilation",
           "[gen][exceptions][contract]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
-        module __test_exc_reject_class__;
+        module gen_exceptions_24;
 
         class NotAnException {
             public:
@@ -617,7 +617,7 @@ TEST_CASE("Exception: throw temporary construction of Exception-derived class",
     // First verify that calling getCode() on a caught derived exception works
     // even with a local variable (non-temporary) throw
     auto jit = gen_jit(R"(
-        module __test_exc_temp_throw_1__;
+        module gen_exceptions_25;
 
         class MyErr : public Exception {
             public:
@@ -661,7 +661,7 @@ TEST_CASE("Exception: throw temporary construction of Exception-derived class",
 TEST_CASE("Exception: throw temporary construction of base Exception",
           "[gen][exceptions][run][temp-throw]") {
     auto jit = gen_jit(R"(
-        module __test_exc_temp_throw_2__;
+        module gen_exceptions_26;
 
         test_throw_base() : int {
             result : int = 0;
@@ -683,7 +683,7 @@ TEST_CASE("Exception: throw temporary construction of base Exception",
 TEST_CASE("Exception: throw temporary caught by base class reference",
           "[gen][exceptions][run][temp-throw]") {
     auto jit = gen_jit(R"(
-        module __test_exc_temp_throw_3__;
+        module gen_exceptions_27;
 
         class AppError : public Exception {
             public:
@@ -710,7 +710,7 @@ TEST_CASE("Exception: throw temporary caught by base class reference",
 TEST_CASE("Exception: throw temporary in called function",
           "[gen][exceptions][run][temp-throw]") {
     auto jit = gen_jit(R"(
-        module __test_exc_temp_throw_4__;
+        module gen_exceptions_28;
 
         class NetErr : public Exception {
             public:
@@ -747,7 +747,7 @@ TEST_CASE("Exception contract: constructor with throws clause — new caught in 
     // A class whose constructor declares 'throws ErrA'.
     // Calling new inside a try-catch that catches ErrA should compile and run.
     auto jit = gen_jit(R"(
-        module __test_exc_ctor_1__;
+        module gen_exceptions_29;
 
         class ErrA : public Exception {
             public:
@@ -805,7 +805,7 @@ TEST_CASE("Exception contract: constructor with throws clause — new not handle
     // A function with a throws clause that does NOT cover the constructor's exception.
     // Calling new without try-catch should produce a compile error.
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
-        module __test_exc_ctor_2__;
+        module gen_exceptions_30;
 
         class ErrA : public Exception { }
         class ErrB : public Exception { }
@@ -830,7 +830,7 @@ TEST_CASE("Exception contract: constructor with throws clause — propagated via
           "[gen][exceptions][contract][constructor]") {
     // A function that declares the same exception as the constructor should compile fine.
     auto jit = gen_jit(R"(
-        module __test_exc_ctor_3__;
+        module gen_exceptions_31;
 
         class ErrA : public Exception {
             public:
@@ -866,7 +866,7 @@ TEST_CASE("Exception contract: struct constructor with throws clause — local v
     // A struct whose constructor declares 'throws ErrA'.
     // Constructing a local variable inside a try-catch should compile and work.
     auto jit = gen_jit(R"(
-        module __test_exc_ctor_4__;
+        module gen_exceptions_32;
 
         class ErrA : public Exception {
             public:
@@ -921,7 +921,7 @@ TEST_CASE("Exception contract: struct constructor with throws clause — local v
           "[gen][exceptions][contract][constructor]") {
     // A struct constructor with throws clause, and the caller declares a different exception.
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
-        module __test_exc_ctor_5__;
+        module gen_exceptions_33;
 
         class ErrA : public Exception { }
         class ErrB : public Exception { }
@@ -946,7 +946,7 @@ TEST_CASE("Exception contract: temporary construction with throws clause — cau
           "[gen][exceptions][contract][constructor]") {
     // Throwing constructor via temporary construction inside try-catch should work.
     auto jit = gen_jit(R"(
-        module __test_exc_ctor_6__;
+        module gen_exceptions_34;
 
         class ErrA : public Exception {
             public:
@@ -1000,7 +1000,7 @@ TEST_CASE("Exception contract: constructor without throws clause — no enforcem
           "[gen][exceptions][contract][constructor]") {
     // A constructor without a throws clause should not trigger any contract check.
     auto jit = gen_jit(R"(
-        module __test_exc_ctor_7__;
+        module gen_exceptions_35;
 
         class ErrA : public Exception { }
 
@@ -1038,7 +1038,7 @@ TEST_CASE("Exception contract: cross-module constructor throws — local and new
     auto result = build_exec_with_lib(
         // ── Library module ──
         R"K(
-            module exc_lib;
+            module gen_exceptions_36;
 
             public:
 
@@ -1061,15 +1061,15 @@ TEST_CASE("Exception contract: cross-module constructor throws — local and new
         )K",
         // ── Executable module ──
         R"K(
-            module exc_app;
-            import exc_lib;
+            module gen_exceptions_37;
+            import gen_exceptions_36;
 
             test_local_ok() : int {
                 result : int = 0;
                 try {
-                    s : exc_lib::Sensor(10);
+                    s : gen_exceptions_36::Sensor(10);
                     result = s.getValue();
-                } catch (e: exc_lib::InitError&) {
+                } catch (e: gen_exceptions_36::InitError&) {
                     result = -1;
                 }
                 return result;
@@ -1078,9 +1078,9 @@ TEST_CASE("Exception contract: cross-module constructor throws — local and new
             test_local_throws() : int {
                 result : int = 0;
                 try {
-                    s : exc_lib::Sensor(-7);
+                    s : gen_exceptions_36::Sensor(-7);
                     result = s.getValue();
-                } catch (e: exc_lib::InitError&) {
+                } catch (e: gen_exceptions_36::InitError&) {
                     result = e.getCode();
                 }
                 return result;
@@ -1089,10 +1089,10 @@ TEST_CASE("Exception contract: cross-module constructor throws — local and new
             test_new_ok() : int {
                 result : int = 0;
                 try {
-                    s : exc_lib::Sensor! = new exc_lib::Sensor(20);
+                    s : gen_exceptions_36::Sensor! = new gen_exceptions_36::Sensor(20);
                     result = s->getValue();
                     delete s;
-                } catch (e: exc_lib::InitError&) {
+                } catch (e: gen_exceptions_36::InitError&) {
                     result = -1;
                 }
                 return result;
@@ -1101,10 +1101,10 @@ TEST_CASE("Exception contract: cross-module constructor throws — local and new
             test_new_throws() : int {
                 result : int = 0;
                 try {
-                    s : exc_lib::Sensor! = new exc_lib::Sensor(-3);
+                    s : gen_exceptions_36::Sensor! = new gen_exceptions_36::Sensor(-3);
                     result = s->getValue();
                     delete s;
-                } catch (e: exc_lib::InitError&) {
+                } catch (e: gen_exceptions_36::InitError&) {
                     result = e.getCode();
                 }
                 return result;
@@ -1143,7 +1143,7 @@ TEST_CASE("ConstructionException: UniSlot construct catches throwing constructor
     // A class whose constructor throws when given a negative value.
     // UniSlot::construct wraps the exception as ConstructionException.
     auto jit = gen_jit(R"(
-        module __test_ce_unislot_1__;
+        module gen_exceptions_38;
 
         class InitErr : public Exception {
             public:
@@ -1199,7 +1199,7 @@ TEST_CASE("ConstructionException: UniSlot construct catches throwing constructor
 TEST_CASE("ConstructionException: MultiSlot construct catches throwing constructor",
           "[gen][exceptions][construction][intrinsic]") {
     auto jit = gen_jit(R"(
-        module __test_ce_multislot_1__;
+        module gen_exceptions_39;
 
         class InitErr : public Exception {
             public:
@@ -1268,7 +1268,7 @@ TEST_CASE("ConstructionException: UniSlot construct — non-throwing constructor
     // A simple struct without throws clause — construct() still declares throws
     // ConstructionException, so the caller must declare or catch it.
     auto jit = gen_jit(R"(
-        module __test_ce_unislot_nothrow__;
+        module gen_exceptions_40;
 
         struct Point {
             x : int;
@@ -1298,7 +1298,7 @@ TEST_CASE("ConstructionException: no throws declaration needed — FatalError pr
     // ConstructionException is now a FatalError, so calling UniSlot::construct
     // without declaring it in a throws clause should compile successfully.
     auto jit = gen_jit(R"(
-        module __test_ce_contract_1__;
+        module gen_exceptions_41;
 
         class InitErr : public Exception { }
 
@@ -1329,7 +1329,7 @@ TEST_CASE("ConstructionException: no throws declaration needed — FatalError pr
 TEST_CASE("NullDereferenceError: catch null dereference in try-catch",
           "[gen][exceptions][fatal][null-deref]") {
     auto res = build_and_exec(R"(
-        module __test_null_deref_catch__;
+        module gen_exceptions_42;
 
         main() : int {
             p : int* = null;
@@ -1347,7 +1347,7 @@ TEST_CASE("NullDereferenceError: catch null dereference in try-catch",
 TEST_CASE("NullPointerError: catch base class matches dereference",
           "[gen][exceptions][fatal][null-base]") {
     auto res = build_and_exec(R"(
-        module __test_null_base_catch__;
+        module gen_exceptions_43;
 
         main() : int {
             p : int* = null;
@@ -1365,7 +1365,7 @@ TEST_CASE("NullPointerError: catch base class matches dereference",
 TEST_CASE("FatalError: catch base class matches null dereference",
           "[gen][exceptions][fatal][fatal-base]") {
     auto res = build_and_exec(R"(
-        module __test_fatal_base_catch__;
+        module gen_exceptions_44;
 
         main() : int {
             p : int* = null;
@@ -1383,7 +1383,7 @@ TEST_CASE("FatalError: catch base class matches null dereference",
 TEST_CASE("NullAssignationError: catch null-to-link rebind in try-catch",
           "[gen][exceptions][fatal][null-assign]") {
     auto res = build_and_exec(R"(
-        module __test_null_assign_catch__;
+        module gen_exceptions_45;
 
         main() : int {
             v : int = 42;
@@ -1403,7 +1403,7 @@ TEST_CASE("NullAssignationError: catch null-to-link rebind in try-catch",
 TEST_CASE("NullDereferenceError: uncaught terminates process",
           "[gen][exceptions][fatal][null-terminate]") {
     auto res = build_and_exec(R"(
-        module __test_null_deref_term__;
+        module gen_exceptions_46;
         main() : int {
             p : int* = null;
             x : int = *p;
@@ -1416,7 +1416,7 @@ TEST_CASE("NullDereferenceError: uncaught terminates process",
 TEST_CASE("IndexOutOfBoundsError: catch array OOB in try-catch",
           "[gen][exceptions][fatal][oob]") {
     auto res = build_and_exec(R"(
-        module __test_oob_catch__;
+        module gen_exceptions_47;
 
         main() : int {
             a : int[3];
@@ -1437,7 +1437,7 @@ TEST_CASE("IndexOutOfBoundsError: catch array OOB in try-catch",
 TEST_CASE("IndexOutOfBoundsError: uncaught terminates process",
           "[gen][exceptions][fatal][oob-terminate]") {
     auto res = build_and_exec(R"(
-        module __test_oob_term__;
+        module gen_exceptions_48;
         main() : int {
             a : int[3];
             a[0] = 1;
@@ -1457,7 +1457,7 @@ TEST_CASE("Exception: bare throw rethrows caught exception to outer handler", "[
     // A bare 'throw;' inside a catch block should rethrow the current exception
     // to an enclosing try-catch handler.
     auto jit = gen_jit(R"(
-        module __test_exc_rethrow_1__;
+        module gen_exceptions_49;
 
         class MyErr : public Exception {
             public:
@@ -1488,7 +1488,7 @@ TEST_CASE("Exception: bare throw rethrows caught exception to outer handler", "[
 TEST_CASE("Exception: bare throw rethrows to caller", "[gen][exceptions][rethrow][run]") {
     // A bare 'throw;' inside a catch block rethrows the exception to the calling function.
     auto jit = gen_jit(R"(
-        module __test_exc_rethrow_2__;
+        module gen_exceptions_50;
 
         class AppErr : public Exception {
             public:
@@ -1522,7 +1522,7 @@ TEST_CASE("Exception: bare throw rethrows to caller", "[gen][exceptions][rethrow
 TEST_CASE("Exception: bare throw outside catch block fails compilation", "[gen][exceptions][rethrow][resolution]") {
     // A bare 'throw;' that is not inside a catch block should produce a compile-time error.
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
-        module __test_exc_rethrow_err_1__;
+        module gen_exceptions_51;
 
         class MyErr : public Exception { }
 
@@ -1535,7 +1535,7 @@ TEST_CASE("Exception: bare throw outside catch block fails compilation", "[gen][
 TEST_CASE("Exception: bare throw outside catch in function body fails", "[gen][exceptions][rethrow][resolution]") {
     // A bare 'throw;' in a try body (not catch) should fail.
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
-        module __test_exc_rethrow_err_2__;
+        module gen_exceptions_52;
 
         class MyErr : public Exception { }
 
@@ -1551,7 +1551,7 @@ TEST_CASE("Exception: bare throw outside catch in function body fails", "[gen][e
 TEST_CASE("Exception: bare throw rethrows FatalError (unchecked)", "[gen][exceptions][rethrow][run]") {
     // FatalError-derived exceptions are unchecked, but rethrow should still work.
     auto jit = gen_jit(R"(
-        module __test_exc_rethrow_fatal_1__;
+        module gen_exceptions_53;
 
         class CritErr : public FatalError {
             public:
@@ -1582,7 +1582,7 @@ TEST_CASE("Exception: bare throw with contract — caught by outer try-catch", "
     // Rethrow inside a catch, with an enclosing outer try-catch that handles the type.
     // This should compile even if the function has a throws spec that does NOT include the type.
     auto jit = gen_jit(R"(
-        module __test_exc_rethrow_contract_1__;
+        module gen_exceptions_54;
 
         class ErrA : public Exception {
             public:
@@ -1612,7 +1612,7 @@ TEST_CASE("Exception: bare throw with contract — caught by outer try-catch", "
 TEST_CASE("Exception: bare throw with contract — declared in throws clause", "[gen][exceptions][rethrow][contract]") {
     // Rethrow inside a catch, function declares exception in throws clause — should compile.
     auto jit = gen_jit(R"(
-        module __test_exc_rethrow_contract_2__;
+        module gen_exceptions_55;
 
         class ErrB : public Exception {
             public:
@@ -1650,7 +1650,7 @@ TEST_CASE("Exception: bare throw with contract — declared in throws clause", "
 
 TEST_CASE("Exception: finally executes on normal flow", "[gen][exceptions][finally]") {
     auto jit = gen_jit(R"(
-        module __test_finally_1__;
+        module gen_exceptions_56;
 
         test_finally_normal() : int {
             result : int = 0;
@@ -1672,7 +1672,7 @@ TEST_CASE("Exception: finally executes on normal flow", "[gen][exceptions][final
 
 TEST_CASE("Exception: finally executes after catch", "[gen][exceptions][finally]") {
     auto jit = gen_jit(R"(
-        module __test_finally_2__;
+        module gen_exceptions_57;
 
         class TestErr : public Exception {
             public:
@@ -1704,7 +1704,7 @@ TEST_CASE("Exception: finally executes after catch", "[gen][exceptions][finally]
 
 TEST_CASE("Exception: try-finally without catch clauses", "[gen][exceptions][finally]") {
     auto jit = gen_jit(R"(
-        module __test_finally_3__;
+        module gen_exceptions_58;
 
         test_try_finally_only() : int {
             result : int = 0;
@@ -1724,7 +1724,7 @@ TEST_CASE("Exception: try-finally without catch clauses", "[gen][exceptions][fin
 
 TEST_CASE("Exception: finally executes on unmatched exception", "[gen][exceptions][finally]") {
     auto jit = gen_jit(R"(
-        module __test_finally_4__;
+        module gen_exceptions_59;
 
         class ErrX : public Exception {
             public:
@@ -1764,7 +1764,7 @@ TEST_CASE("Exception: finally executes on unmatched exception", "[gen][exception
 
 TEST_CASE("Exception: nested try-finally both execute", "[gen][exceptions][finally]") {
     auto jit = gen_jit(R"(
-        module __test_finally_5__;
+        module gen_exceptions_60;
 
         test_nested_finally() : int {
             result : int = 0;
@@ -1788,7 +1788,7 @@ TEST_CASE("Exception: nested try-finally both execute", "[gen][exceptions][final
 
 TEST_CASE("Exception: finally with no exception and no catch", "[gen][exceptions][finally]") {
     auto jit = gen_jit(R"(
-        module __test_finally_6__;
+        module gen_exceptions_61;
 
         test_finally_simple() : int {
             x : int = 10;
@@ -1809,7 +1809,7 @@ TEST_CASE("Exception: finally with no exception and no catch", "[gen][exceptions
 TEST_CASE("Exception: finally does not suppress exception", "[gen][exceptions][finally]") {
     // The exception should propagate through the finally block to the outer catch.
     auto jit = gen_jit(R"(
-        module __test_finally_7__;
+        module gen_exceptions_62;
 
         class PropErr : public Exception {
             public:
@@ -1843,7 +1843,7 @@ TEST_CASE("Exception: finally does not suppress exception", "[gen][exceptions][f
 TEST_CASE("Exception: parser rejects try without catch or finally", "[gen][exceptions][finally]") {
     // A try statement with neither catch nor finally should fail to parse.
     REQUIRE(compile_should_fail(R"(
-        module __test_finally_err__;
+        module gen_exceptions_63;
 
         bad() : int {
             try {
@@ -1861,7 +1861,7 @@ TEST_CASE("Exception: parser rejects try without catch or finally", "[gen][excep
 
 TEST_CASE("Exception: finally runs on return from try body", "[gen][exceptions][finally][finally-phase2]") {
     auto jit = gen_jit(R"(
-        module __test_finally_p2_1__;
+        module gen_exceptions_64;
 
         private:
         g_finally_ran : int = 0;
@@ -1893,7 +1893,7 @@ TEST_CASE("Exception: finally runs on return from try body", "[gen][exceptions][
 
 TEST_CASE("Exception: finally runs on return from catch body", "[gen][exceptions][finally][finally-phase2]") {
     auto jit = gen_jit(R"(
-        module __test_finally_p2_2__;
+        module gen_exceptions_65;
 
         class ErrP2 : public Exception {
             public:
@@ -1936,7 +1936,7 @@ TEST_CASE("Exception: finally runs on return from catch body", "[gen][exceptions
 
 TEST_CASE("Exception: finally runs on break from try body in loop", "[gen][exceptions][finally][finally-phase2]") {
     auto jit = gen_jit(R"(
-        module __test_finally_p2_3__;
+        module gen_exceptions_66;
 
         test_break_in_try() : int {
             result : int = 0;
@@ -1965,7 +1965,7 @@ TEST_CASE("Exception: finally runs on break from try body in loop", "[gen][excep
 
 TEST_CASE("Exception: finally runs on continue from try body in loop", "[gen][exceptions][finally][finally-phase2]") {
     auto jit = gen_jit(R"(
-        module __test_finally_p2_4__;
+        module gen_exceptions_67;
 
         test_continue_in_try() : int {
             result : int = 0;
@@ -1994,7 +1994,7 @@ TEST_CASE("Exception: finally runs on continue from try body in loop", "[gen][ex
 
 TEST_CASE("Exception: finally runs on break from catch body in loop", "[gen][exceptions][finally][finally-phase2]") {
     auto jit = gen_jit(R"(
-        module __test_finally_p2_5__;
+        module gen_exceptions_68;
 
         class ErrLoop : public Exception {
             public:
@@ -2034,7 +2034,7 @@ TEST_CASE("Exception: finally runs on break from catch body in loop", "[gen][exc
 
 TEST_CASE("Exception: nested finally on return", "[gen][exceptions][finally][finally-phase2]") {
     auto jit = gen_jit(R"(
-        module __test_finally_p2_6__;
+        module gen_exceptions_69;
 
         private:
         g_order : int = 0;
@@ -2071,7 +2071,7 @@ TEST_CASE("Exception: nested finally on return", "[gen][exceptions][finally][fin
 
 TEST_CASE("Exception: finally with continue in for loop", "[gen][exceptions][finally][finally-phase2]") {
     auto jit = gen_jit(R"(
-        module __test_finally_p2_8__;
+        module gen_exceptions_70;
 
         test_finally_continue_for() : int {
             result : int = 0;
@@ -2102,7 +2102,7 @@ TEST_CASE("Exception: finally with continue in for loop", "[gen][exceptions][fin
 
 TEST_CASE("Exception chaining: getCause returns null when no cause", "[gen][exceptions][chaining]") {
     auto jit = gen_jit(R"(
-        module __test_exc_chain_no_cause__;
+        module gen_exceptions_71;
 
         class MyErr : public Exception {
         public:
@@ -2132,7 +2132,7 @@ TEST_CASE("Exception chaining: getCause returns null when no cause", "[gen][exce
 
 TEST_CASE("Exception chaining: hasCause false when no cause", "[gen][exceptions][chaining]") {
     auto jit = gen_jit(R"(
-        module __test_exc_chain_hascause_false__;
+        module gen_exceptions_72;
 
         class MyErr : public Exception {
         public:
@@ -2162,7 +2162,7 @@ TEST_CASE("Exception chaining: hasCause false when no cause", "[gen][exceptions]
 
 TEST_CASE("Exception chaining: throw with cause preserves cause pointer", "[gen][exceptions][chaining]") {
     auto jit = gen_jit(R"(
-        module __test_exc_chain_basic__;
+        module gen_exceptions_73;
 
         class OrigErr : public Exception {
         public:
@@ -2200,7 +2200,7 @@ TEST_CASE("Exception chaining: throw with cause preserves cause pointer", "[gen]
 
 TEST_CASE("Exception chaining: getCause returns valid cause with correct code", "[gen][exceptions][chaining]") {
     auto jit = gen_jit(R"(
-        module __test_exc_chain_cause_code__;
+        module gen_exceptions_74;
 
         class OrigErr : public Exception {
         public:
@@ -2241,7 +2241,7 @@ TEST_CASE("Exception chaining: cause survives after inner catch exits", "[gen][e
     // Critical test: the cause (original exception) must survive even after
     // __cxa_end_catch frees it (because we retained it via __k_exception_retain).
     auto jit = gen_jit(R"(
-        module __test_exc_chain_survive__;
+        module gen_exceptions_75;
 
         class InnerErr : public Exception {
         public:
@@ -2288,7 +2288,7 @@ TEST_CASE("Exception chaining: cause survives after inner catch exits", "[gen][e
 
 TEST_CASE("Exception chaining: multi-level chaining (A causes B causes C)", "[gen][exceptions][chaining]") {
     auto jit = gen_jit(R"(
-        module __test_exc_chain_multi__;
+        module gen_exceptions_76;
 
         class ErrA : public Exception {
         public:
@@ -2340,7 +2340,7 @@ TEST_CASE("Exception chaining: multi-level chaining (A causes B causes C)", "[ge
 
 TEST_CASE("Exception chaining: FatalError with cause", "[gen][exceptions][chaining]") {
     auto jit = gen_jit(R"(
-        module __test_exc_chain_fatal__;
+        module gen_exceptions_77;
 
         class AppErr : public Exception {
         public:
@@ -2379,7 +2379,7 @@ TEST_CASE("Exception chaining: FatalError with cause", "[gen][exceptions][chaini
 
 TEST_CASE("Exception chaining: null cause via explicit null argument", "[gen][exceptions][chaining]") {
     auto jit = gen_jit(R"(
-        module __test_exc_chain_null_cause__;
+        module gen_exceptions_78;
 
         class WrapErr : public Exception {
         public:
@@ -2417,7 +2417,7 @@ TEST_CASE("Exception unwinding: struct destructor called on throw",
     // Verify that when an exception propagates through a scope, destructors of
     // local struct variables are called during unwinding.
     auto res = build_and_exec(R"(
-        module __test_unwind_dtor_1__;
+        module gen_exceptions_79;
 
         dtor_count : int = 0;
 
@@ -2462,7 +2462,7 @@ TEST_CASE("Exception unwinding: destructor order is reverse declaration",
     // Destructors during unwinding should run in reverse declaration order.
     // We encode the destruction order in a global variable.
     auto res = build_and_exec(R"(
-        module __test_unwind_order__;
+        module gen_exceptions_80;
 
         order : int = 0;
 
@@ -2509,7 +2509,7 @@ TEST_CASE("Exception unwinding: owner freed on throw",
     // When an exception propagates through a scope with owner variables,
     // the owned memory should be freed (delete called) during unwinding.
     auto res = build_and_exec(R"(
-        module __test_unwind_owner_1__;
+        module gen_exceptions_81;
 
         free_count : int = 0;
 
@@ -2550,7 +2550,7 @@ TEST_CASE("Exception unwinding: null owner not freed",
           "[gen][exceptions][unwinding][owner-null]") {
     // An owner that is null at the time of unwinding should NOT be freed.
     auto res = build_and_exec(R"(
-        module __test_unwind_owner_null__;
+        module gen_exceptions_82;
 
         free_count : int = 0;
 
@@ -2591,7 +2591,7 @@ TEST_CASE("Exception unwinding: nested scopes cleanup inner then outer",
           "[gen][exceptions][unwinding][nested]") {
     // With nested scopes, inner scope cleanup runs first, then outer scope.
     auto res = build_and_exec(R"(
-        module __test_unwind_nested__;
+        module gen_exceptions_83;
 
         order : int = 0;
 
@@ -2637,7 +2637,7 @@ TEST_CASE("Exception unwinding: try-catch inside cleanup scope catches normally"
     // A try-catch inside a block with cleanup vars should catch exceptions normally.
     // The outer scope vars should NOT be destroyed if the exception is caught.
     auto res = build_and_exec(R"(
-        module __test_unwind_try_scope__;
+        module gen_exceptions_84;
 
         dtor_count : int = 0;
 
@@ -2681,7 +2681,7 @@ TEST_CASE("Exception unwinding: unconstructed vars not destroyed",
     // If an exception is thrown before a variable is constructed, its destructor
     // should NOT be called during unwinding.
     auto res = build_and_exec(R"(
-        module __test_unwind_flag__;
+        module gen_exceptions_85;
 
         dtor_count : int = 0;
 
@@ -2724,7 +2724,7 @@ TEST_CASE("Exception unwinding: owner param freed on throw in function body",
           "[gen][exceptions][unwinding][owner-param]") {
     // An owner parameter should be freed if the function body throws.
     auto res = build_and_exec(R"(
-        module __test_unwind_ownparam__;
+        module gen_exceptions_86;
 
         free_count : int = 0;
 
@@ -2762,7 +2762,7 @@ TEST_CASE("Exception unwinding: owner param freed on throw in function body",
 TEST_CASE("Exception unwinding: intermediate frame locals cleaned before outer catch",
           "[gen][exceptions][unwinding][multi-frame]") {
     auto res = build_and_exec(R"(
-        module __test_unwind_multiframe__;
+        module gen_exceptions_87;
 
         order : int = 0;
 
@@ -2808,7 +2808,7 @@ TEST_CASE("Exception unwinding: intermediate frame locals cleaned before outer c
 TEST_CASE("Exception unwinding: sized array elements destroyed on throw",
           "[gen][exceptions][unwinding][array]") {
     auto res = build_and_exec(R"(
-        module __test_unwind_array__;
+        module gen_exceptions_88;
 
         dtor_count : int = 0;
 
@@ -2850,7 +2850,7 @@ TEST_CASE("Exception unwinding: early return in block with destructible vars",
     // When a function returns early from a block containing destructible variables,
     // the cleanup lpad must still be emitted correctly (no duplicate terminator).
     auto res = build_and_exec(R"(
-        module __test_unwind_early_ret__;
+        module gen_exceptions_89;
 
         dtor_count : int = 0;
 
@@ -2901,7 +2901,7 @@ TEST_CASE("Exception unwinding: early return in block with destructible vars",
 TEST_CASE("Exception: throw through a virtual call on a local interface is catchable",
           "[gen][exceptions][virtual]") {
     auto jit = gen_jit(R"(
-        module __test_exc_virtual_iface__;
+        module gen_exceptions_90;
 
         interface Task {
             perform() : int;
@@ -2936,7 +2936,7 @@ TEST_CASE("Exception: throw through a virtual call on a local interface is catch
 TEST_CASE("Exception: throw through a virtual call on a local class is catchable",
           "[gen][exceptions][virtual]") {
     auto jit = gen_jit(R"(
-        module __test_exc_virtual_class__;
+        module gen_exceptions_91;
 
         class Base {
         public:
@@ -2976,7 +2976,7 @@ TEST_CASE("Exception: virtual call unwinding runs destructors of live locals",
     // pad, so destructible locals alive at the call site are destroyed exactly
     // once while the exception propagates.
     auto res = build_and_exec(R"(
-        module __test_exc_virtual_cleanup__;
+        module gen_exceptions_92;
 
         dtor_count : int = 0;
 
@@ -3026,7 +3026,7 @@ TEST_CASE("exceptions: a landing pad reached before an owner declaration must no
     // corrupting unrelated memory. The slot must be neutral from function
     // entry, so unwinding before the declaration frees nothing.
     auto res = build_and_exec(R"(
-        module __test_exc_owner_before_decl__;
+        module gen_exceptions_93;
 
         freed : int = 0;
 

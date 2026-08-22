@@ -39,7 +39,7 @@ namespace ast = k::parse::ast;
 TEST_CASE("Model — free function redirect has correct flags", "[model][redirect]") {
     test_logger log;
     auto src = R"SRC(
-        module test;
+        module gen_redirector_01;
         bar() : int { return 42; }
         foo() : int -> bar;
     )SRC";
@@ -71,7 +71,7 @@ TEST_CASE("Model — free function redirect has correct flags", "[model][redirec
 TEST_CASE("Model — member function redirect has correct flags", "[model][redirect]") {
     test_logger log;
     auto src = R"SRC(
-        module test;
+        module gen_redirector_02;
         struct Foo {
             bar() : int { return 42; }
             baz() : int -> bar;
@@ -103,7 +103,7 @@ TEST_CASE("Model — member function redirect has correct flags", "[model][redir
 TEST_CASE("Model — redirect with qualified target name", "[model][redirect]") {
     test_logger log;
     auto src = R"SRC(
-        module test;
+        module gen_redirector_03;
         struct Base {
             method() : int { return 10; }
         }
@@ -137,7 +137,7 @@ TEST_CASE("Model — redirect with qualified target name", "[model][redirect]") 
 TEST_CASE("Model — regular function is not redirected", "[model][redirect]") {
     test_logger log;
     auto src = R"SRC(
-        module test;
+        module gen_redirector_04;
         bar() : int { return 42; }
     )SRC";
 
@@ -164,7 +164,7 @@ TEST_CASE("Model — regular function is not redirected", "[model][redirect]") {
 
 TEST_CASE("Redirect — free function to free function", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_05;
         bar() : int { return 42; }
         foo() : int -> bar;
         main() : int {
@@ -176,7 +176,7 @@ TEST_CASE("Redirect — free function to free function", "[redirect][codegen]") 
 
 TEST_CASE("Redirect — free function with params", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_06;
         add(a: int, b: int) : int { return a + b; }
         sum(a: int, b: int) : int -> add;
         main() : int {
@@ -188,7 +188,7 @@ TEST_CASE("Redirect — free function with params", "[redirect][codegen]") {
 
 TEST_CASE("Redirect — member function in struct", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_07;
         struct Foo {
             bar() : int { return 99; }
             baz() : int -> bar;
@@ -203,7 +203,7 @@ TEST_CASE("Redirect — member function in struct", "[redirect][codegen]") {
 
 TEST_CASE("Redirect — member to parent struct method", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_08;
         struct Base {
             value() : int { return 7; }
         }
@@ -220,7 +220,7 @@ TEST_CASE("Redirect — member to parent struct method", "[redirect][codegen]") 
 
 TEST_CASE("Redirect — chained redirects", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_09;
         impl() : int { return 55; }
         mid() : int -> impl;
         top() : int -> mid;
@@ -233,14 +233,14 @@ TEST_CASE("Redirect — chained redirects", "[redirect][codegen]") {
 
 TEST_CASE("Redirect — error: unknown target", "[redirect][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_redirector_10;
         foo() : int -> nonexistent;
     )SRC"));
 }
 
 TEST_CASE("Redirect — error: circular redirect", "[redirect][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_redirector_11;
         foo() : int -> bar;
         bar() : int -> foo;
     )SRC"));
@@ -248,7 +248,7 @@ TEST_CASE("Redirect — error: circular redirect", "[redirect][error]") {
 
 TEST_CASE("Redirect — error: target is abstract", "[redirect][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_redirector_12;
         abstract class Base {
             abstract speak() : int;
         }
@@ -264,7 +264,7 @@ TEST_CASE("Redirect — error: target is abstract", "[redirect][error]") {
 
 TEST_CASE("Redirect — virtual method redirect to parent", "[redirect][codegen][virtual]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_13;
         class Base {
             speak() : int { return 10; }
         }
@@ -284,7 +284,7 @@ TEST_CASE("Redirect — virtual method redirect to parent", "[redirect][codegen]
 
 TEST_CASE("Redirect — override a redirected virtual method", "[redirect][codegen][virtual]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_14;
         class Base {
             speak() : int { return 10; }
         }
@@ -307,7 +307,7 @@ TEST_CASE("Redirect — override a redirected virtual method", "[redirect][codeg
 
 TEST_CASE("Redirect — redirect with return type void", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_15;
         g : int = 0;
         impl() { g = 77; }
         aliasFn() -> impl;
@@ -325,7 +325,7 @@ TEST_CASE("Redirect — redirect with return type void", "[redirect][codegen]") 
 
 TEST_CASE("Redirect — forward reference (target defined after redirector)", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_16;
         aliasFn() : int -> impl;
         impl() : int { return 33; }
         main() : int {
@@ -341,7 +341,7 @@ TEST_CASE("Redirect — forward reference (target defined after redirector)", "[
 
 TEST_CASE("Redirect — static member to free function", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_17;
         helper(a: int) : int { return a * 3; }
         struct Foo {
             static compute(a: int) : int -> helper;
@@ -359,7 +359,7 @@ TEST_CASE("Redirect — static member to free function", "[redirect][codegen]") 
 
 TEST_CASE("Redirect — triple chain a -> b -> c -> impl", "[redirect][codegen]") {
     auto result = build_and_exec(R"SRC(
-        module test;
+        module gen_redirector_18;
         impl() : int { return 88; }
         c() : int -> impl;
         b() : int -> c;
@@ -377,7 +377,7 @@ TEST_CASE("Redirect — triple chain a -> b -> c -> impl", "[redirect][codegen]"
 
 TEST_CASE("Redirect — alias symbol present in shared library", "[redirect][codegen][lib]") {
     auto so_path = build_shared_library(R"SRC(
-        module test;
+        module gen_redirector_19;
         bar() : int { return 42; }
         foo() : int -> bar;
     )SRC");

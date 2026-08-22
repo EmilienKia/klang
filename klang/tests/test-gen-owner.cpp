@@ -57,7 +57,7 @@ TEST_CASE("Parse owner type specifier '!'", "[parser][owner]") {
         test_logger logger;
         k::parse::parser parser(logger);
         k::source src(R"SRC(
-            module __owner_parse__;
+            module gen_owner_01;
             foo() : void {
                 x : int! = new int(42);
                 delete x;
@@ -73,7 +73,7 @@ TEST_CASE("Parse owner type specifier '!'", "[parser][owner]") {
         test_logger logger;
         k::parse::parser parser(logger);
         k::source src(R"SRC(
-            module __owner_parse2__;
+            module gen_owner_02;
             foo() : void {
                 x : int! = new int(0);
             }
@@ -92,7 +92,7 @@ TEST_CASE("Parse owner type specifier '!'", "[parser][owner]") {
 
 TEST_CASE("new/delete primitive: explicit delete returns value", "[gen][owner][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_prim__;
+        module gen_owner_03;
         test_new_delete() : int {
             p : int! = new int(99);
             v : int = *p;
@@ -102,28 +102,28 @@ TEST_CASE("new/delete primitive: explicit delete returns value", "[gen][owner][j
     )SRC", /*dump=*/false);
     REQUIRE(jit);
     // _KFN12__own_prim__15test_new_deleteEv
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__own_prim__15test_new_deleteEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_0315test_new_deleteEv");
     REQUIRE(fn);
     REQUIRE(fn() == 99);
 }
 
 TEST_CASE("new/delete: scope auto-cleanup (no explicit delete)", "[gen][owner][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_scope__;
+        module gen_owner_04;
         test_scope_cleanup() : int {
             p : int! = new int(42);
             return *p;
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__own_scope__18test_scope_cleanupEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_0418test_scope_cleanupEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);
 }
 
 TEST_CASE("delete null owner: no-op, no crash", "[gen][owner][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_null__;
+        module gen_owner_05;
         test_delete_null() : int {
             p : int! = new int(7);
             delete p;
@@ -132,14 +132,14 @@ TEST_CASE("delete null owner: no-op, no crash", "[gen][owner][jit]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__own_null__16test_delete_nullEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_0516test_delete_nullEv");
     REQUIRE(fn);
     REQUIRE(fn() == 1);
 }
 
 TEST_CASE("new struct with ctor/dtor: ctor called, dtor+free on delete", "[gen][owner][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_struct__;
+        module gen_owner_06;
 
         g_count : int = 0;
 
@@ -162,7 +162,7 @@ TEST_CASE("new struct with ctor/dtor: ctor called, dtor+free on delete", "[gen][
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__own_struct__8test_boxEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_068test_boxEv");
     REQUIRE(fn);
     // g_count=1 when inside, value=10 → sum=110, after delete g_count=0 → result=1100
     REQUIRE(fn() == 1100);
@@ -170,7 +170,7 @@ TEST_CASE("new struct with ctor/dtor: ctor called, dtor+free on delete", "[gen][
 
 TEST_CASE("owner auto-destroy at scope exit calls dtor", "[gen][owner][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_dtor__;
+        module gen_owner_07;
 
         g_dtor : int = 0;
 
@@ -192,14 +192,14 @@ TEST_CASE("owner auto-destroy at scope exit calls dtor", "[gen][owner][jit]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__own_dtor__3runEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_073runEv");
     REQUIRE(fn);
     REQUIRE(fn() == 1);
 }
 
 TEST_CASE("owner assigned to observer pointer", "[gen][owner][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_obs__;
+        module gen_owner_08;
         test_observer() : int {
             p : int! = new int(55);
             obs : int* = p;
@@ -207,7 +207,7 @@ TEST_CASE("owner assigned to observer pointer", "[gen][owner][jit]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__own_obs__13test_observerEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_0813test_observerEv");
     REQUIRE(fn);
     REQUIRE(fn() == 55);
 }
@@ -222,7 +222,7 @@ TEST_CASE("owner assigned to observer pointer", "[gen][owner][jit]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner return value: ownership transferred to caller", "[gen][owner][move][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_ret__;
+        module gen_owner_09;
 
         g_dtors : int = 0;
 
@@ -245,7 +245,7 @@ TEST_CASE("Owner return value: ownership transferred to caller", "[gen][owner][m
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__own_ret__8test_retEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_098test_retEv");
     REQUIRE(fn);
     // Inside test_ret: b->v=42, g_dtors=0 (callee dtor NOT called) → result=4200
     // After delete b: g_dtors=1 → result*10+1 = 42001
@@ -258,7 +258,7 @@ TEST_CASE("Owner return value: ownership transferred to caller", "[gen][owner][m
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner variable init from another owner (move)", "[gen][owner][move][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_init_move__;
+        module gen_owner_10;
 
         g_count : int = 0;
 
@@ -275,7 +275,7 @@ TEST_CASE("Owner variable init from another owner (move)", "[gen][owner][move][j
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__own_init_move__14test_init_moveEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_1014test_init_moveEv");
     REQUIRE(fn);
     REQUIRE(fn() == 0);
 }
@@ -286,7 +286,7 @@ TEST_CASE("Owner variable init from another owner (move)", "[gen][owner][move][j
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner assignment: old object deleted, new ownership transferred", "[gen][owner][move][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_asgn__;
+        module gen_owner_11;
 
         g_id : int = 0;
         g_last_dtor : int = 0;
@@ -307,7 +307,7 @@ TEST_CASE("Owner assignment: old object deleted, new ownership transferred", "[g
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__own_asgn__11test_assignEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_1111test_assignEv");
     REQUIRE(fn);
     // a->id=2, g_last_dtor=1, g_id=1 → result=2000+10+1=2011
     REQUIRE(fn() == 2011);
@@ -318,7 +318,7 @@ TEST_CASE("Owner assignment: old object deleted, new ownership transferred", "[g
 // -----------------------------------------------------------------------------
 TEST_CASE("Null assignment to owner: deletes object", "[gen][owner][move][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_null_asgn__;
+        module gen_owner_12;
 
         g_dtors : int = 0;
 
@@ -336,7 +336,7 @@ TEST_CASE("Null assignment to owner: deletes object", "[gen][owner][move][jit]")
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__own_null_asgn__16test_null_assignEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_1216test_null_assignEv");
     REQUIRE(fn);
     // before=0, after=1 → 0*10+1 = 1
     REQUIRE(fn() == 1);
@@ -348,7 +348,7 @@ TEST_CASE("Null assignment to owner: deletes object", "[gen][owner][move][jit]")
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner as function parameter: ownership transferred", "[gen][owner][move][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_param__;
+        module gen_owner_13;
 
         g_dtors : int = 0;
 
@@ -369,7 +369,7 @@ TEST_CASE("Owner as function parameter: ownership transferred", "[gen][owner][mo
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__own_param__10test_paramEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_1310test_paramEv");
     REQUIRE(fn);
     REQUIRE(fn() == 1);
 }
@@ -379,7 +379,7 @@ TEST_CASE("Owner as function parameter: ownership transferred", "[gen][owner][mo
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner chain: make → pass → consume, dtor called once", "[gen][owner][move][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_chain__;
+        module gen_owner_14;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -403,7 +403,7 @@ TEST_CASE("Owner chain: make → pass → consume, dtor called once", "[gen][own
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__own_chain__10test_chainEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_1410test_chainEv");
     REQUIRE(fn);
     REQUIRE(fn() == 11);
 }
@@ -414,7 +414,7 @@ TEST_CASE("Owner chain: make → pass → consume, dtor called once", "[gen][own
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner to pointer observer: read and write", "[gen][owner][indirection][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_obs_ptr__;
+        module gen_owner_15;
         test_ptr() : int {
             p : int! = new int(10);
             obs : int* = p;
@@ -425,7 +425,7 @@ TEST_CASE("Owner to pointer observer: read and write", "[gen][owner][indirection
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__own_obs_ptr__8test_ptrEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_158test_ptrEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);
 }
@@ -437,7 +437,7 @@ TEST_CASE("Owner to pointer observer: read and write", "[gen][owner][indirection
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner to link observer: read and write", "[gen][owner][indirection][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_obs_link__;
+        module gen_owner_16;
         test_link() : int {
             p : int! = new int(7);
             lnk : int+ = p;
@@ -448,7 +448,7 @@ TEST_CASE("Owner to link observer: read and write", "[gen][owner][indirection][j
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__own_obs_link__9test_linkEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_169test_linkEv");
     REQUIRE(fn);
     REQUIRE(fn() == 99);
 }
@@ -459,7 +459,7 @@ TEST_CASE("Owner to link observer: read and write", "[gen][owner][indirection][j
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner to pin observer: read", "[gen][owner][indirection][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_obs_pin__;
+        module gen_owner_17;
         test_pin() : int {
             p : int! = new int(33);
             pin : int? = p;
@@ -469,7 +469,7 @@ TEST_CASE("Owner to pin observer: read", "[gen][owner][indirection][jit]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__own_obs_pin__8test_pinEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_178test_pinEv");
     REQUIRE(fn);
     REQUIRE(fn() == 33);
 }
@@ -481,7 +481,7 @@ TEST_CASE("Owner to pin observer: read", "[gen][owner][indirection][jit]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner to reference observer: read", "[gen][owner][indirection][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_obs_ref__;
+        module gen_owner_18;
 
         read_ref(r : int&) : int {
             return r;
@@ -495,7 +495,7 @@ TEST_CASE("Owner to reference observer: read", "[gen][owner][indirection][jit]")
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__own_obs_ref__8test_refEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_188test_refEv");
     REQUIRE(fn);
     REQUIRE(fn() == 77);
 }
@@ -506,7 +506,7 @@ TEST_CASE("Owner to reference observer: read", "[gen][owner][indirection][jit]")
 
 TEST_CASE("Owner<struct> to pointer observer: read field", "[gen][owner][indirection][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_obs_struct_ptr__;
+        module gen_owner_19;
 
         struct Point {
             x : int = 0;
@@ -523,14 +523,14 @@ TEST_CASE("Owner<struct> to pointer observer: read field", "[gen][owner][indirec
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn_ptr = jit->lookup_symbol<int(*)()>("_KFN22__own_obs_struct_ptr__15test_ptr_structEv");
+    auto fn_ptr = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_1915test_ptr_structEv");
     REQUIRE(fn_ptr);
     CHECK(fn_ptr() == 34);
 }
 
 TEST_CASE("Owner<struct> to link observer: read and write field", "[gen][owner][indirection][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_obs_struct_lnk__;
+        module gen_owner_20;
 
         struct Point {
             x : int = 0;
@@ -548,14 +548,14 @@ TEST_CASE("Owner<struct> to link observer: read and write field", "[gen][owner][
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn_link = jit->lookup_symbol<int(*)()>("_KFN22__own_obs_struct_lnk__16test_link_structEv");
+    auto fn_link = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_2016test_link_structEv");
     REQUIRE(fn_link);
     CHECK(fn_link() == 96);
 }
 
 TEST_CASE("Owner<struct> to pin observer: read field", "[gen][owner][indirection][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_obs_struct_pin__;
+        module gen_owner_21;
 
         struct Point {
             x : int = 0;
@@ -572,7 +572,7 @@ TEST_CASE("Owner<struct> to pin observer: read field", "[gen][owner][indirection
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn_pin = jit->lookup_symbol<int(*)()>("_KFN22__own_obs_struct_pin__15test_pin_structEv");
+    auto fn_pin = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_2115test_pin_structEv");
     REQUIRE(fn_pin);
     CHECK(fn_pin() == 78);
 }
@@ -583,7 +583,7 @@ TEST_CASE("Owner<struct> to pin observer: read field", "[gen][owner][indirection
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner keeps ownership after observer assignment", "[gen][owner][indirection][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_keeps_own__;
+        module gen_owner_22;
 
         g_dtors : int = 0;
 
@@ -601,7 +601,7 @@ TEST_CASE("Owner keeps ownership after observer assignment", "[gen][owner][indir
         }
     )SRC");
     REQUIRE(jit);
-    std::string mod = "__own_keeps_own__";
+    std::string mod = "gen_owner_22";
     std::string fn  = "test";
     auto sym = "_KFN" + std::to_string(mod.size()) + mod
                + std::to_string(fn.size()) + fn + "Ev";
@@ -622,7 +622,7 @@ TEST_CASE("Owner keeps ownership after observer assignment", "[gen][owner][indir
 // -----------------------------------------------------------------------------
 TEST_CASE("new/delete of class type: ctor, virtual method, dtor", "[gen][owner][class][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_class__;
+        module gen_owner_23;
 
         g_dtors : int = 0;
 
@@ -642,7 +642,7 @@ TEST_CASE("new/delete of class type: ctor, virtual method, dtor", "[gen][owner][
     )SRC", /*dump=*/false);
     REQUIRE(jit);
     // _KFN13__own_class__10test_classEv
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__own_class__10test_classEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_2310test_classEv");
     REQUIRE(fn);
     // c->get() == 42, after explicit delete g_dtors == 1 → 42*10+1 = 421
     REQUIRE(fn() == 421);
@@ -658,7 +658,7 @@ TEST_CASE("new/delete of class type: ctor, virtual method, dtor", "[gen][owner][
 // -----------------------------------------------------------------------------
 TEST_CASE("Owner in nested block: dtor called at inner scope exit", "[gen][owner][scope][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_nested_block__;
+        module gen_owner_24;
 
         g_dtors : int = 0;
 
@@ -679,7 +679,7 @@ TEST_CASE("Owner in nested block: dtor called at inner scope exit", "[gen][owner
     )SRC", /*dump=*/false);
     REQUIRE(jit);
     // _KFN20__own_nested_block__11test_nestedEv
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN20__own_nested_block__11test_nestedEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_2411test_nestedEv");
     REQUIRE(fn);
     // before=0, after=1 → 0*10+1 = 1
     REQUIRE(fn() == 1);
@@ -691,7 +691,7 @@ TEST_CASE("Owner in nested block: dtor called at inner scope exit", "[gen][owner
 // -----------------------------------------------------------------------------
 TEST_CASE("Multiple owners at scope exit: cleanup in reverse declaration order", "[gen][owner][scope][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __own_multi_order__;
+        module gen_owner_25;
 
         g_order : int = 0;
 
@@ -713,7 +713,7 @@ TEST_CASE("Multiple owners at scope exit: cleanup in reverse declaration order",
     )SRC", /*dump=*/false);
     REQUIRE(jit);
     // _KFN19__own_multi_order__3runEv
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN19__own_multi_order__3runEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_253runEv");
     REQUIRE(fn);
     // Second destroyed first: g_order = 2; First destroyed next: g_order = 21
     REQUIRE(fn() == 21);
@@ -729,7 +729,7 @@ TEST_CASE("Multiple owners at scope exit: cleanup in reverse declaration order",
 
 TEST_CASE("Bare new expression statement: ctor+dtor both called (Warning 0x5010 semantics)", "[gen][owner][w5010][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_bare_new__;
+        module gen_owner_26;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -745,7 +745,7 @@ TEST_CASE("Bare new expression statement: ctor+dtor both called (Warning 0x5010 
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__own_bare_new__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_264testEv");
     REQUIRE(fn);
     // ctor called once, dtor called once (immediately after construction)
     REQUIRE(fn() == 11);
@@ -753,21 +753,21 @@ TEST_CASE("Bare new expression statement: ctor+dtor both called (Warning 0x5010 
 
 TEST_CASE("Bare new primitive expression statement: no leak (Warning 0x5010 semantics)", "[gen][owner][w5010][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_bare_prim__;
+        module gen_owner_27;
         test() : int {
             new int(42);       // Warning 0x5010: allocated then freed immediately
             return 1;
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__own_bare_prim__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_274testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 1);
 }
 
 TEST_CASE("Function returning owner, result discarded: ctor+dtor (Warning 0x5010 semantics)", "[gen][owner][w5010][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_discard_ret__;
+        module gen_owner_28;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -787,7 +787,7 @@ TEST_CASE("Function returning owner, result discarded: ctor+dtor (Warning 0x5010
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN19__own_discard_ret__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_284testEv");
     REQUIRE(fn);
     // ctor called once (in make), dtor called once (at expression statement end)
     REQUIRE(fn() == 11);
@@ -795,7 +795,7 @@ TEST_CASE("Function returning owner, result discarded: ctor+dtor (Warning 0x5010
 
 TEST_CASE("Bare new array expression statement: elements allocated and freed (Warning 0x5010 semantics)", "[gen][owner][w5010][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __own_bare_arr__;
+        module gen_owner_29;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -811,7 +811,7 @@ TEST_CASE("Bare new array expression statement: elements allocated and freed (Wa
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__own_bare_arr__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN12gen_owner_294testEv");
     REQUIRE(fn);
     // 3 ctors, 3 dtors (all immediate)
     REQUIRE(fn() == 33);
@@ -823,7 +823,7 @@ TEST_CASE("Bare new array expression statement: elements allocated and freed (Wa
 
 TEST_CASE("delete on non-owner type — error 0x0117", "[gen][owner][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __own_err_del_nonowner__;
+        module gen_owner_30;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -835,7 +835,7 @@ TEST_CASE("delete on non-owner type — error 0x0117", "[gen][owner][error]") {
 
 TEST_CASE("new abstract class — error 0x0114", "[gen][owner][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __own_err_new_abstract__;
+        module gen_owner_31;
 
         abstract class Shape {
             Shape() {}

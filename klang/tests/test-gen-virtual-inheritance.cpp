@@ -118,7 +118,7 @@ TEST_CASE("Virtual inheritance - single virtual base field access", "[gen][virtu
     // class B : public A  — all class bases are implicit-virtual
     // B gets a __vbptr_A__ and a __vbase_A__ in its own layout (B is most-derived).
     auto jit = gen_jit(R"SRC(
-module __virt_single__;
+module gen_virtual_inheritance_01;
 
 class A {
     public x: int;
@@ -188,7 +188,7 @@ TEST_CASE("Diamond virtual inheritance - B and C are virtual bases of D", "[gen]
     // B->A and C->A are both virtual → D has a single shared __vbase_A__.
     // Writes via B& are visible via C& — they are the same field.
     auto jit = gen_jit(R"SRC(
-module __virt_diamond__;
+module gen_virtual_inheritance_02;
 
 class A {
     public x: int;
@@ -236,7 +236,7 @@ test_current_behaviour() : int {
 
 TEST_CASE("Diamond virtual inheritance - direct field access on D", "[gen][virtual][inheritance][diamond]") {
     auto jit = gen_jit(R"SRC(
-module __virt_diamond_field__;
+module gen_virtual_inheritance_03;
 
 class A {
     public x: int;
@@ -308,7 +308,7 @@ test_sum() : int {
 
 TEST_CASE("Diamond virtual inheritance - write and read shared field", "[gen][virtual][inheritance][diamond]") {
     auto jit = gen_jit(R"SRC(
-module __virt_diamond_write__;
+module gen_virtual_inheritance_04;
 
 class A {
     public x: int;
@@ -351,7 +351,7 @@ TEST_CASE("Diamond virtual inheritance - destructor called once", "[gen][virtual
     // Currently: D has two copies of A (in __vbase_B__ and __vbase_C__),
     // so A::~A is called twice (once for each copy). The expected count is 2 for now.
     auto jit = gen_jit(R"SRC(
-module __virt_diamond_dtor__;
+module gen_virtual_inheritance_05;
 
 dtor_count : int;
 
@@ -406,7 +406,7 @@ test_dtor_once() {
 
 TEST_CASE("Diamond virtual inheritance - multiple fields in virtual base", "[gen][virtual][inheritance][diamond]") {
     auto jit = gen_jit(R"SRC(
-module __virt_diamond_multifield__;
+module gen_virtual_inheritance_06;
 
 class A {
     public x: int;
@@ -470,7 +470,7 @@ TEST_CASE("Virtual base - method in virtual base callable on derived (direct cal
     // TODO: test_method_called_via_b (passing D to B& and calling b.get_val()) is disabled
     // until vtable dispatch for multiple virtual bases with shared A is fixed.
     auto jit = gen_jit(R"SRC(
-module __virt_method__;
+module gen_virtual_inheritance_07;
 
 class A {
     val: int;
@@ -528,7 +528,7 @@ TEST_CASE("[BUG] Diamond: B and C still embed independent copies of A (no sharin
     // ─────────────────────────────────────────────────────────────────────────
 
     auto jit = gen_jit(R"SRC(
-module __bug_diamond_sharing__;
+module gen_virtual_inheritance_08;
 
 class A {
     public x: int;
@@ -574,7 +574,7 @@ TEST_CASE("[BUG] Diamond: destructor of virtual base A called twice instead of o
     // Current (broken):   dtor_count == 2 (one call per embedded copy of A).
 
     auto jit = gen_jit(R"SRC(
-module __bug_diamond_dtor__;
+module gen_virtual_inheritance_09;
 
 dtor_count : int;
 
@@ -625,7 +625,7 @@ TEST_CASE("[BUG] Diamond: most-derived constructor D() : A(99) initialises share
     // Expected (correct): d.x == 99  (D's mem-init controls A).
 
     auto jit = gen_jit(R"SRC(
-module __bug_diamond_ctor_init__;
+module gen_virtual_inheritance_10;
 
 class A {
     public x: int;
@@ -667,7 +667,7 @@ TEST_CASE("[BUG] Diamond: virtual dispatch through secondary base ref C& resolve
     // Current (broken):   likely returns C's own implementation (1) or crashes.
 
     auto jit = gen_jit(R"SRC(
-module __bug_diamond_secondary_dispatch__;
+module gen_virtual_inheritance_11;
 
 class A { foo() : int { return 0; } }
 class B : public A {}
@@ -699,7 +699,7 @@ TEST_CASE("[EXPECTED] Diamond: single shared A — write via B& visible via C&",
     // Writes through any inheritance path all reach the same memory location.
 
     auto jit = gen_jit(R"SRC(
-module __exp_diamond_shared__;
+module gen_virtual_inheritance_12;
 
 class A {
     public x: int;
@@ -745,7 +745,7 @@ TEST_CASE("[EXPECTED] Diamond: A destructor called exactly once", "[gen][virtual
     // B::~B and C::~C must NOT call A::~A in the base-subobject path.
 
     auto jit = gen_jit(R"SRC(
-module __exp_diamond_dtor_once__;
+module gen_virtual_inheritance_13;
 
 dtor_count : int;
 
@@ -780,7 +780,7 @@ TEST_CASE("[EXPECTED] Diamond: most-derived D controls A constructor", "[gen][vi
     // Result: d.x == 99.
 
     auto jit = gen_jit(R"SRC(
-module __exp_diamond_ctor_ctrl__;
+module gen_virtual_inheritance_14;
 
 class A {
     public x: int;
@@ -807,7 +807,7 @@ TEST_CASE("[EXPECTED] Diamond: virtual dispatch through primary base ref B& call
     // This may already work for simple cases; the test documents the expectation.
 
     auto jit = gen_jit(R"SRC(
-module __exp_diamond_dispatch_primary__;
+module gen_virtual_inheritance_15;
 
 class A { foo() : int { return 0; } }
 class B : public A { foo() : int { return 1; } }
@@ -832,7 +832,7 @@ TEST_CASE("[EXPECTED] Diamond: virtual dispatch through secondary base ref C& ca
     // After the fix, calling foo() via C& on a D object must return 42.
 
     auto jit = gen_jit(R"SRC(
-module __exp_diamond_dispatch_secondary__;
+module gen_virtual_inheritance_16;
 
 class A { foo() : int { return 0; } }
 class B : public A {}
@@ -857,7 +857,7 @@ TEST_CASE("[EXPECTED] Diamond: abstract class A with virtual base — D provides
     // Dispatch through A& on a D object must reach D::area().
 
     auto jit = gen_jit(R"SRC(
-module __exp_diamond_abstract__;
+module gen_virtual_inheritance_17;
 
 abstract class A {
     abstract area() : int;
@@ -886,7 +886,7 @@ TEST_CASE("[EXPECTED] Diamond: multi-field shared A — all fields in one copy",
     // Writing one field must not disturb the other.
 
     auto jit = gen_jit(R"SRC(
-module __exp_diamond_multifield__;
+module gen_virtual_inheritance_18;
 
 class A {
     public x: int;
@@ -943,7 +943,7 @@ TEST_CASE("Non-virtual diamond still produces two independent copies (regression
     // as a regression guard: non-virtual diamond must NOT share the base.
     // Note: uses 'struct' (no virtuality — pure aggregation).
     auto jit = gen_jit(R"SRC(
-module __non_virt_diamond_reg__;
+module gen_virtual_inheritance_19;
 
 struct A {
     x: int;

@@ -22,7 +22,7 @@
 
 TEST_CASE("Recursive struct field through pointer is supported", "[gen][indirection][recursive][pointer]") {
     auto jit = gen_jit(R"SRC(
-        module __rec_ptr_self__;
+        module gen_recursive_indirection_01;
 
         struct Node {
             value : int = 0;
@@ -46,7 +46,7 @@ TEST_CASE("Recursive struct field through pointer is supported", "[gen][indirect
 
 TEST_CASE("Recursive struct field through owner is supported", "[gen][indirection][recursive][owner]") {
     auto jit = gen_jit(R"SRC(
-        module __rec_owner_self__;
+        module gen_recursive_indirection_02;
 
         struct Node {
             value : int = 0;
@@ -80,7 +80,7 @@ TEST_CASE("Recursive struct field through owner is supported", "[gen][indirectio
 
 TEST_CASE("Recursive struct field through view is supported", "[gen][indirection][recursive][view]") {
     auto jit = gen_jit(R"SRC(
-        module __rec_view_self__;
+        module gen_recursive_indirection_03;
 
         struct Node {
             value : int = 0;
@@ -104,7 +104,7 @@ TEST_CASE("Recursive struct field through view is supported", "[gen][indirection
 
 TEST_CASE("Recursive struct field through reference is rejected with diagnostic", "[gen][indirection][recursive][reference]") {
     REQUIRE_THROWS_WITH(gen_jit_throws(R"SRC(
-        module __rec_ref_self__;
+        module gen_recursive_indirection_04;
 
         struct Node {
             next : Node&;
@@ -119,7 +119,7 @@ TEST_CASE("Recursive struct field through reference is rejected with diagnostic"
 
 TEST_CASE("Recursive struct field through link is rejected with diagnostic", "[gen][indirection][recursive][link]") {
     REQUIRE_THROWS_WITH(gen_jit_throws(R"SRC(
-        module __rec_link_self__;
+        module gen_recursive_indirection_05;
 
         struct Node {
             next : Node+;

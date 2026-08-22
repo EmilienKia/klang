@@ -44,7 +44,7 @@
 TEST_CASE("[A] Mangling: template struct Box<int> has IiE encoding",
           "[mangling][template]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_a__;
+        module gen_template_mangling_01;
         template<typename T>
         struct Box {
             public value : T;
@@ -79,7 +79,7 @@ TEST_CASE("[A] Mangling: template struct Box<int> has IiE encoding",
 TEST_CASE("[B] Mangling: Box<int> and Box<float> have distinct mangled names",
           "[mangling][template]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_b__;
+        module gen_template_mangling_02;
         template<typename T>
         struct Box {
             public value : T;
@@ -114,7 +114,7 @@ TEST_CASE("[B] Mangling: Box<int> and Box<float> have distinct mangled names",
 TEST_CASE("[C] Mangling: Pair<int, float> has two-arg IifE encoding",
           "[mangling][template]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_c__;
+        module gen_template_mangling_03;
         template<typename K, typename V>
         struct Pair {
             public first : K;
@@ -145,7 +145,7 @@ TEST_CASE("[C] Mangling: Pair<int, float> has two-arg IifE encoding",
 TEST_CASE("[D] Mangling: template struct constructor includes IiE encoding",
           "[mangling][template]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_d__;
+        module gen_template_mangling_04;
         template<typename T>
         struct Box {
             public value : T;
@@ -180,7 +180,7 @@ TEST_CASE("[D] Mangling: template struct constructor includes IiE encoding",
 TEST_CASE("[E] Mangling: JIT lookup works with template struct mangled names",
           "[mangling][template][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __mangle_e__;
+        module gen_template_mangling_05;
         template<typename T>
         struct Box {
             public value : T;
@@ -193,7 +193,7 @@ TEST_CASE("[E] Mangling: JIT lookup works with template struct mangled names",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto get_value = jit->lookup_symbol<int(*)()>("_KFN12__mangle_e__9get_valueEv");
+    auto get_value = jit->lookup_symbol<int(*)()>("_KFN24gen_template_mangling_059get_valueEv");
     REQUIRE(get_value != nullptr);
     CHECK(get_value() == 42);
 }
@@ -205,7 +205,7 @@ TEST_CASE("[E] Mangling: JIT lookup works with template struct mangled names",
 TEST_CASE("[F] Mangling: template struct used as parameter type mangles correctly",
           "[mangling][template]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_f__;
+        module gen_template_mangling_06;
         template<typename T>
         struct Box {
             public value : T;
@@ -242,7 +242,7 @@ TEST_CASE("[F] Mangling: template struct used as parameter type mangles correctl
 TEST_CASE("[G] Mangling: free template function instantiation has IiE encoding (model-level)",
           "[mangling][template]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_g__;
+        module gen_template_mangling_07;
         template<typename T>
         identity(x : T) : T { return x; }
     )SRC");
@@ -272,7 +272,7 @@ TEST_CASE("[G] Mangling: free template function instantiation has IiE encoding (
 TEST_CASE("[H] Mangling: generic synthesis keeps base symbol without template arg encoding",
           "[mangling][template][generic]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_h__;
+        module gen_template_mangling_08;
         generic<typename T>
         struct Box {
             public value : T&;
@@ -324,7 +324,7 @@ TEST_CASE("[H] Mangling: generic synthesis keeps base symbol without template ar
 TEST_CASE("[I] Mangling: generic synthesized method keeps one symbol across concrete usages",
           "[mangling][template][generic]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_i__;
+        module gen_template_mangling_09;
         generic<typename T>
         struct Box {
             relay(v : T&) : T& { return v; }
@@ -383,7 +383,7 @@ TEST_CASE("[I] Mangling: generic synthesized method keeps one symbol across conc
 TEST_CASE("[J] Mangling: generic synthesized constructor keeps one symbol across concrete usages",
           "[mangling][template][generic]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_j__;
+        module gen_template_mangling_10;
         generic<typename T>
         struct Box {
             public value : T&;
@@ -455,7 +455,7 @@ TEST_CASE("[J] Mangling: generic synthesized constructor keeps one symbol across
 TEST_CASE("Mangling: enum parameters produce distinct symbols",
           "[gen][mangling][exhaustive]") {
     auto comp = compile_model(R"SRC(
-        module __mangle_enum__;
+        module gen_template_mangling_11;
         enum ErrA { a1; a2; }
         enum ErrB { b1; b2; b3; }
         f(x : ErrA) : int { return 100; }
@@ -484,7 +484,7 @@ TEST_CASE("Mangling: enum template argument is not erased",
     // was silently dropped, so Expected<long, EnumA> and Expected<long, EnumB> were
     // indistinguishable at link time (and linkonce_odr/COMDAT merged them arbitrarily).
     auto comp = compile_model(R"SRC(
-        module __mangle_enum_tpl__;
+        module gen_template_mangling_12;
         enum ErrA { a1; }
         enum ErrB { b1; }
         template<typename R, typename E>
@@ -520,7 +520,7 @@ TEST_CASE("Mangling: no two emitted entities share a mangled name",
     // and duplicated mangled names, so simply compiling this unit exercises the check over
     // a broad mix of type kinds.
     auto comp = compile_model(R"SRC(
-        module __mangle_mix__;
+        module gen_template_mangling_13;
         enum Colour : int { red; green; }
         struct Point { x : int; y : int; }
         template<typename T>

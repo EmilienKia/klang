@@ -55,7 +55,7 @@
 
 TEST_CASE("NR-1: Named return int — implicit return", "[gen][named-return][nr1]") {
     auto jit = gen_jit(R"SRC(
-        module __nr1_int__;
+        module gen_named_return_01;
         foo() r : int = 42 { }
         test() : int { return foo(); }
     )SRC");
@@ -67,7 +67,7 @@ TEST_CASE("NR-1: Named return int — implicit return", "[gen][named-return][nr1
 
 TEST_CASE("NR-1: Named return bool — implicit return", "[gen][named-return][nr1]") {
     auto jit = gen_jit(R"SRC(
-        module __nr1_bool__;
+        module gen_named_return_02;
         foo() r : bool = true { }
         test() : int { if(foo()) return 1; return 0; }
     )SRC");
@@ -79,7 +79,7 @@ TEST_CASE("NR-1: Named return bool — implicit return", "[gen][named-return][nr
 
 TEST_CASE("NR-1: Named return double — implicit return", "[gen][named-return][nr1]") {
     auto jit = gen_jit(R"SRC(
-        module __nr1_double__;
+        module gen_named_return_03;
         foo() r : double = 3.14d { }
         test() : double { return foo(); }
     )SRC");
@@ -95,7 +95,7 @@ TEST_CASE("NR-1: Named return double — implicit return", "[gen][named-return][
 
 TEST_CASE("NR-2: Named return int — modified in body", "[gen][named-return][nr2]") {
     auto jit = gen_jit(R"SRC(
-        module __nr2_mod__;
+        module gen_named_return_04;
         foo() r : int = 0 { r = 42; }
         test() : int { return foo(); }
     )SRC");
@@ -107,7 +107,7 @@ TEST_CASE("NR-2: Named return int — modified in body", "[gen][named-return][nr
 
 TEST_CASE("NR-2: Named return int — init from parameter", "[gen][named-return][nr2]") {
     auto jit = gen_jit(R"SRC(
-        module __nr2_param__;
+        module gen_named_return_05;
         foo(x : int) r : int = x { ++r; }
         test() : int { return foo(41); }
     )SRC");
@@ -123,7 +123,7 @@ TEST_CASE("NR-2: Named return int — init from parameter", "[gen][named-return]
 
 TEST_CASE("NR-3: Named return int — bare return in if/else", "[gen][named-return][nr3]") {
     auto jit = gen_jit(R"SRC(
-        module __nr3_branch__;
+        module gen_named_return_06;
         foo(b : bool) r : int = 0 {
             if (b) {
                 r = 1;
@@ -145,7 +145,7 @@ TEST_CASE("NR-3: Named return int — bare return in if/else", "[gen][named-retu
 
 TEST_CASE("NR-3: Named return int — bare return in loop", "[gen][named-return][nr3]") {
     auto jit = gen_jit(R"SRC(
-        module __nr3_loop__;
+        module gen_named_return_07;
         find_first_positive(a : int, b : int, c : int) r : int = 0 {
             if (a > 0) { r = a; return; }
             if (b > 0) { r = b; return; }
@@ -165,7 +165,7 @@ TEST_CASE("NR-3: Named return int — bare return in loop", "[gen][named-return]
 
 TEST_CASE("NR-4: Named return struct — guaranteed NRVO (1 ctor, 1 dtor)", "[gen][named-return][nr4]") {
     auto jit = gen_jit(R"SRC(
-        module __nr4_nrvo__;
+        module gen_named_return_08;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -207,7 +207,7 @@ TEST_CASE("NR-4: Named return struct — guaranteed NRVO (1 ctor, 1 dtor)", "[ge
 
 TEST_CASE("NR-5: Named return struct — modified in body, NRVO", "[gen][named-return][nr5]") {
     auto jit = gen_jit(R"SRC(
-        module __nr5_mod_nrvo__;
+        module gen_named_return_09;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -250,7 +250,7 @@ TEST_CASE("NR-5: Named return struct — modified in body, NRVO", "[gen][named-r
 
 TEST_CASE("NR-6: Named return struct — conditional bare return, NRVO", "[gen][named-return][nr6]") {
     auto jit = gen_jit(R"SRC(
-        module __nr6_cond_nrvo__;
+        module gen_named_return_10;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -306,7 +306,7 @@ TEST_CASE("NR-6: Named return struct — conditional bare return, NRVO", "[gen][
 
 TEST_CASE("NR-7: Named return struct — default-constructed", "[gen][named-return][nr7]") {
     auto jit = gen_jit(R"SRC(
-        module __nr7_default__;
+        module gen_named_return_11;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -347,7 +347,7 @@ TEST_CASE("NR-7: Named return struct — default-constructed", "[gen][named-retu
 
 TEST_CASE("NR-8: Named return struct — other locals are destroyed", "[gen][named-return][nr8]") {
     auto jit = gen_jit(R"SRC(
-        module __nr8_locals__;
+        module gen_named_return_12;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -393,7 +393,7 @@ TEST_CASE("NR-8: Named return struct — other locals are destroyed", "[gen][nam
 
 TEST_CASE("NR-9: Named return in member function", "[gen][named-return][nr9]") {
     auto jit = gen_jit(R"SRC(
-        module __nr9_member__;
+        module gen_named_return_13;
 
         struct Helper {
             base : int;
@@ -421,7 +421,7 @@ TEST_CASE("NR-9: Named return in member function", "[gen][named-return][nr9]") {
 TEST_CASE("NR-10: Named return int — return expr assigns to named var", "[gen][named-return][nr10]") {
     // return expr; with named return = assigns to r, then returns
     auto jit = gen_jit(R"SRC(
-        module __nr10_ret_expr__;
+        module gen_named_return_14;
         foo() r : int = 0 {
             return 42;
         }
@@ -439,7 +439,7 @@ TEST_CASE("NR-10: Named return int — return expr assigns to named var", "[gen]
 
 TEST_CASE("NR-11: Classic return — no named return, unchanged", "[gen][named-return][nr11]") {
     auto jit = gen_jit(R"SRC(
-        module __nr11_classic__;
+        module gen_named_return_15;
         foo(x : int) : int { return x + 1; }
         test() : int { return foo(41); }
     )SRC");
@@ -451,7 +451,7 @@ TEST_CASE("NR-11: Classic return — no named return, unchanged", "[gen][named-r
 
 TEST_CASE("NR-11: Classic struct return — NRVO still works", "[gen][named-return][nr11]") {
     auto jit = gen_jit(R"SRC(
-        module __nr11_classic_nrvo__;
+        module gen_named_return_16;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -495,7 +495,7 @@ TEST_CASE("NR-11: Classic struct return — NRVO still works", "[gen][named-retu
 
 TEST_CASE("NR-12: Named return struct — chained member access on result", "[gen][named-return][nr12]") {
     auto jit = gen_jit(R"SRC(
-        module __nr12_chain__;
+        module gen_named_return_17;
 
         struct Point {
             x : int;
@@ -521,7 +521,7 @@ TEST_CASE("NR-12: Named return struct — chained member access on result", "[ge
 
 TEST_CASE("NR-13: Named return struct — bare return; destroys locals but not named ret", "[gen][named-return][nr13]") {
     auto jit = gen_jit(R"SRC(
-        module __nr13_bare_cleanup__;
+        module gen_named_return_18;
 
         g_ctors : int = 0;
         g_dtors : int = 0;
@@ -571,7 +571,7 @@ TEST_CASE("NR-13: Named return struct — bare return; destroys locals but not n
 
 TEST_CASE("NR-14: Named return struct — multi-arg constructor init", "[gen][named-return][nr14]") {
     auto jit = gen_jit(R"SRC(
-        module __nr14_multi_arg__;
+        module gen_named_return_19;
 
         struct Pair {
             a : int;
@@ -598,7 +598,7 @@ TEST_CASE("NR-14: Named return struct — multi-arg constructor init", "[gen][na
 
 TEST_CASE("NR-15: Named return in operator overload", "[gen][named-return][nr15]") {
     auto jit = gen_jit(R"SRC(
-        module __nr15_operator__;
+        module gen_named_return_20;
 
         struct Vec {
             x : int;
@@ -626,7 +626,7 @@ TEST_CASE("NR-15: Named return in operator overload", "[gen][named-return][nr15]
 
 TEST_CASE("NR-16: Void function with bare return — non-regression", "[gen][named-return][nr16]") {
     auto jit = gen_jit(R"SRC(
-        module __nr16_void__;
+        module gen_named_return_21;
         g_val : int = 0;
         set_val() { g_val = 42; return; }
         test() : int { set_val(); return g_val; }
@@ -639,7 +639,7 @@ TEST_CASE("NR-16: Void function with bare return — non-regression", "[gen][nam
 
 TEST_CASE("NR-16: Void function without return — non-regression", "[gen][named-return][nr16]") {
     auto jit = gen_jit(R"SRC(
-        module __nr16_void_no_ret__;
+        module gen_named_return_22;
         g_val : int = 0;
         set_val() { g_val = 42; }
         test() : int { set_val(); return g_val; }
@@ -656,7 +656,7 @@ TEST_CASE("NR-16: Void function without return — non-regression", "[gen][named
 
 TEST_CASE("NR-17: Named return struct — method call on named var", "[gen][named-return][nr17]") {
     auto jit = gen_jit(R"SRC(
-        module __nr17_method_call__;
+        module gen_named_return_23;
 
         struct Counter {
             val : int;

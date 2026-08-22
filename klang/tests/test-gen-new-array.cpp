@@ -175,7 +175,7 @@ TEST_CASE("Parse new array — empty brackets without init", "[parser][new-array
 
 TEST_CASE("new int[3]{10,20,30} — read back values via subscript", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_prim__;
+        module gen_new_array_01;
         test() : int {
             arr : int[3]! = new int[3]{10, 20, 30};
             r : int = arr[0] + arr[1] + arr[2];
@@ -184,14 +184,14 @@ TEST_CASE("new int[3]{10,20,30} — read back values via subscript", "[gen][new-
         }
     )SRC", /*dump=*/false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__na_prim__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_014testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 60);
 }
 
 TEST_CASE("new int[5]{1,2,3} — fewer inits, rest default-zero", "[gen][new-array][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __na_pad__;
+        module gen_new_array_02;
         test() : int {
             arr : int[5]! = new int[5]{1, 2, 3};
             r : int = arr[0] + arr[1] + arr[2] + arr[3] + arr[4];
@@ -200,14 +200,14 @@ TEST_CASE("new int[5]{1,2,3} — fewer inits, rest default-zero", "[gen][new-arr
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN10__na_pad__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_024testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 6);  // 1+2+3+0+0
 }
 
 TEST_CASE("new int[]{10,20,30} — inferred size from init list", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_infer__;
+        module gen_new_array_03;
         test() : int {
             arr : int[3]! = new int[]{10, 20, 30};
             r : int = arr[0] + arr[1] + arr[2];
@@ -216,14 +216,14 @@ TEST_CASE("new int[]{10,20,30} — inferred size from init list", "[gen][new-arr
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__na_infer__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_034testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 60);
 }
 
 TEST_CASE("new int[3]{1,,3} — empty slot defaults to 0", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_empty__;
+        module gen_new_array_04;
         test() : int {
             arr : int[3]! = new int[3]{1, , 3};
             r : int = arr[0] + arr[1] + arr[2];
@@ -232,14 +232,14 @@ TEST_CASE("new int[3]{1,,3} — empty slot defaults to 0", "[gen][new-array][jit
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__na_empty__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_044testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 4);  // 1+0+3
 }
 
 TEST_CASE("new int[3]{1+2, 3*4, 10/2} — expression elements", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_expr__;
+        module gen_new_array_05;
         test() : int {
             arr : int[3]! = new int[3]{1+2, 3*4, 10/2};
             r : int = arr[0] + arr[1] + arr[2];
@@ -248,14 +248,14 @@ TEST_CASE("new int[3]{1+2, 3*4, 10/2} — expression elements", "[gen][new-array
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__na_expr__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_054testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 20);  // 3+12+5
 }
 
 TEST_CASE("new int[0]{} — empty array", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_zero__;
+        module gen_new_array_06;
         test() : int {
             arr : int[0]! = new int[0]{};
             delete arr;
@@ -263,14 +263,14 @@ TEST_CASE("new int[0]{} — empty array", "[gen][new-array][jit]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__na_zero__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_064testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);
 }
 
 TEST_CASE("new int[3]{} — no init, all default-zero", "[gen][new-array][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __na_noinit__;
+        module gen_new_array_07;
         test() : int {
             arr : int[3]! = new int[3]{};
             r : int = arr[0] + arr[1] + arr[2];
@@ -279,28 +279,28 @@ TEST_CASE("new int[3]{} — no init, all default-zero", "[gen][new-array][jit]")
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__na_noinit__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_074testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 0);
 }
 
 TEST_CASE("new array scope auto-cleanup — no explicit delete", "[gen][new-array][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __na_autoclean__;
+        module gen_new_array_08;
         test() : int {
             arr : int[3]! = new int[3]{7, 8, 9};
             return arr[0] + arr[1] + arr[2];
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__na_autoclean__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_084testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 24);
 }
 
 TEST_CASE("new struct array — ctor called for each element, dtor on delete", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_struct__;
+        module gen_new_array_09;
 
         g_ctor : int = 0;
         g_dtor : int = 0;
@@ -328,9 +328,9 @@ TEST_CASE("new struct array — ctor called for each element, dtor on delete", "
     )SRC", /*dump=*/false);
     REQUIRE(jit);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__na_struct__4testEv");
-    auto get_ctor = jit->lookup_symbol<int(*)()>("_KFN13__na_struct__14get_ctor_countEv");
-    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN13__na_struct__14get_dtor_countEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_094testEv");
+    auto get_ctor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_0914get_ctor_countEv");
+    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_0914get_dtor_countEv");
     REQUIRE(fn);
     REQUIRE(get_ctor);
     REQUIRE(get_dtor);
@@ -343,7 +343,7 @@ TEST_CASE("new struct array — ctor called for each element, dtor on delete", "
 
 TEST_CASE("new struct array — scope auto-cleanup calls all dtors", "[gen][new-array][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __na_st_auto__;
+        module gen_new_array_10;
 
         g_dtor : int = 0;
 
@@ -363,8 +363,8 @@ TEST_CASE("new struct array — scope auto-cleanup calls all dtors", "[gen][new-
     )SRC");
     REQUIRE(jit);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__na_st_auto__4testEv");
-    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN14__na_st_auto__14get_dtor_countEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_104testEv");
+    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_1014get_dtor_countEv");
     REQUIRE(fn);
     REQUIRE(get_dtor);
 
@@ -375,7 +375,7 @@ TEST_CASE("new struct array — scope auto-cleanup calls all dtors", "[gen][new-
 
 TEST_CASE("new array too many inits — error", "[gen][new-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __na_toomany__;
+        module gen_new_array_11;
         test() : int {
             arr : int[2]! = new int[2]{1, 2, 3};
             return 0;
@@ -385,7 +385,7 @@ TEST_CASE("new array too many inits — error", "[gen][new-array][error]") {
 
 TEST_CASE("new int[5] without brace init — default zero", "[gen][new-array][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __na_nobraces__;
+        module gen_new_array_12;
         test() : int {
             arr : int[5]! = new int[5];
             r : int = arr[0] + arr[1] + arr[2] + arr[3] + arr[4];
@@ -394,14 +394,14 @@ TEST_CASE("new int[5] without brace init — default zero", "[gen][new-array][ji
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__na_nobraces__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_124testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 0);
 }
 
 TEST_CASE("Existing single-object new/delete still works", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_compat__;
+        module gen_new_array_13;
         test() : int {
             p : int! = new int(42);
             v : int = *p;
@@ -410,7 +410,7 @@ TEST_CASE("Existing single-object new/delete still works", "[gen][new-array][jit
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__na_compat__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_134testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);
 }
@@ -422,7 +422,7 @@ TEST_CASE("Existing single-object new/delete still works", "[gen][new-array][jit
 TEST_CASE("new int[] — no size, no init — error", "[gen][new-array][error]") {
     // new T[] with no explicit size and no brace init list is ambiguous
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __na_nosize__;
+        module gen_new_array_14;
         test() : int {
             arr : int[0]! = new int[];
             return 0;
@@ -433,7 +433,7 @@ TEST_CASE("new int[] — no size, no init — error", "[gen][new-array][error]")
 TEST_CASE("new int[]{} — empty brace init — valid empty array", "[gen][new-array][jit]") {
     // new T[]{} with empty init list → valid empty array (0 elements)
     auto jit = gen_jit_throws(R"SRC(
-        module __na_emptyinfer__;
+        module gen_new_array_15;
         test() : int {
             arr : int[0]! = new int[]{};
             delete arr;
@@ -441,7 +441,7 @@ TEST_CASE("new int[]{} — empty brace init — valid empty array", "[gen][new-a
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__na_emptyinfer__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_154testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);
 }
@@ -452,7 +452,7 @@ TEST_CASE("new int[]{} — empty brace init — valid empty array", "[gen][new-a
 
 TEST_CASE("new struct array — default ctor for all elements", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_defctor__;
+        module gen_new_array_16;
 
         g_ctor : int = 0;
         g_dtor : int = 0;
@@ -480,9 +480,9 @@ TEST_CASE("new struct array — default ctor for all elements", "[gen][new-array
     )SRC", /*dump=*/false);
     REQUIRE(jit);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__na_defctor__4testEv");
-    auto get_ctor = jit->lookup_symbol<int(*)()>("_KFN14__na_defctor__14get_ctor_countEv");
-    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN14__na_defctor__14get_dtor_countEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_164testEv");
+    auto get_ctor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_1614get_ctor_countEv");
+    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_1614get_dtor_countEv");
     REQUIRE(fn);
     REQUIRE(get_ctor);
     REQUIRE(get_dtor);
@@ -495,7 +495,7 @@ TEST_CASE("new struct array — default ctor for all elements", "[gen][new-array
 
 TEST_CASE("new struct array — inferred size from init list", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_stinfer__;
+        module gen_new_array_17;
 
         g_ctor : int = 0;
 
@@ -519,8 +519,8 @@ TEST_CASE("new struct array — inferred size from init list", "[gen][new-array]
     )SRC", /*dump=*/false);
     REQUIRE(jit);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__na_stinfer__4testEv");
-    auto get_ctor = jit->lookup_symbol<int(*)()>("_KFN14__na_stinfer__14get_ctor_countEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_174testEv");
+    auto get_ctor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_1714get_ctor_countEv");
     REQUIRE(fn);
     REQUIRE(get_ctor);
 
@@ -531,7 +531,7 @@ TEST_CASE("new struct array — inferred size from init list", "[gen][new-array]
 
 TEST_CASE("new struct array — mixed empty slots with default ctor", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_stmix__;
+        module gen_new_array_18;
 
         g_ctor : int = 0;
         g_defctor : int = 0;
@@ -561,9 +561,9 @@ TEST_CASE("new struct array — mixed empty slots with default ctor", "[gen][new
     )SRC", /*dump=*/false);
     REQUIRE(jit);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN12__na_stmix__4testEv");
-    auto get_ctor = jit->lookup_symbol<int(*)()>("_KFN12__na_stmix__14get_ctor_countEv");
-    auto get_defctor = jit->lookup_symbol<int(*)()>("_KFN12__na_stmix__17get_defctor_countEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_184testEv");
+    auto get_ctor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_1814get_ctor_countEv");
+    auto get_defctor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_1817get_defctor_countEv");
     REQUIRE(fn);
     REQUIRE(get_ctor);
     REQUIRE(get_defctor);
@@ -576,7 +576,7 @@ TEST_CASE("new struct array — mixed empty slots with default ctor", "[gen][new
 
 TEST_CASE("delete on null owner array — no crash", "[gen][new-array][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __na_delnull__;
+        module gen_new_array_19;
         test() : int {
             arr : int[3]! = new int[3]{1, 2, 3};
             delete arr;
@@ -585,14 +585,14 @@ TEST_CASE("delete on null owner array — no crash", "[gen][new-array][jit]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__na_delnull__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_194testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);  // double delete is a no-op (already null)
 }
 
 TEST_CASE("new byte[4]{1,2,3,4} — byte array", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_byte__;
+        module gen_new_array_20;
         test() : int {
             arr : byte[4]! = new byte[4]{1, 2, 3, 4};
             r : int = arr[0] + arr[1] + arr[2] + arr[3];
@@ -601,14 +601,14 @@ TEST_CASE("new byte[4]{1,2,3,4} — byte array", "[gen][new-array][jit]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__na_byte__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_204testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 10);  // 1+2+3+4
 }
 
 TEST_CASE("new long[3]{100000, 200000, 300000} — long array", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_long__;
+        module gen_new_array_21;
         test() : long {
             arr : long[3]! = new long[3]{100000, 200000, 300000};
             r : long = arr[0] + arr[1] + arr[2];
@@ -617,14 +617,14 @@ TEST_CASE("new long[3]{100000, 200000, 300000} — long array", "[gen][new-array
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<long(*)()>("_KFN11__na_long__4testEv");
+    auto fn = jit->lookup_symbol<long(*)()>("_KFN16gen_new_array_214testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 600000L);
 }
 
 TEST_CASE("new int[1]{42} — single-element array", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_single__;
+        module gen_new_array_22;
         test() : int {
             arr : int[1]! = new int[1]{42};
             r : int = arr[0];
@@ -633,7 +633,7 @@ TEST_CASE("new int[1]{42} — single-element array", "[gen][new-array][jit]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__na_single__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_224testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);
 }
@@ -643,7 +643,7 @@ TEST_CASE("new struct array — dtors called in reverse order on delete", "[gen]
     // g_order starts at a value larger than any id; each dtor checks that
     // the current id is not larger than g_order (monotonically non-increasing).
     auto jit = gen_jit_throws(R"SRC(
-        module __na_revdtor__;
+        module gen_new_array_23;
 
         g_order : int = 100;
         g_ok : int = 1;
@@ -669,8 +669,8 @@ TEST_CASE("new struct array — dtors called in reverse order on delete", "[gen]
     )SRC", /*dump=*/false);
     REQUIRE(jit);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__na_revdtor__4testEv");
-    auto get_ok = jit->lookup_symbol<int(*)()>("_KFN14__na_revdtor__6get_okEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_234testEv");
+    auto get_ok = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_236get_okEv");
     REQUIRE(fn);
     REQUIRE(get_ok);
 
@@ -680,7 +680,7 @@ TEST_CASE("new struct array — dtors called in reverse order on delete", "[gen]
 
 TEST_CASE("new struct array — scope auto-cleanup with default ctors", "[gen][new-array][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __na_autodef__;
+        module gen_new_array_24;
 
         g_dtor : int = 0;
 
@@ -699,8 +699,8 @@ TEST_CASE("new struct array — scope auto-cleanup with default ctors", "[gen][n
     )SRC");
     REQUIRE(jit);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN14__na_autodef__4testEv");
-    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN14__na_autodef__14get_dtor_countEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_244testEv");
+    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_2414get_dtor_countEv");
     REQUIRE(fn);
     REQUIRE(get_dtor);
 
@@ -762,7 +762,7 @@ TEST_CASE("Parse new int{1, , 3} — bare brace with empty slots", "[parser][new
 
 TEST_CASE("new int{} — JIT: empty array, no crash", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_bare_empty__;
+        module gen_new_array_25;
         test() : int {
             arr : int[0]! = new int{};
             delete arr;
@@ -770,14 +770,14 @@ TEST_CASE("new int{} — JIT: empty array, no crash", "[gen][new-array][jit]") {
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__na_bare_empty__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_254testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);
 }
 
 TEST_CASE("new int{10,20,30} — JIT: inferred size 3 from bare brace", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_bare_infer__;
+        module gen_new_array_26;
         test() : int {
             arr : int[3]! = new int{10, 20, 30};
             r : int = arr[0] + arr[1] + arr[2];
@@ -786,14 +786,14 @@ TEST_CASE("new int{10,20,30} — JIT: inferred size 3 from bare brace", "[gen][n
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__na_bare_infer__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_264testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 60);
 }
 
 TEST_CASE("new int{1, , 3} — JIT: bare brace empty slot defaults to 0", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_bare_slot__;
+        module gen_new_array_27;
         test() : int {
             arr : int[3]! = new int{1, , 3};
             r : int = arr[0] + arr[1] + arr[2];
@@ -802,7 +802,7 @@ TEST_CASE("new int{1, , 3} — JIT: bare brace empty slot defaults to 0", "[gen]
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__na_bare_slot__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_274testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 4);  // 1+0+3
 }
@@ -813,7 +813,7 @@ TEST_CASE("new int{1, , 3} — JIT: bare brace empty slot defaults to 0", "[gen]
 
 TEST_CASE("Bounds check: valid access on stack-allocated array", "[gen][bounds][array]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __bc_stack_ok__;
+        module gen_new_array_28;
         test() : int {
             a : int[3];
             a[0] = 10;
@@ -823,14 +823,14 @@ TEST_CASE("Bounds check: valid access on stack-allocated array", "[gen][bounds][
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__bc_stack_ok__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_284testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 60);
 }
 
 TEST_CASE("Bounds check: valid access on owner array", "[gen][bounds][new-array]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __bc_own_ok__;
+        module gen_new_array_29;
         test() : int {
             arr : int[3]! = new int[3]{10, 20, 30};
             r : int = arr[0] + arr[1] + arr[2];
@@ -839,14 +839,14 @@ TEST_CASE("Bounds check: valid access on owner array", "[gen][bounds][new-array]
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__bc_own_ok__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_294testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 60);
 }
 
 TEST_CASE("Bounds check: out-of-bounds on stack array aborts", "[gen][bounds][array][oob]") {
     auto res = build_and_exec(R"SRC(
-        module __bc_stack_oob__;
+        module gen_new_array_30;
         main() : int {
             a : int[3];
             a[0] = 1;
@@ -859,7 +859,7 @@ TEST_CASE("Bounds check: out-of-bounds on stack array aborts", "[gen][bounds][ar
 
 TEST_CASE("Bounds check: out-of-bounds on owner array aborts", "[gen][bounds][new-array][oob]") {
     auto res = build_and_exec(R"SRC(
-        module __bc_own_oob__;
+        module gen_new_array_31;
         main() : int {
             arr : int[3]! = new int[3]{10, 20, 30};
             x : int = arr[5];
@@ -872,7 +872,7 @@ TEST_CASE("Bounds check: out-of-bounds on owner array aborts", "[gen][bounds][ne
 
 TEST_CASE("Bounds check: negative index (unsigned wrap) on array aborts", "[gen][bounds][array][oob]") {
     auto res = build_and_exec(R"SRC(
-        module __bc_neg_oob__;
+        module gen_new_array_32;
         main() : int {
             a : int[3];
             i : int = -1;
@@ -891,7 +891,7 @@ TEST_CASE("Bounds check: negative index (unsigned wrap) on array aborts", "[gen]
 TEST_CASE("new array — dynamic size with brace init — error 0x014A", "[gen][new-array][error]") {
     // n is not a compile-time constant → dynamic size; brace init {} is forbidden → error 0x014A
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __na_err_nonconst__;
+        module gen_new_array_33;
         test() : int {
             n : int = 5;
             arr : int[5]! = new int[n]{};
@@ -902,7 +902,7 @@ TEST_CASE("new array — dynamic size with brace init — error 0x014A", "[gen][
 
 TEST_CASE("new array — abstract class element — error 0x0146", "[gen][new-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __na_err_abstract__;
+        module gen_new_array_34;
 
         abstract class Shape {
             Shape() {}
@@ -918,7 +918,7 @@ TEST_CASE("new array — abstract class element — error 0x0146", "[gen][new-ar
 
 TEST_CASE("new struct array — no matching explicit ctor — error 0x0147", "[gen][new-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __na_err_noctor__;
+        module gen_new_array_35;
 
         struct Pair {
             x : int = 0;
@@ -935,7 +935,7 @@ TEST_CASE("new struct array — no matching explicit ctor — error 0x0147", "[g
 
 TEST_CASE("new struct array — no matching single-param ctor — error 0x0148", "[gen][new-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __na_err_nodefctor__;
+        module gen_new_array_36;
 
         struct TwoArgs {
             x : int = 0;
@@ -952,7 +952,7 @@ TEST_CASE("new struct array — no matching single-param ctor — error 0x0148",
 
 TEST_CASE("new dynamic array — brace init forbidden — error 0x014A", "[gen][new-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __na_err_dynbrace__;
+        module gen_new_array_37;
         test() : int {
             n : int = 5;
             arr : int[]! = new int[n]{};
@@ -967,7 +967,7 @@ TEST_CASE("new dynamic array — brace init forbidden — error 0x014A", "[gen][
 
 TEST_CASE("new int[n] — dynamic primitive array, default-init", "[gen][new-array][dynamic][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_dyn_prim__;
+        module gen_new_array_38;
         test() : int {
             n : unsigned int = 5;
             arr : int[]! = new int[n];
@@ -977,14 +977,14 @@ TEST_CASE("new int[n] — dynamic primitive array, default-init", "[gen][new-arr
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__na_dyn_prim__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_384testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 0);  // all default-initialized to 0
 }
 
 TEST_CASE("new int[n] — dynamic array, write and read back", "[gen][new-array][dynamic][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_dyn_rw__;
+        module gen_new_array_39;
         test() : int {
             n : unsigned int = 3;
             arr : int[]! = new int[n];
@@ -997,14 +997,14 @@ TEST_CASE("new int[n] — dynamic array, write and read back", "[gen][new-array]
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__na_dyn_rw__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_394testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 60);
 }
 
 TEST_CASE("new int[n] — size from signed int (implicit cast)", "[gen][new-array][dynamic][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_dyn_signed__;
+        module gen_new_array_40;
         test() : int {
             n : int = 4;
             arr : int[]! = new int[n];
@@ -1018,14 +1018,14 @@ TEST_CASE("new int[n] — size from signed int (implicit cast)", "[gen][new-arra
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__na_dyn_signed__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_404testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 10);
 }
 
 TEST_CASE("new int[expr] — size from expression", "[gen][new-array][dynamic][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_dyn_expr__;
+        module gen_new_array_41;
         test(n : unsigned int) : int {
             arr : int[]! = new int[n];
             i : unsigned int = 0;
@@ -1036,7 +1036,7 @@ TEST_CASE("new int[expr] — size from expression", "[gen][new-array][dynamic][j
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)(unsigned int)>("_KFN15__na_dyn_expr__4testEj");
+    auto fn = jit->lookup_symbol<int(*)(unsigned int)>("_KFN16gen_new_array_414testEj");
     REQUIRE(fn);
     REQUIRE(fn(1) == 42);
     REQUIRE(fn(5) == 42);
@@ -1044,7 +1044,7 @@ TEST_CASE("new int[expr] — size from expression", "[gen][new-array][dynamic][j
 
 TEST_CASE("new Struct[n] — dynamic struct array with default ctor", "[gen][new-array][dynamic][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_dyn_struct__;
+        module gen_new_array_42;
 
         struct Point {
             x : int = 0;
@@ -1061,14 +1061,14 @@ TEST_CASE("new Struct[n] — dynamic struct array with default ctor", "[gen][new
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__na_dyn_struct__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_424testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 17);  // 7 + 7 + 3
 }
 
 TEST_CASE("new Struct[n] — dynamic struct array with destructor", "[gen][new-array][dynamic][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_dyn_dtor__;
+        module gen_new_array_43;
 
         counter : int = 0;
 
@@ -1087,7 +1087,7 @@ TEST_CASE("new Struct[n] — dynamic struct array with destructor", "[gen][new-a
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__na_dyn_dtor__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_434testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 50);  // c1=5, c2=0 → 5*10+0 = 50
 }
@@ -1098,7 +1098,7 @@ TEST_CASE("new Struct[n] — dynamic struct array with destructor", "[gen][new-a
 
 TEST_CASE("new int[0] — zero-size static array without braces", "[gen][new-array][jit]") {
     auto jit = gen_jit_throws(R"SRC(
-        module __na_zero_nobraces__;
+        module gen_new_array_44;
         test() : int {
             arr : int[0]! = new int[0];
             delete arr;
@@ -1106,14 +1106,14 @@ TEST_CASE("new int[0] — zero-size static array without braces", "[gen][new-arr
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN20__na_zero_nobraces__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_444testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);
 }
 
 TEST_CASE("new Struct[n] — dynamic struct array scope auto-cleanup", "[gen][new-array][dynamic][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __na_dyn_autoclean__;
+        module gen_new_array_45;
 
         g_dtor : int = 0;
 
@@ -1133,8 +1133,8 @@ TEST_CASE("new Struct[n] — dynamic struct array scope auto-cleanup", "[gen][ne
     )SRC");
     REQUIRE(jit);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN20__na_dyn_autoclean__4testEv");
-    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN20__na_dyn_autoclean__14get_dtor_countEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_454testEv");
+    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_4514get_dtor_countEv");
     REQUIRE(fn);
     REQUIRE(get_dtor);
 
@@ -1145,7 +1145,7 @@ TEST_CASE("new Struct[n] — dynamic struct array scope auto-cleanup", "[gen][ne
 
 TEST_CASE("delete on null owner dynamic array — no crash", "[gen][new-array][dynamic][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __na_dyn_delnull__;
+        module gen_new_array_46;
         test() : int {
             n : unsigned int = 2;
             arr : int[]! = new int[n];
@@ -1157,7 +1157,7 @@ TEST_CASE("delete on null owner dynamic array — no crash", "[gen][new-array][d
         }
     )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN18__na_dyn_delnull__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16gen_new_array_464testEv");
     REQUIRE(fn);
     REQUIRE(fn() == 42);  // double delete is a no-op (already null)
 }
@@ -1180,7 +1180,7 @@ TEST_CASE("Parse new array — complex expression as size", "[parser][new-array]
 
 TEST_CASE("Bounds check: out-of-bounds on dynamic owner array aborts", "[gen][bounds][new-array][dynamic][oob]") {
     auto res = build_and_exec(R"SRC(
-        module __bc_dyn_oob__;
+        module gen_new_array_47;
         main() : int {
             n : unsigned int = 3;
             arr : int[]! = new int[n];
@@ -1200,7 +1200,7 @@ TEST_CASE("Bounds check: out-of-bounds on dynamic owner array aborts", "[gen][bo
 TEST_CASE("new array — struct as size expression — error 0x0141", "[gen][new-array][error]") {
     // A struct value cannot be converted to unsigned int → error 0x0141
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __na_err_sizetyp__;
+        module gen_new_array_48;
 
         struct Foo {
             x : int = 0;
@@ -1218,7 +1218,7 @@ TEST_CASE("new array — struct as size expression — error 0x0141", "[gen][new
 TEST_CASE("new array — struct value in primitive init list — error 0x0144", "[gen][new-array][error]") {
     // A struct value cannot be converted to the primitive element type → error 0x0144
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __na_err_elemtyp__;
+        module gen_new_array_49;
 
         struct Bar {
             x : int = 0;

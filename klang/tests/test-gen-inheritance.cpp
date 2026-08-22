@@ -82,7 +82,7 @@ TEST_CASE("Parse struct with base clause", "[parser][inheritance]") {
 
 TEST_CASE("Single inheritance - constructor and member access", "[gen][inheritance]") {
     auto jit = gen_jit(R"SRC(
-module __inh_simple__;
+module gen_inheritance_01;
 
 struct Base {
     x: int;
@@ -157,7 +157,7 @@ test_assign_derived() : int {
 
 TEST_CASE("Single inheritance - method inherited from base", "[gen][inheritance]") {
     auto jit = gen_jit(R"SRC(
-module __inh_method__;
+module gen_inheritance_02;
 
 struct Base {
     val: int;
@@ -215,7 +215,7 @@ test_modify_then_call() : int {
 
 TEST_CASE("Single inheritance - upcast to base ref", "[gen][inheritance]") {
     auto jit = gen_jit(R"SRC(
-module __inh_upcast__;
+module gen_inheritance_03;
 
 struct Base {
     val: int;
@@ -251,7 +251,7 @@ test_upcast() : int {
 
 TEST_CASE("Single inheritance - explicit base constructor in mem-init list", "[gen][inheritance]") {
     auto jit = gen_jit(R"SRC(
-module __inh_ctor_init__;
+module gen_inheritance_04;
 
 struct Base {
     x: int;
@@ -298,7 +298,7 @@ test_explicit_base_ctor() : int {
 
 TEST_CASE("Multiple inheritance - member access", "[gen][inheritance]") {
     auto jit = gen_jit(R"SRC(
-module __inh_multi__;
+module gen_inheritance_05;
 
 struct A {
     a_val: int;
@@ -374,7 +374,7 @@ TEST_CASE("Multiple inheritance - diamond: two independent base copies", "[gen][
     // C++ non-virtual diamond: A appears twice, one copy per branch.
     // D::B1::x and D::B2::x are independent.
     auto jit = gen_jit(R"SRC(
-module __inh_diamond__;
+module gen_inheritance_06;
 
 struct A {
     x: int;
@@ -447,7 +447,7 @@ TEST_CASE("Single inheritance - destructor called in reverse order", "[gen][inhe
     //   To distinguish order, use an accumulator: append 1 for Derived, 2 for Base.
     //   order_log = dtor_derived_count*10 + dtor_base_count after one full cycle.
     auto jit = gen_jit(R"SRC(
-module __inh_dtor__;
+module gen_inheritance_07;
 
 dtor_log : int;   // accumulator: Derived dtor appends 1, Base dtor appends 2
 
@@ -491,7 +491,7 @@ get_dtor_log() : int {
 
 TEST_CASE("Inheritance - error on ambiguous member access", "[gen][inheritance]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-module __inh_ambig__;
+module gen_inheritance_08;
 struct A { x: int; A() : x(1) {} }
 struct B { x: int; B() : x(2) {} }
 struct C : public A, public B {
@@ -505,7 +505,7 @@ get_x(c: C&) : int {
 
 TEST_CASE("Inheritance - cycle detection", "[gen][inheritance]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-module __inh_cycle__;
+module gen_inheritance_09;
 struct A : public B {}
 struct B : public A {}
 )SRC", false, false), k::model::gen::resolution_error);
@@ -513,14 +513,14 @@ struct B : public A {}
 
 TEST_CASE("Inheritance - unknown base class error", "[gen][inheritance]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-module __inh_unknown_base__;
+module gen_inheritance_10;
 struct Derived : public NonExistent {}
 )SRC", false, false), k::model::gen::resolution_error);
 }
 
 TEST_CASE("Inheritance - private member access from outside (error)", "[gen][inheritance]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-module __inh_private_member__;
+module gen_inheritance_11;
 struct Base {
 private:
     secret: int;
@@ -587,7 +587,7 @@ TEST_CASE("Model: final struct is_final flag", "[model][final]") {
     SECTION("final struct sets is_final to true") {
         test_logger logger;
         auto jit = gen_jit(R"SRC(
-module __final_model__;
+module gen_inheritance_12;
 final struct Leaf {
     x: int;
     Leaf() : x(0) {}
@@ -599,7 +599,7 @@ final struct Leaf {
     SECTION("Non-final struct has is_final false") {
         test_logger logger;
         auto jit = gen_jit(R"SRC(
-module __nonfinal_model__;
+module gen_inheritance_13;
 struct Extendable {
     x: int;
     Extendable() : x(0) {}
@@ -611,7 +611,7 @@ struct Extendable {
 
 TEST_CASE("Final struct can be used as member (aggregation)", "[gen][final]") {
     auto jit = gen_jit(R"SRC(
-module __final_aggregation__;
+module gen_inheritance_14;
 
 final struct Coord {
     x: int;
@@ -642,7 +642,7 @@ test_final_aggregation() : int {
 
 TEST_CASE("Final struct can be used as function parameter", "[gen][final]") {
     auto jit = gen_jit(R"SRC(
-module __final_param__;
+module gen_inheritance_15;
 
 final struct Point {
     x: int;
@@ -668,7 +668,7 @@ test_final_param() : int {
 
 TEST_CASE("Inheritance - error when inheriting from a final struct", "[gen][final]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-module __final_inherit_error__;
+module gen_inheritance_16;
 final struct Base {
     x: int;
     Base() : x(0) {}
@@ -681,7 +681,7 @@ struct Derived : public Base {
 
 TEST_CASE("Inheritance - error: final struct in multi-inheritance chain", "[gen][final]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-module __final_multi_inherit__;
+module gen_inheritance_17;
 struct A { A() {} }
 final struct B { B() {} }
 struct C : public A, public B {
@@ -694,7 +694,7 @@ TEST_CASE("Inheritance - final struct can itself inherit", "[gen][final]") {
     // A final struct may still derive from another struct;
     // it only forbids being used AS a base class.
     auto jit = gen_jit(R"SRC(
-module __final_can_inherit__;
+module gen_inheritance_18;
 
 struct Base {
     v: int;

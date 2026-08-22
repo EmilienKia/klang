@@ -142,7 +142,7 @@ TEST_CASE("Parse new uniform array — multi-arg", "[parser][uniform-array]") {
 
 TEST_CASE("Uniform array stack — int(42)[5] returns element", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_01;
 
         get_elem(idx : int) : int {
             arr : int(42)[5];
@@ -159,30 +159,30 @@ TEST_CASE("Uniform array stack — int(42)[5] returns element", "[gen][uniform-a
 
 TEST_CASE("Uniform array stack — int(0)[3] all zero", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_02;
 
-        test() : int {
+        gen_uniform_array_init_02() : int {
             arr : int(0)[3];
             return arr[0] + arr[1] + arr[2];
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_uniform_array_init_02");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 0);
 }
 
 TEST_CASE("Uniform array stack — int(7)[4] sum", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_03;
 
-        test() : int {
+        gen_uniform_array_init_03() : int {
             arr : int(7)[4];
             return arr[0] + arr[1] + arr[2] + arr[3];
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_uniform_array_init_03");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 28);
 }
@@ -193,9 +193,9 @@ TEST_CASE("Uniform array stack — int(7)[4] sum", "[gen][uniform-array]") {
 
 TEST_CASE("Uniform array heap static — new int(42)[5]", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_04;
 
-        test() : int {
+        gen_uniform_array_init_04() : int {
             arr : int[5]! = new int(42)[5];
             r : int = arr[3];
             delete arr;
@@ -203,16 +203,16 @@ TEST_CASE("Uniform array heap static — new int(42)[5]", "[gen][uniform-array]"
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_uniform_array_init_04");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 42);
 }
 
 TEST_CASE("Uniform array heap static — new int(10)[3] sum", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_05;
 
-        test() : int {
+        gen_uniform_array_init_05() : int {
             arr : int[3]! = new int(10)[3];
             r : int = arr[0] + arr[1] + arr[2];
             delete arr;
@@ -220,7 +220,7 @@ TEST_CASE("Uniform array heap static — new int(10)[3] sum", "[gen][uniform-arr
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_uniform_array_init_05");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 30);
 }
@@ -231,9 +231,9 @@ TEST_CASE("Uniform array heap static — new int(10)[3] sum", "[gen][uniform-arr
 
 TEST_CASE("Uniform array heap dynamic — new int(99)[n]", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_06;
 
-        test(n : unsigned int) : int {
+        gen_uniform_array_init_06(n : unsigned int) : int {
             arr : int[]! = new int(99)[n];
             r : int = arr[0];
             delete arr;
@@ -241,16 +241,16 @@ TEST_CASE("Uniform array heap dynamic — new int(99)[n]", "[gen][uniform-array]
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)(unsigned int)>("test");
+    auto test = jit->lookup_symbol<int(*)(unsigned int)>("gen_uniform_array_init_06");
     REQUIRE(test != nullptr);
     REQUIRE(test(3) == 99);
 }
 
 TEST_CASE("Uniform array heap dynamic — new int(5)[n] last element", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_07;
 
-        test(n : unsigned int) : int {
+        gen_uniform_array_init_07(n : unsigned int) : int {
             arr : int[]! = new int(5)[n];
             r : int = arr[n - 1];
             delete arr;
@@ -258,7 +258,7 @@ TEST_CASE("Uniform array heap dynamic — new int(5)[n] last element", "[gen][un
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)(unsigned int)>("test");
+    auto test = jit->lookup_symbol<int(*)(unsigned int)>("gen_uniform_array_init_07");
     REQUIRE(test != nullptr);
     REQUIRE(test(10) == 5);
 }
@@ -269,7 +269,7 @@ TEST_CASE("Uniform array heap dynamic — new int(5)[n] last element", "[gen][un
 
 TEST_CASE("Uniform array stack — struct with ctor", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_08;
 
         struct Point {
             x : int = 0;
@@ -280,13 +280,13 @@ TEST_CASE("Uniform array stack — struct with ctor", "[gen][uniform-array]") {
             }
         }
 
-        test() : int {
+        gen_uniform_array_init_08() : int {
             pts : Point(3, 4)[3];
             return pts[0].x + pts[1].y + pts[2].x;
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_uniform_array_init_08");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 10); // 3 + 4 + 3
 }
@@ -297,7 +297,7 @@ TEST_CASE("Uniform array stack — struct with ctor", "[gen][uniform-array]") {
 
 TEST_CASE("Uniform array heap static — struct with ctor", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_09;
 
         struct Point {
             x : int = 0;
@@ -308,7 +308,7 @@ TEST_CASE("Uniform array heap static — struct with ctor", "[gen][uniform-array
             }
         }
 
-        test() : int {
+        gen_uniform_array_init_09() : int {
             pts : Point[2]! = new Point(5, 6)[2];
             r : int = pts[0].x + pts[1].y;
             delete pts;
@@ -316,7 +316,7 @@ TEST_CASE("Uniform array heap static — struct with ctor", "[gen][uniform-array
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_uniform_array_init_09");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 11); // 5 + 6
 }
@@ -327,7 +327,7 @@ TEST_CASE("Uniform array heap static — struct with ctor", "[gen][uniform-array
 
 TEST_CASE("Uniform array heap dynamic — struct with ctor", "[gen][uniform-array]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_uniform_array_init_10;
 
         struct Point {
             x : int = 0;
@@ -338,7 +338,7 @@ TEST_CASE("Uniform array heap dynamic — struct with ctor", "[gen][uniform-arra
             }
         }
 
-        test(n : unsigned int) : int {
+        gen_uniform_array_init_10(n : unsigned int) : int {
             pts : Point[]! = new Point(7, 8)[n];
             r : int = pts[0].x + pts[0].y;
             delete pts;
@@ -346,7 +346,7 @@ TEST_CASE("Uniform array heap dynamic — struct with ctor", "[gen][uniform-arra
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)(unsigned int)>("test");
+    auto test = jit->lookup_symbol<int(*)(unsigned int)>("gen_uniform_array_init_10");
     REQUIRE(test != nullptr);
     REQUIRE(test(5) == 15); // 7 + 8
 }
@@ -357,7 +357,7 @@ TEST_CASE("Uniform array heap dynamic — struct with ctor", "[gen][uniform-arra
 
 TEST_CASE("Uniform array — error: no matching constructor (stack)", "[gen][uniform-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_uniform_array_init_11;
 
         struct Foo {
             x : int = 0;
@@ -366,7 +366,7 @@ TEST_CASE("Uniform array — error: no matching constructor (stack)", "[gen][uni
             }
         }
 
-        test() : int {
+        gen_uniform_array_init_11() : int {
             arr : Foo(42)[3];
             return 0;
         }
@@ -375,7 +375,7 @@ TEST_CASE("Uniform array — error: no matching constructor (stack)", "[gen][uni
 
 TEST_CASE("Uniform array — error: no matching constructor (heap)", "[gen][uniform-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_uniform_array_init_12;
 
         struct Bar {
             x : int = 0;
@@ -384,7 +384,7 @@ TEST_CASE("Uniform array — error: no matching constructor (heap)", "[gen][unif
             }
         }
 
-        test() : int {
+        gen_uniform_array_init_12() : int {
             arr : Bar[3]! = new Bar(1, 2, 3)[3];
             delete arr;
             return 0;

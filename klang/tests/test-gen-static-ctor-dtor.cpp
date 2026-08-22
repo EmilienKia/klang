@@ -40,7 +40,7 @@
 
 TEST_CASE("Static constructor is called during global initialization", "[gen][struct][static-ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __static_ctor__;
+        module gen_static_ctor_dtor_01;
 
         // Global counter to verify the static constructor ran
         ctor_called : int;
@@ -71,7 +71,7 @@ TEST_CASE("Static constructor is called during global initialization", "[gen][st
 
 TEST_CASE("Static destructor is called during global finalization", "[gen][struct][static-dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __static_dtor__;
+        module gen_static_ctor_dtor_02;
 
         dtor_called : int;
 
@@ -108,7 +108,7 @@ TEST_CASE("Static destructor is called during global finalization", "[gen][struc
 
 TEST_CASE("Static constructor and destructor: both executed at init/finit", "[gen][struct][static-ctor][static-dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __static_ctor_dtor__;
+        module gen_static_ctor_dtor_03;
 
         init_count : int;
         fini_count : int;
@@ -157,7 +157,7 @@ TEST_CASE("Static constructor and destructor: both executed at init/finit", "[ge
 
 TEST_CASE("Static constructor initializes state before functions are called", "[gen][struct][static-ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __static_ctor_state__;
+        module gen_static_ctor_dtor_04;
 
         value : int;
 
@@ -187,7 +187,7 @@ TEST_CASE("Static constructor initializes state before functions are called", "[
 
 TEST_CASE("Static destructor runs after global variable destruction (reverse order)", "[gen][struct][static-dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __static_dtor_order__;
+        module gen_static_ctor_dtor_05;
 
         log : int;
 
@@ -231,7 +231,7 @@ TEST_CASE("Static destructor runs after global variable destruction (reverse ord
 
 TEST_CASE("Multiple structs with static constructors: all called at init", "[gen][struct][static-ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __multi_static_ctor__;
+        module gen_static_ctor_dtor_06;
 
         counter : int;
 
@@ -268,7 +268,7 @@ TEST_CASE("Multiple structs with static constructors: all called at init", "[gen
 
 TEST_CASE("Multiple structs with static destructors: all called at finit", "[gen][struct][static-dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __multi_static_dtor__;
+        module gen_static_ctor_dtor_07;
 
         counter : int;
 
@@ -308,7 +308,7 @@ TEST_CASE("Multiple structs with static destructors: all called at finit", "[gen
 
 TEST_CASE("Static constructor cannot be called explicitly", "[gen][struct][static-ctor][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __explicit_static_ctor__;
+        module gen_static_ctor_dtor_08;
 
         struct Tracker {
             static Tracker() {}
@@ -330,7 +330,7 @@ TEST_CASE("Static constructor cannot be called explicitly", "[gen][struct][stati
 
 TEST_CASE("Static destructor cannot be called explicitly", "[gen][struct][static-dtor][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __explicit_static_dtor__;
+        module gen_static_ctor_dtor_09;
 
         struct Cleaner {
             static ~Cleaner() {}
@@ -349,7 +349,7 @@ TEST_CASE("Static destructor cannot be called explicitly", "[gen][struct][static
 
 TEST_CASE("Static constructor with return type is a compilation error", "[gen][struct][static-ctor][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __static_ctor_ret__;
+        module gen_static_ctor_dtor_10;
 
         struct BadInit {
             static BadInit() : int {
@@ -365,7 +365,7 @@ TEST_CASE("Static constructor with return type is a compilation error", "[gen][s
 
 TEST_CASE("Static constructor with parameters is a compilation error", "[gen][struct][static-ctor][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __static_ctor_params__;
+        module gen_static_ctor_dtor_11;
 
         struct BadInit {
             static BadInit(x: int) {
@@ -380,7 +380,7 @@ TEST_CASE("Static constructor with parameters is a compilation error", "[gen][st
 
 TEST_CASE("Static destructor with return type is a compilation error", "[gen][struct][static-dtor][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __static_dtor_ret__;
+        module gen_static_ctor_dtor_12;
 
         struct BadFini {
             static ~BadFini() : int {
@@ -396,7 +396,7 @@ TEST_CASE("Static destructor with return type is a compilation error", "[gen][st
 
 TEST_CASE("Static destructor with parameters is a compilation error", "[gen][struct][static-dtor][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __static_dtor_params__;
+        module gen_static_ctor_dtor_13;
 
         struct BadFini {
             static ~BadFini(x: int) {
@@ -412,7 +412,7 @@ TEST_CASE("Static destructor with parameters is a compilation error", "[gen][str
 
 TEST_CASE("Static constructor co-exists with global variable initialization", "[gen][struct][static-ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __static_ctor_global__;
+        module gen_static_ctor_dtor_14;
 
         base : int;
         derived : int;

@@ -66,7 +66,7 @@ TEST_CASE("Callable interface: a single-abstract-method interface binds to a cal
     "[gen][callable][interface]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_01;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -95,7 +95,7 @@ TEST_CASE("Callable interface: the bound callable dispatches through the vtable"
     // Two implementations of the same functional interface bound through the same
     // interface reference must reach their own override.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_02;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -127,7 +127,7 @@ TEST_CASE("Callable interface: a functional interface returning nothing binds to
     "[gen][callable][interface]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_03;
         interface Sink {
             accept(x : int);
         }
@@ -158,7 +158,7 @@ TEST_CASE("Callable interface: one default method plus one abstract method is st
     "[gen][callable][interface][default]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_04;
         interface Transformer {
             transform(x : int) : int;
             default twice(x : int) : int { return transform(transform(x)); }
@@ -191,7 +191,7 @@ TEST_CASE("Callable interface: an interface with no abstract method is not funct
 {
     try {
         gen_jit_throws(R"SRC(
-            module test;
+            module gen_callable_interface_05;
             interface AllDefault {
                 default apply(x : int) : int { return x; }
             }
@@ -212,7 +212,7 @@ TEST_CASE("Callable interface: an interface with two abstract methods is not fun
 {
     try {
         gen_jit_throws(R"SRC(
-            module test;
+            module gen_callable_interface_06;
             interface TwoOps {
                 first(x : int) : int;
                 second(x : int) : int;
@@ -234,7 +234,7 @@ TEST_CASE("Callable interface: an abstract class with two abstract methods is no
 {
     try {
         gen_jit_throws(R"SRC(
-            module test;
+            module gen_callable_interface_07;
             abstract class TwoOps {
                 public:
                 abstract first(x : int) : int;
@@ -261,7 +261,7 @@ TEST_CASE("Callable interface: a mismatching parameter list is rejected",
 {
     try {
         gen_jit_throws(R"SRC(
-            module test;
+            module gen_callable_interface_08;
             interface Transformer {
                 transform(x : int) : int;
             }
@@ -282,7 +282,7 @@ TEST_CASE("Callable interface: a mismatching arity is rejected",
 {
     try {
         gen_jit_throws(R"SRC(
-            module test;
+            module gen_callable_interface_09;
             interface Transformer {
                 transform(x : int) : int;
             }
@@ -303,7 +303,7 @@ TEST_CASE("Callable interface: a mismatching return type is rejected",
 {
     try {
         gen_jit_throws(R"SRC(
-            module test;
+            module gen_callable_interface_10;
             interface Transformer {
                 transform(x : int) : int;
             }
@@ -327,7 +327,7 @@ TEST_CASE("Callable interface: an abstract class with a single abstract method i
     "[gen][callable][interface][abstract]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_11;
         abstract class AbstractOp {
             public:
             abstract apply(x : int) : int;
@@ -359,7 +359,7 @@ TEST_CASE("Callable interface: an abstract class with a single abstract method i
 TEST_CASE("Callable interface: bind through a pointer receiver", "[gen][callable][interface]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_12;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -383,7 +383,7 @@ TEST_CASE("Callable interface: bind through a pointer receiver", "[gen][callable
 TEST_CASE("Callable interface: bind through a link receiver", "[gen][callable][interface]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_13;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -407,7 +407,7 @@ TEST_CASE("Callable interface: bind through a link receiver", "[gen][callable][i
 TEST_CASE("Callable interface: bind through a view receiver", "[gen][callable][interface]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_14;
         interface Transformer {
             const transform(x : int) : int;
         }
@@ -432,7 +432,7 @@ TEST_CASE("Callable interface: bind through an owner receiver",
     "[gen][callable][interface][owner]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_15;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -456,7 +456,7 @@ TEST_CASE("Callable interface: a const receiver binds a const abstract method",
     "[gen][callable][interface][const]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_16;
         interface Transformer {
             const transform(x : int) : int;
         }
@@ -483,7 +483,7 @@ TEST_CASE("Callable interface: a null pointer receiver bound to a nullable calla
     "[gen][callable][interface][null]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_17;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -504,7 +504,7 @@ TEST_CASE("Callable interface: a non-null pointer receiver bound to a nullable c
     "[gen][callable][interface][null]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_18;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -532,7 +532,7 @@ TEST_CASE("Callable interface: a null pointer receiver bound to a non-null calla
     // A '&' callable cannot hold null, so the bind dereferences the receiver and the
     // null check raises a FatalError (non-zero exit status).
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_interface_19;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -553,7 +553,7 @@ TEST_CASE("Callable interface: an abstract method inherited from a base interfac
     "[gen][callable][interface][inheritance]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_20;
         interface BaseOp {
             apply(x : int) : int;
         }
@@ -584,7 +584,7 @@ TEST_CASE("Callable interface: a derived interface adding a second abstract meth
 {
     try {
         gen_jit_throws(R"SRC(
-            module test;
+            module gen_callable_interface_21;
             interface BaseOp {
                 apply(x : int) : int;
             }
@@ -611,7 +611,7 @@ TEST_CASE("Callable interface: a diamond re-declaring the same abstract method c
     "[gen][callable][interface][diamond]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_22;
         interface Root {
             apply(x : int) : int;
         }
@@ -651,7 +651,7 @@ TEST_CASE("Callable interface: a concrete class implementing one abstract slot b
 {
     // Spec §6.6: `fp : *(int):int = d;` where `d` is the concrete implementation.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_23;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -677,7 +677,7 @@ TEST_CASE("Callable interface: a plain class implementing nothing abstract is no
     // No abstract slot at all: the functional-interface rule declines silently and
     // the generic conversion diagnostics reject the assignment.
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_callable_interface_24;
         class Plain {
             public:
             value(x : int) : int { return x; }
@@ -694,7 +694,7 @@ TEST_CASE("Callable interface: store a bound interface callable in a struct memb
     "[gen][callable][interface][store]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_25;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -723,7 +723,7 @@ TEST_CASE("Callable interface: rebind a pointer callable from an interface recei
     "[gen][callable][interface][rebind]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_26;
         interface Transformer {
             transform(x : int) : int;
         }
@@ -758,7 +758,7 @@ TEST_CASE("Callable interface: a functor operator() wins over the functional-int
     // An abstract class declaring `operator()` binds as a functor (phase B.5), not
     // as a functional interface: the functor rule is tried first.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_interface_27;
         abstract class Callable {
             public:
             abstract other(x : int) : int;

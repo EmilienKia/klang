@@ -34,7 +34,7 @@
 
 TEST_CASE("Sized→unsized — pass int[4] to int[] parameter", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_01;
 
         sum(a : int[], n : unsigned int) : int {
             s : int = 0;
@@ -46,51 +46,51 @@ TEST_CASE("Sized→unsized — pass int[4] to int[] parameter", "[gen][array-uns
             return s;
         }
 
-        test() : int {
+        gen_array_unsized_conv_01() : int {
             arr : int[3]{10, 20, 30};
             return sum(arr, 3u);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_unsized_conv_01");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 60);
 }
 
 TEST_CASE("Sized→unsized — pass int[N] to int[] and read .size", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_02;
 
         get_size(a : int[]) : unsigned int {
             return a.size;
         }
 
-        test() : unsigned int {
+        gen_array_unsized_conv_02() : unsigned int {
             arr : int[4]{10, 20, 30, 40};
             return get_size(arr);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<unsigned(*)()>("test");
+    auto test = jit->lookup_symbol<unsigned(*)()>("gen_array_unsized_conv_02");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 4);
 }
 
 TEST_CASE("Sized→unsized — pass int[5] to int[]& explicit ref", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_03;
 
         get_size(a : int[]&) : unsigned int {
             return a.size;
         }
 
-        test() : unsigned int {
+        gen_array_unsized_conv_03() : unsigned int {
             arr : int[5]{1, 2, 3, 4, 5};
             return get_size(arr);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<unsigned(*)()>("test");
+    auto test = jit->lookup_symbol<unsigned(*)()>("gen_array_unsized_conv_03");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 5);
 }
@@ -101,36 +101,36 @@ TEST_CASE("Sized→unsized — pass int[5] to int[]& explicit ref", "[gen][array
 
 TEST_CASE("Sized→unsized — link to unsized array", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_04;
 
-        test() : unsigned int {
+        gen_array_unsized_conv_04() : unsigned int {
             arr : int[3]{1, 2, 3};
             l : int[]+ = &arr;
             return l->size;
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<unsigned(*)()>("test");
+    auto test = jit->lookup_symbol<unsigned(*)()>("gen_array_unsized_conv_04");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 3);
 }
 
 TEST_CASE("Sized→unsized — link to unsized array, read element", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_05;
 
         get_first(l : int[]+) : int {
             return l[0];
         }
 
-        test() : int {
+        gen_array_unsized_conv_05() : int {
             arr : int[3]{42, 99, 7};
             l : int[]+ = &arr;
             return get_first(l);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_unsized_conv_05");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 42);
 }
@@ -141,36 +141,36 @@ TEST_CASE("Sized→unsized — link to unsized array, read element", "[gen][arra
 
 TEST_CASE("Sized→unsized — pointer to unsized array", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_06;
 
-        test() : unsigned int {
+        gen_array_unsized_conv_06() : unsigned int {
             arr : int[4]{10, 20, 30, 40};
             p : int[]* = &arr;
             return p->size;
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<unsigned(*)()>("test");
+    auto test = jit->lookup_symbol<unsigned(*)()>("gen_array_unsized_conv_06");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 4);
 }
 
 TEST_CASE("Sized→unsized — pointer to unsized array, subscript", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_07;
 
         get_elem(p : int[]*, i : unsigned int) : int {
             return p[i];
         }
 
-        test() : int {
+        gen_array_unsized_conv_07() : int {
             arr : int[3]{100, 200, 300};
             p : int[]* = &arr;
             return get_elem(p, 2u);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_unsized_conv_07");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 300);
 }
@@ -181,16 +181,16 @@ TEST_CASE("Sized→unsized — pointer to unsized array, subscript", "[gen][arra
 
 TEST_CASE("Sized→unsized — view to unsized array", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_08;
 
-        test() : unsigned int {
+        gen_array_unsized_conv_08() : unsigned int {
             arr : int[2]{7, 8};
             p : int[]? = &arr;
             return p->size;
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<unsigned(*)()>("test");
+    auto test = jit->lookup_symbol<unsigned(*)()>("gen_array_unsized_conv_08");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 2);
 }
@@ -201,30 +201,30 @@ TEST_CASE("Sized→unsized — view to unsized array", "[gen][array-unsized]") {
 
 TEST_CASE("Sized→unsized — owner to unsized array", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_09;
 
-        test() : unsigned int {
+        gen_array_unsized_conv_09() : unsigned int {
             o : int[]! = new int[]{10, 20, 30, 40, 50};
             return o->size;
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<unsigned(*)()>("test");
+    auto test = jit->lookup_symbol<unsigned(*)()>("gen_array_unsized_conv_09");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 5);
 }
 
 TEST_CASE("Sized→unsized — owner to unsized, subscript read", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_10;
 
-        test() : int {
+        gen_array_unsized_conv_10() : int {
             o : int[]! = new int[]{10, 20, 30};
             return o[1];
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_unsized_conv_10");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 20);
 }
@@ -235,9 +235,9 @@ TEST_CASE("Sized→unsized — owner to unsized, subscript read", "[gen][array-u
 
 TEST_CASE("Sized→unsized — array of links to unsized, different sizes", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_11;
 
-        test() : unsigned int {
+        gen_array_unsized_conv_11() : unsigned int {
             a : int[2]{1, 2};
             b : int[4]{3, 4, 5, 6};
             outer : int[]+[]{&a, &b};
@@ -245,7 +245,7 @@ TEST_CASE("Sized→unsized — array of links to unsized, different sizes", "[ge
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<unsigned(*)()>("test");
+    auto test = jit->lookup_symbol<unsigned(*)()>("gen_array_unsized_conv_11");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 4);
 }
@@ -256,30 +256,30 @@ TEST_CASE("Sized→unsized — array of links to unsized, different sizes", "[ge
 
 TEST_CASE("Sized→unsized — array of owners to unsized arrays", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_12;
 
-        test() : unsigned int {
+        gen_array_unsized_conv_12() : unsigned int {
             arr : int[]![]{new int[]{1}, new int[]{1, 2}, new int[]{1, 2, 3}};
             return arr[2]->size;
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<unsigned(*)()>("test");
+    auto test = jit->lookup_symbol<unsigned(*)()>("gen_array_unsized_conv_12");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 3);
 }
 
 TEST_CASE("Sized→unsized — array of owners, outer size", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_13;
 
-        test() : unsigned int {
+        gen_array_unsized_conv_13() : unsigned int {
             arr : int[]![]{new int[]{1}, new int[]{1, 2}, new int[]{1, 2, 3}};
             return arr.size;
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<unsigned(*)()>("test");
+    auto test = jit->lookup_symbol<unsigned(*)()>("gen_array_unsized_conv_13");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 3);
 }
@@ -290,7 +290,7 @@ TEST_CASE("Sized→unsized — array of owners, outer size", "[gen][array-unsize
 
 TEST_CASE("Sized→unsized — sum function with .size loop", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_array_unsized_conv_14;
 
         array_sum(a : int[]) : int {
             s : int = 0;
@@ -302,13 +302,13 @@ TEST_CASE("Sized→unsized — sum function with .size loop", "[gen][array-unsiz
             return s;
         }
 
-        test() : int {
+        gen_array_unsized_conv_14() : int {
             arr : int[5]{1, 2, 3, 4, 5};
             return array_sum(arr);
         }
     )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_unsized_conv_14");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 15);
 }

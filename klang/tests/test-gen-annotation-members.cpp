@@ -43,7 +43,7 @@
 
 TEST_CASE("Annotation: implicit const — annotation type is const struct", "[annotation][const]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_const_1__;
+        module gen_annotation_members_01;
         annotation Config {
             level : int;
         }
@@ -59,7 +59,7 @@ TEST_CASE("Annotation: explicit const is redundant but compiles", "[annotation][
     // 'const annotation' is accepted — annotation is still const.
     // The compiler emits a warning (0x00A9) but compilation succeeds.
     auto comp = compile_model(R"SRC(
-        module __test_ann_const_2__;
+        module gen_annotation_members_02;
         const annotation Redundant {
             x : int;
         }
@@ -78,7 +78,7 @@ TEST_CASE("Annotation: explicit const is redundant but compiles", "[annotation][
 
 TEST_CASE("Annotation: single int field", "[annotation][member]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_field_1__;
+        module gen_annotation_members_03;
         annotation Priority {
             value : int;
         }
@@ -93,7 +93,7 @@ TEST_CASE("Annotation: single int field", "[annotation][member]") {
 
 TEST_CASE("Annotation: multiple fields", "[annotation][member]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_field_2__;
+        module gen_annotation_members_04;
         annotation Version {
             major : int;
             minor : int;
@@ -111,7 +111,7 @@ TEST_CASE("Annotation: multiple fields", "[annotation][member]") {
 
 TEST_CASE("Annotation: bool field", "[annotation][member]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_field_3__;
+        module gen_annotation_members_05;
         annotation Flag {
             enabled : bool;
         }
@@ -125,7 +125,7 @@ TEST_CASE("Annotation: bool field", "[annotation][member]") {
 
 TEST_CASE("Annotation: field with default value", "[annotation][member]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_field_4__;
+        module gen_annotation_members_06;
         annotation Config {
             level : int = 5;
             verbose : bool = false;
@@ -146,7 +146,7 @@ TEST_CASE("Annotation: field with default value", "[annotation][member]") {
 
 TEST_CASE("Annotation: method declaration", "[annotation][method]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_method_1__;
+        module gen_annotation_members_07;
         annotation Range {
             min : int;
             max : int;
@@ -170,7 +170,7 @@ TEST_CASE("Annotation: method declaration", "[annotation][method]") {
 
 TEST_CASE("Annotation: positional init on class", "[annotation][init][positional]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_pos_1__;
+        module gen_annotation_members_08;
         annotation Priority {
             value : int;
         }
@@ -195,7 +195,7 @@ TEST_CASE("Annotation: positional init on class", "[annotation][init][positional
 
 TEST_CASE("Annotation: positional init with multiple args", "[annotation][init][positional]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_pos_2__;
+        module gen_annotation_members_09;
         annotation Version {
             major : int;
             minor : int;
@@ -221,7 +221,7 @@ TEST_CASE("Annotation: positional init with multiple args", "[annotation][init][
 
 TEST_CASE("Annotation: designated init on class", "[annotation][init][designated]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_desig_1__;
+        module gen_annotation_members_10;
         annotation Range {
             min : int;
             max : int;
@@ -251,7 +251,7 @@ TEST_CASE("Annotation: designated init on class", "[annotation][init][designated
 
 TEST_CASE("Annotation: default construction (no args)", "[annotation][init][default]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_default_1__;
+        module gen_annotation_members_11;
         annotation Config {
             level : int = 1;
             verbose : bool = false;
@@ -281,7 +281,7 @@ TEST_CASE("Annotation: default construction (no args)", "[annotation][init][defa
 
 TEST_CASE("Annotation: member variables are public by default", "[annotation][visibility]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_vis_1__;
+        module gen_annotation_members_12;
         annotation Info {
             value : int;
         }
@@ -304,7 +304,7 @@ TEST_CASE("Annotation: member variables are public by default", "[annotation][vi
 
 TEST_CASE("Annotation: same type, different values on different classes", "[annotation][multi]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_multi_1__;
+        module gen_annotation_members_13;
         annotation Version {
             major : int;
             minor : int;
@@ -344,7 +344,7 @@ TEST_CASE("Annotation: same type, different values on different classes", "[anno
 
 TEST_CASE("Annotation: with fields on interface", "[annotation][interface]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_iface_field__;
+        module gen_annotation_members_14;
         annotation Version {
             major : int;
             minor : int;
@@ -371,7 +371,7 @@ TEST_CASE("Annotation: with fields on interface", "[annotation][interface]") {
 
 TEST_CASE("Annotation: with fields on another annotation", "[annotation][meta]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_meta_field__;
+        module gen_annotation_members_15;
         annotation Target {
             value : int;
         }
@@ -394,7 +394,7 @@ TEST_CASE("Annotation: with fields on another annotation", "[annotation][meta]")
 
 TEST_CASE("Annotation: nested annotation type as field", "[annotation][nested]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_nested_1__;
+        module gen_annotation_members_16;
         annotation Inner {
             x : int;
         }
@@ -418,7 +418,7 @@ TEST_CASE("Annotation: nested annotation type as field", "[annotation][nested]")
 
 TEST_CASE("Annotation: various primitive field types", "[annotation][member][types]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_types_1__;
+        module gen_annotation_members_17;
         annotation AllTypes {
             a : int;
             b : bool;
@@ -453,7 +453,7 @@ TEST_CASE("Annotation: various primitive field types", "[annotation][member][typ
 
 TEST_CASE("Annotation: positional init materializes int constant", "[annotation][materialize][positional]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_mat_pos_1__;
+        module gen_annotation_members_18;
         annotation Priority {
             value : int;
         }
@@ -481,7 +481,7 @@ TEST_CASE("Annotation: positional init materializes int constant", "[annotation]
 
 TEST_CASE("Annotation: positional init materializes multiple fields", "[annotation][materialize][positional]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_mat_pos_2__;
+        module gen_annotation_members_19;
         annotation Version {
             major : int;
             minor : int;
@@ -514,7 +514,7 @@ TEST_CASE("Annotation: positional init materializes multiple fields", "[annotati
 
 TEST_CASE("Annotation: positional init materializes bool constant", "[annotation][materialize][positional]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_mat_pos_3__;
+        module gen_annotation_members_20;
         annotation Flag {
             enabled : bool;
         }
@@ -543,7 +543,7 @@ TEST_CASE("Annotation: positional init materializes bool constant", "[annotation
 
 TEST_CASE("Annotation: designated init materializes field constants", "[annotation][materialize][designated]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_mat_desig_1__;
+        module gen_annotation_members_21;
         annotation Range {
             min : int;
             max : int;
@@ -571,7 +571,7 @@ TEST_CASE("Annotation: designated init materializes field constants", "[annotati
 
 TEST_CASE("Annotation: designated init with out-of-order fields", "[annotation][materialize][designated]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_mat_desig_2__;
+        module gen_annotation_members_22;
         annotation Pair {
             first : int;
             second : int;
@@ -605,7 +605,7 @@ TEST_CASE("Annotation: designated init with out-of-order fields", "[annotation][
 
 TEST_CASE("Annotation: default construction uses member default values", "[annotation][materialize][default]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_mat_default_1__;
+        module gen_annotation_members_23;
         annotation Config {
             level : int = 5;
             verbose : bool = true;
@@ -633,7 +633,7 @@ TEST_CASE("Annotation: default construction uses member default values", "[annot
 
 TEST_CASE("Annotation: partial positional args use defaults for remaining", "[annotation][materialize][default]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_mat_partial_1__;
+        module gen_annotation_members_24;
         annotation Config {
             level : int = 0;
             verbose : bool = true;
@@ -667,7 +667,7 @@ TEST_CASE("Annotation: partial positional args use defaults for remaining", "[an
 
 TEST_CASE("Annotation: different materialized values on different classes", "[annotation][materialize][multi]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_mat_multi_1__;
+        module gen_annotation_members_25;
         annotation Version {
             major : int;
             minor : int;
@@ -716,7 +716,7 @@ TEST_CASE("Annotation: different materialized values on different classes", "[an
 
 TEST_CASE("Annotation: on function parameter — model level", "[annotation][parameter]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_param_1__;
+        module gen_annotation_members_26;
         annotation Tag {
             label : int;
         }
@@ -767,7 +767,7 @@ TEST_CASE("Annotation: on function parameter — model level", "[annotation][par
 
 TEST_CASE("Annotation: multiple annotations on single parameter — model level", "[annotation][parameter]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_param_2__;
+        module gen_annotation_members_27;
         annotation Tag {
             label : int;
         }
@@ -810,7 +810,7 @@ TEST_CASE("Annotation: multiple annotations on single parameter — model level"
 
 TEST_CASE("Annotation: on constructor parameter — model level", "[annotation][parameter][constructor]") {
     auto comp = compile_model(R"SRC(
-        module __test_ann_param_3__;
+        module gen_annotation_members_28;
         annotation Required {}
         class Config {
             public Config(@Required host : int, port : int) {}

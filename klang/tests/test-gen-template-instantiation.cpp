@@ -44,7 +44,7 @@
 TEST_CASE("[A] M5: template struct instantiation via type reference",
           "[milestone5][template][instantiation]") {
     auto jit = gen_jit(R"SRC(
-        module __m5_inst_a__;
+        module gen_template_instantiation_01;
         template<typename T>
         struct Box {
             public value : T;
@@ -57,7 +57,7 @@ TEST_CASE("[A] M5: template struct instantiation via type reference",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto get_value = jit->lookup_symbol<int(*)()>("_KFN13__m5_inst_a__9get_valueEv");
+    auto get_value = jit->lookup_symbol<int(*)()>("_KFN29gen_template_instantiation_019get_valueEv");
     REQUIRE(get_value != nullptr);
     CHECK(get_value() == 42);
 }
@@ -69,7 +69,7 @@ TEST_CASE("[A] M5: template struct instantiation via type reference",
 TEST_CASE("[B] M5: instantiated template member has correct type",
           "[milestone5][template][instantiation]") {
     auto comp = compile_model(R"SRC(
-        module __m5_inst_b__;
+        module gen_template_instantiation_02;
         template<typename T>
         struct Wrapper {
             public inner : T;
@@ -99,7 +99,7 @@ TEST_CASE("[B] M5: instantiated template member has correct type",
 TEST_CASE("[C] M5: distinct instantiations are different types",
           "[milestone5][template][instantiation]") {
     auto comp = compile_model(R"SRC(
-        module __m5_inst_c__;
+        module gen_template_instantiation_03;
         template<typename T>
         struct Box {
             public value : T;
@@ -127,7 +127,7 @@ TEST_CASE("[C] M5: distinct instantiations are different types",
 TEST_CASE("[D] M5: same template args are cached (same entity)",
           "[milestone5][template][instantiation]") {
     auto comp = compile_model(R"SRC(
-        module __m5_inst_d__;
+        module gen_template_instantiation_04;
         template<typename T>
         struct Box {
             public value : T;
@@ -160,7 +160,7 @@ TEST_CASE("[D] M5: same template args are cached (same entity)",
 TEST_CASE("[E] M5: template struct in function param and return",
           "[milestone5][template][instantiation]") {
     auto jit = gen_jit(R"SRC(
-        module __m5_inst_e__;
+        module gen_template_instantiation_05;
         template<typename T>
         struct Box {
             public value : T;
@@ -182,7 +182,7 @@ TEST_CASE("[E] M5: template struct in function param and return",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto roundtrip = jit->lookup_symbol<int(*)()>("_KFN13__m5_inst_e__9roundtripEv");
+    auto roundtrip = jit->lookup_symbol<int(*)()>("_KFN29gen_template_instantiation_059roundtripEv");
     REQUIRE(roundtrip != nullptr);
     CHECK(roundtrip() == 99);
 }
@@ -194,7 +194,7 @@ TEST_CASE("[E] M5: template struct in function param and return",
 TEST_CASE("[F] M5: template struct with multiple type params",
           "[milestone5][template][instantiation]") {
     auto jit = gen_jit(R"SRC(
-        module __m5_inst_f__;
+        module gen_template_instantiation_06;
         template<typename K, typename V>
         struct Pair {
             public first : K;
@@ -209,7 +209,7 @@ TEST_CASE("[F] M5: template struct with multiple type params",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_pair = jit->lookup_symbol<int(*)()>("_KFN13__m5_inst_f__9test_pairEv");
+    auto test_pair = jit->lookup_symbol<int(*)()>("_KFN29gen_template_instantiation_069test_pairEv");
     REQUIRE(test_pair != nullptr);
     CHECK(test_pair() == 30);
 }
@@ -225,7 +225,7 @@ TEST_CASE("[G] M6: no cosmetic error messages on stderr",
     auto* old_buf = std::cerr.rdbuf(captured.rdbuf());
 
     auto jit = gen_jit(R"SRC(
-        module __m6_diag__;
+        module gen_template_instantiation_07;
         template<typename T>
         struct Box {
             public value : T;
@@ -254,7 +254,7 @@ TEST_CASE("[G] M6: no cosmetic error messages on stderr",
 TEST_CASE("[H] M7: template struct with default type param — all defaults",
           "[milestone7][template][defaults]") {
     auto jit = gen_jit(R"SRC(
-        module __m7_def_a__;
+        module gen_template_instantiation_08;
         template<typename T = int>
         struct Box {
             public value : T;
@@ -267,7 +267,7 @@ TEST_CASE("[H] M7: template struct with default type param — all defaults",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto get_value = jit->lookup_symbol<int(*)()>("_KFN12__m7_def_a__9get_valueEv");
+    auto get_value = jit->lookup_symbol<int(*)()>("_KFN29gen_template_instantiation_089get_valueEv");
     REQUIRE(get_value != nullptr);
     CHECK(get_value() == 77);
 }
@@ -279,7 +279,7 @@ TEST_CASE("[H] M7: template struct with default type param — all defaults",
 TEST_CASE("[I] M7: template struct with partial default type params",
           "[milestone7][template][defaults]") {
     auto jit = gen_jit(R"SRC(
-        module __m7_def_b__;
+        module gen_template_instantiation_09;
         template<typename K, typename V = int>
         struct Pair {
             public first : K;
@@ -294,7 +294,7 @@ TEST_CASE("[I] M7: template struct with partial default type params",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_pair = jit->lookup_symbol<int(*)()>("_KFN12__m7_def_b__9test_pairEv");
+    auto test_pair = jit->lookup_symbol<int(*)()>("_KFN29gen_template_instantiation_099test_pairEv");
     REQUIRE(test_pair != nullptr);
     CHECK(test_pair() == 30);
 }
@@ -306,7 +306,7 @@ TEST_CASE("[I] M7: template struct with partial default type params",
 TEST_CASE("[J] M7: default and explicit args produce same cached type",
           "[milestone7][template][defaults]") {
     auto comp = compile_model(R"SRC(
-        module __m7_def_c__;
+        module gen_template_instantiation_10;
         template<typename T = int>
         struct Box {
             public value : T;
@@ -332,7 +332,7 @@ TEST_CASE("[J] M7: default and explicit args produce same cached type",
 TEST_CASE("[K] Template-qualified static call Type<T>::fn(args)",
           "[template][qualified-call][static]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_qcall_static__;
+        module gen_template_instantiation_11;
 
         template<typename T>
         class Math {
@@ -344,7 +344,7 @@ TEST_CASE("[K] Template-qualified static call Type<T>::fn(args)",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto run = jit->lookup_symbol<int(*)()>("_KFN20__tpl_qcall_static__3runEv");
+    auto run = jit->lookup_symbol<int(*)()>("_KFN29gen_template_instantiation_113runEv");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
 }
@@ -356,22 +356,22 @@ TEST_CASE("[K] Template-qualified static call Type<T>::fn(args)",
 TEST_CASE("[L] Template-qualified explicit member call bypasses virtual dispatch",
           "[template][qualified-call][non-virtual]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_instantiation_12;
 
         template<typename T>
         class Base {
             public nonvirt(x : int) : int { return x + 100; }
         }
 
-        test() : int {
+        gen_template_instantiation_12() : int {
             b : Base<int>;
             return Base<int>::nonvirt(b, 41);
         }
     )SRC");
     REQUIRE(jit != nullptr);
     // Try multiple possible mangling schemes
-    auto test1 = jit->lookup_symbol<int(*)()>("_KFN4test4testEv");
-    auto test2 = jit->lookup_symbol<int(*)()>("_KFN8test4testEv");
+    auto test1 = jit->lookup_symbol<int(*)()>("gen_template_instantiation_12");
+    auto test2 = jit->lookup_symbol<int(*)()>("gen_template_instantiation_12");
     auto test  = test1 ? test1 : test2;
     if(test) {
         CHECK(test() == 141);
@@ -396,7 +396,7 @@ TEST_CASE("[L] Template-qualified explicit member call bypasses virtual dispatch
 TEST_CASE("[M] Same-named templates in different namespaces are distinct types",
           "[template][instantiation][ns-collision]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_instantiation_13;
 
         namespace a {
             template<typename T>
@@ -426,7 +426,7 @@ TEST_CASE("[M] Same-named templates in different namespaces are distinct types",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto run = jit->lookup_symbol<int(*)()>("_KFN4test3runEv");
+    auto run = jit->lookup_symbol<int(*)()>("_KFN29gen_template_instantiation_133runEv");
     REQUIRE(run != nullptr);
     CHECK(run() == 41);
 }
@@ -451,7 +451,7 @@ TEST_CASE("[M] Same-named templates in different namespaces are distinct types",
 TEST_CASE("[N] Namespace-qualified enum as template argument",
           "[template][qualified-call][enum][instantiation]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_instantiation_14;
 
         namespace io {
             enum Err { OutOfData; Closed; }
@@ -484,22 +484,22 @@ TEST_CASE("[N] Namespace-qualified enum as template argument",
         class Producer {
         public:
             // Declared return type and the static-factory result must share the
-            // same instantiation of Result<unsigned int, ::test::io::Err>.
-            produce() : Result<unsigned int, ::test::io::Err> {
+            // same instantiation of Result<unsigned int, ::gen_template_instantiation_14::io::Err>.
+            produce() : Result<unsigned int, ::gen_template_instantiation_14::io::Err> {
                 n : unsigned int = 7;
-                return Result<unsigned int, ::test::io::Err>::ok(n);
+                return Result<unsigned int, ::gen_template_instantiation_14::io::Err>::ok(n);
             }
         }
 
         run() : int {
             p : Producer;
-            r : Result<unsigned int, ::test::io::Err> = p.produce();
+            r : Result<unsigned int, ::gen_template_instantiation_14::io::Err> = p.produce();
             if (r.hasError()) return -1;
             return (int) r.value();   // 7
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto run = jit->lookup_symbol<int(*)()>("_KFN4test3runEv");
+    auto run = jit->lookup_symbol<int(*)()>("_KFN29gen_template_instantiation_143runEv");
     REQUIRE(run != nullptr);
     CHECK(run() == 7);
 }
@@ -530,7 +530,7 @@ TEST_CASE("[N] Namespace-qualified enum as template argument",
 TEST_CASE("[O] Multi-level template interface hierarchy builds vtable recursively",
           "[template][instantiation][vtable][interface]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_instantiation_15;
 
         template<typename T>
         interface Base {
@@ -564,8 +564,8 @@ TEST_CASE("[O] Multi-level template interface hierarchy builds vtable recursivel
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_base = jit->lookup_symbol<int(*)(int)>("_KFN4test9test_baseEi");
-    auto test_mid = jit->lookup_symbol<int(*)(int)>("_KFN4test8test_midEi");
+    auto test_base = jit->lookup_symbol<int(*)(int)>("_KFN29gen_template_instantiation_159test_baseEi");
+    auto test_mid = jit->lookup_symbol<int(*)(int)>("_KFN29gen_template_instantiation_158test_midEi");
     REQUIRE(test_base != nullptr);
     REQUIRE(test_mid != nullptr);
     CHECK(test_base(7) == 7);
@@ -588,7 +588,7 @@ TEST_CASE("[O] Multi-level template interface hierarchy builds vtable recursivel
 TEST_CASE("Instantiations differing only by addresser are distinct",
           "[template][instantiation][addresser-distinct]") {
     auto comp = compile_model(R"SRC(
-        module __inst_addresser__;
+        module gen_template_instantiation_16;
         struct S { a : long; b : long; }
         template<typename T>
         struct Box {
@@ -634,7 +634,7 @@ TEST_CASE("Instantiated name qualifies a namespaced type argument",
     // different namespaces used to produce the same instantiation key and the same
     // instantiated aggregate name. type_display_name() now uses the fully-qualified name.
     auto comp = compile_model(R"SRC(
-        module __inst_ns__;
+        module gen_template_instantiation_17;
         namespace a { struct Item { v : int; } }
         template<typename T>
         struct Box {
@@ -671,7 +671,7 @@ TEST_CASE("Instantiated name qualifies a namespaced type argument",
 TEST_CASE("Template method body preserves throw / try / catch statements",
           "[gen][template][instantiation][exceptions]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_throw__;
+        module gen_template_instantiation_18;
 
         class Boom : public Exception {
             Boom() : Exception(9) {}

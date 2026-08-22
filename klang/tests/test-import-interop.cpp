@@ -36,7 +36,7 @@ namespace {
 /// Library exporting a soft alias, two typedefs and a function typed with one
 /// of the typedefs.
 constexpr const char* ALIAS_LIB_SRC = R"K(
-    module aliaslib;
+    module import_interop_01;
 
     typedef Identifier : int;
     alias   Num        : int;
@@ -57,15 +57,15 @@ TEST_CASE("import exported aliases and typedefs", "[import][alias][typedef]") {
     auto result = build_exec_with_lib(
         ALIAS_LIB_SRC,
         R"K(
-            module app;
-            import aliaslib;
+            module import_interop_02;
+            import import_interop_01;
 
             main() : int {
-                id : aliaslib::Identifier = 4;
-                n  : aliaslib::Num        = 3;
-                c  : aliaslib::Coord;
+                id : import_interop_01::Identifier = 4;
+                n  : import_interop_01::Num        = 3;
+                c  : import_interop_01::Coord;
                 c.x = 5;
-                return aliaslib::makeId(id) + n + c.x;
+                return import_interop_01::makeId(id) + n + c.x;
             }
         )K");
 
@@ -83,12 +83,12 @@ TEST_CASE("imported typedef keeps its nominal identity", "[import][typedef]") {
     auto result = build_exec_with_lib(
         ALIAS_LIB_SRC,
         R"K(
-            module app;
-            import aliaslib;
+            module import_interop_03;
+            import import_interop_01;
 
             main() : int {
                 n  : int = 40;
-                id : aliaslib::Identifier = (aliaslib::Identifier) n;
+                id : import_interop_01::Identifier = (import_interop_01::Identifier) n;
                 // The reverse direction is implicit.
                 back : int = id;
                 return back + 2;
@@ -109,13 +109,13 @@ TEST_CASE("imported soft alias is transparent", "[import][alias]") {
     auto result = build_exec_with_lib(
         ALIAS_LIB_SRC,
         R"K(
-            module app;
-            import aliaslib;
+            module import_interop_04;
+            import import_interop_01;
 
             twice(v : int) : int { return v * 2; }
 
             main() : int {
-                n : aliaslib::Num = 21;
+                n : import_interop_01::Num = 21;
                 m : int = n;
                 return twice(m);
             }
@@ -139,7 +139,7 @@ TEST_CASE("cross-module parameterised alias — soft alias of a template aggrega
           "[import][e2e][alias][template]") {
     auto result = build_exec_with_lib(
         R"K(
-            module tpl_alias_lib;
+            module import_interop_05;
 
             public:
             template<typename T>
@@ -153,8 +153,8 @@ TEST_CASE("cross-module parameterised alias — soft alias of a template aggrega
             dummy() : int { return 0; }
         )K",
         R"K(
-            module tpl_alias_exe;
-            import tpl_alias_lib;
+            module import_interop_06;
+            import import_interop_05;
 
             main() : int {
                 b : BoxOf<int>;
@@ -173,7 +173,7 @@ TEST_CASE("cross-module parameterised alias — strong alias keeps its nominal i
           "[import][e2e][typedef][template]") {
     auto result = build_exec_with_lib(
         R"K(
-            module tpl_typedef_lib;
+            module import_interop_07;
 
             public:
             template<typename T> typedef Id : T;
@@ -181,8 +181,8 @@ TEST_CASE("cross-module parameterised alias — strong alias keeps its nominal i
             dummy() : int { return 0; }
         )K",
         R"K(
-            module tpl_typedef_exe;
-            import tpl_typedef_lib;
+            module import_interop_08;
+            import import_interop_07;
 
             main() : int {
                 a : Id<int> = 40;
@@ -210,7 +210,7 @@ TEST_CASE("cross-module callable — global, parameter and return type round-tri
           "[import][e2e][callable]") {
     auto result = build_exec_with_lib(
         R"K(
-            module cbl_lib;
+            module import_interop_09;
 
             public isPos(x: int) : bool { return x > 0; }
 
@@ -221,20 +221,20 @@ TEST_CASE("cross-module callable — global, parameter and return type round-tri
             public getPred() : *(int):bool { return isPos; }
         )K",
         R"K(
-            module cbl_exe;
-            import cbl_lib;
+            module import_interop_10;
+            import import_interop_09;
 
             isNeg(x: int) : bool { return x < 0; }
 
             main() : int {
                 // Callable-typed global imported from the library.
-                g : *(int):bool = cbl_lib::gPred;
+                g : *(int):bool = import_interop_09::gPred;
                 if (!g(7)) return 1;
                 // Callable return type.
-                q : *(int):bool = cbl_lib::getPred();
+                q : *(int):bool = import_interop_09::getPred();
                 if (!q(4)) return 2;
                 // Callable parameter, bound to a local function.
-                if (!cbl_lib::applyPred(isNeg, -1)) return 3;
+                if (!import_interop_09::applyPred(isNeg, -1)) return 3;
                 return 42;
             }
         )K");
@@ -252,7 +252,7 @@ TEST_CASE("cross-module callable — soft alias over a callable is transparent",
           "[import][e2e][callable][alias]") {
     auto result = build_exec_with_lib(
         R"K(
-            module cbl_alias_lib;
+            module import_interop_11;
 
             public isPos(x: int) : bool { return x > 0; }
 
@@ -261,16 +261,16 @@ TEST_CASE("cross-module callable — soft alias over a callable is transparent",
             public applyAlias(p: Pred, v: int) : bool { return p(v); }
         )K",
         R"K(
-            module cbl_alias_exe;
-            import cbl_alias_lib;
+            module import_interop_12;
+            import import_interop_11;
 
             main() : int {
-                p : cbl_alias_lib::Pred = cbl_alias_lib::isPos;
+                p : import_interop_11::Pred = import_interop_11::isPos;
                 if (!p(3)) return 1;
                 // The alias and the raw callable denote the very same type.
                 r : *(int):bool = p;
                 if (!r(5)) return 2;
-                if (!cbl_alias_lib::applyAlias(cbl_alias_lib::isPos, 9)) return 3;
+                if (!import_interop_11::applyAlias(import_interop_11::isPos, 9)) return 3;
                 return 42;
             }
         )K");
@@ -288,7 +288,7 @@ TEST_CASE("cross-module callable — typedef over a callable stays nominal",
           "[import][e2e][callable][typedef]") {
     auto result = build_exec_with_lib(
         R"K(
-            module cbl_typedef_lib;
+            module import_interop_13;
 
             public isPos(x: int) : bool { return x > 0; }
 
@@ -297,12 +297,12 @@ TEST_CASE("cross-module callable — typedef over a callable stays nominal",
             public getPred() : *(int):bool { return isPos; }
         )K",
         R"K(
-            module cbl_typedef_exe;
-            import cbl_typedef_lib;
+            module import_interop_14;
+            import import_interop_13;
 
             main() : int {
-                s : cbl_typedef_lib::StrictPred =
-                    (cbl_typedef_lib::StrictPred) cbl_typedef_lib::getPred();
+                s : import_interop_13::StrictPred =
+                    (import_interop_13::StrictPred) import_interop_13::getPred();
                 return s(2) ? 42 : 1;
             }
         )K");
@@ -323,7 +323,7 @@ TEST_CASE("cross-module callable — parameterised alias over a callable round-t
           "[import][e2e][callable][alias][template]") {
     auto result = build_exec_with_lib(
         R"K(
-            module cbl_tpl_lib;
+            module import_interop_15;
 
             public:
             template<typename T, typename R> alias Fn : *(T):R;
@@ -334,8 +334,8 @@ TEST_CASE("cross-module callable — parameterised alias over a callable round-t
             applyFn(p: Fn<int,bool>, v: int) : bool { return p(v); }
         )K",
         R"K(
-            module cbl_tpl_exe;
-            import cbl_tpl_lib;
+            module import_interop_16;
+            import import_interop_15;
 
             isNeg(x: int) : bool { return x < 0; }
 
@@ -343,12 +343,12 @@ TEST_CASE("cross-module callable — parameterised alias over a callable round-t
                 f : Fn<int,bool> = isNeg;
                 if (!f(-5)) return 1;
                 // Alias chaining: Predicate<T> renames Fn<T,bool>.
-                p : Predicate<int> = cbl_tpl_lib::isPos;
+                p : Predicate<int> = import_interop_15::isPos;
                 if (!p(3)) return 2;
                 // The instantiated alias is the raw callable type.
                 r : *(int):bool = f;
                 if (!r(-9)) return 3;
-                if (!cbl_tpl_lib::applyFn(cbl_tpl_lib::isPos, 9)) return 4;
+                if (!import_interop_15::applyFn(import_interop_15::isPos, 9)) return 4;
                 return 42;
             }
         )K");
@@ -367,7 +367,7 @@ TEST_CASE("cross-module callable — mangling stays stable across import",
           "[import][e2e][callable][mangling]") {
     auto result = build_exec_with_lib(
         R"K(
-            module cbl_mangle_lib;
+            module import_interop_17;
 
             public class Boom { }
 
@@ -381,20 +381,20 @@ TEST_CASE("cross-module callable — mangling stays stable across import",
             public withThrows(v: int, f: *(int):int throws Boom) : int throws Boom { return f(v); }
         )K",
         R"K(
-            module cbl_mangle_exe;
-            import cbl_mangle_lib;
+            module import_interop_18;
+            import import_interop_17;
 
             twice(x: int) : int { return x * 2; }
 
             main() : int {
                 acc : int = 0;
-                acc += cbl_mangle_lib::byPtr(twice, 1);
-                acc += cbl_mangle_lib::byRef(twice, 2);
-                acc += cbl_mangle_lib::byLink(twice, 3);
-                acc += cbl_mangle_lib::byView(twice, 4);
+                acc += import_interop_17::byPtr(twice, 1);
+                acc += import_interop_17::byRef(twice, 2);
+                acc += import_interop_17::byLink(twice, 3);
+                acc += import_interop_17::byView(twice, 4);
                 try {
-                    acc += cbl_mangle_lib::withThrows(11, twice);
-                } catch (e : cbl_mangle_lib::Boom&) {
+                    acc += import_interop_17::withThrows(11, twice);
+                } catch (e : import_interop_17::Boom&) {
                     return 5;
                 }
                 return acc;
@@ -410,7 +410,7 @@ TEST_CASE("import cast-operator — explicit cast works on imported class value"
           "[import][e2e][cast][operator]") {
     auto result = build_exec_with_lib(
         R"K(
-            module castop_lib;
+            module import_interop_19;
 
             public class Wrapper {
                 public value : int;
@@ -423,11 +423,11 @@ TEST_CASE("import cast-operator — explicit cast works on imported class value"
             }
         )K",
         R"K(
-            module castop_exe;
-            import castop_lib;
+            module import_interop_20;
+            import import_interop_19;
 
             main() : int {
-                return (int) castop_lib::make(42);
+                return (int) import_interop_19::make(42);
             }
         )K");
 
@@ -446,14 +446,14 @@ TEST_CASE("import multi-lib — imported aliases do not collide across dependenc
           "[import][e2e][alias][regression]") {
     std::vector<LibSpec> libs = {
         { R"K(
-            module multi_alias_lib1;
+            module import_interop_21;
             public template<typename T> alias Pred : *(T):bool;
             public isEven(x: int) : bool { return x % 2 == 0; }
         )K" },
         { R"K(
-            module multi_alias_lib2;
-            import multi_alias_lib1;
-            public checkVal(p: multi_alias_lib1::Pred<int>, v: int) : bool {
+            module import_interop_22;
+            import import_interop_21;
+            public checkVal(p: import_interop_21::Pred<int>, v: int) : bool {
                 return p(v);
             }
         )K" }
@@ -461,13 +461,13 @@ TEST_CASE("import multi-lib — imported aliases do not collide across dependenc
 
     auto result = build_exec_with_libs(libs,
         R"K(
-            module multi_alias_exe;
-            import multi_alias_lib1;
-            import multi_alias_lib2;
+            module import_interop_23;
+            import import_interop_21;
+            import import_interop_22;
 
             main() : int {
-                if (!multi_alias_lib2::checkVal(multi_alias_lib1::isEven, 42)) return 1;
-                if (multi_alias_lib2::checkVal(multi_alias_lib1::isEven, 43)) return 2;
+                if (!import_interop_22::checkVal(import_interop_21::isEven, 42)) return 1;
+                if (import_interop_22::checkVal(import_interop_21::isEven, 43)) return 2;
                 return 0;
             }
         )K");

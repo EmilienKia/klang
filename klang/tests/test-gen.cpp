@@ -24,7 +24,7 @@ TEST_CASE( "Simple method", "[gen]" ) {
 
     SECTION("Simple int() method") {
         auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_01;
         test() : int {
             return 42;
         }
@@ -38,7 +38,7 @@ TEST_CASE( "Simple method", "[gen]" ) {
 
     SECTION( "Simple int(int) method" ) {
         auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_02;
         increment(i : int) : int {
             return i + 1;
         }
@@ -52,7 +52,7 @@ TEST_CASE( "Simple method", "[gen]" ) {
 
     SECTION( "Simple int(int, int) method" ) {
         auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_03;
         multiply(a : int, b : int) : int {
             return a * b;
         }
@@ -68,7 +68,7 @@ TEST_CASE( "Simple method", "[gen]" ) {
 #if defined(__SIZEOF_INT128__)
 TEST_CASE("Long long literals and signatures", "[gen][longlong]") {
     auto jit = gen_jit(R"SRC(
-        module __longlong__;
+        module gen_04;
 
         echo_signed(v: long long) : long long {
             return v;
@@ -128,7 +128,7 @@ TEST_CASE("Long long literals and signatures", "[gen][longlong]") {
 
 TEST_CASE("Pointers", "[gen][pointers]") {
     auto jit = gen_jit(R"SRC(
-        module __pointers__;
+        module gen_05;
         a : int;
         b : int;
 
@@ -167,7 +167,7 @@ TEST_CASE("Pointers", "[gen][pointers]") {
 
 TEST_CASE("References", "[gen][refs]") {
     auto jit = gen_jit(R"SRC(
-        module __refs__;
+        module gen_06;
         a : int;
 
         assign(var: int&, val: int) : int {
@@ -200,7 +200,7 @@ TEST_CASE("References", "[gen][refs]") {
 
 TEST_CASE("Array indices references", "[gen][refs][array]") {
     auto jit = gen_jit(R"SRC(
-        module __arrs__;
+        module gen_07;
 
         g : int[4];
 
@@ -241,7 +241,7 @@ TEST_CASE("Array indices references", "[gen][refs][array]") {
 
 TEST_CASE("Structure content references and invocation with local variable", "[gen][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __structs__;
+        module gen_08;
 
         struct plop {
             a : int;
@@ -278,7 +278,7 @@ TEST_CASE("Structure content references and invocation with local variable", "[g
 
 TEST_CASE("Structure content references and invocation with global variable", "[gen][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __structs__;
+        module gen_09;
 
         struct plop {
             a : int;
@@ -331,7 +331,7 @@ TEST_CASE("Structure content references and invocation with global variable", "[
 
 TEST_CASE("Structure content and invocation through reference", "[gen][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __structs__;
+        module gen_10;
 
         struct plop {
             a : int;
@@ -367,7 +367,7 @@ TEST_CASE("Structure content and invocation through reference", "[gen][struct]")
 
 TEST_CASE("Implicit and explicit 'this' name lookup", "[gen][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __structs__;
+        module gen_11;
 
         struct plop {
             a: double;
@@ -399,7 +399,7 @@ TEST_CASE("Implicit and explicit 'this' name lookup", "[gen][struct]") {
 
 TEST_CASE("This and var name lookup", "[gen][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __structs__;
+        module gen_12;
 
         struct plop {
             a: double;
@@ -428,7 +428,7 @@ TEST_CASE("This and var name lookup", "[gen][struct]") {
 
 TEST_CASE("Local variable constant init expression", "[gen][variable]") {
     auto jit = gen_jit(R"SRC(
-        module __vars__;
+        module gen_13;
 
         test() : int {
             a : int = 5;
@@ -446,7 +446,7 @@ TEST_CASE("Local variable constant init expression", "[gen][variable]") {
 
 TEST_CASE("Global variable constant init expression", "[gen][variable]") {
     auto jit = gen_jit(R"SRC(
-        module __vars__;
+        module gen_14;
 
         a : int = 5;
         b : int = 12;
@@ -465,7 +465,7 @@ TEST_CASE("Global variable constant init expression", "[gen][variable]") {
 
 TEST_CASE("Struct fields default 0-initialization", "[gen][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __struct__;
+        module gen_15;
 
         struct plop {
             // Should be default init to 0
@@ -492,7 +492,7 @@ TEST_CASE("Struct fields default 0-initialization", "[gen][struct]") {
 
 TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __struct__;
+        module gen_16;
 
         struct plop {
             a : int = 5;
@@ -527,7 +527,7 @@ TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct
 
 TEST_CASE("Global primitive variable non-trivial initialization", "[gen]") {
     auto jit = gen_jit(R"SRC(
-        module __global__;
+        module gen_17;
 
         a : int = 30 + 12;
         b : int = init();
@@ -558,14 +558,14 @@ TEST_CASE("Global primitive variable non-trivial initialization", "[gen]") {
 
 TEST_CASE("Main entry point method returning int", "[gen]") {
     auto jit = gen_jit(R"SRC(
-        module __main__;
+        module gen_18;
 
-        test() : int {
+        gen_03() : int {
             return 42;
         }
 
         main() : int {
-            return test();
+            return gen_03();
         }
         )SRC");
     REQUIRE(jit);
@@ -580,14 +580,14 @@ TEST_CASE("Main entry point method returning int", "[gen]") {
 
 TEST_CASE("Main entry point method returning nothing", "[gen]") {
     auto jit = gen_jit(R"SRC(
-        module __main__;
+        module gen_19;
 
-        test() : int {
+        gen_03() : int {
             return 42;
         }
 
         main() {
-            test();
+            gen_03();
         }
         )SRC");
     REQUIRE(jit);
@@ -602,7 +602,7 @@ TEST_CASE("Main entry point method returning nothing", "[gen]") {
 
 TEST_CASE("Static struct member", "[gen][var]") {
     auto jit = gen_jit(R"SRC(
-        module __static__;
+        module gen_20;
 
         g : int = 7;
 
@@ -632,7 +632,7 @@ TEST_CASE("Static struct member", "[gen][var]") {
 
 TEST_CASE("Static local variable", "[gen][var]") {
     auto jit = gen_jit(R"SRC(
-        module __static__;
+        module gen_21;
 
         init() : int {
             return 12;
@@ -672,7 +672,7 @@ TEST_CASE("Static local variable", "[gen][var]") {
 
 TEST_CASE("Static method", "[gen]") {
     auto jit = gen_jit(R"SRC(
-        module __func__;
+        module gen_22;
 
         struct plop {
             static s : int = 12;
@@ -709,7 +709,7 @@ TEST_CASE("Static method", "[gen]") {
 
 TEST_CASE("Aggregated structs", "[gen][structs]") {
     auto jit = gen_jit(R"SRC(
-        module __structs__;
+        module gen_23;
 
         struct titi {
             b : int = 5;
@@ -746,7 +746,7 @@ TEST_CASE("Aggregated structs", "[gen][structs]") {
 
 TEST_CASE("Struct constructor", "[gen][structs]") {
     auto jit = gen_jit(R"SRC(
-        module __structs__;
+        module gen_24;
 
         struct plop {
             a : int = 3;
@@ -775,7 +775,7 @@ TEST_CASE("Struct constructor", "[gen][structs]") {
 
 TEST_CASE("Struct constructor overload resolution", "[gen][structs]") {
     auto jit = gen_jit(R"SRC(
-        module __structs__;
+        module gen_25;
 
         struct plop {
             a : int = 1;
@@ -820,7 +820,7 @@ TEST_CASE("Struct destructor called on local variable at block exit", "[gen][str
     // The return value is evaluated BEFORE destruction (C++ semantics),
     // so test_local_dtor() returns 0. After the call returns, dtor_count is 1.
     auto jit = gen_jit(R"SRC(
-        module __dtor_local__;
+        module gen_26;
 
         dtor_count : int;
 
@@ -856,7 +856,7 @@ TEST_CASE("Struct destructor called on local variable at block exit", "[gen][str
 
 TEST_CASE("Struct destructor called on global variable via global_dtor", "[gen][struct][destructor]") {
     auto jit = gen_jit(R"SRC(
-        module __dtor_global__;
+        module gen_27;
 
         dtor_called : int;
 
@@ -896,7 +896,7 @@ TEST_CASE("Struct destructor called on global variable via global_dtor", "[gen][
 TEST_CASE("Function call with primitive widening cast", "[gen][cast][widening]") {
     // short argument passed to int parameter: widening, no data loss
     auto jit = gen_jit(R"SRC(
-        module __cast_widening__;
+        module gen_28;
 
         add(a : int, b : int) : int {
             return a + b;
@@ -917,7 +917,7 @@ TEST_CASE("Function call with primitive widening cast", "[gen][cast][widening]")
 TEST_CASE("Function call with primitive narrowing cast", "[gen][cast][narrowing]") {
     // int argument passed to short parameter: narrowing, possible overflow
     auto jit = gen_jit(R"SRC(
-        module __cast_narrowing__;
+        module gen_29;
 
         identity(x : short) : int {
             return x;
@@ -937,7 +937,7 @@ TEST_CASE("Function call with primitive narrowing cast", "[gen][cast][narrowing]
 
 TEST_CASE("Function call with int-to-double widening cast", "[gen][cast][widening]") {
     auto jit = gen_jit(R"SRC(
-        module __cast_int_double__;
+        module gen_30;
 
         half(x : double) : double {
             return x / 2.0d;
@@ -957,7 +957,7 @@ TEST_CASE("Function call with int-to-double widening cast", "[gen][cast][widenin
 TEST_CASE("Constructor call with primitive widening cast", "[gen][cast][structs][widening]") {
     // Constructor expects int but we pass a short: widening cast
     auto jit = gen_jit(R"SRC(
-        module __ctor_widening__;
+        module gen_31;
 
         struct box {
             val : int = 0;
@@ -984,7 +984,7 @@ TEST_CASE("Constructor overload resolution preferring widening over narrowing", 
     // plop(int) and plop(short): passing an int literal should select plop(int) (CAST_NONE),
     // and passing a short should prefer plop(short) (CAST_NONE) over plop(int) (CAST_WIDENING).
     auto jit = gen_jit(R"SRC(
-        module __ctor_overload__;
+        module gen_32;
 
         struct plop {
             a : int = 0;
@@ -1039,7 +1039,7 @@ TEST_CASE("Constructor overload resolution preferring widening over narrowing", 
 TEST_CASE("Constructor mem-initializer-list: single primitive member", "[gen][structs][mem_init]") {
     // Constructor mem-init sets a primitive field directly
     auto jit = gen_jit(R"SRC(
-        module __mem_init_single__;
+        module gen_33;
 
         struct box {
             val : int = 0;
@@ -1060,7 +1060,7 @@ TEST_CASE("Constructor mem-initializer-list: single primitive member", "[gen][st
 TEST_CASE("Constructor mem-initializer-list: multiple primitive members", "[gen][structs][mem_init]") {
     // Multiple members initialized via mem-init list
     auto jit = gen_jit(R"SRC(
-        module __mem_init_multi__;
+        module gen_34;
 
         struct point {
             x : int = 0;
@@ -1092,7 +1092,7 @@ TEST_CASE("Constructor mem-initializer-list: multiple primitive members", "[gen]
 TEST_CASE("Constructor mem-initializer-list: mem-init with expression", "[gen][structs][mem_init]") {
     // Member initialized with an arithmetic expression
     auto jit = gen_jit(R"SRC(
-        module __mem_init_expr__;
+        module gen_35;
 
         struct doubled {
             val : int = 0;
@@ -1113,7 +1113,7 @@ TEST_CASE("Constructor mem-initializer-list: mem-init with expression", "[gen][s
 TEST_CASE("Constructor mem-initializer-list: mem-init overrides default member init", "[gen][structs][mem_init]") {
     // Default member init is 99, but mem-init list overrides with 42
     auto jit = gen_jit(R"SRC(
-        module __mem_init_override__;
+        module gen_36;
 
         struct box {
             val : int = 99;
@@ -1134,7 +1134,7 @@ TEST_CASE("Constructor mem-initializer-list: mem-init overrides default member i
 TEST_CASE("Constructor mem-initializer-list: unlisted member keeps its default", "[gen][structs][mem_init]") {
     // x is initialized via mem-init, y keeps its default value
     auto jit = gen_jit(R"SRC(
-        module __mem_init_partial__;
+        module gen_37;
 
         struct pair {
             x : int = 0;
@@ -1166,7 +1166,7 @@ TEST_CASE("Constructor mem-initializer-list: unlisted member keeps its default",
 TEST_CASE("Constructor mem-initializer-list: nested struct member", "[gen][structs][mem_init]") {
     // Inner struct initialized via mem-init list using its own constructor
     auto jit = gen_jit(R"SRC(
-        module __mem_init_nested__;
+        module gen_38;
 
         struct inner {
             v : int = 0;
@@ -1192,7 +1192,7 @@ TEST_CASE("Constructor mem-initializer-list: nested struct member", "[gen][struc
 TEST_CASE("Constructor mem-initializer-list: no mem-init uses default", "[gen][structs][mem_init]") {
     // Constructor without mem-init list: member should use its default value
     auto jit = gen_jit(R"SRC(
-        module __mem_init_no_list__;
+        module gen_39;
 
         struct box {
             val : int = 42;
@@ -1213,7 +1213,7 @@ TEST_CASE("Constructor mem-initializer-list: no mem-init uses default", "[gen][s
 TEST_CASE("Constructor mem-initializer-list: multiple ctors different mem-inits", "[gen][structs][mem_init]") {
     // Two overloaded constructors with different mem-initializer-lists
     auto jit = gen_jit(R"SRC(
-        module __mem_init_overload__;
+        module gen_40;
 
         struct box {
             val : int = 0;
@@ -1245,7 +1245,7 @@ TEST_CASE("Constructor mem-initializer-list: multiple ctors different mem-inits"
 TEST_CASE("Constructor mem-initializer-list: a constructor of sub-object with multiple arguments", "[gen][structs][mem_init]") {
     // Constructor with mem-init list that initializes a sub-object using a constructor that takes multiple arguments
     auto jit = gen_jit(R"SRC(
-        module __mem_init_overload__;
+        module gen_41;
 
         struct box {
             p1 : point;
@@ -1305,7 +1305,7 @@ TEST_CASE("Constructor mem-initializer-list: a constructor of sub-object with mu
 
 TEST_CASE("Function with one default parameter - call with full args", "[gen][default-params]") {
     auto jit = gen_jit(R"SRC(
-        module __default_params__;
+        module gen_42;
 
         add(a: int, b: int = 10) : int {
             return a + b;
@@ -1332,7 +1332,7 @@ TEST_CASE("Function with one default parameter - call with full args", "[gen][de
 
 TEST_CASE("Function with two default parameters", "[gen][default-params]") {
     auto jit = gen_jit(R"SRC(
-        module __default_params__;
+        module gen_43;
 
         compute(a: int, b: int = 5, c: int = 2) : int {
             return a + b * c;
@@ -1367,7 +1367,7 @@ TEST_CASE("Function with two default parameters", "[gen][default-params]") {
 
 TEST_CASE("Member function with default parameter", "[gen][default-params][structs]") {
     auto jit = gen_jit(R"SRC(
-        module __default_params__;
+        module gen_44;
 
         struct Counter {
             value : int = 0;
@@ -1406,7 +1406,7 @@ TEST_CASE("Member function with default parameter", "[gen][default-params][struc
 
 TEST_CASE("Constructor with default parameter", "[gen][default-params][structs]") {
     auto jit = gen_jit(R"SRC(
-        module __default_params__;
+        module gen_45;
 
         struct Box {
             width  : int = 0;
@@ -1446,7 +1446,7 @@ TEST_CASE("Constructor with default parameter", "[gen][default-params][structs]"
 
 TEST_CASE("Local reference variable bound to a local variable", "[gen][refs][variable]") {
     auto jit = gen_jit(R"SRC(
-        module __ref_var__;
+        module gen_46;
 
         test() : int {
             x : int = 10;
@@ -1465,7 +1465,7 @@ TEST_CASE("Local reference variable bound to a local variable", "[gen][refs][var
 
 TEST_CASE("Local reference variable bound to a global variable", "[gen][refs][variable]") {
     auto jit = gen_jit(R"SRC(
-        module __ref_var_global__;
+        module gen_47;
 
         g : int = 0;
 
@@ -1491,7 +1491,7 @@ TEST_CASE("Local reference variable bound to a global variable", "[gen][refs][va
 
 TEST_CASE("Local reference variable bound to a function parameter", "[gen][refs][variable]") {
     auto jit = gen_jit(R"SRC(
-        module __ref_param__;
+        module gen_48;
 
         increment(x : int&) {
             r : int& = x;
@@ -1514,7 +1514,7 @@ TEST_CASE("Local reference variable bound to a function parameter", "[gen][refs]
 TEST_CASE("Local reference variable: assignment modifies referent, does not rebind", "[gen][refs][variable]") {
     // After r is bound to x, assigning r = 99 must change x, not rebind r.
     auto jit = gen_jit(R"SRC(
-        module __ref_rebind__;
+        module gen_49;
 
         test() : int {
             x : int = 10;
@@ -1533,7 +1533,7 @@ TEST_CASE("Local reference variable: assignment modifies referent, does not rebi
 
 TEST_CASE("Reference variable bound to struct member", "[gen][refs][variable][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __ref_struct__;
+        module gen_50;
 
         struct Point {
             x : int = 0;
@@ -1562,7 +1562,7 @@ TEST_CASE("Reference variable bound to struct member", "[gen][refs][variable][st
 
 TEST_CASE("Array value variable: zero-initialised on declaration", "[gen][array][value]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_zero__;
+        module gen_51;
 
         test() : int {
             a : int[4];
@@ -1577,7 +1577,7 @@ TEST_CASE("Array value variable: zero-initialised on declaration", "[gen][array]
 
 TEST_CASE("Array value variable: read and write elements", "[gen][array][value]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_rw__;
+        module gen_52;
 
         test() : int {
             a : int[4];
@@ -1596,7 +1596,7 @@ TEST_CASE("Array value variable: read and write elements", "[gen][array][value]"
 
 TEST_CASE("Array value variable: global array zero-initialised", "[gen][array][value][global]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_global__;
+        module gen_53;
 
         g : int[3];
 
@@ -1612,7 +1612,7 @@ TEST_CASE("Array value variable: global array zero-initialised", "[gen][array][v
 
 TEST_CASE("Array ref variable: pass local array by reference", "[gen][array][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_ref__;
+        module gen_54;
 
         fill(a : int[4]&, v : int) {
             a[0] = v;
@@ -1639,7 +1639,7 @@ TEST_CASE("Array ref variable: pass local array by reference", "[gen][array][ref
 
 TEST_CASE("Array ref variable: init copies all elements (same size)", "[gen][array][ref][copy]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_copy_same__;
+        module gen_55;
 
         test() : int {
             src : int[4];
@@ -1660,7 +1660,7 @@ TEST_CASE("Array ref variable: init copies all elements (same size)", "[gen][arr
 TEST_CASE("Array ref init: dest smaller than src — only first N elements copied", "[gen][array][ref][copy]") {
     // dst has 2 elements, src has 4: only first 2 are copied
     auto jit = gen_jit(R"SRC(
-        module __arr_copy_smaller__;
+        module gen_56;
 
         test() : int {
             src : int[4];
@@ -1681,7 +1681,7 @@ TEST_CASE("Array ref init: dest smaller than src — only first N elements copie
 TEST_CASE("Array ref init: dest larger than src — extra elements zero-initialised", "[gen][array][ref][copy]") {
     // dst has 6 elements, src has 3: 3 copied, 3 zero-filled
     auto jit = gen_jit(R"SRC(
-        module __arr_copy_larger__;
+        module gen_57;
 
         test() : int {
             src : int[3];
@@ -1700,7 +1700,7 @@ TEST_CASE("Array ref init: dest larger than src — extra elements zero-initiali
 
 TEST_CASE("Array assignment: same size — element-wise copy", "[gen][array][assign]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_assign__;
+        module gen_58;
 
         test() : int {
             a : int[3];
@@ -1719,7 +1719,7 @@ TEST_CASE("Array assignment: same size — element-wise copy", "[gen][array][ass
 TEST_CASE("Array assignment: modifying src after assignment does not affect dest", "[gen][array][assign]") {
     // Assignment copies values; mutating src afterwards must not change dest.
     auto jit = gen_jit(R"SRC(
-        module __arr_assign_indep__;
+        module gen_59;
 
         test() : int {
             a : int[3];
@@ -1739,7 +1739,7 @@ TEST_CASE("Array assignment: modifying src after assignment does not affect dest
 TEST_CASE("Array assignment: partial copy (dest < src), unchanged tail", "[gen][array][assign]") {
     // Assign int[5] to int[3]: only first 3 elements of dest are overwritten.
     auto jit = gen_jit(R"SRC(
-        module __arr_assign_partial__;
+        module gen_60;
 
         test() : int {
             src : int[5];
@@ -1758,7 +1758,7 @@ TEST_CASE("Array assignment: partial copy (dest < src), unchanged tail", "[gen][
 
 TEST_CASE("Array ref variable: unbound (no init) must be rejected", "[gen][array][ref][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __arr_ref_no_init__;
+        module gen_61;
         test() : int {
             r : int[4]&;   // ERROR: array ref without initialiser
             return 0;
@@ -1768,7 +1768,7 @@ TEST_CASE("Array ref variable: unbound (no init) must be rejected", "[gen][array
 
 TEST_CASE("Array ref variable: init with non-array must be rejected", "[gen][array][ref][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __arr_ref_bad_init__;
+        module gen_62;
         test() : int {
             x : int = 5;
             r : int[4]& = x;   // ERROR: int is not an array
@@ -1779,7 +1779,7 @@ TEST_CASE("Array ref variable: init with non-array must be rejected", "[gen][arr
 
 TEST_CASE("Array ref variable: element type mismatch must be rejected", "[gen][array][ref][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __arr_ref_type_mismatch__;
+        module gen_63;
         test() : int {
             src : double[4];
             r : int[4]& = src;   // ERROR: double[] != int[]
@@ -1794,7 +1794,7 @@ TEST_CASE("Array ref variable: element type mismatch must be rejected", "[gen][a
 
 TEST_CASE("Array of double: zero-init on declaration", "[gen][array][double]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_dbl_zero__;
+        module gen_64;
         // Returns 1 if all elements are 0.0, 0 otherwise (using int arithmetic on double comparison)
         test() : int {
             a : double[3];
@@ -1814,7 +1814,7 @@ TEST_CASE("Array of double: zero-init on declaration", "[gen][array][double]") {
 
 TEST_CASE("Array of double: read and write elements", "[gen][array][double]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_dbl_rw__;
+        module gen_65;
         // We work with doubles and return int via explicit cast
         sum(a : double[4]&) : double {
             return a[0] + a[1] + a[2] + a[3];
@@ -1836,7 +1836,7 @@ TEST_CASE("Array of double: read and write elements", "[gen][array][double]") {
 
 TEST_CASE("Array of double ref: copy same size", "[gen][array][double][ref][copy]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_dbl_copy__;
+        module gen_66;
         sum(a : double[3]&) : double {
             return a[0] + a[1] + a[2];
         }
@@ -1857,7 +1857,7 @@ TEST_CASE("Array of double ref: copy same size", "[gen][array][double][ref][copy
 
 TEST_CASE("Array of double: assignment element-wise copy", "[gen][array][double][assign]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_dbl_assign__;
+        module gen_67;
         sum(a : double[2]&) : double {
             return a[0] + a[1];
         }
@@ -1881,7 +1881,7 @@ TEST_CASE("Array of double: assignment element-wise copy", "[gen][array][double]
 
 TEST_CASE("Array of struct: default construction (zero fields)", "[gen][array][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_default__;
+        module gen_68;
 
         struct Point {
             x : int;
@@ -1905,7 +1905,7 @@ TEST_CASE("Array of struct: default construction (zero fields)", "[gen][array][s
 
 TEST_CASE("Array of struct: write and read fields", "[gen][array][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_rw__;
+        module gen_69;
 
         struct Point {
             x : int;
@@ -1930,7 +1930,7 @@ TEST_CASE("Array of struct: write and read fields", "[gen][array][struct]") {
 
 TEST_CASE("Array of struct: pass by ref, modify elements", "[gen][array][struct][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_ref__;
+        module gen_70;
 
         struct Pair {
             a : int;
@@ -1971,7 +1971,7 @@ TEST_CASE("Array of struct: pass by ref, modify elements", "[gen][array][struct]
 
 TEST_CASE("Array of struct with single-arg constructor: element access after fill", "[gen][array][struct][ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_ctor1__;
+        module gen_71;
 
         struct Counter {
             value : int = 0;
@@ -1997,7 +1997,7 @@ TEST_CASE("Array of struct with single-arg constructor: element access after fil
 
 TEST_CASE("Array of struct with two-arg constructor: element access", "[gen][array][struct][ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_ctor2__;
+        module gen_72;
 
         struct Vec2 {
             x : int = 0;
@@ -2024,7 +2024,7 @@ TEST_CASE("Array of struct with two-arg constructor: element access", "[gen][arr
 
 TEST_CASE("Array of struct ref copy: same size, plain struct fields", "[gen][array][struct][ref][copy]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_refcopy__;
+        module gen_73;
 
         struct Item {
             id  : int = 0;
@@ -2052,7 +2052,7 @@ TEST_CASE("Array of struct ref copy: same size, plain struct fields", "[gen][arr
 
 TEST_CASE("Array of struct ref: dest larger than src — extra elements zero-init", "[gen][array][struct][ref][copy]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_refcopy_larger__;
+        module gen_74;
 
         struct Slot {
             val : int = 0;
@@ -2078,7 +2078,7 @@ TEST_CASE("Array of struct ref: dest larger than src — extra elements zero-ini
 
 TEST_CASE("Array of struct assignment: element-wise copy, tail unchanged", "[gen][array][struct][assign]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_assign__;
+        module gen_75;
 
         struct Pt {
             x : int = 0;
@@ -2110,7 +2110,7 @@ TEST_CASE("Array of struct assignment: element-wise copy, tail unchanged", "[gen
 
 TEST_CASE("Global array of struct: zero-init", "[gen][array][struct][global]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_global__;
+        module gen_76;
 
         struct Node {
             data : int = 0;
@@ -2135,7 +2135,7 @@ TEST_CASE("Global array of struct: zero-init", "[gen][array][struct][global]") {
 
 TEST_CASE("Global array of struct: write and read", "[gen][array][struct][global]") {
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_global_rw__;
+        module gen_77;
 
         struct Score {
             player : int = 0;
@@ -2171,7 +2171,7 @@ TEST_CASE("Array of struct with default-value fields: zero-declared array", "[ge
     // (current spec: arrays are always zero-initialised, default field values are not
     // applied element-by-element for array values — they apply only to standalone variables).
     auto jit = gen_jit(R"SRC(
-        module __arr_struct_defaults__;
+        module gen_78;
 
         struct Pair {
             a : int;

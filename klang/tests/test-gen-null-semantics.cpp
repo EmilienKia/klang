@@ -34,7 +34,7 @@
 
 TEST_CASE("Pointer init with null", "[gen][null][construction]") {
     auto jit = gen_jit(R"SRC(
-        module __null_ptr_init__;
+        module gen_null_semantics_01;
         test() : int {
             p : int* = null;
             return 0;
@@ -45,7 +45,7 @@ TEST_CASE("Pointer init with null", "[gen][null][construction]") {
 
 TEST_CASE("Pinned init with null", "[gen][null][construction]") {
     auto jit = gen_jit(R"SRC(
-        module __null_pin_init__;
+        module gen_null_semantics_02;
         test() : int {
             p : int? = null;
             return 0;
@@ -56,7 +56,7 @@ TEST_CASE("Pinned init with null", "[gen][null][construction]") {
 
 TEST_CASE("Owner init with null", "[gen][null][construction]") {
     auto jit = gen_jit(R"SRC(
-        module __null_own_init__;
+        module gen_null_semantics_03;
         test() : int {
             o : int! = null;
             return 0;
@@ -69,7 +69,7 @@ TEST_CASE("Owner init with null", "[gen][null][construction]") {
 
 TEST_CASE("Pointer assign null", "[gen][null][assignment]") {
     auto jit = gen_jit(R"SRC(
-        module __null_ptr_assign__;
+        module gen_null_semantics_04;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -82,7 +82,7 @@ TEST_CASE("Pointer assign null", "[gen][null][assignment]") {
 
 TEST_CASE("Owner assign null", "[gen][null][assignment]") {
     auto jit = gen_jit(R"SRC(
-        module __null_own_assign__;
+        module gen_null_semantics_05;
         test() : int {
             o : int! = new int(42);
             o = null;
@@ -95,7 +95,7 @@ TEST_CASE("Owner assign null", "[gen][null][assignment]") {
 TEST_CASE("Pinned assign null is rejected", "[gen][null][assignment]") {
     // Pinned cannot be reassigned after construction — compile error expected.
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __null_pin_assign__;
+        module gen_null_semantics_06;
         test() : int {
             x : int = 42;
             p : int? = &x;
@@ -111,7 +111,7 @@ TEST_CASE("Pinned assign null is rejected", "[gen][null][assignment]") {
 
 TEST_CASE("Pointer == null", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __ptr_eq_null__;
+        module gen_null_semantics_07;
         test() : int {
             p : int* = null;
             if (p == null) { return 1; }
@@ -126,7 +126,7 @@ TEST_CASE("Pointer == null", "[gen][null][comparison]") {
 
 TEST_CASE("Pointer != null", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __ptr_ne_null__;
+        module gen_null_semantics_08;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -142,7 +142,7 @@ TEST_CASE("Pointer != null", "[gen][null][comparison]") {
 
 TEST_CASE("null == pointer", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __null_eq_ptr__;
+        module gen_null_semantics_09;
         test() : int {
             p : int* = null;
             if (null == p) { return 1; }
@@ -157,7 +157,7 @@ TEST_CASE("null == pointer", "[gen][null][comparison]") {
 
 TEST_CASE("Two pointers same address", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __ptr_eq_ptr__;
+        module gen_null_semantics_10;
         test() : int {
             x : int = 42;
             p1 : int* = &x;
@@ -174,7 +174,7 @@ TEST_CASE("Two pointers same address", "[gen][null][comparison]") {
 
 TEST_CASE("Two pointers different address", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __ptr_ne_ptr__;
+        module gen_null_semantics_11;
         test() : int {
             x : int = 1;
             y : int = 2;
@@ -192,7 +192,7 @@ TEST_CASE("Two pointers different address", "[gen][null][comparison]") {
 
 TEST_CASE("Owner == null", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __own_eq_null__;
+        module gen_null_semantics_12;
         test() : int {
             o : int! = null;
             if (o == null) { return 1; }
@@ -207,7 +207,7 @@ TEST_CASE("Owner == null", "[gen][null][comparison]") {
 
 TEST_CASE("Owner != null after new", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __own_ne_null__;
+        module gen_null_semantics_13;
         test() : int {
             o : int! = new int(42);
             if (o != null) { return 1; }
@@ -222,7 +222,7 @@ TEST_CASE("Owner != null after new", "[gen][null][comparison]") {
 
 TEST_CASE("Pinned == null", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __pin_eq_null__;
+        module gen_null_semantics_14;
         test() : int {
             p : int? = null;
             if (p == null) { return 1; }
@@ -237,7 +237,7 @@ TEST_CASE("Pinned == null", "[gen][null][comparison]") {
 
 TEST_CASE("Pointer == link (same address)", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __ptr_eq_link__;
+        module gen_null_semantics_15;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -254,7 +254,7 @@ TEST_CASE("Pointer == link (same address)", "[gen][null][comparison]") {
 
 TEST_CASE("null != null is false", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __null_ne_null__;
+        module gen_null_semantics_16;
         test() : int {
             if (null != null) { return 0; }
             return 1;
@@ -274,7 +274,7 @@ TEST_CASE("null != null is false", "[gen][null][comparison]") {
 
 TEST_CASE("if(ptr) — non-null pointer is truthy", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __if_ptr_truthy__;
+        module gen_null_semantics_17;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -290,7 +290,7 @@ TEST_CASE("if(ptr) — non-null pointer is truthy", "[gen][null][bool]") {
 
 TEST_CASE("if(ptr) — null pointer is falsy", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __if_ptr_falsy__;
+        module gen_null_semantics_18;
         test() : int {
             p : int* = null;
             if (p) { return 1; }
@@ -307,7 +307,7 @@ TEST_CASE("if(ptr) — null pointer is falsy", "[gen][null][bool]") {
 
 TEST_CASE("if(owner) — non-null owner is truthy", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __if_own_truthy__;
+        module gen_null_semantics_19;
         test() : int {
             o : int! = new int(1);
             if (o) { return 1; }
@@ -322,7 +322,7 @@ TEST_CASE("if(owner) — non-null owner is truthy", "[gen][null][bool]") {
 
 TEST_CASE("if(owner) — null owner is falsy", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __if_own_falsy__;
+        module gen_null_semantics_20;
         test() : int {
             o : int! = null;
             if (o) { return 1; }
@@ -339,7 +339,7 @@ TEST_CASE("if(owner) — null owner is falsy", "[gen][null][bool]") {
 
 TEST_CASE("if(view) — non-null view is truthy", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __if_pin_truthy__;
+        module gen_null_semantics_21;
         test() : int {
             x : int = 10;
             p : int? = &x;
@@ -355,7 +355,7 @@ TEST_CASE("if(view) — non-null view is truthy", "[gen][null][bool]") {
 
 TEST_CASE("if(view) — null view is falsy", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __if_pin_falsy__;
+        module gen_null_semantics_22;
         test() : int {
             p : int? = null;
             if (p) { return 1; }
@@ -372,7 +372,7 @@ TEST_CASE("if(view) — null view is falsy", "[gen][null][bool]") {
 
 TEST_CASE("!ptr — null pointer negated is true", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __not_ptr_null__;
+        module gen_null_semantics_23;
         test() : int {
             p : int* = null;
             if (!p) { return 1; }
@@ -387,7 +387,7 @@ TEST_CASE("!ptr — null pointer negated is true", "[gen][null][bool]") {
 
 TEST_CASE("!ptr — non-null pointer negated is false", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __not_ptr_nonnull__;
+        module gen_null_semantics_24;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -405,7 +405,7 @@ TEST_CASE("!ptr — non-null pointer negated is false", "[gen][null][bool]") {
 
 TEST_CASE("ptr && ptr — both non-null", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __and_ptr_ptr__;
+        module gen_null_semantics_25;
         test() : int {
             x : int = 1;
             y : int = 2;
@@ -423,7 +423,7 @@ TEST_CASE("ptr && ptr — both non-null", "[gen][null][bool]") {
 
 TEST_CASE("ptr && ptr — one null", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __and_ptr_null__;
+        module gen_null_semantics_26;
         test() : int {
             x : int = 1;
             p : int* = &x;
@@ -442,7 +442,7 @@ TEST_CASE("ptr && ptr — one null", "[gen][null][bool]") {
 
 TEST_CASE("ptr || ptr — one non-null", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __or_ptr_one__;
+        module gen_null_semantics_27;
         test() : int {
             x : int = 1;
             p : int* = &x;
@@ -459,7 +459,7 @@ TEST_CASE("ptr || ptr — one non-null", "[gen][null][bool]") {
 
 TEST_CASE("ptr || ptr — both null", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __or_ptr_both_null__;
+        module gen_null_semantics_28;
         test() : int {
             p : int* = null;
             q : int* = null;
@@ -478,7 +478,7 @@ TEST_CASE("ptr || ptr — both null", "[gen][null][bool]") {
 TEST_CASE("while(ptr) — loop until null", "[gen][null][bool]") {
     // Use a simple array-like pattern: walk pointers until null sentinel
     auto jit = gen_jit(R"SRC(
-        module __while_ptr__;
+        module gen_null_semantics_29;
         test() : int {
             x : int = 1;
             p : int* = &x;
@@ -499,7 +499,7 @@ TEST_CASE("while(ptr) — loop until null", "[gen][null][bool]") {
 
 TEST_CASE("ptr && true", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __ptr_and_true__;
+        module gen_null_semantics_30;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -515,7 +515,7 @@ TEST_CASE("ptr && true", "[gen][null][bool]") {
 
 TEST_CASE("false || ptr", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __false_or_ptr__;
+        module gen_null_semantics_31;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -533,7 +533,7 @@ TEST_CASE("false || ptr", "[gen][null][bool]") {
 
 TEST_CASE("if(link) — non-null link is truthy", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __if_link_truthy__;
+        module gen_null_semantics_32;
         test() : int {
             x : int = 42;
             l : int+ = &x;
@@ -551,7 +551,7 @@ TEST_CASE("if(link) — non-null link is truthy", "[gen][null][bool]") {
 
 TEST_CASE("Null guard before dereference", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __null_guard__;
+        module gen_null_semantics_33;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -571,7 +571,7 @@ TEST_CASE("Null guard before dereference", "[gen][null][bool]") {
 
 TEST_CASE("Relational < on pointers is rejected", "[gen][null][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __ptr_lt_err__;
+        module gen_null_semantics_34;
         test() : int {
             x : int = 1;
             y : int = 2;
@@ -585,7 +585,7 @@ TEST_CASE("Relational < on pointers is rejected", "[gen][null][error]") {
 
 TEST_CASE("Relational >= on pointer and null is rejected", "[gen][null][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __ptr_ge_null_err__;
+        module gen_null_semantics_35;
         test() : int {
             x : int = 1;
             p : int* = &x;
@@ -597,7 +597,7 @@ TEST_CASE("Relational >= on pointer and null is rejected", "[gen][null][error]")
 
 TEST_CASE("Link init with null is rejected", "[gen][null][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __link_null_init_err__;
+        module gen_null_semantics_36;
         test() : int {
             l : int+ = null;
             return 0;
@@ -607,7 +607,7 @@ TEST_CASE("Link init with null is rejected", "[gen][null][error]") {
 
 TEST_CASE("Reference init with null is rejected", "[gen][null][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __ref_null_init_err__;
+        module gen_null_semantics_37;
         test() : int {
             r : int& = null;
             return 0;
@@ -621,7 +621,7 @@ TEST_CASE("Reference init with null is rejected", "[gen][null][error]") {
 
 TEST_CASE("!owner — null owner negated is true", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __not_own_null__;
+        module gen_null_semantics_38;
         test() : int {
             o : int! = null;
             if (!o) { return 1; }
@@ -636,7 +636,7 @@ TEST_CASE("!owner — null owner negated is true", "[gen][null][bool]") {
 
 TEST_CASE("!owner — non-null owner negated is false", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __not_own_nonnull__;
+        module gen_null_semantics_39;
         test() : int {
             o : int! = new int(42);
             if (!o) { return 1; }
@@ -652,7 +652,7 @@ TEST_CASE("!owner — non-null owner negated is false", "[gen][null][bool]") {
 TEST_CASE("Owner == owner (same allocation)", "[gen][null][comparison]") {
     // Two null owners are equal
     auto jit = gen_jit(R"SRC(
-        module __own_eq_own__;
+        module gen_null_semantics_40;
         test() : int {
             o1 : int! = null;
             o2 : int! = null;
@@ -668,7 +668,7 @@ TEST_CASE("Owner == owner (same allocation)", "[gen][null][comparison]") {
 
 TEST_CASE("null == null is true", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
-        module __null_eq_null__;
+        module gen_null_semantics_41;
         test() : int {
             if (null == null) { return 1; }
             return 0;
@@ -683,7 +683,7 @@ TEST_CASE("null == null is true", "[gen][null][comparison]") {
 TEST_CASE("Pointer assign null then check", "[gen][null][bool][assignment]") {
     // Assign non-null, check truthy, assign null, check falsy
     auto jit = gen_jit(R"SRC(
-        module __ptr_assign_check__;
+        module gen_null_semantics_42;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -710,7 +710,7 @@ TEST_CASE("&& short-circuit: null ptr skips dereference", "[gen][null][shortcirc
     // Critical test: if && were eager, *p would segfault because p is null.
     // With short-circuit, p is false so *p is never evaluated.
     auto jit = gen_jit(R"SRC(
-        module __sc_and_null__;
+        module gen_null_semantics_43;
         test() : int {
             p : int* = null;
             if (p != null && *p == 42) { return 1; }
@@ -725,7 +725,7 @@ TEST_CASE("&& short-circuit: null ptr skips dereference", "[gen][null][shortcirc
 
 TEST_CASE("&& short-circuit: non-null ptr evaluates both sides", "[gen][null][shortcircuit]") {
     auto jit = gen_jit(R"SRC(
-        module __sc_and_nonnull__;
+        module gen_null_semantics_44;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -742,7 +742,7 @@ TEST_CASE("&& short-circuit: non-null ptr evaluates both sides", "[gen][null][sh
 TEST_CASE("&& short-circuit with implicit bool: null ptr skips dereference", "[gen][null][shortcircuit]") {
     // Same as above but using implicit bool conversion instead of explicit != null
     auto jit = gen_jit(R"SRC(
-        module __sc_and_implicit__;
+        module gen_null_semantics_45;
         test() : int {
             p : int* = null;
             if (p && *p == 42) { return 1; }
@@ -759,7 +759,7 @@ TEST_CASE("|| short-circuit: true left skips right", "[gen][null][shortcircuit]"
     // If || were eager, *q would segfault because q is null.
     // With short-circuit, p != null is true so *q is never evaluated.
     auto jit = gen_jit(R"SRC(
-        module __sc_or_skip__;
+        module gen_null_semantics_46;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -776,7 +776,7 @@ TEST_CASE("|| short-circuit: true left skips right", "[gen][null][shortcircuit]"
 
 TEST_CASE("|| short-circuit: false left evaluates right", "[gen][null][shortcircuit]") {
     auto jit = gen_jit(R"SRC(
-        module __sc_or_eval__;
+        module gen_null_semantics_47;
         test() : int {
             x : int = 42;
             p : int* = null;
@@ -793,7 +793,7 @@ TEST_CASE("|| short-circuit: false left evaluates right", "[gen][null][shortcirc
 
 TEST_CASE("Chained && short-circuit: a && b && c", "[gen][null][shortcircuit]") {
     auto jit = gen_jit(R"SRC(
-        module __sc_chain_and__;
+        module gen_null_semantics_48;
         test() : int {
             x : int = 1;
             y : int = 2;
@@ -813,7 +813,7 @@ TEST_CASE("Chained && short-circuit: a && b && c", "[gen][null][shortcircuit]") 
 TEST_CASE("Chained && short-circuit: stops at first false", "[gen][null][shortcircuit]") {
     // r is null, so the third && is false and *r is never evaluated
     auto jit = gen_jit(R"SRC(
-        module __sc_chain_stop__;
+        module gen_null_semantics_49;
         test() : int {
             x : int = 1;
             p : int* = &x;
@@ -830,7 +830,7 @@ TEST_CASE("Chained && short-circuit: stops at first false", "[gen][null][shortci
 
 TEST_CASE("Chained || short-circuit: stops at first true", "[gen][null][shortcircuit]") {
     auto jit = gen_jit(R"SRC(
-        module __sc_chain_or__;
+        module gen_null_semantics_50;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -847,7 +847,7 @@ TEST_CASE("Chained || short-circuit: stops at first true", "[gen][null][shortcir
 
 TEST_CASE("Mixed && || short-circuit", "[gen][null][shortcircuit]") {
     auto jit = gen_jit(R"SRC(
-        module __sc_mixed__;
+        module gen_null_semantics_51;
         test() : int {
             x : int = 42;
             p : int* = &x;
@@ -864,7 +864,7 @@ TEST_CASE("Mixed && || short-circuit", "[gen][null][shortcircuit]") {
 
 TEST_CASE("&& truth table preserved", "[gen][null][shortcircuit]") {
     auto jit = gen_jit(R"SRC(
-        module __sc_truth_and__;
+        module gen_null_semantics_52;
         test() : int {
             result : int = 0;
             if (false && false) { ++result; }
@@ -882,7 +882,7 @@ TEST_CASE("&& truth table preserved", "[gen][null][shortcircuit]") {
 
 TEST_CASE("|| truth table preserved", "[gen][null][shortcircuit]") {
     auto jit = gen_jit(R"SRC(
-        module __sc_truth_or__;
+        module gen_null_semantics_53;
         test() : int {
             result : int = 0;
             if (false || false) { ++result; }

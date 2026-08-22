@@ -46,7 +46,7 @@
 TEST_CASE("[default][model] default method is concrete (non-abstract) and flagged", "[interface][default][model]") {
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-module __idefault_model__;
+module gen_interface_default_01;
 interface Greeter {
     name() : int;
     default greet() : int { return 1; }
@@ -77,7 +77,7 @@ TEST_CASE("[default] class inherits the default implementation", "[interface][de
 
     SECTION("Direct call on concrete instance") {
         auto jit = gen_jit(R"SRC(
-module __idefault_inherit_direct__;
+module gen_interface_default_02;
 interface Greeter {
     default greet() : int { return 7; }
 }
@@ -97,7 +97,7 @@ test() : int {
 
     SECTION("Dispatch through interface reference") {
         auto jit = gen_jit(R"SRC(
-module __idefault_inherit_ref__;
+module gen_interface_default_03;
 interface Greeter {
     default greet() : int { return 7; }
 }
@@ -123,7 +123,7 @@ test() : int {
 
 TEST_CASE("[default] class override wins over the default", "[interface][default][dispatch]") {
     auto jit = gen_jit(R"SRC(
-module __idefault_override__;
+module gen_interface_default_04;
 interface Greeter {
     default greet() : int { return 7; }
 }
@@ -152,7 +152,7 @@ test_fallback() : int { f: Fallback; return via(f); }
 
 TEST_CASE("[default] default body calls abstract method of same interface", "[interface][default][dispatch]") {
     auto jit = gen_jit(R"SRC(
-module __idefault_calls_abstract__;
+module gen_interface_default_05;
 interface Doubler {
     base() : int;
     default doubled() : int { return this.base() * 2; }
@@ -183,7 +183,7 @@ test_ten()  : int { t: Ten;  return via(t); }
 
 TEST_CASE("[default] default body calls another default method", "[interface][default][dispatch]") {
     auto jit = gen_jit(R"SRC(
-module __idefault_calls_default__;
+module gen_interface_default_06;
 interface Calc {
     seed() : int;
     default plus_one() : int { return this.seed() + 1; }
@@ -207,7 +207,7 @@ test() : int { c: C; return c.plus_two(); }
 
 TEST_CASE("[default] sub-interface provides default for parent method", "[interface][default][inheritance]") {
     auto jit = gen_jit(R"SRC(
-module __idefault_subiface__;
+module gen_interface_default_07;
 interface A {
     value() : int;
 }
@@ -228,7 +228,7 @@ test() : int { i: Impl; return via(i); }
 
 TEST_CASE("[default] default method resolves inherited member call", "[interface][default][inheritance]") {
     auto jit = gen_jit(R"SRC(
-module __idefault_inherited_call__;
+module gen_interface_default_08;
 interface Sized {
     size() : int;
 }
@@ -266,7 +266,7 @@ test() : int {
 
 TEST_CASE("[default][template] template interface default method (independent of T)", "[interface][default][template]") {
     auto jit = gen_jit(R"SRC(
-module __idefault_tpl_indep__;
+module gen_interface_default_09;
 template<typename T>
 interface Container {
     size() : int;
@@ -286,7 +286,7 @@ test() : int { l: IntList; return l.isEmptyValue(); }
 
 TEST_CASE("[default][template] template interface default method using T", "[interface][default][template]") {
     auto jit = gen_jit(R"SRC(
-module __idefault_tpl_uses_t__;
+module gen_interface_default_10;
 template<typename T>
 interface Box {
     get() : T;
@@ -310,7 +310,7 @@ test() : int { b: IntBox; return b.getOrTwice(); }
 
 TEST_CASE("[default][error] default outside interface is rejected", "[interface][default][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __idefault_err_class__;
+module gen_interface_default_11;
 class C {
     C() {}
     default foo() : int { return 1; }
@@ -318,7 +318,7 @@ class C {
 )SRC"));
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __idefault_err_struct__;
+module gen_interface_default_12;
 struct S {
     default foo() : int { return 1; }
 }
@@ -327,7 +327,7 @@ struct S {
 
 TEST_CASE("[default][error] default without a body is rejected", "[interface][default][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __idefault_err_nobody__;
+module gen_interface_default_13;
 interface I {
     default foo() : int;
 }
@@ -336,21 +336,21 @@ interface I {
 
 TEST_CASE("[default][error] default combined with static/final/abstract is rejected", "[interface][default][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __idefault_err_static__;
+module gen_interface_default_14;
 interface I {
     default static foo() : int { return 1; }
 }
 )SRC"));
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __idefault_err_final__;
+module gen_interface_default_15;
 interface I {
     default final foo() : int { return 1; }
 }
 )SRC"));
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __idefault_err_abstract__;
+module gen_interface_default_16;
 interface I {
     default abstract foo() : int { return 1; }
 }
@@ -359,7 +359,7 @@ interface I {
 
 TEST_CASE("[default][error] private default is rejected", "[interface][default][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __idefault_err_private__;
+module gen_interface_default_17;
 interface I {
 private:
     default foo() : int { return 1; }
@@ -377,16 +377,16 @@ TEST_CASE("[default][import] default method inherited across modules", "[interfa
     // method symbol from the library, and the class must be instantiable.
     auto result = build_exec_with_lib(
         R"K(
-            module idefault_lib;
+            module gen_interface_default_18;
             interface Greeter {
                 base() : int;
                 default greet() : int { return this.base() + 5; }
             }
         )K",
         R"K(
-            module idefault_exe;
-            import idefault_lib;
-            class Hello : public idefault_lib::Greeter {
+            module gen_interface_default_19;
+            import gen_interface_default_18;
+            class Hello : public gen_interface_default_18::Greeter {
                 Hello() {}
                 base() : int { return 37; }
             }
@@ -408,14 +408,14 @@ TEST_CASE("[default][regression] bodyless interface method stays abstract", "[in
     // A non-default interface method with a body is still an error, and a class
     // that leaves an abstract method unimplemented must be declared abstract.
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __idefault_regression_body__;
+module gen_interface_default_20;
 interface I {
     foo() : int { return 1; }
 }
 )SRC"));
 
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __idefault_regression_unimpl__;
+module gen_interface_default_21;
 interface I {
     foo() : int;
 }

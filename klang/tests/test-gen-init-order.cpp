@@ -50,7 +50,7 @@ TEST_CASE("Init order: global var of struct type S initialized after S's static 
     // The static ctor must run before g is initialized.
     // get_order() reads the flag: if ctor ran first it returns 1, else 0.
     auto jit = gen_jit(R"SRC(
-        module __init_order_rule3__;
+        module gen_init_order_01;
 
         flag : int;
 
@@ -83,7 +83,7 @@ TEST_CASE("Init order: explicit static-ctor dep via mem-init list — A before B
     // After init: flag==2. A ran first, then B.
     // check_a_before_b() returns 1 if A ran before B (flag was set by A before B).
     auto jit = gen_jit(R"SRC(
-        module __init_order_explicit_dep__;
+        module gen_init_order_02;
 
         order_log : int;   // cumulative log: A sets bit 1, B sets bit 2
 
@@ -117,7 +117,7 @@ TEST_CASE("Init order: explicit static-ctor dep via mem-init list — A before B
 TEST_CASE("Init order: chain of explicit deps — A before B before C",
           "[gen][init-order][static-ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __init_order_chain__;
+        module gen_init_order_03;
 
         seq : int;   // 0 initially; each ctor appends its digit
 
@@ -160,7 +160,7 @@ TEST_CASE("Init order: finalization is exact reverse of initialization",
     // We use a counter that increments on ctor and decrements on dtor; if order is
     // respected the final value should be 0.
     auto result = build_and_exec(R"SRC(
-        module __init_order_reverse__;
+        module gen_init_order_04;
 
         live_count : int;
 
@@ -193,7 +193,7 @@ TEST_CASE("Init order: global var used in another var's init expression — no c
           "[gen][init-order]") {
     // Verify that two independent globals compile and initialize without error
     auto jit = gen_jit(R"SRC(
-        module __init_order_rule4__;
+        module gen_init_order_05;
 
         base    : int;
         derived : int;
@@ -215,7 +215,7 @@ TEST_CASE("Init order: global var used in another var's init expression — no c
 TEST_CASE("Init order: struct static ctor runs before global var of that type, dtor after",
           "[gen][init-order][static-ctor][static-dtor]") {
     auto result = build_and_exec(R"SRC(
-        module __init_order_ctor_var__;
+        module gen_init_order_06;
 
         state : int;   // 0 = uninit, 1 = ctor ran, 2 = var-init ran, 3 = dtor ran
 
@@ -243,7 +243,7 @@ TEST_CASE("Init order: struct static ctor runs before global var of that type, d
 TEST_CASE("Init order: duplicate explicit deps — deduped, no error",
           "[gen][init-order][static-ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __init_order_dedup__;
+        module gen_init_order_07;
 
         cnt : int;
 
@@ -272,7 +272,7 @@ TEST_CASE("Init order: cycle in dependency graph is a compilation error",
           "[gen][init-order][error]") {
     // A depends on B, B depends on A → cycle
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __init_order_cycle__;
+        module gen_init_order_08;
 
         struct A {
             static A() : B() {}
@@ -291,7 +291,7 @@ TEST_CASE("Init order: cycle in dependency graph is a compilation error",
 TEST_CASE("Init order: unknown dependency name in mem-init list is an error",
           "[gen][init-order][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __init_order_unknown_dep__;
+        module gen_init_order_09;
 
         struct S {
             static S() : NonExistent() {}
@@ -306,7 +306,7 @@ TEST_CASE("Init order: unknown dependency name in mem-init list is an error",
 TEST_CASE("Init order: dependency with arguments in static ctor mem-init list is an error",
           "[gen][init-order][static-ctor][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __init_order_dep_with_args__;
+        module gen_init_order_10;
 
         struct A {
             static A() {}
@@ -325,7 +325,7 @@ TEST_CASE("Init order: dependency with arguments in static ctor mem-init list is
 TEST_CASE("Init order: diamond dependency — A runs exactly once",
           "[gen][init-order][static-ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __init_order_diamond__;
+        module gen_init_order_11;
 
         a_count : int;
         b_count : int;

@@ -34,7 +34,7 @@ TEST_CASE("jit-exec: main returning int forwards exit code", "[jit-exec][live]")
     auto klangc = find_klangc();
 
     std::string src = R"(
-        module jit_test;
+        module klangc_jit_exec_01;
         main() : int {
             return 42;
         }
@@ -59,7 +59,7 @@ TEST_CASE("jit-exec: main returning void gives exit code 0", "[jit-exec][live]")
     auto klangc = find_klangc();
 
     std::string src = R"(
-        module jit_void;
+        module klangc_jit_exec_02;
         main() {
         }
     )";
@@ -83,7 +83,7 @@ TEST_CASE("jit-exec: non-trivial computation", "[jit-exec][live]") {
     auto klangc = find_klangc();
 
     std::string src = R"(
-        module jit_compute;
+        module klangc_jit_exec_03;
         fibo(n: int) : int {
             if (n <= 1) return 1;
             return fibo(n - 1) + fibo(n - 2);
@@ -113,7 +113,7 @@ TEST_CASE("jit-exec: no main produces error", "[jit-exec][live]") {
     auto klangc = find_klangc();
 
     std::string src = R"(
-        module jit_no_main;
+        module klangc_jit_exec_04;
         helper() : int {
             return 7;
         }
@@ -145,14 +145,14 @@ TEST_CASE("jit-exec: combined with input file", "[jit-exec][live]") {
     {
         std::ofstream ofs(k_file);
         ofs << R"(
-            module jit_combo;
+            module klangc_jit_exec_05;
             g_val : int = 17;
         )";
     }
 
     // stdin provides main() that returns the global variable from the file
     std::string stdin_src = R"(
-        module jit_combo;
+        module klangc_jit_exec_05; // <- must match the module name in the file
         main() : int {
             return 17;
         }

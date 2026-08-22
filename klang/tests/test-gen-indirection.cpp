@@ -36,7 +36,7 @@
 // -----------------------------------------------------------------------------
 TEST_CASE("Link basic read", "[gen][indirection][link]") {
     auto jit = gen_jit(R"SRC(
-        module __link_basic_read__;
+        module gen_indirection_01;
 
         test() : int {
             x : int = 42;
@@ -55,7 +55,7 @@ TEST_CASE("Link basic read", "[gen][indirection][link]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Link write modifies original", "[gen][indirection][link]") {
     auto jit = gen_jit(R"SRC(
-        module __link_write__;
+        module gen_indirection_02;
 
         a : int;
 
@@ -80,7 +80,7 @@ TEST_CASE("Link write modifies original", "[gen][indirection][link]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Link rebind", "[gen][indirection][link]") {
     auto jit = gen_jit(R"SRC(
-        module __link_rebind__;
+        module gen_indirection_03;
 
         test() : int {
             x : int = 1;
@@ -102,7 +102,7 @@ TEST_CASE("Link rebind", "[gen][indirection][link]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Link init from non-null pointer succeeds", "[gen][indirection][link]") {
     auto jit = gen_jit(R"SRC(
-        module __link_from_ptr_ok__;
+        module gen_indirection_04;
 
         test() : int {
             x : int = 7;
@@ -122,7 +122,7 @@ TEST_CASE("Link init from non-null pointer succeeds", "[gen][indirection][link]"
 // -----------------------------------------------------------------------------
 TEST_CASE("Link without initialiser is rejected", "[gen][resolution][link]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __link_no_init__;
+        module gen_indirection_05;
         test() : int {
             lnk : int+;    // ERROR: link must be initialised at declaration
             return 0;
@@ -135,7 +135,7 @@ TEST_CASE("Link without initialiser is rejected", "[gen][resolution][link]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Link initialised from a literal is rejected", "[gen][resolution][link]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __link_literal__;
+        module gen_indirection_06;
         test() : int {
             lnk : int+ = 42;   // ERROR: 42 is not an address
             return 0;
@@ -152,7 +152,7 @@ TEST_CASE("Link initialised from a literal is rejected", "[gen][resolution][link
 // -----------------------------------------------------------------------------
 TEST_CASE("Pinned basic read", "[gen][indirection][view]") {
     auto jit = gen_jit(R"SRC(
-        module __view_basic__;
+        module gen_indirection_07;
 
         test() : int {
             x : int = 55;
@@ -171,7 +171,7 @@ TEST_CASE("Pinned basic read", "[gen][indirection][view]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Pinned init from non-null pointer succeeds", "[gen][indirection][view]") {
     auto jit = gen_jit(R"SRC(
-        module __view_from_ptr__;
+        module gen_indirection_08;
 
         test() : int {
             x : int = 13;
@@ -191,7 +191,7 @@ TEST_CASE("Pinned init from non-null pointer succeeds", "[gen][indirection][view
 // -----------------------------------------------------------------------------
 TEST_CASE("Pinned without initialiser is rejected", "[gen][resolution][view]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __view_no_init__;
+        module gen_indirection_09;
         test() : int {
             pin : int?;    // ERROR: view must be initialised at declaration
             return 0;
@@ -204,7 +204,7 @@ TEST_CASE("Pinned without initialiser is rejected", "[gen][resolution][view]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Pinned rebind is rejected", "[gen][resolution][view]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __view_rebind__;
+        module gen_indirection_10;
         test() : int {
             x : int = 1;
             y : int = 2;
@@ -226,7 +226,7 @@ TEST_CASE("Pinned rebind is rejected", "[gen][resolution][view]") {
 // -----------------------------------------------------------------------------
 TEST_CASE("Reference assignment through ref modifies underlying object", "[gen][indirection][refs]") {
     auto jit = gen_jit(R"SRC(
-        module __ref_rebind__;
+        module gen_indirection_11;
         test() : int {
             x : int = 1;
             y : int = 2;
@@ -244,7 +244,7 @@ TEST_CASE("Reference assignment through ref modifies underlying object", "[gen][
 // Positive test: assignment through a reference changes the underlying object.
 TEST_CASE("Assignment through reference modifies underlying object", "[gen][indirection][refs]") {
     auto jit = gen_jit(R"SRC(
-        module __ref_assign_through__;
+        module gen_indirection_12;
 
         a : int;
 
@@ -270,7 +270,7 @@ TEST_CASE("Assignment through reference modifies underlying object", "[gen][indi
 
 TEST_CASE("Address-of produces a link", "[gen][indirection][address_of]") {
     auto jit = gen_jit(R"SRC(
-        module __addr_of_link__;
+        module gen_indirection_13;
 
         test() : int {
             x : int = 21;
@@ -287,7 +287,7 @@ TEST_CASE("Address-of produces a link", "[gen][indirection][address_of]") {
 
 TEST_CASE("Address-of result can be stored in a pointer", "[gen][indirection][address_of]") {
     auto jit = gen_jit(R"SRC(
-        module __addr_of_ptr__;
+        module gen_indirection_14;
 
         test() : int {
             x : int = 10;
@@ -311,7 +311,7 @@ TEST_CASE("Address-of result can be stored in a pointer", "[gen][indirection][ad
 // -----------------------------------------------------------------------------
 TEST_CASE("Pointer assigned from a link", "[gen][indirection][pointer]") {
     auto jit = gen_jit(R"SRC(
-        module __ptr_from_link__;
+        module gen_indirection_15;
 
         test() : int {
             x : int = 33;
@@ -334,7 +334,7 @@ TEST_CASE("Pointer assigned from a link", "[gen][indirection][pointer]") {
 
 TEST_CASE("Pointer dereference with non-null pointer succeeds", "[gen][indirection][pointer]") {
     auto jit = gen_jit(R"SRC(
-        module __ptr_deref_ok__;
+        module gen_indirection_16;
 
         test() : int {
             x : int = 5;
@@ -354,7 +354,7 @@ TEST_CASE("Pointer dereference with non-null pointer succeeds", "[gen][indirecti
 
 TEST_CASE("Member-of-pointer (->) on a pointer to struct", "[gen][indirection][arrow]") {
     auto jit = gen_jit(R"SRC(
-        module __arrow_ptr__;
+        module gen_indirection_17;
 
         struct Point {
             x : int = 3;
@@ -375,7 +375,7 @@ TEST_CASE("Member-of-pointer (->) on a pointer to struct", "[gen][indirection][a
 
 TEST_CASE("Member-of-pointer (->) on a link to struct", "[gen][indirection][arrow]") {
     auto jit = gen_jit(R"SRC(
-        module __arrow_link__;
+        module gen_indirection_18;
 
         struct Pair {
             a : int = 10;
@@ -396,7 +396,7 @@ TEST_CASE("Member-of-pointer (->) on a link to struct", "[gen][indirection][arro
 
 TEST_CASE("Member access through struct reference member", "[gen][indirection][refs][member-access]") {
     auto jit = gen_jit(R"SRC(
-        module __ref_member_access__;
+        module gen_indirection_19;
 
         class Counter {
         public:
@@ -428,7 +428,7 @@ TEST_CASE("Member access through struct reference member", "[gen][indirection][r
 
 TEST_CASE("Link passed as function parameter behaves like object", "[gen][indirection][link]") {
     auto jit = gen_jit(R"SRC(
-        module __link_param__;
+        module gen_indirection_20;
 
         double_it(r : int&) : int {
             return r * 2;

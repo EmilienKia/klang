@@ -57,7 +57,7 @@
 TEST_CASE("Dynamic upcast: ptr<Derived> from ptr<Base> to actual Derived is non-null", "[gen][dyncast][ptr]") {
     auto jit = gen_jit(R"SRC(
 
-        module __du_ptr_ok__;
+        module gen_upcast_01;
 
         class Base {
             public val : int;
@@ -92,7 +92,7 @@ TEST_CASE("Dynamic upcast: ptr<Derived> from ptr<Base> to actual Derived is non-
 TEST_CASE("Dynamic upcast: ptr<Derived> from ptr<Base> wrong type → null → crash on use", "[gen][dyncast][ptr][null]") {
     // Null pointer dereference raises a signal; use build_and_exec and verify crash.
     auto res = build_and_exec(R"SRC(
-        module __du_ptr_null__;
+        module gen_upcast_02;
 
         class Base {
             public val : int;
@@ -127,7 +127,7 @@ TEST_CASE("Dynamic upcast: ptr<Derived> from ptr<Base> wrong type → null → c
 // =============================================================================
 TEST_CASE("Dynamic upcast: lnk<Derived> from lnk<Base> to actual Derived succeeds", "[gen][dyncast][lnk]") {
     auto jit = gen_jit(R"SRC(
-        module __du_lnk_ok__;
+        module gen_upcast_03;
 
         class Base {
             public val : int;
@@ -161,7 +161,7 @@ TEST_CASE("Dynamic upcast: lnk<Derived> from lnk<Base> to actual Derived succeed
 // =============================================================================
 TEST_CASE("Dynamic upcast: lnk<Derived> from ptr<Base> wrong type triggers fatal trap", "[gen][dyncast][lnk][fatal]") {
     auto res = build_and_exec(R"SRC(
-        module __du_lnk_fatal__;
+        module gen_upcast_04;
 
         class Base {
             public val : int;
@@ -193,7 +193,7 @@ TEST_CASE("Dynamic upcast: lnk<Derived> from ptr<Base> wrong type triggers fatal
 // =============================================================================
 TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> to actual Derived is non-null", "[gen][dyncast][view]") {
     auto jit = gen_jit(R"SRC(
-        module __du_pin_ok__;
+        module gen_upcast_05;
 
         class Base {
             public val : int;
@@ -227,7 +227,7 @@ TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> to actual Derived is non-
 // =============================================================================
 TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> wrong type → null → crash", "[gen][dyncast][view][null]") {
     auto res = build_and_exec(R"SRC(
-        module __du_pin_null__;
+        module gen_upcast_06;
 
         class Base {
             public val : int;
@@ -262,7 +262,7 @@ TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> wrong type → null → c
 // =============================================================================
 TEST_CASE("Dynamic upcast: ref<Derived> from ref<Base> of actual Derived succeeds", "[gen][dyncast][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __du_ref_ok__;
+        module gen_upcast_07;
 
         class Base {
             public val : int;
@@ -296,7 +296,7 @@ TEST_CASE("Dynamic upcast: ref<Derived> from ref<Base> of actual Derived succeed
 // =============================================================================
 TEST_CASE("Dynamic upcast: lnk<Derived> rebind from ptr<Base> of actual Derived succeeds", "[gen][dyncast][lnk][rebind]") {
     auto jit = gen_jit(R"SRC(
-        module __du_lnk_rebind__;
+        module gen_upcast_08;
 
         class Base {
             public val : int;
@@ -332,7 +332,7 @@ TEST_CASE("Dynamic upcast: lnk<Derived> rebind from ptr<Base> of actual Derived 
 // =============================================================================
 TEST_CASE("Dynamic upcast: ptr<Derived> rebind from ptr<Base> wrong type → null → crash", "[gen][dyncast][ptr][rebind][null]") {
     auto res = build_and_exec(R"SRC(
-        module __du_ptr_rebind_null__;
+        module gen_upcast_09;
 
         class Base {
             public val : int;
@@ -369,7 +369,7 @@ TEST_CASE("Dynamic upcast: ptr<Derived> rebind from ptr<Base> wrong type → nul
 // =============================================================================
 TEST_CASE("Dynamic upcast: ptr<Derived> from ptr<interface> of actual Derived succeeds", "[gen][dyncast][interface]") {
     auto jit = gen_jit(R"SRC(
-        module __du_interface__;
+        module gen_upcast_10;
 
         interface IBase {
             get_val() : int;
@@ -402,7 +402,7 @@ TEST_CASE("Dynamic upcast: ptr<Derived> from ptr<interface> of actual Derived su
 // =============================================================================
 TEST_CASE("Dynamic upcast: ptr<C> from ptr<A> transitive hierarchy (C→B→A) succeeds", "[gen][dyncast][transitive]") {
     auto jit = gen_jit(R"SRC(
-        module __du_transitive__;
+        module gen_upcast_11;
 
         class A {
             public x : int;
@@ -441,7 +441,7 @@ TEST_CASE("Dynamic upcast: ptr<C> from ptr<A> transitive hierarchy (C→B→A) s
 // =============================================================================
 TEST_CASE("Dynamic upcast: lnk<Dog> from lnk<Animal> to actual Dog succeeds", "[gen][dyncast][lnk2]") {
     auto jit = gen_jit(R"SRC(
-        module __du_lnk_ok2__;
+        module gen_upcast_12;
 
         class Animal {
             public name_code : int;
@@ -477,7 +477,7 @@ TEST_CASE("Dynamic upcast: lnk<Dog> from lnk<Animal> to actual Dog succeeds", "[
 // =============================================================================
 TEST_CASE("Dynamic upcast error: cannot dynamic-cast struct ptr (no RTTI)", "[gen][dyncast][error][struct]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __du_err_struct__;
+        module gen_upcast_13;
 
         struct Base { val : int; Base() : val(0) {} }
         struct Derived : public Base { extra : int; Derived() : Base(), extra(0) {} }
@@ -496,7 +496,7 @@ TEST_CASE("Dynamic upcast error: cannot dynamic-cast struct ptr (no RTTI)", "[ge
 // =============================================================================
 TEST_CASE("Dynamic upcast error: ptr<Unrelated> from ptr<Base> is rejected at compile time", "[gen][dyncast][error][unrelated]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __du_err_unrelated__;
+        module gen_upcast_14;
 
         class Base {
             public val : int;

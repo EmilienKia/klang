@@ -45,7 +45,7 @@
 
 TEST_CASE("Synthesize != from == via NEGATE", "[gen][operator][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_negate_ne__;
+module gen_comparison_fallback_01;
 struct Box {
     v: int;
     Box(av: int) : v(av) {}
@@ -55,8 +55,8 @@ test_same() : bool { a: Box(5); b: Box(5); return a != b; }
 test_diff() : bool { a: Box(5); b: Box(6); return a != b; }
 )SRC");
     REQUIRE(jit);
-    auto test_same = jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_negate_ne__9test_sameEv");
-    auto test_diff = jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_negate_ne__9test_diffEv");
+    auto test_same = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_019test_sameEv");
+    auto test_diff = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_019test_diffEv");
     REQUIRE(test_same); REQUIRE(test_diff);
     CHECK(test_same() == false);
     CHECK(test_diff() == true);
@@ -64,7 +64,7 @@ test_diff() : bool { a: Box(5); b: Box(6); return a != b; }
 
 TEST_CASE("Synthesize == from != via NEGATE", "[gen][operator][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_negate_eq__;
+module gen_comparison_fallback_02;
 struct Box {
     v: int;
     Box(av: int) : v(av) {}
@@ -74,8 +74,8 @@ test_same() : bool { a: Box(5); b: Box(5); return a == b; }
 test_diff() : bool { a: Box(5); b: Box(6); return a == b; }
 )SRC");
     REQUIRE(jit);
-    auto test_same = jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_negate_eq__9test_sameEv");
-    auto test_diff = jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_negate_eq__9test_diffEv");
+    auto test_same = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_029test_sameEv");
+    auto test_diff = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_029test_diffEv");
     REQUIRE(test_same); REQUIRE(test_diff);
     CHECK(test_same() == true);
     CHECK(test_diff() == false);
@@ -87,7 +87,7 @@ test_diff() : bool { a: Box(5); b: Box(6); return a == b; }
 
 TEST_CASE("Synthesize >, <=, >= from < via SWAP/SWAP_NEGATE/NEGATE", "[gen][operator][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_from_lt__;
+module gen_comparison_fallback_03;
 struct Ord {
     v: int;
     Ord(av: int) : v(av) {}
@@ -101,17 +101,17 @@ test_ge_true()  : bool { a: Ord(3); b: Ord(3); return a >= b; }
 test_ge_false() : bool { a: Ord(3); b: Ord(5); return a >= b; }
 )SRC");
     REQUIRE(jit);
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_lt__12test_gt_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_lt__13test_gt_falseEv")());
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_lt__12test_le_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_lt__13test_le_falseEv")());
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_lt__12test_ge_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_lt__13test_ge_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0312test_gt_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0313test_gt_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0312test_le_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0313test_le_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0312test_ge_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0313test_ge_falseEv")());
 }
 
 TEST_CASE("Synthesize <, <=, >= from > via SWAP/NEGATE/SWAP_NEGATE", "[gen][operator][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_from_gt__;
+module gen_comparison_fallback_04;
 struct Ord {
     v: int;
     Ord(av: int) : v(av) {}
@@ -125,17 +125,17 @@ test_ge_true()  : bool { a: Ord(3); b: Ord(3); return a >= b; }
 test_ge_false() : bool { a: Ord(3); b: Ord(5); return a >= b; }
 )SRC");
     REQUIRE(jit);
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_gt__12test_lt_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_gt__13test_lt_falseEv")());
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_gt__12test_le_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_gt__13test_le_falseEv")());
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_gt__12test_ge_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_gt__13test_ge_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0412test_lt_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0413test_lt_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0412test_le_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0413test_le_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0412test_ge_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0413test_ge_falseEv")());
 }
 
 TEST_CASE("Synthesize <, >, >= from <= via NEGATE/SWAP/SWAP_NEGATE", "[gen][operator][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_from_le__;
+module gen_comparison_fallback_05;
 struct Ord {
     v: int;
     Ord(av: int) : v(av) {}
@@ -149,17 +149,17 @@ test_ge_true()  : bool { a: Ord(3); b: Ord(3); return a >= b; }
 test_ge_false() : bool { a: Ord(3); b: Ord(5); return a >= b; }
 )SRC");
     REQUIRE(jit);
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_le__12test_lt_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_le__13test_lt_falseEv")());
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_le__12test_gt_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_le__13test_gt_falseEv")());
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_le__12test_ge_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_le__13test_ge_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0512test_lt_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0513test_lt_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0512test_gt_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0513test_gt_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0512test_ge_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0513test_ge_falseEv")());
 }
 
 TEST_CASE("Synthesize <, >, <= from >= via NEGATE/SWAP/SWAP_NEGATE", "[gen][operator][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_from_ge__;
+module gen_comparison_fallback_06;
 struct Ord {
     v: int;
     Ord(av: int) : v(av) {}
@@ -173,12 +173,12 @@ test_le_true()  : bool { a: Ord(3); b: Ord(3); return a <= b; }
 test_le_false() : bool { a: Ord(5); b: Ord(3); return a <= b; }
 )SRC");
     REQUIRE(jit);
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_ge__12test_lt_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_ge__13test_lt_falseEv")());
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_ge__12test_gt_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_ge__13test_gt_falseEv")());
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_ge__12test_le_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_from_ge__13test_le_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0612test_lt_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0613test_lt_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0612test_gt_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0613test_gt_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0612test_le_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0613test_le_falseEv")());
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -187,7 +187,7 @@ test_le_false() : bool { a: Ord(5); b: Ord(3); return a <= b; }
 
 TEST_CASE("Synthesize from a non-member source comparison operator", "[gen][operator][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_nonmember__;
+module gen_comparison_fallback_07;
 struct Pt {
     x: int;
     Pt(ax: int) : x(ax) {}
@@ -197,8 +197,8 @@ test_gt_true()  : bool { a: Pt(5); b: Pt(3); return a > b; }
 test_gt_false() : bool { a: Pt(3); b: Pt(5); return a > b; }
 )SRC");
     REQUIRE(jit);
-    auto gt_true = jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_nonmember__12test_gt_trueEv");
-    auto gt_false = jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_nonmember__13test_gt_falseEv");
+    auto gt_true = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0712test_gt_trueEv");
+    auto gt_false = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_0713test_gt_falseEv");
     REQUIRE(gt_true); REQUIRE(gt_false);
     CHECK(gt_true() == true);
     CHECK(gt_false() == false);
@@ -210,7 +210,7 @@ test_gt_false() : bool { a: Pt(3); b: Pt(5); return a > b; }
 
 TEST_CASE("Synthesize from a const member source operator", "[gen][operator][comparison-fallback][const]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_const__;
+module gen_comparison_fallback_08;
 struct Box {
     v: int;
     Box(av: int) : v(av) {}
@@ -221,8 +221,8 @@ test_same() : bool { a: Box(5); b: Box(5); return check(a, b); }
 test_diff() : bool { a: Box(5); b: Box(6); return check(a, b); }
 )SRC");
     REQUIRE(jit);
-    auto test_same = jit->lookup_symbol<bool(*)()>("_KFN16__cmp_fb_const__9test_sameEv");
-    auto test_diff = jit->lookup_symbol<bool(*)()>("_KFN16__cmp_fb_const__9test_diffEv");
+    auto test_same = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_089test_sameEv");
+    auto test_diff = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_089test_diffEv");
     REQUIRE(test_same); REQUIRE(test_diff);
     CHECK(test_same() == false);
     CHECK(test_diff() == true);
@@ -230,7 +230,7 @@ test_diff() : bool { a: Box(5); b: Box(6); return check(a, b); }
 
 TEST_CASE("Mutable-only source operator on const object is rejected (no fallback)", "[gen][operator][comparison-fallback][const][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __cmp_fb_const_err__;
+        module gen_comparison_fallback_09;
         struct Box {
             v: int;
             Box(av: int) : v(av) {}
@@ -250,7 +250,7 @@ TEST_CASE("Mutable-only source operator on const object is rejected (no fallback
 // must win over the named-but-relaxed exact operator.
 TEST_CASE("Exact-type synthesis wins over relaxed-type exact operator", "[gen][operator][comparison-fallback][priority]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_priority__;
+module gen_comparison_fallback_10;
 struct Vec {
     v: int;
     Vec(av: int) : v(av) {}
@@ -261,8 +261,8 @@ test_same() : bool { a: Vec(5); return a != 5; }
 test_diff() : bool { a: Vec(5); return a != 6; }
 )SRC");
     REQUIRE(jit);
-    auto test_same = jit->lookup_symbol<bool(*)()>("_KFN19__cmp_fb_priority__9test_sameEv");
-    auto test_diff = jit->lookup_symbol<bool(*)()>("_KFN19__cmp_fb_priority__9test_diffEv");
+    auto test_same = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_109test_sameEv");
+    auto test_diff = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_109test_diffEv");
     REQUIRE(test_same); REQUIRE(test_diff);
     // If the (cast_weight=0, tier=NEGATE) synthesis is correctly preferred over
     // the (cast_weight>0, tier=DIRECT) exact `!=(long)` (which always returns
@@ -277,7 +277,7 @@ test_diff() : bool { a: Vec(5); return a != 6; }
 
 TEST_CASE("Synthesize using a comparison operator inherited from a base class", "[gen][operator][comparison-fallback][class]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_inherit__;
+module gen_comparison_fallback_11;
 class Base {
     v: int;
     Base() : v(0) {}
@@ -292,8 +292,8 @@ test_gt_true()  : bool { a: Derived(5); b: Derived(3); return a > b; }
 test_gt_false() : bool { a: Derived(3); b: Derived(5); return a > b; }
 )SRC");
     REQUIRE(jit);
-    auto gt_true = jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_inherit__12test_gt_trueEv");
-    auto gt_false = jit->lookup_symbol<bool(*)()>("_KFN18__cmp_fb_inherit__13test_gt_falseEv");
+    auto gt_true = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_1112test_gt_trueEv");
+    auto gt_false = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_1113test_gt_falseEv");
     REQUIRE(gt_true); REQUIRE(gt_false);
     CHECK(gt_true() == true);
     CHECK(gt_false() == false);
@@ -306,7 +306,7 @@ test_gt_false() : bool { a: Derived(3); b: Derived(5); return a > b; }
 
 TEST_CASE("Synthesize == and != from < only (COMPOSITE)", "[gen][operator][comparison-fallback][composite]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_composite__;
+module gen_comparison_fallback_12;
 struct Ord {
     v: int;
     Ord(av: int) : v(av) {}
@@ -318,15 +318,15 @@ test_ne_true()  : bool { a: Ord(5); b: Ord(6); return a != b; }
 test_ne_false() : bool { a: Ord(5); b: Ord(5); return a != b; }
 )SRC");
     REQUIRE(jit);
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_composite__12test_eq_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_composite__13test_eq_falseEv")());
-    CHECK(jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_composite__12test_ne_trueEv")());
-    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN20__cmp_fb_composite__13test_ne_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_1212test_eq_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_1213test_eq_falseEv")());
+    CHECK(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_1212test_ne_trueEv")());
+    CHECK_FALSE(jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_1213test_ne_falseEv")());
 }
 
 TEST_CASE("Composite synthesis calls the base operator exactly twice, no operand re-evaluation", "[gen][operator][comparison-fallback][composite]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_composite_once__;
+module gen_comparison_fallback_13;
 op_calls : int;
 ctor_calls : int;
 struct Ord {
@@ -343,8 +343,8 @@ test_eq() : bool { a: Ord(3); b: Ord(3); return a == b; }
 test_ne() : bool { a: Ord(3); b: Ord(4); return a != b; }
 )SRC");
     REQUIRE(jit);
-    auto test_eq = jit->lookup_symbol<bool(*)()>("_KFN25__cmp_fb_composite_once__7test_eqEv");
-    auto test_ne = jit->lookup_symbol<bool(*)()>("_KFN25__cmp_fb_composite_once__7test_neEv");
+    auto test_eq = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_137test_eqEv");
+    auto test_ne = jit->lookup_symbol<bool(*)()>("_KFN26gen_comparison_fallback_137test_neEv");
     auto get_op_calls = jit->lookup_symbol<int(*)()>("get_op_calls");
     auto get_ctor_calls = jit->lookup_symbol<int(*)()>("get_ctor_calls");
     REQUIRE(test_eq); REQUIRE(test_ne); REQUIRE(get_op_calls); REQUIRE(get_ctor_calls);
@@ -371,7 +371,7 @@ TEST_CASE("Non-bool-returning operator is not used as a synthesis source", "[gen
     // `==`, but must not be used to synthesize `!=` (no bool-returning source
     // exists), so this must fail to compile.
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __cmp_fb_nonbool__;
+        module gen_comparison_fallback_14;
         struct Box {
             v: int;
             Box(av: int) : v(av) {}
@@ -387,7 +387,7 @@ TEST_CASE("Non-bool-returning operator is not used as a synthesis source", "[gen
 
 TEST_CASE("Non-bool-returning operator still usable directly by exact name", "[gen][operator][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __cmp_fb_nonbool_direct__;
+module gen_comparison_fallback_15;
 struct Box {
     v: int;
     Box(av: int) : v(av) {}
@@ -396,7 +396,7 @@ struct Box {
 test() : int { a: Box(5); b: Box(5); return a == b; }
 )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("_KFN25__cmp_fb_nonbool_direct__4testEv");
+    auto test = jit->lookup_symbol<int(*)()>("_KFN26gen_comparison_fallback_154testEv");
     REQUIRE(test);
     CHECK(test() == 1);
 }
@@ -407,7 +407,7 @@ test() : int { a: Box(5); b: Box(5); return a == b; }
 
 TEST_CASE("No comparison operator declared at all yields a compile error", "[gen][operator][comparison-fallback][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __cmp_fb_none__;
+        module gen_comparison_fallback_16;
         struct Plain {
             v: int;
             Plain(av: int) : v(av) {}
@@ -426,7 +426,7 @@ TEST_CASE("No comparison operator declared at all yields a compile error", "[gen
 
 TEST_CASE("Comparison fallback end-to-end via build_and_exec", "[gen][operator][comparison-fallback][e2e]") {
     auto result = build_and_exec(R"SRC(
-module __cmp_fb_e2e__;
+module gen_comparison_fallback_17;
 struct Ord {
     v: int;
     Ord(av: int) : v(av) {}

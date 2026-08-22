@@ -38,7 +38,7 @@
 
 TEST_CASE("Model: class with explicit public constructor", "[model][constructor]") {
     auto comp = compile_model(R"SRC(
-        module __test_ctor_1__;
+        module model_constructor_rtti_01;
         class Foo {
             public Foo() {}
             public dummy() : int { return 0; }
@@ -54,7 +54,7 @@ TEST_CASE("Model: class with explicit public constructor", "[model][constructor]
 
 TEST_CASE("Model: class with default constructor is compiler-generated", "[model][constructor]") {
     auto comp = compile_model(R"SRC(
-        module __test_ctor_2__;
+        module model_constructor_rtti_02;
         class Bar {
             public Bar() -> default;
             public dummy() : int { return 0; }
@@ -72,7 +72,7 @@ TEST_CASE("Model: class with default constructor is compiler-generated", "[model
 
 TEST_CASE("Model: class with deleted constructor", "[model][constructor]") {
     auto comp = compile_model(R"SRC(
-        module __test_ctor_3__;
+        module model_constructor_rtti_03;
         class Baz {
             public Baz() -> delete;
             public dummy() : int { return 0; }
@@ -90,7 +90,7 @@ TEST_CASE("Model: class with deleted constructor", "[model][constructor]") {
 
 TEST_CASE("Model: class with multiple constructors", "[model][constructor]") {
     auto comp = compile_model(R"SRC(
-        module __test_ctor_4__;
+        module model_constructor_rtti_04;
         class Multi {
             public Multi() {}
             public Multi(x : int) {}
@@ -107,7 +107,7 @@ TEST_CASE("Model: class with multiple constructors", "[model][constructor]") {
 
 TEST_CASE("Model: constructor parameter count", "[model][constructor]") {
     auto comp = compile_model(R"SRC(
-        module __test_ctor_5__;
+        module model_constructor_rtti_05;
         class WithParams {
             public WithParams(a : int, b : int, c : int) {}
             public dummy() : int { return 0; }

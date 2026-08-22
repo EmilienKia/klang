@@ -134,7 +134,7 @@ TEST_CASE("Parse brace init — all empty slots", "[parser][brace-init]") {
 
 TEST_CASE("Array brace init — local int array with literal values", "[gen][brace-init]") {
     auto jit = gen_jit(R"SRC(
-    module test;
+    module gen_array_init_01;
     get_elem(idx : int) : int {
         arr : int[3] {10, 20, 30};
         return arr[idx];
@@ -151,7 +151,7 @@ TEST_CASE("Array brace init — local int array with literal values", "[gen][bra
 
 TEST_CASE("Array brace init — expressions as initializers", "[gen][brace-init]") {
     auto jit = gen_jit(R"SRC(
-    module test;
+    module gen_array_init_02;
     get_elem(idx : int) : int {
         arr : int[5] {1, 1+1, 2+1, 2*2, 10/2};
         return arr[idx];
@@ -170,7 +170,7 @@ TEST_CASE("Array brace init — expressions as initializers", "[gen][brace-init]
 
 TEST_CASE("Array brace init — empty slots default to zero", "[gen][brace-init]") {
     auto jit = gen_jit(R"SRC(
-    module test;
+    module gen_array_init_03;
     get_elem(idx : int) : int {
         arr : int[3] {42, , 99};
         return arr[idx];
@@ -187,7 +187,7 @@ TEST_CASE("Array brace init — empty slots default to zero", "[gen][brace-init]
 
 TEST_CASE("Array brace init — fewer elements than size (padding)", "[gen][brace-init]") {
     auto jit = gen_jit(R"SRC(
-    module test;
+    module gen_array_init_04;
     get_elem(idx : int) : int {
         arr : int[5] {10, 20};
         return arr[idx];
@@ -206,8 +206,8 @@ TEST_CASE("Array brace init — fewer elements than size (padding)", "[gen][brac
 
 TEST_CASE("Array brace init — too many elements errors", "[gen][brace-init]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-    module test;
-    test() : int {
+    module gen_array_init_05;
+    gen_array_init_05() : int {
         arr : int[2] {1, 2, 3};
         return arr[0];
     }
@@ -216,22 +216,22 @@ TEST_CASE("Array brace init — too many elements errors", "[gen][brace-init]") 
 
 TEST_CASE("Array brace init — empty brace list for zero-size array", "[gen][brace-init]") {
     auto jit = gen_jit(R"SRC(
-    module test;
-    test() : int {
+    module gen_array_init_06;
+    gen_array_init_06() : int {
         arr : int[0] {};
         return 42;
     }
     )SRC");
     REQUIRE(jit);
 
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_init_06");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 42);
 }
 
 TEST_CASE("Array brace init — size inferred from init list", "[gen][brace-init]") {
     auto jit = gen_jit(R"SRC(
-    module test;
+    module gen_array_init_07;
     get_elem(idx : int) : int {
         arr : int[] {100, 200, 300, 400};
         return arr[idx];
@@ -249,22 +249,22 @@ TEST_CASE("Array brace init — size inferred from init list", "[gen][brace-init
 
 TEST_CASE("Array brace init — single element", "[gen][brace-init]") {
     auto jit = gen_jit(R"SRC(
-    module test;
-    test() : int {
+    module gen_array_init_08;
+    gen_array_init_08() : int {
         arr : int[1] {42};
         return arr[0];
     }
     )SRC");
     REQUIRE(jit);
 
-    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto test = jit->lookup_symbol<int(*)()>("gen_array_init_08");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 42);
 }
 
 TEST_CASE("Array brace init — double type", "[gen][brace-init]") {
     auto jit = gen_jit(R"SRC(
-    module test;
+    module gen_array_init_09;
     get_elem(idx : int) : double {
         arr : double[3] {1.5d, 2.5d, 3.5d};
         return arr[idx];
@@ -285,7 +285,7 @@ TEST_CASE("Array brace init — double type", "[gen][brace-init]") {
 
 TEST_CASE("Array brace init — global array with constant values (static init)", "[gen][brace-init][global]") {
     auto jit = gen_jit(R"SRC(
-    module test;
+    module gen_array_init_10;
     garr : int[3] {10, 20, 30};
     get_elem(idx : int) : int {
         return garr[idx];
@@ -302,7 +302,7 @@ TEST_CASE("Array brace init — global array with constant values (static init)"
 
 TEST_CASE("Array brace init — global array with expression values (dynamic init)", "[gen][brace-init][global]") {
     auto jit = gen_jit(R"SRC(
-    module test;
+    module gen_array_init_11;
     base : int = 100;
     garr : int[3] {base, base+1, base+2};
     get_elem(idx : int) : int {
@@ -320,7 +320,7 @@ TEST_CASE("Array brace init — global array with expression values (dynamic ini
 
 TEST_CASE("Array brace init — global array inferred size", "[gen][brace-init][global]") {
     auto jit = gen_jit(R"SRC(
-    module test;
+    module gen_array_init_12;
     garr : int[] {5, 10, 15, 20};
     get_elem(idx : int) : int {
         return garr[idx];

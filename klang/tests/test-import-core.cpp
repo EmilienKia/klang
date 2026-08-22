@@ -59,7 +59,7 @@ TEST_CASE("import — kdi loaded and stored in unit imported_modules", "[import]
 
     REQUIRE_NOTHROW(comp->parse_source("consumer.k",
         R"K(
-            module consumer;
+            module consumer_01;
             import mathlib;
         )K"));
 
@@ -73,24 +73,24 @@ TEST_CASE("import — kdi loaded and stored in unit imported_modules", "[import]
 
 TEST_CASE("import — qualified module name", "[import][phase4]") {
     TmpKdi lib(R"K(
-        module math::utils;
+        module math::utils_01;
         double_val(x: int) : int { return x + x; }
     )K");
 
     auto comp = k::compiler::create();
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
-    resolver->add_explicit_path("math::utils", lib.kdi_path);
+    resolver->add_explicit_path("math::utils_01", lib.kdi_path);
     comp->set_file_resolver(resolver);
 
     REQUIRE_NOTHROW(comp->parse_source("consumer.k",
         R"K(
-            module consumer;
-            import math::utils;
+            module consumer_02;
+            import math::utils_01;
         )K"));
 
     const auto& imports = comp->get_unit()->get_imports();
     REQUIRE( imports.size() == 1 );
-    REQUIRE( imports[0].module_name.to_string() == "math::utils" );
+    REQUIRE( imports[0].module_name.to_string() == "math::utils_01" );
     REQUIRE( imports[0].kdi != nullptr );
 }
 
@@ -103,7 +103,7 @@ TEST_CASE("import — module not found is a fatal error", "[import][phase4][erro
     REQUIRE_THROWS_AS(
         comp->parse_source("consumer.k",
             R"K(
-                module consumer;
+                module consumer_03;
                 import no::such::lib;
             )K"),
         k::log::compiler_error);
@@ -131,7 +131,7 @@ TEST_CASE("import — namespace root collision between two imports is an error",
     REQUIRE_THROWS_AS(
         comp->parse_source("consumer.k",
             R"K(
-                module consumer;
+                module consumer_04;
                 import myns::liba;
                 import myns::libb;
             )K"),
@@ -152,7 +152,7 @@ TEST_CASE("import — duplicate import is deduplicated silently", "[import][phas
     // model_builder::add_import() deduplicates
     REQUIRE_NOTHROW(comp->parse_source("consumer.k",
         R"K(
-            module consumer;
+            module consumer_05;
             import duplib;
             import duplib;
         )K"));
@@ -175,7 +175,7 @@ TEST_CASE("find_imported_function — simple module, function found", "[import][
     resolver->add_explicit_path("mymath", lib.kdi_path);
     comp->set_file_resolver(resolver);
     comp->parse_source("consumer.k", R"K(
-        module consumer;
+        module consumer_06;
         import mymath;
     )K");
 
@@ -192,20 +192,20 @@ TEST_CASE("find_imported_function — simple module, function found", "[import][
 
 TEST_CASE("find_imported_function — qualified module, function found", "[import][step6a]") {
     TmpKdi lib(R"K(
-        module math::utils;
+        module math::utils_02;
         square(x: int) : int { return x * x; }
     )K");
 
     auto comp = k::compiler::create();
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
-    resolver->add_explicit_path("math::utils", lib.kdi_path);
+    resolver->add_explicit_path("math::utils_02", lib.kdi_path);
     comp->set_file_resolver(resolver);
     comp->parse_source("consumer.k", R"K(
-        module consumer;
-        import math::utils;
+        module consumer_07;
+        import math::utils_02;
     )K");
 
-    k::name fn_name{false, {"math", "utils", "square"}};
+    k::name fn_name{false, {"math", "utils_02", "square"}};
     auto* fn = comp->get_unit()->find_imported_function(fn_name);
     REQUIRE( fn != nullptr );
     REQUIRE( fn->name == "square" );
@@ -222,7 +222,7 @@ TEST_CASE("find_imported_function — unknown name returns nullptr", "[import][s
     resolver->add_explicit_path("mylib2", lib.kdi_path);
     comp->set_file_resolver(resolver);
     comp->parse_source("consumer.k", R"K(
-        module consumer;
+        module consumer_08;
         import mylib2;
     )K");
 
@@ -243,7 +243,7 @@ TEST_CASE("find_imported_type — aggregate found", "[import][step6a]") {
     resolver->add_explicit_path("shapes", lib.kdi_path);
     comp->set_file_resolver(resolver);
     comp->parse_source("consumer.k", R"K(
-        module consumer;
+        module consumer_09;
         import shapes;
     )K");
 
@@ -265,7 +265,7 @@ TEST_CASE("find_imported_type — unknown type returns nullptr", "[import][step6
     resolver->add_explicit_path("shapes2", lib.kdi_path);
     comp->set_file_resolver(resolver);
     comp->parse_source("consumer.k", R"K(
-        module consumer;
+        module consumer_10;
         import shapes2;
     )K");
 
@@ -291,7 +291,7 @@ TEST_CASE("get_or_create_imported_function — model node created and cached", "
     // Compile a consumer that CALLS the imported function so that the
     // resolver creates the imported_function node.
     REQUIRE_NOTHROW(comp->parse_source("consumer.k", R"K(
-        module consumer;
+        module consumer_11;
         import imath;
         main() : int {
             return imath::add(1, 2);
@@ -328,7 +328,7 @@ TEST_CASE("get_or_create_imported_function — LLVM declare emitted in IR",
     comp->set_file_resolver(resolver);
 
     REQUIRE_NOTHROW(comp->parse_source("consumer.k", R"K(
-        module consumer;
+        module consumer_12;
         import imath2;
         main() : int {
             return imath2::mul(3, 4);
@@ -429,7 +429,7 @@ TEST_CASE("import/export docs — function and aggregate docs are preserved", "[
     comp->set_file_resolver(resolver);
 
     REQUIRE_NOTHROW(comp->parse_source("consumer.k", R"K(
-        module consumer;
+        module consumer_13;
         import doclib;
 
         main() : int {
@@ -485,7 +485,7 @@ TEST_CASE("get_or_create_imported_aggregate — struct type resolved", "[import]
 
     // Consumer uses the aggregate type as return type of a local function
     REQUIRE_NOTHROW(comp->parse_source("consumer.k", R"K(
-        module consumer;
+        module consumer_14;
         import geom;
         get_origin() : geom::Vec2 {
             return geom::make_vec(0, 0);
@@ -521,7 +521,7 @@ TEST_CASE("import — imported struct member methods are accessible", "[import][
     comp->set_file_resolver(resolver);
 
     REQUIRE_NOTHROW(comp->parse_source("consumer.k", R"K(
-        module consumer;
+        module consumer_15;
         import calclib;
         use_counter() : int {
             c : calclib::Counter;
@@ -679,8 +679,8 @@ TEST_CASE("import class — interface + concrete class in same lib, dispatch via
             class Counter : public ICounter {
                 value : int;
                 Counter() : value(0) {}
-                increment() { this.value = this.value + 1; }
-                get() : int { return this.value; }
+                override increment() { this.value = this.value + 1; }
+                override get() : int { return this.value; }
             }
         )K",
         R"K(
@@ -729,7 +729,7 @@ TEST_CASE("import class multi — interface in lib1, class in lib2, dispatch via
             class Square : public iface_lib::IShape {
                 side : int;
                 Square(s: int) : side(s) {}
-                area() : int { return this.side * this.side; }
+                override area() : int { return this.side * this.side; }
             }
         )K" }
     };
@@ -763,38 +763,38 @@ TEST_CASE("import chain — interface lib1, abstract class lib2, concrete class 
           "[import][e2e][import-class-iface]") {
     std::vector<LibSpec> libs = {
         { R"K(
-            module ival_lib;
+            module ival_lib_01;
             interface IVal {
                 val() : int;
             }
         )K" },
         { R"K(
-            module aval_lib;
-            import ival_lib;
-            abstract class AVal : public ival_lib::IVal {
+            module aval_lib_01;
+            import ival_lib_01;
+            abstract class AVal : public ival_lib_01::IVal {
                 AVal() {}
-                val() : int { return 10; }
+                override val() : int { return 10; }
             }
         )K" },
         { R"K(
-            module cval_lib;
-            import ival_lib;
-            import aval_lib;
-            class ConcreteVal : public aval_lib::AVal {
+            module cval_lib_01;
+            import ival_lib_01;
+            import aval_lib_01;
+            class ConcreteVal : public aval_lib_01::AVal {
                 ConcreteVal() {}
-                val() : int { return 30; }
+                override val() : int { return 30; }
             }
         )K" }
     };
 
     auto result = build_exec_with_libs(libs,
         R"K(
-            module exec_chain;
-            import ival_lib;
-            import cval_lib;
-            call_val(v: ival_lib::IVal&) : int { return v.val(); }
+            module exec_chain_01;
+            import ival_lib_01;
+            import cval_lib_01;
+            call_val(v: ival_lib_01::IVal&) : int { return v.val(); }
             main() : int {
-                cv : cval_lib::ConcreteVal;
+                cv : cval_lib_01::ConcreteVal;
                 return call_val(cv);
             }
         )K");
@@ -838,8 +838,8 @@ TEST_CASE("import two interfaces — class implements two interfaces from two li
             import imul_lib;
             class Calculator : public iadd_lib::IAdd, public imul_lib::IMul {
                 Calculator() {}
-                add(x: int, y: int) : int { return x + y; }
-                mul(x: int, y: int) : int { return x * y; }
+                override add(x: int, y: int) : int { return x + y; }
+                override mul(x: int, y: int) : int { return x * y; }
             }
         )K" }
     };
@@ -885,35 +885,35 @@ TEST_CASE("import diamond interfaces — IBase/IA/IB from 3 libs, Diamond class 
           "[import][e2e][import-diamond-iface]") {
     std::vector<LibSpec> libs = {
         { R"K(
-            module ibase_lib;
+            module ibase_lib_01;
             interface IBase {
                 base_val() : int;
             }
         )K" },
         { R"K(
-            module ia_lib;
-            import ibase_lib;
-            interface IA : public ibase_lib::IBase {
+            module ia_lib_01;
+            import ibase_lib_01;
+            interface IA : public ibase_lib_01::IBase {
                 a_val() : int;
             }
         )K" },
         { R"K(
-            module ib_lib;
-            import ibase_lib;
-            interface IB : public ibase_lib::IBase {
+            module ib_lib_01;
+            import ibase_lib_01;
+            interface IB : public ibase_lib_01::IBase {
                 b_val() : int;
             }
         )K" },
         { R"K(
-            module diamond_lib;
-            import ibase_lib;
-            import ia_lib;
-            import ib_lib;
-            class Diamond : public ia_lib::IA, public ib_lib::IB {
+            module diamond_lib_01;
+            import ibase_lib_01;
+            import ia_lib_01;
+            import ib_lib_01;
+            class Diamond : public ia_lib_01::IA, public ib_lib_01::IB {
                 Diamond() {}
-                base_val() : int { return 1; }
-                a_val()    : int { return 2; }
-                b_val()    : int { return 3; }
+                override base_val() : int { return 1; }
+                override a_val()    : int { return 2; }
+                override b_val()    : int { return 3; }
             }
         )K" }
     };
@@ -921,13 +921,13 @@ TEST_CASE("import diamond interfaces — IBase/IA/IB from 3 libs, Diamond class 
     auto result = build_exec_with_libs(libs,
         R"K(
             module exec_diamond;
-            import ibase_lib;
-            import diamond_lib;
-            via_base(x: ibase_lib::IBase&) : int { return x.base_val(); }
-            via_a(x: ia_lib::IA&)          : int { return x.a_val(); }
-            via_b(x: ib_lib::IB&)          : int { return x.b_val(); }
+            import ibase_lib_01;
+            import diamond_lib_01;
+            via_base(x: ibase_lib_01::IBase&) : int { return x.base_val(); }
+            via_a(x: ia_lib_01::IA&)          : int { return x.a_val(); }
+            via_b(x: ib_lib_01::IB&)          : int { return x.b_val(); }
             main() : int {
-                d : diamond_lib::Diamond;
+                d : diamond_lib_01::Diamond;
                 r1 : int;
                 r1 = via_base(d);
                 r2 : int;
@@ -963,7 +963,7 @@ TEST_CASE("import enum — basic qualified access to imported enum entries",
                 RED = 0;
                 GREEN = 1;
                 BLUE = 2;
-            };
+            }
         )K",
         R"K(
             module exec_enum;
@@ -987,7 +987,7 @@ TEST_CASE("import enum — explicit integer underlying stays integer-backed acro
             enum Small : unsigned byte {
                 A = 250;
                 B;
-            };
+            }
         )K",
         R"K(
             module exec_import_int_typed_enum;
@@ -1020,7 +1020,7 @@ TEST_CASE("import enum — default construction of imported enum",
                 OK = 0;
                 ERR = 1 default;
                 WARN = 2;
-            };
+            }
         )K",
         R"K(
             module exec_enum_default;
@@ -1055,7 +1055,7 @@ TEST_CASE("import enum — enum as function parameter/return across lib boundary
                 SOUTH = 1;
                 EAST = 2;
                 WEST = 3;
-            };
+            }
             opposite(d: Dir) : int {
                 if (d == Dir::NORTH) { return Dir::SOUTH; }
                 if (d == Dir::SOUTH) { return Dir::NORTH; }
@@ -1093,7 +1093,7 @@ TEST_CASE("import enum — comparison operators on imported enum",
                 LOW = 1;
                 MED = 5;
                 HIGH = 10;
-            };
+            }
         )K",
         R"K(
             module exec_enum_cmp;
@@ -1127,14 +1127,14 @@ TEST_CASE("import enum — local derivation of imported enum",
             enum Base {
                 A = 1;
                 B = 2;
-            };
+            }
         )K",
         R"K(
             module exec_enum_derive;
             import baseenumlib;
             enum Extended : baseenumlib::Base {
                 C = 3;
-            };
+            }
             main() : int {
                 return Extended::A + Extended::C;
             }
@@ -1161,14 +1161,14 @@ TEST_CASE("import enum — local derivation overrides imported default",
             enum Base {
                 A = 1 default;
                 B = 2;
-            };
+            }
         )K",
         R"K(
             module exec_enum_derive_default;
             import defenumlib;
             enum Ext : defenumlib::Base {
                 C = 3 default;
-            };
+            }
             main() : int {
                 e : Ext;
                 return e;
@@ -1196,14 +1196,14 @@ TEST_CASE("import enum — local derivation auto-increments from imported base",
             enum Base {
                 X = 10;
                 Y = 20;
-            };
+            }
         )K",
         R"K(
             module exec_enum_derive_auto;
             import autoenumlib;
             enum Ext : autoenumlib::Base {
                 Z;
-            };
+            }
             main() : int {
                 return Ext::Z;
             }
@@ -1230,14 +1230,14 @@ TEST_CASE("import enum — derivation chain across two libraries",
             enum Base {
                 A = 1;
                 B = 2;
-            };
+            }
         )K" },
         { R"K(
             module enumderiv_lib;
             import enumbase_lib;
             enum Mid : enumbase_lib::Base {
                 C = 3;
-            };
+            }
         )K" }
     };
 
@@ -1271,14 +1271,14 @@ TEST_CASE("import enum — local derivation from cross-lib derived enum (3-level
             module ebase3_lib;
             enum Base {
                 A = 1;
-            };
+            }
         )K" },
         { R"K(
             module emid3_lib;
             import ebase3_lib;
             enum Mid : ebase3_lib::Base {
                 B = 2;
-            };
+            }
         )K" }
     };
 
@@ -1289,7 +1289,7 @@ TEST_CASE("import enum — local derivation from cross-lib derived enum (3-level
             import emid3_lib;
             enum Leaf : emid3_lib::Mid {
                 C = 3;
-            };
+            }
             main() : int {
                 return Leaf::A + Leaf::B + Leaf::C;
             }
@@ -1312,7 +1312,7 @@ TEST_CASE("import enum — object-backed typed enum to const ref across module b
             enum Dir : Vec2 {
                 UP{.x = 0, .y = 1} default;
                 RIGHT{.x = 1, .y = 0};
-            };
+            }
         )K",
         R"K(
             module exec_import_typed_enum;
@@ -1340,7 +1340,7 @@ TEST_CASE("import enum — local typed extension from imported typed base enum",
             enum Dir : Vec2 {
                 UP{.x = 0, .y = 1} default;
                 RIGHT{.x = 1, .y = 0};
-            };
+            }
         )K",
         R"K(
             module exec_import_typed_extend;
@@ -1348,7 +1348,7 @@ TEST_CASE("import enum — local typed extension from imported typed base enum",
 
             enum ExtendedDir : typedbase_lib::Dir {
                 DOWN{.x = 0, .y = 7};
-            };
+            }
 
             main() : int {
                 p : const typedbase_lib::Vec2& = ExtendedDir::DOWN;
@@ -1477,24 +1477,24 @@ TEST_CASE("import transitive chain via search-dir — transitive KDI found via d
           "[import][transitive][import-transitive-chain-searchdir]") {
     std::vector<LibSpec> libs = {
         { R"K(
-            module ival_lib;
+            module ival_lib_02;
             interface IVal { val() : int; }
         )K" },
         { R"K(
-            module aval_lib;
-            import ival_lib;
-            abstract class AVal : public ival_lib::IVal {
+            module aval_lib_02;
+            import ival_lib_02;
+            abstract class AVal : public ival_lib_02::IVal {
                 AVal() {}
-                val() : int { return 10; }
+                override val() : int { return 10; }
             }
         )K" },
         { R"K(
-            module cval_lib;
-            import ival_lib;
-            import aval_lib;
-            class ConcreteVal : public aval_lib::AVal {
+            module cval_lib_02;
+            import ival_lib_02;
+            import aval_lib_02;
+            class ConcreteVal : public aval_lib_02::AVal {
                 ConcreteVal() {}
-                val() : int { return 30; }
+                override val() : int { return 30; }
             }
         )K" }
     };
@@ -1502,16 +1502,16 @@ TEST_CASE("import transitive chain via search-dir — transitive KDI found via d
     // exe imports ival_lib and cval_lib directly; aval_lib is transitive
     auto result = build_exec_with_libs_direct_only(libs,
         R"K(
-             module exec_chain;
-            import ival_lib;
-            import cval_lib;
-            measure(s: ival_lib::IVal&) : int { return s.val(); }
+             module exec_chain_02;
+            import ival_lib_02;
+            import cval_lib_02;
+            measure(s: ival_lib_02::IVal&) : int { return s.val(); }
             main() : int {
-                cv : cval_lib::ConcreteVal;
+                cv : cval_lib_02::ConcreteVal;
                 return measure(cv);
             }
         )K",
-        {"ival_lib", "cval_lib"} // only these are registered explicitly
+        {"ival_lib_02", "cval_lib_02"} // only these are registered explicitly
     );
 
     if (!result.out.empty()) INFO("stdout: " << result.out);
@@ -1535,24 +1535,24 @@ TEST_CASE("import transitive deep — 3-level chain, middle lib is transitive",
           "[import][transitive][import-transitive-deep]") {
     std::vector<LibSpec> libs = {
         { R"K(
-            module ibase_lib;
+            module ibase_lib_02;
             interface IBase { base() : int; }
         )K" },
         { R"K(
             module imid_lib;
-            import ibase_lib;
-            interface IMid : public ibase_lib::IBase {
+            import ibase_lib_02;
+            interface IMid : public ibase_lib_02::IBase {
                 mid() : int;
             }
         )K" },
         { R"K(
             module leaf_lib;
-            import ibase_lib;
+            import ibase_lib_02;
             import imid_lib;
             class Leaf : public imid_lib::IMid {
                 Leaf() {}
-                base() : int { return 1; }
-                mid()  : int { return 2; }
+                override base() : int { return 1; }
+                override mid()  : int { return 2; }
             }
         )K" }
     };
@@ -1561,10 +1561,10 @@ TEST_CASE("import transitive deep — 3-level chain, middle lib is transitive",
     auto result = build_exec_with_libs_direct_only(libs,
         R"K(
             module exec_deep;
-            import ibase_lib;
+            import ibase_lib_02;
             import leaf_lib;
-            via_base(x: ibase_lib::IBase&) : int { return x.base(); }
-            via_mid(x: ibase_lib::IBase&)  : int { return x.base(); }
+            via_base(x: ibase_lib_02::IBase&) : int { return x.base(); }
+            via_mid(x: ibase_lib_02::IBase&)  : int { return x.base(); }
             main() : int {
                 leaf : leaf_lib::Leaf;
                 r1 : int;
@@ -1574,7 +1574,7 @@ TEST_CASE("import transitive deep — 3-level chain, middle lib is transitive",
                 return r1 + r2;
             }
         )K",
-        {"ibase_lib", "leaf_lib"} // imid_lib only reachable via search-dir
+        {"ibase_lib_02", "leaf_lib"} // imid_lib only reachable via search-dir
     );
 
     if (!result.out.empty()) INFO("stdout: " << result.out);
@@ -1600,29 +1600,29 @@ TEST_CASE("import transitive diamond via search-dir — middle interfaces are tr
           "[import][transitive][import-transitive-diamond-searchdir]") {
     std::vector<LibSpec> libs = {
         { R"K(
-            module ibase_lib;
+            module ibase_lib_03;
             interface IBase { base_val() : int; }
         )K" },
         { R"K(
-            module ia_lib;
-            import ibase_lib;
-            interface IA : public ibase_lib::IBase { a_val() : int; }
+            module ia_lib_02;
+            import ibase_lib_03;
+            interface IA : public ibase_lib_03::IBase { a_val() : int; }
         )K" },
         { R"K(
-            module ib_lib;
-            import ibase_lib;
-            interface IB : public ibase_lib::IBase { b_val() : int; }
+            module ib_lib_02;
+            import ibase_lib_03;
+            interface IB : public ibase_lib_03::IBase { b_val() : int; }
         )K" },
         { R"K(
-            module diamond_lib;
-            import ibase_lib;
-            import ia_lib;
-            import ib_lib;
-            class Diamond : public ia_lib::IA, public ib_lib::IB {
+            module diamond_lib_02;
+            import ibase_lib_03;
+            import ia_lib_02;
+            import ib_lib_02;
+            class Diamond : public ia_lib_02::IA, public ib_lib_02::IB {
                 Diamond() {}
-                base_val() : int { return 1; }
-                a_val()    : int { return 2; }
-                b_val()    : int { return 3; }
+                override base_val() : int { return 1; }
+                override a_val()    : int { return 2; }
+                override b_val()    : int { return 3; }
             }
         )K" }
     };
@@ -1631,16 +1631,16 @@ TEST_CASE("import transitive diamond via search-dir — middle interfaces are tr
     auto result = build_exec_with_libs_direct_only(libs,
         R"K(
             module exec_diamond2;
-            import ibase_lib;
-            import diamond_lib;
-            via_base(x: ibase_lib::IBase&) : int { return x.base_val(); }
+            import ibase_lib_03;
+            import diamond_lib_02;
+            via_base(x: ibase_lib_03::IBase&) : int { return x.base_val(); }
             main() : int {
-                d : diamond_lib::Diamond;
+                d : diamond_lib_02::Diamond;
                 r1 : int; r1 = via_base(d);
                 return r1 + r1 + r1;
             }
         )K",
-        {"ibase_lib", "diamond_lib"} // ia_lib, ib_lib found via search-dir
+        {"ibase_lib_03", "diamond_lib_02"} // ia_lib, ib_lib found via search-dir
     );
 
     if (!result.out.empty()) INFO("stdout: " << result.out);
@@ -1756,7 +1756,7 @@ TEST_CASE("unused import — used import does NOT emit warning",
     // This compile must succeed without throwing
     test_logger tl;
     bool ok = compile_collect_diagnostics(R"K(
-        module consumer;
+        module consumer_16;
         import used_lib;
         main() : int { return used_lib::bar(); }
     )K", resolver, tl);

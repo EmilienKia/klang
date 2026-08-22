@@ -48,7 +48,7 @@ std::shared_ptr<k::model::expression> get_return_expr(
 
 TEST_CASE("Constant expression — scalar literals", "[model][const_expr][scalar]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_scalar__;
+        module model_constant_expressions_01;
         test_int() : int { return 42; }
         test_bool() : bool { return true; }
         test_char() : char { return 'z'; }
@@ -77,7 +77,7 @@ TEST_CASE("Constant expression — scalar literals", "[model][const_expr][scalar
 
 TEST_CASE("Constant expression — enum entries", "[model][const_expr][enum]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_enum__;
+        module model_constant_expressions_02;
         enum Color {
             Red = 1;
             Green = 2;
@@ -101,7 +101,7 @@ TEST_CASE("Constant expression — enum entries", "[model][const_expr][enum]") {
 
 TEST_CASE("Constant expression — arithmetic operations", "[model][const_expr][arithmetic]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_arith__;
+        module model_constant_expressions_03;
         test_add() : int { return 10 + 20; }
         test_sub() : int { return 100 - 35; }
         test_mul() : int { return 6 * 7; }
@@ -144,7 +144,7 @@ TEST_CASE("Constant expression — arithmetic operations", "[model][const_expr][
 
 TEST_CASE("Constant expression — comparisons", "[model][const_expr][comparison]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_cmp__;
+        module model_constant_expressions_04;
         test_eq() : bool { return 10 == 10; }
         test_ne() : bool { return 10 != 20; }
         test_lt() : bool { return 5 < 10; }
@@ -189,7 +189,7 @@ TEST_CASE("Constant expression — comparisons", "[model][const_expr][comparison
 
 TEST_CASE("Constant expression — logical and ternary", "[model][const_expr][logical]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_log__;
+        module model_constant_expressions_05;
         test_and_t() : bool { return true && true; }
         test_and_f() : bool { return true && false; }
         test_or_t() : bool { return false || true; }
@@ -230,7 +230,7 @@ TEST_CASE("Constant expression — logical and ternary", "[model][const_expr][lo
 
 TEST_CASE("Constant expression — primitive casts", "[model][const_expr][cast]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_cast__;
+        module model_constant_expressions_06;
         test_cast_int() : int { return (int)3.14; }
         test_cast_byte() : unsigned byte { return (unsigned byte)257; }
     )SRC");
@@ -253,7 +253,7 @@ TEST_CASE("Constant expression — primitive casts", "[model][const_expr][cast]"
 
 TEST_CASE("Constant expression — struct construction and field access", "[model][const_expr][struct]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_struct__;
+        module model_constant_expressions_07;
         struct Point {
             public x : int;
             public y : int;
@@ -307,7 +307,7 @@ TEST_CASE("Constant expression — struct construction and field access", "[mode
 
 TEST_CASE("Constant expression — union construction and alternative access", "[model][const_expr][union]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_union__;
+        module model_constant_expressions_08;
         union Value {
             i : int;
             d : double;
@@ -340,7 +340,7 @@ TEST_CASE("Constant expression — union construction and alternative access", "
 
 TEST_CASE("Constant expression — combined operations", "[model][const_expr][combined]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_combined__;
+        module model_constant_expressions_09;
         enum Flags {
             A = 1;
             B = 2;
@@ -401,7 +401,7 @@ TEST_CASE("Constant expression — combined operations", "[model][const_expr][co
 
 TEST_CASE("Constant expression — const variable propagation", "[model][const_expr][const_var]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_var_prop__;
+        module model_constant_expressions_10;
 
         const GLOBAL_CONST : int = 100;
 
@@ -485,7 +485,7 @@ TEST_CASE("Constant expression — const variable propagation", "[model][const_e
 
 TEST_CASE("Constant expression — constant arrays", "[model][const_expr][array]") {
     auto comp = compile_model(R"SRC(
-        module __test_const_array__;
+        module model_constant_expressions_11;
 
         const GLOBAL_ARR : int[4] { 2, 4, 6, 8 };
 
@@ -557,7 +557,7 @@ TEST_CASE("Constant expression — constant arrays", "[model][const_expr][array]
 
 TEST_CASE("Constant expression — non-constant expressions remain non-const", "[model][const_expr][boundary]") {
     auto comp = compile_model(R"SRC(
-        module __test_non_const__;
+        module model_constant_expressions_12;
         test_param(x : int) : int {
             return x + 10;
         }
@@ -588,7 +588,7 @@ TEST_CASE("Constant expression — non-constant expressions remain non-const", "
 
 TEST_CASE("Constant expression — direct LLVM IR constant emission", "[model][const_expr][llvm_opt]") {
     auto jit = gen_jit(R"SRC(
-        module __test_const_llvm_opt__;
+        module model_constant_expressions_13;
 
         struct Point {
             public x : int;

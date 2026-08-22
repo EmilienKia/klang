@@ -140,7 +140,7 @@ TEST_CASE("Parse: generic<class T, class U> two type params", "[parser][generic]
 
 TEST_CASE("Model: generic class has is_generic and is_template true", "[model][generic]") {
     auto comp = compile_model(R"K(
-        module __generic_model__;
+        module gen_generic_01;
 
         generic<class T> class Box {
             public val : T!;
@@ -162,7 +162,7 @@ TEST_CASE("Model: generic class has is_generic and is_template true", "[model][g
 
 TEST_CASE("Model: generic struct has is_generic and is_template true", "[model][generic]") {
     auto comp = compile_model(R"K(
-        module __generic_model_struct__;
+        module gen_generic_02;
 
         generic<typename T> struct Wrapper {
             public ref : T&;
@@ -186,7 +186,7 @@ TEST_CASE("Model: generic struct has is_generic and is_template true", "[model][
 TEST_CASE("Validator: bare T usage in member → ERR_GENERIC_DIRECT_TYPE_USAGE", "[validator][generic][error]") {
     REQUIRE_THROWS_AS(
         gen_jit_throws(R"K(
-            module __generic_val_direct__;
+            module gen_generic_03;
 
             generic<typename T> class Box {
                 val : T;
@@ -199,7 +199,7 @@ TEST_CASE("Validator: bare T usage in member → ERR_GENERIC_DIRECT_TYPE_USAGE",
 TEST_CASE("Validator: bare T usage in local variable → ERR_GENERIC_DIRECT_TYPE_USAGE", "[validator][generic][error]") {
     REQUIRE_THROWS_AS(
         gen_jit_throws(R"K(
-            module __generic_val_local__;
+            module gen_generic_04;
 
             generic<typename T> fun bad(v : T&) : int {
                 local : T;
@@ -213,7 +213,7 @@ TEST_CASE("Validator: bare T usage in local variable → ERR_GENERIC_DIRECT_TYPE
 TEST_CASE("Validator: owner of typename T → ERR_GENERIC_OWNER_REQUIRES_CLASS", "[validator][generic][error]") {
     REQUIRE_THROWS_AS(
         gen_jit_throws(R"K(
-            module __generic_val_owner_typename__;
+            module gen_generic_05;
 
             generic<typename T> class Holder {
                 val : T!;
@@ -226,7 +226,7 @@ TEST_CASE("Validator: owner of typename T → ERR_GENERIC_OWNER_REQUIRES_CLASS",
 TEST_CASE("Validator: owner of struct T → ERR_GENERIC_OWNER_REQUIRES_CLASS", "[validator][generic][error]") {
     REQUIRE_THROWS_AS(
         gen_jit_throws(R"K(
-            module __generic_val_owner_struct__;
+            module gen_generic_06;
 
             generic<struct T> class Holder {
                 val : T!;
@@ -243,7 +243,7 @@ TEST_CASE("Validator: owner of class T is valid — compilation succeeds", "[val
     // constructor takes `byte*!` but the call site provides `Animal!`.
     // See TODO.md: "Generic constructor call with owner argument at call site".
     auto comp = compile_model(R"K(
-        module __generic_val_owner_class__;
+        module gen_generic_07;
 
         class Animal {
             public:
@@ -289,7 +289,7 @@ TEST_CASE("Synthesis: generic class with two instantiation sites compiles succes
     // itself is generated correctly; the limitation is at the call-site constructor
     // argument binding. See TODO.md: "Generic constructor call with owner argument".
     auto comp = compile_model(R"K(
-        module __generic_synth__;
+        module gen_generic_08;
 
         class Animal1 {
             public:
@@ -327,7 +327,7 @@ TEST_CASE("Generic class with default constructor compiles and default-initialis
     // A generic class with only a default constructor (no T argument) and a null-check
     // method can be instantiated without any type-conversion issue.
     auto jit = gen_jit(R"K(
-        module __generic_default_ctor__;
+        module gen_generic_09;
 
         class Item {
             public:
@@ -361,7 +361,7 @@ TEST_CASE("Generic class whose definition compiles — pointer member and getter
     // supported at runtime; the K type system generates 0 for the return value.
     // That runtime gap is documented in TODO.md.
     auto comp = compile_model(R"K(
-        module __generic_ptr_compile__;
+        module gen_generic_10;
 
         class Counter {
             public value : int = 0;
@@ -386,7 +386,7 @@ TEST_CASE("Generic class with view member compiles — view is non-rebindable", 
     // T? (view) is non-rebindable after initialisation in K.
     // A read-only view member is initialised only in the constructor.
     auto comp = compile_model(R"K(
-        module __generic_view_compile__;
+        module gen_generic_11;
 
         class Node {
             public:
@@ -414,7 +414,7 @@ TEST_CASE("Generic free function — compilation succeeds", "[gen][generic]") {
     // doesn't have field layouts. This test verifies the function passes the
     // constraint validator and synthesis phases.
     auto comp = compile_model(R"K(
-        module __generic_fn_compile__;
+        module gen_generic_12;
 
         class Tag { }
 
@@ -431,7 +431,7 @@ TEST_CASE("Generic class with two type params compiles", "[gen][generic]") {
     // NOTE: member access on the generic T*/U* fields cannot be done in the generic
     // body itself (opaque pointer limitation); the call-site type mapping handles it.
     auto comp = compile_model(R"K(
-        module __generic_two_params_compile__;
+        module gen_generic_13;
 
         class Alpha { }
         class Beta  { }
@@ -460,7 +460,7 @@ TEST_CASE("Generic class with null-check method executes correctly", "[gen][gene
     // A generic class that only uses T* for null checks (no member access in generic body)
     // must execute correctly, because no type-specific layout is needed for null checks.
     auto jit = gen_jit(R"K(
-        module __generic_null_check__;
+        module gen_generic_14;
 
         class Handle {
             public:
@@ -531,7 +531,7 @@ TEST_CASE("Cross-module: import generic class definition from KDI",
     // and its KDI can be generated without errors.
     // The generic class itself is declared but not instantiated in the library.
     std::string so = build_shared_library(R"K(
-        module genericimportlib;
+        module gen_generic_15;
 
         public:
         class Seed {
@@ -562,7 +562,7 @@ TEST_CASE("Cross-module: import non-generic functions from a module that has a g
     // A module that defines a generic class AND non-generic public functions can be
     // imported normally; the non-generic functions are accessible in the importing module.
     constexpr std::string_view lib_src = R"K(
-        module genericmixedlib;
+        module gen_generic_16;
 
         public:
         class Item {
@@ -584,11 +584,11 @@ TEST_CASE("Cross-module: import non-generic functions from a module that has a g
     )K";
 
     constexpr std::string_view exec_src = R"K(
-        module genericmixedexec;
-        import genericmixedlib;
+        module gen_generic_17;
+        import gen_generic_16;
 
         main() : int {
-            i : Item!(genericmixedlib::makeItem(5));
+            i : Item!(gen_generic_16::makeItem(5));
             if(i.weight != 5) return 1;
             return 0;
         }
@@ -604,7 +604,7 @@ TEST_CASE("Template struct with nested struct and self-referencing pointer", "[g
     // and a self-referencing pointer (linked-list node pattern).  The outer struct
     // holds a pointer to the nested struct and uses it in method bodies.
     auto jit = gen_jit(R"K(
-        module __nested_struct_ll__;
+        module gen_generic_18;
 
         template<typename T>
         struct Container {
@@ -653,7 +653,7 @@ TEST_CASE("Template struct with nested struct and self-referencing pointer", "[g
 TEST_CASE("Template struct with nested struct - null pointer member", "[gen][generic][nested-struct]") {
     // Simpler case: nested struct member used with null assignment
     auto jit = gen_jit(R"K(
-        module __nested_struct_null__;
+        module gen_generic_19;
 
         template<typename T>
         struct Wrapper {

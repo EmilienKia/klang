@@ -54,7 +54,7 @@
 // =============================================================================
 TEST_CASE("Class upcast: ref<Base> init from Derived class object reads Base field", "[gen][upcast][class][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_ref_init__;
+        module gen_class_upcast_01;
 
         class Base {
             public val : int;
@@ -83,7 +83,7 @@ TEST_CASE("Class upcast: ref<Base> init from Derived class object reads Base fie
 // =============================================================================
 TEST_CASE("Class upcast: lien<Base> init from &Derived class reads Base field", "[gen][upcast][class][lien]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_lien_init__;
+        module gen_class_upcast_02;
 
         class Base {
             public val : int;
@@ -112,7 +112,7 @@ TEST_CASE("Class upcast: lien<Base> init from &Derived class reads Base field", 
 // =============================================================================
 TEST_CASE("Class upcast: lien<Base> can be rebound to another Derived class", "[gen][upcast][class][lien]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_lien_rebind__;
+        module gen_class_upcast_03;
 
         class Base {
             public val : int;
@@ -143,7 +143,7 @@ TEST_CASE("Class upcast: lien<Base> can be rebound to another Derived class", "[
 // =============================================================================
 TEST_CASE("Class upcast: pin<Base> init from &Derived class reads Base field", "[gen][upcast][class][view]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_pin_init__;
+        module gen_class_upcast_04;
 
         class Base {
             public val : int;
@@ -172,7 +172,7 @@ TEST_CASE("Class upcast: pin<Base> init from &Derived class reads Base field", "
 // =============================================================================
 TEST_CASE("Class upcast: ptr<Base> init from &Derived class reads Base field", "[gen][upcast][class][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_ptr_init__;
+        module gen_class_upcast_05;
 
         class Base {
             public val : int;
@@ -201,7 +201,7 @@ TEST_CASE("Class upcast: ptr<Base> init from &Derived class reads Base field", "
 // =============================================================================
 TEST_CASE("Class upcast: ptr<Base> can be reassigned to another Derived class", "[gen][upcast][class][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_ptr_rebind__;
+        module gen_class_upcast_06;
 
         class Base {
             public val : int;
@@ -232,7 +232,7 @@ TEST_CASE("Class upcast: ptr<Base> can be reassigned to another Derived class", 
 // =============================================================================
 TEST_CASE("Class upcast: lien<Base> init from non-null ptr<Derived class> succeeds", "[gen][upcast][class][lien]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_lien_from_ptr__;
+        module gen_class_upcast_07;
 
         class Base {
             public val : int;
@@ -262,7 +262,7 @@ TEST_CASE("Class upcast: lien<Base> init from non-null ptr<Derived class> succee
 // =============================================================================
 TEST_CASE("Class upcast: virtual call via ref<Base> bound to Derived dispatches correctly", "[gen][upcast][class][ref][virtual]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_ref_virtual__;
+        module gen_class_upcast_08;
 
         class Base {
             public val : int;
@@ -296,7 +296,7 @@ TEST_CASE("Class upcast: virtual call via ref<Base> bound to Derived dispatches 
 // =============================================================================
 TEST_CASE("Class upcast: ptr<interface> init from implementing class, virtual dispatch", "[gen][upcast][class][interface]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_interface_ptr__;
+        module gen_class_upcast_09;
 
         interface Countable {
             count() : int;
@@ -327,7 +327,7 @@ TEST_CASE("Class upcast: ptr<interface> init from implementing class, virtual di
 // =============================================================================
 TEST_CASE("Class upcast: ptr<A> from C class where C→B→A (transitive upcast)", "[gen][upcast][class][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_transitive_ptr__;
+        module gen_class_upcast_10;
 
         class A {
             public val : int;
@@ -364,7 +364,7 @@ TEST_CASE("Class upcast: ptr<A> from C class where C→B→A (transitive upcast)
 // =============================================================================
 TEST_CASE("Class upcast: ptr<abstract Base> from Derived class succeeds", "[gen][upcast][class][abstract][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_abstract_ptr__;
+        module gen_class_upcast_11;
 
         abstract class Shape {
             public abstract area() : int;
@@ -395,7 +395,7 @@ TEST_CASE("Class upcast: ptr<abstract Base> from Derived class succeeds", "[gen]
 // =============================================================================
 TEST_CASE("Class upcast error: ref<Base class> init from unrelated type is rejected", "[gen][upcast][class][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __cu_ref_unrelated__;
+        module gen_class_upcast_12;
 
         class A {
             public x : int;
@@ -419,7 +419,7 @@ TEST_CASE("Class upcast error: ref<Base class> init from unrelated type is rejec
 // =============================================================================
 TEST_CASE("Class upcast error: lien<Base class> init from &unrelated class is rejected", "[gen][upcast][class][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __cu_lien_unrelated__;
+        module gen_class_upcast_13;
 
         class A {
             public x : int;
@@ -443,7 +443,7 @@ TEST_CASE("Class upcast error: lien<Base class> init from &unrelated class is re
 // =============================================================================
 TEST_CASE("Class upcast error: pin<Base class> cannot be rebound after construction", "[gen][upcast][class][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __cu_pin_rebind__;
+        module gen_class_upcast_14;
 
         class Base {
             public val : int;
@@ -469,7 +469,7 @@ TEST_CASE("Class upcast error: pin<Base class> cannot be rebound after construct
 // =============================================================================
 TEST_CASE("Class upcast: writing through lien<Base class> modifies Derived's Base field", "[gen][upcast][class][lien][write]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_lien_write__;
+        module gen_class_upcast_15;
 
         class Base {
             public val : int;
@@ -499,7 +499,7 @@ TEST_CASE("Class upcast: writing through lien<Base class> modifies Derived's Bas
 // =============================================================================
 TEST_CASE("Class upcast: virtual call via lien<interface> bound to class dispatches correctly", "[gen][upcast][interface][lien][virtual]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_interface_lien__;
+        module gen_class_upcast_16;
 
         interface Describable {
             describe() : int;
@@ -530,7 +530,7 @@ TEST_CASE("Class upcast: virtual call via lien<interface> bound to class dispatc
 // =============================================================================
 TEST_CASE("Class upcast: ptr<Base class> assigned from pin<Derived class>", "[gen][upcast][class][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_ptr_from_pin__;
+        module gen_class_upcast_17;
 
         class Base {
             public val : int;
@@ -565,7 +565,7 @@ TEST_CASE("Class upcast: ptr<Base class> assigned from pin<Derived class>", "[ge
 
 TEST_CASE("Class upcast: ptr<Base class> initialised from owner<Derived class>", "[gen][upcast][class][ptr][owner]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_ptr_from_owner__;
+        module gen_class_upcast_18;
 
         class Base {
             public val : int;
@@ -590,7 +590,7 @@ TEST_CASE("Class upcast: ptr<Base class> initialised from owner<Derived class>",
 
 TEST_CASE("Class upcast: virtual call through ptr<interface> initialised from owner<class>", "[gen][upcast][interface][ptr][owner][virtual]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_iface_from_owner__;
+        module gen_class_upcast_19;
 
         interface Task {
             run() : void;
@@ -616,7 +616,7 @@ TEST_CASE("Class upcast: virtual call through ptr<interface> initialised from ow
 
 TEST_CASE("Class upcast: lien<Base class> initialised from owner<Derived class>", "[gen][upcast][class][lien][owner]") {
     auto jit = gen_jit(R"SRC(
-        module __cu_lien_from_owner__;
+        module gen_class_upcast_20;
 
         class Base {
             public val : int;

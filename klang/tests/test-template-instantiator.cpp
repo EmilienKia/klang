@@ -46,7 +46,7 @@
 TEST_CASE("[C] M4: instantiate template struct Box<int>",
           "[milestone4][instantiator][aggregate]") {
     auto comp = compile_model(R"SRC(
-        module __m4_c__;
+        module template_instantiator_01;
         template<typename T>
         struct Box {
             public value : T;
@@ -97,7 +97,7 @@ TEST_CASE("[C] M4: instantiate template struct Box<int>",
 TEST_CASE("[D] M4: instantiate template function identity<int>",
           "[milestone4][instantiator][function]") {
     auto comp = compile_model(R"SRC(
-        module __m4_d__;
+        module template_instantiator_02;
         template<typename T>
         identity(x : T) : T { return x; }
     )SRC");
@@ -138,7 +138,7 @@ TEST_CASE("[D] M4: instantiate template function identity<int>",
 TEST_CASE("[E] M4: instantiation cache returns same instance for same args",
           "[milestone4][instantiator][cache]") {
     auto comp = compile_model(R"SRC(
-        module __m4_e__;
+        module template_instantiator_03;
         template<typename T>
         struct Wrapper {
             public data : T;
@@ -179,7 +179,7 @@ TEST_CASE("[E] M4: instantiation cache returns same instance for same args",
 TEST_CASE("[F] M4: different args produce different instances",
           "[milestone4][instantiator]") {
     auto comp = compile_model(R"SRC(
-        module __m4_f__;
+        module template_instantiator_04;
         template<typename T>
         struct Container {
             public val : T;
@@ -257,7 +257,7 @@ TEST_CASE("[G] M4: build_instantiation_key and build_instantiated_name",
 TEST_CASE("[H] M4: instantiated struct has member with substituted type",
           "[milestone4][instantiator][model_level]") {
     auto comp = compile_model(R"SRC(
-        module __m4_h__;
+        module template_instantiator_05;
         template<typename T>
         struct Box {
             public value : T;
@@ -304,7 +304,7 @@ TEST_CASE("[H] M4: instantiated struct has member with substituted type",
 TEST_CASE("[I] M4: instantiated function has cloned body",
           "[milestone4][instantiator][model_level]") {
     auto comp = compile_model(R"SRC(
-        module __m4_i__;
+        module template_instantiator_06;
         template<typename T>
         identity(x : T) : T { return x; }
     )SRC");
@@ -354,7 +354,7 @@ TEST_CASE("[I] M4: instantiated function has cloned body",
 TEST_CASE("[J] M7: generic aggregate synthesis is unique and uses base name",
           "[milestone7][generic][instantiator]") {
     auto comp = compile_model(R"SRC(
-        module __m7_j__;
+        module template_instantiator_07;
         generic<typename T>
         struct Box {
             public value : T&;
@@ -407,7 +407,7 @@ TEST_CASE("[J] M7: generic aggregate synthesis is unique and uses base name",
 TEST_CASE("[K] M7: generic uses track concrete arguments without re-synthesis",
           "[milestone7][generic][resolver]") {
     auto comp = compile_model(R"SRC(
-        module __m7_k__;
+        module template_instantiator_08;
         generic<typename T>
         struct Box {
             public value : T&;
@@ -480,7 +480,7 @@ TEST_CASE("[K] M7: generic uses track concrete arguments without re-synthesis",
 TEST_CASE("[L] M7: generic flag preserved for class-kind parameter",
           "[milestone7][generic][model]") {
     auto comp = compile_model(R"SRC(
-        module __m7_l__;
+        module template_instantiator_09;
         generic<class T>
         class Box {
             public value : T&;
@@ -504,7 +504,7 @@ TEST_CASE("[L] M7: generic flag preserved for class-kind parameter",
 TEST_CASE("[M] M7: generic flag preserved for module k nested aggregate",
           "[milestone7][generic][model]") {
     auto comp = compile_model(R"SRC(
-        module k;
+        module template_instantiator_10;
         generic<class TYPE>
         public class LinkedList {
             private struct Node {
@@ -533,7 +533,7 @@ TEST_CASE("[N] M7: generic flag preserved with optimize=true parse pipeline",
     REQUIRE(comp != nullptr);
 
     REQUIRE_NOTHROW(comp->parse_source("", R"SRC(
-        module k;
+        module template_instantiator_11;
         generic<class TYPE>
         public class LinkedList {
             private struct Node {
@@ -562,7 +562,7 @@ TEST_CASE("[O] M7: generic flag preserved in parse_sources with forced module",
 
     std::vector<std::pair<std::string, std::string>> sources;
     sources.emplace_back("list.k", R"SRC(
-        module k;
+        module template_instantiator_12;
         generic<class TYPE>
         public class LinkedList {
             private struct Node {
@@ -593,7 +593,7 @@ TEST_CASE("[P] M7: generic flag survives shared-lib generation and KDI export",
 
     std::vector<std::pair<std::string, std::string>> sources;
     sources.emplace_back("list.k", R"SRC(
-        module k;
+        module template_instantiator_13;
         generic<class TYPE>
         public class LinkedList {
             private struct Node {
@@ -642,7 +642,7 @@ TEST_CASE("[Q] M7: generic KDI export with file-backed source and absolute path"
         std::ofstream os(src_path);
         REQUIRE(os.is_open());
         os << R"SRC(
-module k;
+module template_instantiator_14;
 generic<class TYPE>
 public class LinkedList {
     private struct Node {

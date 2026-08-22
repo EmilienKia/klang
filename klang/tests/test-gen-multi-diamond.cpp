@@ -61,7 +61,7 @@ TEST_CASE("[MD1] Diamond 1: ColoredShape dispatch via Shape&, Drawable&, Colorab
           "[multi-diamond][diamond][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __md1__;
+module gen_multi_diamond_01;
 interface Shape    { draw()  : int; }
 interface Colorable { color() : int; }
 abstract class Drawable : public Shape {
@@ -112,7 +112,7 @@ TEST_CASE("[MD2] Diamond 2: IntNamedNode dispatch via Node&, IntNode&, NamedNode
           "[multi-diamond][diamond][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __md2__;
+module gen_multi_diamond_02;
 interface Node { value() : int; }
 class IntNode : public Node {
     IntNode() {}
@@ -156,7 +156,7 @@ TEST_CASE("[MD3] Diamond 2: each class dispatches its own value",
           "[multi-diamond][diamond][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __md3__;
+module gen_multi_diamond_03;
 interface Node { value() : int; }
 class IntNode : public Node {
     IntNode() {}
@@ -202,7 +202,7 @@ TEST_CASE("[MD4] Everything: dispatch via all ancestor refs",
           "[multi-diamond][dispatch][secondary]") {
 
     auto jit = gen_jit(R"SRC(
-module __md4__;
+module gen_multi_diamond_04;
 
 interface Shape     { draw()  : int; }
 interface Colorable { color() : int; }
@@ -294,7 +294,7 @@ TEST_CASE("[MD5] Non-contamination: ColoredShape and IntNamedNode unaffected by 
           "[multi-diamond][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __md5__;
+module gen_multi_diamond_05;
 
 interface Shape     { draw()  : int; }
 interface Colorable { color() : int; }
@@ -380,7 +380,7 @@ TEST_CASE("[MD6] Deep 4-level diamond: dispatch via all ancestor refs returns D 
           "[multi-diamond][diamond][dispatch]") {
 
     auto jit = gen_jit(R"SRC(
-module __md6__;
+module gen_multi_diamond_06;
 interface I { tag() : int; }
 class A : public I {
     A() {}

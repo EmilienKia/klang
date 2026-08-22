@@ -49,7 +49,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 TEST_CASE("[A] Phase4: direct (non-virtual) call still works", "[phase4][gen][direct]") {
     auto jit = gen_jit(R"SRC(
-        module __p4_a__;
+        module phase4_gen_01;
         add(x: int, y: int) : int { return x + y; }
         test() : int { return add(3, 4); }
     )SRC");
@@ -64,7 +64,7 @@ TEST_CASE("[A] Phase4: direct (non-virtual) call still works", "[phase4][gen][di
 // ─────────────────────────────────────────────────────────────────────────────
 TEST_CASE("[B] Phase4: single-inheritance virtual dispatch via base ref", "[phase4][gen][vtable]") {
     auto jit = gen_jit(R"SRC(
-        module __p4_b__;
+        module phase4_gen_02;
         class Animal {
             speak() : int { return 0; }
         }
@@ -95,7 +95,7 @@ TEST_CASE("[C] Phase4: thunk allows secondary-base override to reach D::speak()"
     // When dispatching through C&, a this-adjustment thunk must be used to
     // convert the C* into a D* before calling D::speak().
     auto jit = gen_jit(R"SRC(
-        module __p4_c__;
+        module phase4_gen_03;
         class B {
             val() : int { return 10; }
         }
@@ -125,7 +125,7 @@ TEST_CASE("[C] Phase4: thunk allows secondary-base override to reach D::speak()"
 // ─────────────────────────────────────────────────────────────────────────────
 TEST_CASE("[D] Phase4: runtime dispatch via primary-base ref", "[phase4][gen][runtime]") {
     auto jit = gen_jit(R"SRC(
-        module __p4_d__;
+        module phase4_gen_04;
         class Shape {
             area() : int { return 0; }
         }
@@ -154,7 +154,7 @@ TEST_CASE("[E] Phase4: runtime dispatch via secondary-base ref (multiple inherit
           "[phase4][gen][runtime][multiple_inheritance]") {
     // D : B, C — dispatch through C& reaches D::value() = 99
     auto jit = gen_jit(R"SRC(
-        module __p4_e__;
+        module phase4_gen_05;
         class B {
             b_val() : int { return 10; }
         }
@@ -189,7 +189,7 @@ TEST_CASE("[E] Phase4: runtime dispatch via secondary-base ref (multiple inherit
 TEST_CASE("[F] Phase4: qualified call bypasses vtable — calls exact base method",
           "[phase4][gen][runtime][direct]") {
     auto jit = gen_jit(R"SRC(
-        module __p4_f__;
+        module phase4_gen_06;
         class Base {
             value() : int { return 1; }
         }
@@ -219,7 +219,7 @@ TEST_CASE("[F] Phase4: qualified call bypasses vtable — calls exact base metho
 TEST_CASE("[G] Phase4: abstract method dispatch reaches concrete override",
           "[phase4][gen][runtime][abstract]") {
     auto jit = gen_jit(R"SRC(
-        module __p4_g__;
+        module phase4_gen_07;
         abstract class Processor {
             abstract process(x: int) : int;
         }
@@ -248,7 +248,7 @@ TEST_CASE("[G] Phase4: abstract method dispatch reaches concrete override",
 TEST_CASE("[H] Phase4: multiple virtual methods dispatch to correct slots",
           "[phase4][gen][runtime]") {
     auto jit = gen_jit(R"SRC(
-        module __p4_h__;
+        module phase4_gen_08;
         class Vehicle {
             start() : int { return 1; }
             stop()  : int { return 0; }
@@ -276,7 +276,7 @@ TEST_CASE("[H] Phase4: multiple virtual methods dispatch to correct slots",
 TEST_CASE("[I] Phase4: non-regression — recursive direct call (fibo)",
           "[phase4][gen][direct][nonreg]") {
     auto jit = gen_jit(R"SRC(
-        module __p4_i__;
+        module phase4_gen_09;
         fibo(n: int) : int {
             if (n <= 1) return n;
             return fibo(n - 1) + fibo(n - 2);
@@ -295,7 +295,7 @@ TEST_CASE("[I] Phase4: non-regression — recursive direct call (fibo)",
 TEST_CASE("[J] Phase4: non-regression — main() wrapper (global_main_function)",
           "[phase4][gen][direct][nonreg]") {
     auto result = build_and_exec(R"SRC(
-        module __p4_j__;
+        module phase4_gen_10;
         compute() : int { return 42; }
         main() : int { return compute(); }
     )SRC");

@@ -20,7 +20,7 @@
  * Tests for Java-style varargs (variable-length argument lists).
  *
  * A varargs parameter is declared with '...' after the name:
- *   fun f(args... : int) : int { ... }
+ *   f(args... : int) : int { ... }
  * Internally, args is an int[] (unsized array). The compiler packs
  * individual arguments into a stack-allocated array at the call site.
  */
@@ -104,13 +104,13 @@ TEST_CASE("Parse error — varargs with default value", "[parse][varargs]") {
 
 TEST_CASE("Varargs — basic call with multiple args", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_01;
 
-        fun sum(values... : int) : int {
+        sum(values... : int) : int {
             return values[0] + values[1] + values[2];
         }
 
-        fun test() : int {
+        test() : int {
             return sum(10, 20, 30);
         }
     )SRC");
@@ -122,13 +122,13 @@ TEST_CASE("Varargs — basic call with multiple args", "[gen][varargs]") {
 
 TEST_CASE("Varargs — single vararg", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_02;
 
-        fun first(values... : int) : int {
+        first(values... : int) : int {
             return values[0];
         }
 
-        fun test() : int {
+        test() : int {
             return first(42);
         }
     )SRC");
@@ -140,13 +140,13 @@ TEST_CASE("Varargs — single vararg", "[gen][varargs]") {
 
 TEST_CASE("Varargs — mixed fixed and varargs parameters", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_03;
 
-        fun add_to(base: int, extras... : int) : int {
+        add_to(base: int, extras... : int) : int {
             return base + extras[0] + extras[1];
         }
 
-        fun test() : int {
+        test() : int {
             return add_to(100, 20, 3);
         }
     )SRC");
@@ -158,13 +158,13 @@ TEST_CASE("Varargs — mixed fixed and varargs parameters", "[gen][varargs]") {
 
 TEST_CASE("Varargs — explicit array pass", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_04;
 
-        fun first(values... : int) : int {
+        first(values... : int) : int {
             return values[0];
         }
 
-        fun test() : int {
+        test() : int {
             arr : int[3]{7, 8, 9};
             return first(arr);
         }
@@ -177,13 +177,13 @@ TEST_CASE("Varargs — explicit array pass", "[gen][varargs]") {
 
 TEST_CASE("Varargs — long type", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_05;
 
-        fun sum_long(values... : long) : long {
+        sum_long(values... : long) : long {
             return values[0] + values[1];
         }
 
-        fun test() : long {
+        test() : long {
             return sum_long(1000000, 2000000);
         }
     )SRC");
@@ -195,13 +195,13 @@ TEST_CASE("Varargs — long type", "[gen][varargs]") {
 
 TEST_CASE("Varargs — zero varargs arguments", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_06;
 
-        fun count(values... : int) : int {
+        count(values... : int) : int {
             return values.size;
         }
 
-        fun test() : int {
+        test() : int {
             return count();
         }
     )SRC");
@@ -213,13 +213,13 @@ TEST_CASE("Varargs — zero varargs arguments", "[gen][varargs]") {
 
 TEST_CASE("Varargs — zero varargs with fixed params", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_07;
 
-        fun base_only(base: int, extras... : int) : int {
+        base_only(base: int, extras... : int) : int {
             return base + extras.size;
         }
 
-        fun test() : int {
+        test() : int {
             return base_only(100);
         }
     )SRC");
@@ -231,17 +231,17 @@ TEST_CASE("Varargs — zero varargs with fixed params", "[gen][varargs]") {
 
 TEST_CASE("Varargs — overload preference: non-varargs preferred", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_08;
 
-        fun pick(a: int, b: int) : int {
+        pick(a: int, b: int) : int {
             return 1;
         }
 
-        fun pick(args... : int) : int {
+        pick(args... : int) : int {
             return 2;
         }
 
-        fun test() : int {
+        test() : int {
             return pick(10, 20);
         }
     )SRC");
@@ -254,17 +254,17 @@ TEST_CASE("Varargs — overload preference: non-varargs preferred", "[gen][varar
 
 TEST_CASE("Varargs — overload: varargs used when no exact match", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_09;
 
-        fun pick(a: int, b: int) : int {
+        pick(a: int, b: int) : int {
             return 1;
         }
 
-        fun pick(args... : int) : int {
+        pick(args... : int) : int {
             return 2;
         }
 
-        fun test() : int {
+        test() : int {
             return pick(10, 20, 30);
         }
     )SRC");
@@ -277,13 +277,13 @@ TEST_CASE("Varargs — overload: varargs used when no exact match", "[gen][varar
 
 TEST_CASE("Varargs — array size access inside body", "[gen][varargs]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_10;
 
-        fun count_args(values... : int) : int {
+        count_args(values... : int) : int {
             return values.size;
         }
 
-        fun test() : int {
+        test() : int {
             return count_args(10, 20, 30, 40, 50);
         }
     )SRC");
@@ -302,13 +302,13 @@ TEST_CASE("Varargs — mangling identical to T[] parameter", "[gen][varargs]") {
     // to `fun f(args : int[])` since the parameter type is int[] in the model.
     // We verify by looking up the mangled symbol name.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_varargs_11;
 
-        fun vararg_func(values... : int) : int {
+        vararg_func(values... : int) : int {
             return values[0];
         }
 
-        fun test() : int {
+        test() : int {
             return vararg_func(42);
         }
     )SRC");
@@ -326,24 +326,24 @@ TEST_CASE("Varargs — KDI import: call varargs function from imported library",
     auto result = build_exec_with_lib(
         // Library source — use .size instead of subscript to avoid bounds-check symbol
         R"SRC(
-            module varlib;
+            module gen_varargs_12;
 
-            public fun count(values... : int) : int {
+            public count(values... : int) : int {
                 return values.size;
             }
 
-            public fun count_plus(base: int, extras... : int) : int {
+            public count_plus(base: int, extras... : int) : int {
                 return base + extras.size;
             }
         )SRC",
         // Executable source
         R"SRC(
-            module test;
-            import varlib;
+            module gen_varargs_13;
+            import gen_varargs_12;
 
             main() : int {
-                a : int = varlib::count(10, 20, 30);
-                b : int = varlib::count_plus(100, 20, 3);
+                a : int = gen_varargs_12::count(10, 20, 30);
+                b : int = gen_varargs_12::count_plus(100, 20, 3);
                 if(a == 3 && b == 102) {
                     return 0;
                 }

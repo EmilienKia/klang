@@ -24,7 +24,7 @@
 TEST_CASE( "float arithmetic", "[gen][float][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __float__;
+        module gen_arithmetic_float_01;
         add(a : float, b : float) : float {
             return a + b;
         }
@@ -280,7 +280,7 @@ TEST_CASE( "float arithmetic", "[gen][float][arithmetic]" ) {
 TEST_CASE( "double arithmetic", "[gen][double][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
-        module __double__;
+        module gen_arithmetic_float_02;
         add(a : double, b : double) : double {
             return a + b;
         }
@@ -535,7 +535,7 @@ TEST_CASE( "double arithmetic", "[gen][double][arithmetic]" ) {
 
 TEST_CASE("Boolean values and casting", "[gen][bool]") {
     auto jit = gen_jit(R"SRC(
-        module __bool__;
+        module gen_arithmetic_float_03;
         ret_true() : bool {
             return true;
         }
@@ -644,7 +644,7 @@ TEST_CASE("Boolean values and casting", "[gen][bool]") {
 
 TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
     auto jit = gen_jit(R"SRC(
-        module __bool__;
+        module gen_arithmetic_float_04;
         not(b : bool) : bool {
             return !b;
         }
@@ -775,7 +775,7 @@ TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
 
 TEST_CASE("Increment/decrement in loops", "[gen][incr-decr][loop]") {
     auto jit = gen_jit(R"SRC(
-        module __incr_loops__;
+        module gen_arithmetic_float_05;
 
         // Sum 0..n-1 using postfix ++
         sum_postfix_incr(n : int) : int {
@@ -902,7 +902,7 @@ TEST_CASE("Increment/decrement in loops", "[gen][incr-decr][loop]") {
 
 TEST_CASE("Prefix and postfix distinction", "[gen][incr-decr][prefix-vs-postfix]") {
     auto jit = gen_jit(R"SRC(
-        module __prefix_vs_postfix__;
+        module gen_arithmetic_float_06;
 
         // Compute a + b where a is prefix-incremented before use
         // Expected: (a+1) + b
@@ -969,7 +969,7 @@ TEST_CASE("Prefix and postfix distinction", "[gen][incr-decr][prefix-vs-postfix]
 
 TEST_CASE("Increment/decrement on unsigned integer types", "[gen][incr-decr][unsigned]") {
     auto jit = gen_jit(R"SRC(
-        module __incr_unsigned__;
+        module gen_arithmetic_float_07;
 
         prefix_incr_ubyte(a : byte) : byte {
             return ++a;

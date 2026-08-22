@@ -39,7 +39,7 @@
 TEST_CASE("Callable member: bind a method through an object", "[gen][callable][member]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_01;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -60,7 +60,7 @@ TEST_CASE("Callable member: bind a method through an object", "[gen][callable][m
 TEST_CASE("Callable member: bind through a reference receiver", "[gen][callable][member]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_02;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -84,7 +84,7 @@ TEST_CASE("Callable member: bind through a reference receiver", "[gen][callable]
 TEST_CASE("Callable member: bind through a pointer receiver", "[gen][callable][member]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_03;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -106,7 +106,7 @@ TEST_CASE("Callable member: bind through a pointer receiver", "[gen][callable][m
 TEST_CASE("Callable member: bind through a link receiver", "[gen][callable][member]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_04;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -128,7 +128,7 @@ TEST_CASE("Callable member: bind through a link receiver", "[gen][callable][memb
 TEST_CASE("Callable member: bind 'this.method' inside a member function", "[gen][callable][member]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_05;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -154,7 +154,7 @@ TEST_CASE("Callable member: bind a bare member name inside a member function", "
     // A bare `add` in a callable position inside a non-static member function
     // implicitly binds the enclosing `this`.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_06;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -179,7 +179,7 @@ TEST_CASE("Callable member: a virtual method bound through a base reference disp
     "[gen][callable][member][virtual]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_07;
         class Base {
             public:
             value(x : int) : int { return x; }
@@ -209,7 +209,7 @@ TEST_CASE("Callable member: an inherited virtual method bound through a derived 
     // `d.value` resolves to Base::value: the receiver is upcast to the Base
     // subobject, which is also the pointer the vptr is loaded from.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_08;
         class Base {
             public:
             base : int;
@@ -236,7 +236,7 @@ TEST_CASE("Callable member: a non-virtual method of a secondary base upcasts the
     // `A` is not the first base of `C`, so binding `c.getA` must adjust the
     // receiver to the A subobject or the wrong field is read.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_09;
         struct First {
             pad0 : long;
             pad1 : long;
@@ -264,7 +264,7 @@ TEST_CASE("Callable member: a const object binds a const member function",
     "[gen][callable][member][const]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_10;
         struct Counter {
             base : int;
             const add(x : int) : int { return base + x; }
@@ -289,7 +289,7 @@ TEST_CASE("Callable member: a const object cannot bind a non-const member functi
     "[gen][callable][member][const]")
 {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_callable_member_11;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -310,7 +310,7 @@ TEST_CASE("Callable member: naming a non-static member without an object is an e
 {
     // ERR_CALLABLE_MEMBER_BIND_REQUIRES_OBJECT
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_callable_member_12;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -326,7 +326,7 @@ TEST_CASE("Callable member: overloaded methods disambiguated by the callable pro
     "[gen][callable][member][overload]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_13;
         struct Counter {
             base : int;
             compute(x : double) : int { return 99; }
@@ -349,7 +349,7 @@ TEST_CASE("Callable member: store a bound callable in a struct member and call i
     "[gen][callable][member][store]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_14;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -374,7 +374,7 @@ TEST_CASE("Callable member: store a bound callable in a struct member and call i
 TEST_CASE("Callable member: pass a bound callable as an argument", "[gen][callable][member]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_15;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -398,7 +398,7 @@ TEST_CASE("Callable member: a bound callable called inside a try catches the thr
     // The bound callable is called through create_call_or_invoke(), so the indirect
     // call carries an unwind edge and the enclosing try catches the exception.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_16;
         class Boom : public Exception {
             public:
             Boom(code : int) : Exception(code) {}
@@ -431,7 +431,7 @@ TEST_CASE("Callable member: a null pointer receiver bound to a nullable callable
     "[gen][callable][member][null]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_17;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -453,7 +453,7 @@ TEST_CASE("Callable member: a non-null pointer receiver bound to a nullable call
     "[gen][callable][member][null]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_18;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -479,7 +479,7 @@ TEST_CASE("Callable member: a null pointer receiver bound to a non-null callable
     // A '&' callable cannot hold null, so the bind dereferences the receiver and
     // the null check raises a FatalError (non-zero exit status).
     auto res = build_and_exec(R"SRC(
-        module test;
+        module gen_callable_member_19;
         struct Counter {
             base : int;
             add(x : int) : int { return base + x; }
@@ -497,7 +497,7 @@ TEST_CASE("Callable member: bind a virtual method through an owner receiver",
     "[gen][callable][member][virtual][owner]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_member_20;
         class Base {
             public:
             value(x : int) : int { return x; }

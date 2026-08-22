@@ -38,7 +38,7 @@
 TEST_CASE("Static local variable with constant init persists across calls",
           "[gen][static-local]") {
     auto jit = gen_jit(R"SRC(
-        module __sl_const__;
+        module gen_static_local_01;
 
         test() : int {
             static x : int = 42;
@@ -62,7 +62,7 @@ TEST_CASE("Static local variable with constant init persists across calls",
 TEST_CASE("Static local variable initialized by function call — called once",
           "[gen][static-local]") {
     auto jit = gen_jit(R"SRC(
-        module __sl_func_init__;
+        module gen_static_local_02;
 
         call_count : int;
 
@@ -100,7 +100,7 @@ TEST_CASE("Static local variable initialized by function call — called once",
 TEST_CASE("Two functions with identically named static locals are independent",
           "[gen][static-local]") {
     auto jit = gen_jit(R"SRC(
-        module __sl_name_unique__;
+        module gen_static_local_03;
 
         foo() : int {
             static i : int = 100;
@@ -134,7 +134,7 @@ TEST_CASE("Two functions with identically named static locals are independent",
 TEST_CASE("Static local persists, non-static local resets each call",
           "[gen][static-local]") {
     auto jit = gen_jit(R"SRC(
-        module __sl_vs_nonstatic__;
+        module gen_static_local_04;
 
         test_static() : int {
             static s : int = 0;
@@ -172,7 +172,7 @@ TEST_CASE("Static local persists, non-static local resets each call",
 TEST_CASE("Static local depending on global variable — correct init order",
           "[gen][static-local][init-order]") {
     auto jit = gen_jit(R"SRC(
-        module __sl_dep_global__;
+        module gen_static_local_05;
 
         base_val : int = 50;
 
@@ -196,7 +196,7 @@ TEST_CASE("Static local depending on global variable — correct init order",
 TEST_CASE("Static local array with brace init",
           "[gen][static-local][brace-init]") {
     auto jit = gen_jit(R"SRC(
-        module __sl_array__;
+        module gen_static_local_06;
 
         get(idx : int) : int {
             static arr : int[3] {10, 20, 30};
@@ -219,7 +219,7 @@ TEST_CASE("Static local array with brace init",
 TEST_CASE("Static local of struct type — constructor called at global init",
           "[gen][static-local][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __sl_struct__;
+        module gen_static_local_07;
 
         ctor_count : int;
 
@@ -263,7 +263,7 @@ TEST_CASE("Static local of struct type — constructor called at global init",
 TEST_CASE("Static local with designated struct initializer",
           "[gen][static-local][designated-init]") {
     auto jit = gen_jit(R"SRC(
-        module __sl_desig__;
+        module gen_static_local_08;
 
         struct Point {
             x : int;
@@ -298,7 +298,7 @@ TEST_CASE("Static local with designated struct initializer",
 TEST_CASE("Static local inside nested block persists across calls",
           "[gen][static-local]") {
     auto jit = gen_jit(R"SRC(
-        module __sl_nested_block__;
+        module gen_static_local_09;
 
         test() : int {
             {

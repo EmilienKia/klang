@@ -105,7 +105,7 @@ struct Immutable {
 
 TEST_CASE("Struct operator= overload basic", "[operator][gen][assign]") {
     auto jit = gen_jit(R"SRC(
-module __op_asgn_basic__;
+module gen_assign_operator_01;
 struct Counter {
     val: int;
     operator =(const other: Counter&) : Counter& {
@@ -135,7 +135,7 @@ test() : int {
 
 TEST_CASE("Struct operator+= overload", "[operator][gen][assign][compound]") {
     auto jit = gen_jit(R"SRC(
-module __op_add_asgn__;
+module gen_assign_operator_02;
 struct Acc {
     val: int;
     operator +=(n: int) : Acc& {
@@ -158,7 +158,7 @@ test() : int {
 
 TEST_CASE("Struct operator-= overload", "[operator][gen][assign][compound]") {
     auto jit = gen_jit(R"SRC(
-module __op_sub_asgn__;
+module gen_assign_operator_03;
 struct Acc {
     val: int;
     operator -=(n: int) : Acc& {
@@ -181,7 +181,7 @@ test() : int {
 
 TEST_CASE("Struct operator*= overload", "[operator][gen][assign][compound]") {
     auto jit = gen_jit(R"SRC(
-module __op_mul_asgn__;
+module gen_assign_operator_04;
 struct Acc {
     val: int;
     operator *=(n: int) : Acc& {
@@ -204,7 +204,7 @@ test() : int {
 
 TEST_CASE("Struct operator/= overload", "[operator][gen][assign][compound]") {
     auto jit = gen_jit(R"SRC(
-module __op_div_asgn__;
+module gen_assign_operator_05;
 struct Acc {
     val: int;
     operator /=(n: int) : Acc& {
@@ -227,7 +227,7 @@ test() : int {
 
 TEST_CASE("Struct operator%= overload", "[operator][gen][assign][compound]") {
     auto jit = gen_jit(R"SRC(
-module __op_mod_asgn__;
+module gen_assign_operator_06;
 struct Acc {
     val: int;
     operator %=(n: int) : Acc& {
@@ -254,7 +254,7 @@ test() : int {
 
 TEST_CASE("Struct operator&= overload", "[operator][gen][assign][bitwise]") {
     auto jit = gen_jit(R"SRC(
-module __op_bitand_asgn__;
+module gen_assign_operator_07;
 struct Mask {
     val: int;
     operator &=(n: int) : Mask& {
@@ -277,7 +277,7 @@ test() : int {
 
 TEST_CASE("Struct operator|= overload", "[operator][gen][assign][bitwise]") {
     auto jit = gen_jit(R"SRC(
-module __op_bitor_asgn__;
+module gen_assign_operator_08;
 struct Mask {
     val: int;
     operator |=(n: int) : Mask& {
@@ -300,7 +300,7 @@ test() : int {
 
 TEST_CASE("Struct operator^= overload", "[operator][gen][assign][bitwise]") {
     auto jit = gen_jit(R"SRC(
-module __op_bitxor_asgn__;
+module gen_assign_operator_09;
 struct Mask {
     val: int;
     operator ^=(n: int) : Mask& {
@@ -327,7 +327,7 @@ test() : int {
 
 TEST_CASE("Struct operator<<= overload", "[operator][gen][assign][shift]") {
     auto jit = gen_jit(R"SRC(
-module __op_shl_asgn__;
+module gen_assign_operator_10;
 struct Bits {
     val: int;
     operator <<=(n: int) : Bits& {
@@ -350,7 +350,7 @@ test() : int {
 
 TEST_CASE("Struct operator>>= overload", "[operator][gen][assign][shift]") {
     auto jit = gen_jit(R"SRC(
-module __op_shr_asgn__;
+module gen_assign_operator_11;
 struct Bits {
     val: int;
     operator >>=(n: int) : Bits& {
@@ -377,7 +377,7 @@ test() : int {
 
 TEST_CASE("Assignment chaining with operator=", "[operator][gen][assign][chain]") {
     auto jit = gen_jit(R"SRC(
-module __op_asgn_chain__;
+module gen_assign_operator_12;
 struct Val {
     v: int;
     operator =(const other: Val&) : Val& {
@@ -406,7 +406,7 @@ test() : int {
 
 TEST_CASE("Implicit copy assignment for struct", "[operator][gen][assign][implicit]") {
     auto jit = gen_jit(R"SRC(
-module __op_asgn_implicit__;
+module gen_assign_operator_13;
 struct Point {
     x: int;
     y: int;
@@ -428,7 +428,7 @@ test() : int {
 
 TEST_CASE("Implicit copy assignment overwrites all fields", "[operator][gen][assign][implicit]") {
     auto jit = gen_jit(R"SRC(
-module __op_asgn_implicit2__;
+module gen_assign_operator_14;
 struct Pair {
     a: int;
     b: int;
@@ -461,7 +461,7 @@ test() : int {
 // that broke transform-stream `read()` loops ("current = _in->read();").
 TEST_CASE("Copy assignment from value-returning call", "[operator][gen][assign][implicit]") {
     auto jit = gen_jit(R"SRC(
-module __op_asgn_sret__;
+module gen_assign_operator_15;
 struct Box {
     a: int;
     b: int;
@@ -498,7 +498,7 @@ test() : int {
 
 TEST_CASE("Deleted operator= prevents assignment", "[operator][gen][assign][delete]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __op_asgn_delete__;
+module gen_assign_operator_16;
 struct Immutable {
     v: int;
     operator =(const other: Immutable&) -> delete;
@@ -520,7 +520,7 @@ test() : int {
 
 TEST_CASE("Non-member operator= is rejected", "[parser][operator][assign][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __op_asgn_nonmember__;
+module gen_assign_operator_17;
 struct Val {
     v: int;
 }
@@ -540,7 +540,7 @@ test() : int {
 
 TEST_CASE("Virtual operator= in class", "[operator][gen][assign][class][virtual]") {
     auto jit = gen_jit(R"SRC(
-module __op_asgn_virtual__;
+module gen_assign_operator_18;
 class Base {
     public val: int;
     public operator =(n: int) : Base& {
@@ -572,7 +572,7 @@ test() : int {
 
 TEST_CASE("Struct operator+= with struct parameter", "[operator][gen][assign][compound]") {
     auto jit = gen_jit(R"SRC(
-module __op_add_asgn_struct__;
+module gen_assign_operator_19;
 struct Vec2 {
     x: int;
     y: int;
@@ -605,7 +605,7 @@ test() : int {
 
 TEST_CASE("Multiple compound assignment operators in sequence", "[operator][gen][assign][compound]") {
     auto jit = gen_jit(R"SRC(
-module __op_compound_seq__;
+module gen_assign_operator_20;
 struct Counter {
     val: int;
     operator +=(n: int) : Counter& {
@@ -641,7 +641,7 @@ test() : int {
 
 TEST_CASE("Assignment on const struct object is rejected", "[operator][gen][assign][const]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __op_asgn_const__;
+module gen_assign_operator_21;
 struct Val {
     v: int;
     operator =(const other: Val&) : Val& {
@@ -686,7 +686,7 @@ TEST_CASE("No implicit copy assignment for class", "[operator][gen][assign][clas
     // (or be rejected).  This test simply ensures compilation succeeds with a
     // direct field assignment on a class (no operator= overload involved).
     auto jit = gen_jit(R"SRC(
-module __op_asgn_no_implicit_class__;
+module gen_assign_operator_22;
 class Widget {
     public val: int;
 }
@@ -708,7 +708,7 @@ test() : int {
 
 TEST_CASE("Deleted compound operator+= prevents usage", "[operator][gen][assign][delete][compound]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-module __op_add_asgn_delete__;
+module gen_assign_operator_23;
 struct Counter {
     val: int;
     operator +=(n: int) -> delete;
@@ -728,7 +728,7 @@ test() : int {
 
 TEST_CASE("Operator= with void return compiles", "[operator][gen][assign]") {
     auto jit = gen_jit(R"SRC(
-module __op_asgn_void__;
+module gen_assign_operator_24;
 struct Val {
     v: int;
     operator =(n: int) {
@@ -753,7 +753,7 @@ test() : int {
 
 TEST_CASE("Bool assignment — local variable", "[gen][assign][bool]") {
     auto jit = gen_jit(R"SRC(
-module __bool_assign_local__;
+module gen_assign_operator_25;
 test() : int {
     flag : bool = true;
     if (!flag) return 1;
@@ -772,7 +772,7 @@ test() : int {
 
 TEST_CASE("Bool assignment — struct member", "[gen][assign][bool]") {
     auto jit = gen_jit(R"SRC(
-module __bool_assign_member__;
+module gen_assign_operator_26;
 struct Toggle {
     _on : bool;
     Toggle() { _on = false; }
@@ -798,7 +798,7 @@ test() : int {
 
 TEST_CASE("Bool assignment — from comparison expression", "[gen][assign][bool]") {
     auto jit = gen_jit(R"SRC(
-module __bool_assign_cmp__;
+module gen_assign_operator_27;
 test(x : int) : int {
     positive : bool = x > 0;
     if (positive) return 1;

@@ -68,7 +68,7 @@ TEST_CASE("Parse #expr unary prefix", "[parser][expression][drain]") {
 // Drain parameter: function takes int# and just reads the value (no actual drain)
 TEST_CASE("Drain basic read through drain parameter", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
-        module __drain_basic_read__;
+        module gen_drain_01;
 
         read_via_drain(v : int#) : int {
             return v;
@@ -88,7 +88,7 @@ TEST_CASE("Drain basic read through drain parameter", "[gen][drain]") {
 // Drain parameter with struct: pass a struct by drain, read its member
 TEST_CASE("Drain struct member read", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
-        module __drain_struct_read__;
+        module gen_drain_02;
 
         struct Pt {
             x : int = 0;
@@ -120,7 +120,7 @@ TEST_CASE("Drain struct member read", "[gen][drain]") {
 // The drain operator # must be explicit. But drain → reference is OK.
 TEST_CASE("Drain implicit conversion to reference parameter", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
-        module __drain_to_ref__;
+        module gen_drain_03;
 
         // Only a reference-taking function exists
         read_ref(v : int&) : int {
@@ -146,7 +146,7 @@ TEST_CASE("Drain implicit conversion to reference parameter", "[gen][drain]") {
 // When both ref and drain overloads exist, #x selects the drain overload
 TEST_CASE("Drain overload resolution prefers drain overload", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
-        module __drain_overload__;
+        module gen_drain_04;
 
         choose(v : int&) : int {
             return 1;
@@ -183,7 +183,7 @@ TEST_CASE("Drain overload resolution prefers drain overload", "[gen][drain]") {
 // A local variable of drain type can be declared and used
 TEST_CASE("Drain variable declaration and usage", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
-        module __drain_var__;
+        module gen_drain_05;
 
         test() : int {
             x : int = 77;
@@ -203,7 +203,7 @@ TEST_CASE("Drain variable declaration and usage", "[gen][drain]") {
 
 TEST_CASE("Drain on const object is rejected", "[gen][drain][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __drain_const_error__;
+        module gen_drain_06;
 
         test() : int {
             const x : int = 42;
@@ -223,7 +223,7 @@ TEST_CASE("Drain on const object is rejected", "[gen][drain][error]") {
 // Note: implicit ref→drain conversion is NOT allowed (spec says explicit # is required).
 TEST_CASE("Mutable local can be passed to drain parameter", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
-        module __mutable_to_drain__;
+        module gen_drain_07;
 
         consume(v : int#) : int {
             return v;
@@ -246,7 +246,7 @@ TEST_CASE("Mutable local can be passed to drain parameter", "[gen][drain]") {
 
 TEST_CASE("Drain type mangling", "[gen][drain][mangling]") {
     auto jit = gen_jit(R"SRC(
-        module __drain_mangle__;
+        module gen_drain_08;
 
         drain_fn(v : int#) : int {
             return v;
@@ -269,7 +269,7 @@ TEST_CASE("Drain type mangling", "[gen][drain][mangling]") {
 
 TEST_CASE("Drain value load — arithmetic through drain", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
-        module __drain_arith__;
+        module gen_drain_09;
 
         add_via_drain(a : int#, b : int#) : int {
             return a + b;
@@ -294,7 +294,7 @@ TEST_CASE("Drain value load — arithmetic through drain", "[gen][drain]") {
 // Passing a drain through another function preserving the drain type
 TEST_CASE("Drain parameter forwarding to drain parameter", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
-        module __drain_forward__;
+        module gen_drain_10;
 
         inner(v : int#) : int {
             return v;
@@ -321,7 +321,7 @@ TEST_CASE("Drain parameter forwarding to drain parameter", "[gen][drain]") {
 
 TEST_CASE("Drain struct — simulated move constructor pattern", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
-        module __drain_move_ctor__;
+        module gen_drain_11;
 
         struct Resource {
             value : int = 0;

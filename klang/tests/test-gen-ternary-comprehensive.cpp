@@ -17,7 +17,7 @@
 
 TEST_CASE("Ternary: primitive in arithmetic sub-expression", "[gen][ternary][primitives][sub-expression]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_prim_expr__;
+module gen_ternary_comprehensive_01;
 
 test() : int {
     // Ternary as operand in arithmetic
@@ -32,7 +32,7 @@ test() : int {
 
 TEST_CASE("Ternary: primitive in logical sub-expression", "[gen][ternary][primitives][sub-expression]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_prim_logic__;
+module gen_ternary_comprehensive_02;
 
 test() : bool {
     // Ternary as operand in logical expression
@@ -47,7 +47,7 @@ test() : bool {
 
 TEST_CASE("Ternary: primitive in assignment", "[gen][ternary][primitives][assignment]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_prim_assign__;
+module gen_ternary_comprehensive_03;
 
 test() : int {
     x : int = 5 > 3 ? 42 : 24;
@@ -63,7 +63,7 @@ test() : int {
 
 TEST_CASE("Ternary: primitive as function argument", "[gen][ternary][primitives][function-arg]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_prim_arg__;
+module gen_ternary_comprehensive_04;
 
 add(a : int, b : int) : int {
     return a + b;
@@ -82,7 +82,7 @@ test() : int {
 
 TEST_CASE("Ternary: primitive in return statement", "[gen][ternary][primitives][return]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_prim_return__;
+module gen_ternary_comprehensive_05;
 
 get_value(flag : bool) : int {
     return flag ? 777 : 888;
@@ -100,7 +100,7 @@ test() : int {
 
 TEST_CASE("Ternary: double in arithmetic", "[gen][ternary][primitives][floating-point]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_double__;
+module gen_ternary_comprehensive_06;
 
 test() : double {
     x : double = true ? 3.14 : 2.71;
@@ -118,7 +118,7 @@ test() : double {
 
 TEST_CASE("Ternary: char type", "[gen][ternary][primitives][char]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_char__;
+module gen_ternary_comprehensive_07;
 
 test() : int {
     c : char = 5 > 3 ? 'A' : 'B';
@@ -140,7 +140,7 @@ test() : int {
 
 TEST_CASE("Ternary: enum in assignment", "[gen][ternary][enums][assignment]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_enum_assign__;
+module gen_ternary_comprehensive_08;
 
 enum Color { Red; Green; Blue; }
 
@@ -163,7 +163,7 @@ test() : int {
 
 TEST_CASE("Ternary: enum as function argument", "[gen][ternary][enums][function-arg]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_enum_arg__;
+module gen_ternary_comprehensive_09;
 
 enum Status { Idle; Running; Done; }
 
@@ -184,7 +184,7 @@ test() : int {
 
 TEST_CASE("Ternary: enum in return statement", "[gen][ternary][enums][return]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_enum_return__;
+module gen_ternary_comprehensive_10;
 
 enum Priority { Low; Medium; High; }
 
@@ -210,7 +210,7 @@ test() : int {
 
 TEST_CASE("Ternary: union in assignment", "[gen][ternary][unions][assignment]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_union_assign__;
+module gen_ternary_comprehensive_11;
 
 union Value {
     i : int;
@@ -232,7 +232,7 @@ test() : int {
 
 TEST_CASE("Ternary: union as function argument", "[gen][ternary][unions][function-arg]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_union_arg__;
+module gen_ternary_comprehensive_12;
 
 union Number {
     i : int;
@@ -263,7 +263,7 @@ test() : int {
 
 TEST_CASE("Ternary: struct in assignment", "[gen][ternary][aggregates][assignment]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_struct_assign__;
+module gen_ternary_comprehensive_13;
 
 struct Point {
     x : int;
@@ -284,7 +284,7 @@ test() : int {
 
 TEST_CASE("Ternary: struct in return", "[gen][ternary][aggregates][return]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_struct_return__;
+module gen_ternary_comprehensive_14;
 
 struct Pair {
     first : int;
@@ -310,7 +310,7 @@ test() : int {
 TEST_CASE("Ternary: struct as function argument",
           "[gen][ternary][aggregates][function-arg]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_struct_arg__;
+module gen_ternary_comprehensive_15;
 
 struct Coord {
     row : int;
@@ -340,7 +340,7 @@ test() : int {
 
 TEST_CASE("Ternary: reference in assignment", "[gen][ternary][references][assignment]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_ref_assign__;
+module gen_ternary_comprehensive_16;
 
 test() : int {
     x : int = 10;
@@ -358,7 +358,7 @@ test() : int {
 
 TEST_CASE("Ternary: pointer in assignment", "[gen][ternary][pointers][assignment]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_ptr_assign__;
+module gen_ternary_comprehensive_17;
 
 test() : int {
     x : int = 42;
@@ -377,7 +377,7 @@ test() : int {
 TEST_CASE("Ternary: reference through ternary-selected pointer",
           "[gen][ternary][references][indirect]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_ref_indirect__;
+module gen_ternary_comprehensive_18;
 
 test() : int {
     x : int = 10;
@@ -401,7 +401,7 @@ test() : int {
 
 TEST_CASE("Ternary: nested ternaries (primitive)", "[gen][ternary][primitives][nested]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_nested_prim__;
+module gen_ternary_comprehensive_19;
 
 test() : int {
     // Nested ternaries in both branches
@@ -418,7 +418,7 @@ test() : int {
 
 TEST_CASE("Ternary: deeply nested ternaries", "[gen][ternary][primitives][nested]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_deep_nested__;
+module gen_ternary_comprehensive_20;
 
 test() : int {
     // Triple-nested ternary
@@ -434,7 +434,7 @@ test() : int {
 
 TEST_CASE("Ternary: ternary with complex condition", "[gen][ternary][primitives][complex-condition]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_complex_cond__;
+module gen_ternary_comprehensive_21;
 
 test() : int {
     a : int = 5;
@@ -453,7 +453,7 @@ test() : int {
 
 TEST_CASE("Ternary: ternary in chain of operations", "[gen][ternary][primitives][chain]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_chain__;
+module gen_ternary_comprehensive_22;
 
 test() : int {
     // Ternary result used in multiple operations
@@ -477,7 +477,7 @@ test() : int {
 
 TEST_CASE("Ternary: type adaptation in branches", "[gen][ternary][type-adaptation]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_type_adapt__;
+module gen_ternary_comprehensive_23;
 
 test() : long {
     // Branches have different primitive types that need adaptation
@@ -493,7 +493,7 @@ test() : long {
 
 TEST_CASE("Ternary: bool result from primitive comparison", "[gen][ternary][type-coercion]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_bool_result__;
+module gen_ternary_comprehensive_24;
 
 test() : bool {
     x : int = 10;
@@ -516,7 +516,7 @@ test() : bool {
 
 TEST_CASE("Ternary: zero and negative values", "[gen][ternary][primitives][edge-cases]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_edge_zero_neg__;
+module gen_ternary_comprehensive_25;
 
 test() : int {
     zero_or_neg : int = true ? 0 : -42;
@@ -531,7 +531,7 @@ test() : int {
 
 TEST_CASE("Ternary: same value in both branches", "[gen][ternary][primitives][edge-cases]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_same_value__;
+module gen_ternary_comprehensive_26;
 
 test() : int {
     // Both branches return same value (dead code in else)
@@ -547,7 +547,7 @@ test() : int {
 
 TEST_CASE("Ternary: boundary values", "[gen][ternary][primitives][edge-cases]") {
     auto jit = gen_jit(R"SRC(
-module __ternary_boundary__;
+module gen_ternary_comprehensive_27;
 
 test() : int {
     // Maximum int value

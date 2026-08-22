@@ -56,7 +56,7 @@
 
 TEST_CASE("[A] Phase2: single-class vtable has correct slot count", "[phase2][materializer][vtable]") {
     auto comp = compile_model(R"SRC(
-        module __phase2_a__;
+        module model_materializer_01;
         class Foo {
             bar() : int { return 42; }
         }
@@ -82,7 +82,7 @@ TEST_CASE("[A] Phase2: single-class vtable has correct slot count", "[phase2][ma
 
 TEST_CASE("[B] Phase2: derived override updates vtable entry func pointer", "[phase2][materializer][vtable]") {
     auto comp = compile_model(R"SRC(
-        module __phase2_b__;
+        module model_materializer_02;
         class Base {
             value() : int { return 1; }
         }
@@ -123,7 +123,7 @@ TEST_CASE("[B] Phase2: derived override updates vtable entry func pointer", "[ph
 
 TEST_CASE("[C] Phase2: abstract class has abstract slot without error", "[phase2][materializer][vtable][abstract]") {
     auto comp = compile_model(R"SRC(
-        module __phase2_c__;
+        module model_materializer_03;
         abstract class Shape {
             abstract area() : int;
         }
@@ -148,7 +148,7 @@ TEST_CASE("[C] Phase2: abstract class has abstract slot without error", "[phase2
 
 TEST_CASE("[D] Phase2: concrete derived class fills all abstract slots", "[phase2][materializer][vtable][abstract]") {
     auto comp = compile_model(R"SRC(
-        module __phase2_d__;
+        module model_materializer_04;
         abstract class Shape {
             abstract area() : int;
         }
@@ -180,7 +180,7 @@ TEST_CASE("[D] Phase2: concrete derived class fills all abstract slots", "[phase
 
 TEST_CASE("[E] Phase2: single inheritance → one secondary vtable spec for primary base", "[phase2][materializer][secondary_vtable]") {
     auto comp = compile_model(R"SRC(
-        module __phase2_e__;
+        module model_materializer_05;
         class Base {
             foo() : int { return 1; }
         }
@@ -210,7 +210,7 @@ TEST_CASE("[E] Phase2: single inheritance → one secondary vtable spec for prim
 
 TEST_CASE("[F] Phase2: multiple class bases → secondary_vtable_spec present", "[phase2][materializer][secondary_vtable]") {
     auto comp = compile_model(R"SRC(
-        module __phase2_f__;
+        module model_materializer_06;
         class B {
             b_method() : int { return 10; }
         }
@@ -254,7 +254,7 @@ TEST_CASE("[F] Phase2: multiple class bases → secondary_vtable_spec present", 
 
 TEST_CASE("[G] Phase2: inherited-but-not-overridden slot → needs_thunk false", "[phase2][materializer][secondary_vtable]") {
     auto comp = compile_model(R"SRC(
-        module __phase2_g__;
+        module model_materializer_07;
         class B {
             foo() : int { return 1; }
         }
@@ -305,7 +305,7 @@ TEST_CASE("[G] Phase2: inherited-but-not-overridden slot → needs_thunk false",
 
 TEST_CASE("[H] Phase2: overridden slot in D with non-zero offset → needs_thunk true", "[phase2][materializer][secondary_vtable]") {
     auto comp = compile_model(R"SRC(
-        module __phase2_h__;
+        module model_materializer_08;
         class B {
             foo() : int { return 1; }
         }
@@ -365,7 +365,7 @@ TEST_CASE("[H] Phase2: overridden slot in D with non-zero offset → needs_thunk
 
 TEST_CASE("[I] Phase2: single inheritance virtual dispatch works at runtime", "[phase2][materializer][runtime]") {
     auto jit = gen_jit(R"SRC(
-        module __phase2_i__;
+        module model_materializer_09;
         class Animal {
             speak() : int { return 0; }
         }
@@ -392,7 +392,7 @@ TEST_CASE("[I] Phase2: single inheritance virtual dispatch works at runtime", "[
 
 TEST_CASE("[J] Phase2: multiple class inheritance virtual dispatch works at runtime", "[phase2][materializer][runtime]") {
     auto jit = gen_jit(R"SRC(
-        module __phase2_j__;
+        module model_materializer_10;
         class B {
             value() : int { return 10; }
         }
@@ -433,7 +433,7 @@ TEST_CASE("[K] Phase2: non-abstract class with unimplemented abstract slot → c
     // symbol_resolver already catches this; model_materializer provides a
     // defensive second check. Either way it must fail to compile.
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __phase2_k__;
+        module model_materializer_11;
         abstract class Base {
             abstract method() : int;
         }
@@ -451,7 +451,7 @@ TEST_CASE("[K] Phase2: non-abstract class with unimplemented abstract slot → c
 TEST_CASE("[DBG-V2] Child : Base(abstract) : Ping, Pong — secondary specs cover Pong transitively",
           "[phase2][materializer][secondary_vtable][debug]") {
     auto comp = compile_model(R"SRC(
-        module __dbg_v2__;
+        module model_materializer_12;
         interface Ping { ping() : int; }
         interface Pong { pong() : int; }
         abstract class Base : public Ping, public Pong {
@@ -525,7 +525,7 @@ TEST_CASE("[DBG-V2] Child : Base(abstract) : Ping, Pong — secondary specs cove
 TEST_CASE("[P] Secondary interface base of intermediate interface dispatches at runtime",
           "[phase2][materializer][runtime][multi-interface]") {
     auto jit = gen_jit(R"SRC(
-        module __phase2_p__;
+        module model_materializer_13;
         interface A {
             doA() : int;
         }

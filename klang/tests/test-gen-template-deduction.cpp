@@ -25,7 +25,7 @@
 #include "helpers.hpp"
 TEST_CASE("template deduction - simple single param", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_01;
         template<typename T>
         fun identity(a: T) : T {
             return a;
@@ -40,7 +40,7 @@ TEST_CASE("template deduction - simple single param", "[gen][template-deduction]
 }
 TEST_CASE("template deduction - two different params", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_02;
         template<typename T, typename U>
         fun first_of(a: T, b: U) : T {
             return a;
@@ -55,7 +55,7 @@ TEST_CASE("template deduction - two different params", "[gen][template-deduction
 }
 TEST_CASE("template deduction - same param used twice", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_03;
         template<typename T>
         fun add_same(a: T, b: T) : T {
             return a + b;
@@ -70,7 +70,7 @@ TEST_CASE("template deduction - same param used twice", "[gen][template-deductio
 }
 TEST_CASE("template deduction - pack deduction", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_04;
         fun sum2(a: int, b: int) : int {
             return a + b;
         }
@@ -88,7 +88,7 @@ TEST_CASE("template deduction - pack deduction", "[gen][template-deduction]") {
 }
 TEST_CASE("template deduction - mixed param + pack", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_05;
         fun combine(a: int, b: int, c: int) : int {
             return a + b + c;
         }
@@ -106,7 +106,7 @@ TEST_CASE("template deduction - mixed param + pack", "[gen][template-deduction]"
 }
 TEST_CASE("template deduction - forwarding chain", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_06;
         fun target(a: int, b: int) : int {
             return a * b;
         }
@@ -128,7 +128,7 @@ TEST_CASE("template deduction - forwarding chain", "[gen][template-deduction]") 
 }
 TEST_CASE("template deduction - empty pack", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_07;
         fun no_args() : int {
             return 77;
         }
@@ -146,7 +146,7 @@ TEST_CASE("template deduction - empty pack", "[gen][template-deduction]") {
 }
 TEST_CASE("template deduction - prefers non-template exact match", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_08;
         fun process(a: int) : int {
             return a + 1;
         }
@@ -166,7 +166,7 @@ TEST_CASE("template deduction - prefers non-template exact match", "[gen][templa
 
 TEST_CASE("template deduction - deduces when non-template has different arity", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_09;
         // Non-template with 2 params (different arity than the call)
         fun work(a: int, b: int) : int {
             return a + b;
@@ -190,7 +190,7 @@ TEST_CASE("template deduction - fails on type inconsistency", "[gen][template-de
     // Same T deduced to int from first arg and long from second arg
     // should fail deduction, leaving no viable candidate → compilation error
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_template_deduction_10;
         template<typename T>
         fun same_type(a: T, b: T) : T {
             return a + b;
@@ -204,7 +204,7 @@ TEST_CASE("template deduction - fails on type inconsistency", "[gen][template-de
 
 TEST_CASE("template deduction - overloaded targets with single type param", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_11;
 
         // Overloaded target functions with different parameter types
         fun compute(a: int) : int {
@@ -321,7 +321,7 @@ TEST_CASE("template deduction - overloaded targets with single type param", "[ge
 
 TEST_CASE("template deduction - pack forwarding to distinct targets", "[gen][template-deduction]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_template_deduction_12;
 
         // Distinct target functions (no overloading)
         fun target_one(a: int) : int {

@@ -67,7 +67,7 @@
 // =============================================================================
 TEST_CASE("Downcast: ref<Base> init from Derived object reads Base field", "[gen][downcast][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_ref_init__;
+        module gen_indirection_downcast_01;
 
         struct Base {
             val : int;
@@ -96,7 +96,7 @@ TEST_CASE("Downcast: ref<Base> init from Derived object reads Base field", "[gen
 // =============================================================================
 TEST_CASE("Downcast: lien<Base> init from &Derived reads Base field", "[gen][downcast][lien]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_lien_init__;
+        module gen_indirection_downcast_02;
 
         struct Base {
             val : int;
@@ -125,7 +125,7 @@ TEST_CASE("Downcast: lien<Base> init from &Derived reads Base field", "[gen][dow
 // =============================================================================
 TEST_CASE("Downcast: lien<Base> can be rebound to another Derived", "[gen][downcast][lien]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_lien_rebind__;
+        module gen_indirection_downcast_03;
 
         struct Base {
             val : int;
@@ -156,7 +156,7 @@ TEST_CASE("Downcast: lien<Base> can be rebound to another Derived", "[gen][downc
 // =============================================================================
 TEST_CASE("Downcast: pin<Base> init from &Derived reads Base field", "[gen][downcast][view]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_pin_init__;
+        module gen_indirection_downcast_04;
 
         struct Base {
             val : int;
@@ -185,7 +185,7 @@ TEST_CASE("Downcast: pin<Base> init from &Derived reads Base field", "[gen][down
 // =============================================================================
 TEST_CASE("Downcast: ptr<Base> init from &Derived reads Base field", "[gen][downcast][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_ptr_init__;
+        module gen_indirection_downcast_05;
 
         struct Base {
             val : int;
@@ -214,7 +214,7 @@ TEST_CASE("Downcast: ptr<Base> init from &Derived reads Base field", "[gen][down
 // =============================================================================
 TEST_CASE("Downcast: ptr<Base> can be reassigned to another Derived", "[gen][downcast][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_ptr_rebind__;
+        module gen_indirection_downcast_06;
 
         struct Base {
             val : int;
@@ -245,7 +245,7 @@ TEST_CASE("Downcast: ptr<Base> can be reassigned to another Derived", "[gen][dow
 // =============================================================================
 TEST_CASE("Downcast: lien<Base> init from non-null ptr<Derived> succeeds", "[gen][downcast][lien]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_lien_from_ptr_ok__;
+        module gen_indirection_downcast_07;
 
         struct Base {
             val : int;
@@ -275,7 +275,7 @@ TEST_CASE("Downcast: lien<Base> init from non-null ptr<Derived> succeeds", "[gen
 // =============================================================================
 TEST_CASE("Downcast: writing through ref<Base> modifies Base field of Derived", "[gen][downcast][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_ref_write__;
+        module gen_indirection_downcast_08;
 
         struct Base {
             val : int;
@@ -305,7 +305,7 @@ TEST_CASE("Downcast: writing through ref<Base> modifies Base field of Derived", 
 // =============================================================================
 TEST_CASE("Downcast: ptr<Base> initially null, then assigned to Derived", "[gen][downcast][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_ptr_null_then_ok__;
+        module gen_indirection_downcast_09;
 
         struct Base {
             val : int;
@@ -335,7 +335,7 @@ TEST_CASE("Downcast: ptr<Base> initially null, then assigned to Derived", "[gen]
 // =============================================================================
 TEST_CASE("Downcast error: ref<Base> init from unrelated type is rejected", "[gen][resolution][downcast]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __dc_err_ref_unrelated__;
+        module gen_indirection_downcast_10;
 
         struct Base { val : int; Base() : val(0) {} }
         struct Unrelated { data : int; Unrelated() : data(0) {} }
@@ -353,7 +353,7 @@ TEST_CASE("Downcast error: ref<Base> init from unrelated type is rejected", "[ge
 // =============================================================================
 TEST_CASE("Downcast error: lien<Base> init from unrelated type is rejected", "[gen][resolution][downcast]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __dc_err_lien_unrelated__;
+        module gen_indirection_downcast_11;
 
         struct Base { val : int; Base() : val(0) {} }
         struct Unrelated { data : int; Unrelated() : data(0) {} }
@@ -371,7 +371,7 @@ TEST_CASE("Downcast error: lien<Base> init from unrelated type is rejected", "[g
 // =============================================================================
 TEST_CASE("Downcast error: ptr<Base> assigned &Unrelated is rejected", "[gen][resolution][downcast]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __dc_err_ptr_unrelated__;
+        module gen_indirection_downcast_12;
 
         struct Base { val : int; Base() : val(0) {} }
         struct Unrelated { data : int; Unrelated() : data(0) {} }
@@ -389,7 +389,7 @@ TEST_CASE("Downcast error: ptr<Base> assigned &Unrelated is rejected", "[gen][re
 // =============================================================================
 TEST_CASE("Downcast error: pin<Base> cannot be rebound after construction", "[gen][resolution][downcast]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __dc_err_pin_rebind__;
+        module gen_indirection_downcast_13;
 
         struct Base { val : int; Base() : val(0) {} }
         struct Derived : public Base { Derived() : Base(1) {} }
@@ -411,7 +411,7 @@ TEST_CASE("Downcast error: pin<Base> cannot be rebound after construction", "[ge
 // =============================================================================
 TEST_CASE("Downcast: ptr<interface> init from implementing class, dispatch via ref", "[gen][downcast][interface]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_interface_ptr__;
+        module gen_indirection_downcast_14;
 
         interface Printable {
             get_val() : int;
@@ -441,7 +441,7 @@ TEST_CASE("Downcast: ptr<interface> init from implementing class, dispatch via r
 // =============================================================================
 TEST_CASE("Downcast: ptr<A> from C where C→B→A (transitive upcast)", "[gen][downcast][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_transitive_ptr__;
+        module gen_indirection_downcast_15;
 
         struct A {
             val : int;
@@ -476,7 +476,7 @@ TEST_CASE("Downcast: ptr<A> from C where C→B→A (transitive upcast)", "[gen][
 // =============================================================================
 TEST_CASE("Downcast: writing through lien<Base> modifies Derived's Base field", "[gen][downcast][lien]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_lien_write__;
+        module gen_indirection_downcast_16;
 
         struct Base {
             val : int;
@@ -506,7 +506,7 @@ TEST_CASE("Downcast: writing through lien<Base> modifies Derived's Base field", 
 // =============================================================================
 TEST_CASE("Downcast: ptr<Base> assigned from pin<Derived>", "[gen][downcast][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __dc_ptr_from_pin__;
+        module gen_indirection_downcast_17;
 
         struct Base {
             val : int;

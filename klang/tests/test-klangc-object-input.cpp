@@ -80,8 +80,8 @@ TEST_CASE("klangc: .o file linked into shared library exports C symbol", "[klang
     {
         std::ofstream ofs(k_path);
         ofs << R"(
-            module objtest;
-            namespace objtest {
+            module klangc_object_input_01;
+            namespace klangc_object_input_01 {
                 k_func() : int {
                     return 7;
                 }
@@ -144,7 +144,7 @@ TEST_CASE("klangc: .o file linked into executable exports C symbol", "[klangc][o
     {
         std::ofstream ofs(k_path);
         ofs << R"(
-            module objtest_exe;
+            module klangc_object_input_02;
             main() : int {
                 return 0;
             }

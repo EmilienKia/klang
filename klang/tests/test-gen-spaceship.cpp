@@ -41,15 +41,15 @@
 
 TEST_CASE("Builtin primitive <=> on int", "[gen][spaceship][primitive]") {
     auto jit = gen_jit(R"SRC(
-module __ss_prim_int__;
+module gen_spaceship_01;
 lt() : int { return 3 <=> 5; }
 eq() : int { return 5 <=> 5; }
 gt() : int { return 7 <=> 5; }
 )SRC");
     REQUIRE(jit);
-    auto lt = jit->lookup_symbol<int(*)()>("_KFN15__ss_prim_int__2ltEv");
-    auto eq = jit->lookup_symbol<int(*)()>("_KFN15__ss_prim_int__2eqEv");
-    auto gt = jit->lookup_symbol<int(*)()>("_KFN15__ss_prim_int__2gtEv");
+    auto lt = jit->lookup_symbol<int(*)()>("_KFN16gen_spaceship_012ltEv");
+    auto eq = jit->lookup_symbol<int(*)()>("_KFN16gen_spaceship_012eqEv");
+    auto gt = jit->lookup_symbol<int(*)()>("_KFN16gen_spaceship_012gtEv");
     REQUIRE(lt); REQUIRE(eq); REQUIRE(gt);
     CHECK(lt() < 0);
     CHECK(eq() == 0);
@@ -58,15 +58,15 @@ gt() : int { return 7 <=> 5; }
 
 TEST_CASE("Builtin primitive <=> on double", "[gen][spaceship][primitive]") {
     auto jit = gen_jit(R"SRC(
-module __ss_prim_dbl__;
+module gen_spaceship_02;
 lt() : double { return 1.5 <=> 2.5; }
 eq() : double { return 2.5 <=> 2.5; }
 gt() : double { return 3.5 <=> 2.5; }
 )SRC");
     REQUIRE(jit);
-    auto lt = jit->lookup_symbol<double(*)()>("_KFN15__ss_prim_dbl__2ltEv");
-    auto eq = jit->lookup_symbol<double(*)()>("_KFN15__ss_prim_dbl__2eqEv");
-    auto gt = jit->lookup_symbol<double(*)()>("_KFN15__ss_prim_dbl__2gtEv");
+    auto lt = jit->lookup_symbol<double(*)()>("_KFN16gen_spaceship_022ltEv");
+    auto eq = jit->lookup_symbol<double(*)()>("_KFN16gen_spaceship_022eqEv");
+    auto gt = jit->lookup_symbol<double(*)()>("_KFN16gen_spaceship_022gtEv");
     REQUIRE(lt); REQUIRE(eq); REQUIRE(gt);
     CHECK(lt() < 0.0);
     CHECK(eq() == 0.0);
@@ -79,7 +79,7 @@ gt() : double { return 3.5 <=> 2.5; }
 
 TEST_CASE("Member <=> used directly and as fallback for all six comparisons", "[gen][spaceship][member][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __ss_member_all__;
+module gen_spaceship_03;
 struct Point {
     x: int;
     y: int;
@@ -102,17 +102,17 @@ le_same() : bool { a: Point(1, 2); b: Point(1, 2); return a <= b; }
 ge_same() : bool { a: Point(1, 2); b: Point(1, 2); return a >= b; }
 )SRC");
     REQUIRE(jit);
-    auto direct = jit->lookup_symbol<int(*)()>("_KFN17__ss_member_all__6directEv");
-    auto lt = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__2ltEv");
-    auto gt = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__2gtEv");
-    auto le = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__2leEv");
-    auto ge = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__2geEv");
-    auto eq_diff = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__7eq_diffEv");
-    auto ne_diff = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__7ne_diffEv");
-    auto eq_same = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__7eq_sameEv");
-    auto ne_same = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__7ne_sameEv");
-    auto le_same = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__7le_sameEv");
-    auto ge_same = jit->lookup_symbol<bool(*)()>("_KFN17__ss_member_all__7ge_sameEv");
+    auto direct = jit->lookup_symbol<int(*)()>("_KFN16gen_spaceship_036directEv");
+    auto lt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_032ltEv");
+    auto gt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_032gtEv");
+    auto le = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_032leEv");
+    auto ge = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_032geEv");
+    auto eq_diff = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_037eq_diffEv");
+    auto ne_diff = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_037ne_diffEv");
+    auto eq_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_037eq_sameEv");
+    auto ne_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_037ne_sameEv");
+    auto le_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_037le_sameEv");
+    auto ge_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_037ge_sameEv");
     REQUIRE(direct); REQUIRE(lt); REQUIRE(gt); REQUIRE(le); REQUIRE(ge);
     REQUIRE(eq_diff); REQUIRE(ne_diff); REQUIRE(eq_same); REQUIRE(ne_same);
     REQUIRE(le_same); REQUIRE(ge_same);
@@ -137,7 +137,7 @@ ge_same() : bool { a: Point(1, 2); b: Point(1, 2); return a >= b; }
 
 TEST_CASE("Non-member (global) <=> used directly and as comparison fallback", "[gen][spaceship][non-member]") {
     auto jit = gen_jit(R"SRC(
-module __ss_global__;
+module gen_spaceship_04;
 struct Pt { x: int; Pt(ax: int) : x(ax) {} }
 operator <=>(a: Pt&, b: Pt&) : int { return a.x - b.x; }
 direct() : int { a: Pt(3); b: Pt(5); return a <=> b; }
@@ -145,9 +145,9 @@ lt_true() : bool { a: Pt(3); b: Pt(5); return a < b; }
 lt_false() : bool { a: Pt(5); b: Pt(3); return a < b; }
 )SRC");
     REQUIRE(jit);
-    auto direct = jit->lookup_symbol<int(*)()>("_KFN13__ss_global__6directEv");
-    auto lt_true = jit->lookup_symbol<bool(*)()>("_KFN13__ss_global__7lt_trueEv");
-    auto lt_false = jit->lookup_symbol<bool(*)()>("_KFN13__ss_global__8lt_falseEv");
+    auto direct = jit->lookup_symbol<int(*)()>("_KFN16gen_spaceship_046directEv");
+    auto lt_true = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_047lt_trueEv");
+    auto lt_false = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_048lt_falseEv");
     REQUIRE(direct); REQUIRE(lt_true); REQUIRE(lt_false);
     CHECK(direct() < 0);
     CHECK(lt_true() == true);
@@ -160,7 +160,7 @@ lt_false() : bool { a: Pt(5); b: Pt(3); return a < b; }
 
 TEST_CASE("Heterogeneous <=> declared on right operand triggers SPACESHIP_SWAP", "[gen][spaceship][comparison-fallback][swap]") {
     auto jit = gen_jit(R"SRC(
-module __ss_swap__;
+module gen_spaceship_05;
 struct A { v: int; A(av: int) : v(av) {} }
 struct B {
     v: int;
@@ -179,16 +179,16 @@ le_same() : bool { a: A(5); b: B(5); return a <= b; }
 ge_same() : bool { a: A(5); b: B(5); return a >= b; }
 )SRC");
     REQUIRE(jit);
-    auto lt = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__2ltEv");
-    auto gt = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__2gtEv");
-    auto le = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__2leEv");
-    auto ge = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__2geEv");
-    auto ne = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__2neEv");
-    auto eq_diff = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__7eq_diffEv");
-    auto eq_same = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__7eq_sameEv");
-    auto ne_same = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__7ne_sameEv");
-    auto le_same = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__7le_sameEv");
-    auto ge_same = jit->lookup_symbol<bool(*)()>("_KFN11__ss_swap__7ge_sameEv");
+    auto lt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_052ltEv");
+    auto gt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_052gtEv");
+    auto le = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_052leEv");
+    auto ge = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_052geEv");
+    auto ne = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_052neEv");
+    auto eq_diff = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_057eq_diffEv");
+    auto eq_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_057eq_sameEv");
+    auto ne_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_057ne_sameEv");
+    auto le_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_057le_sameEv");
+    auto ge_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_057ge_sameEv");
     REQUIRE(lt); REQUIRE(gt); REQUIRE(le); REQUIRE(ge); REQUIRE(ne);
     REQUIRE(eq_diff); REQUIRE(eq_same); REQUIRE(ne_same); REQUIRE(le_same); REQUIRE(ge_same);
 
@@ -214,7 +214,7 @@ TEST_CASE("Exact operator takes precedence over spaceship fallback", "[gen][spac
     // exact DIRECT operator (must win) or the correct SPACESHIP fallback
     // (must NOT be used here) was selected.
     auto jit = gen_jit(R"SRC(
-module __ss_prio_direct__;
+module gen_spaceship_06;
 struct P {
     v: int;
     P(av: int) : v(av) {}
@@ -224,7 +224,7 @@ struct P {
 lt() : bool { a: P(10); b: P(5); return a < b; }
 )SRC");
     REQUIRE(jit);
-    auto lt = jit->lookup_symbol<bool(*)()>("_KFN18__ss_prio_direct__2ltEv");
+    auto lt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_062ltEv");
     REQUIRE(lt);
     // Real "<" (10 < 5) is false, but the always-true exact operator< must be
     // the one used (DIRECT beats SPACESHIP), so the result must be true.
@@ -237,7 +237,7 @@ TEST_CASE("Spaceship fallback takes precedence over NEGATE/SWAP fallback tiers",
         // !==) were (incorrectly) preferred over SPACESHIP, the wrong answer
         // would come out for differing values.
         auto jit = gen_jit(R"SRC(
-module __ss_prio_negate__;
+module gen_spaceship_07;
 struct P {
     v: int;
     P(av: int) : v(av) {}
@@ -247,7 +247,7 @@ struct P {
 ne() : bool { a: P(3); b: P(5); return a != b; }
 )SRC");
         REQUIRE(jit);
-        auto ne = jit->lookup_symbol<bool(*)()>("_KFN18__ss_prio_negate__2neEv");
+        auto ne = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_072neEv");
         REQUIRE(ne);
         // Real 3 != 5 is true; NEGATE(always-true ==) would (wrongly) give false.
         CHECK(ne() == true);
@@ -258,7 +258,7 @@ ne() : bool { a: P(3); b: P(5); return a != b; }
         // swapped >) were (incorrectly) preferred over SPACESHIP, the wrong
         // answer would come out.
         auto jit = gen_jit(R"SRC(
-module __ss_prio_swap__;
+module gen_spaceship_08;
 struct P {
     v: int;
     P(av: int) : v(av) {}
@@ -268,7 +268,7 @@ struct P {
 lt() : bool { a: P(5); b: P(3); return a < b; }
 )SRC");
         REQUIRE(jit);
-        auto lt = jit->lookup_symbol<bool(*)()>("_KFN16__ss_prio_swap__2ltEv");
+        auto lt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_082ltEv");
         REQUIRE(lt);
         // Real 5 < 3 is false; SWAP(always-true >) would (wrongly) give true.
         CHECK(lt() == false);
@@ -281,7 +281,7 @@ lt() : bool { a: P(5); b: P(3); return a < b; }
 
 TEST_CASE("Virtual <=> is dispatched polymorphically through comparison fallback", "[gen][spaceship][virtual]") {
     auto jit = gen_jit(R"SRC(
-module __ss_virtual__;
+module gen_spaceship_09;
 class Base {
     public v: int;
     Base() : v(0) {}
@@ -306,8 +306,8 @@ test_derived() : bool {
 }
 )SRC");
     REQUIRE(jit);
-    auto test_base = jit->lookup_symbol<bool(*)()>("_KFN14__ss_virtual__9test_baseEv");
-    auto test_derived = jit->lookup_symbol<bool(*)()>("_KFN14__ss_virtual__12test_derivedEv");
+    auto test_base = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_099test_baseEv");
+    auto test_derived = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_0912test_derivedEv");
     REQUIRE(test_base); REQUIRE(test_derived);
     CHECK(test_base() == true);     // 3 - 5 = -2 < 0 -> true
     CHECK(test_derived() == false); // (3 - 5) + 1000 = 998, not < 0 -> false
@@ -319,7 +319,7 @@ test_derived() : bool {
 
 TEST_CASE("Template struct with member <=>", "[gen][spaceship][template]") {
     auto jit = gen_jit(R"SRC(
-module __ss_template__;
+module gen_spaceship_10;
 template<typename T>
 struct Box {
     v: T;
@@ -345,8 +345,8 @@ test_eq() : bool {
 }
 )SRC");
     REQUIRE(jit);
-    auto test_lt = jit->lookup_symbol<bool(*)()>("_KFN15__ss_template__7test_ltEv");
-    auto test_eq = jit->lookup_symbol<bool(*)()>("_KFN15__ss_template__7test_eqEv");
+    auto test_lt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_107test_ltEv");
+    auto test_eq = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_107test_eqEv");
     REQUIRE(test_lt); REQUIRE(test_eq);
     CHECK(test_lt() == true);
     CHECK(test_eq() == true);
@@ -358,7 +358,7 @@ test_eq() : bool {
 
 TEST_CASE("Direct use of <=> returning bool is rejected (Phase 1 return-type restriction)", "[gen][spaceship][error]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ss_err_bad_return_direct__;
+        module gen_spaceship_11;
         struct P {
             v: int;
             const operator <=>(other: P&) : bool { return v < other.v; }
@@ -372,7 +372,7 @@ TEST_CASE("Comparison fallback ignores an <=> with an invalid (bool) return type
     // comparison operator can be synthesized for `<` here: this must fail,
     // not silently (and incorrectly) use the invalid spaceship operator.
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ss_err_bad_return_fallback__;
+        module gen_spaceship_12;
         struct P {
             v: int;
             const operator <=>(other: P&) : bool { return v < other.v; }
@@ -394,7 +394,7 @@ TEST_CASE("Comparison fallback ignores an <=> with an invalid (bool) return type
 
 TEST_CASE("Direct use of <=> returning an aggregate works with no extra validation", "[gen][spaceship][phase2][direct]") {
     auto jit = gen_jit(R"SRC(
-module __ss2_direct__;
+module gen_spaceship_13;
 struct Ordering {
     v: int;
     Ordering(av: int) : v(av) {}
@@ -416,14 +416,14 @@ test() : int {
 }
 )SRC");
     REQUIRE(jit);
-    auto test = jit->lookup_symbol<int(*)()>("_KFN14__ss2_direct__4testEv");
+    auto test = jit->lookup_symbol<int(*)()>("_KFN16gen_spaceship_134testEv");
     REQUIRE(test);
     CHECK(test() < 0); // (1,2) vs (1,5): x equal, y: 2 - 5 = -3
 }
 
 TEST_CASE("Aggregate-returning <=> used as fallback source for all six comparisons", "[gen][spaceship][phase2][comparison-fallback]") {
     auto jit = gen_jit(R"SRC(
-module __ss2_fallback__;
+module gen_spaceship_14;
 struct Ordering {
     v: int;
     Ordering(av: int) : v(av) {}
@@ -453,14 +453,14 @@ eq_same() : bool { a: Point(1, 2); b: Point(1, 2); return a == b; }
 ne_same() : bool { a: Point(1, 2); b: Point(1, 2); return a != b; }
 )SRC");
     REQUIRE(jit);
-    auto lt = jit->lookup_symbol<bool(*)()>("_KFN16__ss2_fallback__2ltEv");
-    auto gt = jit->lookup_symbol<bool(*)()>("_KFN16__ss2_fallback__2gtEv");
-    auto le = jit->lookup_symbol<bool(*)()>("_KFN16__ss2_fallback__2leEv");
-    auto ge = jit->lookup_symbol<bool(*)()>("_KFN16__ss2_fallback__2geEv");
-    auto eq_diff = jit->lookup_symbol<bool(*)()>("_KFN16__ss2_fallback__7eq_diffEv");
-    auto ne_diff = jit->lookup_symbol<bool(*)()>("_KFN16__ss2_fallback__7ne_diffEv");
-    auto eq_same = jit->lookup_symbol<bool(*)()>("_KFN16__ss2_fallback__7eq_sameEv");
-    auto ne_same = jit->lookup_symbol<bool(*)()>("_KFN16__ss2_fallback__7ne_sameEv");
+    auto lt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_142ltEv");
+    auto gt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_142gtEv");
+    auto le = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_142leEv");
+    auto ge = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_142geEv");
+    auto eq_diff = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_147eq_diffEv");
+    auto ne_diff = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_147ne_diffEv");
+    auto eq_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_147eq_sameEv");
+    auto ne_same = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_147ne_sameEv");
     REQUIRE(lt); REQUIRE(gt); REQUIRE(le); REQUIRE(ge);
     REQUIRE(eq_diff); REQUIRE(ne_diff); REQUIRE(eq_same); REQUIRE(ne_same);
 
@@ -477,7 +477,7 @@ ne_same() : bool { a: Point(1, 2); b: Point(1, 2); return a != b; }
 
 TEST_CASE("Aggregate-returning <=> declared only on right operand triggers SPACESHIP_SWAP", "[gen][spaceship][phase2][comparison-fallback][swap]") {
     auto jit = gen_jit(R"SRC(
-module __ss2_swap__;
+module gen_spaceship_15;
 struct Ordering {
     v: int;
     Ordering(av: int) : v(av) {}
@@ -494,8 +494,8 @@ lt() : bool { a: A(3); b: B(5); return a < b; }
 gt() : bool { a: A(3); b: B(5); return a > b; }
 )SRC");
     REQUIRE(jit);
-    auto lt = jit->lookup_symbol<bool(*)()>("_KFN12__ss2_swap__2ltEv");
-    auto gt = jit->lookup_symbol<bool(*)()>("_KFN12__ss2_swap__2gtEv");
+    auto lt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_152ltEv");
+    auto gt = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_152gtEv");
     REQUIRE(lt); REQUIRE(gt);
     // b's <=> is declared on B: B(5) <=> A(3) via SPACESHIP_SWAP, so wanted `a < b`
     // probes swap_of(<) = `>` against B's Ordering(5 - 3 = 2): 2 > 0 -> true.
@@ -505,7 +505,7 @@ gt() : bool { a: A(3); b: B(5); return a > b; }
 
 TEST_CASE("Virtual aggregate-returning <=> is dispatched polymorphically through comparison fallback", "[gen][spaceship][phase2][virtual]") {
     auto jit = gen_jit(R"SRC(
-module __ss2_virtual__;
+module gen_spaceship_16;
 struct Ordering {
     v: int;
     Ordering(av: int) : v(av) {}
@@ -535,8 +535,8 @@ test_derived() : bool {
 }
 )SRC");
     REQUIRE(jit);
-    auto test_base = jit->lookup_symbol<bool(*)()>("_KFN15__ss2_virtual__9test_baseEv");
-    auto test_derived = jit->lookup_symbol<bool(*)()>("_KFN15__ss2_virtual__12test_derivedEv");
+    auto test_base = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_169test_baseEv");
+    auto test_derived = jit->lookup_symbol<bool(*)()>("_KFN16gen_spaceship_1612test_derivedEv");
     REQUIRE(test_base); REQUIRE(test_derived);
     CHECK(test_base() == true);     // 3 - 5 = -2 < 0 -> true
     CHECK(test_derived() == false); // (3 - 5) + 1000 = 998, not < 0 -> false
@@ -547,7 +547,7 @@ TEST_CASE("Aggregate-returning <=> with no viable zero-comparison: direct use OK
     // `<=>` never needs it (the result might never be compared to anything), but
     // synthesizing `<` from it is impossible and must be a compile error.
     auto jit = gen_jit(R"SRC(
-module __ss2_err_no_zero_direct__;
+module gen_spaceship_17;
 struct Ordering2 { v: int; Ordering2(av: int) : v(av) {} }
 struct P {
     v: int;
@@ -557,12 +557,12 @@ struct P {
 direct() : int { a: P(1); b: P(2); r: Ordering2 = a <=> b; return r.v; }
 )SRC");
     REQUIRE(jit);
-    auto direct = jit->lookup_symbol<int(*)()>("_KFN26__ss2_err_no_zero_direct__6directEv");
+    auto direct = jit->lookup_symbol<int(*)()>("_KFN16gen_spaceship_176directEv");
     REQUIRE(direct);
     CHECK(direct() < 0); // 1 - 2 = -1
 
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ss2_err_no_zero_fallback__;
+        module gen_spaceship_18;
         struct Ordering2 { v: int; Ordering2(av: int) : v(av) {} }
         struct P {
             v: int;
@@ -579,7 +579,7 @@ TEST_CASE("Aggregate-returning <=> whose zero-comparison operator takes a refere
     // (by-value numeric parameter only, see docs) — so no fallback candidate is
     // viable and this must be a compile error, not a silent miscompile.
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __ss2_err_ref_param__;
+        module gen_spaceship_19;
         struct Ordering3 {
             v: int;
             Ordering3(av: int) : v(av) {}

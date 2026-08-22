@@ -31,12 +31,12 @@ using namespace k::parse::ast;
 
 TEST_CASE("Union basic declaration compiles", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_01;
         union MyUnion {
             first: int;
             second: long;
         }
-        fun get_size() : int {
+        get_size() : int {
             return 1;
         }
     )");
@@ -48,12 +48,12 @@ TEST_CASE("Union basic declaration compiles", "[gen][union]") {
 
 TEST_CASE("Union variable declaration and default construction", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_02;
         union MyUnion {
             first: int;
             second: long;
         }
-        fun test_default() : int {
+        test_default() : int {
             u : MyUnion;
             return 0;
         }
@@ -66,12 +66,12 @@ TEST_CASE("Union variable declaration and default construction", "[gen][union]")
 
 TEST_CASE("Union explicit member write and read", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_03;
         union MyUnion {
             first: int;
             second: long;
         }
-        fun test_write_read() : int {
+        test_write_read() : int {
             u : MyUnion;
             u.first = 42;
             return u.first;
@@ -85,12 +85,12 @@ TEST_CASE("Union explicit member write and read", "[gen][union]") {
 
 TEST_CASE("Union typed construction with initializer", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_04;
         union MyUnion {
             first: int;
             second: long;
         }
-        fun test_init() : int {
+        test_init() : int {
             u : MyUnion = 25;
             return u.first;
         }
@@ -103,12 +103,12 @@ TEST_CASE("Union typed construction with initializer", "[gen][union]") {
 
 TEST_CASE("Union second alternative access", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_05;
         union MyUnion {
             first: int;
             second: long;
         }
-        fun test_second() : long {
+        test_second() : long {
             u : MyUnion;
             u.second = 100;
             return u.second;
@@ -122,34 +122,34 @@ TEST_CASE("Union second alternative access", "[gen][union]") {
 
 TEST_CASE("Union drain addresser rejected", "[gen][union]") {
     REQUIRE(compile_should_fail(R"(
-        module test;
+        module gen_union_06;
         union MyUnion {
             first: int;
             second: int#;
         }
-        fun dummy() : int { return 0; }
+        dummy() : int { return 0; }
     )", nullptr));
 }
 
 TEST_CASE("Union multiple alternatives different sizes", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_07;
         union NumUnion {
             i: int;
             l: long;
             b: byte;
         }
-        fun test_int() : int {
+        test_int() : int {
             u : NumUnion;
             u.i = 42;
             return u.i;
         }
-        fun test_long() : long {
+        test_long() : long {
             u : NumUnion;
             u.l = 1000000;
             return u.l;
         }
-        fun test_byte() : byte {
+        test_byte() : byte {
             u : NumUnion;
             u.b = 7;
             return u.b;
@@ -169,15 +169,15 @@ TEST_CASE("Union multiple alternatives different sizes", "[gen][union]") {
 
 TEST_CASE("Union passed to function by reference", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_08;
         union MyUnion {
             first: int;
             second: long;
         }
-        fun read_first(u: MyUnion&) : int {
+        read_first(u: MyUnion&) : int {
             return u.first;
         }
-        fun test_ref() : int {
+        test_ref() : int {
             u : MyUnion;
             u.first = 99;
             return read_first(u);
@@ -195,7 +195,7 @@ TEST_CASE("Union passed to function by reference", "[gen][union]") {
 
 TEST_CASE("Union with struct alternative — write and read fields", "[gen][union][structs]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_09;
         struct Point {
             x: int = 0;
             y: int = 0;
@@ -204,7 +204,7 @@ TEST_CASE("Union with struct alternative — write and read fields", "[gen][unio
             point: Point;
             radius: int;
         }
-        fun test_struct_alt() : int {
+        test_struct_alt() : int {
             u : ShapeData;
             p : Point;
             p.x = 10;
@@ -221,7 +221,7 @@ TEST_CASE("Union with struct alternative — write and read fields", "[gen][unio
 
 TEST_CASE("Union with struct alternative — default construction", "[gen][union][structs]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_10;
         struct Pair {
             a: int = 5;
             b: int = 7;
@@ -230,7 +230,7 @@ TEST_CASE("Union with struct alternative — default construction", "[gen][union
             pair: Pair;
             value: int;
         }
-        fun test_default_struct() : int {
+        test_default_struct() : int {
             u : PairOrInt;
             return u.pair.a + u.pair.b;
         }
@@ -245,7 +245,7 @@ TEST_CASE("Union with struct alternative — default construction", "[gen][union
 
 TEST_CASE("Union with struct — switch between struct and primitive", "[gen][union][structs]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_11;
         struct Vec2 {
             x: int = 0;
             y: int = 0;
@@ -254,7 +254,7 @@ TEST_CASE("Union with struct — switch between struct and primitive", "[gen][un
             vec: Vec2;
             scalar: int;
         }
-        fun test_switch() : int {
+        test_switch() : int {
             u : VecOrScalar;
             u.scalar = 42;
             return u.scalar;
@@ -268,7 +268,7 @@ TEST_CASE("Union with struct — switch between struct and primitive", "[gen][un
 
 TEST_CASE("Union with struct — struct field modification via reference", "[gen][union][structs]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_12;
         struct Rect {
             w: int = 0;
             h: int = 0;
@@ -277,7 +277,7 @@ TEST_CASE("Union with struct — struct field modification via reference", "[gen
             rect: Rect;
             radius: int;
         }
-        fun test_struct_ref() : int {
+        test_struct_ref() : int {
             u : Shape;
             r : Rect;
             r.w = 3;
@@ -300,7 +300,7 @@ TEST_CASE("Union with struct — struct field modification via reference", "[gen
 
 TEST_CASE("Union with class alternative — basic instantiation", "[gen][union][class]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_13;
         class Counter {
             count: int;
             Counter() : count(0) {}
@@ -311,7 +311,7 @@ TEST_CASE("Union with class alternative — basic instantiation", "[gen][union][
             value: int;
             counter: Counter;
         }
-        fun test_class_alt() : int {
+        test_class_alt() : int {
             u : ValueOrCounter;
             u.value = 77;
             return u.value;
@@ -325,7 +325,7 @@ TEST_CASE("Union with class alternative — basic instantiation", "[gen][union][
 
 TEST_CASE("Union with struct and class mixed — access different alts", "[gen][union][class][structs]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_14;
         struct Coords {
             x: int = 0;
             y: int = 0;
@@ -341,12 +341,12 @@ TEST_CASE("Union with struct and class mixed — access different alts", "[gen][
             label: Label;
             tag: int;
         }
-        fun test_mixed_tag() : int {
+        test_mixed_tag() : int {
             u : Element;
             u.tag = 123;
             return u.tag;
         }
-        fun test_mixed_coords() : int {
+        test_mixed_coords() : int {
             u : Element;
             c : Coords;
             c.x = 5;
@@ -366,7 +366,7 @@ TEST_CASE("Union with struct and class mixed — access different alts", "[gen][
 
 TEST_CASE("Union with pointer alternative", "[gen][union][structs]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_15;
         struct Data {
             val: int = 0;
         }
@@ -374,7 +374,7 @@ TEST_CASE("Union with pointer alternative", "[gen][union][structs]") {
             ptr: Data*;
             val: int;
         }
-        fun test_ptr_alt() : int {
+        test_ptr_alt() : int {
             u : PtrOrVal;
             u.val = 55;
             return u.val;
@@ -392,13 +392,13 @@ TEST_CASE("Union with pointer alternative", "[gen][union][structs]") {
 
 TEST_CASE("Union discriminant updated on alternative switch", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_16;
         union MyUnion {
             first: int;
             second: long;
             third: byte;
         }
-        fun test_switch_disc() : int {
+        test_switch_disc() : int {
             u : MyUnion;
             u.first = 10;
             u.second = 20;
@@ -416,17 +416,17 @@ TEST_CASE("Union discriminant updated on alternative switch", "[gen][union]") {
 
 TEST_CASE("Union discriminant tracks last assigned alternative", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_17;
         union NumVal {
             i: int;
             l: long;
         }
-        fun get_disc(u: NumVal&) : int {
+        get_disc(u: NumVal&) : int {
             // Assign to l (index 1) then read back l
             u.l = 99;
             return 1;
         }
-        fun test_disc_track() : long {
+        test_disc_track() : long {
             u : NumVal;
             u.i = 5;
             get_disc(u);
@@ -441,7 +441,7 @@ TEST_CASE("Union discriminant tracks last assigned alternative", "[gen][union]")
 
 TEST_CASE("Union struct assignment updates discriminant", "[gen][union][structs]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_18;
         struct Vec2 {
             x: int = 0;
             y: int = 0;
@@ -450,7 +450,7 @@ TEST_CASE("Union struct assignment updates discriminant", "[gen][union][structs]
             vec: Vec2;
             val: int;
         }
-        fun test_struct_disc() : int {
+        test_struct_disc() : int {
             u : VecOrInt;
             v : Vec2;
             v.x = 3;
@@ -473,15 +473,15 @@ TEST_CASE("Union struct assignment updates discriminant", "[gen][union][structs]
 
 TEST_CASE("Union passed by value to function", "[gen][union]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_19;
         union IntOrLong {
             i: int;
             l: long;
         }
-        fun use_val(u: IntOrLong) : int {
+        use_val(u: IntOrLong) : int {
             return u.i;
         }
-        fun test_by_val() : int {
+        test_by_val() : int {
             u : IntOrLong;
             u.i = 77;
             return use_val(u);
@@ -499,22 +499,22 @@ TEST_CASE("Union passed by value to function", "[gen][union]") {
 
 TEST_CASE("Union exported to shared library and used from another module", "[gen][union][import]") {
     auto result = build_exec_with_lib(R"(
-        module mylib;
+        module gen_union_20;
         public:
         union IntOrLong {
             i: int;
             l: long;
         }
-        fun get_forty_two() : int {
+        get_forty_two() : int {
             u : IntOrLong;
             u.i = 42;
             return u.i;
         }
     )", R"(
-        module main;
-        import mylib;
-        fun main() : int {
-            return mylib::get_forty_two();
+        module gen_union_21;
+        import gen_union_20;
+        main() : int {
+            return gen_union_20::get_forty_two();
         }
     )");
     REQUIRE(result.exit_code == 42);
@@ -522,22 +522,22 @@ TEST_CASE("Union exported to shared library and used from another module", "[gen
 
 TEST_CASE("Union passed by reference across modules", "[gen][union][import]") {
     auto result = build_exec_with_lib(R"(
-        module mylib;
+        module gen_union_22;
         public:
         union IntOrLong {
             i: int;
             l: long;
         }
-        fun read_int(u: IntOrLong&) : int {
+        read_int(u: IntOrLong&) : int {
             return u.i;
         }
     )", R"(
-        module main;
-        import mylib;
-        fun main() : int {
-            u : mylib::IntOrLong;
+        module gen_union_23;
+        import gen_union_22;
+        main() : int {
+            u : gen_union_22::IntOrLong;
             u.i = 99;
-            return mylib::read_int(u);
+            return gen_union_22::read_int(u);
         }
     )");
     REQUIRE(result.exit_code == 99);
@@ -549,7 +549,7 @@ TEST_CASE("Union passed by reference across modules", "[gen][union][import]") {
 
 TEST_CASE("Nested union inside struct - basic declaration and usage", "[gen][union][nested]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_24;
         struct Container {
             union Value {
                 i: int;
@@ -573,7 +573,7 @@ TEST_CASE("Nested union inside struct - basic declaration and usage", "[gen][uni
 
 TEST_CASE("Nested union inside struct - multiple alternatives", "[gen][union][nested]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_25;
         struct Wrapper {
             union Data {
                 x: int;
@@ -604,7 +604,7 @@ TEST_CASE("Nested union inside struct - multiple alternatives", "[gen][union][ne
 
 TEST_CASE("Nested union inside class", "[gen][union][nested]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_26;
         class MyClass {
             public:
             union Result {
@@ -630,7 +630,7 @@ TEST_CASE("Nested union inside class", "[gen][union][nested]") {
 
 TEST_CASE("Nested union type used as function parameter type", "[gen][union][nested]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_27;
         struct Outer {
             union Inner {
                 a: int;
@@ -660,7 +660,7 @@ TEST_CASE("Nested union type used as function parameter type", "[gen][union][nes
 
 TEST_CASE("union Kind enum basic values", "[gen][union][kind]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_28;
         union Value {
             i: int;
             d: double;
@@ -693,7 +693,7 @@ TEST_CASE("union Kind enum basic values", "[gen][union][kind]") {
 
 TEST_CASE("union index() basic", "[gen][union][kind]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_29;
         union Value {
             i: int;
             d: double;
@@ -722,7 +722,7 @@ TEST_CASE("union index() basic", "[gen][union][kind]") {
 
 TEST_CASE("union index() after reassignment", "[gen][union][kind]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_30;
         union Value {
             i: int;
             d: double;
@@ -743,7 +743,7 @@ TEST_CASE("union index() after reassignment", "[gen][union][kind]") {
 
 TEST_CASE("union index() compared with Kind enum", "[gen][union][kind]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_31;
         union Value {
             i: int;
             d: double;
@@ -766,7 +766,7 @@ TEST_CASE("union index() compared with Kind enum", "[gen][union][kind]") {
 
 TEST_CASE("union index() on nested union in struct", "[gen][union][kind]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_32;
         struct Container {
             union Inner {
                 a: int;
@@ -789,7 +789,7 @@ TEST_CASE("union index() on nested union in struct", "[gen][union][kind]") {
 
 TEST_CASE("template union Kind enum and index()", "[gen][union][kind][template]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_33;
         template<typename T>
         union MaybeVal {
             some: T;
@@ -819,7 +819,7 @@ TEST_CASE("template union Kind enum and index()", "[gen][union][kind][template]"
 
 TEST_CASE("template struct with nested union — index and member access", "[gen][union][template][nested]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_34;
         template<typename R, typename E>
         struct Expected {
             union Storage {
@@ -856,7 +856,7 @@ TEST_CASE("template struct with nested union — index and member access", "[gen
 
 TEST_CASE("template struct with nested union — factory function", "[gen][union][template][nested][factory]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_35;
         template<typename R, typename E>
         struct Expected {
             union Storage {
@@ -904,7 +904,7 @@ TEST_CASE("template struct with nested union — factory function", "[gen][union
 // the next read).
 TEST_CASE("Union owner-array alternative updates discriminant", "[gen][union][owner]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_union_36;
         union Store {
             u8  : unsigned byte[]!;
             u16 : unsigned short[]!;

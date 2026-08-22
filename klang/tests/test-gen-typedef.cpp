@@ -35,7 +35,7 @@
 
 TEST_CASE("typedef — declaration, literal init and implicit widening to base", "[gen][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_01;
         typedef identifier : int;
         f() : int {
             id : identifier = 4;
@@ -51,7 +51,7 @@ TEST_CASE("typedef — declaration, literal init and implicit widening to base",
 
 TEST_CASE("typedef — explicit cast from the underlying type", "[gen][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_02;
         typedef identifier : int;
         f(n : int) : int {
             id : identifier = (identifier) n;
@@ -65,7 +65,7 @@ TEST_CASE("typedef — explicit cast from the underlying type", "[gen][typedef]"
 
 TEST_CASE("typedef — assigning the underlying type without a cast is an error", "[gen][typedef]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_typedef_03;
         typedef identifier : int;
         f(n : int) : int {
             id : identifier = 0;
@@ -77,7 +77,7 @@ TEST_CASE("typedef — assigning the underlying type without a cast is an error"
 
 TEST_CASE("typedef — expression locality: a tainted expression needs no cast", "[gen][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_04;
         typedef identifier : int;
         f() : int {
             id : identifier = 10;
@@ -93,7 +93,7 @@ TEST_CASE("typedef — expression locality: a tainted expression needs no cast",
 
 TEST_CASE("typedef — variable definition accepts the underlying type", "[gen][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_05;
         typedef identifier : int;
         f(n : int) : int {
             id : identifier = n;
@@ -107,7 +107,7 @@ TEST_CASE("typedef — variable definition accepts the underlying type", "[gen][
 
 TEST_CASE("typedef — typedef of a struct type", "[gen][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_06;
         struct Point { x : int; y : int; }
         typedef Coord : Point;
         f() : int {
@@ -125,7 +125,7 @@ TEST_CASE("typedef — typedef of a struct type", "[gen][typedef]") {
 
 TEST_CASE("typedef — overloading on a typedef is forbidden", "[gen][typedef]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module test;
+        module gen_typedef_07;
         typedef identifier : int;
         f(v : int) : int { return 1; }
         f(v : identifier) : int { return 2; }
@@ -135,7 +135,7 @@ TEST_CASE("typedef — overloading on a typedef is forbidden", "[gen][typedef]")
 
 TEST_CASE("typedef — parameter and return use the typedef", "[gen][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_08;
         typedef identifier : int;
         inc(id : identifier) : identifier { return id + 1; }
         f() : int {
@@ -150,7 +150,7 @@ TEST_CASE("typedef — parameter and return use the typedef", "[gen][typedef]") 
 
 TEST_CASE("typedef — a typedef mangles with its underlying type", "[gen][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_09;
         typedef identifier : int;
         plain(v : int) : int { return v; }
         tagged(v : identifier) : identifier { return v; }
@@ -163,7 +163,7 @@ TEST_CASE("typedef — a typedef mangles with its underlying type", "[gen][typed
 
 TEST_CASE("typedef — typedef inside a statement block", "[gen][typedef]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_10;
         f() : int {
             typedef identifier : int;
             id : identifier = 6;
@@ -178,7 +178,7 @@ TEST_CASE("typedef — typedef inside a statement block", "[gen][typedef]") {
 
 TEST_CASE("typedef — soft alias over a typedef stays nominally distinct", "[gen][typedef][alias]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_11;
         typedef identifier : int;
         alias id_t : identifier;
         f() : int {
@@ -195,7 +195,7 @@ TEST_CASE("typedef — soft alias over a typedef stays nominally distinct", "[ge
 
 TEST_CASE("typedef — composite scenario mixing alias and typedef", "[gen][typedef][alias]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_typedef_12;
         typedef identifier : int;
         alias num : int;
         gval : int = 7;

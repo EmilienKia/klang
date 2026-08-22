@@ -27,7 +27,7 @@
 TEST_CASE("Visibility: default visibility is PUBLIC for namespace members", "[visibility][model]") {
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-        module vis_test;
+        module gen_visibility_01;
         x : int;
         foo() : int { return 1; }
     )SRC");
@@ -48,7 +48,7 @@ TEST_CASE("Visibility: default visibility is PUBLIC for namespace members", "[vi
 TEST_CASE("Visibility: default visibility is PUBLIC for struct members", "[visibility][model]") {
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-        module vis_test;
+        module gen_visibility_02;
         struct S {
             x : int;
             foo() : int { return x; }
@@ -73,7 +73,7 @@ TEST_CASE("Visibility: default visibility is PUBLIC for struct members", "[visib
 TEST_CASE("Visibility: group specifier sets visibility for subsequent members", "[visibility][model]") {
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-        module vis_test;
+        module gen_visibility_03;
         struct S {
         public:
             a : int;
@@ -105,7 +105,7 @@ TEST_CASE("Visibility: group specifier sets visibility for subsequent members", 
 TEST_CASE("Visibility: per-element specifier overrides group visibility", "[visibility][model]") {
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-        module vis_test;
+        module gen_visibility_04;
         struct S {
         private:
             a : int;
@@ -138,7 +138,7 @@ TEST_CASE("Visibility: per-element specifier overrides group visibility", "[visi
 TEST_CASE("Visibility: per-element specifier on namespace-level function", "[visibility][model]") {
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-        module vis_test;
+        module gen_visibility_05;
         public  pub_fn() : int { return 1; }
         protected prot_fn() : int { return 2; }
         private priv_fn() : int { return 3; }
@@ -163,7 +163,7 @@ TEST_CASE("Visibility: per-element specifier on namespace-level function", "[vis
 
 TEST_CASE("Visibility: public struct members accessible from outside", "[visibility][gen]") {
     auto jit = gen_jit(R"SRC(
-        module vis_test;
+        module gen_visibility_06;
         struct S {
         public:
             x : int;
@@ -183,7 +183,7 @@ TEST_CASE("Visibility: public struct members accessible from outside", "[visibil
 
 TEST_CASE("Visibility: private struct member variable accessible from member function", "[visibility][gen]") {
     auto jit = gen_jit(R"SRC(
-        module vis_test;
+        module gen_visibility_07;
         struct Counter {
         private:
             count : int;
@@ -208,7 +208,7 @@ TEST_CASE("Visibility: private struct member variable accessible from member fun
 
 TEST_CASE("Visibility: private struct method accessible from another method of same struct", "[visibility][gen]") {
     auto jit = gen_jit(R"SRC(
-        module vis_test;
+        module gen_visibility_08;
         struct Helper {
         private:
             compute(p: int, q: int) : int { return p + q; }
@@ -228,7 +228,7 @@ TEST_CASE("Visibility: private struct method accessible from another method of s
 
 TEST_CASE("Visibility: private namespace function callable from same namespace", "[visibility][gen]") {
     auto jit = gen_jit(R"SRC(
-        module vis_test;
+        module gen_visibility_09;
         private helper() : int { return 42; }
         test() : int { return helper(); }
     )SRC");
@@ -240,7 +240,7 @@ TEST_CASE("Visibility: private namespace function callable from same namespace",
 
 TEST_CASE("Visibility: group visibility switch in namespace", "[visibility][gen]") {
     auto jit = gen_jit(R"SRC(
-        module vis_test;
+        module gen_visibility_10;
         private:
         helper() : int { return 21; }
         public:
@@ -255,7 +255,7 @@ TEST_CASE("Visibility: group visibility switch in namespace", "[visibility][gen]
 TEST_CASE("Visibility: struct visibility set by per-element specifier", "[visibility][model]") {
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
-        module vis_test;
+        module gen_visibility_11;
         public struct PubS { x : int; }
         private struct PrivS { y : int; }
     )SRC");
@@ -279,7 +279,7 @@ TEST_CASE("Visibility: struct visibility set by per-element specifier", "[visibi
 
 TEST_CASE("Visibility: private member variable not accessible from outside struct", "[visibility][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module vis_test;
+        module gen_visibility_12;
         struct S {
         private:
             x : int;
@@ -293,7 +293,7 @@ TEST_CASE("Visibility: private member variable not accessible from outside struc
 
 TEST_CASE("Visibility: private member function not callable from outside struct", "[visibility][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module vis_test;
+        module gen_visibility_13;
         struct S {
         private:
             secret() : int { return 42; }
@@ -307,7 +307,7 @@ TEST_CASE("Visibility: private member function not callable from outside struct"
 
 TEST_CASE("Visibility: protected member variable not accessible from outside struct", "[visibility][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module vis_test;
+        module gen_visibility_14;
         struct S {
         protected:
             val : int;
@@ -324,7 +324,7 @@ TEST_CASE("Visibility: private namespace function not callable from different na
     // but accessing the variable from outside the namespace should fail.
     // Here we test that private VARIABLE is not accessible.
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module vis_test;
+        module gen_visibility_15;
         namespace inner {
             private x : int;
         }
@@ -340,7 +340,7 @@ TEST_CASE("Visibility: private namespace function not callable from different na
 
 TEST_CASE("Visibility: protected member variable accessible from subclass method", "[visibility][gen]") {
     auto jit = gen_jit(R"SRC(
-        module vis_test;
+        module gen_visibility_16;
         struct Base {
         protected:
             val : int;
@@ -364,7 +364,7 @@ TEST_CASE("Visibility: protected member variable accessible from subclass method
 
 TEST_CASE("Visibility: protected member variable not accessible from unrelated struct", "[visibility][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module vis_test;
+        module gen_visibility_17;
         struct A {
         protected:
             x : int;
@@ -377,7 +377,7 @@ TEST_CASE("Visibility: protected member variable not accessible from unrelated s
 
 TEST_CASE("Visibility: protected method accessible from subclass method", "[visibility][gen]") {
     auto jit = gen_jit(R"SRC(
-        module vis_test;
+        module gen_visibility_18;
         struct Base {
         protected:
             compute() : int { return 21; }
@@ -399,7 +399,7 @@ TEST_CASE("Visibility: protected method accessible from subclass method", "[visi
 
 TEST_CASE("Visibility: protected method not callable from unrelated struct", "[visibility][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module vis_test;
+        module gen_visibility_19;
         struct A {
         protected:
             secret() : int { return 1; }
@@ -410,7 +410,7 @@ TEST_CASE("Visibility: protected method not callable from unrelated struct", "[v
 
 TEST_CASE("Visibility: private member not accessible from subclass", "[visibility][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module vis_test;
+        module gen_visibility_20;
         struct Base {
         private:
             x : int;
@@ -430,7 +430,7 @@ TEST_CASE("Visibility: private member not accessible from subclass", "[visibilit
 
 TEST_CASE("Visibility: private member variable not accessible via -> from outside struct", "[visibility][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module vis_test;
+        module gen_visibility_21;
         struct S {
         private:
             x : int;
@@ -447,7 +447,7 @@ TEST_CASE("Visibility: private member variable not accessible via -> from outsid
 
 TEST_CASE("Visibility: public member variable accessible via -> from outside struct", "[visibility][gen]") {
     auto jit = gen_jit(R"SRC(
-        module vis_test;
+        module gen_visibility_22;
         struct S {
         public:
             x : int;

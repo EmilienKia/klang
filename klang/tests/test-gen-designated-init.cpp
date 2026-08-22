@@ -144,7 +144,7 @@ TEST_CASE("Parse designated init — empty call form", "[parser][designated-init
 
 TEST_CASE("Designated init — simple struct with primitives", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_01;
         struct Point {
             x : int;
             y : int;
@@ -169,7 +169,7 @@ TEST_CASE("Designated init — simple struct with primitives", "[gen][designated
 
 TEST_CASE("Designated init — partial init, remaining defaults to zero", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_02;
         struct Trio {
             a : int;
             b : int;
@@ -202,7 +202,7 @@ TEST_CASE("Designated init — partial init, remaining defaults to zero", "[gen]
 
 TEST_CASE("Designated init — order independent", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_03;
         struct Point {
             x : int;
             y : int;
@@ -227,7 +227,7 @@ TEST_CASE("Designated init — order independent", "[gen][designated-init]") {
 
 TEST_CASE("Designated init — error on non-struct type", "[gen][designated-init]") {
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
+        module gen_designated_init_04;
         get() : int {
             x : int { .a = 1 };
             return x;
@@ -237,7 +237,7 @@ TEST_CASE("Designated init — error on non-struct type", "[gen][designated-init
 
 TEST_CASE("Designated init — error on unknown member", "[gen][designated-init]") {
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
+        module gen_designated_init_05;
         struct S {
             x : int;
         }
@@ -250,7 +250,7 @@ TEST_CASE("Designated init — error on unknown member", "[gen][designated-init]
 
 TEST_CASE("Designated init — error on duplicate member", "[gen][designated-init]") {
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
+        module gen_designated_init_06;
         struct S {
             x : int;
         }
@@ -263,7 +263,7 @@ TEST_CASE("Designated init — error on duplicate member", "[gen][designated-ini
 
 TEST_CASE("Designated init — error on private member", "[gen][designated-init]") {
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
+        module gen_designated_init_07;
         struct S {
             private:
             x : int;
@@ -279,7 +279,7 @@ TEST_CASE("Designated init — error on private member", "[gen][designated-init]
 
 TEST_CASE("Designated init — error on protected member from outside", "[gen][designated-init]") {
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
+        module gen_designated_init_08;
         struct S {
             protected:
             x : int;
@@ -295,7 +295,7 @@ TEST_CASE("Designated init — error on protected member from outside", "[gen][d
 
 TEST_CASE("Designated init — mixed assignment and constructor forms", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_09;
         struct Pair {
             x : int;
             y : int;
@@ -320,7 +320,7 @@ TEST_CASE("Designated init — mixed assignment and constructor forms", "[gen][d
 
 TEST_CASE("Designated init — constructor form for primitive member", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_10;
         struct S {
             x : int;
         }
@@ -337,7 +337,7 @@ TEST_CASE("Designated init — constructor form for primitive member", "[gen][de
 
 TEST_CASE("Designated init — float members", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_11;
         struct Vec {
             x : float;
             y : float;
@@ -362,7 +362,7 @@ TEST_CASE("Designated init — float members", "[gen][designated-init]") {
 
 TEST_CASE("Designated init — inherited member from base struct", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_12;
         struct Base {
             x : int;
         }
@@ -389,7 +389,7 @@ TEST_CASE("Designated init — inherited member from base struct", "[gen][design
 
 TEST_CASE("Designated init — qualified member disambiguation", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_13;
         struct A {
             v : int;
         }
@@ -426,7 +426,7 @@ TEST_CASE("Designated init — qualified member disambiguation", "[gen][designat
 
 TEST_CASE("Designated init — single member struct", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_14;
         struct Wrap {
             val : int;
         }
@@ -443,7 +443,7 @@ TEST_CASE("Designated init — single member struct", "[gen][designated-init]") 
 
 TEST_CASE("Designated init — all members omitted uses defaults", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_15;
         struct Pair {
             x : int;
             y : int;
@@ -468,7 +468,7 @@ TEST_CASE("Designated init — all members omitted uses defaults", "[gen][design
 
 TEST_CASE("Designated init — error on ambiguous inherited member without qualifier", "[gen][designated-init]") {
     REQUIRE_THROWS(gen_jit_throws(R"(
-        module test;
+        module gen_designated_init_16;
         struct A {
             v : int;
         }
@@ -490,7 +490,7 @@ TEST_CASE("Designated init — error on ambiguous inherited member without quali
 
 TEST_CASE("Designated init — non-designated struct member gets default-constructed", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_17;
         struct Inner {
             val : int;
             Inner() { val = 42; }
@@ -519,7 +519,7 @@ TEST_CASE("Designated init — non-designated struct member gets default-constru
 
 TEST_CASE("Designated init — private struct member gets default-constructed", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_18;
         struct Counter {
             count : int;
             Counter() { count = 99; }
@@ -544,7 +544,7 @@ TEST_CASE("Designated init — private struct member gets default-constructed", 
 
 TEST_CASE("Designated init — protected struct member gets default-constructed", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_19;
         struct Counter {
             count : int;
             Counter() { count = 77; }
@@ -569,7 +569,7 @@ TEST_CASE("Designated init — protected struct member gets default-constructed"
 
 TEST_CASE("Designated init — all struct-typed members default-constructed when none designated", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_20;
         struct A {
             val : int;
             A() { val = 11; }
@@ -602,7 +602,7 @@ TEST_CASE("Designated init — all struct-typed members default-constructed when
 
 TEST_CASE("Designated init — designated member constructed, non-designated gets default ctor", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_21;
         struct A {
             val : int;
             A() { val = 11; }
@@ -636,7 +636,7 @@ TEST_CASE("Designated init — designated member constructed, non-designated get
 
 TEST_CASE("Designated init — private and public struct members, only public designated", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_22;
         struct Inner {
             val : int;
             Inner() { val = 33; }
@@ -718,7 +718,7 @@ TEST_CASE("Parse designated init — multi-level qualified name", "[parser][desi
 
 TEST_CASE("Designated init — multi-level inheritance (grandparent member)", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_23;
         struct A {
             x : int;
         }
@@ -755,7 +755,7 @@ TEST_CASE("Designated init — multi-level inheritance (grandparent member)", "[
 
 TEST_CASE("Designated init — multi-level inheritance, only grandparent member designated", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_24;
         struct A {
             x : int;
         }
@@ -792,7 +792,7 @@ TEST_CASE("Designated init — multi-level inheritance, only grandparent member 
 
 TEST_CASE("Designated init — nested struct designated init", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_25;
         struct Inner {
             a : int;
             b : int;
@@ -828,7 +828,7 @@ TEST_CASE("Designated init — nested struct designated init", "[gen][designated
 
 TEST_CASE("Designated init — expression values", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_26;
         struct Point {
             x : int;
             y : int;
@@ -846,7 +846,7 @@ TEST_CASE("Designated init — expression values", "[gen][designated-init]") {
 
 TEST_CASE("Designated init — qualified constructor form", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_27;
         struct A {
             v : int;
         }
@@ -883,7 +883,7 @@ TEST_CASE("Designated init — qualified constructor form", "[gen][designated-in
 
 TEST_CASE("Designated init — inherited struct member with base default ctor", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_28;
         struct Counter {
             val : int;
             Counter() { val = 55; }
@@ -922,7 +922,7 @@ TEST_CASE("Designated init — inherited struct member with base default ctor", 
 
 TEST_CASE("Designated init — inherited member partially designated, rest defaults", "[gen][designated-init]") {
     auto jit = gen_jit(R"(
-        module test;
+        module gen_designated_init_29;
         struct Base {
             a : int;
             b : int;
@@ -976,7 +976,7 @@ TEST_CASE("Designated init — imported parent struct with private member",
     // (the base constructor is NOT called by designated init).
     auto result = build_exec_with_lib(
         R"K(
-            module baselib;
+            module gen_designated_init_30;
             struct Base {
             private:
                 secret : int;
@@ -986,9 +986,9 @@ TEST_CASE("Designated init — imported parent struct with private member",
             }
         )K",
         R"K(
-            module exec_desig;
-            import baselib;
-            struct Derived : public baselib::Base {
+            module gen_designated_init_31;
+            import gen_designated_init_30;
+            struct Derived : public gen_designated_init_30::Base {
                 extra : int;
             }
             main() : int {
@@ -1013,7 +1013,7 @@ TEST_CASE("Designated init — error: cannot designate private member of importe
     // with a "no member" or "not accessible" error.
     REQUIRE_THROWS(build_exec_with_lib(
         R"K(
-            module baselib_err;
+            module gen_designated_init_32;
             struct Base {
             private:
                 secret : int;
@@ -1022,9 +1022,9 @@ TEST_CASE("Designated init — error: cannot designate private member of importe
             }
         )K",
         R"K(
-            module exec_desig_err;
-            import baselib_err;
-            struct Derived : public baselib_err::Base {
+            module gen_designated_init_33;
+            import gen_designated_init_32;
+            struct Derived : public gen_designated_init_32::Base {
                 extra : int;
             }
             main() : int {
@@ -1041,7 +1041,7 @@ TEST_CASE("Designated init — imported parent struct with private member and ba
     // zero-inits and does NOT call the base ctor, get_secret() still returns 0.
     auto result = build_exec_with_lib(
         R"K(
-            module baselib_ctor;
+            module gen_designated_init_34;
             struct Base {
             private:
                 secret : int;
@@ -1052,9 +1052,9 @@ TEST_CASE("Designated init — imported parent struct with private member and ba
             }
         )K",
         R"K(
-            module exec_desig_ctor;
-            import baselib_ctor;
-            struct Derived : public baselib_ctor::Base {
+            module gen_designated_init_35;
+            import gen_designated_init_34;
+            struct Derived : public gen_designated_init_34::Base {
                 extra : int;
             }
             main() : int {

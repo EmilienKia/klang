@@ -45,7 +45,7 @@
 TEST_CASE("if-cond-var-test: int var with true test enters then",
           "[gen][if-cond-var-test][int]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_int1__;
+        module gen_if_cond_var_test_01;
 
         test() : int {
             if(x : int = 42; x > 0) {
@@ -63,7 +63,7 @@ TEST_CASE("if-cond-var-test: int var with true test enters then",
 TEST_CASE("if-cond-var-test: int var with false test enters else",
           "[gen][if-cond-var-test][int]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_int2__;
+        module gen_if_cond_var_test_02;
 
         test() : int {
             if(x : int = 42; x < 0) {
@@ -83,7 +83,7 @@ TEST_CASE("if-cond-var-test: zero var with separate true test enters then",
           "[gen][if-cond-var-test][int]") {
     // Zero variable would be false in classic if-let, but separate test overrides
     auto jit = gen_jit(R"SRC(
-        module __icvt_int3__;
+        module gen_if_cond_var_test_03;
 
         test() : int {
             if(x : int = 0; true) {
@@ -107,7 +107,7 @@ TEST_CASE("if-cond-var-test: zero var with separate true test enters then",
 TEST_CASE("if-cond-var-test: var accessible in else branch",
           "[gen][if-cond-var-test][else]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_else1__;
+        module gen_if_cond_var_test_04;
 
         test() : int {
             if(x : int = 10; x > 100) {
@@ -131,7 +131,7 @@ TEST_CASE("if-cond-var-test: var accessible in else branch",
 TEST_CASE("if-cond-var-test: variable can be redeclared after if (scope test)",
           "[gen][if-cond-var-test][scope]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_scope1__;
+        module gen_if_cond_var_test_05;
 
         test() : int {
             if(x : int = 5; x > 0) {
@@ -155,7 +155,7 @@ TEST_CASE("if-cond-var-test: variable can be redeclared after if (scope test)",
 TEST_CASE("if-cond-var-test: nested if(var; test)",
           "[gen][if-cond-var-test][nested]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_nested1__;
+        module gen_if_cond_var_test_06;
 
         test() : int {
             if(a : int = 3; a > 0) {
@@ -180,7 +180,7 @@ TEST_CASE("if-cond-var-test: nested if(var; test)",
 TEST_CASE("if-cond-var-test: struct var with method test",
           "[gen][if-cond-var-test][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_struct1__;
+        module gen_if_cond_var_test_07;
 
         struct S {
             val : int;
@@ -211,7 +211,7 @@ TEST_CASE("if-cond-var-test: struct var with method test",
 TEST_CASE("if-cond-var-test: struct var with failing method test enters else",
           "[gen][if-cond-var-test][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_struct2__;
+        module gen_if_cond_var_test_08;
 
         struct S {
             val : int;
@@ -247,7 +247,7 @@ TEST_CASE("if-cond-var-test: struct var with failing method test enters else",
 TEST_CASE("if-cond-var-test: ref var with separate test, no soft-fail",
           "[gen][if-cond-var-test][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_ref1__;
+        module gen_if_cond_var_test_09;
 
         test() : int {
             val : int = 7;
@@ -267,7 +267,7 @@ TEST_CASE("if-cond-var-test: ref var with separate test, no soft-fail",
 TEST_CASE("if-cond-var-test: ref var with failing test enters else",
           "[gen][if-cond-var-test][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_ref2__;
+        module gen_if_cond_var_test_10;
 
         test() : int {
             val : int = 3;
@@ -292,7 +292,7 @@ TEST_CASE("if-cond-var-test: ref var with failing test enters else",
 TEST_CASE("if-cond-var-test: destructor called in then branch",
           "[gen][if-cond-var-test][dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_dtor1__;
+        module gen_if_cond_var_test_11;
 
         g_dtor_count : int = 0;
 
@@ -330,7 +330,7 @@ TEST_CASE("if-cond-var-test: destructor called in then branch",
 TEST_CASE("if-cond-var-test: destructor called in else branch",
           "[gen][if-cond-var-test][dtor]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_dtor2__;
+        module gen_if_cond_var_test_12;
 
         g_dtor_count : int = 0;
 
@@ -376,7 +376,7 @@ TEST_CASE("if-cond-var-test: destructor called in else branch",
 TEST_CASE("if-cond-var-test: function call as init with method test",
           "[gen][if-cond-var-test][func]") {
     auto jit = gen_jit(R"SRC(
-        module __icvt_func1__;
+        module gen_if_cond_var_test_13;
 
         getValue() : int {
             return 100;

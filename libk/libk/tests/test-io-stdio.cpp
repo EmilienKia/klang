@@ -31,7 +31,8 @@
 // compile_text is defined in klang-test-helpers but not declared in the header.
 // We forward-declare it here for use in subprocess tests.
 extern bool compile_text(const std::string_view& source, const std::string& out_file,
-                          const IgnoredDiagCodes& ignored_diag_codes = {});
+                          const IgnoredDiagCodes& ignored_diag_codes = {},
+                          const std::string& file_name = "");
 
 namespace {
 

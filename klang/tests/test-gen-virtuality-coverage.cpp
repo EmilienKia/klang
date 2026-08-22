@@ -53,7 +53,7 @@
 TEST_CASE("[V1] Two interfaces: dispatch via secondary interface ref Right& works",
           "[interface][dispatch][secondary][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v1_secondary_iface__;
+module gen_virtuality_coverage_01;
 interface Left  { left()  : int; }
 interface Right { right() : int; }
 class Both : public Left, public Right {
@@ -81,7 +81,7 @@ test_via_right() : int { b: Both; return via_right(b); }
 TEST_CASE("[V2] Two interfaces: subclass overrides both; dispatch via each ref reaches override",
           "[interface][dispatch][secondary][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v2_two_iface_override__;
+module gen_virtuality_coverage_02;
 interface Ping { ping() : int; }
 interface Pong { pong() : int; }
 abstract class Base : public Ping, public Pong {
@@ -114,7 +114,7 @@ test_pong() : int { c: Child; return do_pong(c); }
 TEST_CASE("[V3] Interface+diamond: dispatch via I& on D reaches D::method",
           "[interface][diamond][dispatch][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v3_iface_diamond__;
+module gen_virtuality_coverage_03;
 interface I { method() : int; }
 abstract class A : public I { method() : int { return 0; } }
 abstract class B : public A {}
@@ -140,7 +140,7 @@ test() : int { d: D; return via_i(d); }
 TEST_CASE("[V4] Two interfaces: each method dispatches to its own vtable slot independently",
           "[interface][dispatch][multi][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v4_two_slots__;
+module gen_virtuality_coverage_04;
 interface Shape  { area()      : int; }
 interface Greet  { greeting()  : int; }
 class Circle : public Shape, public Greet {
@@ -180,7 +180,7 @@ test_square_greet() : int { s: Square; return get_greet(s); }
 TEST_CASE("[V5] Abstract class implementing interface: dispatch via A& and via I& both correct",
           "[interface][abstract][dispatch][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v5_abstract_iface__;
+module gen_virtuality_coverage_05;
 interface Computable { compute() : int; }
 abstract class Engine : public Computable {
     compute() : int { return 0; }
@@ -220,7 +220,7 @@ test_slow_engine() : int { s: SlowEngine; return run_engine(s); }
 TEST_CASE("[V6] Interface inherited transitively through class diamond: dispatch via I& reaches D",
           "[interface][diamond][dispatch][transitive][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v6_transitive_iface_diamond__;
+module gen_virtuality_coverage_06;
 interface I { method() : int; }
 abstract class A : public I {
     method() : int { return 0; }
@@ -260,7 +260,7 @@ test_via_c() : int { d: D; return via_c(d); }
 TEST_CASE("[V7] Three-level interface chain: dispatch via I& always reaches leaf override",
           "[interface][dispatch][multi-level][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v7_three_level_iface__;
+module gen_virtuality_coverage_07;
 interface I { val() : int; }
 abstract class A : public I { val() : int { return 1; } }
 class B : public A {
@@ -306,7 +306,7 @@ test_c_via_b() : int { c: C; return via_b(c); }
 TEST_CASE("[V8] Diamond with separate interface on each branch: dispatch via each interface ref",
           "[interface][diamond][dispatch][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v8_diamond_two_ifaces__;
+module gen_virtuality_coverage_08;
 interface IA { fa() : int; }
 interface IB { fb() : int; }
 abstract class B : public IA { fa() : int { return 1; } }
@@ -338,7 +338,7 @@ test_via_ib() : int { d: D; return via_ib(d); }
 TEST_CASE("[V9] Diamond sibling override: D overrides, dispatch via B& and C& both reach D",
           "[class][diamond][dispatch][sibling][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v9_sibling_override__;
+module gen_virtuality_coverage_09;
 class A { f() : int { return 0; } }
 class B : public A { f() : int { return 1; } }
 class C : public A {}
@@ -366,7 +366,7 @@ test_via_a() : int { d: D; return via_a(d); }
 TEST_CASE("[V9b] Diamond sibling: D does NOT override, B's override wins through all paths",
           "[class][diamond][dispatch][sibling][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v9b_no_d_override__;
+module gen_virtuality_coverage_10;
 class A { f() : int { return 0; } }
 class B : public A { f() : int { return 1; } }
 class C : public A {}
@@ -396,7 +396,7 @@ test_via_a() : int { d: D; return via_a(d); }
 TEST_CASE("[V10] Class + interface combined: dispatch via class ref and via interface ref",
           "[class][interface][dispatch][multi][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v10_class_plus_iface__;
+module gen_virtuality_coverage_11;
 interface Measurable { measure() : int; }
 abstract class Named {
     name() : int { return 0; }
@@ -438,7 +438,7 @@ test_big_meas()      : int { b: BigThing; return via_meas(b);  }
 TEST_CASE("[V11] Secondary interface dispatch [X3 updated]: via_right(Both) works",
           "[interface][dispatch][secondary][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v11_x3_updated__;
+module gen_virtuality_coverage_12;
 interface Left  { left()  : int; }
 interface Right { right() : int; }
 class Both : public Left, public Right {
@@ -473,7 +473,7 @@ test_only_left()    : int { o: OnlyLeft; return via_left(o);  }
 TEST_CASE("[V12] Full polymorphism matrix: 3 classes x 2 interfaces",
           "[interface][dispatch][polymorphism][coverage]") {
     auto jit = gen_jit(R"SRC(
-module __v12_full_poly__;
+module gen_virtuality_coverage_13;
 interface Adder  { add(a: int, b: int)  : int; }
 interface Multer { mult(a: int, b: int) : int; }
 class Plain : public Adder, public Multer {

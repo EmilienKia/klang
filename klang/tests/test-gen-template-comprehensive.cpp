@@ -85,7 +85,7 @@
 
 TEST_CASE("[F01] Template function with int arg", "[template][function][primitive]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_f01__;
+        module gen_template_comprehensive_01;
         template<typename T>
         identity(x : T) : T { return x; }
 
@@ -99,11 +99,11 @@ TEST_CASE("[F01] Template function with int arg", "[template][function][primitiv
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn_int = jit->lookup_symbol<int(*)()>("_KFN11__tpl_f01__8test_intEv");
+    auto fn_int = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_018test_intEv");
     REQUIRE(fn_int != nullptr);
     CHECK(fn_int() == 42);
 
-    auto fn_float = jit->lookup_symbol<float(*)()>("_KFN11__tpl_f01__10test_floatEv");
+    auto fn_float = jit->lookup_symbol<float(*)()>("_KFN29gen_template_comprehensive_0110test_floatEv");
     REQUIRE(fn_float != nullptr);
     CHECK(fn_float() == Catch::Approx(3.14f));
 }
@@ -114,7 +114,7 @@ TEST_CASE("[F01] Template function with int arg", "[template][function][primitiv
 
 TEST_CASE("[F02] Template function with struct type arg", "[template][function][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_f02__;
+        module gen_template_comprehensive_02;
         struct Point {
             x : int = 0;
             y : int = 0;
@@ -134,7 +134,7 @@ TEST_CASE("[F02] Template function with struct type arg", "[template][function][
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_f02__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_024testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 7);
 }
@@ -145,7 +145,7 @@ TEST_CASE("[F02] Template function with struct type arg", "[template][function][
 
 TEST_CASE("[F03] Template function with class type arg", "[template][function][class]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_f03__;
+        module gen_template_comprehensive_03;
         class Counter {
             count : int;
             Counter() : count(0) {}
@@ -164,7 +164,7 @@ TEST_CASE("[F03] Template function with class type arg", "[template][function][c
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_f03__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_034testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 0);
 }
@@ -175,7 +175,7 @@ TEST_CASE("[F03] Template function with class type arg", "[template][function][c
 
 TEST_CASE("[F04] Template function with struct reference param", "[template][function][struct][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_f04__;
+        module gen_template_comprehensive_04;
         struct Pair {
             a : int = 0;
             b : int = 0;
@@ -195,7 +195,7 @@ TEST_CASE("[F04] Template function with struct reference param", "[template][fun
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_f04__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_044testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 30);
 }
@@ -206,7 +206,7 @@ TEST_CASE("[F04] Template function with struct reference param", "[template][fun
 
 TEST_CASE("[F05] Template function with struct link param", "[template][function][struct][link]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_f05__;
+        module gen_template_comprehensive_05;
         struct Data {
             val : int = 0;
         }
@@ -225,7 +225,7 @@ TEST_CASE("[F05] Template function with struct link param", "[template][function
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_f05__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_054testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 77);
 }
@@ -236,7 +236,7 @@ TEST_CASE("[F05] Template function with struct link param", "[template][function
 
 TEST_CASE("[F06] Template function with class pointer param", "[template][function][class][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_f06__;
+        module gen_template_comprehensive_06;
         class Widget {
             public id : int;
             Widget() : id(0) {}
@@ -256,7 +256,7 @@ TEST_CASE("[F06] Template function with class pointer param", "[template][functi
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_f06__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_064testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 55);
 }
@@ -267,7 +267,7 @@ TEST_CASE("[F06] Template function with class pointer param", "[template][functi
 
 TEST_CASE("[F07] Template function with class reference param", "[template][function][class][ref]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_f07__;
+        module gen_template_comprehensive_07;
         class Item {
             public value : int;
             Item() : value(0) {}
@@ -287,7 +287,7 @@ TEST_CASE("[F07] Template function with class reference param", "[template][func
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_f07__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_074testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 123);
 }
@@ -298,7 +298,7 @@ TEST_CASE("[F07] Template function with class reference param", "[template][func
 
 TEST_CASE("[F08] Template function with multiple params: int + struct", "[template][function][multi]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_f08__;
+        module gen_template_comprehensive_08;
         struct Holder {
             val : int = 0;
         }
@@ -316,7 +316,7 @@ TEST_CASE("[F08] Template function with multiple params: int + struct", "[templa
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_f08__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_084testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 42);
 }
@@ -327,7 +327,7 @@ TEST_CASE("[F08] Template function with multiple params: int + struct", "[templa
 
 TEST_CASE("[F09] Template function: two instantiations with int and long", "[template][function][multi-inst]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_f09__;
+        module gen_template_comprehensive_09;
         template<typename T>
         add_one(x : T) : T { return x + 1; }
 
@@ -341,11 +341,11 @@ TEST_CASE("[F09] Template function: two instantiations with int and long", "[tem
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn_int = jit->lookup_symbol<int(*)()>("_KFN11__tpl_f09__8test_intEv");
+    auto fn_int = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_098test_intEv");
     REQUIRE(fn_int != nullptr);
     CHECK(fn_int() == 42);
 
-    auto fn_long = jit->lookup_symbol<long(*)()>("_KFN11__tpl_f09__9test_longEv");
+    auto fn_long = jit->lookup_symbol<long(*)()>("_KFN29gen_template_comprehensive_099test_longEv");
     REQUIRE(fn_long != nullptr);
     CHECK(fn_long() == 100L);
 }
@@ -360,7 +360,7 @@ TEST_CASE("[F09] Template function: two instantiations with int and long", "[tem
 
 TEST_CASE("[S01] Template struct with int member", "[template][struct][primitive]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_s01__;
+        module gen_template_comprehensive_10;
         template<typename T>
         struct Box {
             public value : T;
@@ -374,7 +374,7 @@ TEST_CASE("[S01] Template struct with int member", "[template][struct][primitive
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_s01__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_104testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 42);
 }
@@ -385,7 +385,7 @@ TEST_CASE("[S01] Template struct with int member", "[template][struct][primitive
 
 TEST_CASE("[S02] Template struct with struct type member", "[template][struct][struct-arg]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_s02__;
+        module gen_template_comprehensive_11;
         struct Inner {
             val : int = 7;
         }
@@ -402,7 +402,7 @@ TEST_CASE("[S02] Template struct with struct type member", "[template][struct][s
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_s02__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_114testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 7);
 }
@@ -413,7 +413,7 @@ TEST_CASE("[S02] Template struct with struct type member", "[template][struct][s
 
 TEST_CASE("[S03] Template struct with class type member", "[template][struct][class-arg]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_s03__;
+        module gen_template_comprehensive_12;
         class Gadget {
             public id : int;
             Gadget() : id(33) {}
@@ -432,7 +432,7 @@ TEST_CASE("[S03] Template struct with class type member", "[template][struct][cl
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_s03__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_124testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 33);
 }
@@ -443,7 +443,7 @@ TEST_CASE("[S03] Template struct with class type member", "[template][struct][cl
 
 TEST_CASE("[S04] Template struct with pointer to struct member", "[template][struct][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_s04__;
+        module gen_template_comprehensive_13;
         struct Target {
             val : int = 0;
         }
@@ -463,7 +463,7 @@ TEST_CASE("[S04] Template struct with pointer to struct member", "[template][str
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_s04__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_134testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 88);
 }
@@ -474,7 +474,7 @@ TEST_CASE("[S04] Template struct with pointer to struct member", "[template][str
 
 TEST_CASE("[S05] Template struct with pointer to class member", "[template][struct][class-ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_s05__;
+        module gen_template_comprehensive_14;
         class Engine {
             public power : int;
             Engine() : power(200) {}
@@ -495,7 +495,7 @@ TEST_CASE("[S05] Template struct with pointer to class member", "[template][stru
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_s05__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_144testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 200);
 }
@@ -506,7 +506,7 @@ TEST_CASE("[S05] Template struct with pointer to class member", "[template][stru
 
 TEST_CASE("[S06] Template struct with member method using value param", "[template][struct][method]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_s06__;
+        module gen_template_comprehensive_15;
         template<typename T, int N>
         struct Container {
             public data : T;
@@ -521,7 +521,7 @@ TEST_CASE("[S06] Template struct with member method using value param", "[templa
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_s06__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_154testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 65); // 55 + 10
 }
@@ -532,7 +532,7 @@ TEST_CASE("[S06] Template struct with member method using value param", "[templa
 
 TEST_CASE("[S07] Template struct with default-constructed field access", "[template][struct][ctor]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_s07__;
+        module gen_template_comprehensive_16;
         template<typename T>
         struct Box {
             public value : T;
@@ -546,7 +546,7 @@ TEST_CASE("[S07] Template struct with default-constructed field access", "[templ
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_s07__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_164testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 99);
 }
@@ -557,7 +557,7 @@ TEST_CASE("[S07] Template struct with default-constructed field access", "[templ
 
 TEST_CASE("[S08] Template struct with two type params", "[template][struct][multi-param]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_s08__;
+        module gen_template_comprehensive_17;
         template<typename K, typename V>
         struct Pair {
             public first : K;
@@ -573,7 +573,7 @@ TEST_CASE("[S08] Template struct with two type params", "[template][struct][mult
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_s08__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_174testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 33);
 }
@@ -584,7 +584,7 @@ TEST_CASE("[S08] Template struct with two type params", "[template][struct][mult
 
 TEST_CASE("[S09] Template struct: int and float instantiations", "[template][struct][multi-inst]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_s09__;
+        module gen_template_comprehensive_18;
         template<typename T>
         struct Box {
             public value : T;
@@ -604,11 +604,11 @@ TEST_CASE("[S09] Template struct: int and float instantiations", "[template][str
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn_int = jit->lookup_symbol<int(*)()>("_KFN11__tpl_s09__8test_intEv");
+    auto fn_int = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_188test_intEv");
     REQUIRE(fn_int != nullptr);
     CHECK(fn_int() == 10);
 
-    auto fn_float = jit->lookup_symbol<float(*)()>("_KFN11__tpl_s09__10test_floatEv");
+    auto fn_float = jit->lookup_symbol<float(*)()>("_KFN29gen_template_comprehensive_1810test_floatEv");
     REQUIRE(fn_float != nullptr);
     CHECK(fn_float() == Catch::Approx(2.5f));
 }
@@ -623,7 +623,7 @@ TEST_CASE("[S09] Template struct: int and float instantiations", "[template][str
 
 TEST_CASE("[C01] Template class with int member, external access", "[template][class][primitive]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_c01__;
+        module gen_template_comprehensive_19;
         template<typename T>
         class Container {
             public data : T;
@@ -638,7 +638,7 @@ TEST_CASE("[C01] Template class with int member, external access", "[template][c
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_c01__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_194testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 42);
 }
@@ -649,7 +649,7 @@ TEST_CASE("[C01] Template class with int member, external access", "[template][c
 
 TEST_CASE("[C02] Template class with class type member, external access", "[template][class][class-arg]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_c02__;
+        module gen_template_comprehensive_20;
         class Payload {
             public weight : int;
             Payload() : weight(50) {}
@@ -668,7 +668,7 @@ TEST_CASE("[C02] Template class with class type member, external access", "[temp
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_c02__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_204testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 50);
 }
@@ -679,7 +679,7 @@ TEST_CASE("[C02] Template class with class type member, external access", "[temp
 
 TEST_CASE("[C03] Template class with value param in method", "[template][class][value-param]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_c03__;
+        module gen_template_comprehensive_21;
         template<typename T, int N>
         class Provider {
             public data : T;
@@ -695,7 +695,7 @@ TEST_CASE("[C03] Template class with value param in method", "[template][class][
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_c03__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_214testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 87); // 10 + 77
 }
@@ -706,7 +706,7 @@ TEST_CASE("[C03] Template class with value param in method", "[template][class][
 
 TEST_CASE("[C04] Template class with pointer-to-class field", "[template][class][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_c04__;
+        module gen_template_comprehensive_22;
         class Node {
             public value : int;
             Node() : value(0) {}
@@ -728,7 +728,7 @@ TEST_CASE("[C04] Template class with pointer-to-class field", "[template][class]
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_c04__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_224testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 66);
 }
@@ -739,7 +739,7 @@ TEST_CASE("[C04] Template class with pointer-to-class field", "[template][class]
 
 TEST_CASE("[C05] Template class: two different class type instantiations", "[template][class][multi-inst]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_c05__;
+        module gen_template_comprehensive_23;
         class A {
             public x : int;
             A() : x(10) {}
@@ -763,7 +763,7 @@ TEST_CASE("[C05] Template class: two different class type instantiations", "[tem
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_c05__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_234testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 30);
 }
@@ -774,7 +774,7 @@ TEST_CASE("[C05] Template class: two different class type instantiations", "[tem
 
 TEST_CASE("[C06] Template class used with reference in function", "[template][class][ref-param]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_c06__;
+        module gen_template_comprehensive_24;
         template<typename T>
         class Wrapper {
             public data : T;
@@ -793,7 +793,7 @@ TEST_CASE("[C06] Template class used with reference in function", "[template][cl
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_c06__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_244testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 88);
 }
@@ -808,7 +808,7 @@ TEST_CASE("[C06] Template class used with reference in function", "[template][cl
 
 TEST_CASE("[I01] Template struct holding interface implementor", "[template][interface][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_i01__;
+        module gen_template_comprehensive_25;
         interface Identifiable {
             get_id() : int;
         }
@@ -831,7 +831,7 @@ TEST_CASE("[I01] Template struct holding interface implementor", "[template][int
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_i01__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_254testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 42);
 }
@@ -842,7 +842,7 @@ TEST_CASE("[I01] Template struct holding interface implementor", "[template][int
 
 TEST_CASE("[I02] Template function with interface implementor arg", "[template][interface][function]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_i02__;
+        module gen_template_comprehensive_26;
         interface Valuable {
             get_value() : int;
         }
@@ -866,7 +866,7 @@ TEST_CASE("[I02] Template function with interface implementor arg", "[template][
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_i02__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_264testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 100);
 }
@@ -878,7 +878,7 @@ TEST_CASE("[I02] Template function with interface implementor arg", "[template][
 
 TEST_CASE("[I03] Template struct with interface implementor pointer", "[template][interface][ptr]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_i03__;
+        module gen_template_comprehensive_27;
         interface Countable {
             count() : int;
         }
@@ -904,7 +904,7 @@ TEST_CASE("[I03] Template struct with interface implementor pointer", "[template
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_i03__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_274testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 5);
 }
@@ -922,7 +922,7 @@ TEST_CASE("[I03] Template struct with interface implementor pointer", "[template
 
 TEST_CASE("[M01] Template struct: method returns value param", "[template][method][return-type]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_m01__;
+        module gen_template_comprehensive_28;
         template<typename T, int N>
         struct Store {
             public data : T;
@@ -937,7 +937,7 @@ TEST_CASE("[M01] Template struct: method returns value param", "[template][metho
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_m01__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_284testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 87); // 10 + 77
 }
@@ -948,7 +948,7 @@ TEST_CASE("[M01] Template struct: method returns value param", "[template][metho
 
 TEST_CASE("[M02] Template struct: field accessed externally after method-like pattern", "[template][method][param-type]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_m02__;
+        module gen_template_comprehensive_29;
         template<typename T>
         struct Accumulator {
             public total : T;
@@ -969,7 +969,7 @@ TEST_CASE("[M02] Template struct: field accessed externally after method-like pa
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_m02__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_294testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 42);
 }
@@ -980,7 +980,7 @@ TEST_CASE("[M02] Template struct: field accessed externally after method-like pa
 
 TEST_CASE("[M03] Template struct: external function takes T& param", "[template][method][ref-param]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_m03__;
+        module gen_template_comprehensive_30;
         struct Coord {
             x : int = 0;
             y : int = 0;
@@ -1007,7 +1007,7 @@ TEST_CASE("[M03] Template struct: external function takes T& param", "[template]
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_m03__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_304testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 15);
 }
@@ -1018,7 +1018,7 @@ TEST_CASE("[M03] Template struct: external function takes T& param", "[template]
 
 TEST_CASE("[M04] Template class: method with value param", "[template][class][method][virtual]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_m04__;
+        module gen_template_comprehensive_31;
         template<typename T, int N>
         class Processor {
             public val : T;
@@ -1033,7 +1033,7 @@ TEST_CASE("[M04] Template class: method with value param", "[template][class][me
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_m04__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_314testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 42);
 }
@@ -1044,7 +1044,7 @@ TEST_CASE("[M04] Template class: method with value param", "[template][class][me
 
 TEST_CASE("[M05] Template struct: method uses value param N", "[template][method][value-param]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_m05__;
+        module gen_template_comprehensive_32;
         template<typename T, int N>
         struct Scaled {
             public base : T;
@@ -1059,7 +1059,7 @@ TEST_CASE("[M05] Template struct: method uses value param N", "[template][method
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_m05__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_324testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 13); // 7 + (3*2)
 }
@@ -1072,7 +1072,7 @@ TEST_CASE("[M05] Template struct: method uses value param N", "[template][method
 
 TEST_CASE("[X01] Template struct used in non-template struct", "[template][nested]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_x01__;
+        module gen_template_comprehensive_33;
         template<typename T>
         struct Box {
             public value : T;
@@ -1090,7 +1090,7 @@ TEST_CASE("[X01] Template struct used in non-template struct", "[template][neste
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_x01__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_334testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 99);
 }
@@ -1101,7 +1101,7 @@ TEST_CASE("[X01] Template struct used in non-template struct", "[template][neste
 
 TEST_CASE("[X02] Template function with template struct param", "[template][mixed]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_x02__;
+        module gen_template_comprehensive_34;
         template<typename T>
         struct Box {
             public value : T;
@@ -1119,7 +1119,7 @@ TEST_CASE("[X02] Template function with template struct param", "[template][mixe
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_x02__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_344testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 55);
 }
@@ -1130,7 +1130,7 @@ TEST_CASE("[X02] Template function with template struct param", "[template][mixe
 
 TEST_CASE("[X03] Template struct with default type param", "[template][defaults][struct]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_x03__;
+        module gen_template_comprehensive_35;
         struct MyStruct {
             val : int = 11;
         }
@@ -1153,11 +1153,11 @@ TEST_CASE("[X03] Template struct with default type param", "[template][defaults]
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn_default = jit->lookup_symbol<int(*)()>("_KFN11__tpl_x03__12test_defaultEv");
+    auto fn_default = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_3512test_defaultEv");
     REQUIRE(fn_default != nullptr);
     CHECK(fn_default() == 42);
 
-    auto fn_struct = jit->lookup_symbol<int(*)()>("_KFN11__tpl_x03__11test_structEv");
+    auto fn_struct = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_3511test_structEv");
     REQUIRE(fn_struct != nullptr);
     CHECK(fn_struct() == 11);
 }
@@ -1168,7 +1168,7 @@ TEST_CASE("[X03] Template struct with default type param", "[template][defaults]
 
 TEST_CASE("[X04] Template function with type + value params", "[template][mixed][value-param]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_x04__;
+        module gen_template_comprehensive_36;
         template<typename T, int N>
         scale(x : T) : T { return x * N; }
 
@@ -1178,7 +1178,7 @@ TEST_CASE("[X04] Template function with type + value params", "[template][mixed]
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_x04__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_364testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 40);
 }
@@ -1189,7 +1189,7 @@ TEST_CASE("[X04] Template function with type + value params", "[template][mixed]
 
 TEST_CASE("[X05] Same template instantiated with struct and class", "[template][mixed][multi-inst]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_x05__;
+        module gen_template_comprehensive_37;
         struct S {
             val : int = 3;
         }
@@ -1216,11 +1216,11 @@ TEST_CASE("[X05] Same template instantiated with struct and class", "[template][
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn_struct = jit->lookup_symbol<int(*)()>("_KFN11__tpl_x05__11test_structEv");
+    auto fn_struct = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_3711test_structEv");
     REQUIRE(fn_struct != nullptr);
     CHECK(fn_struct() == 3);
 
-    auto fn_class = jit->lookup_symbol<int(*)()>("_KFN11__tpl_x05__10test_classEv");
+    auto fn_class = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_3710test_classEv");
     REQUIRE(fn_class != nullptr);
     CHECK(fn_class() == 7);
 }
@@ -1246,7 +1246,7 @@ TEST_CASE("[X05] Same template instantiated with struct and class", "[template][
 // resolvers_type_ref.cpp `is_enclosing_template_param_name()`.
 TEST_CASE("[X06] User type named 'I' does not collide with stdlib template param names", "[template][name-collision][regression]") {
     auto jit = gen_jit(R"SRC(
-        module __tpl_x06__;
+        module gen_template_comprehensive_38;
 
         interface I {
             bar() : int;
@@ -1263,7 +1263,7 @@ TEST_CASE("[X06] User type named 'I' does not collide with stdlib template param
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN11__tpl_x06__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN29gen_template_comprehensive_384testEv");
     REQUIRE(fn != nullptr);
     CHECK(fn() == 42);
 }

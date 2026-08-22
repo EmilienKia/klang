@@ -19,7 +19,7 @@
 #include "helpers.hpp"
 TEST_CASE("Union inheritance: basic derived union compiles", "[gen][union][inheritance]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_union_inheritance_01;
         union Base { i: int; d: double; }
         union Derived : Base { b: bool; }
         make_base_alt() : int {
@@ -35,7 +35,7 @@ TEST_CASE("Union inheritance: basic derived union compiles", "[gen][union][inher
 }
 TEST_CASE("Union inheritance: discriminant continuity", "[gen][union][inheritance]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_union_inheritance_02;
         union Base { a: int; b: int; }
         union Derived : Base { c: int; }
         disc_a() : int { v : Derived; v.a = 1; return v.index(); }
@@ -53,7 +53,7 @@ TEST_CASE("Union inheritance: discriminant continuity", "[gen][union][inheritanc
 }
 TEST_CASE("Union inheritance: derived own alternative accessible", "[gen][union][inheritance]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_union_inheritance_03;
         union Base { i: int; }
         union Derived : Base { d: double; }
         get_d() : double { v : Derived; v.d = 3.14; return v.d; }
@@ -65,7 +65,7 @@ TEST_CASE("Union inheritance: derived own alternative accessible", "[gen][union]
 }
 TEST_CASE("Union inheritance: LLVM size at least as large as parent", "[gen][union][inheritance]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_union_inheritance_04;
         union Small { i: int; }
         union Big : Small { d: double; }
         roundtrip(x: double) : double { v : Big; v.d = x; return v.d; }
@@ -77,7 +77,7 @@ TEST_CASE("Union inheritance: LLVM size at least as large as parent", "[gen][uni
 }
 TEST_CASE("Union inheritance: parent to derived assignment (downcast)", "[gen][union][inheritance]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_union_inheritance_05;
         union Base { i: int; d: double; }
         union Derived : Base { b: bool; }
         downcast_test() : int {
@@ -93,7 +93,7 @@ TEST_CASE("Union inheritance: parent to derived assignment (downcast)", "[gen][u
 }
 TEST_CASE("Union inheritance: derived to parent upcast, valid alt", "[gen][union][inheritance]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_union_inheritance_06;
         union Base { i: int; d: double; }
         union Derived : Base { b: bool; }
         upcast_valid() : int {
@@ -109,7 +109,7 @@ TEST_CASE("Union inheritance: derived to parent upcast, valid alt", "[gen][union
 }
 TEST_CASE("Union inheritance: derived to parent upcast, invalid alt traps", "[gen][union][inheritance]") {
     auto result = build_and_exec(R"SRC(
-        module __uinh_trap__;
+        module gen_union_inheritance_07;
         union Base { i: int; }
         union Derived : Base { x: long; }
         main() : int {
@@ -122,7 +122,7 @@ TEST_CASE("Union inheritance: derived to parent upcast, invalid alt traps", "[ge
 }
 TEST_CASE("Union inheritance: three-level chain", "[gen][union][inheritance]") {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_union_inheritance_08;
         union GP { x: int; }
         union P : GP { y: int; }
         union C : P  { z: int; }
@@ -141,41 +141,41 @@ TEST_CASE("Union inheritance: three-level chain", "[gen][union][inheritance]") {
 }
 TEST_CASE("Union inheritance: multiple bases rejected", "[gen][union][inheritance]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_union_inheritance_09;
         union A { i: int; } union B { d: double; }
         union C : A, B { b: bool; }
     )SRC", nullptr));
 }
 TEST_CASE("Union inheritance: base must be union not struct", "[gen][union][inheritance]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_union_inheritance_10;
         struct S { x: int; }
         union U : S { y: int; }
     )SRC", nullptr));
 }
 TEST_CASE("Union inheritance: circular inheritance rejected", "[gen][union][inheritance]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_union_inheritance_11;
         union A : B { x: int; }
         union B : A { y: int; }
     )SRC", nullptr));
 }
 TEST_CASE("Union inheritance: unrelated union assignment rejected", "[gen][union][inheritance]") {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_union_inheritance_12;
         union A { i: int; } union B { d: double; }
         bad() : void { a : A; b : B; b = a; }
     )SRC", nullptr));
 }
 TEST_CASE("Union inheritance: cross-module base union import", "[gen][union][inheritance][import]") {
     auto result = build_exec_with_lib(R"SRC(
-        module base_mod;
+        module gen_union_inheritance_13;
         public:
         union BaseVal { i: int; d: double; }
         dummy() : int { return 0; }
     )SRC", R"SRC(
-        module main;
-        import base_mod;
+        module gen_union_inheritance_14;
+        import gen_union_inheritance_13;
         union ExtVal : BaseVal { b: bool; }
         main() : int {
             v : ExtVal; v.i = 55;

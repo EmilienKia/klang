@@ -97,7 +97,7 @@ TEST_CASE("[B] M10: struct kind rejects primitive type",
 TEST_CASE("[C] M10: struct kind accepts struct type from model",
           "[milestone10][template][constraints]") {
     auto comp = compile_model(R"SRC(
-        module __m10_c__;
+        module gen_template_constraints_01;
         struct Foo {
             public x : int;
         }
@@ -142,7 +142,7 @@ TEST_CASE("[C] M10: struct kind accepts struct type from model",
 TEST_CASE("[D] M10: class kind rejects struct type",
           "[milestone10][template][constraints]") {
     auto comp = compile_model(R"SRC(
-        module __m10_d__;
+        module gen_template_constraints_02;
         struct Foo {
             public x : int;
         }
@@ -183,7 +183,7 @@ TEST_CASE("[D] M10: class kind rejects struct type",
 TEST_CASE("[E] M10: class kind accepts class type",
           "[milestone10][template][constraints]") {
     auto comp = compile_model(R"SRC(
-        module __m10_e__;
+        module gen_template_constraints_03;
         class Animal {
             public name : int;
         }
@@ -222,7 +222,7 @@ TEST_CASE("[E] M10: class kind accepts class type",
 TEST_CASE("[F] M10: interface kind accepts interface type",
           "[milestone10][template][constraints]") {
     auto comp = compile_model(R"SRC(
-        module __m10_f__;
+        module gen_template_constraints_04;
         interface Printable {
             print() : int;
         }
@@ -261,7 +261,7 @@ TEST_CASE("[F] M10: interface kind accepts interface type",
 TEST_CASE("[G] M10: base-type constraint accepts derived type",
           "[milestone10][template][constraints]") {
     auto comp = compile_model(R"SRC(
-        module __m10_g__;
+        module gen_template_constraints_05;
         class Animal {
             public age : int;
         }
@@ -316,7 +316,7 @@ TEST_CASE("[G] M10: base-type constraint accepts derived type",
 TEST_CASE("[H] M10: base-type constraint rejects unrelated type",
           "[milestone10][template][constraints]") {
     auto comp = compile_model(R"SRC(
-        module __m10_h__;
+        module gen_template_constraints_06;
         class Animal {
             public age : int;
         }
@@ -383,7 +383,7 @@ TEST_CASE("[J] M10: struct-constrained template rejects int in resolver",
     // should throw a resolution_error with ERR_TPL_ARG_NOT_AGGREGATE.
     try {
         gen_jit_throws(R"SRC(
-            module __m10_j__;
+            module gen_template_constraints_07;
             template<struct S>
             struct Holder {
                 public val : int;
@@ -406,7 +406,7 @@ TEST_CASE("[J] M10: struct-constrained template rejects int in resolver",
 TEST_CASE("[K] M10: typename-constrained template accepts int in resolver",
           "[milestone10][template][constraints][integration]") {
     auto jit = gen_jit(R"SRC(
-        module __m10_k__;
+        module gen_template_constraints_08;
         template<typename T>
         struct Box {
             public value : T;
@@ -418,7 +418,7 @@ TEST_CASE("[K] M10: typename-constrained template accepts int in resolver",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto get_value = jit->lookup_symbol<int(*)()>("_KFN9__m10_k__9get_valueEv");
+    auto get_value = jit->lookup_symbol<int(*)()>("_KFN27gen_template_constraints_089get_valueEv");
     REQUIRE(get_value != nullptr);
     CHECK(get_value() == 42);
 }
@@ -431,7 +431,7 @@ TEST_CASE("[L] M10: class-constrained template rejects struct in resolver",
           "[milestone10][template][constraints][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_l__;
+            module gen_template_constraints_09;
             struct Foo {
                 public x : int;
             }
@@ -458,7 +458,7 @@ TEST_CASE("[M] M10: interface-constrained template rejects class in resolver",
           "[milestone10][template][constraints][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_m__;
+            module gen_template_constraints_10;
             class Animal {
                 public age : int;
             }
@@ -485,7 +485,7 @@ TEST_CASE("[N] M10: base-type constraint rejects unrelated class in resolver",
           "[milestone10][template][constraints][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_n__;
+            module gen_template_constraints_11;
             class Animal {
                 public age : int;
             }
@@ -514,7 +514,7 @@ TEST_CASE("[N] M10: base-type constraint rejects unrelated class in resolver",
 TEST_CASE("[O] M10: base-type constraint accepts derived class in resolver",
           "[milestone10][template][constraints][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m10_o__;
+        module gen_template_constraints_12;
         class Animal {
             public age : int;
         }
@@ -532,7 +532,7 @@ TEST_CASE("[O] M10: base-type constraint accepts derived class in resolver",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_o__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN27gen_template_constraints_124testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 99);
 }
@@ -544,7 +544,7 @@ TEST_CASE("[O] M10: base-type constraint accepts derived class in resolver",
 TEST_CASE("[P] M10: struct-constrained template accepts struct in resolver",
           "[milestone10][template][constraints][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m10_p__;
+        module gen_template_constraints_13;
         struct Vec2 {
             public x : int;
             public y : int;
@@ -561,7 +561,7 @@ TEST_CASE("[P] M10: struct-constrained template accepts struct in resolver",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_p__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN27gen_template_constraints_134testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 42);
 }
@@ -573,7 +573,7 @@ TEST_CASE("[P] M10: struct-constrained template accepts struct in resolver",
 TEST_CASE("[Q] M10: class-constrained template accepts class in resolver",
           "[milestone10][template][constraints][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m10_q__;
+        module gen_template_constraints_14;
         class Widget {
             public id : int;
         }
@@ -588,7 +588,7 @@ TEST_CASE("[Q] M10: class-constrained template accepts class in resolver",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_q__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN27gen_template_constraints_144testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 55);
 }
@@ -600,7 +600,7 @@ TEST_CASE("[Q] M10: class-constrained template accepts class in resolver",
 TEST_CASE("[R] M10: interface-constrained template accepts interface in resolver",
           "[milestone10][template][constraints][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m10_r__;
+        module gen_template_constraints_15;
         interface Countable {
             count() : int;
         }
@@ -615,7 +615,7 @@ TEST_CASE("[R] M10: interface-constrained template accepts interface in resolver
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_r__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN27gen_template_constraints_154testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 77);
 }
@@ -630,7 +630,7 @@ TEST_CASE("[S] M10: function template with struct constraint rejects int",
     // resolver — they prevent instantiation, leading to further errors.
     REQUIRE_THROWS_AS(
         gen_jit_throws(R"SRC(
-            module __m10_s__;
+            module gen_template_constraints_16;
             template<struct S>
             process() : int { return 0; }
 
@@ -649,7 +649,7 @@ TEST_CASE("[S] M10: function template with struct constraint rejects int",
 TEST_CASE("[T] M10: function template with class constraint accepts class",
           "[milestone10][template][constraints][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m10_t__;
+        module gen_template_constraints_17;
         class Widget {
             public id : int;
         }
@@ -661,7 +661,7 @@ TEST_CASE("[T] M10: function template with class constraint accepts class",
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_t__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN27gen_template_constraints_174testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 0);
 }
@@ -674,7 +674,7 @@ TEST_CASE("[U] M10: function template with base-type constraint rejects unrelate
           "[milestone10][template][constraints][integration]") {
     REQUIRE_THROWS_AS(
         gen_jit_throws(R"SRC(
-            module __m10_u__;
+            module gen_template_constraints_18;
             class Animal {
                 public age : int;
             }
@@ -699,7 +699,7 @@ TEST_CASE("[U] M10: function template with base-type constraint rejects unrelate
 TEST_CASE("[V] M10: function template with base-type constraint accepts derived",
           "[milestone10][template][constraints][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m10_v__;
+        module gen_template_constraints_19;
         class Animal {
             public age : int;
         }
@@ -714,7 +714,7 @@ TEST_CASE("[V] M10: function template with base-type constraint accepts derived"
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_v__4testEv");
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN27gen_template_constraints_194testEv");
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 42);
 }
@@ -727,7 +727,7 @@ TEST_CASE("[W] M10: error message for not_aggregate includes param name",
           "[milestone10][template][constraints][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_w__;
+            module gen_template_constraints_20;
             template<struct MyParam>
             struct Box { public val : int; }
             struct User { public b : Box<int>; }
@@ -750,7 +750,7 @@ TEST_CASE("[X] M10: error message for kind mismatch includes kinds",
           "[milestone10][template][constraints][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_x__;
+            module gen_template_constraints_21;
             struct Foo { public x : int; }
             template<class C>
             struct Wrapper { public val : int; }
@@ -773,7 +773,7 @@ TEST_CASE("[Y] M10: error message for constraint violation includes constraint t
           "[milestone10][template][constraints][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_y__;
+            module gen_template_constraints_22;
             class Animal { public age : int; }
             class Car { public speed : int; }
             template<class T : Animal>
@@ -797,7 +797,7 @@ TEST_CASE("[Z] M10: generic function rejects bare local variable type",
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_z__;
+            module gen_template_constraints_23;
             generic<typename T>
             fun bad(value: T&) : int {
                 local : T;
@@ -820,7 +820,7 @@ TEST_CASE("[AA] M10: generic function rejects owner local for typename param",
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_aa__;
+            module gen_template_constraints_24;
             generic<typename T>
             fun bad(value: T&) : int {
                 owned : T!;
@@ -843,7 +843,7 @@ TEST_CASE("[AB] M10: generic member function validates its own generic locals",
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_ab__;
+            module gen_template_constraints_25;
             generic<typename T>
             struct Box {
                 generic<typename U>
@@ -870,7 +870,7 @@ TEST_CASE("[AC] M10: generic function rejects cast target with bare type paramet
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_ac__;
+            module gen_template_constraints_26;
             generic<typename T>
             fun bad(v: int) : int {
                 (T) v;
@@ -893,7 +893,7 @@ TEST_CASE("[AD] M10: generic function rejects owner cast target for typename",
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_ad__;
+            module gen_template_constraints_27;
             generic<typename T>
             fun bad(v: int) : int {
                 (T!) v;
@@ -916,7 +916,7 @@ TEST_CASE("[AE] M10: generic function rejects new allocation of bare type parame
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_ae__;
+            module gen_template_constraints_28;
             generic<typename T>
             fun bad() : int {
                 new T();
@@ -939,7 +939,7 @@ TEST_CASE("[AF] M10: generic function rejects const-wrapped bare local type",
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_af__;
+            module gen_template_constraints_29;
             generic<typename T>
             fun bad(value: T&) : int {
                 local : const T;
@@ -962,7 +962,7 @@ TEST_CASE("[AG] M10: generic function rejects const owner local for typename par
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_ag__;
+            module gen_template_constraints_30;
             generic<typename T>
             fun bad(value: T&) : int {
                 owned : const T!;
@@ -985,7 +985,7 @@ TEST_CASE("[AH] M10: generic function rejects explicit template arg with bare ty
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_ah__;
+            module gen_template_constraints_31;
             template<typename X>
             identity(x: X&) : int { return 0; }
 
@@ -1010,7 +1010,7 @@ TEST_CASE("[AI] M10: generic function rejects explicit owner template arg for ty
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
-            module __m10_ai__;
+            module gen_template_constraints_32;
             template<typename X>
             consume() : int { return 0; }
 
@@ -1034,7 +1034,7 @@ TEST_CASE("[AI] M10: generic function rejects explicit owner template arg for ty
 TEST_CASE("[AJ] M10: generic function accepts explicit owner template arg for class",
           "[milestone10][template][constraints][generic][jit]") {
     auto jit = gen_jit(R"SRC(
-        module __m10_aj__;
+        module gen_template_constraints_33;
         class Boxed {
             public value : int;
             Boxed() : value(7) {}
@@ -1054,7 +1054,7 @@ TEST_CASE("[AJ] M10: generic function accepts explicit owner template arg for cl
         }
     )SRC");
     REQUIRE(jit != nullptr);
-    auto run_fn = jit->lookup_symbol<int(*)()>("_KFN10__m10_aj__3runEv");
+    auto run_fn = jit->lookup_symbol<int(*)()>("_KFN27gen_template_constraints_333runEv");
     REQUIRE(run_fn != nullptr);
     CHECK(run_fn() == 1);
 }

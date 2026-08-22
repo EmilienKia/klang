@@ -47,7 +47,7 @@
 // the inner `Pair<int>` type while instantiating the outer `Holder<...>`.
 TEST_CASE("Owner variable with nested generic type argument resolves and runs", "[gen][template][nested-generic][regression]") {
     auto jit = gen_jit(R"SRC(
-module __nested_generic_owner__;
+module gen_nested_generics_01;
 template<typename T>
 struct Pair {
     a: T;
@@ -81,7 +81,7 @@ test() : int {
 // `Box<Pair<K>>`.
 TEST_CASE("Template class with a nested-generic base class upcasts and dispatches correctly", "[gen][template][nested-generic][regression]") {
     auto jit = gen_jit(R"SRC(
-module __nested_generic_base__;
+module gen_nested_generics_02;
 template<typename T>
 struct Pair {
     a: T;

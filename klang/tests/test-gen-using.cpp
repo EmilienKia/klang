@@ -36,7 +36,7 @@
 
 TEST_CASE("Using namespace — call function from nested namespace", "[gen][using]") {
     auto jit = gen_jit(R"SRC(
-        module __using_ns_func__;
+        module gen_using_01;
         namespace math {
             add(a : int, b : int) : int {
                 return a + b;
@@ -56,7 +56,7 @@ TEST_CASE("Using namespace — call function from nested namespace", "[gen][usin
 
 TEST_CASE("Using namespace — access global variable from nested namespace", "[gen][using]") {
     auto jit = gen_jit(R"SRC(
-        module __using_ns_var__;
+        module gen_using_02;
         namespace vals {
             answer : int = 42;
         }
@@ -74,7 +74,7 @@ TEST_CASE("Using namespace — access global variable from nested namespace", "[
 
 TEST_CASE("Using namespace — resolve type from nested namespace", "[gen][using]") {
     auto jit = gen_jit(R"SRC(
-        module __using_ns_type__;
+        module gen_using_03;
         namespace geom {
             struct Point {
                 x : int;
@@ -100,7 +100,7 @@ TEST_CASE("Using namespace — resolve type from nested namespace", "[gen][using
 
 TEST_CASE("Using specific function — call injected function", "[gen][using]") {
     auto jit = gen_jit(R"SRC(
-        module __using_specific_func__;
+        module gen_using_04;
         namespace math {
             mul(a : int, b : int) : int {
                 return a * b;
@@ -123,7 +123,7 @@ TEST_CASE("Using specific function — call injected function", "[gen][using]") 
 
 TEST_CASE("Using specific type — resolve injected struct", "[gen][using]") {
     auto jit = gen_jit(R"SRC(
-        module __using_specific_type__;
+        module gen_using_05;
         namespace geom {
             struct Vec2 {
                 x : int;
@@ -149,7 +149,7 @@ TEST_CASE("Using specific type — resolve injected struct", "[gen][using]") {
 
 TEST_CASE("Using namespace inside function body", "[gen][using]") {
     auto jit = gen_jit(R"SRC(
-        module __using_in_func__;
+        module gen_using_06;
         namespace helpers {
             double_it(x : int) : int {
                 return x * 2;
@@ -169,7 +169,7 @@ TEST_CASE("Using namespace inside function body", "[gen][using]") {
 
 TEST_CASE("Using specific function inside function body", "[gen][using]") {
     auto jit = gen_jit(R"SRC(
-        module __using_in_func_specific__;
+        module gen_using_07;
         namespace ops {
             sub(a : int, b : int) : int {
                 return a - b;
@@ -191,7 +191,7 @@ TEST_CASE("Using specific function inside function body", "[gen][using]") {
 
 TEST_CASE("Using namespace — deeply nested", "[gen][using]") {
     auto jit = gen_jit(R"SRC(
-        module __using_deep__;
+        module gen_using_08;
         namespace a {
             namespace b {
                 namespace c {
@@ -217,7 +217,7 @@ TEST_CASE("Using namespace — deeply nested", "[gen][using]") {
 
 TEST_CASE("Multiple using namespace directives", "[gen][using]") {
     auto jit = gen_jit(R"SRC(
-        module __using_multi__;
+        module gen_using_09;
         namespace alpha {
             get_a() : int {
                 return 20;
@@ -245,7 +245,7 @@ TEST_CASE("Multiple using namespace directives", "[gen][using]") {
 
 TEST_CASE("Using namespace — call static function of struct in namespace", "[gen][using][static]") {
     auto jit = gen_jit(R"SRC(
-        module __using_static_func__;
+        module gen_using_10;
         namespace math {
             struct Calculator {
                 static add(a : int, b : int) : int {
@@ -267,7 +267,7 @@ TEST_CASE("Using namespace — call static function of struct in namespace", "[g
 
 TEST_CASE("Using namespace — access static variable of struct in namespace", "[gen][using][static]") {
     auto jit = gen_jit(R"SRC(
-        module __using_static_var__;
+        module gen_using_11;
         namespace config {
             struct Settings {
                 static value : int = 42;
@@ -287,7 +287,7 @@ TEST_CASE("Using namespace — access static variable of struct in namespace", "
 
 TEST_CASE("Using specific struct — call static method via injected type", "[gen][using][static]") {
     auto jit = gen_jit(R"SRC(
-        module __using_specific_static_func__;
+        module gen_using_12;
         namespace tools {
             struct Converter {
                 static double_it(x : int) : int {
@@ -309,7 +309,7 @@ TEST_CASE("Using specific struct — call static method via injected type", "[ge
 
 TEST_CASE("Using specific struct — access static variable via injected type", "[gen][using][static]") {
     auto jit = gen_jit(R"SRC(
-        module __using_specific_static_var__;
+        module gen_using_13;
         namespace data {
             struct Constants {
                 static answer : int = 42;
@@ -329,7 +329,7 @@ TEST_CASE("Using specific struct — access static variable via injected type", 
 
 TEST_CASE("Using namespace inside function — call static method of struct", "[gen][using][static]") {
     auto jit = gen_jit(R"SRC(
-        module __using_func_static_method__;
+        module gen_using_14;
         namespace ops {
             struct Math {
                 static negate(x : int) : int {
@@ -351,7 +351,7 @@ TEST_CASE("Using namespace inside function — call static method of struct", "[
 
 TEST_CASE("Using namespace — static method and instance method of struct", "[gen][using][static]") {
     auto jit = gen_jit(R"SRC(
-        module __using_static_and_instance__;
+        module gen_using_15;
         namespace geom {
             struct Rect {
                 w : int;
@@ -382,7 +382,7 @@ TEST_CASE("Using namespace — static method and instance method of struct", "[g
 
 TEST_CASE("Using namespace — write and read static variable of struct", "[gen][using][static]") {
     auto jit = gen_jit(R"SRC(
-        module __using_static_var_rw__;
+        module gen_using_16;
         namespace state {
             struct Counter {
                 static count : int = 0;
@@ -412,13 +412,13 @@ TEST_CASE("Using namespace — write and read static variable of struct", "[gen]
 TEST_CASE("Using namespace — imported module function", "[gen][using][import]") {
     auto result = build_exec_with_lib(
         R"K(
-            module mathlib;
+            module gen_using_17;
             add(a: int, b: int) : int { return a + b; }
         )K",
         R"K(
-            module consumer;
-            import mathlib;
-            using namespace mathlib;
+            module gen_using_18;
+            import gen_using_17;
+            using namespace gen_using_17;
             main() : int {
                 return add(10, 32);
             }
@@ -433,14 +433,14 @@ TEST_CASE("Using namespace — imported module function", "[gen][using][import]"
 TEST_CASE("Using specific function — imported module", "[gen][using][import]") {
     auto result = build_exec_with_lib(
         R"K(
-            module arithlib;
+            module gen_using_19;
             mul(a: int, b: int) : int { return a * b; }
             other() : int { return 999; }
         )K",
         R"K(
-            module consumer;
-            import arithlib;
-            using arithlib::mul;
+            module gen_using_20;
+            import gen_using_19;
+            using gen_using_19::mul;
             main() : int {
                 return mul(6, 7);
             }
@@ -455,7 +455,7 @@ TEST_CASE("Using specific function — imported module", "[gen][using][import]")
 TEST_CASE("Using namespace — imported module struct with method", "[gen][using][import]") {
     auto result = build_exec_with_lib(
         R"K(
-            module shapelib;
+            module gen_using_21;
             struct Point {
                 x : int;
                 y : int;
@@ -463,9 +463,9 @@ TEST_CASE("Using namespace — imported module struct with method", "[gen][using
             }
         )K",
         R"K(
-            module consumer;
-            import shapelib;
-            using namespace shapelib;
+            module gen_using_22;
+            import gen_using_21;
+            using namespace gen_using_21;
             main() : int {
                 p : Point;
                 p.x = 20;
@@ -483,16 +483,16 @@ TEST_CASE("Using namespace — imported module struct with method", "[gen][using
 TEST_CASE("Using specific struct — imported module", "[gen][using][import]") {
     auto result = build_exec_with_lib(
         R"K(
-            module veclib;
+            module gen_using_23;
             struct Vec2 {
                 x : int;
                 y : int;
             }
         )K",
         R"K(
-            module consumer;
-            import veclib;
-            using veclib::Vec2;
+            module gen_using_24;
+            import gen_using_23;
+            using gen_using_23::Vec2;
             main() : int {
                 v : Vec2;
                 v.x = 20;
@@ -510,15 +510,15 @@ TEST_CASE("Using specific struct — imported module", "[gen][using][import]") {
 TEST_CASE("Using namespace — imported module with static struct method", "[gen][using][import][static]") {
     auto result = build_exec_with_lib(
         R"K(
-            module calclib;
+            module gen_using_25;
             struct Calculator {
                 static compute(a: int, b: int) : int { return a + b; }
             }
         )K",
         R"K(
-            module consumer;
-            import calclib;
-            using namespace calclib;
+            module gen_using_26;
+            import gen_using_25;
+            using namespace gen_using_25;
             main() : int {
                 return Calculator::compute(10, 32);
             }
@@ -533,21 +533,21 @@ TEST_CASE("Using namespace — imported module with static struct method", "[gen
 TEST_CASE("Using namespace — imported module with multiple members", "[gen][using][import]") {
     std::vector<LibSpec> libs = {
         {R"K(
-            module alpha_lib;
+            module gen_using_27;
             get_alpha() : int { return 20; }
         )K"},
         {R"K(
-            module beta_lib;
+            module gen_using_28;
             get_beta() : int { return 22; }
         )K"}
     };
     auto result = build_exec_with_libs(libs,
         R"K(
-            module consumer;
-            import alpha_lib;
-            import beta_lib;
-            using namespace alpha_lib;
-            using namespace beta_lib;
+            module gen_using_29;
+            import gen_using_27;
+            import gen_using_28;
+            using namespace gen_using_27;
+            using namespace gen_using_28;
             main() : int {
                 return get_alpha() + get_beta();
             }
@@ -563,17 +563,17 @@ TEST_CASE("Imported overload resolution — unqualified call uses best imported 
           "[gen][using][import][overload][regression]") {
     auto result = build_exec_with_lib(
         R"K(
-            module ovllib;
+            module gen_using_30;
             enum ErrA { a1; }
             enum ErrB { b1; }
             f(x: ErrA) : int { return 11; }
             f(x: ErrB) : int { return 42; }
         )K",
         R"K(
-            module consumer;
-            import ovllib;
+            module gen_using_31;
+            import gen_using_30;
             main() : int {
-                return f(ovllib::ErrB::b1);
+                return f(gen_using_30::ErrB::b1);
             }
         )K");
 
@@ -587,17 +587,17 @@ TEST_CASE("Imported overload resolution — qualified call uses best imported ov
           "[gen][using][import][overload][regression]") {
     auto result = build_exec_with_lib(
         R"K(
-            module ovllib;
+            module gen_using_32;
             enum ErrA { a1; }
             enum ErrB { b1; }
             f(x: ErrA) : int { return 11; }
             f(x: ErrB) : int { return 42; }
         )K",
         R"K(
-            module consumer;
-            import ovllib;
+            module gen_using_33;
+            import gen_using_32;
             main() : int {
-                return ovllib::f(ovllib::ErrB::b1);
+                return gen_using_32::f(gen_using_32::ErrB::b1);
             }
         )K");
 
@@ -610,14 +610,14 @@ TEST_CASE("Imported overload resolution — qualified call uses best imported ov
 TEST_CASE("Using inside function body — imported module function", "[gen][using][import]") {
     auto result = build_exec_with_lib(
         R"K(
-            module helperlib;
+            module gen_using_34;
             triple(x: int) : int { return x * 3; }
         )K",
         R"K(
-            module consumer;
-            import helperlib;
+            module gen_using_35;
+            import gen_using_34;
             main() : int {
-                using namespace helperlib;
+                using namespace gen_using_34;
                 return triple(14);
             }
         )K");
@@ -632,7 +632,7 @@ TEST_CASE("Using inside function body — imported module function", "[gen][usin
 
 TEST_CASE("Using alias — function alias", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_func__;
+        module gen_using_36;
         namespace math {
             add(a : int, b : int) : int {
                 return a + b;
@@ -652,7 +652,7 @@ TEST_CASE("Using alias — function alias", "[gen][using][alias]") {
 
 TEST_CASE("Using alias — variable alias", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_var__;
+        module gen_using_37;
         namespace config {
             answer : int = 42;
         }
@@ -672,7 +672,7 @@ TEST_CASE("Using alias — variable alias", "[gen][using][alias]") {
 
 TEST_CASE("Using alias — type alias for struct", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_type__;
+        module gen_using_38;
         namespace geom {
             struct Vector2 {
                 x : int;
@@ -696,7 +696,7 @@ TEST_CASE("Using alias — type alias for struct", "[gen][using][alias]") {
 
 TEST_CASE("Using alias — type alias with method call", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_type_method__;
+        module gen_using_39;
         namespace shapes {
             struct Rect {
                 w : int;
@@ -723,7 +723,7 @@ TEST_CASE("Using alias — type alias with method call", "[gen][using][alias]") 
 
 TEST_CASE("Using alias — namespace alias, access function via prefix", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_ns_func__;
+        module gen_using_40;
         namespace very_long_namespace_name {
             compute(x : int) : int {
                 return x * 2;
@@ -743,7 +743,7 @@ TEST_CASE("Using alias — namespace alias, access function via prefix", "[gen][
 
 TEST_CASE("Using alias — namespace alias, access type via prefix", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_ns_type__;
+        module gen_using_41;
         namespace geo {
             struct Point {
                 x : int;
@@ -767,7 +767,7 @@ TEST_CASE("Using alias — namespace alias, access type via prefix", "[gen][usin
 
 TEST_CASE("Using alias — namespace alias, access variable via prefix", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_ns_var__;
+        module gen_using_42;
         namespace globals {
             value : int = 42;
         }
@@ -785,7 +785,7 @@ TEST_CASE("Using alias — namespace alias, access variable via prefix", "[gen][
 
 TEST_CASE("Using alias — namespace alias for deeply nested namespace", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_ns_deep__;
+        module gen_using_43;
         namespace a {
             namespace b {
                 namespace c {
@@ -811,7 +811,7 @@ TEST_CASE("Using alias — namespace alias for deeply nested namespace", "[gen][
 
 TEST_CASE("Using alias — alias struct with static method access", "[gen][using][alias][static]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_static_method__;
+        module gen_using_44;
         namespace tools {
             struct Calculator {
                 static add(a : int, b : int) : int {
@@ -833,7 +833,7 @@ TEST_CASE("Using alias — alias struct with static method access", "[gen][using
 
 TEST_CASE("Using alias — alias struct with static variable access", "[gen][using][alias][static]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_static_var__;
+        module gen_using_45;
         namespace data {
             struct Config {
                 static val : int = 42;
@@ -853,7 +853,7 @@ TEST_CASE("Using alias — alias struct with static variable access", "[gen][usi
 
 TEST_CASE("Using alias — namespace alias gives access to struct static members", "[gen][using][alias][static]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_ns_static__;
+        module gen_using_46;
         namespace math {
             struct Ops {
                 static mul(a : int, b : int) : int {
@@ -877,7 +877,7 @@ TEST_CASE("Using alias — namespace alias gives access to struct static members
 
 TEST_CASE("Using alias — function alias inside function body", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_func_body__;
+        module gen_using_47;
         namespace ops {
             negate(x : int) : int {
                 return 0 - x;
@@ -897,7 +897,7 @@ TEST_CASE("Using alias — function alias inside function body", "[gen][using][a
 
 TEST_CASE("Using alias — namespace alias inside function body", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_ns_func_body__;
+        module gen_using_48;
         namespace helpers {
             double_it(x : int) : int {
                 return x * 2;
@@ -917,7 +917,7 @@ TEST_CASE("Using alias — namespace alias inside function body", "[gen][using][
 
 TEST_CASE("Using alias — type alias inside function body", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_type_func_body__;
+        module gen_using_49;
         namespace geom {
             struct Vec {
                 x : int;
@@ -944,13 +944,13 @@ TEST_CASE("Using alias — type alias inside function body", "[gen][using][alias
 TEST_CASE("Using alias — function alias from imported module", "[gen][using][alias][import]") {
     auto result = build_exec_with_lib(
         R"K(
-            module arithlib;
+            module gen_using_50;
             add(a: int, b: int) : int { return a + b; }
         )K",
         R"K(
-            module consumer;
-            import arithlib;
-            using sum = arithlib::add;
+            module gen_using_51;
+            import gen_using_50;
+            using sum = gen_using_50::add;
             main() : int {
                 return sum(10, 32);
             }
@@ -965,16 +965,16 @@ TEST_CASE("Using alias — function alias from imported module", "[gen][using][a
 TEST_CASE("Using alias — type alias from imported module", "[gen][using][alias][import]") {
     auto result = build_exec_with_lib(
         R"K(
-            module shapelib;
+            module gen_using_52;
             struct Point {
                 x : int;
                 y : int;
             }
         )K",
         R"K(
-            module consumer;
-            import shapelib;
-            using Pt = shapelib::Point;
+            module gen_using_53;
+            import gen_using_52;
+            using Pt = gen_using_52::Point;
             main() : int {
                 p : Pt;
                 p.x = 20;
@@ -992,13 +992,13 @@ TEST_CASE("Using alias — type alias from imported module", "[gen][using][alias
 TEST_CASE("Using alias — namespace alias for imported module", "[gen][using][alias][import]") {
     auto result = build_exec_with_lib(
         R"K(
-            module very_long_module_name;
+            module gen_using_54;
             compute(x: int) : int { return x * 2; }
         )K",
         R"K(
-            module consumer;
-            import very_long_module_name;
-            using namespace m = very_long_module_name;
+            module gen_using_55;
+            import gen_using_54;
+            using namespace m = gen_using_54;
             main() : int {
                 return m::compute(21);
             }
@@ -1013,16 +1013,16 @@ TEST_CASE("Using alias — namespace alias for imported module", "[gen][using][a
 TEST_CASE("Using alias — namespace alias for imported module with struct", "[gen][using][alias][import]") {
     auto result = build_exec_with_lib(
         R"K(
-            module geolib;
+            module gen_using_56;
             struct Circle {
                 r : int;
                 diameter() : int { return this.r * 2; }
             }
         )K",
         R"K(
-            module consumer;
-            import geolib;
-            using namespace g = geolib;
+            module gen_using_57;
+            import gen_using_56;
+            using namespace g = gen_using_56;
             main() : int {
                 c : g::Circle;
                 c.r = 21;
@@ -1040,7 +1040,7 @@ TEST_CASE("Using alias — namespace alias for imported module with struct", "[g
 
 TEST_CASE("Using alias — original qualified name still works alongside alias", "[gen][using][alias]") {
     auto jit = gen_jit(R"SRC(
-        module __alias_coexist__;
+        module gen_using_58;
         namespace math {
             add(a : int, b : int) : int {
                 return a + b;

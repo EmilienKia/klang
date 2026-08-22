@@ -23,7 +23,7 @@
 TEST_CASE("Call operator: direct invocation on an aggregate", "[gen][operator][call-operator]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_operator_call_01;
         struct Adder {
             base : int;
             operator()(x : int) : int { return base + x; }
@@ -43,7 +43,7 @@ TEST_CASE("Call operator: direct invocation on an aggregate", "[gen][operator][c
 TEST_CASE("Call operator: a const object uses a const operator()", "[gen][operator][call-operator][const]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_operator_call_02;
         struct Adder {
             base : int;
             const operator()(x : int) : int { return base + x; }
@@ -66,7 +66,7 @@ TEST_CASE("Call operator: a const object uses a const operator()", "[gen][operat
 TEST_CASE("Call operator: overload resolution by arity and parameter type", "[gen][operator][call-operator][overload]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_operator_call_03;
         struct Multi {
             operator()(x : int) : int { return x + 2; }
             operator()(x : double) : int { return 99; }
@@ -86,7 +86,7 @@ TEST_CASE("Call operator: overload resolution by arity and parameter type", "[ge
 TEST_CASE("Call operator: binding a functor to a callable", "[gen][operator][call-operator][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_operator_call_04;
         struct Multiplier {
             factor : int;
             operator()(x : int) : int { return factor * x; }
@@ -107,7 +107,7 @@ TEST_CASE("Call operator: binding a functor to a callable", "[gen][operator][cal
 TEST_CASE("Call operator: missing operator() is rejected", "[gen][operator][call-operator][error]")
 {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_operator_call_05;
         struct Plain { value : int; }
         test() : int {
             p : Plain;

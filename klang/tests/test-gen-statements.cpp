@@ -26,7 +26,7 @@
 
 TEST_CASE("If-then-else", "[gen][if-else]") {
     auto jit = gen_jit(R"SRC(
-        module __if__;
+        module gen_statements_01;
         min(a: int, b: int) : int {
             if(a<b)
                 return a;
@@ -80,7 +80,7 @@ TEST_CASE("If-then-else", "[gen][if-else]") {
 
 TEST_CASE("While", "[gen][while]") {
     auto jit = gen_jit(R"SRC(
-        module __while__;
+        module gen_statements_02;
         cumul(i : int) : int {
             r : int;
             r = 0;
@@ -111,7 +111,7 @@ TEST_CASE("While", "[gen][while]") {
 
 TEST_CASE("For", "[gen][for]") {
     auto jit = gen_jit(R"SRC(
-        module __for__;
+        module gen_statements_03;
         sum(i : short) : int {
             r : int;
             r = 0;
@@ -141,7 +141,7 @@ TEST_CASE("For", "[gen][for]") {
 
 TEST_CASE("Break in while loop", "[gen][break]") {
     auto jit = gen_jit(R"SRC(
-        module __break_while__;
+        module gen_statements_04;
         find_first_ge(limit : int) : int {
             i : int = 0;
             while(i < 100) {
@@ -188,7 +188,7 @@ TEST_CASE("Break in while loop", "[gen][break]") {
 
 TEST_CASE("Break in for loop", "[gen][break]") {
     auto jit = gen_jit(R"SRC(
-        module __break_for__;
+        module gen_statements_05;
         sum_until_for(limit : int) : int {
             r : int = 0;
             for (i : int = 0; i < 100; ++i) {
@@ -214,7 +214,7 @@ TEST_CASE("Break in for loop", "[gen][break]") {
 
 TEST_CASE("Break in nested loops", "[gen][break]") {
     auto jit = gen_jit(R"SRC(
-        module __break_nested__;
+        module gen_statements_06;
         nested_break(n : int) : int {
             total : int = 0;
             i : int = 0;
@@ -253,7 +253,7 @@ TEST_CASE("Break in nested loops", "[gen][break]") {
 TEST_CASE("Break outside loop is an error", "[gen][break]") {
     SECTION("break in function body (not in loop)") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-            module __break_error__;
+            module gen_statements_07;
             bad() : int {
                 break;
                 return 0;
@@ -263,7 +263,7 @@ TEST_CASE("Break outside loop is an error", "[gen][break]") {
 
     SECTION("break in if (not in loop)") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-            module __break_error2__;
+            module gen_statements_08;
             bad(x : int) : int {
                 if(x > 0) {
                     break;
@@ -280,7 +280,7 @@ TEST_CASE("Break outside loop is an error", "[gen][break]") {
 
 TEST_CASE("Continue in while loop", "[gen][continue]") {
     auto jit = gen_jit(R"SRC(
-        module __continue_while__;
+        module gen_statements_09;
         sum_odd(n : int) : int {
             r : int = 0;
             i : int = 0;
@@ -311,7 +311,7 @@ TEST_CASE("Continue in while loop", "[gen][continue]") {
 
 TEST_CASE("Continue in for loop", "[gen][continue]") {
     auto jit = gen_jit(R"SRC(
-        module __continue_for__;
+        module gen_statements_10;
         sum_skip_multiples(n : int, skip : int) : int {
             r : int = 0;
             for (i : int = 0; i < n; ++i) {
@@ -339,7 +339,7 @@ TEST_CASE("Continue in for loop", "[gen][continue]") {
 
 TEST_CASE("Continue in for loop preserves step", "[gen][continue]") {
     auto jit = gen_jit(R"SRC(
-        module __continue_for_step__;
+        module gen_statements_11;
         count_non_multiples(n : int, skip : int) : int {
             count : int = 0;
             for (i : int = 1; i <= n; ++i) {
@@ -367,7 +367,7 @@ TEST_CASE("Continue in for loop preserves step", "[gen][continue]") {
 
 TEST_CASE("Continue in nested loops", "[gen][continue]") {
     auto jit = gen_jit(R"SRC(
-        module __continue_nested__;
+        module gen_statements_12;
         nested_continue(n : int) : int {
             total : int = 0;
             i : int = 0;
@@ -402,7 +402,7 @@ TEST_CASE("Continue in nested loops", "[gen][continue]") {
 TEST_CASE("Continue outside loop is an error", "[gen][continue]") {
     SECTION("continue in function body (not in loop)") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-            module __continue_error__;
+            module gen_statements_13;
             bad() : int {
                 continue;
                 return 0;
@@ -412,7 +412,7 @@ TEST_CASE("Continue outside loop is an error", "[gen][continue]") {
 
     SECTION("continue in if (not in loop)") {
         REQUIRE_THROWS(gen_jit_throws(R"SRC(
-            module __continue_error2__;
+            module gen_statements_14;
             bad(x : int) : int {
                 if(x > 0) {
                     continue;

@@ -40,7 +40,7 @@
 TEST_CASE("Callable: local variable of pointer callable type", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_01;
         add_one(x : int) : int { return x + 1; }
         test() : int {
             fp : *(int):int = add_one;
@@ -56,7 +56,7 @@ TEST_CASE("Callable: local variable of pointer callable type", "[gen][callable]"
 TEST_CASE("Callable: local variable of link callable type", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_02;
         double_it(x : int) : int { return x * 2; }
         test() : int {
             fp : +(int):int = double_it;
@@ -72,7 +72,7 @@ TEST_CASE("Callable: local variable of link callable type", "[gen][callable]")
 TEST_CASE("Callable: local variable of view callable type", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_03;
         triple_it(x : int) : int { return x * 3; }
         test() : int {
             fp : ?(int):int = triple_it;
@@ -89,7 +89,7 @@ TEST_CASE("Callable: local variable of reference callable type", "[gen][callable
 {
     // '&' is the new non-null, non-rebindable callable addresser.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_04;
         quad_it(x : int) : int { return x * 4; }
         test() : int {
             fp : &(int):int = quad_it;
@@ -105,7 +105,7 @@ TEST_CASE("Callable: local variable of reference callable type", "[gen][callable
 TEST_CASE("Callable: global variable of callable type", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_05;
         add_one(x : int) : int { return x + 1; }
         gfp : *(int):int = add_one;
         test() : int { return gfp(41); }
@@ -119,7 +119,7 @@ TEST_CASE("Callable: global variable of callable type", "[gen][callable]")
 TEST_CASE("Callable: rebind a pointer callable", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_06;
         add_one(x : int) : int { return x + 1; }
         add_two(x : int) : int { return x + 2; }
         test() : int {
@@ -137,7 +137,7 @@ TEST_CASE("Callable: rebind a pointer callable", "[gen][callable]")
 TEST_CASE("Callable: pass a callable as a parameter", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_07;
         add_one(x : int) : int { return x + 1; }
         apply(f : *(int):int, x : int) : int { return f(x); }
         test() : int { return apply(add_one, 41); }
@@ -151,7 +151,7 @@ TEST_CASE("Callable: pass a callable as a parameter", "[gen][callable]")
 TEST_CASE("Callable: return a callable from a function", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_08;
         add_one(x : int) : int { return x + 1; }
         get_fn() : *(int):int { return add_one; }
         test() : int {
@@ -168,7 +168,7 @@ TEST_CASE("Callable: return a callable from a function", "[gen][callable]")
 TEST_CASE("Callable: several parameters", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_09;
         add(a : int, b : int) : int { return a + b; }
         test() : int {
             fp : *(int, int):int = add;
@@ -184,7 +184,7 @@ TEST_CASE("Callable: several parameters", "[gen][callable]")
 TEST_CASE("Callable: no parameter", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_10;
         answer() : int { return 42; }
         test() : int {
             fp : *():int = answer;
@@ -201,7 +201,7 @@ TEST_CASE("Callable: void return type is an omitted return type", "[gen][callabl
 {
     // K has no 'void' keyword: a callable without ': TypeSpec' returns nothing.
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_11;
         counter : int = 0;
         bump(x : int) { counter += x; }
         test() : int {
@@ -220,7 +220,7 @@ TEST_CASE("Callable: overload disambiguated by the callable parameter list",
     "[gen][callable][overload]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_12;
         compute(x : int) : int { return x + 1; }
         compute(x : double) : int { return 99; }
         test() : int {
@@ -237,7 +237,7 @@ TEST_CASE("Callable: overload disambiguated by the callable parameter list",
 TEST_CASE("Callable: comparison against null and boolean conversion", "[gen][callable][null]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_13;
         add_one(x : int) : int { return x + 1; }
         test() : int {
             fp : *(int):int = add_one;
@@ -257,7 +257,7 @@ TEST_CASE("Callable: 'void' is not a keyword, so ':void' does not parse", "[gen]
 {
     // 'void' is parsed as an ordinary (unknown) type name, so resolution fails.
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_callable_basic_14;
         bump(x : int) { }
         test() : int {
             fp : *(int):void = bump;
@@ -270,7 +270,7 @@ TEST_CASE("Callable: a bare prototype is not an instantiable value type", "[gen]
 {
     // '(int):int' names a signature; a variable needs an addresser.
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_callable_basic_15;
         add_one(x : int) : int { return x + 1; }
         test() : int {
             fp : (int):int = add_one;
@@ -282,7 +282,7 @@ TEST_CASE("Callable: a bare prototype is not an instantiable value type", "[gen]
 TEST_CASE("Callable: capture-free lambda infers the callable prototype from the destination", "[gen][callable][lambda]")
 {
     auto jit = gen_jit(R"SRC(
-        module test;
+        module gen_callable_basic_16;
         test() : int {
             fp : &(int):int = [](x : int) { return x + 1; };
             return fp(41);
@@ -297,7 +297,7 @@ TEST_CASE("Callable: capture-free lambda infers the callable prototype from the 
 TEST_CASE("Callable: a non-null callable must be initialised", "[gen][callable][null]")
 {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_callable_basic_17;
         test() : int {
             fp : &(int):int;
             return 0;
@@ -308,7 +308,7 @@ TEST_CASE("Callable: a non-null callable must be initialised", "[gen][callable][
 TEST_CASE("Callable: a reference callable is not rebindable", "[gen][callable][rebind]")
 {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_callable_basic_18;
         add_one(x : int) : int { return x + 1; }
         add_two(x : int) : int { return x + 2; }
         test() : int {
@@ -322,7 +322,7 @@ TEST_CASE("Callable: a reference callable is not rebindable", "[gen][callable][r
 TEST_CASE("Callable: a view callable is not rebindable", "[gen][callable][rebind]")
 {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_callable_basic_19;
         add_one(x : int) : int { return x + 1; }
         add_two(x : int) : int { return x + 2; }
         test() : int {
@@ -336,7 +336,7 @@ TEST_CASE("Callable: a view callable is not rebindable", "[gen][callable][rebind
 TEST_CASE("Callable: relational operators are forbidden on callables", "[gen][callable][operators]")
 {
     REQUIRE(compile_should_fail(R"SRC(
-        module test;
+        module gen_callable_basic_20;
         add_one(x : int) : int { return x + 1; }
         add_two(x : int) : int { return x + 2; }
         test() : int {

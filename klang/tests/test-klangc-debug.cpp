@@ -43,7 +43,7 @@ TEST_CASE("klangc: -g emits DWARF sections in executable", "[klangc][debug][dwar
     {
         std::ofstream ofs(k_path);
         ofs << R"(
-            module dbg_exe;
+            module klangc_debug_01;
             main() : int {
                 x: int = 41;
                 return x + 1;
@@ -79,8 +79,8 @@ TEST_CASE("klangc: --dyn-lib -g emits DWARF sections in shared library", "[klang
     {
         std::ofstream ofs(k_path);
         ofs << R"(
-            module dbg_so;
-            namespace dbg_so {
+            module klangc_debug_02;
+            namespace klangc_debug_02 {
                 plus_one(v: int) : int {
                     return v + 1;
                 }
@@ -109,7 +109,7 @@ TEST_CASE("compiler: debug metadata contains parameters, locals and lexical bloc
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
     comp->parse_source("debug_ir_test.k", R"(
-        module debug_ir_test;
+        module klangc_debug_03;
 
         compute(a: int) : int {
             result: int = a;
@@ -142,7 +142,7 @@ TEST_CASE("compiler: debug metadata covers loop scopes and catch variables", "[k
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
     comp->parse_source("debug_flow_test.k", R"(
-        module debug_flow_test;
+        module klangc_debug_04;
 
         flow(a: int) : int {
             result: int = a;
@@ -184,7 +184,7 @@ TEST_CASE("klangc: debug DWARF contains catch variables and lexical blocks", "[k
     {
         std::ofstream ofs(k_path);
         ofs << R"(
-            module dbg_throw;
+            module klangc_debug_05;
 
             class MyErr : public Exception { }
 
@@ -244,7 +244,7 @@ TEST_CASE("compiler: debug metadata gives loop scopes to single-statement bodies
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_single_loop_scopes.k", R"(module debug_single_loop_scopes;
+    comp->parse_source("debug_single_loop_scopes.k", R"(module klangc_debug_06;
 
 sum(n: int) : int {
     total: int = 0;
@@ -276,7 +276,7 @@ TEST_CASE("compiler: debug metadata keeps control-flow exits on their source lin
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_control_flow_locations.k", R"(module debug_control_flow_locations;
+    comp->parse_source("debug_control_flow_locations.k", R"(module klangc_debug_07;
 
 class MyErr : public Exception { }
 
@@ -317,7 +317,7 @@ TEST_CASE("compiler: debug metadata declares implicit this parameter in member f
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_this_param.k", R"(module debug_this_param;
+    comp->parse_source("debug_this_param.k", R"(module klangc_debug_08;
 
 class Counter {
     value: int;
@@ -345,7 +345,7 @@ TEST_CASE("compiler: debug metadata anchors explicit casts on cast lines", "[kla
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_cast_locations.k", R"(module debug_cast_locations;
+    comp->parse_source("debug_cast_locations.k", R"(module klangc_debug_09;
 
 cast_line(v: short) : int {
     widened: int =
@@ -400,7 +400,7 @@ TEST_CASE("compiler: catch-return finally path anchors __cxa_end_catch on source
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_finally_catch_return.k", R"(module debug_finally_catch_return;
+    comp->parse_source("debug_finally_catch_return.k", R"(module klangc_debug_10;
 
 class MyErr : public Exception { }
 
@@ -459,7 +459,7 @@ TEST_CASE("compiler: debug metadata anchors dereference loads on source line", "
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_deref_line.k", R"(module debug_deref_line;
+    comp->parse_source("debug_deref_line.k", R"(module klangc_debug_11;
 
 read(ptr: int*) : int {
     value: int =
@@ -514,7 +514,7 @@ TEST_CASE("compiler: debug metadata anchors dynamic-cast RTTI compare on cast li
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_dynamic_cast_line.k", R"(module debug_dynamic_cast_line;
+    comp->parse_source("debug_dynamic_cast_line.k", R"(module klangc_debug_12;
 
 class Base {
     id() : int { return 0; }
@@ -578,7 +578,7 @@ TEST_CASE("compiler: debug metadata anchors dynamic-cast nullable guard on cast 
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_dynamic_cast_guard_line.k", R"(module debug_dynamic_cast_guard_line;
+    comp->parse_source("debug_dynamic_cast_guard_line.k", R"(module klangc_debug_13;
 
 class Base {
     id() : int { return 0; }
@@ -642,7 +642,7 @@ TEST_CASE("compiler: debug metadata anchors allocation null-check on new express
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_alloc_null_line.k", R"(module debug_alloc_null_line;
+    comp->parse_source("debug_alloc_null_line.k", R"(module klangc_debug_14;
 
 class Box {
     value: int;
@@ -697,7 +697,7 @@ TEST_CASE("compiler: debug metadata anchors multiline if branch on if keyword li
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_if_branch_line.k", R"(module debug_if_branch_line;
+    comp->parse_source("debug_if_branch_line.k", R"(module klangc_debug_15;
 
 branch(a: int) : int {
     if (
@@ -753,7 +753,7 @@ TEST_CASE("compiler: debug metadata anchors multiline multi-var softfail guard o
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_if_multi_softfail_line.k", R"(module debug_if_multi_softfail_line;
+    comp->parse_source("debug_if_multi_softfail_line.k", R"(module klangc_debug_16;
 
 branch(a: int*, b: int*) : int {
     if (
@@ -810,7 +810,7 @@ TEST_CASE("compiler: debug metadata anchors then/else merge branches on source k
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_if_merge_branch_lines.k", R"(module debug_if_merge_branch_lines;
+    comp->parse_source("debug_if_merge_branch_lines.k", R"(module klangc_debug_17;
 
 branch(a: int) : int {
     v: int = 0;
@@ -871,7 +871,7 @@ TEST_CASE("compiler: debug metadata anchors multiline while branches on while ke
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_while_branch_lines.k", R"(module debug_while_branch_lines;
+    comp->parse_source("debug_while_branch_lines.k", R"(module klangc_debug_18;
 
 loop(a: int) : int {
     while (
@@ -920,7 +920,7 @@ TEST_CASE("compiler: debug metadata anchors multiline for branches on for keywor
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_for_branch_lines.k", R"(module debug_for_branch_lines;
+    comp->parse_source("debug_for_branch_lines.k", R"(module klangc_debug_19;
 
 loop(n: int) : int {
     total: int = 0;
@@ -979,7 +979,7 @@ TEST_CASE("compiler: debug metadata anchors while/for continue branches on conti
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_continue_branch_lines.k", R"(module debug_continue_branch_lines;
+    comp->parse_source("debug_continue_branch_lines.k", R"(module klangc_debug_20;
 
 run(a: int, n: int) : int {
     while (a > 0) {
@@ -1038,7 +1038,7 @@ TEST_CASE("compiler: debug metadata anchors while/for break branches on break li
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_break_branch_lines.k", R"(module debug_break_branch_lines;
+    comp->parse_source("debug_break_branch_lines.k", R"(module klangc_debug_21;
 
 run(a: int, n: int) : int {
     while (a > 0) {
@@ -1097,7 +1097,7 @@ TEST_CASE("compiler: debug metadata anchors while back-edge and for-no-test entr
     comp->set_file_resolver(resolver);
     comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
 
-    comp->parse_source("debug_loop_edge_lines.k", R"(module debug_loop_edge_lines;
+    comp->parse_source("debug_loop_edge_lines.k", R"(module klangc_debug_22;
 
 run(n: int) : int {
     while (

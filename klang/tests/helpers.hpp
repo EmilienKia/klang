@@ -61,8 +61,19 @@ llvm::TargetMachine* make_pic_target_machine();
  */
 using IgnoredDiagCodes = std::vector<unsigned int>;
 
+/**
+ * Diagnostic path used to identify the source of a compiled fragment (shown
+ * in diagnostics/traces, has no effect on compilation semantics).
+ *
+ * When @p file_name is empty (the default), it is auto-derived from the
+ * fragment's own `module <name>;` declaration (e.g. `module foo;` ->
+ * "foo.k", `module math::utils;` -> "math.utils.k"). Pass an explicit
+ * @p file_name to override this, e.g. to give a fragment lacking a distinct
+ * module name (or reusing one) an unambiguous file name in test output.
+ */
 std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false, bool optimize = true,
-                                             const IgnoredDiagCodes& ignored_diag_codes = {});
+                                             const IgnoredDiagCodes& ignored_diag_codes = {},
+                                             const std::string& file_name = "");
 
 /**
  * Like gen_jit() but configures a file resolver so that the K base standard
@@ -80,7 +91,8 @@ std::unique_ptr<k::model::gen::jit> gen_jit_with_stdlib(
     const std::string& stdlib_kdi_dir,
     const std::string& stdlib_lib_dir,
     bool dump = false, bool optimize = true,
-    const IgnoredDiagCodes& ignored_diag_codes = {});
+    const IgnoredDiagCodes& ignored_diag_codes = {},
+    const std::string& file_name = "");
 
 /**
  * Like gen_jit() but compiles multiple source files as a single compilation unit.
@@ -113,9 +125,11 @@ std::unique_ptr<k::model::gen::jit> gen_jit_multi_throws(
  *   REQUIRE_THROWS_AS(gen_jit_throws(src), k::model::gen::resolution_error);
  */
 std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool dump = false, bool optimize = true,
-                                                    const IgnoredDiagCodes& ignored_diag_codes = {});
+                                                    const IgnoredDiagCodes& ignored_diag_codes = {},
+                                                    const std::string& file_name = "");
 
-k::tools::exec_result build_and_exec(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {});
+k::tools::exec_result build_and_exec(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {},
+                                      const std::string& file_name = "");
 
 /**
  * Compile the given K source into a shared library (.so).
@@ -123,7 +137,8 @@ k::tools::exec_result build_and_exec(const std::string_view& src, const IgnoredD
  * Throws std::runtime_error on failure.
  * The caller is responsible for removing the file when done.
  */
-std::string build_shared_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {});
+std::string build_shared_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {},
+                                  const std::string& file_name = "");
 
 /**
  * Compile the given K source into a static library (.a).
@@ -131,7 +146,8 @@ std::string build_shared_library(const std::string_view& src, const IgnoredDiagC
  * Throws std::runtime_error on failure.
  * The caller is responsible for removing the file when done.
  */
-std::string build_static_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {});
+std::string build_static_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {},
+                                  const std::string& file_name = "");
 
 /**
  * Compile the given K source into both a shared library (.so) and a static
@@ -141,7 +157,8 @@ std::string build_static_library(const std::string_view& src, const IgnoredDiagC
  * The caller is responsible for removing both files when done.
  */
 std::pair<std::string, std::string> build_both_libraries(const std::string_view& src,
-                                                          const IgnoredDiagCodes& ignored_diag_codes = {});
+                                                          const IgnoredDiagCodes& ignored_diag_codes = {},
+                                                          const std::string& file_name = "");
 
 /**
  * Compile a library from @p lib_src and an executable from @p exec_src
@@ -151,6 +168,10 @@ std::pair<std::string, std::string> build_both_libraries(const std::string_view&
  * is added to LD_LIBRARY_PATH (and as -rpath in the link) so the dynamic
  * loader can find it without any prior installation.
  *
+ * The diagnostic path of each source is auto-derived from its own
+ * `module <name>;` declaration (see gen_jit()'s @p file_name doc); pass
+ * explicit @p lib_file_name / @p exec_file_name to override.
+ *
  * @param lib_src   K source for the library module (no main()).
  * @param exec_src  K source for the executable module (has main()).
  * @return          exec_result from running the executable.
@@ -158,7 +179,9 @@ std::pair<std::string, std::string> build_both_libraries(const std::string_view&
  */
 k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
                                            const std::string_view& exec_src,
-                                           const IgnoredDiagCodes& ignored_diag_codes = {});
+                                           const IgnoredDiagCodes& ignored_diag_codes = {},
+                                           const std::string& lib_file_name = "",
+                                           const std::string& exec_file_name = "");
 
 /**
  * Description of a library to build for build_exec_with_libs().
@@ -168,6 +191,7 @@ struct LibSpec {
     std::string      kdi_path;  ///< [out] filled in after build with the .kdi path
     std::string      so_path;   ///< [out] filled in after build with the .so path
     std::string      symlink_path; ///< [out] filled in with the lib<base>.so symlink
+    std::string      file_name;    ///< diagnostic path override; auto-derived from `src`'s module name when empty
 };
 
 /**
@@ -176,7 +200,9 @@ struct LibSpec {
  *
  * Each LibSpec in @p libs is compiled independently.  Their KDI descriptors
  * and shared-library paths are then made available to the executable compiler
- * via a path_lookup_file_resolver.
+ * via a path_lookup_file_resolver. Each source's diagnostic path is
+ * auto-derived from its own `module <name>;` declaration unless
+ * LibSpec::file_name (resp. @p exec_file_name) is set explicitly.
  *
  * @param libs      One entry per library to compile.
  * @param exec_src  K source for the executable module (must have main()).
@@ -185,7 +211,8 @@ struct LibSpec {
  */
 k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
                                             const std::string_view& exec_src,
-                                            const IgnoredDiagCodes& ignored_diag_codes = {});
+                                            const IgnoredDiagCodes& ignored_diag_codes = {},
+                                            const std::string& exec_file_name = "");
 
 /**
  * Identical to build_exec_with_libs() but when building the executable only
@@ -208,7 +235,8 @@ k::tools::exec_result build_exec_with_libs_direct_only(
     std::vector<LibSpec>& libs,
     const std::string_view& exec_src,
     const std::vector<std::string>& direct_imports,
-    const IgnoredDiagCodes& ignored_diag_codes = {});
+    const IgnoredDiagCodes& ignored_diag_codes = {},
+    const std::string& exec_file_name = "");
 
 /**
  * Compile @p src as a K source for an executable, with the given resolver,
@@ -220,7 +248,8 @@ k::tools::exec_result build_exec_with_libs_direct_only(
  */
 bool compile_should_fail(const std::string_view& src,
                          std::shared_ptr<k::path_lookup_file_resolver> resolver,
-                         const IgnoredDiagCodes& ignored_diag_codes = {});
+                         const IgnoredDiagCodes& ignored_diag_codes = {},
+                         const std::string& file_name = "");
 
 class test_logger : public k::log::logger {
 public:
@@ -267,7 +296,8 @@ bool compile_collect_diagnostics(
     const std::string_view& src,
     std::shared_ptr<k::path_lookup_file_resolver> resolver,
     test_logger& out_logger,
-    const IgnoredDiagCodes& ignored_diag_codes = {});
+    const IgnoredDiagCodes& ignored_diag_codes = {},
+    const std::string& file_name = "");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Model inspection helpers
@@ -279,7 +309,8 @@ bool compile_collect_diagnostics(
  * Note: parse_source() runs ALL passes including code generation; we inspect
  * the model AFTER full compilation so all materializer passes have run.
  */
-std::shared_ptr<k::compiler> compile_model(std::string_view src, const IgnoredDiagCodes& ignored_diag_codes = {});
+std::shared_ptr<k::compiler> compile_model(std::string_view src, const IgnoredDiagCodes& ignored_diag_codes = {},
+                                            const std::string& file_name = "");
 
 /**
  * Like compile_model() but configures a file resolver so the K standard
@@ -288,7 +319,8 @@ std::shared_ptr<k::compiler> compile_model(std::string_view src, const IgnoredDi
  * contains `import k;`.
  */
 std::shared_ptr<k::compiler> compile_model_with_stdlib(std::string_view src,
-                                                        const IgnoredDiagCodes& ignored_diag_codes = {});
+                                                        const IgnoredDiagCodes& ignored_diag_codes = {},
+                                                        const std::string& file_name = "");
 
 /**
  * Navigate to an aggregate by its short name within the root namespace.
