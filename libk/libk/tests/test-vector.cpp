@@ -416,7 +416,7 @@ TEST_CASE("Vector<Color> — append, insert, peek with enum", "[libk][vector][en
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
 
         test() : int {
             vec : Vector<Color>;
@@ -457,7 +457,7 @@ TEST_CASE("Vector<Direction> — plain enum with auto values", "[libk][vector][e
             SOUTH;
             EAST;
             WEST;
-        };
+        }
 
         test() : int {
             vec : Vector<Direction>;
@@ -495,7 +495,7 @@ TEST_CASE("Vector<TypedEnum> — typed enum (byte)", "[libk][vector][enum]") {
             OK = 0;
             WARN = 1;
             ERR = 2;
-        };
+        }
 
         test() : int {
             vec : Vector<Status>;
@@ -533,10 +533,10 @@ TEST_CASE("Vector<Derived> — derived enum", "[libk][vector][enum]") {
         enum Base {
             A = 0;
             B = 1;
-        };
+        }
         enum Derived : Base {
             C = 2;
-        };
+        }
 
         test() : int {
             vec : Vector<Derived>;

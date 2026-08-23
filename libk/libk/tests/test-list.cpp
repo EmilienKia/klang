@@ -514,7 +514,7 @@ TEST_CASE("LinkedList<Color> — pushBack, insert, peek with enum", "[libk][list
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
 
         test() : int {
             lst : LinkedList<Color>;
@@ -555,7 +555,7 @@ TEST_CASE("LinkedList<Direction> — plain enum with auto values", "[libk][list]
             SOUTH;
             EAST;
             WEST;
-        };
+        }
 
         test() : int {
             lst : LinkedList<Direction>;
@@ -588,10 +588,10 @@ TEST_CASE("LinkedList<Derived> — derived enum insert and access", "[libk][list
         enum Base {
             A = 0;
             B = 1;
-        };
+        }
         enum Derived : Base {
             C = 2;
-        };
+        }
 
         test() : int {
             lst : LinkedList<Derived>;
@@ -938,7 +938,7 @@ TEST_CASE("DoubleLinkedList<Color> — enum type", "[libk][list][dlist][enum]") 
             RED = 0;
             GREEN = 1;
             BLUE = 2;
-        };
+        }
 
         test() : int {
             lst : DoubleLinkedList<Color>;
@@ -1112,7 +1112,7 @@ TEST_CASE("DoubleLinkedList<TypedEnum> — typed enum (short)", "[libk][list][dl
             LOW = 1;
             MED = 2;
             HIGH = 3;
-        };
+        }
 
         test() : int {
             lst : DoubleLinkedList<Priority>;

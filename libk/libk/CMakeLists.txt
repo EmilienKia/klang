@@ -445,33 +445,46 @@ target_compile_definitions(libk-tests-core PRIVATE
 add_test(NAME libk-tests-core COMMAND libk-tests-core)
 set_tests_properties(libk-tests-core PROPERTIES TIMEOUT 180)
 
-# ── libk functional tests (collections + stream I/O) ─────────────────────────
-# Collection containers and synchronous stream/file/path I/O APIs.
-# Split from core to keep each CTest target below timeout budget.
+# ── libk basic stream I/O tests  ─────────────────────────────────────────────
+# Synchronous stream/file/path I/O APIs.
 # ─────────────────────────────────────────────────────────────────────────────
-add_executable(libk-tests-collections-io
-    tests/test-io-byte-array-streams.cpp
-    tests/test-io-filter-streams.cpp
-    tests/test-io-transform-streams.cpp
-    tests/test-io-buffered-streams.cpp
-    tests/test-io-data-streams.cpp
-    tests/test-io-print-stream.cpp
-    tests/test-io-stdio.cpp
+add_executable(libk-tests-io
+        tests/test-io-byte-array-streams.cpp
+        tests/test-io-filter-streams.cpp
+        tests/test-io-transform-streams.cpp
+        tests/test-io-buffered-streams.cpp
+        tests/test-io-data-streams.cpp
+        tests/test-io-print-stream.cpp
+        tests/test-io-stdio.cpp
+        tests/test-io-byte-buffer.cpp
+        tests/test-io-path.cpp
+)
+target_link_libraries(libk-tests-io klang-test-helpers Catch2::Catch2WithMain dl)
+add_dependencies(libk-tests-io libk_stdlib)
+target_compile_definitions(libk-tests-io PRIVATE
+        LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
+        LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
+)
+add_test(NAME libk-tests-io COMMAND libk-tests-io)
+set_tests_properties(libk-tests-io PROPERTIES TIMEOUT 60)
+
+# ── libk collection tests ────────────────────────────────────────────────────
+# Collection containers and related tools.
+# ─────────────────────────────────────────────────────────────────────────────
+add_executable(libk-tests-collections
     tests/test-list.cpp
     tests/test-vector.cpp
     tests/test-set.cpp
     tests/test-map.cpp
-    tests/test-io-byte-buffer.cpp
-    tests/test-io-path.cpp
 )
-target_link_libraries(libk-tests-collections-io klang-test-helpers Catch2::Catch2WithMain dl)
-add_dependencies(libk-tests-collections-io libk_stdlib)
-target_compile_definitions(libk-tests-collections-io PRIVATE
+target_link_libraries(libk-tests-collections klang-test-helpers Catch2::Catch2WithMain dl)
+add_dependencies(libk-tests-collections libk_stdlib)
+target_compile_definitions(libk-tests-collections PRIVATE
     LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
     LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
 )
-add_test(NAME libk-tests-collections-io COMMAND libk-tests-collections-io)
-set_tests_properties(libk-tests-collections-io PROPERTIES TIMEOUT 180)
+add_test(NAME libk-tests-collections COMMAND libk-tests-collections)
+set_tests_properties(libk-tests-collections PROPERTIES TIMEOUT 120)
 
 # ── libk threading and I/O tests ──────────────────────────────────────────────
 # Functional correctness tests that involve real threads, futures, sync
