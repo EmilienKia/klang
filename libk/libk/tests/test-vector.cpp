@@ -109,6 +109,200 @@ TEST_CASE("Vector<int> — subscript operator", "[libk][vector][int]") {
     CHECK(fn() == 111);
 }
 
+TEST_CASE("Vector<int> — copy construct", "[libk][vector][int]") {
+    auto j = jit_k(R"SRC(
+        module __vec_int_copy_construct__;
+
+        test() : int {
+            vec : Vector<int>;
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            vec.append(a);
+            vec.append(b);
+            vec.append(c);
+
+            vec2 : Vector<int>(vec);
+
+            result : int = 0;
+            if (vec2.size() == vec.size())      ++result;
+            if (vec2.first() == vec.first())   result += 10;
+            if (vec2.last() == vec.last())    result += 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("Vector<int> — copy array construct", "[libk][vector][int]") {
+    auto j = jit_k(R"SRC(
+        module __vec_int_copy_array_construct__;
+
+        test() : int {
+            arr : int[]{10, 20, 30};
+            vec : Vector<int>(arr);
+
+            result : int = 0;
+            if (vec[0] == arr[0]) ++result;
+            if (vec[1] == arr[1]) result += 10;
+            if (vec[2] == arr[2]) result += 100;
+
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("Vector<int> — copy inline array construct", "[libk][vector][int]") {
+    auto j = jit_k(R"SRC(
+        module __vec_int_copy_inline_array_construct__;
+
+        test() : int {
+            vec : Vector<int>(int[]{10, 20, 30});
+
+            result : int = 0;
+            if (vec[0] == 10) ++result;
+            if (vec[1] == 20) result += 10;
+            if (vec[2] == 30) result += 100;
+
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("Vector<int> — drain construct", "[libk][vector][int][drain]") {
+    auto j = jit_k(R"SRC(
+        module __vec_int_drain_construct__;
+
+         test() : int {
+            vec : Vector<int>(int[]{10, 20, 30});
+            vec2 : Vector<int>(#vec);
+
+            result : int = 0;
+            if (vec.isEmpty())        result += 1;
+            if (vec2.size() == 3)     result += 2;
+            if (vec2.first() == 10)   result += 10;
+            if (vec2.last() == 30)    result += 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() ==  113 );
+}
+
+TEST_CASE("Vector<int> — copy assignment", "[libk][vector][int]") {
+    auto j = jit_k(R"SRC(
+        module __vec_int_copy_assign__;
+
+        test() : int {
+            vec : Vector<int>(int[]{10, 20, 30});
+            vec2 : Vector<int>(int[]{40, 50});
+            vec2.append(60);
+
+            vec2 = vec;
+
+            result : int = 0;
+            if (vec2.size() == vec.size())      ++result;
+            if (vec2.first() == vec.first())   result += 10;
+            if (vec2.last() == vec.last())    result += 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("Vector<int> — copy array assignment", "[libk][vector][int]") {
+    auto j = jit_k(R"SRC(
+        module __vec_int_copy_array_assign__;
+
+        test() : int {
+            arr : int[]{10, 20, 30};
+            vec : Vector<int>(int[]{40, 50, 60});
+
+            vec = arr;
+
+            result : int = 0;
+            if (vec[0] == arr[0]) ++result;
+            if (vec[1] == arr[1]) result += 10;
+            if (vec[2] == arr[2]) result += 100;
+
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+// TODO: This test is currently failing because the compiler does not yet correctly support casting a LinkedList<T> to a Sequence<T>.
+TEST_CASE("Vector<int> — copy sequence assignment", "[.known-issue][libk][vector][int]") {
+    FAIL_CHECK("This test is currently failing because the compiler does not yet correctly support casting a LinkedList<T> to a Sequence<T>.");
+    auto j = jit_k(R"SRC(
+        module __vec_int_copy_seq_assign__;
+
+        test() : int {
+            lst : LinkedList<int>;
+            lst.append(10);
+            lst.append(20);
+            lst.append(30);
+            vec : Vector<int>(int[]{40, 50, 60});
+
+            vec = (Sequence<int>&)lst;
+
+            result : int = 0;
+            if (vec[0] == lst[0]) ++result;
+            if (vec[1] == lst[1]) result += 10;
+            if (vec[2] == lst[2]) result += 100;
+
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("Vector<int> — drain assignment", "[libk][vector][int][drain]") {
+    auto j = jit_k(R"SRC(
+        module __vec_int_drain_assign__;
+
+         test() : int {
+            vec : Vector<int>(int[]{10, 20, 30});
+            vec2 : Vector<int>(int[]{40, 50, 60});
+
+            vec2 = #vec;
+
+            result : int = 0;
+            if (vec.isEmpty())        result += 1;
+            if (vec2.size() == 3)     result += 2;
+            if (vec2.first() == 10)   result += 10;
+            if (vec2.last() == 30)    result += 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() ==  113 );
+}
+
 TEST_CASE("Vector<int> — removeLast", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_int_rmback__;

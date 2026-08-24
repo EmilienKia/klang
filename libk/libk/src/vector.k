@@ -39,10 +39,10 @@ module k;
  */
 template<typename T>
 class Vector : public MutableIndexedCollection<T>, public MutableReversibleSequence<T> {
-    private:
+private:
     _slot : MultiSlot<T>;
-    _size : unsigned int;
-    _capacity : unsigned int;
+    _size : unsigned int = 0;
+    _capacity : unsigned int = 0;
 
     /** Grow the internal buffer to at least minCapacity. */
     grow(minCapacity : unsigned int) {
@@ -61,11 +61,11 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
         _capacity = newCap;
     }
 
-    public:
-    Vector() {
-        _size = 0;
-        _capacity = 0;
-    }
+public:
+    /**
+     * Default constructor — creates an empty vector with zero capacity.
+     */
+    Vector() -> default;
 
     /**
      * Copy constructor — deep-copies the buffer so the two vectors own
@@ -91,11 +91,121 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
         }
     }
 
+    /**
+     * Drain constructor - moves the buffer from the other vector to this one, leaving the other vector empty.
+     */
+    Vector(other : Vector<T>#) {
+        _size = other._size;
+        _capacity = other._capacity;
+        _slot = # other._slot;
+        other._size = 0;
+        other._capacity = 0;
+    }
+
+    /**
+     * Copy constructor from a raw array — deep-copies the elements into the vector.
+     *
+     * Copy each element from the given array into the vector,
+     * constructing new elements in the vector's buffer with their own copy constructor.
+     */
+    Vector(other : const T[]&) {
+        _size = 0;
+        _capacity = 0;
+        n : unsigned int = other.size;
+        if (n > 0) {
+            grow(n);
+            i : unsigned int = 0;
+            while (i < n) {
+                _slot.construct(i);
+                _slot.get(i) = other[i];
+                ++i;
+            }
+            _size = n;
+        }
+    }
+
+    /**
+     * Copy constructor from a Sequence<T> — deep-copies the elements into the vector.
+     */
+    Vector(coll : Sequence<T>&) {
+        appendAll(coll);
+    }
+
     ~Vector() {
         clear();
         if (_capacity > 0) {
             _slot.deallocate();
         }
+    }
+
+    /**
+     * Copy assignment operator — deep-copies the buffer so the two vectors own independent storage.
+     * If the vector already has allocated storage, it is cleared and reused if possible.
+     * If the other vector has more elements than the current capacity, the buffer is reallocated.
+     */
+    operator = (other : const Vector<T>&) : Vector<T>& {
+// TODO : add check for self-assignment to avoid unnecessary work and potential issues with aliasing.
+//        if (this != other) {
+            clear();
+            n : unsigned int = other.size();
+            if (n > 0) {
+                grow(n);
+                i : unsigned int = 0;
+                while (i < n) {
+                    _slot.construct(i);
+                    _slot.get(i) = other.get(i);
+                    ++i;
+                }
+                _size = n;
+            }
+//        }
+        return this;
+    }
+
+    /**
+     * Drain assignment operator — moves the buffer from the other vector to this one, leaving the other vector empty.
+     * If the vector already has allocated storage, it is cleared and reused if possible.
+     * If the other vector has more elements than the current capacity, the buffer is reallocated.
+     */
+    operator = (other : Vector<T>#) : Vector<T>& {
+// TODO : add check for self-assignment to avoid unnecessary work and potential issues with aliasing.
+//        if (this != other) {
+            clear();
+            _size = other._size;
+            _capacity = other._capacity;
+            _slot = # other._slot;
+            other._size = 0;
+            other._capacity = 0;
+//        }
+        return this;
+    }
+
+    /**
+     * Copy assignment operator from a raw array — deep-copies the elements into the vector.
+     */
+    operator = (other : const T[]&) : Vector<T>& {
+        clear();
+        n : unsigned int = other.size;
+        if (n > 0) {
+            grow(n);
+            i : unsigned int = 0;
+            while (i < n) {
+                _slot.construct(i);
+                _slot.get(i) = other[i];
+                ++i;
+            }
+            _size = n;
+        }
+        return this;
+    }
+
+    /**
+     * Copy assignment operator from a Sequence<T> — deep-copies the elements into the vector.
+     */
+    operator = (coll : Sequence<T>&) : Vector<T>& {
+        clear();
+        appendAll(coll);
+        return this;
     }
 
     /** Return true if the vector contains no elements. */
@@ -135,6 +245,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     }
 
     prependAll(coll : const T[]&) {
+        // TODO: check if the sequence is Sized. If so, reserve the size in advance to avoid multiple reallocations.
         i : unsigned int = coll.size;
         while (i > 0) {
             --i;
@@ -143,6 +254,7 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
     }
 
     appendAll(coll : Sequence<T>&) {
+        // TODO: check if the sequence is Sized. If so, reserve the size in advance to avoid multiple reallocations.
         it : ConstIterator<T>! = coll.constIterator();
         cur : OptionalConstRef<T> = it.next();
         while (cur.hasValue()) {
@@ -196,6 +308,8 @@ class Vector : public MutableIndexedCollection<T>, public MutableReversibleSeque
         _slot.get(index) = value;
         ++_size;
     }
+
+    // TODO add insertAll(...)
 
     /**
      * Construct an element in-place at the given index. O(n).
