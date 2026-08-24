@@ -102,7 +102,69 @@ interface Sequence {
     filter(predicate: Predicate<T>) -> Sequence<T>;
     // ...
  */
+    /**
+     * Collect all elements of the sequence into an appendable collection.
+     * @param collection An Appendable<T> to receive the elements, typically a collection.
+     */
+    default const collect(collection : Appendable<T>&) {
+        it : ConstIterator<T>! = constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        while (cur.hasValue()) {
+            collection.append(cur.get());
+            cur = it.next();
+        }
+    }
+
+    /**
+     * Collect all elements of the sequence into a consumer.
+     * @param collector A Consumer<const T&> to receive the elements, typically a function or lambda.
+     */
+    default const collect(collector : functional::Consumer<const T&>) {
+        it : ConstIterator<T>! = constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        while (cur.hasValue()) {
+            collector(cur.get());
+            cur = it.next();
+        }
+    }
+
+
+// TODO: declare accumulate() as a default method on Sequence<T> once we have a way to express the accumulator function type in the interface.
+// For now, we provide a free function version below.
+/*
+    template<typename R>
+    default const accumulate(initial : const R&, accumulator : functional::BiFunction<R, const T&, R>) : R {
+        result : R = initial;
+        it : ConstIterator<T>! = constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        while (cur.hasValue()) {
+            result = accumulator(result, cur.get());
+            cur = it.next();
+        }
+        return result;
+    }
+*/
 }
+
+
+/**
+ * Accumulate all elements of the sequence into a single value.
+ * @param initial The initial value to start the accumulation.
+ * @param accumulator A BiFunction<R, const T&, R> that combines the current result with each element.
+ */
+template<typename T, typename R>
+accumulate(seq: const Sequence<T>&, initial : const R&, accumulator : functional::BiFunction<R, const T&, R>) : R {
+    result : R = initial;
+    it : ConstIterator<T>! = seq.constIterator();
+    cur : OptionalConstRef<T> = it.next();
+    while (cur.hasValue()) {
+        result = accumulator(result, cur.get());
+        cur = it.next();
+    }
+    return result;
+}
+
+
 
 /**
  * MutableSequence<T> — abstract interface for sequences that also support mutable iteration.

@@ -477,6 +477,7 @@ add_executable(libk-tests-collections
     tests/test-vector.cpp
     tests/test-set.cpp
     tests/test-map.cpp
+    tests/test-sequence-helpers.cpp
 )
 target_link_libraries(libk-tests-collections klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests-collections libk_stdlib)

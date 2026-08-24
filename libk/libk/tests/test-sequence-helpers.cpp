@@ -1,0 +1,169 @@
+/*
+ * K Language standard library — Set tests (ListSet, TreeSet, HashSet)
+ *
+ * Copyright 2023-2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <catch2/catch_all.hpp>
+
+#include "helpers.hpp"
+
+#ifndef LIBK_KDI_DIR
+#error "LIBK_KDI_DIR must be defined — check CMakeLists.txt"
+#endif
+#ifndef LIBK_LIB_DIR
+#error "LIBK_LIB_DIR must be defined — check CMakeLists.txt"
+#endif
+
+namespace {
+
+std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
+    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
+}
+
+} // anonymous namespace
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1 : Sequence::forEach
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — for each", "[libk][vector][int][forEach]") {
+    auto j = jit_k(R"SRC(
+        module __vector_foreach__;
+
+        struct Accumulator {
+            sum : int = 0;
+            add(v : const int&) { sum += v; }
+        }
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5});
+            acc : Accumulator;
+            v.forEach(acc.add);
+            return acc.sum == 15;  // 1+2+3+4+5 = 15
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2 : MutableSequence::forEach
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — mutable for each", "[libk][vector][int][forEach]") {
+    auto j = jit_k(R"SRC(
+        module __vector_foreach__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5});
+            v.forEach([](v : int&) { v *= 2; });  // Double each element
+            return v.size() == 5 && v[0] == 2 && v[4] == 10;  // Check first and last elements
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3 : Sequence::collect
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — collect by appending into an appendable collection", "[libk][vector][int][collect]") {
+    auto j = jit_k(R"SRC(
+        module __vector_collect__;
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5});
+            v2 : Vector<int>;
+
+            v.collect(v2);
+
+            return v2.size() == v.size() && v2[0] == v[0] && v2[4] == v[4];  // Check first and last elements
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — collect through a consumer collector", "[libk][vector][int][collect]") {
+    auto j = jit_k(R"SRC(
+        module __vector_collect__;
+
+        struct Accumulator {
+            sum : int = 0;
+            add(v : const int&) { sum += v; }
+        }
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5});
+            acc : Accumulator;
+
+            v.collect(acc.add);
+
+            return acc.sum == 15;  // 1+2+3+4+5 = 15
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4 : Sequence::accumulate
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — accumulate into a single value - free form", "[libk][vector][int][accumulate]") {
+    auto j = jit_k(R"SRC(
+        module __vector_accumulate__;
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5});
+            result : int = accumulate<int, int>(v, 0, [](acc : int, v : const int&) { return acc + v; });
+
+            return result == 15;  // 1+2+3+4+5 = 15
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+// TODO: this test is currently failing because the uniform member form of accumulate is not yet fully implemented in the klangc.
+// The free form version works, but the uniform member form does not. This is a known issue and should be fixed in a future update.
+TEST_CASE("Vector<int> — accumulate into a single value - uniform member form", "[.known-issue][libk][vector][int][accumulate]") {
+    FAIL_CHECK("This test is currently failing because the uniform member form of accumulate is not yet fully implemented in the klangc.");
+    auto j = jit_k(R"SRC(
+        module __vector_accumulate__;
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5});
+            result : int = v.accumulate<int>(0, [](acc : int, v : const int&) { return acc + v; });
+
+            return result == 15;  // 1+2+3+4+5 = 15
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
