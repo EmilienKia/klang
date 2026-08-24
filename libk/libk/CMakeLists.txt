@@ -432,6 +432,7 @@ add_executable(libk-tests-core
     tests/test-string-search.cpp
     tests/test-string-builder-mutation.cpp
     tests/test-math.cpp
+    tests/test-memory.cpp
     tests/test-optional.cpp
     tests/test-shared.cpp
     tests/test-application.cpp

@@ -43,10 +43,10 @@ module k;
  */
 template<typename T>
 struct UniSlot {
-    private:
+private:
     _slot : T;
 
-    public:
+public:
     @annotations::Intrinsic("UniSlot::constructor")
     UniSlot();
 
@@ -92,11 +92,11 @@ struct UniSlot {
  */
 template<typename T>
 struct MultiSlot {
-    private:
+private:
     _data : T*;
     _capacity : int;
 
-    public:
+public:
     @annotations::Intrinsic("MultiSlot::constructor")
     MultiSlot();
 
@@ -121,6 +121,22 @@ struct MultiSlot {
 
     @annotations::Intrinsic("MultiSlot::get")
     get(index : int) : T&;
+
+    MultiSlot(other: MultiSlot<T>#) : MultiSlot() {
+        _data = other._data;
+        _capacity = other._capacity;
+        other._data = null;
+        other._capacity = 0;
+    }
+
+    operator = (other: MultiSlot<T>#) : MultiSlot<T>& {
+        deallocate();
+        _data = other._data;
+        _capacity = other._capacity;
+        other._data = null;
+        other._capacity = 0;
+        return this;
+    }
 
     const getCapacity() : int { return _capacity; }
 }
