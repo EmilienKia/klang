@@ -19,6 +19,18 @@
         `doc/spec/language/basic/aliases.md` §9); a value parameter is rejected
         because it would have to be evaluated at the use site, where it is not
         in scope. Tests: `klang/tests/test-gen-alias-template.cpp`.
+  - [ ] Template argument deduction (Function template argument deduction & CTAD):
+    - [x] Basic function template argument deduction for primitive/direct type parameters and parameter packs (`fun id<T>(x: T)`, `fun fwd<Ts...>(args: Ts...)`).
+    - [x] Comprehensive template argument deduction for functions (global, member, static, UCS) from invocation arguments:
+      - [x] Composite/aggregate template types deduction (`Vector<T>`, `Pair<T, U>`, `Map<K, V>`).
+      - [x] Nested composite template types deduction (`Vector<Vector<T>>`, `Optional<Vector<T>>`).
+      - [x] Value template parameter deduction from sized arrays (`T[N]`) and aggregate value args (`Array<T, N>`).
+      - [x] Indirection qualifiers pattern matching (`*`, `&`, `+`, `?`, `!`, `#`, `const`) on scalar and composite types.
+      - [x] Callable types and member function reference types deduction (`*(T):R`, `Class::*(T):void`).
+      - [x] Dependent return type materialization and instantiation from deduced parameters (`Vector<T>`, `T*`, `Pair<T, U>`).
+      - [x] Full overload resolution integration: non-template preference tie-breaking, SFINAE-like rejection on deduction failure, constraint validation.
+    - [ ] Return-type-only template argument deduction (target-type inference / context deduction, deferred to later phase).
+    - [ ] Class Template Argument Deduction (CTAD) for constructors (`Pair(1, 2)` -> `Pair<int, int>`).
   - [ ] Concepts / type traits / static_if on template parameters
   - [ ] Standalone template enum declarations
   - [ ] Template constructors (independent of aggregate template)

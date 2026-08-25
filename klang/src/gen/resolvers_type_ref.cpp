@@ -3356,6 +3356,7 @@ type_reference_resolver::get_best_matching_function(
         std::shared_ptr<expression> this_for_unified;
         int preference;
         size_t defaults_used;
+        bool is_template;
     };
 
     std::vector<CandInfo> valid;
@@ -3550,9 +3551,11 @@ type_reference_resolver::get_best_matching_function(
                     adapted_args.push_back(args[i]);
                 }
             }
-            valid.push_back({func, std::move(adapted_args), CAST_NONE, false, nullptr, 0, 0});
+            valid.push_back({func, std::move(adapted_args), CAST_NONE, false, nullptr, 0, 0, false});
             continue;
         }
+
+        const bool func_is_tpl = func ? (func->is_instantiation() || func->has_tpl_args() || func->is_template()) : false;
 
         if (func->is_member() && !func->is_static() && this_expr) {
             if (args.size() <= params.size() || func_has_varargs) {
@@ -3566,7 +3569,7 @@ type_reference_resolver::get_best_matching_function(
                         this_is_const = type::is_const(sub);
                     }
                     int pref = (!this_is_const && func->is_const_member()) ? 1 : 0;
-                    valid.push_back({func, std::move(adapted), w, false, nullptr, pref, def});
+                    valid.push_back({func, std::move(adapted), w, false, nullptr, pref, def, func_is_tpl});
                 }
             }
         }
@@ -3583,7 +3586,7 @@ type_reference_resolver::get_best_matching_function(
                 auto [w, adapted] = score_with_defaults(b_args, params, nullptr, 0);
                 if (w != CAST_IMPOSSIBLE) {
                     size_t def = (b_args.size() < params.size()) ? params.size() - b_args.size() : 0;
-                    valid.push_back({func, std::move(adapted), w, false, nullptr, 1, def});
+                    valid.push_back({func, std::move(adapted), w, false, nullptr, 1, def, func_is_tpl});
                 }
             }
         }
@@ -3600,7 +3603,7 @@ type_reference_resolver::get_best_matching_function(
                         auto adapted_this = adapt_type(this_expr, first_param_type);
                         size_t def = (args.size() < params.size() - 1) ? (params.size() - 1) - args.size() : 0;
                         valid.push_back({func, std::move(adapted_rest), total, true,
-                                         adapted_this ? adapted_this : this_expr, 2, def});
+                                         adapted_this ? adapted_this : this_expr, 2, def, func_is_tpl});
                     }
                 }
             }
@@ -3646,19 +3649,35 @@ type_reference_resolver::get_best_matching_function(
     cast_weight best_score = CAST_IMPOSSIBLE;
     size_t best_def = std::numeric_limits<size_t>::max();
     int best_pref = 999;
+    bool best_is_tpl = true;
     for (auto& c : valid) {
-        if (c.score < best_score
-            || (c.score == best_score && c.defaults_used < best_def)
-            || (c.score == best_score && c.defaults_used == best_def && c.preference < best_pref)) {
+        bool is_better = false;
+        if (c.score < best_score) {
+            is_better = true;
+        } else if (c.score == best_score) {
+            if (c.defaults_used < best_def) {
+                is_better = true;
+            } else if (c.defaults_used == best_def) {
+                if (c.preference < best_pref) {
+                    is_better = true;
+                } else if (c.preference == best_pref) {
+                    if (!c.is_template && best_is_tpl) {
+                        is_better = true;
+                    }
+                }
+            }
+        }
+        if (is_better) {
             best_score = c.score;
             best_def = c.defaults_used;
             best_pref = c.preference;
+            best_is_tpl = c.is_template;
         }
     }
 
     std::vector<CandInfo*> best;
     for (auto& c : valid) {
-        if (c.score == best_score && c.defaults_used == best_def && c.preference == best_pref)
+        if (c.score == best_score && c.defaults_used == best_def && c.preference == best_pref && c.is_template == best_is_tpl)
             best.push_back(&c);
     }
 

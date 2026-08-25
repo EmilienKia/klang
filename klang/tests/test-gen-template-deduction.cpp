@@ -417,3 +417,303 @@ TEST_CASE("template deduction - pack forwarding to distinct targets", "[gen][tem
     }
 }
 
+TEST_CASE("template deduction - composite template argument single type param", "[gen][template-deduction][composite]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_composite_01;
+        template<typename T>
+        struct Box {
+            val: T;
+        }
+        template<typename T>
+        unbox(b: Box<T>&) : T {
+            return b.val;
+        }
+        test_composite() : int {
+            b : Box<int>;
+            b.val = 42;
+            return unbox(b);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_composite");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - composite template argument multiple type params", "[gen][template-deduction][composite]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_composite_02;
+        template<typename T, typename U>
+        struct Pair {
+            first: T;
+            second: U;
+        }
+        template<typename T, typename U>
+        get_second(p: Pair<T, U>&) : U {
+            return p.second;
+        }
+        test_pair() : int {
+            p : Pair<int, int>;
+            p.first = 10;
+            p.second = 42;
+            return get_second(p);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_pair");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - nested composite template arguments", "[gen][template-deduction][composite]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_composite_03;
+        template<typename T>
+        struct Box {
+            val: T;
+        }
+        template<typename T>
+        unbox_nested(b: Box<Box<T>>&) : T {
+            return b.val.val;
+        }
+        test_nested() : int {
+            b : Box<Box<int>>;
+            b.val.val = 42;
+            return unbox_nested(b);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_nested");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - dependent composite return type", "[gen][template-deduction][composite]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_composite_04;
+        template<typename T>
+        struct Box {
+            val: T;
+        }
+        template<typename T>
+        make_box(val: T) : Box<T> {
+            b : Box<T>;
+            b.val = val;
+            return b;
+        }
+        test_make_box() : int {
+            b : Box<int> = make_box(42);
+            return b.val;
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_make_box");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - pointer indirection qualifier", "[gen][template-deduction][indirection]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_ptr_01;
+        template<typename T>
+        deref(p: T*) : T {
+            return *p;
+        }
+        test_ptr() : int {
+            x : int = 42;
+            return deref(&x);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_ptr");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - member template method on non-template class", "[gen][template-deduction][member]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_member_01;
+        class Helper {
+        public:
+            template<typename T>
+            echo(x: T) : T {
+                return x;
+            }
+        }
+        test_member() : int {
+            h : Helper;
+            return h.echo(42);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_member");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - member template method on template class", "[gen][template-deduction][member]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_member_02;
+        template<typename U>
+        class Container {
+        public:
+            item: U;
+            template<typename T>
+            combine(x: T) : int {
+                return (int)item + (int)x;
+            }
+        }
+        test_container() : int {
+            c : Container<int>;
+            c.item = 20;
+            return c.combine(22);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_container");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - static member template method", "[gen][template-deduction][static]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_static_01;
+        class MathUtils {
+        public:
+            template<typename T>
+            static double_it(x: T) : T {
+                return x + x;
+            }
+        }
+        test_static() : int {
+            return MathUtils::double_it(21);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_static");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - callable argument deduction", "[gen][template-deduction][callable]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_callable_01;
+        template<typename T, typename R>
+        apply(x: T, fn: *(T):R) : R {
+            return fn(x);
+        }
+        square(n: int) : int {
+            return n * n;
+        }
+        test_callable() : int {
+            fn : *(int):int = square;
+            return apply(6, fn);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_callable");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 36);
+}
+
+TEST_CASE("template deduction - fallback to template when non-template has incompatible type", "[gen][template-deduction][overload]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_overload_01;
+        process(x: int) : int {
+            return 1;
+        }
+        template<typename T>
+        process(x: T) : int {
+            return 2;
+        }
+        test_overload() : int {
+            b : bool = true;
+            return process(b);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_overload");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 2);
+}
+
+TEST_CASE("template deduction - sized array deduction", "[gen][template-deduction][array]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_array_01;
+        template<typename T>
+        first_elem(arr: T[3]) : T {
+            return arr[0];
+        }
+        test_arr() : int {
+            a : int[3];
+            a[0] = 42;
+            return first_elem(a);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_arr");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - chained member method calls", "[gen][template-deduction][chained]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_chained_01;
+        class Accumulator {
+        public:
+            sum: int;
+            template<typename T>
+            add(val: T) : Accumulator& {
+                sum = sum + (int)val;
+                return this;
+            }
+        }
+        test_chain() : int {
+            acc : Accumulator;
+            acc.sum = 0;
+            acc.add(10).add(20).add(12);
+            return acc.sum;
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_chain");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - const member template on const object", "[gen][template-deduction][const]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_const_01;
+        class Inspector {
+        public:
+            base: int;
+            template<typename T>
+            const inspect(val: T) : int {
+                return base + (int)val;
+            }
+        }
+        test_const() : int {
+            ins : Inspector;
+            ins.base = 20;
+            c_ins : const Inspector& = ins;
+            return c_ins.inspect(22);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_const");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template deduction - type constraints on deduced argument", "[gen][template-deduction][constraints]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_deduction_constraints_01;
+        class Animal {
+        public:
+            age: int;
+        }
+        class Dog : Animal {
+        public:
+            Dog() { age = 7; }
+        }
+        template<class T : Animal>
+        get_age(pet: T&) : int {
+            return pet.age;
+        }
+        test_constraint() : int {
+            d : Dog;
+            return get_age(d);
+        }
+    )SRC");
+    auto fn = jit->lookup_symbol<int(*)()>("test_constraint");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 7);
+}
+

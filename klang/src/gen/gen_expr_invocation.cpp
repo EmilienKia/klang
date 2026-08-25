@@ -639,6 +639,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         std::string key = build_instantiation_key(model_args);
                         // Check instantiation cache
                         std::shared_ptr<function> concrete;
+                        bool newly_instantiated = false;
                         auto cache_it = ti->instantiations.find(key);
                         if (cache_it != ti->instantiations.end()) {
                             if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
@@ -665,19 +666,26 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 concrete->set_tpl_instantiation_info(base_name, model_args);
                                 concrete->mark_instantiation();
                                 ti->instantiations[key] = concrete;
+                                newly_instantiated = true;
                             }
                         }
                         if (concrete) {
-                            // Run through resolver pipeline
-                            {
-                                symbol_resolver sr(*this, _context, _unit);
-                                concrete->accept(sr);
+                            if (newly_instantiated) {
+                                // Run through resolver pipeline
+                                {
+                                    symbol_resolver sr(*this, _context, _unit);
+                                    concrete->accept(sr);
+                                }
+                                {
+                                    aggregate_type_resolver atr(*this, _context, _unit);
+                                    concrete->accept(atr);
+                                }
+                                {
+                                    signature_resolver sigr(*this, _context, _unit);
+                                    concrete->accept(sigr);
+                                }
+                                concrete->accept(*this);
                             }
-                            {
-                                signature_resolver sigr(*this, _context, _unit);
-                                concrete->accept(sigr);
-                            }
-                            concrete->accept(*this);
 
                             // Replace candidates with just the concrete instance
                             callee->set_target(concrete);
@@ -695,8 +703,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         if (callee && !callee->has_ast_template_args()) {
             std::vector<std::shared_ptr<function>> tpl_candidates;
             for (auto& cand : candidates) {
-                if (cand->is_template()) {
-                    tpl_candidates.push_back(cand);
+                if (cand && cand->is_template()) {
+                    // Only member template methods of this aggregate or its bases are member candidates
+                    if (cand->is_member() || cand->parent<aggregate>()) {
+                        if (std::find(tpl_candidates.begin(), tpl_candidates.end(), cand) == tpl_candidates.end()) {
+                            tpl_candidates.push_back(cand);
+                        }
+                    }
                 }
             }
             if (!tpl_candidates.empty()) {
@@ -704,91 +717,75 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 for (auto& arg : expr.arguments()) {
                     arg_types.push_back(arg ? arg->get_type() : nullptr);
                 }
-                // Check if a non-template candidate with matching arity exists
-                size_t call_arity = arg_types.size();
-                bool has_viable_non_template = false;
-                for (auto& cand : candidates) {
-                    if (!cand->is_template()) {
-                        size_t param_count = 0;
-                        for (auto& p : cand->parameters()) {
-                            if (p != cand->get_this_parameter()) param_count++;
-                        }
-                        if (param_count == call_arity) {
-                            has_viable_non_template = true;
-                            break;
+                for (auto& tpl_func : tpl_candidates) {
+                    auto* ti = tpl_func->get_tpl_info();
+                    if (!ti) continue;
+                    for (auto& param : ti->params) {
+                        if (param.is_value_param() && !param.default_value.has_value() && param.default_value_expr) {
+                            (void)materialize_value_default(param, tpl_func);
                         }
                     }
-                }
-                if (!has_viable_non_template) {
-                    for (auto& tpl_func : tpl_candidates) {
-                        auto* ti = tpl_func->get_tpl_info();
-                        if (!ti) continue;
-                        for (auto& param : ti->params) {
-                            if (param.is_value_param() && !param.default_value.has_value() && param.default_value_expr) {
-                                (void)materialize_value_default(param, tpl_func);
-                            }
+                    auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), arg_types);
+                    if (!deduction.success) continue;
+                    size_t err_idx;
+                    std::string err_reason;
+                    if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
+                        continue;
+                    }
+                    // Instantiate within the owning aggregate (not root ns)
+                    auto& deduced_args = deduction.deduced_args;
+                    std::string key = build_instantiation_key(deduced_args);
+                    std::shared_ptr<function> concrete;
+                    bool newly_instantiated = false;
+                    auto cache_it = ti->instantiations.find(key);
+                    if (cache_it != ti->instantiations.end()) {
+                        if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
+                            concrete = *fn_ptr;
                         }
-                        auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), arg_types);
-                        if (!deduction.success) continue;
-                        size_t err_idx;
-                        std::string err_reason;
-                        if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
-                            continue;
-                        }
-                        // Instantiate within the owning aggregate (not root ns)
-                        auto& deduced_args = deduction.deduced_args;
-                        std::string key = build_instantiation_key(deduced_args);
-                        std::shared_ptr<function> concrete;
-                        auto cache_it = ti->instantiations.find(key);
-                        if (cache_it != ti->instantiations.end()) {
-                            if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
-                                concrete = *fn_ptr;
-                            }
-                        }
-                        if (!concrete) {
-                            std::string base_name = tpl_func->get_short_name();
-                            std::string inst_name = build_instantiated_name(base_name, deduced_args);
-                            auto subst = template_instantiator::build_substitution_map_public(*ti, deduced_args);
-                            auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduced_args);
-                            auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduced_args);
-                            concrete = st->define_function(inst_name, tpl_func->is_static());
-                            if (concrete) {
-                                concrete->set_visibility(tpl_func->get_visibility());
-                                concrete->set_const_member(tpl_func->is_const_member());
-                                concrete->set_operator(tpl_func->is_operator());
-                                concrete->set_aliasing(tpl_func->get_aliasing());
-                                concrete->set_compiler_generated(tpl_func->is_compiler_generated());
-                                template_instantiator::populate_function_from_template_public(
-                                    concrete, *tpl_func, subst, val_subst, pack_subst);
-                                concrete->set_tpl_instantiation_info(base_name, deduced_args);
-                                concrete->mark_instantiation();
-                                ti->instantiations[key] = concrete;
-                            }
-                        }
+                    }
+                    if (!concrete) {
+                        std::string base_name = tpl_func->get_short_name();
+                        std::string inst_name = build_instantiated_name(base_name, deduced_args);
+                        auto subst = template_instantiator::build_substitution_map_public(*ti, deduced_args);
+                        auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduced_args);
+                        auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduced_args);
+                        auto target_agg = tpl_func->parent<aggregate>();
+                        if (!target_agg) target_agg = st;
+                        concrete = target_agg->define_function(inst_name, tpl_func->is_static());
                         if (concrete) {
-                            {
-                                symbol_resolver sr(*this, _context, _unit);
-                                concrete->accept(sr);
-                            }
-                            {
-                                signature_resolver sigr(*this, _context, _unit);
-                                concrete->accept(sigr);
-                            }
-                            concrete->accept(*this);
-                            callee->set_target(concrete);
-                            candidates.erase(
-                                std::remove(candidates.begin(), candidates.end(), tpl_func),
-                                candidates.end());
-                            candidates.push_back(concrete);
-                            break;
+                            concrete->set_visibility(tpl_func->get_visibility());
+                            concrete->set_const_member(tpl_func->is_const_member());
+                            concrete->set_operator(tpl_func->is_operator());
+                            concrete->set_aliasing(tpl_func->get_aliasing());
+                            concrete->set_compiler_generated(tpl_func->is_compiler_generated());
+                            template_instantiator::populate_function_from_template_public(
+                                concrete, *tpl_func, subst, val_subst, pack_subst);
+                            concrete->set_tpl_instantiation_info(base_name, deduced_args);
+                            concrete->mark_instantiation();
+                            ti->instantiations[key] = concrete;
+                            newly_instantiated = true;
                         }
                     }
-                    // Remove remaining uninstantiated template candidates
-                    candidates.erase(
-                        std::remove_if(candidates.begin(), candidates.end(),
-                            [](const std::shared_ptr<function>& f) { return f->is_template(); }),
-                        candidates.end());
+                    if (concrete) {
+                        if (newly_instantiated) {
+                            symbol_resolver sr(*this, _context, _unit);
+                            concrete->accept(sr);
+                            aggregate_type_resolver atr(*this, _context, _unit);
+                            concrete->accept(atr);
+                            signature_resolver sigr(*this, _context, _unit);
+                            concrete->accept(sigr);
+                            concrete->accept(*this);
+                        }
+                        if (std::find(candidates.begin(), candidates.end(), concrete) == candidates.end()) {
+                            candidates.push_back(concrete);
+                        }
+                    }
                 }
+                // Remove remaining uninstantiated template candidates
+                candidates.erase(
+                    std::remove_if(candidates.begin(), candidates.end(),
+                        [](const std::shared_ptr<function>& f) { return f && f->is_template(); }),
+                    candidates.end());
             }
         }
 
@@ -882,6 +879,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(inner_type)) {
                 if (ufrt->is_resolved()) {
                     inner_type = unwrap_indirections(ufrt->get_resolved());
+                } else {
+                    auto res = resolve_callable_type(ufrt, expr);
+                    if (res) inner_type = unwrap_indirections(res);
                 }
             }
             // If the inner type is a callable_type, this is an indirect call
@@ -940,12 +940,12 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     {
         std::string func_name = callee->get_name().back();
         const auto& args = expr.arguments();
+        const bool is_qualified_call = (callee->get_name().size() > 1);
 
         // A qualified name (e.g. Base::value) means the call is non-virtual and targets
         // exactly the named function.  Do NOT collect additional member-function candidates
         // from the first argument's struct type — that would create false ambiguities and
         // would defeat the purpose of the explicit qualification.
-        const bool is_qualified_call = (callee->get_name().size() > 1);
 
         std::vector<std::shared_ptr<function>> all_candidates;
         auto append_unique_candidate = [&](const std::shared_ptr<function>& fn) {
@@ -1027,6 +1027,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
 
         if (is_qualified_call && all_candidates.empty()) {
+            // Collect imported functions matching this qualified name
+            for (auto* kdi_fn : _unit.find_imported_functions(callee->get_name())) {
+                append_unique_candidate(_unit.get_or_create_imported_function(kdi_fn, _context));
+            }
+
             // For a qualified name (e.g. Base::value or point::get), collect ALL overloads
             // of the short name within the qualifying context (struct / namespace), not the
             // entire scope chain.  This prevents false ambiguity with functions of the same
@@ -1413,19 +1418,27 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 parent_ns = owner_ns;
                             }
                         }
+                        std::string key = build_instantiation_key(model_args);
+                        bool newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
                         auto concrete = template_instantiator::instantiate_function(
                             *tpl_func, model_args, parent_ns, _unit, _context, *this);
                         if (concrete) {
-                            // Run the concrete function through the resolver pipeline
-                            {
-                                symbol_resolver sr(*this, _context, _unit);
-                                concrete->accept(sr);
+                            if (newly_instantiated) {
+                                // Run the concrete function through the resolver pipeline
+                                {
+                                    symbol_resolver sr(*this, _context, _unit);
+                                    concrete->accept(sr);
+                                }
+                                {
+                                    aggregate_type_resolver atr(*this, _context, _unit);
+                                    concrete->accept(atr);
+                                }
+                                {
+                                    signature_resolver sigr(*this, _context, _unit);
+                                    concrete->accept(sigr);
+                                }
+                                concrete->accept(*this);
                             }
-                            {
-                                signature_resolver sigr(*this, _context, _unit);
-                                concrete->accept(sigr);
-                            }
-                            concrete->accept(*this);
 
                             // Replace all_candidates with just the concrete instance
                             callee->set_target(concrete);
@@ -1441,14 +1454,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // If the callee does NOT carry explicit template arguments, but there are
         // template candidates among all_candidates, attempt to deduce the template
         // arguments from the call-site argument types and instantiate.
-        // Deduced instantiations compete with non-template candidates in overload
-        // resolution (Step 5), but non-template candidates are always preferred
-        // over deduced templates when both are viable with the same arity.
         if (callee && !callee->has_ast_template_args()) {
             // Collect template candidates
             std::vector<std::shared_ptr<function>> tpl_candidates;
             for (auto& cand : all_candidates) {
-                if (cand->is_template()) {
+                if (cand && cand->is_template()) {
                     tpl_candidates.push_back(cand);
                 }
             }
@@ -1459,85 +1469,104 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     arg_types.push_back(arg ? arg->get_type() : nullptr);
                 }
 
-                // Check if a non-template candidate with matching arity exists
-                size_t call_arity = arg_types.size();
-                bool has_viable_non_template = false;
-                for (auto& cand : all_candidates) {
-                    if (!cand->is_template()) {
-                        // Count non-this parameters
-                        size_t param_count = 0;
-                        for (auto& p : cand->parameters()) {
-                            if (p != cand->get_this_parameter()) param_count++;
-                        }
-                        if (param_count == call_arity) {
-                            has_viable_non_template = true;
-                            break;
+                for (auto& tpl_func : tpl_candidates) {
+                    auto* ti = tpl_func->get_tpl_info();
+                    if (!ti) continue;
+                    for (auto& param : ti->params) {
+                        if (param.is_value_param() && !param.default_value.has_value() && param.default_value_expr) {
+                            (void)materialize_value_default(param, tpl_func);
                         }
                     }
-                }
 
-                if (!has_viable_non_template) {
-                    for (auto& tpl_func : tpl_candidates) {
-                        auto* ti = tpl_func->get_tpl_info();
-                        if (!ti) continue;
-                        for (auto& param : ti->params) {
-                            if (param.is_value_param() && !param.default_value.has_value() && param.default_value_expr) {
-                                (void)materialize_value_default(param, tpl_func);
+                    auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), arg_types);
+                    if (!deduction.success) continue;
+
+                    // Validate constraints
+                    size_t err_idx;
+                    std::string err_reason;
+                    if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
+                        continue; // Constraint violation — skip this candidate
+                    }
+
+                    // Instantiate the function with deduced arguments
+                    std::shared_ptr<function> concrete;
+                    bool newly_instantiated = false;
+                    std::string key = build_instantiation_key(deduction.deduced_args);
+                    if (auto parent_agg = std::dynamic_pointer_cast<aggregate>(tpl_func->parent<element>())) {
+                        auto cache_it = ti->instantiations.find(key);
+                        if (cache_it != ti->instantiations.end()) {
+                            if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
+                                concrete = *fn_ptr;
                             }
                         }
-
-                        auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), arg_types);
-                        if (!deduction.success) continue;
-
-                        // Validate constraints
-                        size_t err_idx;
-                        std::string err_reason;
-                        if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
-                            continue; // Constraint violation — skip this candidate
+                        if (!concrete) {
+                            std::string base_name = tpl_func->get_short_name();
+                            std::string inst_name = build_instantiated_name(base_name, deduction.deduced_args);
+                            auto subst = template_instantiator::build_substitution_map_public(*ti, deduction.deduced_args);
+                            auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduction.deduced_args);
+                            auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
+                            concrete = parent_agg->define_function(inst_name, tpl_func->is_static());
+                            if (concrete) {
+                                concrete->set_visibility(tpl_func->get_visibility());
+                                concrete->set_const_member(tpl_func->is_const_member());
+                                concrete->set_operator(tpl_func->is_operator());
+                                concrete->set_aliasing(tpl_func->get_aliasing());
+                                concrete->set_compiler_generated(tpl_func->is_compiler_generated());
+                                template_instantiator::populate_function_from_template_public(
+                                    concrete, *tpl_func, subst, val_subst, pack_subst);
+                                concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args);
+                                concrete->mark_instantiation();
+                                ti->instantiations[key] = concrete;
+                                newly_instantiated = true;
+                            }
                         }
-
-                        // Instantiate the function with deduced arguments
+                    } else {
                         auto parent_ns = _unit.get_root_namespace();
                         if (auto parent_elem = tpl_func->parent<element>()) {
                             if (auto owner_ns = std::dynamic_pointer_cast<ns>(parent_elem)) {
                                 parent_ns = owner_ns;
                             }
                         }
-                        auto concrete = template_instantiator::instantiate_function(
+                        newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
+                        concrete = template_instantiator::instantiate_function(
                             *tpl_func, deduction.deduced_args, parent_ns, _unit, _context, *this);
-                        if (concrete) {
+                    }
+
+                    if (concrete) {
+                        if (newly_instantiated) {
                             // Run through resolver pipeline
                             {
                                 symbol_resolver sr(*this, _context, _unit);
                                 concrete->accept(sr);
                             }
                             {
+                                aggregate_type_resolver atr(*this, _context, _unit);
+                                concrete->accept(atr);
+                            }
+                            {
                                 signature_resolver sigr(*this, _context, _unit);
                                 concrete->accept(sigr);
                             }
                             concrete->accept(*this);
+                        }
 
-                            // Replace template candidate with concrete instance
-                            callee->set_target(concrete);
-                            all_candidates.erase(
-                                std::remove(all_candidates.begin(), all_candidates.end(), tpl_func),
-                                all_candidates.end());
+                        if (std::find(all_candidates.begin(), all_candidates.end(), concrete) == all_candidates.end()) {
                             all_candidates.push_back(concrete);
-                            break; // Use first successful deduction
                         }
                     }
                 }
+
                 // Remove remaining uninstantiated template candidates
                 all_candidates.erase(
                     std::remove_if(all_candidates.begin(), all_candidates.end(),
-                        [](const std::shared_ptr<function>& f) { return f->is_template(); }),
+                        [](const std::shared_ptr<function>& f) { return f && f->is_template(); }),
                     all_candidates.end());
             }
         }
 
         // Step 4: If callee is a function pointer: validate argument types
         if (all_candidates.empty()) {
-            if (callee->is_function()) {
+            if (callee->is_function() && !callee->get_function()->is_template()) {
                 auto already_func = callee->get_function();
                 expr.set_type(already_func->get_return_type());
                 const auto& params = already_func->parameters();
