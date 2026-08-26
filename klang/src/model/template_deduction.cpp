@@ -26,6 +26,97 @@
 namespace k::model {
 namespace {
 
+static bool ast_type_spec_contains_template_param(
+    const k::parse::ast::type_specifier* spec,
+    const std::unordered_set<std::string>& type_param_names,
+    const std::unordered_set<std::string>& value_param_names)
+{
+    if (!spec) return false;
+    if (auto id_spec = dynamic_cast<const k::parse::ast::identified_type_specifier*>(spec)) {
+        if (id_spec->name.size() == 1 && !id_spec->name.has_root_prefix()) {
+            std::string name{id_spec->name.names[0].content};
+            if (type_param_names.count(name) || value_param_names.count(name)) {
+                return true;
+            }
+        }
+        for (const auto& ta : id_spec->template_args) {
+            if (ta && ta->is_type() && ta->type_arg) {
+                if (ast_type_spec_contains_template_param(ta->type_arg.get(), type_param_names, value_param_names)) {
+                    return true;
+                }
+            } else if (ta && ta->is_value() && ta->value_arg) {
+                if (auto ident_expr = dynamic_cast<const k::parse::ast::identifier_expr*>(ta->value_arg.get())) {
+                    if (ident_expr->qident.size() == 1 && !ident_expr->qident.has_root_prefix()) {
+                        std::string name{ident_expr->qident.names[0].content};
+                        if (value_param_names.count(name)) return true;
+                    }
+                }
+            }
+        }
+    }
+    if (auto ct = dynamic_cast<const k::parse::ast::const_type_specifier*>(spec)) {
+        return ast_type_spec_contains_template_param(ct->subtype.get(), type_param_names, value_param_names);
+    }
+    if (auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(spec)) {
+        return ast_type_spec_contains_template_param(ptr->subtype.get(), type_param_names, value_param_names);
+    }
+    if (auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(spec)) {
+        return ast_type_spec_contains_template_param(own->subtype.get(), type_param_names, value_param_names);
+    }
+    if (auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(spec)) {
+        return ast_type_spec_contains_template_param(arr->subtype.get(), type_param_names, value_param_names);
+    }
+    return false;
+}
+
+static bool type_contains_template_param(
+    const std::shared_ptr<type>& t,
+    const std::unordered_set<std::string>& type_param_names,
+    const std::unordered_set<std::string>& value_param_names)
+{
+    if (!t) return false;
+    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (!unres->type_id().empty()) {
+            const std::string& name = unres->type_id().front();
+            if (type_param_names.count(name) || value_param_names.count(name)) {
+                return true;
+            }
+        }
+        if (unres->has_explicit_template_args()) {
+            for (const auto& ta : unres->get_ast_template_args()) {
+                if (ta && ta->is_type() && ta->type_arg) {
+                    if (ast_type_spec_contains_template_param(ta->type_arg.get(), type_param_names, value_param_names)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        if (unres->has_model_template_args()) {
+            for (const auto& mta : unres->get_model_template_args()) {
+                if (type_contains_template_param(mta, type_param_names, value_param_names)) {
+                    return true;
+                }
+            }
+        }
+    }
+    if (auto call = std::dynamic_pointer_cast<callable_type>(t)) {
+        if (type_contains_template_param(call->get_return_type(), type_param_names, value_param_names)) return true;
+        for (const auto& p : call->get_parameter_types()) {
+            if (type_contains_template_param(p, type_param_names, value_param_names)) return true;
+        }
+    }
+    if (auto unres_call = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (type_contains_template_param(unres_call->get_return_type(), type_param_names, value_param_names)) return true;
+        for (const auto& p : unres_call->parameter_types()) {
+            if (type_contains_template_param(p, type_param_names, value_param_names)) return true;
+        }
+    }
+    if (t->get_subtype()) {
+        return type_contains_template_param(t->get_subtype(), type_param_names, value_param_names);
+    }
+    return false;
+}
+
 std::string get_template_param_name(
     const std::shared_ptr<type>& t,
     const std::unordered_set<std::string>& type_param_names)
@@ -41,8 +132,14 @@ std::string get_template_param_name(
     return "";
 }
 
+enum class match_status {
+    SUCCESS,
+    NO_MATCH,
+    CONFLICT
+};
+
 // Forward declarations
-bool deduce_from_types(
+match_status deduce_from_types(
     const std::shared_ptr<type>& param_type,
     const std::shared_ptr<type>& arg_type,
     const std::unordered_set<std::string>& type_param_names,
@@ -50,7 +147,7 @@ bool deduce_from_types(
     std::unordered_map<std::string, std::shared_ptr<type>>& type_deductions,
     std::unordered_map<std::string, k::value_type>& value_deductions);
 
-bool match_ast_type_spec(
+match_status match_ast_type_spec(
     const k::parse::ast::type_specifier* spec,
     const std::shared_ptr<type>& arg_type,
     const std::unordered_set<std::string>& type_param_names,
@@ -58,7 +155,7 @@ bool match_ast_type_spec(
     std::unordered_map<std::string, std::shared_ptr<type>>& type_deductions,
     std::unordered_map<std::string, k::value_type>& value_deductions);
 
-bool match_ast_template_arg(
+match_status match_ast_template_arg(
     const std::shared_ptr<k::parse::ast::template_arg>& ast_arg,
     const template_argument& concrete_arg,
     const std::unordered_set<std::string>& type_param_names,
@@ -66,7 +163,7 @@ bool match_ast_template_arg(
     std::unordered_map<std::string, std::shared_ptr<type>>& type_deductions,
     std::unordered_map<std::string, k::value_type>& value_deductions)
 {
-    if (!ast_arg) return false;
+    if (!ast_arg) return match_status::NO_MATCH;
 
     if (ast_arg->is_type() && ast_arg->type_arg) {
         // In K, a value parameter identifier inside '<...>' may parse as an identified_type_specifier.
@@ -78,11 +175,11 @@ bool match_ast_template_arg(
                     if (concrete_arg.value_arg.has_value()) {
                         auto it = value_deductions.find(name);
                         if (it != value_deductions.end()) {
-                            if (it->second != *concrete_arg.value_arg) return false;
+                            if (it->second != *concrete_arg.value_arg) return match_status::CONFLICT;
                         } else {
                             value_deductions[name] = *concrete_arg.value_arg;
                         }
-                        return true;
+                        return match_status::SUCCESS;
                     }
                 }
             }
@@ -92,7 +189,7 @@ bool match_ast_template_arg(
                 ast_arg->type_arg.get(), concrete_arg.type_arg,
                 type_param_names, value_param_names, type_deductions, value_deductions);
         }
-        return false;
+        return match_status::NO_MATCH;
     }
 
     if (ast_arg->is_value() && ast_arg->value_arg) {
@@ -103,24 +200,75 @@ bool match_ast_template_arg(
                     if (concrete_arg.value_arg.has_value()) {
                         auto it = value_deductions.find(name);
                         if (it != value_deductions.end()) {
-                            if (it->second != *concrete_arg.value_arg) return false;
+                            if (it->second != *concrete_arg.value_arg) return match_status::CONFLICT;
                         } else {
                             value_deductions[name] = *concrete_arg.value_arg;
                         }
-                        return true;
+                        return match_status::SUCCESS;
                     }
                 }
             }
         }
         if (concrete_arg.value_arg.has_value()) {
-            return true;
+            return match_status::SUCCESS;
         }
     }
 
-    return false;
+    return match_status::NO_MATCH;
 }
 
-bool match_ast_type_spec(
+match_status match_aggregate_template(
+    const std::string& target_base_name,
+    const std::vector<std::shared_ptr<k::parse::ast::template_arg>>& ast_args,
+    const std::shared_ptr<aggregate>& root_agg,
+    const std::unordered_set<std::string>& type_param_names,
+    const std::unordered_set<std::string>& value_param_names,
+    std::unordered_map<std::string, std::shared_ptr<type>>& type_deductions,
+    std::unordered_map<std::string, k::value_type>& value_deductions)
+{
+    if (!root_agg) return match_status::NO_MATCH;
+    std::vector<std::shared_ptr<aggregate>> queue = {root_agg};
+    std::unordered_set<const aggregate*> visited = {root_agg.get()};
+    bool found_conflict = false;
+
+    for (size_t qi = 0; qi < queue.size(); ++qi) {
+        auto agg = queue[qi];
+        if (agg->has_tpl_args() && agg->get_tpl_base_name() == target_base_name) {
+            const auto& concrete_args = agg->get_tpl_args();
+            if (ast_args.size() == concrete_args.size()) {
+                bool all_match = true;
+                auto backup_types = type_deductions;
+                auto backup_values = value_deductions;
+                for (size_t i = 0; i < ast_args.size(); ++i) {
+                    auto res = match_ast_template_arg(
+                            ast_args[i], concrete_args[i],
+                            type_param_names, value_param_names,
+                            type_deductions, value_deductions);
+                    if (res == match_status::CONFLICT) {
+                        found_conflict = true;
+                        all_match = false;
+                        break;
+                    }
+                    if (res == match_status::NO_MATCH) {
+                        all_match = false;
+                        break;
+                    }
+                }
+                if (all_match) return match_status::SUCCESS;
+                type_deductions = std::move(backup_types);
+                value_deductions = std::move(backup_values);
+            }
+        }
+        for (const auto& bs : agg->get_bases()) {
+            if (bs.base && visited.insert(bs.base.get()).second) {
+                queue.push_back(bs.base);
+            }
+        }
+    }
+    return found_conflict ? match_status::CONFLICT : match_status::NO_MATCH;
+}
+
+match_status match_ast_type_spec(
     const k::parse::ast::type_specifier* spec,
     const std::shared_ptr<type>& arg_type,
     const std::unordered_set<std::string>& type_param_names,
@@ -128,7 +276,7 @@ bool match_ast_type_spec(
     std::unordered_map<std::string, std::shared_ptr<type>>& type_deductions,
     std::unordered_map<std::string, k::value_type>& value_deductions)
 {
-    if (!spec || !arg_type) return false;
+    if (!spec || !arg_type) return match_status::NO_MATCH;
 
     if (auto ct = dynamic_cast<const k::parse::ast::const_type_specifier*>(spec)) {
         return match_ast_type_spec(
@@ -164,7 +312,10 @@ bool match_ast_type_spec(
                 ptr->subtype.get(), arg_type->get_subtype(),
                 type_param_names, value_param_names, type_deductions, value_deductions);
         }
-        return false;
+        if (ast_type_spec_contains_template_param(spec, type_param_names, value_param_names)) {
+            return match_status::CONFLICT;
+        }
+        return match_status::NO_MATCH;
     }
 
     if (auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(spec)) {
@@ -173,7 +324,10 @@ bool match_ast_type_spec(
                 own->subtype.get(), arg_type->get_subtype(),
                 type_param_names, value_param_names, type_deductions, value_deductions);
         }
-        return false;
+        if (ast_type_spec_contains_template_param(spec, type_param_names, value_param_names)) {
+            return match_status::CONFLICT;
+        }
+        return match_status::NO_MATCH;
     }
 
     if (auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(spec)) {
@@ -182,7 +336,10 @@ bool match_ast_type_spec(
                 arr->subtype.get(), arg_type->get_subtype(),
                 type_param_names, value_param_names, type_deductions, value_deductions);
         }
-        return false;
+        if (ast_type_spec_contains_template_param(spec, type_param_names, value_param_names)) {
+            return match_status::CONFLICT;
+        }
+        return match_status::NO_MATCH;
     }
 
     if (auto id_spec = dynamic_cast<const k::parse::ast::identified_type_specifier*>(spec)) {
@@ -200,12 +357,12 @@ bool match_ast_type_spec(
                     if (!type::are_equal(it->second, clean_arg) &&
                         !type::are_layout_equal(it->second, clean_arg) &&
                         it->second->to_string() != clean_arg->to_string()) {
-                        return false; // Conflict
+                        return match_status::CONFLICT; // Conflict
                     }
                 } else {
                     type_deductions[name] = clean_arg;
                 }
-                return true;
+                return match_status::SUCCESS;
             }
         }
 
@@ -219,41 +376,32 @@ bool match_ast_type_spec(
 
             if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
                 if (auto agg = st->get_struct()) {
-                    if (agg->has_tpl_args()) {
-                        if (std::string(id_spec->name.names.back().content) != agg->get_tpl_base_name()) {
-                            return false;
-                        }
-                        const auto& concrete_args = agg->get_tpl_args();
-                        if (id_spec->template_args.size() != concrete_args.size()) {
-                            return false;
-                        }
-                        for (size_t i = 0; i < id_spec->template_args.size(); ++i) {
-                            if (!match_ast_template_arg(
-                                    id_spec->template_args[i], concrete_args[i],
-                                    type_param_names, value_param_names,
-                                    type_deductions, value_deductions)) {
-                                return false;
-                            }
-                        }
-                        return true;
-                    }
+                    return match_aggregate_template(
+                        std::string(id_spec->name.names.back().content),
+                        id_spec->template_args,
+                        agg,
+                        type_param_names, value_param_names,
+                        type_deductions, value_deductions);
                 }
             }
-            return false;
+            if (ast_type_spec_contains_template_param(spec, type_param_names, value_param_names)) {
+                return match_status::CONFLICT;
+            }
+            return match_status::NO_MATCH;
         }
 
         // Concrete nominal type
-        return true;
+        return match_status::SUCCESS;
     }
 
     if (auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(spec)) {
-        return true;
+        return match_status::SUCCESS;
     }
 
-    return false;
+    return match_status::NO_MATCH;
 }
 
-bool deduce_from_types(
+match_status deduce_from_types(
     const std::shared_ptr<type>& param_type,
     const std::shared_ptr<type>& arg_type,
     const std::unordered_set<std::string>& type_param_names,
@@ -261,7 +409,7 @@ bool deduce_from_types(
     std::unordered_map<std::string, std::shared_ptr<type>>& type_deductions,
     std::unordered_map<std::string, k::value_type>& value_deductions)
 {
-    if (!param_type || !arg_type) return false;
+    if (!param_type || !arg_type) return match_status::NO_MATCH;
 
     // Check if param_type is directly a template parameter placeholder (e.g. "T")
     std::string param_name = get_template_param_name(param_type, type_param_names);
@@ -276,12 +424,12 @@ bool deduce_from_types(
             if (!type::are_equal(it->second, clean_arg) &&
                 !type::are_layout_equal(it->second, clean_arg) &&
                 it->second->to_string() != clean_arg->to_string()) {
-                return false; // Conflict
+                return match_status::CONFLICT; // Conflict
             }
         } else {
             type_deductions[param_name] = clean_arg;
         }
-        return true;
+        return match_status::SUCCESS;
     }
 
     // Check if param_type is a composite template type (e.g. Vector<T>, Map<K, V>)
@@ -295,28 +443,15 @@ bool deduce_from_types(
 
             if (auto st = std::dynamic_pointer_cast<struct_type>(bare_arg)) {
                 if (auto agg = st->get_struct()) {
-                    if (agg->has_tpl_args()) {
-                        if (unres_param->type_id().back() != agg->get_tpl_base_name()) {
-                            return false;
-                        }
-                        const auto& ast_args = unres_param->get_ast_template_args();
-                        const auto& concrete_args = agg->get_tpl_args();
-                        if (ast_args.size() != concrete_args.size()) {
-                            return false;
-                        }
-                        for (size_t i = 0; i < ast_args.size(); ++i) {
-                            if (!match_ast_template_arg(
-                                    ast_args[i], concrete_args[i],
-                                    type_param_names, value_param_names,
-                                    type_deductions, value_deductions)) {
-                                return false;
-                            }
-                        }
-                        return true;
-                    }
+                    return match_aggregate_template(
+                        unres_param->type_id().back(),
+                        unres_param->get_ast_template_args(),
+                        agg,
+                        type_param_names, value_param_names,
+                        type_deductions, value_deductions);
                 }
             }
-            return false;
+            return match_status::NO_MATCH;
         }
     }
 
@@ -330,47 +465,43 @@ bool deduce_from_types(
     if (auto uct_param = std::dynamic_pointer_cast<unresolved_callable_type>(type::remove_const(param_type))) {
         if (auto ct_arg = std::dynamic_pointer_cast<callable_type>(bare_callable_arg)) {
             if (uct_param->get_return_type() && ct_arg->get_return_type()) {
-                if (!deduce_from_types(
+                auto res = deduce_from_types(
                         uct_param->get_return_type(), ct_arg->get_return_type(),
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions)) {
-                    return false;
-                }
+                        type_deductions, value_deductions);
+                if (res != match_status::SUCCESS) return res;
             }
             const auto& p_params = uct_param->parameter_types();
             const auto& a_params = ct_arg->get_parameter_types();
-            if (p_params.size() != a_params.size()) return false;
+            if (p_params.size() != a_params.size()) return match_status::NO_MATCH;
             for (size_t i = 0; i < p_params.size(); ++i) {
-                if (!deduce_from_types(
+                auto res = deduce_from_types(
                         p_params[i], a_params[i],
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions)) {
-                    return false;
-                }
+                        type_deductions, value_deductions);
+                if (res != match_status::SUCCESS) return res;
             }
-            return true;
+            return match_status::SUCCESS;
         }
         if (auto uct_arg = std::dynamic_pointer_cast<unresolved_callable_type>(bare_callable_arg)) {
             if (uct_param->get_return_type() && uct_arg->get_return_type()) {
-                if (!deduce_from_types(
+                auto res = deduce_from_types(
                         uct_param->get_return_type(), uct_arg->get_return_type(),
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions)) {
-                    return false;
-                }
+                        type_deductions, value_deductions);
+                if (res != match_status::SUCCESS) return res;
             }
             const auto& p_params = uct_param->parameter_types();
             const auto& a_params = uct_arg->parameter_types();
-            if (p_params.size() != a_params.size()) return false;
+            if (p_params.size() != a_params.size()) return match_status::NO_MATCH;
             for (size_t i = 0; i < p_params.size(); ++i) {
-                if (!deduce_from_types(
+                auto res = deduce_from_types(
                         p_params[i], a_params[i],
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions)) {
-                    return false;
-                }
+                        type_deductions, value_deductions);
+                if (res != match_status::SUCCESS) return res;
             }
-            return true;
+            return match_status::SUCCESS;
         }
     }
 
@@ -379,25 +510,23 @@ bool deduce_from_types(
         auto ct_arg = std::dynamic_pointer_cast<callable_type>(bare_callable_arg);
         if (ct_param && ct_arg) {
             if (ct_param->get_return_type() && ct_arg->get_return_type()) {
-                if (!deduce_from_types(
+                auto res = deduce_from_types(
                         ct_param->get_return_type(), ct_arg->get_return_type(),
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions)) {
-                    return false;
-                }
+                        type_deductions, value_deductions);
+                if (res != match_status::SUCCESS) return res;
             }
             const auto& p_params = ct_param->get_parameter_types();
             const auto& a_params = ct_arg->get_parameter_types();
-            if (p_params.size() != a_params.size()) return false;
+            if (p_params.size() != a_params.size()) return match_status::NO_MATCH;
             for (size_t i = 0; i < p_params.size(); ++i) {
-                if (!deduce_from_types(
+                auto res = deduce_from_types(
                         p_params[i], a_params[i],
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions)) {
-                    return false;
-                }
+                        type_deductions, value_deductions);
+                if (res != match_status::SUCCESS) return res;
             }
-            return true;
+            return match_status::SUCCESS;
         }
     }
 
@@ -418,7 +547,7 @@ bool deduce_from_types(
         auto sa_param = std::dynamic_pointer_cast<sized_array_type>(bare_array_param);
         auto sa_arg = std::dynamic_pointer_cast<sized_array_type>(bare_array_arg);
         if (sa_param && sa_arg) {
-            if (sa_param->get_size() != sa_arg->get_size()) return false;
+            if (sa_param->get_size() != sa_arg->get_size()) return match_status::CONFLICT;
             return deduce_from_types(
                 sa_param->get_subtype(), sa_arg->get_subtype(),
                 type_param_names, value_param_names,
@@ -441,7 +570,7 @@ bool deduce_from_types(
     auto param_sub = param_type->get_subtype();
     if (!param_sub) {
         // Concrete type, no template param inside — no deduction needed
-        return true;
+        return match_status::SUCCESS;
     }
 
     auto arg_sub = arg_type->get_subtype();
@@ -463,30 +592,24 @@ bool deduce_from_types(
             }
         }
         std::string sub_name = get_template_param_name(param_sub, type_param_names);
-        if (sub_name.empty()) return true; // Not a template param, skip
-        return false; // Wrapper mismatch
+        if (sub_name.empty()) return match_status::SUCCESS; // Not a template param, skip
+        return match_status::CONFLICT; // Wrapper mismatch
     }
 
     // Indirection matching: if both are indirections, check compatibility
     if (type::is_any_indirection(param_type) && type::is_any_indirection(arg_type)) {
         bool indirection_compatible = false;
         if (type::is_pointer(param_type)) {
-            // T* can accept pointer (*), link (+), view (?), reference (&)
             indirection_compatible = true;
         } else if (type::is_view(param_type)) {
-            // T? can accept view (?), pointer (*), link (+), reference (&)
             indirection_compatible = true;
         } else if (type::is_reference(param_type)) {
-            // T& can accept reference (&), link (+), drain (#)
             indirection_compatible = true;
         } else if (type::is_link(param_type)) {
-            // T+ can accept link (+)
             indirection_compatible = type::is_link(arg_type);
         } else if (type::is_owner(param_type)) {
-            // T! can accept owner (!)
             indirection_compatible = type::is_owner(arg_type);
         } else if (type::is_drain(param_type)) {
-            // T# can accept drain (#) or owner (!)
             indirection_compatible = type::is_drain(arg_type) || type::is_owner(arg_type);
         }
 
@@ -527,9 +650,9 @@ bool deduce_from_types(
     // Wrapper mismatch
     std::string sub_param_name = get_template_param_name(param_sub, type_param_names);
     if (sub_param_name.empty()) {
-        return true; // Not a template param — no deduction, no error
+        return match_status::SUCCESS; // Not a template param — no deduction, no error
     }
-    return false; // Cannot deduce due to wrapper mismatch
+    return match_status::CONFLICT; // Cannot deduce due to wrapper mismatch
 }
 
 } // anonymous namespace
@@ -537,7 +660,8 @@ bool deduce_from_types(
 deduction_result deduce_template_arguments(
     const tpl_info& ti,
     const std::vector<std::shared_ptr<parameter>>& params,
-    const std::vector<std::shared_ptr<type>>& arg_types)
+    const std::vector<std::shared_ptr<type>>& arg_types,
+    const std::vector<template_argument>& explicit_args)
 {
     deduction_result result;
 
@@ -561,6 +685,17 @@ deduction_result deduce_template_arguments(
     std::unordered_map<std::string, std::shared_ptr<type>> type_deductions;
     std::unordered_map<std::string, std::vector<std::shared_ptr<type>>> pack_deductions;
     std::unordered_map<std::string, k::value_type> value_deductions;
+
+    // Pre-populate deductions with explicit template arguments (if provided)
+    for (size_t i = 0; i < explicit_args.size() && i < ti.params.size(); ++i) {
+        const auto& tpl_param = ti.params[i];
+        const auto& exp_arg = explicit_args[i];
+        if (tpl_param.is_type_param() && exp_arg.is_type()) {
+            type_deductions[tpl_param.name] = exp_arg.type_arg;
+        } else if (tpl_param.is_value_param() && exp_arg.is_value()) {
+            value_deductions[tpl_param.name] = *exp_arg.value_arg;
+        }
+    }
 
     // Process each function parameter against the call arguments
     size_t arg_idx = 0;
@@ -592,11 +727,16 @@ deduction_result deduce_template_arguments(
 
         auto param_type = param->get_type();
         auto arg_type = arg_types[arg_idx];
-        if (!deduce_from_types(param_type, arg_type, type_param_names, value_param_names, type_deductions, value_deductions)) {
+        auto status = deduce_from_types(param_type, arg_type, type_param_names, value_param_names, type_deductions, value_deductions);
+        if (status == match_status::CONFLICT) {
             result.success = false;
-            result.failure_reason = "Type conflict or mismatch deducing parameter '" +
+            result.failure_reason = "Type conflict deducing parameter '" +
                 param->get_short_name() + "' at position " + std::to_string(p_idx);
             return result;
+        } else if (status == match_status::NO_MATCH) {
+            // NO_MATCH means deduction was inconclusive on this parameter (e.g. non-deducible context like alias types or concrete type).
+            // This is allowed if all template parameters can still be deduced (or defaulted) from other parameters.
+            // Concrete overload resolution (get_best_matching_function) will subsequently validate the argument.
         }
         ++arg_idx;
     }

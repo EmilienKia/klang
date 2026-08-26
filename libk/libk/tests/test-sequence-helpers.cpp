@@ -149,10 +149,7 @@ TEST_CASE("Vector<int> — accumulate into a single value - free form", "[libk][
     CHECK(fn());
 }
 
-// TODO: this test is currently failing because the uniform member form of accumulate is not yet fully implemented in the klangc.
-// The free form version works, but the uniform member form does not. This is a known issue and should be fixed in a future update.
-TEST_CASE("Vector<int> — accumulate into a single value - uniform member form", "[.known-issue][libk][vector][int][accumulate]") {
-    FAIL_CHECK("This test is currently failing because the uniform member form of accumulate is not yet fully implemented in the klangc.");
+TEST_CASE("Vector<int> — accumulate into a single value - uniform member form", "[libk][vector][int][accumulate]") {
     auto j = jit_k(R"SRC(
         module __vector_accumulate__;
         test() : bool {

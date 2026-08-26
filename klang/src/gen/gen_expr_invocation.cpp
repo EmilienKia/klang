@@ -510,8 +510,79 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             return;
         }
 
-        // Collect all candidate functions (member + free/static from parent scopes)
+        // Collect all candidate functions:
+        // 1) Member and static functions from st + its base hierarchy + enclosing scopes
         std::vector<std::shared_ptr<function>> candidates = scope_lookup::lookup_functions(st, func_short_name);
+        auto append_unique_candidate = [&](const std::shared_ptr<function>& fn) {
+            if (!fn) return;
+            if (std::find(candidates.begin(), candidates.end(), fn) == candidates.end()) {
+                candidates.push_back(fn);
+            }
+        };
+
+        // For UCS candidates from caller/outer scopes: only collect free functions or static functions.
+        // Non-static member functions of unrelated enclosing classes must NOT be called on 'st'.
+        auto append_ucs_candidate = [&](const std::shared_ptr<function>& fn) {
+            if (!fn) return;
+            if (fn->is_member() && !fn->is_static()) return;
+            append_unique_candidate(fn);
+        };
+
+        // 2) Collect free/static functions from caller scope for Unified Call Syntax (UCS)
+        if (!_function_stack.empty()) {
+            for (auto& fn : scope_lookup::lookup_functions(_function_stack.back(), func_short_name)) {
+                append_ucs_candidate(fn);
+            }
+        } else {
+            for (auto& fn : scope_lookup::lookup_functions(callee, func_short_name)) {
+                append_ucs_candidate(fn);
+            }
+        }
+
+        // 3) Also collect from using namespace directives in caller scope chain and unit
+        auto collect_from_using = [&](const element& elem) {
+            for (auto cur = elem.shared_as<const element>(); cur; cur = cur->parent<element>()) {
+                if (auto uh = dynamic_cast<const using_holder*>(cur.get())) {
+                    for (const auto& dir : uh->get_using_directives()) {
+                        if (dir.is_namespace() && !dir.has_alias()) {
+                            auto target = resolve_using_target(dir.target_name, _unit);
+                            if (!target) {
+                                if (auto root = _unit.get_root_namespace()) {
+                                    target = root->get_child_namespace(dir.target_name.to_string());
+                                }
+                            }
+                            if (auto target_ns = std::dynamic_pointer_cast<const ns>(target)) {
+                                for (auto& fn : target_ns->get_functions(func_short_name)) {
+                                    append_ucs_candidate(fn);
+                                }
+                            }
+                            // Also search imported functions with the using namespace prefix (e.g. ::k::accumulate)
+                            auto fq_name = dir.target_name.with_back(func_short_name);
+                            for (auto* kdi_fn : _unit.find_imported_functions(fq_name)) {
+                                auto imported_fn = _unit.get_or_create_imported_function(kdi_fn, _context);
+                                if (imported_fn) {
+                                    append_ucs_candidate(imported_fn);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        if (!_function_stack.empty()) {
+            collect_from_using(*_function_stack.back());
+        }
+        if (auto root_ns = _unit.get_root_namespace()) {
+            collect_from_using(*root_ns);
+        }
+
+        // 4) Collect imported free functions
+        for (auto* kdi_fn : _unit.find_imported_functions(k::name(func_short_name))) {
+            auto imported_fn = _unit.get_or_create_imported_function(kdi_fn, _context);
+            if (imported_fn) {
+                append_ucs_candidate(imported_fn);
+            }
+        }
 
         // If calling on a const object, only const member functions are callable.
         if (is_const_this) {
@@ -543,200 +614,131 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                  callee->get_name().to_string()});
         }
 
-        // ── Member template function instantiation (explicit template args) ──
+        // Prepare argument types for template deduction
+        std::vector<std::shared_ptr<type>> expr_arg_types;
+        for (auto& arg : expr.arguments()) {
+            expr_arg_types.push_back(arg ? arg->get_type() : nullptr);
+        }
+
+        // ── Template function instantiation (explicit template args) ────────
         // If the callee carries explicit template arguments (e.g. obj.method<int>(...)),
-        // find the template method in the candidates, instantiate it, and replace
-        // the candidates list with the concrete instance.
+        // find template candidates, instantiate them, and add concrete instances.
         if (callee && callee->has_ast_template_args()) {
-            std::shared_ptr<function> tpl_func;
+            const auto& ast_args = callee->get_ast_template_args();
+            std::vector<std::shared_ptr<function>> tpl_candidates;
             for (auto& cand : candidates) {
-                if (cand->is_template()) {
-                    tpl_func = cand;
-                    break;
+                if (cand && cand->is_template()) {
+                    tpl_candidates.push_back(cand);
                 }
             }
-            if (tpl_func) {
+
+            for (auto& tpl_func : tpl_candidates) {
                 auto* ti = tpl_func->get_tpl_info();
-                bool has_pack = ti && std::any_of(ti->params.begin(), ti->params.end(),
+                if (!ti) continue;
+                bool has_pack = std::any_of(ti->params.begin(), ti->params.end(),
                     [](const template_param_descriptor& p) { return p.is_pack; });
-                const auto& ast_args = callee->get_ast_template_args();
-                if (ti && (ast_args.size() <= ti->params.size() || has_pack)) {
-                    // Convert AST template args to model template_arguments
-                    std::vector<template_argument> model_args;
-                    bool args_ok = true;
-                    for (size_t i = 0; i < ast_args.size(); ++i) {
-                        const auto& ast_arg = ast_args[i];
-                        // Resolve the value parameter's declared type once, up-front, so
-                        // enum-typed value params (unresolved at model_builder time) are
-                        // properly validated by the evaluator below.
-                        std::shared_ptr<type> expected_value_type;
-                        if (i < ti->params.size()) {
-                            expected_value_type = ti->params[i].value_type;
-                            if (expected_value_type && !type::is_resolved(expected_value_type)) {
-                                auto resolved_vt = _context->resolve_type(expected_value_type);
-                                if (resolved_vt && type::is_resolved(resolved_vt)) expected_value_type = resolved_vt;
-                            }
-                        }
-                        if (i < ti->params.size() && ti->params[i].is_value_param() && ast_arg->is_type()) {
-                            // Bare qualified name always parses as a type-specifier arg;
-                            // this parameter position is a VALUE parameter, so
-                            // reinterpret it as a constant expression.
-                            auto eval = evaluate_template_value_arg_from_type_spec(
-                                ast_arg->type_arg.get(), expr, _context, expected_value_type, &_unit);
-                            if (eval.is_error()) {
-                                throw_error(eval.error_code, expr.first_lexeme(), eval.message, eval.message_args);
-                            }
-                            if (!eval.ok()) {
-                                args_ok = false; break;
-                            }
-                            model_args.push_back(template_argument::make_value(*eval.value));
-                            continue;
-                        }
-                        if (ast_arg->is_type()) {
-                            auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
-                            arg_type = _context->resolve_type(arg_type);
-                            if (!arg_type || !type::is_resolved(arg_type) || type::contains_unresolved(arg_type)) {
-                                args_ok = false; break;
-                            }
-                            model_args.push_back(template_argument::make_type(arg_type));
-                        } else if (ast_arg->is_value()) {
-                            auto eval = evaluate_template_value_arg(ast_arg->value_arg.get(), expr, _context, expected_value_type, &_unit);
-                            if (eval.is_error()) {
-                                throw_error(eval.error_code, expr.first_lexeme(), eval.message, eval.message_args);
-                            }
-                            if (!eval.ok()) {
-                                args_ok = false; break;
-                            }
-                            model_args.push_back(template_argument::make_value(*eval.value));
-                        } else {
-                            args_ok = false; break;
+                if (ast_args.size() > ti->params.size() && !has_pack) continue;
+
+                // Convert AST template args to model template_arguments
+                std::vector<template_argument> model_args;
+                bool args_ok = true;
+                for (size_t i = 0; i < ast_args.size(); ++i) {
+                    const auto& ast_arg = ast_args[i];
+                    std::shared_ptr<type> expected_value_type;
+                    if (i < ti->params.size()) {
+                        expected_value_type = ti->params[i].value_type;
+                        if (expected_value_type && !type::is_resolved(expected_value_type)) {
+                            auto resolved_vt = _context->resolve_type(expected_value_type);
+                            if (resolved_vt && type::is_resolved(resolved_vt)) expected_value_type = resolved_vt;
                         }
                     }
+                    if (i < ti->params.size() && ti->params[i].is_value_param() && ast_arg->is_type()) {
+                        auto eval = evaluate_template_value_arg_from_type_spec(
+                            ast_arg->type_arg.get(), expr, _context, expected_value_type, &_unit);
+                        if (eval.is_error()) {
+                            throw_error(eval.error_code, expr.first_lexeme(), eval.message, eval.message_args);
+                        }
+                        if (!eval.ok()) {
+                            args_ok = false; break;
+                        }
+                        model_args.push_back(template_argument::make_value(*eval.value));
+                        continue;
+                    }
+                    if (ast_arg->is_type()) {
+                        auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
+                        arg_type = _context->resolve_type(arg_type);
+                        if (!arg_type || !type::is_resolved(arg_type) || type::contains_unresolved(arg_type)) {
+                            args_ok = false; break;
+                        }
+                        model_args.push_back(template_argument::make_type(arg_type));
+                    } else if (ast_arg->is_value()) {
+                        auto eval = evaluate_template_value_arg(ast_arg->value_arg.get(), expr, _context, expected_value_type, &_unit);
+                        if (eval.is_error()) {
+                            throw_error(eval.error_code, expr.first_lexeme(), eval.message, eval.message_args);
+                        }
+                        if (!eval.ok()) {
+                            args_ok = false; break;
+                        }
+                        model_args.push_back(template_argument::make_value(*eval.value));
+                    } else {
+                        args_ok = false; break;
+                    }
+                }
+                if (!args_ok) continue;
+
+                for (auto& param : ti->params) {
+                    if (param.is_value_param() && !param.default_value.has_value() && param.default_value_expr) {
+                        (void)materialize_value_default(param, tpl_func);
+                    }
+                }
+
+                bool is_member_cand = tpl_func->is_member() && !tpl_func->is_static();
+                std::vector<std::shared_ptr<type>> call_types;
+                if (!is_member_cand) {
+                    call_types.push_back(this_expr ? this_expr->get_type() : nullptr);
+                }
+                call_types.insert(call_types.end(), expr_arg_types.begin(), expr_arg_types.end());
+
+                std::vector<template_argument> final_args;
+                if (model_args.size() < ti->params.size() && !has_pack) {
+                    auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), call_types, model_args);
+                    if (!deduction.success) continue;
+                    final_args = std::move(deduction.deduced_args);
+                } else {
+                    final_args = std::move(model_args);
                     // Fill defaults for trailing non-pack params
-                    for (size_t i = ast_args.size(); i < ti->params.size() && args_ok; ++i) {
+                    for (size_t i = final_args.size(); i < ti->params.size(); ++i) {
                         auto& param = ti->params[i];
                         if (param.is_type_param() && param.default_type) {
                             auto def = param.default_type;
                             if (!type::is_resolved(def)) def = _context->resolve_type(def);
                             if (def && type::is_resolved(def)) {
-                                model_args.push_back(template_argument::make_type(def));
-                            } else { args_ok = false; }
+                                final_args.push_back(template_argument::make_type(def));
+                            } else { args_ok = false; break; }
                         } else if (param.is_value_param()) {
                             if (!param.default_value.has_value()) {
                                 if (!materialize_value_default(param, tpl_func)) {
-                                    args_ok = false;
-                                    continue;
+                                    args_ok = false; break;
                                 }
                             }
-                            model_args.push_back(template_argument::make_value(*param.default_value));
-                        } else if (!param.is_pack) { args_ok = false; }
+                            final_args.push_back(template_argument::make_value(*param.default_value));
+                        } else if (param.is_pack) {
+                            final_args.push_back(template_argument::make_pack({}));
+                        } else { args_ok = false; break; }
                     }
-                    if (args_ok) {
-                        // For member templates, instantiate within the owning aggregate
-                        // (instantiate_function expects ns, but aggregates are not ns).
-                        // We call define_function directly on the aggregate.
-                        auto* ti = tpl_func->get_tpl_info();
-                        std::string key = build_instantiation_key(model_args);
-                        // Check instantiation cache
-                        std::shared_ptr<function> concrete;
-                        bool newly_instantiated = false;
-                        auto cache_it = ti->instantiations.find(key);
-                        if (cache_it != ti->instantiations.end()) {
-                            if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
-                                concrete = *fn_ptr;
-                            }
-                        }
-                        if (!concrete) {
-                            std::string base_name = tpl_func->get_short_name();
-                            std::string inst_name = build_instantiated_name(base_name, model_args);
-                            auto subst = template_instantiator::build_substitution_map_public(*ti, model_args);
-                            auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, model_args);
-                            auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, model_args);
-
-                            // Create the concrete function as a member of the aggregate
-                            concrete = st->define_function(inst_name, tpl_func->is_static());
-                            if (concrete) {
-                                concrete->set_visibility(tpl_func->get_visibility());
-                                concrete->set_const_member(tpl_func->is_const_member());
-                                concrete->set_operator(tpl_func->is_operator());
-                                concrete->set_aliasing(tpl_func->get_aliasing());
-                                concrete->set_compiler_generated(tpl_func->is_compiler_generated());
-                                template_instantiator::populate_function_from_template_public(
-                                    concrete, *tpl_func, subst, val_subst, pack_subst);
-                                concrete->set_tpl_instantiation_info(base_name, model_args);
-                                concrete->mark_instantiation();
-                                ti->instantiations[key] = concrete;
-                                newly_instantiated = true;
-                            }
-                        }
-                        if (concrete) {
-                            if (newly_instantiated) {
-                                // Run through resolver pipeline
-                                {
-                                    symbol_resolver sr(*this, _context, _unit);
-                                    concrete->accept(sr);
-                                }
-                                {
-                                    aggregate_type_resolver atr(*this, _context, _unit);
-                                    concrete->accept(atr);
-                                }
-                                {
-                                    signature_resolver sigr(*this, _context, _unit);
-                                    concrete->accept(sigr);
-                                }
-                                concrete->accept(*this);
-                            }
-
-                            // Replace candidates with just the concrete instance
-                            callee->set_target(concrete);
-                            candidates.clear();
-                            candidates.push_back(concrete);
-                        }
-                    }
+                    if (!args_ok) continue;
                 }
-            }
-        }
 
-        // ── Member template argument deduction (implicit template args) ──
-        // If the callee does NOT carry explicit template arguments but there are
-        // template candidates, attempt to deduce from the call-site argument types.
-        if (callee && !callee->has_ast_template_args()) {
-            std::vector<std::shared_ptr<function>> tpl_candidates;
-            for (auto& cand : candidates) {
-                if (cand && cand->is_template()) {
-                    // Only member template methods of this aggregate or its bases are member candidates
-                    if (cand->is_member() || cand->parent<aggregate>()) {
-                        if (std::find(tpl_candidates.begin(), tpl_candidates.end(), cand) == tpl_candidates.end()) {
-                            tpl_candidates.push_back(cand);
-                        }
-                    }
+                size_t err_idx;
+                std::string err_reason;
+                if (!validate_template_arg_constraints(ti->params, final_args, err_idx, err_reason)) {
+                    continue;
                 }
-            }
-            if (!tpl_candidates.empty()) {
-                std::vector<std::shared_ptr<type>> arg_types;
-                for (auto& arg : expr.arguments()) {
-                    arg_types.push_back(arg ? arg->get_type() : nullptr);
-                }
-                for (auto& tpl_func : tpl_candidates) {
-                    auto* ti = tpl_func->get_tpl_info();
-                    if (!ti) continue;
-                    for (auto& param : ti->params) {
-                        if (param.is_value_param() && !param.default_value.has_value() && param.default_value_expr) {
-                            (void)materialize_value_default(param, tpl_func);
-                        }
-                    }
-                    auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), arg_types);
-                    if (!deduction.success) continue;
-                    size_t err_idx;
-                    std::string err_reason;
-                    if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
-                        continue;
-                    }
-                    // Instantiate within the owning aggregate (not root ns)
-                    auto& deduced_args = deduction.deduced_args;
-                    std::string key = build_instantiation_key(deduced_args);
-                    std::shared_ptr<function> concrete;
-                    bool newly_instantiated = false;
+
+                std::shared_ptr<function> concrete;
+                bool newly_instantiated = false;
+                std::string key = build_instantiation_key(final_args);
+                if (is_member_cand) {
                     auto cache_it = ti->instantiations.find(key);
                     if (cache_it != ti->instantiations.end()) {
                         if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
@@ -745,12 +747,12 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     }
                     if (!concrete) {
                         std::string base_name = tpl_func->get_short_name();
-                        std::string inst_name = build_instantiated_name(base_name, deduced_args);
-                        auto subst = template_instantiator::build_substitution_map_public(*ti, deduced_args);
-                        auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduced_args);
-                        auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduced_args);
+                        std::string inst_name = build_instantiated_name(base_name, final_args);
+                        auto subst = template_instantiator::build_substitution_map_public(*ti, final_args);
+                        auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, final_args);
+                        auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, final_args);
                         auto target_agg = tpl_func->parent<aggregate>();
-                        if (!target_agg) target_agg = st;
+                        if (!target_agg || target_agg->is_template()) target_agg = st;
                         concrete = target_agg->define_function(inst_name, tpl_func->is_static());
                         if (concrete) {
                             concrete->set_visibility(tpl_func->get_visibility());
@@ -760,12 +762,126 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                             template_instantiator::populate_function_from_template_public(
                                 concrete, *tpl_func, subst, val_subst, pack_subst);
-                            concrete->set_tpl_instantiation_info(base_name, deduced_args);
+                            concrete->set_tpl_instantiation_info(base_name, final_args);
                             concrete->mark_instantiation();
                             ti->instantiations[key] = concrete;
                             newly_instantiated = true;
                         }
                     }
+                } else {
+                    auto parent_ns = _unit.get_root_namespace();
+                    if (auto parent_elem = tpl_func->parent<element>()) {
+                        if (auto owner_ns = std::dynamic_pointer_cast<ns>(parent_elem)) {
+                            parent_ns = owner_ns;
+                        }
+                    }
+                    newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
+                    concrete = template_instantiator::instantiate_function(
+                        *tpl_func, final_args, parent_ns, _unit, _context, *this);
+                }
+
+                if (concrete) {
+                    if (newly_instantiated) {
+                        symbol_resolver sr(*this, _context, _unit);
+                        concrete->accept(sr);
+                        aggregate_type_resolver atr(*this, _context, _unit);
+                        concrete->accept(atr);
+                        signature_resolver sigr(*this, _context, _unit);
+                        concrete->accept(sigr);
+                        concrete->accept(*this);
+                    }
+                    append_unique_candidate(concrete);
+                }
+            }
+            // Remove remaining uninstantiated template candidates
+            candidates.erase(
+                std::remove_if(candidates.begin(), candidates.end(),
+                    [](const std::shared_ptr<function>& f) { return f && f->is_template(); }),
+                candidates.end());
+        }
+
+        // ── Template argument deduction (implicit template args) ──────────────
+        // If the callee does NOT carry explicit template arguments but there are
+        // template candidates, attempt to deduce from the call-site argument types.
+        if (callee && !callee->has_ast_template_args()) {
+            std::vector<std::shared_ptr<function>> tpl_candidates;
+            for (auto& cand : candidates) {
+                if (cand && cand->is_template()) {
+                    if (std::find(tpl_candidates.begin(), tpl_candidates.end(), cand) == tpl_candidates.end()) {
+                        tpl_candidates.push_back(cand);
+                    }
+                }
+            }
+            if (!tpl_candidates.empty()) {
+                for (auto& tpl_func : tpl_candidates) {
+                    auto* ti = tpl_func->get_tpl_info();
+                    if (!ti) continue;
+                    for (auto& param : ti->params) {
+                        if (param.is_value_param() && !param.default_value.has_value() && param.default_value_expr) {
+                            (void)materialize_value_default(param, tpl_func);
+                        }
+                    }
+
+                    bool is_member_cand = tpl_func->is_member() && !tpl_func->is_static();
+                    std::vector<std::shared_ptr<type>> call_types;
+                    if (!is_member_cand) {
+                        call_types.push_back(this_expr ? this_expr->get_type() : nullptr);
+                    }
+                    call_types.insert(call_types.end(), expr_arg_types.begin(), expr_arg_types.end());
+
+                    auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), call_types);
+                    if (!deduction.success) continue;
+                    size_t err_idx;
+                    std::string err_reason;
+                    if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
+                        continue;
+                    }
+
+                    std::shared_ptr<function> concrete;
+                    bool newly_instantiated = false;
+                    std::string key = build_instantiation_key(deduction.deduced_args);
+                    if (is_member_cand) {
+                        auto cache_it = ti->instantiations.find(key);
+                        if (cache_it != ti->instantiations.end()) {
+                            if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
+                                concrete = *fn_ptr;
+                            }
+                        }
+                        if (!concrete) {
+                            std::string base_name = tpl_func->get_short_name();
+                            std::string inst_name = build_instantiated_name(base_name, deduction.deduced_args);
+                            auto subst = template_instantiator::build_substitution_map_public(*ti, deduction.deduced_args);
+                            auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduction.deduced_args);
+                            auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
+                            auto target_agg = tpl_func->parent<aggregate>();
+                            if (!target_agg || target_agg->is_template()) target_agg = st;
+                            concrete = target_agg->define_function(inst_name, tpl_func->is_static());
+                            if (concrete) {
+                                concrete->set_visibility(tpl_func->get_visibility());
+                                concrete->set_const_member(tpl_func->is_const_member());
+                                concrete->set_operator(tpl_func->is_operator());
+                                concrete->set_aliasing(tpl_func->get_aliasing());
+                                concrete->set_compiler_generated(tpl_func->is_compiler_generated());
+                                template_instantiator::populate_function_from_template_public(
+                                    concrete, *tpl_func, subst, val_subst, pack_subst);
+                                concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args);
+                                concrete->mark_instantiation();
+                                ti->instantiations[key] = concrete;
+                                newly_instantiated = true;
+                            }
+                        }
+                    } else {
+                        auto parent_ns = _unit.get_root_namespace();
+                        if (auto parent_elem = tpl_func->parent<element>()) {
+                            if (auto owner_ns = std::dynamic_pointer_cast<ns>(parent_elem)) {
+                                parent_ns = owner_ns;
+                            }
+                        }
+                        newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
+                        concrete = template_instantiator::instantiate_function(
+                            *tpl_func, deduction.deduced_args, parent_ns, _unit, _context, *this);
+                    }
+
                     if (concrete) {
                         if (newly_instantiated) {
                             symbol_resolver sr(*this, _context, _unit);
@@ -776,9 +892,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             concrete->accept(sigr);
                             concrete->accept(*this);
                         }
-                        if (std::find(candidates.begin(), candidates.end(), concrete) == candidates.end()) {
-                            candidates.push_back(concrete);
-                        }
+                        append_unique_candidate(concrete);
                     }
                 }
                 // Remove remaining uninstantiated template candidates

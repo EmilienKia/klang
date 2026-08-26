@@ -62,7 +62,8 @@ struct deduction_result {
 deduction_result deduce_template_arguments(
     const tpl_info& ti,
     const std::vector<std::shared_ptr<parameter>>& params,
-    const std::vector<std::shared_ptr<type>>& arg_types);
+    const std::vector<std::shared_ptr<type>>& arg_types,
+    const std::vector<template_argument>& explicit_args = {});
 
 } // namespace k::model
 

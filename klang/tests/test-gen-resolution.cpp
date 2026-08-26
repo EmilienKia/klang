@@ -698,6 +698,121 @@ TEST_CASE("Unified call syntax: recursive function resolution with free function
     REQUIRE(test_double() == 3);
 }
 
+TEST_CASE("Unified call syntax: free template function with explicit template args called as member", "[.known-issue][gen][overload][unified_call]") {
+    auto jit = gen_jit(R"SRC(
+        module __unified_template__;
+
+        struct Box {
+            val : int = 42;
+        }
+
+        template<typename R>
+        extract(b : const Box&, offset : R) : R {
+            return (R)b.val + offset;
+        }
+
+        test() : int {
+            b : Box;
+            return b.extract<int>(10);
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 52);
+}
+
+TEST_CASE("Unified call syntax: free template function with deduced template args called as member", "[.known-issue][gen][overload][unified_call]") {
+    auto jit = gen_jit(R"SRC(
+        module __unified_template_deduced__;
+
+        struct Box {
+            val : int = 42;
+        }
+
+        template<typename R>
+        extract(b : const Box&, offset : R) : R {
+            return (R)b.val + offset;
+        }
+
+        test() : int {
+            b : Box;
+            return b.extract(10);
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 52);
+}
+
+TEST_CASE("Unified call syntax: free template function with interface receiver called as member", "[.known-issue][gen][overload][unified_call]") {
+    auto jit = gen_jit(R"SRC(
+        module __unified_interface_template__;
+
+        interface ItemHolder {
+            const get_val() : int;
+        }
+
+        class ConcreteHolder : public ItemHolder {
+        public:
+            val : int = 5;
+            override const get_val() : int { return val; }
+        }
+
+        template<typename R>
+        accumulate_holder(holder : const ItemHolder&, init : R) : R {
+            return init + (R)holder.get_val();
+        }
+
+        test() : int {
+            c : ConcreteHolder;
+            return c.accumulate_holder<int>(10);
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 15);
+}
+
+TEST_CASE("Unified call syntax: free template function matching sequence-like pattern", "[.known-issue][gen][overload][unified_call]") {
+    auto jit = gen_jit(R"SRC(
+        module __unified_seq__;
+
+        template<typename T>
+        interface Seq {
+            const get_first() : T;
+        }
+
+        template<typename T>
+        class Vec : public Seq<T> {
+        public:
+            val : T;
+            override const get_first() : T { return val; }
+        }
+
+        template<typename T, typename R>
+        acc_first(s : const Seq<T>&, init : R) : R {
+            return init + (R)s.get_first();
+        }
+
+        test() : int {
+            v : Vec<int>;
+            v.val = 5;
+            return v.acc_first<int, int>(10);
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 15);
+}
+
 // =============================================================================
 // Qualified name lookup tests
 // =============================================================================

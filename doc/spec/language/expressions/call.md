@@ -11,6 +11,7 @@ This page covers postfix expression forms: function invocation, array subscript,
 2. [Constructor invocation](#2-constructor-invocation)
 3. [Subscript operator](#3-subscript-operator)
 4. [Member access — dot operator `.`](#4-member-access--dot-operator-)
+   - [Unified Call Syntax (UCS)](#41-unified-call-syntax-ucs)
 5. [Member access through pointer — arrow operator `->`](#5-member-access-through-pointer--arrow-operator--)
 6. [Pointer-to-member call — operators `.*` and `->*`](#6-pointer-to-member-call--operators--and--)
 ---
@@ -200,6 +201,46 @@ sz : unsigned int = arr.size;   // 5
 ```
 
 See [Types — §9.8](../basic/types.md#98-virtual-member-size) for full details.
+
+### 4.1 Unified Call Syntax (UCS)
+
+K supports **Unified Call Syntax (UCS)**. When an invocation uses member syntax `obj.func(args...)` or `obj.func<TArgs...>(args...)`, the compiler searches for candidates in the following order:
+
+1. **Member methods** declared on `obj`'s aggregate type and inherited from its base hierarchy.
+2. **Free functions and static methods** in the caller's lexical scope.
+3. **Free functions** in namespaces brought into scope via `using namespace` directives.
+4. **Imported free functions** from imported modules.
+
+When a free function `func` is selected via UCS, the receiver `obj` is passed implicitly as the **first argument**: `func(obj, args...)`.
+
+```k
+import k;
+
+square(x : int) : int {
+    return x * x;
+}
+
+test() : int {
+    v : Vector<int>;
+    v.push(1);
+    v.push(2);
+    v.push(3);
+
+    // Invoking free function 'accumulate' from module 'k' via UCS:
+    sum : int = v.accumulate(0, [](acc: int, item: const int&) { return acc + item; });
+
+    // Invoking free function 'accumulate' with explicit template arguments:
+    sum_explicit : int = v.accumulate<int>(0, [](acc: int, item: const int&) { return acc + item; });
+
+    return sum;
+}
+```
+
+**Semantics and rules:**
+- **First parameter matching**: The receiver `obj` must be convertible to the function's first parameter type (taking into account value, reference, pointer, or const qualifiers).
+- **Template deduction**: For template free functions, the receiver type participates in template argument deduction as argument 0.
+- **Overload preference**: If both a member method and a free function match with equal viability, direct member methods take precedence during overload scoring.
+- **Scope isolation**: Non-static member methods of an enclosing caller class are never treated as UCS candidates for an unrelated receiver object.
 
 ---
 ## 5. Member access through pointer — arrow operator `->`

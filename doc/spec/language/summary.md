@@ -486,6 +486,7 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 - **Default parameters**: only trailing parameters may have default values.
 - **Subscript**: `arr[i]` — runtime bounds-check. Works on any `T[N]`, `T[]`, and any indirection to an array.
 - **Member access `.`**: fields and methods. Works on temporaries (rvalues) — method chaining supported. `arr.size` = element count.
+- **Unified Call Syntax (UCS)**: `obj.func(args...)` / `obj.func<TArgs...>(args...)` can invoke matching free functions or static methods taking `obj` as their first parameter (`func(obj, args...)`), supporting both non-template and template functions with argument deduction.
 - **Pointer access `→`**: equivalent to `(*p).member`, with null-check.
 - **Member function reference call**: `(obj.*mfp)(args)` and `(ptr->*mfp)(args)` — parentheses required.
 - **Template-qualified scope call**: expression calls support `Type<T>::func(args...)`,

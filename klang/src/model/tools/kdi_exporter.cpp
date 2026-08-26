@@ -1003,7 +1003,7 @@ void kdi_builder::visit_structure(structure& s) {
 
     // Template definition: export as kdi_template_def, not as a regular aggregate
     if (s.is_template()) {
-        if (!_ns_stack.empty() && s.get_tpl_info()) {
+        if (_agg_stack.empty() && !_ns_stack.empty() && s.get_tpl_info()) {
             std::string fq = s.get_fq_name();
             if (fq.empty() || fq == "::") {
                 // Template definitions may not have their fq_name computed yet
@@ -1048,7 +1048,7 @@ void kdi_builder::visit_klass(klass& k) {
 
     // Template definition: export as kdi_template_def
     if (k.is_template()) {
-        if (!_ns_stack.empty() && k.get_tpl_info()) {
+        if (_agg_stack.empty() && !_ns_stack.empty() && k.get_tpl_info()) {
             std::string fq = k.get_fq_name();
             if (fq.empty() || fq == "::") {
                 fq = _ns_stack.back()->fq_name.empty()
@@ -1089,7 +1089,7 @@ void kdi_builder::visit_interface(interface& i) {
 
     // Template definition: export as kdi_template_def
     if (i.is_template()) {
-        if (!_ns_stack.empty() && i.get_tpl_info()) {
+        if (_agg_stack.empty() && !_ns_stack.empty() && i.get_tpl_info()) {
             std::string fq = i.get_fq_name();
             if (fq.empty() || fq == "::") {
                 fq = _ns_stack.back()->fq_name.empty()
@@ -1250,7 +1250,7 @@ void kdi_builder::visit_union(union_type_def& un) {
 
     // Template definition: export as kdi_template_def, not as a regular union
     if (un.is_template()) {
-        if (!_ns_stack.empty() && un.get_tpl_info()) {
+        if (_agg_stack.empty() && !_ns_stack.empty() && un.get_tpl_info()) {
             std::string fq = un.get_fq_name();
             if (fq.empty() || fq == "::") {
                 fq = _ns_stack.back()->fq_name.empty()
@@ -1332,7 +1332,7 @@ void kdi_builder::visit_function(function& fn) {
 
     // Template definition: export as kdi_template_def, not as a regular function
     if (fn.is_template()) {
-        if (!_ns_stack.empty() && fn.get_tpl_info()) {
+        if (_agg_stack.empty() && !_ns_stack.empty() && fn.get_tpl_info()) {
             std::string fq = fn.get_fq_name();
             if (fq.empty() || fq == "::") {
                 fq = _ns_stack.back()->fq_name.empty()

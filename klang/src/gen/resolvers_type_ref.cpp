@@ -3558,6 +3558,16 @@ type_reference_resolver::get_best_matching_function(
         const bool func_is_tpl = func ? (func->is_instantiation() || func->has_tpl_args() || func->is_template()) : false;
 
         if (func->is_member() && !func->is_static() && this_expr) {
+            auto owner_agg = func->parent<aggregate>();
+            if (owner_agg && owner_agg->get_struct_type() && this_expr->get_type()) {
+                auto st_type = owner_agg->get_struct_type();
+                std::shared_ptr<type> owner_type = func->is_const_member() ? std::static_pointer_cast<type>(st_type->get_const()) : std::static_pointer_cast<type>(st_type);
+                auto owner_ref = owner_type->get_reference();
+                auto w_this = compute_cast_weight(this_expr, owner_ref);
+                if (w_this == CAST_IMPOSSIBLE) {
+                    continue;
+                }
+            }
             if (args.size() <= params.size() || func_has_varargs) {
                 auto [w, adapted] = score_with_defaults(args, params, member_param_types, 0);
                 if (w != CAST_IMPOSSIBLE) {

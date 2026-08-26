@@ -37,3 +37,10 @@ This directory contains in-depth technical design specifications for the **Klang
    - Automated template argument deduction pattern matching across scalars, indirections, composites, arrays, callables, and packs.
    - SFINAE overload resolution integration, non-template preference tie-breaking, and dependent return type materialization.
    - Cross-module KDI template serialization and origin tracking.
+
+6. **[06. Unified Call Syntax (UCS) & Member Invocation Resolution](06-unified-call-syntax-resolution.md)**
+   - Unified Call Syntax mechanics for member and free function invocations (`obj.func(...)`).
+   - Candidate collection pipeline across aggregate hierarchy, caller scopes, `using namespace`, and imported modules.
+   - Scope isolation rules preventing unwanted member function leakage.
+   - Deduction, specialization, and instantiation of free and member template functions under UCS.
+   - Overload resolution scoring, argument adaptation, and code generation lowering.
