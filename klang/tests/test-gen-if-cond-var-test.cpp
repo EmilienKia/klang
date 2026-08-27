@@ -241,6 +241,162 @@ TEST_CASE("if-cond-var-test: struct var with failing method test enters else",
 
 
 // =============================================================================
+// [ICVT-SOFTFAIL] Pattern-like soft-fail on union mismatch & nullable addressor
+// =============================================================================
+
+TEST_CASE("if-cond-var-test: union alternative mismatch soft-fails to else and skips test",
+          "[gen][if-cond-var-test][union][softfail]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_cond_var_test_09;
+
+        union U {
+            first: int;
+            second: long;
+        }
+
+        test() : int {
+            u : U;
+            u.second = 99;
+            // 'first' is not active; soft-fail skips (v > 0) and enters else
+            if(v : int = u.first; v > 0) {
+                return v;
+            } else {
+                return -1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == -1);
+}
+
+TEST_CASE("if-cond-var-test: union alternative match evaluates test and enters then",
+          "[gen][if-cond-var-test][union][softfail]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_cond_var_test_10;
+
+        union U {
+            first: int;
+            second: long;
+        }
+
+        test() : int {
+            u : U;
+            u.first = 42;
+            if(v : int = u.first; v > 10) {
+                return v;
+            } else {
+                return -1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("if-cond-var-test: null pointer addressor soft-fails to else and skips dereference in test",
+          "[gen][if-cond-var-test][ptr][softfail]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_cond_var_test_11;
+
+        get_null() : int* {
+            return null;
+        }
+
+        test() : int {
+            // p is null; soft-fail skips (*p > 0) preventing null dereference crash
+            if(p : int* = get_null(); *p > 0) {
+                return *p;
+            } else {
+                return -100;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == -100);
+}
+
+TEST_CASE("if-cond-var-test: link dynamic downcast mismatch soft-fails to else",
+          "[gen][if-cond-var-test][downcast][softfail]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_cond_var_test_12;
+
+        class Base {
+            public v : int;
+            public Base(v : int) : v(v) {}
+            public dummy() : int { return 0; }
+        }
+
+        class Derived : public Base {
+            public extra : int;
+            public Derived(v : int, e : int) : Base(v), extra(e) {}
+            public is_extra_pos() : bool { return extra > 0; }
+        }
+
+        class Other : public Base {
+            public dummy2 : int;
+            public Other(v : int) : Base(v), dummy2(0) {}
+        }
+
+        test() : int {
+            o : Other(10);
+            bp : Base* = &o;
+            d : Derived(1, 2);
+            // bp points to Other, dynamic downcast to Derived+ fails softly
+            if(dlnk : Derived+ = (Derived+) bp; (*dlnk).is_extra_pos()) {
+                return (*dlnk).extra;
+            } else {
+                return -1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == -1);
+}
+
+TEST_CASE("if-cond-var-test: struct destructor called when test expression fails",
+          "[gen][if-cond-var-test][dtor]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_cond_var_test_13;
+
+        g_dtor_count : int = 0;
+
+        struct S {
+            val : int;
+            ~S() {
+                ++g_dtor_count;
+            }
+        }
+
+        makeS(v : int) res : S {
+            res.val = v;
+        }
+
+        test() : int {
+            g_dtor_count = 0;
+            if(s : S = makeS(5); s.val > 100) {
+                return 1;
+            } else {
+                // s was cleaned up before or upon taking else
+            }
+            return g_dtor_count;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+
+// =============================================================================
 // [ICVT-REF] Reference variable + separate test (no soft-fail)
 // =============================================================================
 

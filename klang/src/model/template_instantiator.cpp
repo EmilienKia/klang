@@ -1040,9 +1040,14 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
         new_ies->_ast_node = ies->get_ast_node();
         new_ies->_documentation = ies->get_documentation();
         if (ies->has_cond_var()) {
-            // Clone the condition variable by cloning it as a statement
-            auto cloned_var = clone_statement(*ies->get_cond_var(), new_ies, subst, val_subst);
-            // The variable_holder mechanism should have registered it via on_variable_defined
+            // Clone all condition variables in order
+            for (auto& cond_var : ies->get_cond_vars()) {
+                auto cloned_var = std::dynamic_pointer_cast<variable_statement>(
+                    clone_statement(*cond_var, new_ies, subst, val_subst));
+                if (cloned_var) {
+                    new_ies->add_cond_var(cloned_var);
+                }
+            }
         }
         if (ies->get_test_expr()) {
             new_ies->set_test_expr(clone_and_substitute_expr(
@@ -1400,6 +1405,16 @@ void expand_pack_in_statement(
     } else if (auto bs = std::dynamic_pointer_cast<block>(stmt)) {
         expand_pack_in_block(bs, pack_expansion_names);
     } else if (auto ifs = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
+        if (ifs->has_cond_var()) {
+            for (auto& cond_var : ifs->get_cond_vars()) {
+                expand_pack_in_statement(cond_var, pack_expansion_names);
+            }
+        }
+        if (ifs->get_test_expr()) {
+            auto expr = ifs->get_test_expr();
+            expand_pack_in_expr(expr, pack_expansion_names);
+            if (expr) ifs->set_test_expr(expr);
+        }
         expand_pack_in_statement(std::const_pointer_cast<statement>(ifs->get_then_stmt()), pack_expansion_names);
         expand_pack_in_statement(std::const_pointer_cast<statement>(ifs->get_else_stmt()), pack_expansion_names);
     } else if (auto ws = std::dynamic_pointer_cast<while_statement>(stmt)) {
@@ -2347,7 +2362,9 @@ static void resolve_symbols_in_stmt(const std::shared_ptr<statement>& stmt) {
                 std::const_pointer_cast<expression>(vs->get_init_expr()));
     } else if (auto ies = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
         if (ies->has_cond_var()) {
-            resolve_symbols_in_stmt(ies->get_cond_var());
+            for (auto& cond_var : ies->get_cond_vars()) {
+                resolve_symbols_in_stmt(cond_var);
+            }
         }
         if (ies->get_test_expr())
             resolve_symbols_in_expr(

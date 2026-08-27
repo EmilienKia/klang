@@ -188,14 +188,16 @@ test() : int {
 }
 ```
 
-This soft-fail exception applies to:
+This soft-fail exception applies to all condition-variable forms:
 
 - `if (var : T = u.alt)`
 - `if (var1 : T1 = ...; var2 : T2 = u.alt; ...)`
+- `if (var : T = u.alt; test)`
+- `if (var1 : T1 = ...; var2 : T2 = u.alt; ...; test)`
 
-It does **not** apply to condition-variable forms with a trailing test expression
-(`if(var; test)` / `if(var1; ...; test)`), where condition-variable initialization
-keeps ordinary fatal semantics.
+In all these forms, an alternative mismatch marks the binding as failed, skips
+subsequent initializers and skips evaluation of the trailing test expression,
+branching safely to `else` (or continuing past the `if`).
 
 ---
 

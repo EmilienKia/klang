@@ -553,18 +553,17 @@ Initializer: `= expr`, `(args…)` (constructor), `(args…)[N]` (uniform array 
 The test expression may be any type convertible to `bool`. `else if` chaining via nesting.
 
 **Condition-variable declaration (`if-let`):** A local variable may be declared as the condition.
-Its value, cast to `bool`, determines the branch. The variable is scoped to the `if` (destroyed
-at end of then/else). Soft-fail applies in the classic `if-let` form and in the multi-variable
-soft-fail form (no trailing test expression):
+Its value, cast to `bool` (or trailing test expression), determines the branch. The variable is
+scoped to the `if` (destroyed at end of then branch, or cleaned up before else). Pattern-like
+soft-fail applies to all condition-variable forms (classic `if-let`, multi-variable `if(var1; var2; ...)`,
+and forms with a trailing test expression `if(var1; ...; test)`):
 
-- for addressor initialization failures (for example null when binding a non-null addressor);
+- for addressor initialization failures (for example null when binding a non-null addressor or null pointer);
 - for explicit union alternative accesses used as initializers when the union does not currently
   hold the requested alternative.
 
-On such a soft-fail, the condition is considered `false`, control goes to `else` (or continues
-after the `if`), and the condition variable does not exist on that path. The condition-variable
-forms with a trailing test expression (`if(var; test)` and `if(var1; ...; test)`) keep hard-fail
-initialization semantics.
+On such a soft-fail, the condition is considered `false`, subsequent variable initializers and trailing
+test expressions are skipped, and control goes to `else` (or continues after the `if`).
 
 ### 9.5 While
 

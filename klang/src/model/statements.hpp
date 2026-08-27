@@ -209,6 +209,9 @@ public:
         return _cond_vars;
     }
 
+    /** Add a condition variable statement. */
+    void add_cond_var(const std::shared_ptr<variable_statement>& var);
+
     /** Get the single condition variable statement (for backward compat), or nullptr. */
     std::shared_ptr<variable_statement> get_cond_var() const {
         return _cond_vars.empty() ? nullptr : _cond_vars[0];

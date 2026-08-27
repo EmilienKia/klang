@@ -158,6 +158,16 @@ void if_else_statement::on_variable_defined(std::shared_ptr<variable_definition>
     _cond_vars.push_back(std::dynamic_pointer_cast<variable_statement>(var));
 }
 
+void if_else_statement::add_cond_var(const std::shared_ptr<variable_statement>& var) {
+    if (var) {
+        _cond_vars.push_back(var);
+        set_this_as_parent_to(var);
+        if (!var->get_short_name().empty()) {
+            _vars[var->get_short_name()] = var;
+        }
+    }
+}
+
 //
 // While statement
 //

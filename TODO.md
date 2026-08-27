@@ -231,7 +231,7 @@ Timeout follow-up and mitigation (same day):
 
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts. 
       Workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
-- [ ] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases;
+- [x] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases;
       extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
 - [ ] **Broaden compile-time constant-expression support for template values and
       compile-time configuration values.**

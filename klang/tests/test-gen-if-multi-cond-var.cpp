@@ -360,3 +360,118 @@ TEST_CASE("if-multi-cond-var: single var still works",
     REQUIRE(fn() == 42);
 }
 
+
+// =============================================================================
+// [IMCV-SOFTFAIL] Multi-var with trailing test soft-fail semantics
+// =============================================================================
+
+TEST_CASE("if-multi-cond-var: union mismatch on 2nd var soft-fails and cleans up 1st var",
+          "[gen][if-multi-cond-var][union][softfail]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_multi_cond_var_13;
+
+        g_dtor_count : int = 0;
+
+        struct S {
+            val : int;
+            ~S() {
+                ++g_dtor_count;
+            }
+        }
+
+        makeS(v : int) res : S {
+            res.val = v;
+        }
+
+        union U {
+            first: int;
+            second: long;
+        }
+
+        test() : int {
+            g_dtor_count = 0;
+            u : U;
+            u.second = 99;
+            // s is created; u.first mismatches -> soft-fail cleans up s, skips trailing test
+            if(s : S = makeS(10); v : int = u.first; s.val + v > 0) {
+                return 1;
+            } else {
+                // soft-fail took else branch
+            }
+            return g_dtor_count;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("if-multi-cond-var: multi-var with trailing test and addressor null-check",
+          "[gen][if-multi-cond-var][addr][softfail]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_multi_cond_var_14;
+
+        get_null() : int* { return null; }
+
+        test() : int {
+            a : int = 10;
+            // p1 succeeds (&a), p2 is null -> soft-fails to else, skips test
+            if(p1 : int* = &a; p2 : int* = get_null(); *p1 + *p2 > 0) {
+                return *p1 + *p2;
+            } else {
+                return -55;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == -55);
+}
+
+TEST_CASE("if-multi-cond-var: multi-var with test in template function",
+          "[gen][if-multi-cond-var][template]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_multi_cond_var_15;
+
+        union Opt {
+            val: int;
+            empty: byte;
+        }
+
+        template<typename T>
+        check_pair(o1: Opt&, o2: Opt&, threshold: T) : T {
+            if(v1 : int = o1.val; v2 : int = o2.val; (v1 + v2) > threshold) {
+                return (T)(v1 + v2);
+            } else {
+                return (T)(-1);
+            }
+        }
+
+        test() : int {
+            o1 : Opt;
+            o1.val = 7;
+            o2 : Opt;
+            o2.val = 8;
+            return check_pair<int>(o1, o2, 10);
+        }
+
+        test_mismatch() : int {
+            o1 : Opt;
+            o1.val = 7;
+            o2 : Opt;
+            o2.empty = 1;
+            return check_pair<int>(o1, o2, 10);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 15);
+
+    auto fn_mismatch = jit->lookup_symbol<int(*)()>("test_mismatch");
+    REQUIRE(fn_mismatch != nullptr);
+    REQUIRE(fn_mismatch() == -1);
+}
+

@@ -2453,14 +2453,15 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
     auto* saved_null_failure_bb = _null_failure_bb;
     auto* saved_union_failure_bb = _union_failure_bb;
 
-    if(is_multi_softfail) {
+    if(is_multi_softfail || has_cond_var_with_test) {
         // =====================================================================
-        // Multi-var soft-fail form: if(var1; var2; ...)
-        // Each addressor var gets a null-check after init. On null, cleanup
-        // previously-initialized vars in reverse, then jump to else/cont.
-        // For ref/link: _null_failure_bb handles the soft-fail during init.
-        // For ptr/view/owner: explicit null-check after init.
-        // Non-addressor vars: no null-check, always succeed.
+        // Condition variable(s) with pattern-like soft-fail semantics:
+        //   - if(var1; var2; ...) [multi-var soft-fail without trailing test]
+        //   - if(var1; var2; ...; test) [with trailing test]
+        //   - if(var; test) [single var with trailing test]
+        // Each addressor var gets a null-check after init. On null or union
+        // alternative mismatch, cleanup previously-initialized vars in reverse,
+        // then jump to else/cont (skipping subsequent vars and skipping trailing test).
         // =====================================================================
         auto& vars = stmt.get_cond_vars();
 
@@ -2515,18 +2516,6 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
                     llvm::BasicBlock* ok_bb = llvm::BasicBlock::Create(**_context, "softfail-ok-" + std::to_string(i), func);
 
-                    // But we also need to cleanup THIS var (var i) if it's an owner with non-null before the check
-                    // Actually: the var IS null if we branch here, so no cleanup of THIS var needed.
-                    // But we need to cleanup vars 0..i-1. The trampoline handles 0..i-1.
-                    // For var i which is null, no cleanup needed (it's null).
-                    // However we need a trampoline that also cleans up var i if it was already
-                    // stored but is not null... Actually no: if is_null is true, the value IS null,
-                    // so no cleanup needed for this var. Just cleanup 0..i-1.
-                    // But for owner types, the alloca was already stored with null, which is fine —
-                    // emit_cond_var_cleanup checks for null before freeing owners.
-                    // Actually, let's just route to a trampoline that cleans i..0 including this var
-                    // since cleanup of a null owner/ptr is a no-op anyway.
-
                     // Create a trampoline for failure AT this var (cleanup vars 0..i in reverse)
                     llvm::BasicBlock* this_fail_bb = llvm::BasicBlock::Create(**_context, "if-softfail-at-" + std::to_string(i));
                     set_debug_location(if_lexeme);
@@ -2560,35 +2549,34 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
             }
         }
 
-        // All vars initialized successfully → go to then
-        _null_failure_bb = saved_null_failure_bb;
-        _union_failure_bb = saved_union_failure_bb;
-        set_debug_location(if_lexeme);
-        _builder->CreateBr(then_block);
-
-    } else if(has_cond_var_with_test) {
-        // =====================================================================
-        // if(vars; test) form — hard-fail, test expression determines branch
-        // =====================================================================
-        // No soft-fail for any var
-        for(auto& var : stmt.get_cond_vars()) {
-            var->accept(*this);
-        }
+        // All vars initialized successfully
         _null_failure_bb = saved_null_failure_bb;
         _union_failure_bb = saved_union_failure_bb;
 
-        _value = nullptr;
-        stmt.get_test_expr()->accept(*this);
-        auto test_value = _value;
-        _value = nullptr;
+        if(has_cond_var_with_test) {
+            // Evaluate separate test expression
+            _value = nullptr;
+            stmt.get_test_expr()->accept(*this);
+            auto test_value = _value;
+            _value = nullptr;
 
-        emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
+            emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
-        set_debug_location(if_lexeme);
-        if(has_else) {
-            _builder->CreateCondBr(test_value, then_block, else_block);
+            // If test evaluates to false, cleanup all vars and jump to fail_dest
+            llvm::BasicBlock* test_failed_bb = llvm::BasicBlock::Create(**_context, "if-test-failed", func);
+            set_debug_location(if_lexeme);
+            _builder->CreateCondBr(test_value, then_block, test_failed_bb);
+
+            _builder->SetInsertPoint(test_failed_bb);
+            for(int j = (int)vars.size() - 1; j >= 0; --j) {
+                emit_cond_var_cleanup(vars[j]);
+            }
+            set_debug_location(if_lexeme);
+            _builder->CreateBr(fail_dest);
         } else {
-            _builder->CreateCondBr(test_value, then_block, cont_block);
+            // Multi-var without test: all vars succeeded → go to then
+            set_debug_location(if_lexeme);
+            _builder->CreateBr(then_block);
         }
 
     } else if(is_single_softfail) {
@@ -2729,19 +2717,10 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         func->insert(func->end(), else_block);
         _builder->SetInsertPoint(else_block);
         stmt.get_else_stmt()->accept(*this);
-        // For soft-fail forms (single or multi without test): no cleanup in else.
-        // Variables don't exist on the else path (option 3a).
-        // For if(vars; test) form: all variables always exist, cleanup in reverse order.
-        if(has_cond_var) {
-            if(has_cond_var_with_test) {
-                auto& vars = stmt.get_cond_vars();
-                for(auto it = vars.rbegin(); it != vars.rend(); ++it) {
-                    emit_cond_var_cleanup(*it);
-                }
-            }
-            // else: soft-fail form — no cleanup in else (cleanup done in trampolines
-            // or variable was never fully initialized)
-        }
+        // For soft-fail and pattern-like forms (multi-var, single-var with test, or multi-var with test):
+        // no cleanup in else.
+        // On soft-fail paths, trampolines already cleaned up initialized variables.
+        // On test-failed path, test_failed_bb already cleaned up all condition variables.
         if (auto ast_if = stmt.get_ast_if_else_stmt(); ast_if && ast_if->else_kw) {
             set_debug_location(lex::any_lexeme{*ast_if->else_kw});
         } else {

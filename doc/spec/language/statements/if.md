@@ -305,8 +305,8 @@ test() : int {
 }
 ```
 
-This behaviour is specific to classic if-let and multi-variable soft-fail forms.
-The `if(var; test)` / `if(var1; ...; test)` forms remain hard-fail (see §7–§8).
+This behaviour applies uniformly to all condition-variable forms (classic if-let,
+multi-variable soft-fail, and forms with a trailing test expression).
 
 ### Nested `if-let`
 
@@ -328,39 +328,41 @@ test() : int {
 ## 7. Condition-variable form with trailing test expression
 
 A condition-variable declaration may be followed by a semicolon and a separate
-test expression.  In this form, the variable is declared and initialised, but
-branching is determined by the **test expression** — not by a boolean cast of
-the variable.
+test expression. In this form, the variable is declared and initialized using
+pattern-like soft-fail semantics. If binding succeeds, branching is determined
+by the **test expression** — not by a boolean cast of the variable.
 
 ```k
 if (myVar : MyStruct& = getSomething(); myVar.aTest()) {
-    // entered when myVar.aTest() returns true
+    // entered when myVar binds successfully and myVar.aTest() returns true
 } else {
-    // entered when myVar.aTest() returns false
-    // myVar is accessible here
+    // entered when binding soft-fails or myVar.aTest() returns false
 }
 ```
+
+### Pattern-like soft-fail
+
+When using the `if(var; test)` form, condition-variable initialization uses
+pattern-like soft-fail semantics:
+
+- If the condition variable is an addressor (ref `&`, link `+`, ptr `*`, view `?`,
+  or owner `!`) and evaluates to `null` or dynamic downcast fails, it **soft-fails**:
+  the trailing `test` expression is **not evaluated**, the variable is cleaned up,
+  and execution branches directly to `else` (or continues past `if`).
+- If the initializer accesses a union alternative (`u.alt`) whose active discriminant
+  does not match, it **soft-fails**: the trailing `test` expression is **not evaluated**,
+  and execution branches directly to `else` (or continues past `if`).
+- If binding succeeds, the trailing `test` expression is evaluated to determine branching.
 
 ### Key differences with classic `if-let`
 
 | Aspect                        | Classic if-let                  | `if(var; test)` form            |
 |-------------------------------|----------------------------------|---------------------------------|
-| Branch condition              | Boolean cast of variable value   | Separate test expression        |
-| Ref/link soft-fail            | Yes — null → else branch         | **No** — null is a fatal error  |
-| Union access soft-fail        | Yes — alt mismatch → else branch | **No** — mismatch is fatal      |
-| Variable in else branch       | Not visible on soft-fail paths   | Always visible                  |
-
-### No soft-fail
-
-When using the `if(var; test)` form, condition-variable initialization is
-performed with the normal runtime semantics of ordinary local variables:
-
-- null assignments to references (`&`) or links (`+`) are **fatal errors**;
-- union alternative mismatches on explicit accesses such as `u.alt` are also
-  **fatal errors**.
-
-There is no soft-fail mechanism in this form — the programmer is responsible for
-ensuring the initializer succeeds before the trailing test expression is evaluated.
+| Branch condition              | Boolean cast of variable value   | Separate test expression (if bound) |
+| Ref/link soft-fail            | Yes — null → else branch         | Yes — null → else (skips test)  |
+| Union access soft-fail        | Yes — alt mismatch → else branch | Yes — alt mismatch → else (skips test) |
+| Pointer null soft-fail        | Yes — null → else branch         | Yes — null → else (skips test)  |
+| Variable in else branch       | Not visible on soft-fail paths   | Not visible on soft-fail paths  |
 
 ### Examples
 
@@ -381,37 +383,40 @@ test2() : int {
     return -1;
 }
 
-// Reference variable with separate test — no soft-fail
+// Reference variable with separate test — soft-fails if null, skips test
 test3() : int {
-    val : int = 7;
-    if (r : int& = val; r > 5) {
-        return r;
+    p : int* = null;
+    if (p1 : int* = p; *p1 > 0) {
+        return *p1;     // safe: *p1 > 0 is skipped because p is null
     } else {
-        return -1;      // r is accessible here
+        return -1;      // entered because p is null
     }
 }
 ```
 
 ---
-## 8. Multi-variable form with trailing test expression (hard-fail)
+## 8. Multi-variable form with trailing test expression
 
 The condition-variable form with a trailing test expression can be extended with
 **multiple variable declarations**,
-each separated by a semicolon.  The last semicolon-separated element is always the
+each separated by a semicolon. The last semicolon-separated element is always the
 test expression that determines branching.
 
 ```k
 if (v1 : T1 = e1; v2 : T2 = e2; v3 : T3 = e3; testExpr) {
     // all variables are accessible here
 } else {
-    // all variables are accessible here too
+    // entered if any binding fails or testExpr is false
 }
 ```
 
-### Declaration order
+### Declaration order and short-circuit
 
-Variables are declared **left to right**.  Later declarations may reference
-earlier ones:
+Variables are declared **left to right**. Later declarations may reference
+earlier ones. If any variable soft-fails (null-check failure or union alternative
+mismatch), subsequent variable declarations and the trailing test expression are
+**not evaluated** (short-circuit), and previously-initialized variables are
+cleaned up before branching to `else`.
 
 ```k
 if (a : int = 1; b : int = a + 1; c : int = b + 1; c == 3) {
@@ -430,14 +435,12 @@ if (x : int = 5; s : MyStruct{.a = x, .b = x + 1}; s.a + s.b > 10) {
 }
 ```
 
-### No soft-fail
+### Scope and lifetime
 
-As with the single-variable `if(var; test)` form, the multi-variable form with a
-trailing test expression uses ordinary initialization semantics:
-
-- null assignments to references or links are **fatal errors**;
-- union alternative mismatches during condition-variable initialization are
-  **fatal errors**.
+- All variables are scoped to the `if` statement.
+- In the `then` branch, all variables are accessible and destroyed at the end of the block in reverse order.
+- On soft-fail or when `testExpr` evaluates to `false`, all initialized variables are cleaned up before branching to `else`.
+- After the `if` statement, none of the variables exist.
 
 There is no soft-fail mechanism in this form.
 
@@ -514,7 +517,7 @@ if (p1 : Foo* = getPtr(); p2 : Bar* = p1->getBar(); p3 : Baz* = p2->getBaz()) {
 | `if(var)` single, non-addressor | no, except union alt mismatch | `bool(var)` | yes on success / **no** on union soft-fail | yes on success / **no** on soft-fail |
 | `if(var)` single, addressor | **yes** | non-null after successful init | **no** | **no** |
 | `if(var1; var2; ...)` multi, no test | **yes** | all initializers succeed; addressors also must be non-null | **no** | **no** |
-| `if(var1; ...; test)` with test | no (fatal) | `test` | yes | yes |
+| `if(var1; ...; test)` with test | **yes** | `test` (evaluated only if all bindings succeed) | **no** on soft-fail / cleaned up before else | **no** |
 
 ### Declaration order and short-circuit
 
