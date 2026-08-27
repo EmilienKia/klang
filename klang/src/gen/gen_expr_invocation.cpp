@@ -780,6 +780,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             concrete->set_visibility(tpl_func->get_visibility());
                             concrete->set_const_member(tpl_func->is_const_member());
                             concrete->set_operator(tpl_func->is_operator());
+                            concrete->set_virtual(false);
+                            concrete->set_vtable_slot(-1);
                             concrete->set_aliasing(tpl_func->get_aliasing());
                             concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                             template_instantiator::populate_function_from_template_public(
@@ -904,6 +906,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 concrete->set_visibility(tpl_func->get_visibility());
                                 concrete->set_const_member(tpl_func->is_const_member());
                                 concrete->set_operator(tpl_func->is_operator());
+                                concrete->set_virtual(false);
+                                concrete->set_vtable_slot(-1);
                                 concrete->set_aliasing(tpl_func->get_aliasing());
                                 concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                                 template_instantiator::populate_function_from_template_public(
@@ -980,6 +984,25 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         // Apply adapted arguments (may include cloned defaults for trailing params)
         expr.assign_arguments(best.adapted_args);
+
+        // For an inherited non-static member call (e.g. Base method called on Derived object),
+        // adapt/upcast the receiver sub_expr to the owner class reference type.
+        if (member_callee && best.func->is_member() && !best.func->is_static() && !best.is_unified_call) {
+            if (auto owner_agg = best.func->parent<aggregate>()) {
+                if (owner_agg->get_struct_type()) {
+                    auto target_ref_type = is_const_this
+                        ? owner_agg->get_struct_type()->get_const()->get_reference()
+                        : owner_agg->get_struct_type()->get_reference();
+                    auto adapted_this = adapt_type(this_expr, target_ref_type);
+                    if (adapted_this && adapted_this != this_expr) {
+                        this_expr = adapted_this;
+                        member_callee->sub_expr() = this_expr;
+                        member_callee->sub_expr()->set_parent_expression(member_callee->shared_as<expression>());
+                    }
+                }
+            }
+        }
+
         // Note: if best.is_unified_call, the callee stays as member_of_object_expression
         // but the resolved function is free/static. impl_gen handles this by passing
         // sub_expr() value as first argument when the function is not a member.

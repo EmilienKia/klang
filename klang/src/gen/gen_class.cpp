@@ -471,6 +471,11 @@ build_vtable_layout(aggregate& st,
         auto func = std::dynamic_pointer_cast<function>(child);
         if (!func) continue;
         if (func->is_static()) continue;
+        if (func->is_template()) {
+            func->set_virtual(false);
+            func->set_vtable_slot(-1);
+            continue;
+        }
         if (std::dynamic_pointer_cast<constructor>(func)) continue;
         if (std::dynamic_pointer_cast<destructor>(func)) continue; // handled above, by type not by name
 

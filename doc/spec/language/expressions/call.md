@@ -230,14 +230,32 @@ test() : int {
 }
 ```
 
-**Semantics and rules:**
-- **First parameter matching**: The receiver `obj` must be convertible to the function's first parameter type (supporting value, reference `&`, owner `!`, view `?`, link `+`, and pointer `*` categories, subject to const qualifiers).
-- **Template deduction**: For template static methods and free functions, the receiver type participates in template argument deduction as argument 0.
-- **Overload preference**: Overload scoring applies strict preference levels:
-  1. Instance member methods (highest priority).
-  2. Static member methods declared on the receiver's aggregate or base hierarchy.
-  3. Free functions in lexical scope, imported namespaces, or modules.
-- **Scope isolation**: Non-static member methods of an enclosing caller class are never treated as UCS candidates for an unrelated receiver object.
+### 4.2 Member Template Methods & Interface Default Templates
+
+Member methods declared as templates (e.g. `template<typename R> func(...) : R`) are **non-virtual** (they cannot be assigned slots in a fixed vtable layout).
+
+When declared inside an `interface` with a body, they use the `default` specifier:
+```k
+template<typename T>
+interface Sequence {
+    const constIterator() : ConstIterator<T>!;
+
+    template<typename R>
+    default const accumulate(initial : const R&, accumulator : BiFunction<R, const T&, R>) : R {
+        result : R = initial;
+        it : ConstIterator<T>! = constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        while (cur.hasValue()) {
+            result = accumulator(result, cur.get());
+            cur = it.next();
+        }
+        return result;
+    }
+}
+```
+
+- **Direct Non-Virtual Invocation**: When called on an implementing class (e.g. `vec.accumulate(0, ...)`), the compiler invokes the instantiated method directly (`DIRECT` dispatch) after adjusting the `this` receiver pointer to the target interface sub-object.
+- **Dynamic Polymorphism within Template Bodies**: Virtual methods invoked inside the template method body (such as `this.constIterator()`) dynamically dispatch through the receiver's vtable.
 
 ---
 ## 5. Member access through pointer — arrow operator `->`

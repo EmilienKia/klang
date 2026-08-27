@@ -549,4 +549,97 @@ TEST_CASE("UCS: Static member method called on receiver with value, view, owner,
     CHECK(fn_ptr() == 80);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  9. Interface default member template methods on implementing classes
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Interface default member template method called on implementing class with deduction", "[gen][member-template][interface-default]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_interface_default_tpl_01;
+
+        template<typename T>
+        interface Sequence {
+            const get(index : int) : T;
+            const count() : int;
+
+            template<typename R>
+            default const fold(init : R, factor : R) : R {
+                acc : R = init;
+                i : int = 0;
+                while (i < count()) {
+                    acc += (R)get(i) * factor;
+                    ++i;
+                }
+                return acc;
+            }
+        }
+
+        template<typename T>
+        class ArraySeq : public Sequence<T> {
+            public:
+            _a : T;
+            _b : T;
+            ArraySeq(a : T, b : T) : _a(a), _b(b) {}
+
+            override const get(index : int) : T {
+                if (index == 0) return _a;
+                return _b;
+            }
+
+            override const count() : int { return 2; }
+        }
+
+        test() : int {
+            seq : ArraySeq<int>(10, 20);
+            // Calls Sequence<int>::fold with deduced R = int, which dynamically dispatches get() and count()
+            return seq.fold(5, 2);  // 5 + (10*2) + (20*2) = 5 + 20 + 40 = 65
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 65);
+}
+
+TEST_CASE("Interface default member template method on secondary base with this adjustment", "[gen][member-template][interface-default][secondary-base]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_interface_default_tpl_02;
+
+        interface FirstInterface {
+            const firstVal() : int;
+        }
+
+        template<typename T>
+        interface Transformable {
+            const getElem() : T;
+
+            template<typename R>
+            default const applyTransform(offset : R) : R {
+                return (R)getElem() + offset;
+            }
+        }
+
+        class Combined : public FirstInterface, public Transformable<int> {
+            public:
+            _v : int;
+            Combined(v : int) : _v(v) {}
+
+            override const firstVal() : int { return 1; }
+            override const getElem() : int { return _v; }
+        }
+
+        test() : int {
+            c : Combined(42);
+            // Transformable<int> is a secondary base (at non-zero offset within Combined).
+            // Calling applyTransform<int>(8) must adjust 'this' to Transformable<int> and dispatch getElem().
+            return c.applyTransform<int>(8); // 42 + 8 = 50
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 50);
+}
+
+
 

@@ -128,12 +128,13 @@ interface Sequence {
         }
     }
 
-
-// TODO: declare accumulate() as a default method on Sequence<T> once we have a way to express the accumulator function type in the interface.
-// For now, we provide a free function version below.
-/*
+    /**
+     * Accumulate all elements of the sequence into a single value.
+     * @param initial The initial value to start the accumulation.
+     * @param accumulator A BiFunction<R, const T&, R> that combines the current result with each element.
+     */
     template<typename R>
-    default const accumulate(initial : const R&, accumulator : functional::BiFunction<R, const T&, R>) : R {
+    default const accumulate(initial : const R&, accumulator : ::k::functional::BiFunction<R, const T&, R>) : R {
         result : R = initial;
         it : ConstIterator<T>! = constIterator();
         cur : OptionalConstRef<T> = it.next();
@@ -143,25 +144,6 @@ interface Sequence {
         }
         return result;
     }
-*/
-
-    /**
-     * Accumulate all elements of the sequence into a single value.
-     * @param initial The initial value to start the accumulation.
-     * @param accumulator A BiFunction<R, const T&, R> that combines the current result with each element.
-     */
-    template<typename R>
-    static accumulate(seq: const Sequence<T>&, initial : const R&, accumulator : ::k::functional::BiFunction<R, const T&, R>) : R {
-        result : R = initial;
-        it : ConstIterator<T>! = seq.constIterator();
-        cur : OptionalConstRef<T> = it.next();
-        while (cur.hasValue()) {
-            result = accumulator(result, cur.get());
-            cur = it.next();
-        }
-        return result;
-    }
-
 
 }
 
