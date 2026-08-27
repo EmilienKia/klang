@@ -6,17 +6,17 @@ This document describes the technical architecture, candidate collection pipelin
 
 ## 1. Overview and Core Design Principles
 
-Unified Call Syntax (UCS) allows functions declared outside a structure or class (such as free functions in namespaces or imported modules) to be invoked using member call syntax:
+Unified Call Syntax (UCS) allows functions declared outside a structure or class (such as free functions in namespaces or imported modules), as well as **static member methods** declared on an aggregate or its base hierarchy, to be invoked using member call syntax:
 
 ```k
-// Standard free function invocation
-result = k::accumulate(vec, 0, [](acc: int, v: const int&) { return acc + v; });
-
-// Unified Call Syntax invocation
+// Invoking static member template Sequence<T>::accumulate<R> via Unified Call Syntax
 result = vec.accumulate(0, [](acc: int, v: const int&) { return acc + v; });
 
 // Unified Call Syntax with explicit template arguments
 result = vec.accumulate<int>(0, [](acc: int, v: const int&) { return acc + v; });
+
+// Traditional static member method invocation
+result = Sequence<int>::accumulate<int>(vec, 0, [](acc: int, v: const int&) { return acc + v; });
 ```
 
 ### 1.1. Motivation
@@ -149,18 +149,31 @@ Template argument deduction uses a **tri-state** match status (`template_deducti
 
 This ensures that alias types (e.g. `Predicate<T>` or `UnaryOp<T>`) and non-deducible positions do not cause spurious deduction failures when `T` is unambiguously deduced from another parameter (such as `const Sequence<T>&`).
 
+### 5.3. Static Member Template Instantiation Scope
+When a member template is declared static within an aggregate or interface (such as `Sequence<T>::accumulate<R>`), its instantiation via UCS on a concrete derived receiver (e.g., `Vector<int>`) must target the corresponding aggregate in the receiver's inheritance hierarchy rather than the top-level namespace:
+- If `tpl_func` belongs to a generic aggregate template (e.g., uninstantiated `Sequence`), the receiver's base hierarchy is traversed to locate the matching instantiated base (e.g., `Sequence<int>`).
+- The concrete method is defined directly on that aggregate with identical visibility, constness, aliasing, and compiler-generated flags.
+- This ensures proper encapsulation, symbol mangling (`Sequence<int>::accumulate__int`), and type resolution of aggregate-level template parameters (`T = int`).
+
 ---
 
 ## 6. Overload Selection and Call Generation
 
-Once candidates are gathered, specialized, and instantiated:
+Once candidates are gathered, specialized, and instantiated, `get_best_matching_function` performs overload scoring using the following preference hierarchy (lower preference score wins):
 
-1. **Scoring (`get_best_matching_function`)**:
-   - Compares candidate parameter signatures against `(this_expr, args...)` for UCS candidates or `(args...)` for member methods.
-   - Applies exact matches, qualification conversions, reference conversions, and inheritance upcasts.
-2. **Argument Adaptation**:
-   - For UCS free functions, `expr.arguments()` is updated to prepend `this_expr` as the first argument, and the callee is rewritten to the selected free function.
-   - For member functions, `this_expr` is passed as the receiver in `member_of_object_expression` and annotated with direct or virtual dispatch information.
+| Preference Level | Candidate Category | Description |
+|:----------------:|:-------------------|:------------|
+| **0** | Non-const instance method | Exact receiver match on non-const object (or const method on const object). |
+| **1** | Const instance method / Direct call | Const instance method on non-const receiver; or direct non-member call. |
+| **2** | **Receiver Aggregate Static Method (UCS)** | Static member method declared in the receiver's aggregate or anywhere in its base hierarchy. |
+| **3** | **Global / Namespace Free Function (UCS)** | Free function or static method from caller scope, imported namespaces, or module imports. |
+
+### 6.1. Prioritization Rationale
+Static methods declared within the receiver's aggregate (or base interfaces/classes) are logically bound to the type contract (e.g. `Sequence<T>::accumulate`). They take priority over arbitrary global or imported free functions of the same name.
+
+### 6.2. Argument Adaptation
+- For **UCS static member methods and free functions**, the receiver (`this_expr`) is prepended as parameter 0, with implicit conversions and upcasts applied (supporting value, reference `&`, owner `!`, view `?`, and pointer `*` categories).
+- For **instance member methods**, `this_expr` is maintained as the object expression in `member_of_object_expression` and annotated with direct or virtual dispatch information.
 
 ---
 

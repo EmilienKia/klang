@@ -144,27 +144,26 @@ interface Sequence {
         return result;
     }
 */
-}
 
-
-/**
- * Accumulate all elements of the sequence into a single value.
- * @param initial The initial value to start the accumulation.
- * @param accumulator A BiFunction<R, const T&, R> that combines the current result with each element.
- */
-template<typename T, typename R>
-accumulate(seq: const Sequence<T>&, initial : const R&, accumulator : functional::BiFunction<R, const T&, R>) : R {
-    result : R = initial;
-    it : ConstIterator<T>! = seq.constIterator();
-    cur : OptionalConstRef<T> = it.next();
-    while (cur.hasValue()) {
-        result = accumulator(result, cur.get());
-        cur = it.next();
+    /**
+     * Accumulate all elements of the sequence into a single value.
+     * @param initial The initial value to start the accumulation.
+     * @param accumulator A BiFunction<R, const T&, R> that combines the current result with each element.
+     */
+    template<typename R>
+    static accumulate(seq: const Sequence<T>&, initial : const R&, accumulator : ::k::functional::BiFunction<R, const T&, R>) : R {
+        result : R = initial;
+        it : ConstIterator<T>! = seq.constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        while (cur.hasValue()) {
+            result = accumulator(result, cur.get());
+            cur = it.next();
+        }
+        return result;
     }
-    return result;
+
+
 }
-
-
 
 /**
  * MutableSequence<T> — abstract interface for sequences that also support mutable iteration.

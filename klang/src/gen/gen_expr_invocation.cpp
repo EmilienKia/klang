@@ -738,7 +738,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 std::shared_ptr<function> concrete;
                 bool newly_instantiated = false;
                 std::string key = build_instantiation_key(final_args);
-                if (is_member_cand) {
+                if (tpl_func->is_member()) {
                     auto cache_it = ti->instantiations.find(key);
                     if (cache_it != ti->instantiations.end()) {
                         if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
@@ -752,7 +752,29 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, final_args);
                         auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, final_args);
                         auto target_agg = tpl_func->parent<aggregate>();
-                        if (!target_agg || target_agg->is_template()) target_agg = st;
+                        if (!target_agg || target_agg->is_template()) {
+                            std::shared_ptr<aggregate> found_agg;
+                            if (target_agg && st) {
+                                std::string target_name = target_agg->get_short_name();
+                                std::function<void(const std::shared_ptr<aggregate>&)> find_base;
+                                find_base = [&](const std::shared_ptr<aggregate>& cur) {
+                                    if (!cur || found_agg) return;
+                                    if (cur->has_tpl_args() && cur->get_tpl_base_name() == target_name) {
+                                        found_agg = cur;
+                                        return;
+                                    }
+                                    if (cur->get_short_name() == target_name) {
+                                        found_agg = cur;
+                                        return;
+                                    }
+                                    for (const auto& bs : cur->get_bases()) {
+                                        if (bs.base) find_base(bs.base);
+                                    }
+                                };
+                                find_base(st);
+                            }
+                            target_agg = found_agg ? found_agg : st;
+                        }
                         concrete = target_agg->define_function(inst_name, tpl_func->is_static());
                         if (concrete) {
                             concrete->set_visibility(tpl_func->get_visibility());
@@ -840,7 +862,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     std::shared_ptr<function> concrete;
                     bool newly_instantiated = false;
                     std::string key = build_instantiation_key(deduction.deduced_args);
-                    if (is_member_cand) {
+                    if (tpl_func->is_member()) {
                         auto cache_it = ti->instantiations.find(key);
                         if (cache_it != ti->instantiations.end()) {
                             if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
@@ -854,7 +876,29 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduction.deduced_args);
                             auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
                             auto target_agg = tpl_func->parent<aggregate>();
-                            if (!target_agg || target_agg->is_template()) target_agg = st;
+                            if (!target_agg || target_agg->is_template()) {
+                                std::shared_ptr<aggregate> found_agg;
+                                if (target_agg && st) {
+                                    std::string target_name = target_agg->get_short_name();
+                                    std::function<void(const std::shared_ptr<aggregate>&)> find_base;
+                                    find_base = [&](const std::shared_ptr<aggregate>& cur) {
+                                        if (!cur || found_agg) return;
+                                        if (cur->has_tpl_args() && cur->get_tpl_base_name() == target_name) {
+                                            found_agg = cur;
+                                            return;
+                                        }
+                                        if (cur->get_short_name() == target_name) {
+                                            found_agg = cur;
+                                            return;
+                                        }
+                                        for (const auto& bs : cur->get_bases()) {
+                                            if (bs.base) find_base(bs.base);
+                                        }
+                                    };
+                                    find_base(st);
+                                }
+                                target_agg = found_agg ? found_agg : st;
+                            }
                             concrete = target_agg->define_function(inst_name, tpl_func->is_static());
                             if (concrete) {
                                 concrete->set_visibility(tpl_func->get_visibility());
@@ -1526,16 +1570,48 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                     }
                     if (args_ok) {
-                        auto parent_ns = _unit.get_root_namespace();
-                        if (auto parent_elem = tpl_func->parent<element>()) {
-                            if (auto owner_ns = std::dynamic_pointer_cast<ns>(parent_elem)) {
-                                parent_ns = owner_ns;
-                            }
-                        }
+                        std::shared_ptr<function> concrete;
+                        bool newly_instantiated = false;
                         std::string key = build_instantiation_key(model_args);
-                        bool newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
-                        auto concrete = template_instantiator::instantiate_function(
-                            *tpl_func, model_args, parent_ns, _unit, _context, *this);
+                        if (auto parent_agg = std::dynamic_pointer_cast<aggregate>(tpl_func->parent<element>())) {
+                            auto cache_it = ti->instantiations.find(key);
+                            if (cache_it != ti->instantiations.end()) {
+                                if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cache_it->second)) {
+                                    concrete = *fn_ptr;
+                                }
+                            }
+                            if (!concrete) {
+                                std::string base_name = tpl_func->get_short_name();
+                                std::string inst_name = build_instantiated_name(base_name, model_args);
+                                auto subst = template_instantiator::build_substitution_map_public(*ti, model_args);
+                                auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, model_args);
+                                auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, model_args);
+                                concrete = parent_agg->define_function(inst_name, tpl_func->is_static());
+                                if (concrete) {
+                                    concrete->set_visibility(tpl_func->get_visibility());
+                                    concrete->set_const_member(tpl_func->is_const_member());
+                                    concrete->set_operator(tpl_func->is_operator());
+                                    concrete->set_aliasing(tpl_func->get_aliasing());
+                                    concrete->set_compiler_generated(tpl_func->is_compiler_generated());
+                                    template_instantiator::populate_function_from_template_public(
+                                        concrete, *tpl_func, subst, val_subst, pack_subst);
+                                    concrete->set_tpl_instantiation_info(base_name, model_args);
+                                    concrete->mark_instantiation();
+                                    ti->instantiations[key] = concrete;
+                                    newly_instantiated = true;
+                                }
+                            }
+                        } else {
+                            auto parent_ns = _unit.get_root_namespace();
+                            if (auto parent_elem = tpl_func->parent<element>()) {
+                                if (auto owner_ns = std::dynamic_pointer_cast<ns>(parent_elem)) {
+                                    parent_ns = owner_ns;
+                                }
+                            }
+                            newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
+                            concrete = template_instantiator::instantiate_function(
+                                *tpl_func, model_args, parent_ns, _unit, _context, *this);
+                        }
                         if (concrete) {
                             if (newly_instantiated) {
                                 // Run the concrete function through the resolver pipeline

@@ -133,12 +133,12 @@ TEST_CASE("Vector<int> — collect through a consumer collector", "[libk][vector
 // 4 : Sequence::accumulate
 // ═══════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Vector<int> — accumulate into a single value - free form", "[libk][vector][int][accumulate]") {
+TEST_CASE("Vector<int> — accumulate into a single value - deduced member form", "[libk][vector][int][accumulate]") {
     auto j = jit_k(R"SRC(
         module __vector_accumulate__;
         test() : bool {
             v : Vector<int>(int[]{1, 2, 3, 4, 5});
-            result : int = accumulate<int, int>(v, 0, [](acc : int, v : const int&) { return acc + v; });
+            result : int = v.accumulate(0, [](acc : int, v : const int&) { return acc + v; });
 
             return result == 15;  // 1+2+3+4+5 = 15
         }

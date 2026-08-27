@@ -402,3 +402,151 @@ test() : int {
     CHECK(fn() == 5);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  8. UCS: Static member priority over global free function
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("UCS: Static member method is prioritized over global free function with same name", "[gen][member-template][ucs]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_ucs_priority_01;
+
+        struct Item {
+            val : int;
+            static compute(item : const Item&) : int {
+                return item.val * 10;
+            }
+        }
+
+        compute(item : const Item&) : int {
+            return item.val + 1;
+        }
+
+        test() : int {
+            it : Item;
+            it.val = 5;
+            // Should call Item::compute (pref 2) rather than global compute (pref 3)
+            return it.compute();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 50);
+}
+
+TEST_CASE("UCS: Static member template in base interface called on derived class with deduction", "[gen][member-template][ucs]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_ucs_base_tpl_01;
+
+        template<typename T>
+        interface BaseSeq {
+            template<typename R>
+            static reduce(seq : const BaseSeq<T>&, init : R, multiplier : R) : R {
+                return init + multiplier;
+            }
+        }
+
+        template<typename T>
+        class MyList : public BaseSeq<T> {
+            public:
+            MyList() {}
+        }
+
+        test() : int {
+            list : MyList<int>;
+            // Calls BaseSeq<int>::reduce with deduced R = int via UCS dot notation
+            return list.reduce(100, 25);
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 125);
+}
+
+TEST_CASE("UCS: Static member template in base interface called on derived class with explicit args", "[gen][member-template][ucs]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_ucs_base_tpl_02;
+
+        template<typename T>
+        interface BaseSeq {
+            template<typename R>
+            static transform(seq : const BaseSeq<T>&, factor : R) : R {
+                return factor * factor;
+            }
+        }
+
+        template<typename T>
+        class MyList : public BaseSeq<T> {
+            public:
+            MyList() {}
+        }
+
+        test() : int {
+            list : MyList<int>;
+            // Calls BaseSeq<int>::transform with explicit R = int via UCS dot notation
+            return list.transform<int>(7);
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 49);
+}
+
+TEST_CASE("UCS: Static member method called on receiver with value, view, owner, and pointer", "[gen][member-template][ucs]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_ucs_indirections_01;
+
+        struct Data {
+            x : int;
+            static getDouble(d : const Data&) : int {
+                return d.x * 2;
+            }
+        }
+
+        test_val() : int {
+            d : Data;
+            d.x = 10;
+            return d.getDouble();
+        }
+
+        test_view() : int {
+            d : Data;
+            d.x = 20;
+            v : Data? = &d;
+            return v->getDouble();
+        }
+
+        test_owner() : int {
+            d : Data! = new Data();
+            d.x = 30;
+            return d.getDouble();
+        }
+
+        test_ptr() : int {
+            d : Data;
+            d.x = 40;
+            p : Data* = &d;
+            return p->getDouble();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto fn_val = jit->lookup_symbol<int(*)()>("test_val");
+    REQUIRE(fn_val != nullptr);
+    CHECK(fn_val() == 20);
+
+    auto fn_view = jit->lookup_symbol<int(*)()>("test_view");
+    REQUIRE(fn_view != nullptr);
+    CHECK(fn_view() == 40);
+
+    auto fn_owner = jit->lookup_symbol<int(*)()>("test_owner");
+    REQUIRE(fn_owner != nullptr);
+    CHECK(fn_owner() == 60);
+
+    auto fn_ptr = jit->lookup_symbol<int(*)()>("test_ptr");
+    REQUIRE(fn_ptr != nullptr);
+    CHECK(fn_ptr() == 80);
+}
+
+

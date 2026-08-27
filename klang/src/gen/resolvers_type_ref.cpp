@@ -1952,6 +1952,9 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     //         signature_resolver pre-pass only runs on namespaces, and the
     //         aggregate was created after that pass finished.
     auto resolve_fn_types = [&](function& fn) {
+        // Skip member template definitions — their parameter and return types
+        // still contain uninstantiated template parameters (e.g. R in accumulate<R>).
+        if (fn.is_template()) return;
         // Resolve return type
         if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
             auto resolved = resolve_type_chain(fn.get_return_type(), &agg);
@@ -3604,7 +3607,7 @@ type_reference_resolver::get_best_matching_function(
         if ((!func->is_member() || func->is_static()) && this_expr && !params.empty()
             && (args.size() <= params.size() - 1 || func_has_varargs)) {
             auto first_param_type = params[0]->get_type();
-            if (type::is_reference(first_param_type)) {
+            if (first_param_type) {
                 auto w_this = compute_cast_weight(this_expr, first_param_type);
                 if (w_this != CAST_IMPOSSIBLE) {
                     auto [w_rest, adapted_rest] = score_with_defaults(args, params, nullptr, 1);
@@ -3612,8 +3615,46 @@ type_reference_resolver::get_best_matching_function(
                         cast_weight total = std::max(w_this, w_rest);
                         auto adapted_this = adapt_type(this_expr, first_param_type);
                         size_t def = (args.size() < params.size() - 1) ? (params.size() - 1) - args.size() : 0;
+                        int pref = 3;
+                        if (func->is_member() && func->is_static()) {
+                            auto func_agg = func->parent<aggregate>();
+                            auto recv_agg = [&]() -> std::shared_ptr<aggregate> {
+                                if (!this_expr || !this_expr->get_type()) return nullptr;
+                                auto t = this_expr->get_type();
+                                auto sub = type::canonical(type::remove_const(
+                                    (type::is_reference(t) || type::is_drain(t) || type::is_owner(t) ||
+                                     type::is_pointer(t) || type::is_view(t) || type::is_link(t))
+                                    ? t->get_subtype() : t));
+                                while (sub && (type::is_reference(sub) || type::is_drain(sub) || type::is_owner(sub) ||
+                                               type::is_pointer(sub) || type::is_view(sub) || type::is_link(sub))) {
+                                    sub = type::canonical(type::remove_const(sub->get_subtype()));
+                                }
+                                if (auto st_t = std::dynamic_pointer_cast<struct_type>(sub)) {
+                                    return st_t->get_struct();
+                                }
+                                return nullptr;
+                            }();
+                            if (recv_agg && func_agg) {
+                                if (recv_agg.get() == func_agg.get() || recv_agg->is_derived_from(func_agg)) {
+                                    pref = 2;
+                                } else if (func_agg->is_template() || func_agg->has_tpl_args()) {
+                                    std::string target_base = func_agg->has_tpl_args() ? func_agg->get_tpl_base_name() : func_agg->get_short_name();
+                                    std::function<bool(const std::shared_ptr<aggregate>&)> match_base;
+                                    match_base = [&](const std::shared_ptr<aggregate>& cur) -> bool {
+                                        if (!cur) return false;
+                                        std::string cur_base = cur->has_tpl_args() ? cur->get_tpl_base_name() : cur->get_short_name();
+                                        if (cur_base == target_base) return true;
+                                        for (const auto& bs : cur->get_bases()) {
+                                            if (bs.base && match_base(bs.base)) return true;
+                                        }
+                                        return false;
+                                    };
+                                    if (match_base(recv_agg)) pref = 2;
+                                }
+                            }
+                        }
                         valid.push_back({func, std::move(adapted_rest), total, true,
-                                         adapted_this ? adapted_this : this_expr, 2, def, func_is_tpl});
+                                         adapted_this ? adapted_this : this_expr, pref, def, func_is_tpl});
                     }
                 }
             }

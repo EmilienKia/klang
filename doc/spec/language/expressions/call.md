@@ -204,42 +204,39 @@ See [Types — §9.8](../basic/types.md#98-virtual-member-size) for full details
 
 ### 4.1 Unified Call Syntax (UCS)
 
-K supports **Unified Call Syntax (UCS)**. When an invocation uses member syntax `obj.func(args...)` or `obj.func<TArgs...>(args...)`, the compiler searches for candidates in the following order:
+K supports **Unified Call Syntax (UCS)**. When an invocation uses member syntax `obj.func(args...)` or `obj.func<TArgs...>(args...)`, the compiler searches for candidates in the following prioritized order:
 
-1. **Member methods** declared on `obj`'s aggregate type and inherited from its base hierarchy.
-2. **Free functions and static methods** in the caller's lexical scope.
-3. **Free functions** in namespaces brought into scope via `using namespace` directives.
-4. **Imported free functions** from imported modules.
+1. **Instance member methods** declared on `obj`'s aggregate type and inherited from its base hierarchy.
+2. **Static member methods** declared on `obj`'s aggregate type or inherited from base structures, classes, and interfaces (e.g. `Sequence<T>::accumulate<R>`).
+3. **Free functions and static methods** in the caller's lexical scope.
+4. **Free functions** in namespaces brought into scope via `using namespace` directives.
+5. **Imported free functions** from imported modules.
 
-When a free function `func` is selected via UCS, the receiver `obj` is passed implicitly as the **first argument**: `func(obj, args...)`.
+When a static member method or free function `func` is selected via UCS, the receiver `obj` is passed implicitly as the **first argument**: `func(obj, args...)`.
 
 ```k
 import k;
 
-square(x : int) : int {
-    return x * x;
-}
-
 test() : int {
-    v : Vector<int>;
-    v.push(1);
-    v.push(2);
-    v.push(3);
+    v : Vector<int>(int[]{1, 2, 3, 4, 5});
 
-    // Invoking free function 'accumulate' from module 'k' via UCS:
+    // Invoking Sequence<T>::accumulate via UCS (with deduced template argument R = int):
     sum : int = v.accumulate(0, [](acc: int, item: const int&) { return acc + item; });
 
-    // Invoking free function 'accumulate' with explicit template arguments:
+    // Invoking Sequence<T>::accumulate via UCS with explicit template argument <int>:
     sum_explicit : int = v.accumulate<int>(0, [](acc: int, item: const int&) { return acc + item; });
 
-    return sum;
+    return sum; // 15
 }
 ```
 
 **Semantics and rules:**
-- **First parameter matching**: The receiver `obj` must be convertible to the function's first parameter type (taking into account value, reference, pointer, or const qualifiers).
-- **Template deduction**: For template free functions, the receiver type participates in template argument deduction as argument 0.
-- **Overload preference**: If both a member method and a free function match with equal viability, direct member methods take precedence during overload scoring.
+- **First parameter matching**: The receiver `obj` must be convertible to the function's first parameter type (supporting value, reference `&`, owner `!`, view `?`, link `+`, and pointer `*` categories, subject to const qualifiers).
+- **Template deduction**: For template static methods and free functions, the receiver type participates in template argument deduction as argument 0.
+- **Overload preference**: Overload scoring applies strict preference levels:
+  1. Instance member methods (highest priority).
+  2. Static member methods declared on the receiver's aggregate or base hierarchy.
+  3. Free functions in lexical scope, imported namespaces, or modules.
 - **Scope isolation**: Non-static member methods of an enclosing caller class are never treated as UCS candidates for an unrelated receiver object.
 
 ---
