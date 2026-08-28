@@ -571,6 +571,8 @@ enum class template_diag : unsigned int {
      * instead of letting the compiler overflow its own call stack.
      */
     ERR_TPL_INSTANTIATION_DEPTH_EXCEEDED           = 0x0187,
+    ERR_CTAD_NO_MATCH                             = 0x0188,
+    ERR_CTAD_AMBIGUOUS                            = 0x0189,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

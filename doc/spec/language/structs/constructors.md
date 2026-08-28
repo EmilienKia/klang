@@ -17,6 +17,7 @@ A *constructor* is a special member function that initialises a struct instance.
 7. [Defaulted and deleted constructors](#7-defaulted-and-deleted-constructors)
 8. [Examples](#8-examples)
 9. [Throws clause on constructors](#9-throws-clause-on-constructors)
+10. [Class Template Argument Deduction (CTAD)](#10-class-template-argument-deduction-ctad)
 ---
 ## 1. Instance constructors
 An instance constructor is a member function whose name matches the struct name.  
@@ -321,4 +322,38 @@ test() : int {
   temporary construction expressions.
 
 ---
-*See also:* [Structures](structs.md) · [Destructors](destructors.md) · [Function Overloading](../functions/overloading.md) · [Exception Handling](../statements/exceptions.md)
+
+## 10. Class Template Argument Deduction (CTAD)
+
+When constructing an instance of a template struct or class, explicit template arguments `<...>`
+may be omitted. The compiler deduces the template arguments automatically from constructor arguments:
+
+```k
+template<typename T, typename U>
+struct Pair {
+    first  : T;
+    second : U;
+    Pair(first : T, second : U) : first(first), second(second) {}
+}
+
+// Temporary construction
+p1 = Pair(10, 20);            // Deduced as Pair<int, int>
+
+// Variable declaration with constructor syntax
+p2 : Pair(10, 20);            // Deduced as Pair<int, int>
+
+// Dynamic allocation
+p3 : Pair! = new Pair(10, 20);// Deduced as Pair<int, int>!
+
+// Implicit copy guide
+p4 : Pair = Pair(p1);         // Deduced as Pair<int, int>
+```
+
+### Positive and Negative Rules
+
+- **Positive:** Argument deduction matches explicit constructor parameters, default arguments, and synthesized copy guides.
+- **Negative:** If constructor arguments cannot deduce all un-defaulted template parameters or conflict, compilation fails with `ERR_CTAD_NO_MATCH` (0x0188).
+- **Negative:** If multiple constructor overloads deduce conflicting specializations with equal conversion score, compilation fails with `ERR_CTAD_AMBIGUOUS` (0x0189).
+
+---
+*See also:* [Structures](structs.md) · [Destructors](destructors.md) · [Function Overloading](../functions/overloading.md) · [Exception Handling](../statements/exceptions.md) · [Templates](../templates/templates.md)

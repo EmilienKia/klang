@@ -187,6 +187,45 @@ protected:
         const element* scope_elem);
 
     /**
+     * Look up a template aggregate by qualified or unqualified name.
+     */
+    std::shared_ptr<aggregate> find_template_aggregate(
+        const k::name& base_name,
+        const element& context_elem);
+
+    /**
+     * Result of Class Template Argument Deduction (CTAD).
+     */
+    struct ctad_resolution_result {
+        bool success = false;
+        std::shared_ptr<aggregate> concrete_aggregate;
+        std::shared_ptr<struct_type> concrete_struct_type;
+        std::shared_ptr<constructor> selected_constructor;
+        std::vector<template_argument> deduced_args;
+        std::vector<std::shared_ptr<expression>> adapted_args;
+        bool is_copy_guide = false;
+        std::string failure_reason;
+    };
+
+    /**
+     * Perform Class Template Argument Deduction (CTAD) for an aggregate template
+     * against a set of argument expressions.
+     */
+    ctad_resolution_result resolve_ctad(
+        const std::shared_ptr<aggregate>& tpl_agg,
+        const std::vector<std::shared_ptr<expression>>& args,
+        const element& context_elem,
+        const lex::opt_any_lexeme& loc_lexeme = {});
+
+    /**
+     * Instantiate a template aggregate with concrete model arguments and resolve its internal types.
+     */
+    std::shared_ptr<type> instantiate_template_aggregate(
+        const std::shared_ptr<aggregate>& tpl_agg,
+        const std::vector<template_argument>& model_args,
+        const element& context_elem);
+
+    /**
      * Try to resolve an unresolved_type that carries AST template arguments
      * (e.g. Box<int>) by finding the template definition, converting the AST
      * args to model template_argument values, and triggering instantiation.

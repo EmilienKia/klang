@@ -1544,8 +1544,16 @@ arr : FixedArray<float, 10>;
 #### Function Template Argument Deduction
 Function templates support automated deduction of type and value arguments from call-site
 arguments and contextual target types:
-- **Invocation Arguments**: `val a = identity(42);` (deduces `T=int`). Supports composites (`Vector<T>`), indirections (`T*`, `T&`, `T!`), callables (`*(T):R`), sized arrays (`T[N]`), and parameter packs (`Ts...`).
-- **Contextual Return-Type Deduction**: When a template parameter only appears in the return type (or is partially deduced), Klang infers it from the expected target type in variable declarations (`val x: int = make()`), return statements (`return make()`), assignments (`x = make()`), casts (`(int) make()`), ternary branches, array initializers, designated struct initializers, and function arguments.
+- **Invocation Arguments**: `a : int = identity(42);` (deduces `T=int`). Supports composites (`Vector<T>`), indirections (`T*`, `T&`, `T!`), callables (`*(T):R`), sized arrays (`T[N]`), and parameter packs (`Ts...`).
+- **Contextual Return-Type Deduction**: When a template parameter only appears in the return type (or is partially deduced), Klang infers it from the expected target type in variable declarations (`x: int = make()`), return statements (`return make()`), assignments (`x = make()`), casts (`(int) make()`), ternary branches, array initializers, designated struct initializers, and function arguments.
+
+#### Class Template Argument Deduction (CTAD)
+Constructors of template classes and structs support automated argument deduction:
+- **Temporary construction**: `Pair(1, 2)` deduces `Pair<int, int>`.
+- **Dynamic allocation**: `new Pair(1, 2)` deduces `Pair<int, int>!` (returns owner).
+- **Variable declarations**: `p : Pair(1, 2);` or `p : Pair = Pair(1, 2);` deduces `p : Pair<int, int>`.
+- **Implicit copy guide**: `p2 : Pair = Pair(p1);` preserves existing specialization `Pair<int, int>`.
+- **Uniform array init**: `arr : Pair(1, 2)[5];` deduces `arr : Pair<int, int>[5]`.
 
 Trailing arguments with defaults may be omitted.
 

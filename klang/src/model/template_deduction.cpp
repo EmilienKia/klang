@@ -822,4 +822,126 @@ deduction_result deduce_template_arguments(
     return result;
 }
 
+ctad_deduction_result deduce_aggregate_ctad_candidates(
+    const aggregate& tpl_agg,
+    const std::vector<std::shared_ptr<type>>& arg_types)
+{
+    ctad_deduction_result result;
+    auto* ti = tpl_agg.get_tpl_info();
+    if (!ti) {
+        result.success = false;
+        result.failure_reason = "Aggregate '" + tpl_agg.get_short_name() + "' is not a template";
+        return result;
+    }
+
+    // Candidate 1: Implicit copy/move deduction guide: S(const S<...>&) -> S<...>
+    if (arg_types.size() == 1 && arg_types[0] != nullptr) {
+        auto clean = type::canonical(type::remove_const(arg_types[0]));
+        if (type::is_reference(clean)) {
+            clean = type::canonical(type::remove_const(std::dynamic_pointer_cast<reference_type>(clean)->get_subtype()));
+        }
+        if (auto st = std::dynamic_pointer_cast<struct_type>(clean)) {
+            if (st->get_struct() && st->get_struct()->has_tpl_args() &&
+                st->get_struct()->get_tpl_base_name() == tpl_agg.get_short_name()) {
+                size_t err_idx;
+                std::string err_reason;
+                if (validate_template_arg_constraints(ti->params, st->get_struct()->get_tpl_args(), err_idx, err_reason)) {
+                    ctad_candidate copy_cand;
+                    copy_cand.ctor = nullptr;
+                    copy_cand.deduced_args = st->get_struct()->get_tpl_args();
+                    copy_cand.is_copy_guide = true;
+                    copy_cand.is_default_guide = false;
+                    result.candidates.push_back(std::move(copy_cand));
+                }
+            }
+        }
+    }
+
+    // Candidate 2: Explicit constructors defined on the template aggregate
+    for (const auto& ctor : tpl_agg.constructors()) {
+        if (!ctor || ctor->is_deleted()) continue;
+        const auto& params = ctor->parameters();
+
+        // Check if parameter count is compatible
+        size_t min_params = 0;
+        bool has_pack = false;
+        for (size_t i = 0; i < params.size(); ++i) {
+            if (params[i]->is_pack_expansion()) {
+                has_pack = true;
+                break;
+            }
+            if (!params[i]->has_default_expr()) {
+                min_params = i + 1;
+            }
+        }
+
+        if (arg_types.size() < min_params) continue;
+        if (!has_pack && arg_types.size() > params.size()) continue;
+
+        auto deduction = deduce_template_arguments(*ti, params, arg_types);
+        if (!deduction.success) continue;
+
+        // Validate template constraints
+        size_t err_idx;
+        std::string err_reason;
+        if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
+            continue;
+        }
+
+        ctad_candidate cand;
+        cand.ctor = ctor;
+        cand.deduced_args = std::move(deduction.deduced_args);
+        cand.is_copy_guide = false;
+        cand.is_default_guide = false;
+        result.candidates.push_back(std::move(cand));
+    }
+
+    // Candidate 3: Implicit default construction guide (when arg_types is empty)
+    if (arg_types.empty()) {
+        bool all_defaulted = true;
+        std::vector<template_argument> default_args;
+        for (const auto& p : ti->params) {
+            if (p.is_pack) {
+                default_args.push_back(template_argument::make_pack({}));
+            } else if (p.is_type_param()) {
+                if (p.default_type) {
+                    default_args.push_back(template_argument::make_type(p.default_type));
+                } else {
+                    all_defaulted = false;
+                    break;
+                }
+            } else if (p.is_value_param()) {
+                if (p.default_value.has_value()) {
+                    default_args.push_back(template_argument::make_value(*p.default_value, p.value_type));
+                } else {
+                    all_defaulted = false;
+                    break;
+                }
+            }
+        }
+        if (all_defaulted) {
+            size_t err_idx;
+            std::string err_reason;
+            if (validate_template_arg_constraints(ti->params, default_args, err_idx, err_reason)) {
+                ctad_candidate def_cand;
+                def_cand.ctor = nullptr;
+                def_cand.deduced_args = std::move(default_args);
+                def_cand.is_copy_guide = false;
+                def_cand.is_default_guide = true;
+                result.candidates.push_back(std::move(def_cand));
+            }
+        }
+    }
+
+    if (!result.candidates.empty()) {
+        result.success = true;
+    } else {
+        result.success = false;
+        result.failure_reason = "No matching constructor or guide found for template argument deduction of '" +
+            tpl_agg.get_short_name() + "' with " + std::to_string(arg_types.size()) + " argument(s)";
+    }
+
+    return result;
+}
+
 } // namespace k::model

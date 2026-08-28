@@ -190,6 +190,38 @@ Target types are propagated down the AST during Pass D (`type_reference_resolver
 - **Designated Struct Initializers**: `Point{ .x = make_default(), .y = make_default() }`
 - **Function Arguments**: `consume(make_default())` when `consume(int)` parameter type is known.
 
+### 4.3. Class Template Argument Deduction (CTAD)
+
+Klang supports automated template argument deduction for class/struct constructors (CTAD), allowing instantiation without explicit `<...>` template arguments:
+
+```k
+template<typename T, typename U>
+struct Pair {
+    first  : T;
+    second : U;
+    Pair(first : T, second : U) : first(first), second(second) {}
+}
+
+p1 = Pair(10, 20);            // Deduced as Pair<int, int> (temporary construction)
+p2 : Pair = Pair(p1);         // Deduced as Pair<int, int> (implicit copy guide)
+p3 : Pair(30, 40);            // Deduced as Pair<int, int> (variable constructor syntax)
+p4 : Pair! = new Pair(50, 60);// Deduced as Pair<int, int>! (dynamic allocation)
+arr : Pair(1, 2)[5];          // Deduced as Pair<int, int>[5] (uniform array init)
+```
+
+#### 1. Deduction Guides & Candidate Generation
+During CTAD (`deduce_aggregate_ctad_candidates`), the compiler gathers candidates:
+1. **Explicit Constructors**: Every constructor defined on the template aggregate participates as a deduction candidate. Parameter patterns $P$ are matched against call-site argument types $A$ via `deduce_template_arguments`.
+2. **Implicit Copy/Move Guide**: `S(const S<Params...>&) -> S<Params...>` is synthesized to ensure constructing from an existing specialization `S<T...>` preserves the specialization rather than deducing from individual fields.
+3. **Implicit Default Guide**: When invoked with 0 arguments and all template parameters have defaults, default arguments are populated automatically.
+
+#### 2. CTAD Resolution Pipeline
+In `type_reference_resolver::resolve_ctad`:
+1. Viable candidates are instantiated and their internal types resolved via `instantiate_template_aggregate`.
+2. Candidates are evaluated against argument expressions with `get_best_matching_constructor`.
+3. Overload resolution ranks candidates by lowest conversion weight (`cast_weight`), fewest defaulted parameters, and copy guide preference.
+4. Ambiguous deductions with equal score but distinct concrete specializations are rejected with `ERR_CTAD_AMBIGUOUS` (0x0189).
+
 ---
 
 ## 5. Overload Resolution Integration

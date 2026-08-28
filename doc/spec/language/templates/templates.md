@@ -48,6 +48,8 @@ The following template features are fully implemented, tested, and usable:
   - Parameter pack deduction from argument lists.
 - **Return-type and contextual target-type deduction**:
   - Deduction of un-deduced template parameters from expected return types in variable declarations (`val x: int = make()`), return statements (`return make()`), assignments (`x = make()`), explicit casts (`(int) make()`), ternary branches, array initializers, designated struct initializers, and function arguments.
+- **Class Template Argument Deduction (CTAD)**:
+  - Automated deduction of class/struct template arguments from constructor arguments for temporary constructions (`Pair(1, 2)`), heap allocation (`new Pair(1, 2)`), variable declarations (`p : Pair(1, 2)`), copy guides, and uniform array initialization (`arr : Pair(1, 2)[5]`).
 - Cross-module templates: define a template in one module, import and instantiate it in
   another (via KDI export/import with reconstructed source fragments).
 - Name mangling of template instantiations.
@@ -58,7 +60,6 @@ The following template features are fully implemented, tested, and usable:
 The following features are planned for future development:
 - Template specialization (partial or full).
 - Template template parameters (`template<template<typename> class C>`).
-- Class Template Argument Deduction (CTAD) for constructors (`Pair(1, 2)` -> `Pair<int, int>`).
 - Concepts or type traits beyond simple base-type constraints.
 - Templates on constructors, destructors, operators, or enumerations independently.
 - `extern template` declarations.
@@ -323,6 +324,31 @@ If a template call occurs in a context without a target type (e.g. `val x = make
 with type inference, or as an expression statement `make_default();`), and the template
 parameters cannot be deduced from arguments, compilation fails with an error requiring
 explicit template arguments (`make_default<int>()`).
+
+#### 5.2.3 Class Template Argument Deduction (CTAD)
+When instantiating a template class or struct via constructor syntax, the template arguments
+can be deduced automatically from the arguments passed to the constructor without specifying `<...>`:
+
+```k
+template<typename T, typename U>
+struct Pair {
+    first  : T;
+    second : U;
+    Pair(first : T, second : U) : first(first), second(second) {}
+}
+
+p1 = Pair(10, 20);            // Deduced as Pair<int, int> (temporary construction)
+p2 : Pair = Pair(p1);         // Deduced as Pair<int, int> (implicit copy guide)
+p3 : Pair(30, 40);            // Deduced as Pair<int, int> (variable constructor syntax)
+p4 : Pair! = new Pair(50, 60);// Deduced as Pair<int, int>! (dynamic allocation)
+arr : Pair(1, 2)[5];          // Deduced as Pair<int, int>[5] (uniform array init)
+```
+
+Rules:
+- **Explicit constructors**: Constructors defined in the template participate in deduction matching.
+- **Implicit copy guide**: `S(const S<...>&)` is generated automatically to preserve existing specializations when copying.
+- **Default constructor**: When constructed with 0 arguments and all parameters have defaults, default arguments are deduced.
+- **Overload ranking**: If multiple constructor overloads match, candidate ranking selects the best match (lowest conversion score, fewest defaults used, copy guide preference).
 
 ### 5.3 Instantiation Semantics
 

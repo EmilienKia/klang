@@ -25,7 +25,7 @@
       - [x] Dependent return type materialization and instantiation from deduced parameters (`Vector<T>`, `T*`, `Pair<T, U>`).
       - [x] Full overload resolution integration: non-template preference tie-breaking, SFINAE-like rejection on deduction failure, constraint validation.
     - [x] Return-type-only template argument deduction (target-type inference / context deduction).
-    - [ ] Class Template Argument Deduction (CTAD) for constructors (`Pair(1, 2)` -> `Pair<int, int>`).
+    - [x] Class Template Argument Deduction (CTAD) for constructors (`Pair(1, 2)` -> `Pair<int, int>`).
   - [ ] Concepts / type traits / static_if on template parameters
   - [ ] Standalone template enum declarations
   - [ ] Template constructors (independent of aggregate template)

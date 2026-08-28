@@ -426,6 +426,7 @@ klang_gen_test(klang-tests-gen-templates-deduction 120
         tests/test-gen-template-value-params.cpp
         tests/test-gen-template-aggregate-values.cpp
         tests/test-gen-template-deduction.cpp
+        tests/test-gen-ctad.cpp
         tests/test-gen-template-packs.cpp
         tests/test-gen-generic.cpp
         tests/test-gen-nested-generics.cpp

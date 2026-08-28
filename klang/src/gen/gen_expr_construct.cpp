@@ -40,10 +40,14 @@ namespace k::model::gen {
 // constructor_invocation, temporary_construction
 
 void type_reference_resolver::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
-    // Just accept arguments,
-    // the rest of resolution will be done (just after) in variable definition caller
-    for(auto& arg : expr.arguments()) {
-        arg->accept(*this);
+    // Accept arguments and apply any replacement expressions
+    for(size_t i = 0; i < expr.arguments().size(); ++i) {
+        _replacement_expr = nullptr;
+        expr.arguments()[i]->accept(*this);
+        if (_replacement_expr) {
+            expr.assign_argument(i, _replacement_expr);
+            _replacement_expr = nullptr;
+        }
     }
 
     // This expression is always returning the reference to the constructed object
@@ -190,13 +194,13 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             bool is_direct_copy = false;
             bool is_lvalue_copy = false; // source is a ref<struct> (lvalue)
             // Check bare struct type (rvalue from function return or temporary)
-            if (arg_type_nc == st_type) {
+            if (type::are_equal(arg_type_nc, st_type)) {
                 is_direct_copy = true;
             }
             // Check ref<struct> (lvalue variable)
             if (!is_direct_copy && type::is_reference(arg_type_nc)) {
                 auto ref_sub = type::canonical(type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype()));
-                if (ref_sub == st_type) {
+                if (type::are_equal(ref_sub, st_type)) {
                     is_direct_copy = true;
                     is_lvalue_copy = true;
                 }
@@ -361,13 +365,26 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
         return;
     }
 
-    if (constructors.empty() && expr.size() == 1) {
-        // Direct copy from a single argument (struct copy)
-        expr.set_type(st_type->get_reference());
-        if (!st->is_class() && expr.argument(0) && expr.argument(0)->is_constant()) {
-            expr.set_constant_value(expr.argument(0)->get_constant_value());
+    if (expr.size() == 1) {
+        auto arg_type = expr.argument(0)->get_type();
+        auto arg_type_nc = type::canonical(type::remove_const(arg_type));
+        bool is_direct_copy = false;
+        if (type::are_equal(arg_type_nc, st_type)) {
+            is_direct_copy = true;
+        } else if (type::is_reference(arg_type_nc)) {
+            auto ref_sub = type::canonical(type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype()));
+            if (type::are_equal(ref_sub, st_type)) {
+                is_direct_copy = true;
+            }
         }
-        return;
+        if (is_direct_copy) {
+            expr.set_constructor(nullptr);
+            expr.set_type(st_type->get_reference());
+            if (!st->is_class() && expr.argument(0) && expr.argument(0)->is_constant()) {
+                expr.set_constant_value(expr.argument(0)->get_constant_value());
+            }
+            return;
+        }
     }
 
     if (constructors.empty()) {

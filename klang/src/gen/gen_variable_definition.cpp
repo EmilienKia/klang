@@ -243,6 +243,37 @@ void type_reference_resolver::resolve_variable_type(
         if (!type::is_resolved(inner)) {
             const element* var_elem = dynamic_cast<const element*>(&var);
             auto resolved_inner = resolve_inner_type(inner, var_elem);
+            if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+                // If inner is an unresolved template, resolve from init expression (e.g. p : Pair! = new Pair(1, 2);)
+                if (auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(inner)) {
+                    if (var_elem) {
+                        if (auto tpl_agg = find_template_aggregate(unres_inner->type_id(), *var_elem)) {
+                            if (auto init_expr = var.get_init_expr()) {
+                                _replacement_expr = nullptr;
+                                init_expr->accept(*this);
+                                if (_replacement_expr) {
+                                    var.set_init_expr(_replacement_expr);
+                                    init_expr = _replacement_expr;
+                                    _replacement_expr = nullptr;
+                                }
+                                if (init_expr->get_type()) {
+                                    auto init_type = type::canonical(type::remove_const(init_expr->get_type()));
+                                    if (type::is_owner(init_type)) {
+                                        auto inner_tgt = std::dynamic_pointer_cast<owner_type>(init_type)->get_owned_type();
+                                        inner_tgt = type::canonical(type::remove_const(inner_tgt));
+                                        if (auto st = std::dynamic_pointer_cast<struct_type>(inner_tgt)) {
+                                            if (st->get_struct() && st->get_struct()->has_tpl_args() &&
+                                                st->get_struct()->get_tpl_base_name() == tpl_agg->get_short_name()) {
+                                                resolved_inner = st;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if (resolved_inner && type::is_resolved(resolved_inner)) {
                 // Unsized arrays are canonicalised to ref<array<T>> by resolve_type,
                 // but inside an owner we want owner(array(T)), not owner(ref<array<T>>).
@@ -284,6 +315,33 @@ void type_reference_resolver::resolve_variable_type(
         } else if (type::is_drain(var.get_type())) {
             auto inner = resolve_inner_type(var.get_type()->get_subtype(), var_elem);
             if (inner && type::is_resolved(inner)) resolved = inner->get_drain();
+        } else if (auto sarr = std::dynamic_pointer_cast<sized_array_type>(var.get_type())) {
+            auto inner = resolve_inner_type(sarr->get_subtype(), var_elem);
+            if (!inner || !type::is_resolved(inner)) {
+                if (auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(sarr->get_subtype())) {
+                    if (var_elem) {
+                        if (auto tpl_agg = find_template_aggregate(unres_inner->type_id(), *var_elem)) {
+                            if (auto arr_init = std::dynamic_pointer_cast<array_init_expression>(var.get_init_expr())) {
+                                if (arr_init->is_uniform()) {
+                                    for (size_t i = 0; i < arr_init->uniform_ctor_args().size(); ++i) {
+                                        _replacement_expr = nullptr;
+                                        arr_init->uniform_ctor_args()[i]->accept(*this);
+                                        if (_replacement_expr) {
+                                            arr_init->assign_uniform_ctor_arg(i, _replacement_expr);
+                                            _replacement_expr = nullptr;
+                                        }
+                                    }
+                                    auto ctad = resolve_ctad(tpl_agg, arr_init->uniform_ctor_args(), *var_elem, var_lexeme);
+                                    if (ctad.success && ctad.concrete_struct_type) {
+                                        inner = ctad.concrete_struct_type;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (inner && type::is_resolved(inner)) resolved = inner->get_array(sarr->get_size());
         } else {
             // Fallback: delegate to context->resolve_type
             resolved = _context->resolve_type(var.get_type());
@@ -378,6 +436,52 @@ void type_reference_resolver::resolve_variable_type(
                 if (uname == parts.back()) {
                     resolved = udef->get_struct_type();
                     break;
+                }
+            }
+        }
+    }
+    if (!resolved || !type::is_resolved(resolved)) {
+        // Step 5f: Class Template Argument Deduction (CTAD) for variable definition
+        const element* var_elem = dynamic_cast<const element*>(&var);
+        if (var_elem) {
+            if (auto tpl_agg = find_template_aggregate(unres_type->type_id(), *var_elem)) {
+                if (auto ctor_inv = std::dynamic_pointer_cast<constructor_invocation_expression>(var.get_init_expr())) {
+                    for (size_t i = 0; i < ctor_inv->arguments().size(); ++i) {
+                        _replacement_expr = nullptr;
+                        ctor_inv->arguments()[i]->accept(*this);
+                        if (_replacement_expr) {
+                            ctor_inv->assign_argument(i, _replacement_expr);
+                            _replacement_expr = nullptr;
+                        }
+                    }
+                    auto ctad = resolve_ctad(tpl_agg, ctor_inv->arguments(), *var_elem, var_lexeme);
+                    if (ctad.success && ctad.concrete_struct_type) {
+                        resolved = ctad.concrete_struct_type;
+                    } else if (!ctad.failure_reason.empty()) {
+                        throw_error(static_cast<unsigned int>(k::diag::template_diag::ERR_CTAD_NO_MATCH), var_lexeme,
+                            "Class template argument deduction failed for variable '{}': {}",
+                            {var.get_fq_name(), ctad.failure_reason});
+                    }
+                } else if (auto init_expr = var.get_init_expr()) {
+                    _replacement_expr = nullptr;
+                    init_expr->accept(*this);
+                    if (_replacement_expr) {
+                        var.set_init_expr(_replacement_expr);
+                        init_expr = _replacement_expr;
+                        _replacement_expr = nullptr;
+                    }
+                    if (init_expr->get_type()) {
+                        auto init_type = type::canonical(type::remove_const(init_expr->get_type()));
+                        if (type::is_reference(init_type)) {
+                            init_type = type::canonical(type::remove_const(std::dynamic_pointer_cast<reference_type>(init_type)->get_subtype()));
+                        }
+                        if (auto st = std::dynamic_pointer_cast<struct_type>(init_type)) {
+                            if (st->get_struct() && st->get_struct()->has_tpl_args() &&
+                                st->get_struct()->get_tpl_base_name() == tpl_agg->get_short_name()) {
+                                resolved = st;
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -135,6 +135,26 @@ test() : int {
 If no matching constructor is found, the compiler emits:
 > *"No matching constructor found for temporary construction of 'T' with N argument(s)"*
 
+### 5.1 Class Template Argument Deduction (CTAD)
+
+When `T` is a template aggregate (e.g. `Pair<T, U>`), explicit template arguments `<...>` may be omitted.
+The compiler automatically deduces the template arguments from the arguments provided:
+
+```k
+template<typename T, typename U>
+struct Pair {
+    first  : T;
+    second : U;
+    Pair(first : T, second : U) : first(first), second(second) {}
+}
+
+test_ctad() : int {
+    return Pair(10, 32).first + Pair(10, 32).second; // Deduced as Pair<int, int> -> 42
+}
+```
+
+If no constructor matches or deduction fails, `ERR_CTAD_NO_MATCH` (0x0188) is emitted.
+
 ---
 
 ## 6. Use as function argument

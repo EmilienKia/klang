@@ -57,6 +57,9 @@ items : Point(3, 4)[10];         // Point[10], each Point(3, 4)
 // Default constructor for all elements (no arguments)
 zeros : int(0)[100];             // int[100], all elements = 0
 things : Widget()[8];            // Widget[8], each default-constructed
+
+// Class Template Argument Deduction (CTAD)
+pairs : Pair(1, 2)[5];           // Pair<int, int>[5], each Pair(1, 2)
 ```
 
 Stack arrays always have a **compile-time constant** size (integer literal).
@@ -88,6 +91,9 @@ items : Point[]! = new Point(3, 4)[n];
 
 // Default constructor for all (equivalent to existing new T[n])
 widgets : Widget[]! = new Widget()[n];
+
+// Class Template Argument Deduction (CTAD)
+pairs : Pair<int, int>[]! = new Pair(10, 20)[n];
 ```
 
 **Return type:**

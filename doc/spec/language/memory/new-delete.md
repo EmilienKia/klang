@@ -65,6 +65,21 @@ test() {
 }   // p, n, i go out of scope → each object deleted automatically
 ```
 
+**Class Template Argument Deduction (CTAD):**
+
+If `TypeName` is a template class or struct (e.g. `Pair`), the template arguments may be omitted;
+they are deduced automatically from the constructor arguments:
+
+```k
+template<typename T, typename U>
+class Pair {
+    first : T; second : U;
+    Pair(a : T, b : U) : first(a), second(b) {}
+}
+
+p : Pair<int, int>! = new Pair(10, 20); // Deduced as new Pair<int, int>(10, 20)
+```
+
 **Unassigned result:**
 
 If the result of `new` is not assigned to an owner variable — for example, it is used as a
