@@ -48,14 +48,15 @@ addresser '(' [ TypeList ] ')' [ ':' ReturnType ] [ 'throws' ThrowsList ]
 
 The four permitted addressers are:
 
-| Addresser | Name | Nullable | Rebindable |
-|---|---|---|---|
-| `*` | pointer | yes | yes |
-| `?` | view | yes | no |
-| `+` | link | no | yes |
-| `&` | reference | no | no |
+| Addresser | Name | Nullable | Rebindable | Description |
+|---|---|---|---|---|
+| `*` | pointer | yes | yes | Nullable, rebindable borrowed callable |
+| `?` | view | yes | no | Nullable, non-rebindable borrowed callable |
+| `+` | link | no | yes | Non-null, rebindable borrowed callable |
+| `&` | reference | no | no | Non-null, non-rebindable borrowed callable |
+| `!` | owner | no (null only after move) | move-only | Exclusive ownership of closure environment, destroyed on scope exit |
 
-> **Forbidden addressers:** `!` (owner) and `#` (drain) are **not** permitted on callable types.
+> **Forbidden addressers:** `#` (drain) is **not** permitted on callable types.
 
 **Examples:**
 
@@ -64,6 +65,7 @@ fp  : *(int) : int;          // pointer — nullable, rebindable
 vw  : ?(int, double) : bool; // view    — nullable, non-rebindable
 lnk : +(int) : int;          // link    — non-null,  rebindable
 ref : &() : int;             // reference — non-null, non-rebindable
+own : !(int) : int;          // owner   — exclusive ownership of heap closure, move-only
 ```
 
 The `const` prefix makes the binding non-rebindable (same as for object indirections):
@@ -196,19 +198,33 @@ ref : &(int) : int = add_one;  // bound at declaration, never rebound
 // ref = null;                  // ERROR — reference is non-null
 ```
 
+### `!` — owner (move-only, exclusive closure ownership)
+
+A `!` callable exclusively owns its heap-allocated closure environment. It must be initialized at declaration and follows strict move semantics:
+
+```k
+own : !(int) : int = [base](x: int): int { return base + x; };
+own2 : !(int) : int = own;   // MOVE: own ← null; own2 owns the closure
+```
+
+- **Move-only:** Assigning, passing as a parameter, or returning an owned callable transfers ownership and zeroes the source slot.
+- **Destruction:** When an owned callable goes out of scope while non-null, its closure drop function is called (destroying captured fields in reverse order and freeing heap memory).
+- **Conversion directionality:** An owned callable (`!`) can be converted (borrowed) into any non-owning callable (`&`, `+`, `*`, `?`). A borrowed callable can **never** be converted into an owned callable (`ERR_CALLABLE_OWNER_FROM_BORROW`).
+
 ---
 
 ## 6. What can be assigned to a callable
 
 ### 6.1 null
 
-Only `*` (pointer) and `?` (view) callable types accept `null`. `+` and `&` do not.
+Only `*` (pointer) and `?` (view) callable types accept `null`. `+`, `&` and `!` do not accept `null` literals directly.
 
 ```k
 fp : *(int) : int = null;   // OK
 vw : ?(int) : int = null;   // OK
 lnk : +(int) : int = null;  // ERROR — link cannot be null
 ref : &(int) : int = null;  // ERROR — reference cannot be null
+own : !(int) : int = null;  // ERROR — owner cannot be initialized from null literal
 ```
 
 ### 6.2 Free function name
@@ -219,6 +235,7 @@ Any free function whose parameter list and return type match the callable's prot
 add_one(x : int) : int { return x + 1; }
 
 fp : *(int) : int = add_one;   // context pointer = null
+own : !(int) : int = add_one;  // context pointer = null; no environment to free
 ```
 
 ### 6.3 Static member function
@@ -231,6 +248,7 @@ struct Math {
 }
 
 fp : *(int) : int = Math::double_it;   // context pointer = null
+own : !(int) : int = Math::double_it;  // context pointer = null
 ```
 
 ### 6.4 Bound member function
@@ -250,7 +268,9 @@ fp  : *(int) : int = c.add;    // ctx = address of c; calls c.add(x)
 fp2 : *(int) : int = ptr->add; // ptr is Counter* or Counter+; ctx = ptr
 ```
 
-The bound receiver is captured **by address**, not by value. The lifetime of the receiver object must outlive every call through the callable.
+When binding a member function to an **owned callable** (`!(...)`):
+- Local variables and function parameters cannot be bound to `!(...)` (`ERR_CALLABLE_OWNED_RECEIVER_LOCAL`).
+- Global objects, static objects, and `this` members are permitted. The compiler generates an adapter closure on the heap forwarding the call without taking ownership of the underlying receiver.
 
 ### 6.5 Functor — object with `operator()`
 

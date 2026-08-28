@@ -2653,84 +2653,237 @@ namespace k::model {
     }
 
     void model_builder::visit_lambda_expression(parse::ast::lambda_expression &expr) {
-        std::vector<std::shared_ptr<model::expression>> captures;
-        for (auto& cap : expr.captures) {
-            if (cap.init_expr) {
-                _expr = nullptr;
-                cap.init_expr->visit(*this);
-                captures.push_back(_expr);
-            } else {
-                captures.push_back(nullptr);
-            }
-        }
-        std::shared_ptr<model::function_holder> holder;
         std::shared_ptr<model::element> decl_owner;
         for (auto it = _contexts.rbegin(); it != _contexts.rend(); ++it) {
             if (*it) {
                 decl_owner = (*it)->content;
                 if (std::dynamic_pointer_cast<model::ns>(decl_owner)
                     || std::dynamic_pointer_cast<model::aggregate>(decl_owner)) {
-                    holder = std::dynamic_pointer_cast<model::function_holder>(decl_owner);
-                    if (holder) break;
+                    break;
                 }
             }
         }
-        if (!holder) {
+        if (!decl_owner) {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_NO_IMPL_NO_ABSTRACT), lex::identifier{"lambda"},
                 "Lambda expression cannot be declared here");
         }
 
-        const std::string lambda_name = "__lambda_" + std::to_string(++lambda_synth_counter);
-        std::vector<lex::keyword> lambda_specifiers;
-        lambda_specifiers.emplace_back("private", lex::keyword::PRIVATE);
-        if (current_context_content<model::aggregate>()) {
-            lambda_specifiers.emplace_back("static", lex::keyword::STATIC);
-        }
-
-        auto lambda_decl = std::make_shared<parse::ast::function_decl>(
-            lambda_specifiers,
-            lex::identifier{lambda_name},
-            expr.return_type,
-            expr.params,
-            expr.body,
-            false);
-
-        auto previous_expr = _expr;
-        auto previous_stmt = _stmt;
-        if (auto ns_scope = std::dynamic_pointer_cast<model::ns>(decl_owner)) {
-            stack<ns_context> push(_contexts, ns_scope);
-            visit_function_decl(*lambda_decl);
-        } else if (auto agg_scope = std::dynamic_pointer_cast<model::aggregate>(decl_owner)) {
-            stack<struct_context> push(_contexts, agg_scope);
-            visit_function_decl(*lambda_decl);
-        }
-        _expr = previous_expr;
-        _stmt = previous_stmt;
-
-        auto target = holder->get_function(lambda_name);
-        if (!target) {
-            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_DUPLICATE_DEFINITION), lex::identifier{"lambda"},
-                "Failed to materialise lambda target '{}'",
-                {lambda_name});
-        }
-        auto bind = model::callable_bind_expression::make_shared(
-            model::callable_bind_expression::kind::lambda,
-            target,
-            nullptr);
-        _expr = model::lambda_expression::make_shared(bind, captures);
-        if (_expr) {
-            callable_type_builder builder(_context);
-            builder.addresser(callable_type::addresser::reference);
-            if (target && target->has_return_type()) {
-                builder.return_type(target->get_return_type());
+        if (expr.captures.empty()) {
+            // ── Capture-free lambda: compile as static/free function ──
+            auto holder = std::dynamic_pointer_cast<model::function_holder>(decl_owner);
+            if (!holder) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_NO_IMPL_NO_ABSTRACT), lex::identifier{"lambda"},
+                    "Lambda expression cannot be declared here");
             }
-            for (const auto& param : expr.params) {
-                if (param && param->type) {
-                    builder.append_parameter_type(_context->from_type_specifier(*param->type));
+
+            const std::string lambda_name = "__lambda_" + std::to_string(++lambda_synth_counter);
+            std::vector<lex::keyword> lambda_specifiers;
+            lambda_specifiers.emplace_back("private", lex::keyword::PRIVATE);
+            if (current_context_content<model::aggregate>()) {
+                lambda_specifiers.emplace_back("static", lex::keyword::STATIC);
+            }
+
+            auto lambda_decl = std::make_shared<parse::ast::function_decl>(
+                lambda_specifiers,
+                lex::identifier{lambda_name},
+                expr.return_type,
+                expr.params,
+                expr.body,
+                false);
+
+            auto previous_expr = _expr;
+            auto previous_stmt = _stmt;
+            if (auto ns_scope = std::dynamic_pointer_cast<model::ns>(decl_owner)) {
+                stack<ns_context> push(_contexts, ns_scope);
+                visit_function_decl(*lambda_decl);
+            } else if (auto agg_scope = std::dynamic_pointer_cast<model::aggregate>(decl_owner)) {
+                stack<struct_context> push(_contexts, agg_scope);
+                visit_function_decl(*lambda_decl);
+            }
+            _expr = previous_expr;
+            _stmt = previous_stmt;
+
+            auto target = holder->get_function(lambda_name);
+            if (!target) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_DUPLICATE_DEFINITION), lex::identifier{"lambda"},
+                    "Failed to materialise lambda target '{}'",
+                    {lambda_name});
+            }
+            auto bind = model::callable_bind_expression::make_shared(
+                model::callable_bind_expression::kind::lambda,
+                target,
+                nullptr);
+            _expr = model::lambda_expression::make_shared(bind, {});
+            if (_expr) {
+                callable_type_builder builder(_context);
+                builder.addresser(callable_type::addresser::reference);
+                if (target && target->has_return_type()) {
+                    builder.return_type(target->get_return_type());
+                }
+                for (const auto& param : expr.params) {
+                    if (param && param->type) {
+                        builder.append_parameter_type(_context->from_type_specifier(*param->type));
+                    }
+                }
+                _expr->set_type(builder.build());
+                _expr->set_ast_expression(expr.shared_as<parse::ast::lambda_expression>());
+            }
+        } else {
+            // ── Capturing lambda: synthesize closure struct + invoke method ──
+            auto agg_holder = std::dynamic_pointer_cast<model::aggregate_holder>(decl_owner);
+            if (!agg_holder) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_NO_IMPL_NO_ABSTRACT), lex::identifier{"lambda"},
+                    "Capturing lambda expression cannot be declared here");
+            }
+
+            const std::string closure_name = "__lambda_closure_" + std::to_string(++lambda_synth_counter);
+            auto closure_agg = agg_holder->define_structure(closure_name);
+            closure_agg->set_visibility(model::PRIVATE);
+            auto closure_st = std::make_shared<model::struct_type>(closure_name, closure_agg);
+            _context->add_struct(closure_st);
+            closure_agg->set_struct_type(closure_st);
+
+            auto byte_ptr_type = _context->from_type(primitive_type::BYTE)->get_pointer();
+            auto drop_var = closure_agg->append_variable("__drop", false);
+            drop_var->set_type(byte_ptr_type);
+            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(drop_var)) {
+                mv->set_visibility(model::PUBLIC);
+            }
+
+            auto ctor = model::constructor::make_shared(closure_agg);
+            ctor->assign_name(closure_agg->get_name().with_back(closure_agg->get_short_name()));
+            ctor->set_visibility(model::PUBLIC);
+            closure_agg->_constructors.push_back(ctor);
+            closure_agg->_children.push_back(ctor);
+
+            std::vector<std::shared_ptr<model::expression>> capture_args;
+
+            for (size_t ci = 0; ci < expr.captures.size(); ++ci) {
+                auto& cap = expr.captures[ci];
+                if (cap.is_this) {
+                    auto outer_agg = current_context_content<model::aggregate>();
+                    if (!outer_agg) {
+                        throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_BAD_SCOPE), lex::identifier{"this"},
+                            "Cannot capture 'this' outside of a member function");
+                    }
+                    auto this_link_type = outer_agg->get_struct_type()->get_link();
+                    auto field_var = closure_agg->append_variable("__this", false);
+                    field_var->set_type(this_link_type);
+                    if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(field_var)) {
+                        mv->set_visibility(model::PUBLIC);
+                    }
+
+                    if (ctor) {
+                        auto param = ctor->append_parameter("__this_p", this_link_type);
+                        std::vector<std::shared_ptr<model::expression>> minit_args{
+                            model::symbol_expression::from_variable(param)};
+                        ctor->add_member_init("__this", minit_args);
+                    }
+                    capture_args.push_back(model::symbol_expression::from_identifier(name("this")));
+                } else if (cap.name) {
+                    std::string cap_name = std::string{cap.name->content};
+                    std::shared_ptr<model::type> var_type;
+                    std::shared_ptr<model::expression> capture_arg;
+
+                    if (cap.init_expr) {
+                        _expr = nullptr;
+                        cap.init_expr->visit(*this);
+                        capture_arg = _expr;
+                        var_type = capture_arg ? capture_arg->get_type() : nullptr;
+                        if (!var_type) var_type = _context->from_type(primitive_type::INT);
+                    } else {
+                        for (auto it = _contexts.rbegin(); it != _contexts.rend(); ++it) {
+                            if (!*it) continue;
+                            if (auto blk = (*it)->content_as<model::block>()) {
+                                if (auto var = blk->get_variable(cap_name)) {
+                                    var_type = var->get_type();
+                                    capture_arg = model::symbol_expression::from_variable(var);
+                                    break;
+                                }
+                            }
+                            if (auto fn = (*it)->content_as<model::function>()) {
+                                if (auto p = fn->get_parameter(cap_name)) {
+                                    var_type = p->get_type();
+                                    capture_arg = model::symbol_expression::from_variable(p);
+                                    break;
+                                }
+                            }
+                        }
+                        if (!var_type) {
+                            var_type = _context->from_type(primitive_type::INT);
+                            capture_arg = model::symbol_expression::from_identifier(name(cap_name));
+                        }
+                    }
+
+                    std::shared_ptr<model::type> field_type;
+                    if (cap.is_reference) {
+                        field_type = var_type ? var_type->get_reference() : _context->from_type(primitive_type::INT)->get_reference();
+                    } else {
+                        field_type = var_type ? type::remove_const(var_type) : _context->from_type(primitive_type::INT);
+                    }
+
+                    auto field_var = closure_agg->append_variable(cap_name, false);
+                    field_var->set_type(field_type);
+                    if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(field_var)) {
+                        mv->set_visibility(model::PUBLIC);
+                    }
+
+                    if (ctor) {
+                        auto param = ctor->append_parameter(cap_name + "_p", field_type);
+                        std::vector<std::shared_ptr<model::expression>> minit_args{
+                            model::symbol_expression::from_variable(param)};
+                        ctor->add_member_init(cap_name, minit_args);
+                    }
+                    capture_args.push_back(capture_arg);
                 }
             }
-            _expr->set_type(builder.build());
-            _expr->set_ast_expression(expr.shared_as<parse::ast::lambda_expression>());
+
+            std::vector<lex::keyword> invoke_specifiers{lex::keyword{"public", lex::keyword::PUBLIC}};
+            if (expr.is_const) invoke_specifiers.emplace_back("const", lex::keyword::CONST);
+            auto invoke_decl = std::make_shared<parse::ast::function_decl>(
+                invoke_specifiers,
+                lex::identifier{"__invoke"},
+                expr.return_type,
+                expr.params,
+                expr.body,
+                false);
+
+            auto previous_expr = _expr;
+            auto previous_stmt = _stmt;
+            {
+                stack<struct_context> push_struct(_contexts, closure_agg);
+                visit_function_decl(*invoke_decl);
+            }
+            _expr = previous_expr;
+            _stmt = previous_stmt;
+
+            auto invoke_fn = closure_agg->get_function("__invoke");
+            if (!invoke_fn) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_DUPLICATE_DEFINITION), lex::identifier{"lambda"},
+                    "Failed to materialise lambda invoke method '{}'",
+                    {"__invoke"});
+            }
+
+            auto ctor_call = model::temporary_construction_expression::make_shared(closure_st, capture_args);
+            auto bind = model::callable_bind_expression::make_shared(
+                model::callable_bind_expression::kind::bound_method,
+                invoke_fn,
+                ctor_call);
+            _expr = model::lambda_expression::make_shared(bind, capture_args);
+            if (_expr) {
+                callable_type_builder builder(_context);
+                builder.addresser(callable_type::addresser::reference);
+                if (invoke_fn && invoke_fn->has_return_type()) {
+                    builder.return_type(invoke_fn->get_return_type());
+                }
+                for (const auto& param : expr.params) {
+                    if (param && param->type) {
+                        builder.append_parameter_type(_context->from_type_specifier(*param->type));
+                    }
+                }
+                _expr->set_type(builder.build());
+                _expr->set_ast_expression(expr.shared_as<parse::ast::lambda_expression>());
+            }
         }
     }
 

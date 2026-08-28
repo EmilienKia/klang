@@ -62,7 +62,8 @@ TEST_CASE("callable alias — every addresser can be applied to a bare prototype
             b : F* = twice;
             c : F+ = twice;
             d : F? = twice;
-            return a(1) + b(2) + c(3) + d(15);
+            e : F! = twice;
+            return a(1) + b(2) + c(3) + d(10) + e(5);
         }
     )SRC");
     auto run = jit->lookup_symbol<int(*)()>("run");

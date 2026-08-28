@@ -527,6 +527,7 @@ public:
 class constructor : public function {
 protected:
     friend class aggregate;
+    friend class model_builder;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
     friend class template_instantiator;

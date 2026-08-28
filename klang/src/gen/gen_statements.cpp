@@ -285,6 +285,11 @@ void implementation_generator::emit_scope_variable_cleanup(
         } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
             emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
                 alloca, own_type->get_owned_type(), owner_cleanup_name);
+        } else if (auto call_type = std::dynamic_pointer_cast<callable_type>(vt)) {
+            if (call_type->is_owner()) {
+                emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
+                    alloca, _context->get_or_create_callable_llvm_type(), owner_cleanup_name);
+            }
         } else if (auto arr_type = std::dynamic_pointer_cast<sized_array_type>(vt)) {
             emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions, alloca, arr_type);
         }
@@ -312,12 +317,17 @@ void implementation_generator::emit_active_parameter_cleanup(const std::string& 
         auto& params = _owner_params_stack.top();
         for (auto it = params.rbegin(); it != params.rend(); ++it) {
             auto& param = *it;
-            auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
-            if (!own_type) continue;
             auto param_it = _context->_parameter_variables.find(param);
             if (param_it == _context->_parameter_variables.end()) continue;
-            emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                param_it->second, own_type->get_owned_type(), owner_cleanup_name);
+            if (auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type())) {
+                emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                    param_it->second, own_type->get_owned_type(), owner_cleanup_name);
+            } else if (auto call_type = std::dynamic_pointer_cast<callable_type>(param->get_type())) {
+                if (call_type->is_owner()) {
+                    emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
+                        param_it->second, _context->get_or_create_callable_llvm_type(), owner_cleanup_name);
+                }
+            }
         }
     }
 
@@ -460,6 +470,12 @@ void implementation_generator::visit_block(block& blk) {
             // Owner type — always needs cleanup (destroy + free on scope exit)
             if (type::is_owner(vt)) {
                 dtor_vars.push_back(var_stmt);
+            }
+
+            if (auto ct = std::dynamic_pointer_cast<callable_type>(vt)) {
+                if (ct->is_owner()) {
+                    dtor_vars.push_back(var_stmt);
+                }
             }
 
             if (std::dynamic_pointer_cast<sized_array_type>(vt)) {
@@ -2010,6 +2026,11 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
                     } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
                         emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
                             alloca_var, own_type->get_owned_type(), "fallthru_owner");
+                    } else if (auto call_type = std::dynamic_pointer_cast<callable_type>(vt)) {
+                        if (call_type->is_owner()) {
+                            emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
+                                alloca_var, _context->get_or_create_callable_llvm_type(), "fallthru_owner");
+                        }
                     }
                 }
             }
@@ -2018,12 +2039,17 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
                 auto params_copy = _owner_params_stack.top();
                 for (auto it = params_copy.rbegin(); it != params_copy.rend(); ++it) {
                     auto& param = *it;
-                    auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
-                    if (!own_type) continue;
                     auto param_it = _context->_parameter_variables.find(param);
                     if (param_it == _context->_parameter_variables.end()) continue;
-                    emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                        param_it->second, own_type->get_owned_type(), "fallthru_param");
+                    if (auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type())) {
+                        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                            param_it->second, own_type->get_owned_type(), "fallthru_param");
+                    } else if (auto call_type = std::dynamic_pointer_cast<callable_type>(param->get_type())) {
+                        if (call_type->is_owner()) {
+                            emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
+                                param_it->second, _context->get_or_create_callable_llvm_type(), "fallthru_param");
+                        }
+                    }
                 }
             }
             // Also clean up struct-typed by-value parameters
@@ -3722,6 +3748,10 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
         || k::model::type::is_view(var_type)) {
         build.CreateStore(
             llvm::ConstantPointerNull::get(llvm::PointerType::get(build.getContext(), 0)),
+            alloca);
+    } else if (auto ct = std::dynamic_pointer_cast<callable_type>(var_type)) {
+        build.CreateStore(
+            llvm::ConstantAggregateZero::get(_context->get_or_create_callable_llvm_type()),
             alloca);
     }
 

@@ -3129,7 +3129,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         }
     }
 
-    if (!type::is_resolved(alloc_type)) {
+    if (!type::is_resolved(alloc_type) && !std::dynamic_pointer_cast<struct_type>(alloc_type)) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_TYPE_NOT_FOUND), expr.first_lexeme(),
             "Cannot resolve the type of 'new' expression: type '{}' is unknown",
             {alloc_type ? alloc_type->to_string() : "<null>"});

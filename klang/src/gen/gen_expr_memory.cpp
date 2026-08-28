@@ -81,15 +81,28 @@ void type_reference_resolver::visit_owner_move_expression(owner_move_expression&
     if (!src_type) return;
     // Source must be ref<owner<T>> → result type is owner<T>
     if (type::is_reference(src_type)) {
-        auto inner = std::dynamic_pointer_cast<reference_type>(src_type)->get_subtype();
+        auto inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(src_type)->get_subtype());
         if (type::is_owner(inner)) {
             expr.set_type(inner);
             return;
         }
+        if (auto ct = std::dynamic_pointer_cast<callable_type>(inner)) {
+            if (ct->is_owner()) {
+                expr.set_type(inner);
+                return;
+            }
+        }
     }
-    // If already owner<T> (e.g., wrapping a new_expression rvalue), pass through
+    // If already owner<T> or owned callable (e.g., wrapping a new_expression rvalue), pass through
     if (type::is_owner(src_type)) {
         expr.set_type(src_type);
+        return;
+    }
+    if (auto ct = std::dynamic_pointer_cast<callable_type>(src_type)) {
+        if (ct->is_owner()) {
+            expr.set_type(src_type);
+            return;
+        }
     }
 }
 
@@ -103,6 +116,16 @@ void implementation_generator::visit_owner_move_expression(owner_move_expression
 
     auto src_type = expr.sub_expr() ? expr.sub_expr()->get_type() : nullptr;
     if (src_type && type::is_reference(src_type)) {
+        auto inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(src_type)->get_subtype());
+        if (auto ct = std::dynamic_pointer_cast<callable_type>(inner)) {
+            if (ct->is_owner()) {
+                auto* callable_llvm_type = _context->get_or_create_callable_llvm_type();
+                llvm::Value* alloca_ptr = _value;
+                _value = _builder->CreateLoad(callable_llvm_type, alloca_ptr, "own_callable_move_val");
+                _builder->CreateStore(llvm::ConstantAggregateZero::get(callable_llvm_type), alloca_ptr);
+                return;
+            }
+        }
         // Source is ref<owner<T>>: _value is the alloca (pointer to owner slot)
         llvm::Value* alloca_ptr = _value;
         // Load the raw owner pointer from the alloca

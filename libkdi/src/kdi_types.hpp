@@ -122,7 +122,8 @@ enum class kdi_callable_addresser {
     ptr,        ///< `*(int):bool` — nullable, rebindable
     view,       ///< `?(int):bool` — nullable, not rebindable
     link,       ///< `+(int):bool` — non-null, rebindable
-    ref         ///< `&(int):bool` — non-null, not rebindable
+    ref,        ///< `&(int):bool` — non-null, not rebindable
+    owner       ///< `!(int):bool` — nullable, rebindable, owning closure environment
 };
 
 /**
@@ -147,32 +148,35 @@ struct kdi_callable_type {
 /** Textual encoding of a callable addresser, as stored in the KDI. */
 inline const char* to_string(kdi_callable_addresser a) {
     switch (a) {
-        case kdi_callable_addresser::none: return "none";
-        case kdi_callable_addresser::view: return "view";
-        case kdi_callable_addresser::link: return "link";
-        case kdi_callable_addresser::ref:  return "ref";
-        case kdi_callable_addresser::ptr:  break;
+        case kdi_callable_addresser::none:  return "none";
+        case kdi_callable_addresser::view:  return "view";
+        case kdi_callable_addresser::link:  return "link";
+        case kdi_callable_addresser::ref:   return "ref";
+        case kdi_callable_addresser::owner: return "owner";
+        case kdi_callable_addresser::ptr:   break;
     }
     return "ptr";
 }
 
 /** Decode a callable addresser; unknown spellings degrade to `ptr`. */
 inline kdi_callable_addresser callable_addresser_from_string(const std::string& s) {
-    if (s == "none") return kdi_callable_addresser::none;
-    if (s == "view") return kdi_callable_addresser::view;
-    if (s == "link") return kdi_callable_addresser::link;
-    if (s == "ref")  return kdi_callable_addresser::ref;
+    if (s == "none")  return kdi_callable_addresser::none;
+    if (s == "view")  return kdi_callable_addresser::view;
+    if (s == "link")  return kdi_callable_addresser::link;
+    if (s == "ref")   return kdi_callable_addresser::ref;
+    if (s == "owner") return kdi_callable_addresser::owner;
     return kdi_callable_addresser::ptr;
 }
 
 /** K source-level symbol of a callable addresser (empty for a bare prototype). */
 inline const char* callable_addresser_symbol(kdi_callable_addresser a) {
     switch (a) {
-        case kdi_callable_addresser::none: return "";
-        case kdi_callable_addresser::view: return "?";
-        case kdi_callable_addresser::link: return "+";
-        case kdi_callable_addresser::ref:  return "&";
-        case kdi_callable_addresser::ptr:  break;
+        case kdi_callable_addresser::none:  return "";
+        case kdi_callable_addresser::view:  return "?";
+        case kdi_callable_addresser::link:  return "+";
+        case kdi_callable_addresser::ref:   return "&";
+        case kdi_callable_addresser::owner: return "!";
+        case kdi_callable_addresser::ptr:   break;
     }
     return "*";
 }

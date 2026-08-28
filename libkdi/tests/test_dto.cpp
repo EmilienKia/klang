@@ -176,7 +176,7 @@ TEST_CASE("kdi_type: callable addresser textual encoding round-trips", "[dto][ty
     const kdi_callable_addresser all[] = {
         kdi_callable_addresser::none, kdi_callable_addresser::ptr,
         kdi_callable_addresser::view, kdi_callable_addresser::link,
-        kdi_callable_addresser::ref};
+        kdi_callable_addresser::ref,  kdi_callable_addresser::owner};
     for (auto a : all) {
         REQUIRE(callable_addresser_from_string(to_string(a)) == a);
     }

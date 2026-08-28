@@ -1057,43 +1057,48 @@ ptr : plop*;            // pointer to 'plop'
 
 ---
 
-## 11. Function reference types
-A *function reference type* describes a variable that holds the **address of a function** and can be called later. K distinguishes free function references and member function references.
-For full details, see [Function References](../functions/function_references.md).
-### 11.1 Free function reference types
-A free function reference holds the address of a free function or a `static` member function.
-**Syntax:** `qualifier '(' [ TypeList ] ')'`
-| Qualifier | Nullable | Rebindable |
-|-----------|----------|------------|
-| `*(Params)` | Yes | Yes |
-| `?(Params)` | Yes | No  |
-| `+(Params)` | No  | Yes |
-The return type is not written — it is inferred from the target function.
+## 11. Callable types
+A *callable type* describes a fat pointer `{fn_ptr, ctx_ptr}` that represents any invocable entity (free function, static member, bound method, functor, or lambda).
+For full details, see [Callables](../functions/callables.md) and [Lambdas](../functions/lambdas.md).
+
+### 11.1 Callable types and addressers
+**Syntax:** `addresser '(' [ TypeList ] ')' [ ':' ReturnType ] [ 'throws' ThrowsList ]`
+
+| Addresser | Name | Nullable | Rebindable | Description |
+|-----------|------|----------|------------|-------------|
+| `*(Params):Ret` | pointer | Yes | Yes | Nullable, rebindable callable |
+| `?(Params):Ret` | view | Yes | No | Nullable, fixed view callable |
+| `+(Params):Ret` | link | No | Yes | Non-null, rebindable callable |
+| `&(Params):Ret` | reference | No | No | Non-null, immutable callable |
+| `!(Params):Ret` | owner | No (null only after move) | move-only | Exclusive ownership of heap closure environment |
+
 ```k
 add_one(x : int) : int { return x + 1; }
-fp  : *(int) = add_one;    // nullable, rebindable pointer to (int)->?
- link : +(int) = add_one;    // non-null link  to (int)->?
-view : ?(int) = add_one;    // nullable, fixed view to (int)->?
-result : int = fp(41);     // call through the reference -> 42
+fp   : *(int):int = add_one;    // pointer callable
+lnk  : +(int):int = add_one;    // link callable
+ref  : &(int):int = add_one;    // reference callable
+own  : !(int):int = [base = 10](x:int):int { return base + x; }; // owned callable
+res  : int = own(32);          // call through callable -> 42
 ```
+
 ### 11.2 Member function reference types
-A member function reference holds the address of a non-static member function of a specific struct `T`.
-**Syntax:** `T '::' qualifier '(' [ TypeList ] ')'`
+A member function reference holds the unbound address of a non-static member function of a specific struct `T`.
+**Syntax:** `T '::' qualifier '(' [ TypeList ] ')' [ ':' ReturnType ]`
 The `T::` prefix identifies the struct. The implicit `this` parameter is **not** listed.
 ```k
 struct Counter {
     value : int;
     add(x : int) : int { return value + x; }
 }
-mfp  : Counter::*(int) = Counter::add;   // pointer to Counter::add
+mfp  : Counter::*(int):int = Counter::add;   // unbound pointer to Counter::add
 c : Counter;
 c.value = 40;
 result : int = (c.*mfp)(2);    // calls c.add(2) -> 42
 ```
 To call through an indirection (`*`, `?`, `+`), use `->*`:
 ```k
- link : Counter+ = c;
-result : int = (lnk->*mfp)(2);   // -> 42
+link : Counter+ = c;
+result : int = (link->*mfp)(2);   // -> 42
 ```
 See [Function References](../functions/function_references.md) for the full call syntax.
 ---

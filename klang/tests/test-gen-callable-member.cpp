@@ -517,3 +517,68 @@ TEST_CASE("Callable member: bind a virtual method through an owner receiver",
     REQUIRE(test_fn != nullptr);
     REQUIRE(test_fn() == 42);
 }
+
+TEST_CASE("Callable member: bind a method of a global object to an owned callable",
+    "[gen][callable][member][owner]")
+{
+    auto jit = gen_jit(R"SRC(
+        module gen_callable_member_21;
+        struct Counter {
+            base : int;
+            add(x : int) : int { return base + x; }
+        }
+        g_c : Counter;
+        test() : int {
+            g_c.base = 2;
+            f : !(int):int = g_c.add;
+            return f(40);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Callable member: bind 'this.method' to an owned callable",
+    "[gen][callable][member][owner]")
+{
+    auto jit = gen_jit(R"SRC(
+        module gen_callable_member_22;
+        struct Counter {
+            base : int;
+            add(x : int) : int { return base + x; }
+            getAdder() : !(int):int {
+                return this.add;
+            }
+        }
+        test() : int {
+            c : Counter;
+            c.base = 2;
+            f : !(int):int = c.getAdder();
+            return f(40);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Callable member: binding a local receiver to an owned callable is rejected",
+    "[gen][callable][member][owner][error]")
+{
+    REQUIRE(compile_should_fail(R"SRC(
+        module gen_callable_member_23;
+        struct Counter {
+            base : int;
+            add(x : int) : int { return base + x; }
+        }
+        test() : int {
+            c : Counter;
+            c.base = 2;
+            f : !(int):int = c.add;
+            return f(40);
+        }
+    )SRC", nullptr));
+}

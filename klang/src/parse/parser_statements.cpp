@@ -997,7 +997,8 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
             if (addr_tok == lex::operator_::STAR ||
                 addr_tok == lex::operator_::QUESTION_MARK ||
                 addr_tok == lex::operator_::PLUS ||
-                addr_tok == lex::operator_::AMPERSAND) {
+                addr_tok == lex::operator_::AMPERSAND ||
+                addr_tok == lex::operator_::EXCLAMATION_MARK) {
                 // Must be immediately followed by '(' to be a callable type
                 auto par_tok = _lexer.get();
                 if (par_tok == lex::punctuator::PARENTHESIS_OPEN) {

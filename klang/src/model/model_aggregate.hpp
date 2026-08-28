@@ -93,6 +93,7 @@ struct base_spec {
 class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder, public alias_holder, public friend_holder, public annotation_holder {
 protected:
     friend class ns;
+    friend class model_builder;
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;

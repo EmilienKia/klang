@@ -140,6 +140,10 @@ void symbol_resolver::visit_callable_invocation_expression(callable_invocation_e
     }
 }
 
+void symbol_resolver::visit_lambda_expression(lambda_expression& expr) {
+    if (expr.bind()) expr.bind()->accept(*this);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // type_reference_resolver
 // ═══════════════════════════════════════════════════════════════════════════
@@ -148,6 +152,10 @@ void type_reference_resolver::visit_callable_bind_expression(callable_bind_expre
     if (expr.get_context()) expr.get_context()->accept(*this);
     // The bind type is installed by whoever created the node (adapt_callable_type),
     // because only the target declaration knows the requested addresser.
+}
+
+void type_reference_resolver::visit_lambda_expression(lambda_expression& expr) {
+    if (expr.bind()) expr.bind()->accept(*this);
 }
 
 // ── Member function binding (phase B.4) ────────────────────────────────────
@@ -225,6 +233,12 @@ void type_reference_resolver::check_callable_conversion(
 {
     if (!src || !tgt) return;
 
+    if (tgt->is_owner() && !src->is_owner()) {
+        throw_error(static_cast<unsigned int>(k::diag::callable_model_diag::ERR_CALLABLE_OWNER_FROM_BORROW),
+            where, "A borrowed callable of type '{}' cannot be converted to the owned callable type '{}'",
+            {src->to_string(), tgt->to_string()});
+    }
+
     auto compat = callable_signature_compatible(*src, *tgt);
     if (compat.ok()) return;
 
@@ -277,6 +291,46 @@ std::shared_ptr<callable_type> type_reference_resolver::build_member_callable_ma
     return builder.build();
 }
 
+static bool is_receiver_local_or_parameter(const std::shared_ptr<expression>& expr) {
+    if (!expr) return false;
+    auto cur = expr;
+    while (cur) {
+        if (auto load = std::dynamic_pointer_cast<load_value_expression>(cur)) {
+            cur = load->sub_expr();
+            continue;
+        }
+        if (auto cast = std::dynamic_pointer_cast<cast_expression>(cur)) {
+            cur = cast->sub_expr();
+            continue;
+        }
+        if (auto deref = std::dynamic_pointer_cast<dereference_expression>(cur)) {
+            cur = deref->sub_expr();
+            continue;
+        }
+        if (auto moe = std::dynamic_pointer_cast<member_of_object_expression>(cur)) {
+            cur = moe->sub_expr();
+            continue;
+        }
+        if (auto mop = std::dynamic_pointer_cast<member_of_pointer_expression>(cur)) {
+            cur = mop->sub_expr();
+            continue;
+        }
+        break;
+    }
+    if (auto sym = std::dynamic_pointer_cast<symbol_expression>(cur)) {
+        if (sym->is_variable_def()) {
+            auto var = sym->get_variable_def();
+            if (auto p = std::dynamic_pointer_cast<parameter>(var)) {
+                return p->get_short_name() != "this";
+            }
+            if (auto v = std::dynamic_pointer_cast<variable_statement>(var)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 std::shared_ptr<expression> type_reference_resolver::make_member_bind(
     const std::shared_ptr<function>& fn,
     const std::shared_ptr<expression>& receiver,
@@ -289,6 +343,132 @@ std::shared_ptr<expression> type_reference_resolver::make_member_bind(
         throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_MEMBER_BIND_REQUIRES_OBJECT),
             where, "'{}' is not a member function and cannot be bound to a receiver",
             {fn->get_fq_name()});
+    }
+
+    if (tgt->is_owner()) {
+        if (is_receiver_local_or_parameter(receiver)) {
+            throw_error(static_cast<unsigned int>(k::diag::callable_model_diag::ERR_CALLABLE_OWNED_RECEIVER_LOCAL),
+                where,
+                "Cannot bind member function '{}' to an owned callable ('!') using a local or parameter receiver; "
+                "only global, static, or 'this' member receivers are permitted",
+                {fn->get_fq_name()});
+        }
+
+        callable_type_builder borrowed_builder(_context);
+        borrowed_builder.addresser(callable_type::addresser::link);
+        if (tgt->get_return_type()) borrowed_builder.return_type(tgt->get_return_type());
+        for (const auto& pt : tgt->get_parameter_types()) borrowed_builder.append_parameter_type(pt);
+        borrowed_builder.throws(tgt->get_throws());
+        auto borrowed_tgt = borrowed_builder.build();
+
+        auto borrowed_bind = make_member_bind(fn, receiver, borrowed_tgt, nullable_receiver, where);
+
+        static uint64_t adapt_counter = 0;
+        const std::string closure_name = "__lambda_closure_adapt_" + std::to_string(++adapt_counter);
+        auto root_ns = _unit.get_root_namespace();
+        auto closure_agg = root_ns->define_structure(closure_name);
+        closure_agg->assign_name(root_ns->get_name().with_back(closure_name));
+        closure_agg->set_visibility(model::PRIVATE);
+        auto closure_st = std::make_shared<model::struct_type>(closure_name, closure_agg);
+        _context->add_struct(closure_st);
+        closure_agg->set_struct_type(closure_st);
+
+        auto byte_ptr_type = _context->from_type(primitive_type::BYTE)->get_pointer();
+        auto drop_var = closure_agg->append_variable("__drop", false);
+        drop_var->set_type(byte_ptr_type);
+        if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(drop_var)) {
+            mv->assign_name(closure_agg->get_name().with_back("__drop"));
+            mv->set_visibility(model::PUBLIC);
+        }
+
+        auto bound_call_var = closure_agg->append_variable("__bound", false);
+        bound_call_var->set_type(borrowed_tgt);
+        if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(bound_call_var)) {
+            mv->assign_name(closure_agg->get_name().with_back("__bound"));
+            mv->set_visibility(model::PUBLIC);
+        }
+
+        std::unordered_set<struct_type*> in_progress;
+        _context->resolve_struct_type(closure_st, in_progress);
+
+        auto ctor = model::constructor::make_shared(closure_agg);
+        ctor->assign_name(closure_agg->get_name().with_back(closure_agg->get_short_name()));
+        ctor->set_visibility(model::PUBLIC);
+        ctor->create_this_parameter();
+        auto p = ctor->append_parameter("__bound_p", borrowed_tgt);
+        auto ctor_blk = std::make_shared<model::block>(ctor);
+        ctor->set_block(ctor_blk);
+
+        auto ctor_this = symbol_expression::from_variable(ctor->get_this_parameter());
+        ctor_this->set_type(ctor->get_this_parameter()->get_type());
+        auto ctor_bound_access = member_of_object_expression::make_shared(
+            ctor_this,
+            symbol_expression::from_variable(bound_call_var));
+        ctor_bound_access->set_type(bound_call_var->get_type()->get_reference());
+        auto p_sym = symbol_expression::from_variable(p);
+        p_sym->set_type(p->get_type()->get_reference());
+        auto asgn_expr = simple_assignation_expression::make_shared(
+            ctor_bound_access,
+            p_sym);
+        asgn_expr->accept(*this);
+
+        auto asgn_stmt = std::make_shared<model::expression_statement>(ctor_blk);
+        asgn_stmt->set_expression(asgn_expr);
+        ctor_blk->append_statement(asgn_stmt);
+
+        closure_agg->_constructors.push_back(ctor);
+        closure_agg->_children.push_back(ctor);
+
+        auto invoke_fn = closure_agg->define_function("__invoke", false);
+        invoke_fn->assign_name(closure_agg->get_name().with_back("__invoke"));
+        invoke_fn->set_visibility(model::PUBLIC);
+        invoke_fn->create_this_parameter();
+        if (tgt->get_return_type()) invoke_fn->set_return_type(tgt->get_return_type());
+        for (const auto& th : tgt->get_throws()) {
+            invoke_fn->add_throws_type(th);
+        }
+
+        std::vector<std::shared_ptr<expression>> call_args;
+        for (size_t i = 0; i < tgt->get_parameter_types().size(); ++i) {
+            auto pt = tgt->get_parameter_types()[i];
+            std::string pname = "p" + std::to_string(i);
+            auto p_param = invoke_fn->append_parameter(pname, pt);
+            call_args.push_back(model::symbol_expression::from_variable(p_param));
+        }
+
+        auto blk = std::make_shared<model::block>(invoke_fn);
+        invoke_fn->set_block(blk);
+
+        auto this_expr = symbol_expression::from_variable(invoke_fn->get_this_parameter());
+        this_expr->set_type(invoke_fn->get_this_parameter()->get_type());
+        auto bound_access = member_of_object_expression::make_shared(
+            this_expr,
+            symbol_expression::from_variable(bound_call_var));
+        bound_access->set_type(bound_call_var->get_type()->get_reference());
+
+        auto invoc = callable_invocation_expression::make_shared(bound_access, call_args);
+        invoc->accept(*this);
+
+        auto ret_stmt = std::make_shared<model::return_statement>(blk);
+        if (tgt->get_return_type()) {
+            ret_stmt->set_expression(invoc);
+        } else {
+            auto expr_stmt = std::make_shared<model::expression_statement>(blk);
+            expr_stmt->set_expression(invoc);
+            blk->append_statement(expr_stmt);
+        }
+        blk->append_statement(ret_stmt);
+
+        auto new_expr = new_expression::make_shared(closure_st, {borrowed_bind});
+        new_expr->set_type(closure_st->get_owner());
+        new_expr->accept(*this);
+
+        auto bind = callable_bind_expression::make_shared(
+            callable_bind_expression::kind::bound_method,
+            invoke_fn,
+            new_expr);
+        bind->set_type(tgt);
+        return bind;
     }
 
     // A `*`/`?` receiver bound to a nullable destination propagates the null instead
@@ -620,6 +800,14 @@ void type_reference_resolver::visit_callable_invocation_expression(callable_invo
              std::to_string(ct->get_parameter_types().size()),
              std::to_string(expr.arguments().size())});
     }
+    const auto& params = ct->get_parameter_types();
+    std::vector<std::shared_ptr<expression>> adapted_args = expr.arguments();
+    for (size_t n = 0; n < adapted_args.size() && n < params.size(); ++n) {
+        auto arg = adapted_args[n];
+        auto cast = adapt_type(arg, params[n]);
+        if (cast && cast != arg) adapted_args[n] = cast;
+    }
+    expr.assign_arguments(adapted_args);
     expr.set_type(ct->get_return_type());
 }
 
@@ -645,6 +833,84 @@ llvm::Value* implementation_generator::build_callable_from_function(
     return build_callable_value(*_builder, callable_ty, it->second, ctx);
 }
 
+llvm::Function* implementation_generator::get_or_create_closure_drop_function(
+    const std::shared_ptr<aggregate>& closure_agg)
+{
+    if (!closure_agg) return nullptr;
+    auto& mod = get_module();
+    auto& llvm_ctx = _builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    std::string drop_name = closure_agg->get_mangled_name() + "_drop";
+    if (auto* existing = mod.getFunction(drop_name)) return existing;
+
+    auto* drop_fn_type = llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
+    auto* drop_fn = llvm::Function::Create(
+        drop_fn_type, llvm::Function::InternalLinkage, drop_name, mod);
+
+    auto* saved_bb = _builder->GetInsertBlock();
+    auto saved_ip = _builder->saveIP();
+
+    auto* entry_bb = llvm::BasicBlock::Create(llvm_ctx, "entry", drop_fn);
+    _builder->SetInsertPoint(entry_bb);
+
+    llvm::Value* ctx_arg = &*drop_fn->arg_begin();
+    ctx_arg->setName("ctx");
+
+    auto st_type = closure_agg->get_struct_type();
+    auto* struct_llvm = st_type ? _context->get_llvm_type(st_type) : nullptr;
+
+    if (struct_llvm) {
+        // Run destructors on captured fields in reverse order
+        auto vars = closure_agg->variables();
+        for (auto it = vars.rbegin(); it != vars.rend(); ++it) {
+            auto var = std::dynamic_pointer_cast<member_variable_definition>(it->second);
+            if (!var) continue;
+            auto field_type = var->get_type();
+            if (!field_type) continue;
+            auto member_info = st_type->get_member(var->get_short_name());
+            if (!member_info) continue;
+
+            auto* field_ptr = _builder->CreateStructGEP(
+                struct_llvm, ctx_arg, (unsigned)member_info->index, var->get_short_name() + "_ptr");
+
+            if (type::is_owner(field_type)) {
+                auto own = std::dynamic_pointer_cast<owner_type>(field_type);
+                emit_owner_cleanup_if_nonnull(_builder.get(), mod, _context->_functions,
+                    field_ptr, own->get_owned_type(), "drop_field_owner");
+            } else if (auto ct = std::dynamic_pointer_cast<callable_type>(field_type)) {
+                if (ct->is_owner()) {
+                    emit_owned_callable_cleanup_if_nonnull(_builder.get(), mod,
+                        field_ptr, _context->get_or_create_callable_llvm_type(), "drop_field_call");
+                }
+            } else if (auto st = std::dynamic_pointer_cast<struct_type>(field_type)) {
+                if (auto agg = st->get_struct()) {
+                    if (auto dtor = agg->get_destructor()) {
+                        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                        if (dtor_it != _context->_functions.end()) {
+                            _builder->CreateCall(dtor_it->second, {field_ptr});
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Call free(ctx)
+    llvm::Function* free_fn = mod.getFunction("free");
+    if (!free_fn) {
+        auto* free_type = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
+        free_fn = llvm::Function::Create(
+            free_type, llvm::Function::ExternalLinkage, "free", mod);
+    }
+    _builder->CreateCall(free_fn, {ctx_arg});
+    _builder->CreateRetVoid();
+
+    _builder->restoreIP(saved_ip);
+    return drop_fn;
+}
+
 void implementation_generator::visit_callable_bind_expression(callable_bind_expression& expr) {
     llvm::Value* ctx_ptr = nullptr;
     if (expr.get_context()) {
@@ -652,6 +918,21 @@ void implementation_generator::visit_callable_bind_expression(callable_bind_expr
         expr.get_context()->accept(*this);
         ctx_ptr = _value;
         _value = nullptr;
+    }
+
+    if (expr.get_type()) {
+        if (auto ct = peel_to_callable(expr.get_type())) {
+            if (ct->is_owner() && ctx_ptr) {
+                if (auto target = expr.get_target()) {
+                    if (auto owner_agg = target->get_owner()) {
+                        auto* drop_fn = get_or_create_closure_drop_function(owner_agg);
+                        if (drop_fn) {
+                            _builder->CreateStore(drop_fn, ctx_ptr);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     switch (expr.get_kind()) {
@@ -950,6 +1231,11 @@ void implementation_generator::visit_callable_invocation_expression(callable_inv
 
     _sret_destination = saved_sret_dest;
     emit_callable_invocation(ct, callable_val, args, expr.get_type(), expr.first_lexeme());
+}
+
+void implementation_generator::visit_lambda_expression(lambda_expression& expr) {
+    _value = nullptr;
+    if (expr.bind()) expr.bind()->accept(*this);
 }
 
 } // namespace k::model::gen

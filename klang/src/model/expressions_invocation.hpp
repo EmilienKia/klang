@@ -673,7 +673,11 @@ public:
         const std::vector<std::shared_ptr<expression>>& captures) {
         std::shared_ptr<lambda_expression> c{new lambda_expression()};
         c->_bind = bind;
+        if (c->_bind) c->_bind->set_parent_expression(c);
         c->_captures = captures;
+        for (auto& cap : c->_captures) {
+            if (cap) cap->set_parent_expression(c);
+        }
         c->_capture_free = captures.empty();
         return c;
     }

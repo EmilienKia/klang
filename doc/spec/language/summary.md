@@ -701,22 +701,30 @@ public compute() : int -> Base::impl;  // visibility change
 - Redirector visibility is independent of the target.
 - Compatible with vtable and virtual dispatch.
 
-### 10.6 Function References
+### 10.6 Callables and Lambdas
 
-> Details: [function_references.md](functions/function_references.md)
+> Details: [callables.md](functions/callables.md) · [lambdas.md](functions/lambdas.md)
+
+Callables are fat pointers `{fn_ptr, ctx_ptr}` supporting uniform invocation across free functions, methods, functors, and lambdas:
 
 | Type                     | Description                                |
 |--------------------------|--------------------------------------------|
-| `*(Params)`              | Pointer to free function (nullable, rebindable) |
-| `?(Params)`              | View to free function (nullable, immutable) |
-| `+(Params)`              | Link to free function (non-null, rebindable) |
-| `T::*(Params)` etc.      | Same for member method of `T`              |
+| `*(Params):Ret`          | Pointer callable (nullable, rebindable)    |
+| `?(Params):Ret`          | View callable (nullable, immutable)        |
+| `+(Params):Ret`          | Link callable (non-null, rebindable)       |
+| `&(Params):Ret`          | Reference callable (non-null, immutable)   |
+| `!(Params):Ret`          | Owner callable (exclusive ownership, move-only, heap closure) |
+| `T::*(Params):Ret` etc.  | Unbound member method reference            |
 
-- Obtaining address: `fp = add_one;` (symbol without `()`).
-- Free call: `fp(args)`.
-- Member call: `(obj.*mfp)(args)` / `(ptr->*mfp)(args)`.
-- Overload disambiguation by declared type.
-- First-class values: passable as parameter, returnable.
+- Free function: `fp : *(int):int = add_one;` (context is null).
+- Bound method: `fp : &(int):int = obj.add;` (context is object address).
+- Owned member bind: `fp : !(int):int = obj.add;` (only global/static/`this` receivers).
+- Lambda: `[captures](params):Ret { body }`.
+  - Borrowed lambda (`&`): stack closure, local lifetime.
+  - Owned lambda (`!`): heap closure, move-only, destroyed on scope exit (local captures by value only).
+- Invocations: `fp(args)`.
+- Return type is required (omitted = void).
+- Move-only semantics apply to `!(Params):Ret`. Borrowed callables cannot be converted to owned callables.
 
 ### 10.7 Operator Overloading
 

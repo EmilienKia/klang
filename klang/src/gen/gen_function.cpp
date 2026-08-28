@@ -229,7 +229,7 @@ void signature_resolver::visit_parameter(parameter& param) {
             }
         }
         if (type::is_resolved(res_type)) {
-            param.set_type(res_type);
+            param.set_type(_context->collapse_callable_addresser(res_type));
         }
         // If still unresolved, silently leave it — the full type_reference_resolver
         // pass will either resolve it or emit the proper error.
@@ -319,7 +319,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                 "Cannot resolve type for parameter '{}': the type name is unknown",
                 {param.get_short_name()});
         }
-        param.set_type(res_type);
+        param.set_type(_context->collapse_callable_addresser(res_type));
         } // end else (not unresolved_callable_type)
     }
 
@@ -674,13 +674,13 @@ void signature_resolver::visit_function(function& fn) {
             } else {
                 auto resolved = _context->resolve_type(fn.get_return_type());
                 if (resolved && type::is_resolved(resolved)) {
-                    fn.set_return_type(resolved);
+                    fn.set_return_type(_context->collapse_callable_addresser(resolved));
                 }
             }
         } else {
             auto resolved = _context->resolve_type(fn.get_return_type());
             if (resolved && type::is_resolved(resolved)) {
-                fn.set_return_type(resolved);
+                fn.set_return_type(_context->collapse_callable_addresser(resolved));
             }
         }
     }
@@ -749,7 +749,7 @@ void type_reference_resolver::visit_function(function& fn) {
             } else {
                 auto resolved = _context->resolve_type(fn.get_return_type());
                 if (resolved && type::is_resolved(resolved)) {
-                    fn.set_return_type(resolved);
+                    fn.set_return_type(_context->collapse_callable_addresser(resolved));
                 } else if (unres->has_template_args()) {
                     // Template type (e.g. Expected<R,E>) — try to instantiate using the
                     // function's stored substitution map (set when this is a concrete
@@ -758,21 +758,21 @@ void type_reference_resolver::visit_function(function& fn) {
                     // Accept even if the struct_type's LLVM type is not yet materialized.
                     if (tpl_resolved && (type::is_resolved(tpl_resolved)
                             || std::dynamic_pointer_cast<struct_type>(tpl_resolved))) {
-                        fn.set_return_type(tpl_resolved);
+                        fn.set_return_type(_context->collapse_callable_addresser(tpl_resolved));
                     }
                 }
             }
         } else {
             auto resolved = _context->resolve_type(fn.get_return_type());
             if (resolved && type::is_resolved(resolved)) {
-                fn.set_return_type(resolved);
+                fn.set_return_type(_context->collapse_callable_addresser(resolved));
             } else {
                 // Try full chain resolution for wrapper types around unresolved templates.
                 // Accept the result even if its LLVM type is not yet materialized (struct_type
                 // without LLVM type), as long as no unresolved_type nodes remain.
                 auto resolved2 = resolve_type_chain(fn.get_return_type(), &fn);
                 if (resolved2 && !type::contains_unresolved(resolved2)) {
-                    fn.set_return_type(resolved2);
+                    fn.set_return_type(_context->collapse_callable_addresser(resolved2));
                 }
             }
         }
@@ -1279,8 +1279,13 @@ void implementation_generator::visit_function(function &function) {
     {
         std::vector<std::shared_ptr<parameter>> owner_params;
         for (const auto& param : function.parameters()) {
-            if (type::is_owner(param->get_type())) {
+            auto pt = param->get_type();
+            if (type::is_owner(pt)) {
                 owner_params.push_back(param);
+            } else if (auto ct = std::dynamic_pointer_cast<callable_type>(pt)) {
+                if (ct->is_owner()) {
+                    owner_params.push_back(param);
+                }
             }
         }
         if (!owner_params.empty()) {

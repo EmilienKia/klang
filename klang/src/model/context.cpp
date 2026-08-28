@@ -246,11 +246,12 @@ namespace {
 /** Map a K addresser token to the matching callable addresser. */
 std::optional<callable_type::addresser> callable_addresser_of(lex::operator_::type_t op) {
     switch (op) {
-        case lex::operator_::STAR:          return callable_type::addresser::pointer;
-        case lex::operator_::QUESTION_MARK: return callable_type::addresser::view;
-        case lex::operator_::PLUS:          return callable_type::addresser::link;
-        case lex::operator_::AMPERSAND:     return callable_type::addresser::reference;
-        default:                            return std::nullopt;
+        case lex::operator_::STAR:             return callable_type::addresser::pointer;
+        case lex::operator_::QUESTION_MARK:    return callable_type::addresser::view;
+        case lex::operator_::PLUS:             return callable_type::addresser::link;
+        case lex::operator_::AMPERSAND:        return callable_type::addresser::reference;
+        case lex::operator_::EXCLAMATION_MARK: return callable_type::addresser::owner;
+        default:                               return std::nullopt;
     }
 }
 
@@ -273,7 +274,7 @@ std::shared_ptr<type> context::readdress_callable_suffix(const std::shared_ptr<t
         if (!addr) {
             auto diag = k::log::diagnostic::make_error(
                 static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_BAD_ADDRESSER),
-                "'{}' is not a valid callable addresser; use '*', '?', '+' or '&'",
+                "'{}' is not a valid callable addresser; use '*', '?', '+', '&' or '!'",
                 {std::string{op.content}});
             diag.at(op);
             throw context_resolution_error(std::move(diag));
@@ -289,7 +290,7 @@ std::shared_ptr<type> context::readdress_callable_suffix(const std::shared_ptr<t
         if (!addr) {
             auto diag = k::log::diagnostic::make_error(
                 static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_BAD_ADDRESSER),
-                "'{}' is not a valid callable addresser; use '*', '?', '+' or '&'",
+                "'{}' is not a valid callable addresser; use '*', '?', '+', '&' or '!'",
                 {std::string{op.content}});
             diag.at(op);
             throw context_resolution_error(std::move(diag));
@@ -300,7 +301,7 @@ std::shared_ptr<type> context::readdress_callable_suffix(const std::shared_ptr<t
 }
 
 /**
- * Reject a type suffix that is not a valid callable addresser (`!`, `#`, `[]`).
+ * Reject a type suffix that is not a valid callable addresser (`#`, `[]`).
  */
 void context::reject_callable_addresser(const std::shared_ptr<type>& subtype, const char* suffix)
 {
@@ -313,7 +314,7 @@ void context::reject_callable_addresser(const std::shared_ptr<type>& subtype, co
     if (!is_callable) return;
     throw context_resolution_error(k::log::diagnostic::make_error(
         static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_BAD_ADDRESSER),
-        "'{}' is not a valid callable addresser; use '*', '?', '+' or '&'",
+        "'{}' is not a valid callable addresser; use '*', '?', '+', '&' or '!'",
         {std::string{suffix}}));
 }
 
@@ -331,6 +332,7 @@ std::shared_ptr<type> context::collapse_callable_addresser(const std::shared_ptr
     else if (type::is_pointer(t))   addr = callable_type::addresser::pointer;
     else if (type::is_link(t))      addr = callable_type::addresser::link;
     else if (type::is_view(t))      addr = callable_type::addresser::view;
+    else if (type::is_owner(t))     addr = callable_type::addresser::owner;
 
     if (addr) {
         // `const F&` parses as reference(const(F)): the const qualifier sits between
@@ -444,7 +446,9 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             return {}; // Shall not happen
     } else if(auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*own->subtype);
-        reject_callable_addresser(subtype, "!");
+        if (auto readdressed = readdress_callable_suffix(subtype, own->owner_op)) {
+            return readdressed;
+        }
         // int[] is canonicalized to reference(array(int)) for stack/parameter use,
         // but for ownership (int[]!) we need owner(array(int)), not owner(ref(array(int))).
         // Unwrap the reference when it wraps an unsized array inside an owner.
@@ -477,6 +481,8 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
                 rk = callable_type::addresser::link;
             } else if (*frt->addresser == lex::operator_::AMPERSAND) {
                 rk = callable_type::addresser::reference;
+            } else if (*frt->addresser == lex::operator_::EXCLAMATION_MARK) {
+                rk = callable_type::addresser::owner;
             } else {
                 rk = callable_type::addresser::pointer;
             }

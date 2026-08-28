@@ -351,6 +351,58 @@ inline void emit_owner_cleanup_if_nonnull(
 }
 
 /**
+ * Emit the full conditional cleanup sequence for an owned callable (`!(...)`):
+ *   if (callable_slot.ctx != null) { drop(callable_slot.ctx); }
+ *   if (null_out) { callable_slot = { null, null }; }
+ *
+ * An owned callable fat pointer has type `%__k.callable = { ptr fn, ptr ctx }`.
+ * When ctx is non-null, ctx points to a heap closure whose first field is
+ * `void (*drop)(void* ctx) noexcept`.
+ *
+ * @param builder              The IRBuilder positioned at the insertion point.
+ * @param mod                  The LLVM module.
+ * @param callable_alloca      The alloca holding the %__k.callable value.
+ * @param callable_llvm_type   The %__k.callable llvm::StructType*.
+ * @param label_prefix         A label prefix for the generated basic blocks.
+ * @param null_out             If true (default), zeroes the callable slot after destroy.
+ */
+inline void emit_owned_callable_cleanup_if_nonnull(
+    llvm::IRBuilder<>* builder,
+    llvm::Module& mod,
+    llvm::Value* callable_alloca,
+    llvm::StructType* callable_llvm_type,
+    const std::string& label_prefix = "owned_callable_cleanup",
+    bool null_out = true)
+{
+    auto& llvm_ctx = builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    auto* ctx_addr = builder->CreateStructGEP(
+        callable_llvm_type, callable_alloca, 1, label_prefix + "_ctx_addr");
+    llvm::Value* ctx_ptr = builder->CreateLoad(ptr_ty, ctx_addr, label_prefix + "_ctx");
+
+    auto* fn = builder->GetInsertBlock()->getParent();
+    auto* nonnull_bb = llvm::BasicBlock::Create(llvm_ctx, label_prefix + "_nonnull", fn);
+    auto* done_bb    = llvm::BasicBlock::Create(llvm_ctx, label_prefix + "_done",    fn);
+
+    auto* is_null = builder->CreateICmpEQ(
+        ctx_ptr, llvm::ConstantPointerNull::get(ptr_ty), label_prefix + "_null");
+    builder->CreateCondBr(is_null, done_bb, nonnull_bb);
+
+    builder->SetInsertPoint(nonnull_bb);
+    // ctx_ptr holds __k_owned_callable_header at offset 0: void (*drop)(void* ctx)
+    llvm::Value* drop_fn_ptr = builder->CreateLoad(ptr_ty, ctx_ptr, label_prefix + "_drop_fn");
+    auto* drop_fn_type = llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
+    builder->CreateCall(drop_fn_type, drop_fn_ptr, {ctx_ptr});
+    builder->CreateBr(done_bb);
+
+    builder->SetInsertPoint(done_bb);
+    if (null_out) {
+        builder->CreateStore(llvm::ConstantAggregateZero::get(callable_llvm_type), callable_alloca);
+    }
+}
+
+/**
  * Emit cleanup for all elements of a stack-allocated sized array.
  *
  * For struct elements with a destructor: calls the destructor on each element

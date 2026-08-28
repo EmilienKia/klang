@@ -729,6 +729,7 @@ std::string mangler::mangle_type(const type& ty) const {
             case callable_type::addresser::view:      s << SYMBOL_MODIFIER_VIEW;    break;
             case callable_type::addresser::link:      s << SYMBOL_MODIFIER_LINK;    break;
             case callable_type::addresser::reference: s << SYMBOL_MODIFIER_REF;     break;
+            case callable_type::addresser::owner:     s << SYMBOL_MODIFIER_OWNER;   break;
         }
         s << SYMBOL_MODIFIER_FN_REF SYMBOL_MODIFIER_MEM_FN;
         // owner struct
@@ -764,6 +765,7 @@ std::string mangler::mangle_type(const type& ty) const {
             case callable_type::addresser::view:      s << SYMBOL_MODIFIER_VIEW;    break;
             case callable_type::addresser::link:      s << SYMBOL_MODIFIER_LINK;    break;
             case callable_type::addresser::reference: s << SYMBOL_MODIFIER_REF;     break;
+            case callable_type::addresser::owner:     s << SYMBOL_MODIFIER_OWNER;   break;
         }
         s << SYMBOL_MODIFIER_FN_REF;
         if (fn_ty->get_parameter_types().empty()) {

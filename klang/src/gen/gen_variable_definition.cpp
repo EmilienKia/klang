@@ -247,12 +247,15 @@ void type_reference_resolver::resolve_variable_type(
                 // Unsized arrays are canonicalised to ref<array<T>> by resolve_type,
                 // but inside an owner we want owner(array(T)), not owner(ref<array<T>>).
                 resolved_inner = strip_ref_array(resolved_inner);
-                var.set_type(resolved_inner->get_owner());
+                auto res_owner = _context->collapse_callable_addresser(resolved_inner->get_owner());
+                var.set_type(res_owner);
             } else {
                 throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED), var_lexeme,
                     "Unknown inner type for owner variable '{}': cannot resolve '{}'",
                     {var.get_fq_name(), inner ? inner->to_string() : "?"});
             }
+        } else {
+            var.set_type(_context->collapse_callable_addresser(var.get_type()));
         }
         return;
     }

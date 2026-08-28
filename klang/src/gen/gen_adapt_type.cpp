@@ -131,6 +131,26 @@ type_reference_resolver::adapt_callable_type(
                     }
                     bind->set_type(dest_ct);
                     lambda->set_type(dest_ct);
+                    if (dest_ct->is_owner() && bind->get_context()) {
+                        if (auto ast_lambda = lambda->get_ast_node_as<parse::ast::lambda_expression>()) {
+                            for (const auto& cap : ast_lambda->captures) {
+                                if (cap.is_reference && cap.name && !cap.is_this) {
+                                    throw_error(static_cast<unsigned int>(k::diag::callable_model_diag::ERR_LAMBDA_OWNED_CAPTURE_LOCAL_REF),
+                                        expr ? expr->first_lexeme() : lex::opt_any_lexeme{},
+                                        "An owned lambda ('!') cannot capture local variable '{}' by reference; capture it by value instead",
+                                        {std::string{cap.name->content}});
+                                }
+                            }
+                        }
+                        if (auto tmp = std::dynamic_pointer_cast<temporary_construction_expression>(bind->get_context())) {
+                            auto new_expr = new_expression::make_shared(tmp->constructed_type(), tmp->arguments());
+                            new_expr->set_type(tmp->constructed_type()->get_owner());
+                            new_expr->accept(*this);
+                            bind->set_context(new_expr);
+                        }
+                    } else if (bind->get_context()) {
+                        bind->get_context()->accept(*this);
+                    }
                     return bind;
                 }
             }
@@ -183,9 +203,14 @@ type_reference_resolver::adapt_callable_type(
                     bind->set_type(tgt_frt);
                     return bind;
                 }
-                // Variable holding a callable: load the stored value from the alloca.
+                // Variable holding a callable: load or move the stored value from the alloca.
                 if (!tgt_frt->is_unbound_member() && !src_frt->is_unbound_member()) {
                     check_callable_conversion(src_frt, tgt_frt, expr->first_lexeme());
+                }
+                if (tgt_frt->is_owner() && src_frt->is_owner()) {
+                    auto move = owner_move_expression::make_shared(expr);
+                    move->set_type(tgt_frt);
+                    return move;
                 }
                 return adapt_reference_load_value(expr);
             }

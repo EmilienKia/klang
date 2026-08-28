@@ -72,11 +72,21 @@ inline llvm::Value* build_callable_value(llvm::IRBuilder<>& builder,
 
 /** Extract the function address field of a `%__k.callable` value. */
 inline llvm::Value* extract_fn(llvm::IRBuilder<>& builder, llvm::Value* callable_val) {
+    if (callable_val && callable_val->getType()->isPointerTy()) {
+        auto* ptr_ty = llvm::PointerType::get(builder.getContext(), 0);
+        auto* callable_ty = llvm::StructType::get(builder.getContext(), {ptr_ty, ptr_ty});
+        callable_val = builder.CreateLoad(callable_ty, callable_val, "callable.val");
+    }
     return builder.CreateExtractValue(callable_val, {0}, "callable.fn");
 }
 
 /** Extract the invocation context field of a `%__k.callable` value. */
 inline llvm::Value* extract_ctx(llvm::IRBuilder<>& builder, llvm::Value* callable_val) {
+    if (callable_val && callable_val->getType()->isPointerTy()) {
+        auto* ptr_ty = llvm::PointerType::get(builder.getContext(), 0);
+        auto* callable_ty = llvm::StructType::get(builder.getContext(), {ptr_ty, ptr_ty});
+        callable_val = builder.CreateLoad(callable_ty, callable_val, "callable.val");
+    }
     return builder.CreateExtractValue(callable_val, {1}, "callable.ctx");
 }
 

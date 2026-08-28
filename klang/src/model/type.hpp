@@ -879,12 +879,13 @@ inline bool type::is_struct(const std::shared_ptr<type>& t) {
  *   * `pointer`   — `*(int):long`, nullable and rebindable;
  *   * `view`      — `?(int):long`, nullable, not rebindable;
  *   * `link`      — `+(int):long`, non-null, rebindable;
- *   * `reference` — `&(int):long`, non-null, not rebindable.
+ *   * `reference` — `&(int):long`, non-null, not rebindable;
+ *   * `owner`     — `!(int):long`, nullable, rebindable (owning closure).
  */
 class callable_type : public type {
 public:
     /** Addresser applied to the prototype. `none` = bare prototype (not instantiable). */
-    enum class addresser { none, pointer, view, link, reference };
+    enum class addresser { none, pointer, view, link, reference, owner };
 
 protected:
     friend class type;
@@ -920,12 +921,16 @@ public:
 
     /** A bare prototype has no addresser: it denotes a signature, not a value type. */
     bool is_prototype() const { return _addresser == addresser::none; }
-    /** Only `*` and `?` callables may hold a null target. */
+    /** `*`, `?` and `!` callables may hold a null target. */
     bool is_nullable() const { return _addresser == addresser::pointer
-                                   || _addresser == addresser::view; }
-    /** Only `*` and `+` callables may be re-assigned after initialisation. */
+                                   || _addresser == addresser::view
+                                   || _addresser == addresser::owner; }
+    /** `*`, `+` and `!` callables may be re-assigned after initialisation. */
     bool is_rebindable() const { return _addresser == addresser::pointer
-                                     || _addresser == addresser::link; }
+                                     || _addresser == addresser::link
+                                     || _addresser == addresser::owner; }
+    /** An owned callable (`!`) owns its closure environment. */
+    bool is_owner() const { return _addresser == addresser::owner; }
     /** An unbound member function reference (`T::*(int)`) is not a fat callable. */
     virtual bool is_unbound_member() const { return false; }
 

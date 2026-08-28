@@ -965,6 +965,11 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                                             _value, expr.first_lexeme());
                 _builder->CreateStore(_value, object_ref);
             }
+        } else {
+            // Default construction: zero-initialize the callable slot { null, null }
+            _builder->CreateStore(
+                llvm::ConstantAggregateZero::get(_context->get_or_create_callable_llvm_type()),
+                object_ref);
         }
         _value = object_ref;
 

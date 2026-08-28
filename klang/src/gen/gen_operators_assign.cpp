@@ -950,6 +950,23 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     }
 
     // ------------------------------------------------------------------
+    // Owned callable assignment: cleanup old closure (if any), store new fat callable
+    // ------------------------------------------------------------------
+    if (auto ct = std::dynamic_pointer_cast<callable_type>(target_type)) {
+        if (ct->is_owner()) {
+            emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
+                left, _context->get_or_create_callable_llvm_type(), "owned_callable_asgn", /*null_out=*/false);
+            llvm::Value* new_callable = right;
+            if (!new_callable) {
+                new_callable = llvm::ConstantAggregateZero::get(_context->get_or_create_callable_llvm_type());
+            }
+            _builder->CreateStore(new_callable, left);
+            _value = left;
+            return;
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Scalar / pointer assignment (existing behaviour)
     // ------------------------------------------------------------------
 

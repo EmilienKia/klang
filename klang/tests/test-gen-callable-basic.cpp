@@ -347,3 +347,144 @@ TEST_CASE("Callable: relational operators are forbidden on callables", "[gen][ca
         }
     )SRC", nullptr));
 }
+
+TEST_CASE("Callable: local variable of owned callable type", "[gen][callable][owner]")
+{
+    auto jit = gen_jit(R"SRC(
+        module gen_callable_basic_21;
+        add_one(x : int) : int { return x + 1; }
+        test() : int {
+            fp : !(int):int = add_one;
+            return fp(41);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Callable: owned callable can be default-initialized to null", "[gen][callable][owner][null]")
+{
+    auto jit = gen_jit(R"SRC(
+        module gen_callable_basic_22;
+        test() : int {
+            fp : !(int):int;
+            if (fp == null) { return 42; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Callable: borrow callable from owned callable", "[gen][callable][owner][borrow]")
+{
+    auto jit = gen_jit(R"SRC(
+        module gen_callable_basic_23;
+        add_one(x : int) : int { return x + 1; }
+        test() : int {
+            owned : !(int):int = add_one;
+            borrowed : &(int):int = owned;
+            return borrowed(41);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Callable: owned callable variable initialization moves and nulls source", "[gen][callable][owner][move]")
+{
+    auto jit = gen_jit(R"SRC(
+        module gen_callable_basic_24;
+        add_one(x : int) : int { return x + 1; }
+        test() : int {
+            src : !(int):int = add_one;
+            dst : !(int):int = src;
+            if (src == null && dst != null) {
+                return dst(41);
+            }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Callable: owned callable assignment moves and nulls source", "[gen][callable][owner][assign]")
+{
+    auto jit = gen_jit(R"SRC(
+        module gen_callable_basic_25;
+        add_one(x : int) : int { return x + 1; }
+        test() : int {
+            src : !(int):int = add_one;
+            dst : !(int):int;
+            dst = src;
+            if (src == null && dst != null) {
+                return dst(41);
+            }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Callable: pass owned callable as parameter moves ownership", "[gen][callable][owner][param]")
+{
+    auto jit = gen_jit(R"SRC(
+        module gen_callable_basic_26;
+        add_one(x : int) : int { return x + 1; }
+        consume(f : !(int):int) : int {
+            if (f != null) {
+                return f(41);
+            }
+            return 0;
+        }
+        test() : int {
+            src : !(int):int = add_one;
+            res : int = consume(src);
+            if (src == null && res == 42) {
+                return 42;
+            }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Callable: return owned callable transfers ownership to caller", "[gen][callable][owner][return]")
+{
+    auto jit = gen_jit(R"SRC(
+        module gen_callable_basic_27;
+        add_one(x : int) : int { return x + 1; }
+        make_fn() : !(int):int {
+            f : !(int):int = add_one;
+            return f;
+        }
+        test() : int {
+            res : !(int):int = make_fn();
+            if (res != null) {
+                return res(41);
+            }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+

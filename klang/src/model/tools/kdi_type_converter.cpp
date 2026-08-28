@@ -164,11 +164,12 @@ convert_aggregate_ref(const kdi::kdi_aggregate_ref& ref, unit& owner,
 static callable_type::addresser model_addresser(kdi::kdi_callable_addresser a)
 {
     switch (a) {
-        case kdi::kdi_callable_addresser::none: return callable_type::addresser::none;
-        case kdi::kdi_callable_addresser::view: return callable_type::addresser::view;
-        case kdi::kdi_callable_addresser::link: return callable_type::addresser::link;
-        case kdi::kdi_callable_addresser::ref:  return callable_type::addresser::reference;
-        case kdi::kdi_callable_addresser::ptr:  break;
+        case kdi::kdi_callable_addresser::none:  return callable_type::addresser::none;
+        case kdi::kdi_callable_addresser::view:  return callable_type::addresser::view;
+        case kdi::kdi_callable_addresser::link:  return callable_type::addresser::link;
+        case kdi::kdi_callable_addresser::ref:   return callable_type::addresser::reference;
+        case kdi::kdi_callable_addresser::owner: return callable_type::addresser::owner;
+        case kdi::kdi_callable_addresser::ptr:   break;
     }
     return callable_type::addresser::pointer;
 }

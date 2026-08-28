@@ -402,6 +402,7 @@ std::string unresolved_callable_type::to_string() const {
         case callable_type::addresser::view:      stm << "?("; break;
         case callable_type::addresser::link:      stm << "+("; break;
         case callable_type::addresser::reference: stm << "&("; break;
+        case callable_type::addresser::owner:     stm << "!("; break;
     }
     for (size_t i = 0; i < _parameter_types.size(); ++i) {
         if (i > 0) stm << ", ";
@@ -963,6 +964,7 @@ std::string callable_type::to_string() const {
         case addresser::view:      stm << "?"; break;
         case addresser::link:      stm << "+"; break;
         case addresser::reference: stm << "&"; break;
+        case addresser::owner:     stm << "!"; break;
     }
     stm << "(";
     for (size_t n = 0; n < _parameter_types.size(); ++n) {
@@ -1043,6 +1045,7 @@ std::string member_function_reference_type::to_string() const {
         case addresser::view:      stm << "?"; break;
         case addresser::link:      stm << "+"; break;
         case addresser::reference: stm << "&"; break;
+        case addresser::owner:     stm << "!"; break;
     }
     stm << "(";
     for (size_t n = 0; n < _parameter_types.size(); ++n) {

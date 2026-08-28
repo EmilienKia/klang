@@ -329,6 +329,14 @@ enum class callable_model_diag : unsigned int {
     ERR_CALLABLE_NULL_RECEIVER_BIND               = 0x0252,
     /** An addresser suffix was applied to a typedef naming a bare callable prototype. */
     ERR_CALLABLE_TYPEDEF_PROTOTYPE_READDRESS      = 0x0253,
+    /** A borrowed callable cannot be converted to an owned callable (`!`). */
+    ERR_CALLABLE_OWNER_FROM_BORROW                = 0x0254,
+    /** An owned callable cannot bind a member function on a local/parameter receiver. */
+    ERR_CALLABLE_OWNED_RECEIVER_LOCAL             = 0x0255,
+    /** An owned lambda cannot capture local variables by reference. */
+    ERR_LAMBDA_OWNED_CAPTURE_LOCAL_REF            = 0x0256,
+    /** Implicit capture by reference of a local variable is forbidden in an owned lambda. */
+    ERR_LAMBDA_OWNED_IMPLICIT_CAPTURE_LOCAL       = 0x0257,
 };
 
 } // namespace k::diag

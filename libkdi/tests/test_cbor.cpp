@@ -385,7 +385,7 @@ TEST_CASE("CBOR: callable type round-trips every addresser", "[cbor][type][calla
     const kdi_callable_addresser all[] = {
         kdi_callable_addresser::none, kdi_callable_addresser::ptr,
         kdi_callable_addresser::view, kdi_callable_addresser::link,
-        kdi_callable_addresser::ref};
+        kdi_callable_addresser::ref,  kdi_callable_addresser::owner};
     for (auto a : all) {
         auto t = rt_type(kdi_type::make_callable(a, kdi_type{kdi_void_type{}}));
         REQUIRE(std::get<kdi_callable_type>(t.value).addresser == a);

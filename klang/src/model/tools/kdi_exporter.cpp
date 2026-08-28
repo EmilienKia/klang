@@ -223,6 +223,7 @@ kdi::kdi_callable_addresser kdi_builder::to_kdi_addresser(callable_type::address
         case callable_type::addresser::view:      return kdi::kdi_callable_addresser::view;
         case callable_type::addresser::link:      return kdi::kdi_callable_addresser::link;
         case callable_type::addresser::reference: return kdi::kdi_callable_addresser::ref;
+        case callable_type::addresser::owner:     return kdi::kdi_callable_addresser::owner;
         case callable_type::addresser::pointer:   break;
     }
     return kdi::kdi_callable_addresser::ptr;

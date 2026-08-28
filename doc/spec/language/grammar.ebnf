@@ -722,18 +722,18 @@ TypeSpec
     ;
 
 (* A callable type: either a bare prototype (no addresser, only valid as alias/template
-   target) or a prototype qualified by an addresser (* ? + &).
+   target) or a prototype qualified by an addresser (* ? + & !).
    Examples:
      (int,double):long              -- prototype, no addresser
      *(int):int                     -- pointer (nullable, rebindable)
      ?(int)                         -- view (nullable, non-rebindable), void return
      +(int,int):bool                -- link (non-null, rebindable)
      &():int                        -- reference (non-null, non-rebindable)
+     !(int):int                     -- owner (exclusive ownership of heap closure, move-only)
      const *(int):int               -- const callable pointer (non-rebindable)
      (int):int throws IOException   -- callable with checked-exception contract
    K has no 'void' keyword: void return = omitted return type.
-   '!' and '#' addressers are FORBIDDEN on callables (ERR_CALLABLE_BAD_ADDRESSER).
-   The '&' addresser is NEW compared to the old function-reference types.            *)
+   '#' addresser is FORBIDDEN on callables (ERR_CALLABLE_BAD_ADDRESSER).             *)
 CallableTypeSpec
     = [ 'const' ] , [ CallableAddresser ] ,
       '(' , [ TypeList ] , ')' ,
@@ -750,6 +750,7 @@ CallableAddresser
     | '?'   (* view    — nullable, non-rebindable *)
     | '+'   (* link    — non-null,  rebindable *)
     | '&'   (* reference — non-null, non-rebindable; must be explicitly initialised *)
+    | '!'   (* owner   — exclusive ownership of closure environment, move-only *)
     ;
 
 (* Unbound member function reference: T::*(params):R, T::?(params), T::+(params).

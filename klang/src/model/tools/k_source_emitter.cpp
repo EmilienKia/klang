@@ -188,9 +188,12 @@ void k_source_emitter::emit_type(const std::shared_ptr<type>& t) {
         }
         _os << ")";
         switch (frt->get_addresser()) {
-            case callable_type::addresser::pointer: _os << "*"; break;
-            case callable_type::addresser::view:    _os << "?"; break;
-            case callable_type::addresser::link:    _os << "+"; break;
+            case callable_type::addresser::pointer:   _os << "*"; break;
+            case callable_type::addresser::view:      _os << "?"; break;
+            case callable_type::addresser::link:      _os << "+"; break;
+            case callable_type::addresser::reference: _os << "&"; break;
+            case callable_type::addresser::owner:     _os << "!"; break;
+            case callable_type::addresser::none:      break;
         }
         _os << " -> ";
         emit_type(frt->get_return_type());

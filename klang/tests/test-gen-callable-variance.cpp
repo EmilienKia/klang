@@ -418,6 +418,39 @@ TEST_CASE("Callable variance: rebinding a '+' callable from a null '*' callable 
     REQUIRE(res.exit_code != 42);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. Owned callable (!) variance and conversions
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Callable variance: converting a borrowed callable to an owned callable is rejected",
+    "[gen][callable][variance][owner]")
+{
+    expect_diag(R"SRC(
+        module gen_callable_variance_20;
+        add_one(x : int) : int { return x + 1; }
+        test() : int {
+            borrowed : *(int):int = add_one;
+            owned : !(int):int = borrowed;
+            return 0;
+        }
+    )SRC", k::diag::callable_model_diag::ERR_CALLABLE_OWNER_FROM_BORROW);
+}
+
+TEST_CASE("Callable variance: converting a reference callable to an owned callable is rejected",
+    "[gen][callable][variance][owner]")
+{
+    expect_diag(R"SRC(
+        module gen_callable_variance_21;
+        add_one(x : int) : int { return x + 1; }
+        test() : int {
+            borrowed : &(int):int = add_one;
+            owned : !(int):int = borrowed;
+            return 0;
+        }
+    )SRC", k::diag::callable_model_diag::ERR_CALLABLE_OWNER_FROM_BORROW);
+}
+
+
 TEST_CASE("Callable variance: 'null' cannot initialise a non-null callable",
     "[gen][callable][variance][null]")
 {

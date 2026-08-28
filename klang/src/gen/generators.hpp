@@ -449,6 +449,9 @@ public:
     /** Fill the primary vtable with resolved function pointers. */
     void fill_primary_vtable(klass& klass);
 
+    /** Get or create the synthetic drop function for an owned closure aggregate. */
+    llvm::Function* get_or_create_closure_drop_function(const std::shared_ptr<aggregate>& closure_agg);
+
     /** Build secondary vtables from model_materializer pre-computed specs. */
     void fill_secondary_vtables(klass& klass);
 
@@ -697,6 +700,7 @@ public:
     void visit_delete_expression(delete_expression&) override;
     void visit_callable_bind_expression(callable_bind_expression&) override;
     void visit_callable_invocation_expression(callable_invocation_expression&) override;
+    void visit_lambda_expression(lambda_expression&) override;
 
     /**
      * Build a `%__k.callable` value `{ @fn, ctx }` for the given target function.

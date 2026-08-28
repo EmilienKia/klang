@@ -225,26 +225,44 @@ bad : const &():void = const[&count]() {
 
 ## 7. Closure lifetime
 
-A lambda's closure is a local anonymous struct. Its lifetime rules mirror those of any other local variable:
+### 7.1 Borrowed Closures (`&(Params):Ret`)
+
+For a borrowed callable (`&(Params):Ret`), the lambda's closure is a local anonymous struct allocated on the stack. Its lifetime rules mirror those of any other local variable:
 
 - A lambda defined inside a function lives until the **end of the enclosing block** in which it was defined.
-- Storing a capturing lambda's callable in a **longer-lived location** — a returned value, a member variable (of a different object), or a global — creates a dangling reference. The compiler emits `WARN_LAMBDA_ESCAPES_SCOPE` for statically detectable escapes.
+- Storing a capturing borrowed lambda's callable in a **longer-lived location** — a returned value, a member variable (of a different object), or a global — creates a dangling reference.
 - **Capture-free lambdas** hold no closure state and therefore **never dangle** — they may be stored anywhere freely.
 
 ```k
-// Dangerous — returned callable references a local closure
+// Dangerous — returned borrowed callable references a stack closure
 makeCounter() : &():int {
     count : int = 0;
-    return [&count]():int { return count; };  // WARN_LAMBDA_ESCAPES_SCOPE: closure escapes
-}
-
-// Safe — capture-free; no closure is created
-makeAdder() : &(int,int):int {
-    return (a:int, b:int):int { return a + b; };  // OK
+    return [&count]():int { return count; };  // Error/Warning: closure escapes
 }
 ```
 
-See [§9](#9-lambdas-in-special-contexts) for member-variable and global-variable initializer contexts, which are safe.
+### 7.2 Owned Closures (`!(Params):Ret`)
+
+When assigned to or returned as an **owned callable** (`!(Params):Ret`), the closure is **heap-allocated** via `new`:
+
+- The closure is uniquely owned by the receiving `!(Params):Ret` variable.
+- When the owner goes out of scope or is reassigned, the closure environment is automatically destroyed (captured members destructed in reverse order) and freed.
+- **Capture restrictions:** Local variables in the enclosing scope **must not** be captured by reference (`&x`); only capture by value (`x` or `x = expr`) is permitted (`ERR_LAMBDA_OWNED_CAPTURE_LOCAL_REF`).
+- Returning an owned lambda from a function is **fully safe and memory-leak free**:
+
+```k
+// Safe and leak-free: heap-allocated owned closure
+makeAdder(base : int) : !(int):int {
+    return [base](x : int) : int { return base + x; };
+}
+
+test() : int {
+    adder : !(int):int = makeAdder(40);
+    return adder(2); // returns 42; adder closure freed on scope exit
+}
+```
+
+See [§9](#9-lambdas-in-special-contexts) for member-variable and global-variable initializer contexts.
 
 ---
 
@@ -253,15 +271,18 @@ See [§9](#9-lambdas-in-special-contexts) for member-variable and global-variabl
 Internally, the compiler synthesises an anonymous struct (the *closure type*) for each lambda:
 
 ```
-struct __lambda_<N> {
+struct __lambda_closure_<N> {
+    // Drop function pointer at offset 0 (for owned callable protocol)
+    __drop : byte*;
+
     // One member per captured variable
     <captured-members> ...;
 
     // Constructor initialised at lambda-creation site
-    __lambda_<N>( <capture-params> ) : ... {}
+    __lambda_closure_<N>( <capture-params> ) : ... {}
 
-    // The call operator — const if applicable
-    operator()( <lambda-params> ) : <return-type> {
+    // The invoke method
+    __invoke( <lambda-params> ) : <return-type> {
         <lambda-body>
     }
 }
@@ -269,11 +290,11 @@ struct __lambda_<N> {
 
 The lambda expression itself:
 
-1. Allocates an instance of `__lambda_<N>` (stack-allocated in function scope).
-2. Initialises its captured members from the enclosing scope.
-3. Evaluates to a `&(Params):Ret` callable bound to that closure instance.
+1. For borrowed callables (`&`), allocates an instance of `__lambda_closure_<N>` on the stack and constructs it with capture arguments.
+2. For owned callables (`!`), allocates an instance via `new __lambda_closure_<N>` on the heap and writes the synthetic drop function address into `__drop`.
+3. Evaluates to a `{ @__invoke, ctx_ptr }` fat pointer callable value.
 
-For capture-free lambdas, step 1 and 2 are elided entirely: the closure struct has no members and the resulting callable's context pointer is null.
+For capture-free lambdas, step 1 and 2 are elided entirely: the lambda is compiled as a static function and the resulting callable's context pointer is null (`{ @lambda_fn, null }`).
 
 This lowering is an implementation detail; K programs must not rely on the name or layout of the synthesised struct.
 
