@@ -70,6 +70,25 @@ K module to call or inherit from the exported symbols.
 :   Convert a K mangled symbol to a readable, qualified form.  The output uses
     the same prefixes accepted by **mangle**.
 
+**symbols** [**--headers**] *file.kdi* [*query*]
+**search-symbols** [**--headers**] *file.kdi* *query*
+:   List all symbols described by *file.kdi*, or only symbols matching *query*.
+    Matching is case-insensitive and checks the symbol kind, fully-qualified
+    name, owner, short name, mangled name and signature.  Output is tab-separated
+    and stable for CLI tools:
+
+        kind<TAB>fq_name<TAB>owner_fq_name<TAB>name<TAB>mangled_name<TAB>signature
+
+    Use **--headers** to print the column names as the first row.
+
+**members** [**--headers**] *file.kdi* *aggregate*
+**aggregate-members** [**--headers**] *file.kdi* *aggregate*
+:   List direct members of one aggregate selected by fully-qualified name, short
+    name, mangled name or a unique substring of the fully-qualified name.
+    Output uses the same TSV columns as **symbols**.  Rows include fields,
+    methods, constructors, destructors, static variables, bases, nested
+    aggregates/unions, aliases and vtable/RTTI descriptors when present.
+
 **check-symbols** *file.kdi* *file.so*
 :   Load *file.kdi* and cross-check that every mangled symbol declared in it
     (functions, methods, constructors, destructors, static variables, vtables)
@@ -135,6 +154,12 @@ Translate symbol names:
 
     kditool demangle _KFMKN4demo5Point3lenEv
     # prints: const member function demo::Point::len()
+
+Explore KDI symbols with shell tools:
+
+    kditool symbols --headers libmath.utils.kdi
+    kditool symbols libmath.utils.kdi StringBuilder | cut -f1,2,5
+    kditool members libmath.utils.kdi math::utils::StringBuilder | sed -n '/^method\t/p'
 
 Convert a CBOR KDI to its JSON equivalent:
 

@@ -22,6 +22,8 @@ add_library(kdi STATIC
     src/kdi_mangling.h
     src/kdi_mangling.hpp
     src/kdi_mangling.cpp
+    src/kdi_query.hpp
+    src/kdi_query.cpp
     src/kdi_symbols.hpp
     src/kdi_symbols.cpp
 )
@@ -63,10 +65,15 @@ add_executable(kdi-tests
     tests/test_json.cpp
     tests/test_symbols.cpp
     tests/test_mangling.cpp
+    tests/test_query.cpp
     tests/test_doc.cpp
     tests/test_docgen.cpp
 )
 
 target_link_libraries(kdi-tests PRIVATE kdi Catch2::Catch2WithMain)
+target_compile_definitions(kdi-tests PRIVATE
+    KDITOOL_PATH="$<TARGET_FILE:kdi-tool>"
+)
+add_dependencies(kdi-tests kdi-tool)
 
 add_test(NAME kdi-tests COMMAND kdi-tests)

@@ -42,6 +42,7 @@
 #include "kdi_docgen.hpp"
 #include "kdi_dump.hpp"
 #include "kdi_mangling.hpp"
+#include "kdi_query.hpp"
 
 // Validation
 #include "kdi_validate.hpp"

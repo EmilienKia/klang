@@ -36,6 +36,10 @@
  *   kditool to-cbor    <file.kdi.json>      Convert a .kdi.json file to .kdi (CBOR).
  *   kditool mangle     <readable-symbol>    Convert a readable K symbol to a mangled name.
  *   kditool demangle   <mangled-symbol>     Convert a mangled K symbol to a readable name.
+ *   kditool symbols    [--headers] <file.kdi> [query]
+ *                                           List or search exported symbols as TSV.
+ *   kditool members    [--headers] <file.kdi> <aggregate>
+ *                                           List direct aggregate members as TSV.
  *   kditool help                           Display this help message.
  *
  * Exit codes:
@@ -51,6 +55,7 @@
 #include "kdi_dump.hpp"
 #include "kdi_json.hpp"
 #include "kdi_mangling.hpp"
+#include "kdi_query.hpp"
 #include "kdi_symbols.hpp"
 
 #include <boost/program_options.hpp>
@@ -86,6 +91,10 @@ static void print_usage(const char* prog,
         << "  to-cbor   <file.kdi.json>              Convert .kdi.json -> .kdi (CBOR)\n"
         << "  mangle    <readable-symbol>            Convert a readable K symbol to a mangled name\n"
         << "  demangle  <mangled-symbol>             Convert a mangled K symbol to a readable name\n"
+        << "  symbols   [--headers] <file.kdi> [query]\n"
+        << "                                          List/search symbols as TSV rows\n"
+        << "  members   [--headers] <file.kdi> <aggregate>\n"
+        << "                                          List direct aggregate members as TSV rows\n"
         << "  check-symbols <file.kdi> <binary>      Verify that all symbols declared in\n"
         << "                                          the KDI are present in the binary\n"
         << "  help                                    Show this help\n\n"
@@ -298,29 +307,69 @@ static int cmd_to_cbor(const std::string& path) {
             return 2;
         }
 
-        static int cmd_mangle(const std::string& readable) {
-            try {
-                std::cout << kdi::kdi_mangle_symbol(readable) << "\n";
-                return 0;
-            } catch (const kdi::kdi_mangling_error& e) {
-                std::cerr << "Mangling error: " << e.what() << "\n";
-                return 1;
-            }
-        }
-
-        static int cmd_demangle(const std::string& mangled) {
-            try {
-                std::cout << kdi::kdi_demangle_symbol(mangled) << "\n";
-                return 0;
-            } catch (const kdi::kdi_mangling_error& e) {
-                std::cerr << "Mangling error: " << e.what() << "\n";
-                return 1;
-            }
-        }
         std::cout << "Written: " << out_path << "\n";
         return 0;
     } catch (const kdi::kdi_json_error& e) {
         std::cerr << "JSON error: " << e.what() << "\n";
+        return 2;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 2;
+    }
+}
+
+static int cmd_mangle(const std::string& readable) {
+    try {
+        std::cout << kdi::kdi_mangle_symbol(readable) << "\n";
+        return 0;
+    } catch (const kdi::kdi_mangling_error& e) {
+        std::cerr << "Mangling error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+static int cmd_demangle(const std::string& mangled) {
+    try {
+        std::cout << kdi::kdi_demangle_symbol(mangled) << "\n";
+        return 0;
+    } catch (const kdi::kdi_mangling_error& e) {
+        std::cerr << "Mangling error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+static int cmd_symbols(const std::string& path,
+                       const std::string& query,
+                       bool include_headers) {
+    try {
+        auto file = kdi::kdi_read_cbor_file(path);
+        kdi::kdi_write_symbol_rows_tsv(kdi::kdi_list_symbols(file, query),
+                                       std::cout,
+                                       include_headers);
+        return 0;
+    } catch (const kdi::kdi_parse_error& e) {
+        std::cerr << "Parse error: " << e.what() << "\n";
+        return 2;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 2;
+    }
+}
+
+static int cmd_members(const std::string& path,
+                       const std::string& aggregate,
+                       bool include_headers) {
+    try {
+        auto file = kdi::kdi_read_cbor_file(path);
+        auto rows = kdi::kdi_list_aggregate_members(file, aggregate);
+        if (rows.empty()) {
+            std::cerr << "No unique aggregate match for '" << aggregate << "' in '" << path << "'\n";
+            return 1;
+        }
+        kdi::kdi_write_symbol_rows_tsv(rows, std::cout, include_headers);
+        return 0;
+    } catch (const kdi::kdi_parse_error& e) {
+        std::cerr << "Parse error: " << e.what() << "\n";
         return 2;
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
@@ -340,6 +389,7 @@ int main(int argc, char* argv[]) {
         ("help,h",    "Display this help message and exit")
         ("version,v", "Display version information and exit")
         ("json",      "Output JSON for the doc command")
+        ("headers",   "Print a TSV header row for symbols/members commands")
         ("list-children", "List direct child symbols for the doc command")
         ("md,markdown",   "docgen: generate Markdown documentation")
         ("html,static-html", "docgen: generate static HTML documentation")
@@ -403,7 +453,8 @@ int main(int argc, char* argv[]) {
     }
 
     static const std::vector<std::string> file_commands =
-        {"dump", "validate", "json-dump", "doc", "docgen", "to-json", "to-cbor", "check-symbols"};
+        {"dump", "validate", "json-dump", "doc", "docgen", "to-json", "to-cbor",
+         "check-symbols", "symbols", "search-symbols", "members", "aggregate-members"};
 
     bool is_file_cmd = false;
     for (auto& c : file_commands) if (c == command) { is_file_cmd = true; break; }
@@ -444,6 +495,20 @@ int main(int argc, char* argv[]) {
         const bool gen_md   = want_md   || (!want_md && !want_html);
         const bool gen_html = want_html || (!want_md && !want_html);
         return cmd_docgen(file, destination, gen_md, gen_html);
+    }
+
+    if (command == "symbols" || command == "search-symbols") {
+        const std::string query = vm.count("subject") ? vm["subject"].as<std::string>() : "";
+        return cmd_symbols(file, query, vm.count("headers") != 0);
+    }
+
+    if (command == "members" || command == "aggregate-members") {
+        if (!vm.count("subject")) {
+            std::cerr << "Error: '" << command << "' requires an <aggregate> argument.\n";
+            print_usage(argv[0], global_opts);
+            return 3;
+        }
+        return cmd_members(file, vm["subject"].as<std::string>(), vm.count("headers") != 0);
     }
 
     // check-symbols also requires a <binary> argument
