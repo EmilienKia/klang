@@ -39,6 +39,7 @@
 #include "common/logger.hpp"
 #include "common/path_lookup_file_resolver.hpp"
 #include <kdi.hpp>
+#include <kdi_mangling.hpp>
 #include "parse/parser.hpp"
 #include "parse/ast_dump.hpp"
 #include "model/model.hpp"
@@ -122,6 +123,8 @@ int main(int argc, const char** argv) {
     std::string log_level_str;              // --log-level
     std::string log_file;                   // --log-file
     std::vector<std::string> ignore_diagnostic_strs; // --ignore-diagnostic
+    std::string mangle_symbol;
+    std::string demangle_symbol;
     unsigned int dwarf_version = 5;         // --gdwarf-*
 
     k::compiler::initialize();
@@ -130,6 +133,10 @@ int main(int argc, const char** argv) {
     cli_gobal_options.add_options()
             ("help,h", "Display this information.")
             ("version,v", "Display version information.")
+            ("mangle-symbol", po::value<std::string>(&mangle_symbol),
+                "Convert a readable K symbol to its mangled name and exit.")
+            ("demangle-symbol", po::value<std::string>(&demangle_symbol),
+                "Convert a mangled K symbol to a readable qualified name and exit.")
             ("compile,c", "Compile the source files, but do not link")
             ("output,o", po::value<std::string>(&output_file), "Place the output into <arg> file.")
             ("input-file", po::value<std::vector<std::string>>(&input_files), "input file")
@@ -235,6 +242,24 @@ int main(int argc, const char** argv) {
         std::cout << "Usage: klangc [options] input-file..." << std::endl;
         std::cout << cmdline_options << std::endl;
         return 1;
+    }
+
+    if (vm.count("mangle-symbol") > 0 || vm.count("demangle-symbol") > 0) {
+        if (vm.count("mangle-symbol") > 0 && vm.count("demangle-symbol") > 0) {
+            std::cerr << "--mangle-symbol and --demangle-symbol are mutually exclusive" << std::endl;
+            return 1;
+        }
+        try {
+            if (vm.count("mangle-symbol") > 0) {
+                std::cout << kdi::kdi_mangle_symbol(mangle_symbol) << std::endl;
+            } else {
+                std::cout << kdi::kdi_demangle_symbol(demangle_symbol) << std::endl;
+            }
+            return 0;
+        } catch (const kdi::kdi_mangling_error& e) {
+            std::cerr << "Mangling error: " << e.what() << std::endl;
+            return 1;
+        }
     }
 
     if(!vm.count("target")) {

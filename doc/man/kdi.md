@@ -58,6 +58,18 @@ K module to call or inherit from the exported symbols.
     is derived by stripping the trailing `.json` suffix (i.e. *file.kdi*).
     Exits with code **0** on success, **2** on error.
 
+**mangle** *readable-symbol*
+:   Convert a readable K symbol name to its mangled form.  Namespace and owner
+    qualifiers use `::`.  Callable symbols use `function`, `member function`,
+    `const member function` or `virtual member function` followed by
+    `name(type, ...)`; non-callable forms include `variable`, `vtable`, `rtti`,
+    `rtti-function`, `rtti-constructor` and `rtti-unit`.  If no prefix is
+    provided, the argument is treated as a qualified symbol/type name.
+
+**demangle** *mangled-symbol*
+:   Convert a K mangled symbol to a readable, qualified form.  The output uses
+    the same prefixes accepted by **mangle**.
+
 **check-symbols** *file.kdi* *file.so*
 :   Load *file.kdi* and cross-check that every mangled symbol declared in it
     (functions, methods, constructors, destructors, static variables, vtables)
@@ -115,6 +127,14 @@ Show the documentation of one symbol:
     kditool doc libmath.utils.kdi math::utils::StringBuilder
     kditool doc --json libmath.utils.kdi _KFN...
     kditool doc --list-children libmath.utils.kdi math::utils::StringBuilder
+
+Translate symbol names:
+
+    kditool mangle 'function math::add(int, int)'
+    # prints: _KFN4math3addEii
+
+    kditool demangle _KFMKN4demo5Point3lenEv
+    # prints: const member function demo::Point::len()
 
 Convert a CBOR KDI to its JSON equivalent:
 

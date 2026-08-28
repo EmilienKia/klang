@@ -34,6 +34,8 @@
  *                                           If neither flag is given, both formats are generated.
  *   kditool to-json    <file.kdi>           Convert a .kdi (CBOR) file to .kdi.json.
  *   kditool to-cbor    <file.kdi.json>      Convert a .kdi.json file to .kdi (CBOR).
+ *   kditool mangle     <readable-symbol>    Convert a readable K symbol to a mangled name.
+ *   kditool demangle   <mangled-symbol>     Convert a mangled K symbol to a readable name.
  *   kditool help                           Display this help message.
  *
  * Exit codes:
@@ -48,6 +50,7 @@
 #include "kdi_docgen.hpp"
 #include "kdi_dump.hpp"
 #include "kdi_json.hpp"
+#include "kdi_mangling.hpp"
 #include "kdi_symbols.hpp"
 
 #include <boost/program_options.hpp>
@@ -81,6 +84,8 @@ static void print_usage(const char* prog,
         << "                                          Default (no flag): generate both.\n"
         << "  to-json   <file.kdi>                   Convert .kdi (CBOR) -> .kdi.json\n"
         << "  to-cbor   <file.kdi.json>              Convert .kdi.json -> .kdi (CBOR)\n"
+        << "  mangle    <readable-symbol>            Convert a readable K symbol to a mangled name\n"
+        << "  demangle  <mangled-symbol>             Convert a mangled K symbol to a readable name\n"
         << "  check-symbols <file.kdi> <binary>      Verify that all symbols declared in\n"
         << "                                          the KDI are present in the binary\n"
         << "  help                                    Show this help\n\n"
@@ -292,6 +297,26 @@ static int cmd_to_cbor(const std::string& path) {
             std::cerr << "Error: cannot write '" << out_path << "'\n";
             return 2;
         }
+
+        static int cmd_mangle(const std::string& readable) {
+            try {
+                std::cout << kdi::kdi_mangle_symbol(readable) << "\n";
+                return 0;
+            } catch (const kdi::kdi_mangling_error& e) {
+                std::cerr << "Mangling error: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
+        static int cmd_demangle(const std::string& mangled) {
+            try {
+                std::cout << kdi::kdi_demangle_symbol(mangled) << "\n";
+                return 0;
+            } catch (const kdi::kdi_mangling_error& e) {
+                std::cerr << "Mangling error: " << e.what() << "\n";
+                return 1;
+            }
+        }
         std::cout << "Written: " << out_path << "\n";
         return 0;
     } catch (const kdi::kdi_json_error& e) {
@@ -319,7 +344,7 @@ int main(int argc, char* argv[]) {
         ("md,markdown",   "docgen: generate Markdown documentation")
         ("html,static-html", "docgen: generate static HTML documentation")
         ("command",   po::value<std::string>(), "Command to execute")
-        ("file",      po::value<std::string>(), "KDI file to process")
+        ("file",      po::value<std::string>(), "KDI file or symbol to process")
         ("subject",   po::value<std::string>(), "Symbol for doc, destination for docgen, or binary for check-symbols")
         ;
 
@@ -366,6 +391,17 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Commands requiring a file argument ──────────────────────────────────
+    if (command == "mangle" || command == "demangle") {
+        if (!vm.count("file")) {
+            std::cerr << "Error: command '" << command << "' requires a <symbol> argument.\n";
+            print_usage(argv[0], global_opts);
+            return 3;
+        }
+        return command == "mangle"
+            ? cmd_mangle(vm["file"].as<std::string>())
+            : cmd_demangle(vm["file"].as<std::string>());
+    }
+
     static const std::vector<std::string> file_commands =
         {"dump", "validate", "json-dump", "doc", "docgen", "to-json", "to-cbor", "check-symbols"};
 

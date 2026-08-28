@@ -464,9 +464,13 @@ add_executable(klangc-tests
         tests/test-klangc-jit-exec.cpp
         tests/test-klangc-object-input.cpp
         tests/test-klangc-debug.cpp
+        tests/test-klangc-mangling.cpp
         tests/test-klangc-static-diamond.cpp
 )
 target_link_libraries(klangc-tests klang-test-helpers Catch2::Catch2WithMain)
+target_compile_definitions(klangc-tests PRIVATE
+        KLANGC_PATH="$<TARGET_FILE:klangc>"
+)
 # Ensure klangc and libk are built before running integration tests
 add_dependencies(klangc-tests klangc libk_stdlib)
 

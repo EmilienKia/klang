@@ -16,37 +16,19 @@
  * limitations under the License.
  */
 
-#ifndef LIBKDI_KDI_HPP
-#define LIBKDI_KDI_HPP
+#ifndef LIBKDI_MANGLING_H
+#define LIBKDI_MANGLING_H
 
-/**
- * @file kdi.hpp
- *
- * Public umbrella header for libkdi.
- *
- * Include this header to get access to all KDI DTOs, serialisation and
- * deserialisation functions, and validation utilities.
- */
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-// DTOs
-#include "kdi_types.hpp"
-#include "kdi_aggregates.hpp"
-#include "kdi_file.hpp"
+char* kdi_symbol_mangle(const char* readable);
+char* kdi_symbol_demangle(const char* mangled);
+void kdi_symbol_string_free(char* value);
 
-// I/O
-#include "kdi_cbor.hpp"
-#include "kdi_json.hpp"
+#ifdef __cplusplus
+}
+#endif
 
-// Dump
-#include "kdi_doc.hpp"
-#include "kdi_docgen.hpp"
-#include "kdi_dump.hpp"
-#include "kdi_mangling.hpp"
-
-// Validation
-#include "kdi_validate.hpp"
-
-// Symbol cross-check
-#include "kdi_symbols.hpp"
-
-#endif // LIBKDI_KDI_HPP
+#endif // LIBKDI_MANGLING_H

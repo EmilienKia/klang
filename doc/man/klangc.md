@@ -54,6 +54,33 @@ Display a short help message and exit with status `1`.
 Display the compiler name, version number and the effective target triple, then
 exit with status `2`.
 
+**`--mangle-symbol`** _readable-symbol_
+Convert a readable K symbol name to its mangled form, print it to standard
+output, and exit with status `0`.  Namespace and owner qualifiers use `::`.
+Callable symbols use `function`, `member function`, `const member function` or
+`virtual member function` followed by `name(type, ...)`; non-callable forms
+include `variable`, `vtable`, `rtti`, `rtti-function`, `rtti-constructor` and
+`rtti-unit`. If no prefix is provided, the argument is treated as a qualified
+symbol/type name.
+
+Example:
+
+```sh
+klangc --mangle-symbol 'function math::add(int, int)'
+# _KFN4math3addEii
+```
+
+**`--demangle-symbol`** _mangled-symbol_
+Convert a K mangled symbol name to a readable, qualified form, print it to
+standard output, and exit with status `0`.
+
+Example:
+
+```sh
+klangc --demangle-symbol _KFMKN4demo5Point3lenEv
+# const member function demo::Point::len()
+```
+
 **`-c`**, **`--compile`**  
 Compile source file(s) to a native object file (`.o`) but do not invoke the
 linker. The output file name defaults to the input file name with its extension
@@ -816,4 +843,3 @@ diagnostics are never affected.
 Copyright 2023–2026 Emilien Kia.  
 Licensed under the Apache License, Version 2.0.  
 <https://www.apache.org/licenses/LICENSE-2.0>
-

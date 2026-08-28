@@ -19,6 +19,9 @@ add_library(kdi STATIC
     src/kdi_docgen_html.cpp
     src/kdi_dump.hpp
     src/kdi_dump.cpp
+    src/kdi_mangling.h
+    src/kdi_mangling.hpp
+    src/kdi_mangling.cpp
     src/kdi_symbols.hpp
     src/kdi_symbols.cpp
 )
@@ -59,6 +62,7 @@ add_executable(kdi-tests
     tests/test_validate.cpp
     tests/test_json.cpp
     tests/test_symbols.cpp
+    tests/test_mangling.cpp
     tests/test_doc.cpp
     tests/test_docgen.cpp
 )

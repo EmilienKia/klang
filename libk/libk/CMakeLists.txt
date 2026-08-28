@@ -112,6 +112,19 @@ add_custom_command(
     VERBATIM
 )
 
+set(SYMBOL_MANGLING_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/symbol_mangling.c)
+set(SYMBOL_MANGLING_OBJ ${LIBK_OUTPUT_DIR}/symbol_mangling.o)
+
+add_custom_command(
+    OUTPUT  ${SYMBOL_MANGLING_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${SYMBOL_MANGLING_OBJ} ${SYMBOL_MANGLING_C}
+    DEPENDS ${SYMBOL_MANGLING_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/symbol_mangling.h
+    COMMENT "Compiling K runtime symbol mangling helpers (symbol_mangling.c)"
+    VERBATIM
+)
+
 # ── Compile the I/O C runtime helpers ─────────────────────────────────────
 set(IO_HELPERS_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/io_helpers.c)
 set(IO_HELPERS_OBJ ${LIBK_OUTPUT_DIR}/io_helpers.o)
@@ -341,7 +354,7 @@ add_custom_command(
     VERBATIM
 )
 
-set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
+set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
                    ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
@@ -458,6 +471,7 @@ libk_add_test(libk-tests-types 120
     tests/test-memory.cpp
     tests/test-math.cpp
     tests/test-application.cpp
+    tests/test-symbol-mangling-native.cpp
 )
 
 # ── libk basic stream I/O tests ──────────────────────────────────────────────
