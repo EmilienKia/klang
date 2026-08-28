@@ -1238,7 +1238,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                 throw_error(eval.error_code, lex::opt_any_lexeme{}, eval.message, eval.message_args);
             }
             if (eval.ok()) {
-                model_args.push_back(template_argument::make_value(*eval.value));
+                model_args.push_back(template_argument::make_value(*eval.value, expected_value_type));
                 continue;
             }
             return {};
@@ -1382,7 +1382,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                 throw_error(eval.error_code, lex::opt_any_lexeme{}, eval.message, eval.message_args);
             }
             if (!eval.ok()) return {};
-            model_args.push_back(template_argument::make_value(*eval.value));
+            model_args.push_back(template_argument::make_value(*eval.value, expected_value_type));
         } else {
             return {};
         }
@@ -1404,7 +1404,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             if (!def_type || !type::is_resolved(def_type)) return {};
             model_args.push_back(template_argument::make_type(def_type));
         } else if (param.is_value_param() && param.default_value.has_value()) {
-            model_args.push_back(template_argument::make_value(*param.default_value));
+            model_args.push_back(template_argument::make_value(*param.default_value, param.value_type));
         } else {
             return {};
         }

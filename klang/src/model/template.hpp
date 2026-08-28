@@ -136,6 +136,9 @@ struct template_argument {
     /** For pack arguments: the list of type arguments in the pack. */
     std::vector<std::shared_ptr<type>> pack_types;
 
+    /** Optional declared/deduced type of the value argument (e.g. enum_type). */
+    std::shared_ptr<type> value_type;
+
     /** True if this is a type argument. */
     bool is_type() const { return type_arg != nullptr && pack_types.empty(); }
 
@@ -147,22 +150,22 @@ struct template_argument {
 
     /** Create a type argument. */
     static template_argument make_type(std::shared_ptr<type> t) {
-        return {std::move(t), std::nullopt, {}};
+        return {std::move(t), std::nullopt, {}, nullptr};
     }
 
     /** Create a value argument from any primitive value. */
-    static template_argument make_value(k::value_type v) {
-        return {nullptr, std::move(v), {}};
+    static template_argument make_value(k::value_type v, std::shared_ptr<type> vt = nullptr) {
+        return {nullptr, std::move(v), {}, std::move(vt)};
     }
 
     /** Create a value argument from an integer (convenience overload, stores as int). */
-    static template_argument make_value(int64_t v) {
-        return {nullptr, k::value_type{static_cast<int>(v)}, {}};
+    static template_argument make_value(int64_t v, std::shared_ptr<type> vt = nullptr) {
+        return {nullptr, k::value_type{static_cast<int>(v)}, {}, std::move(vt)};
     }
 
     /** Create a pack argument from a list of types. */
     static template_argument make_pack(std::vector<std::shared_ptr<type>> types) {
-        return {nullptr, std::nullopt, std::move(types)};
+        return {nullptr, std::nullopt, std::move(types), nullptr};
     }
 
     /**

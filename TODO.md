@@ -8,17 +8,12 @@
     type names and deferred symbol references.
 
 - Add templates advanced features (partial specialization, variadic templates, template template parameters, etc.)
-  - [ ] Tests: name mangling tests for template entities
+  - [x] Tests: name mangling tests for template entities
   - [ ] Partial and full template specialization
   - [ ] Template template parameters (`template<template<typename> class C>`)
   - [ ] Variadic template parameters (parameter packs, fold expressions)
   - [ ] `extern template` (explicit instantiation declarations)
-  - [ ] Value template parameters in parameterised aliases
-        (`template<int N> alias Buf : byte[N];`) — parameterised aliases over
-        *type* parameters are implemented (see
-        `doc/spec/language/basic/aliases.md` §9); a value parameter is rejected
-        because it would have to be evaluated at the use site, where it is not
-        in scope. Tests: `klang/tests/test-gen-alias-template.cpp`.
+  - [ ] Value template parameters in parameterised aliases (`template<int N> alias Buf : byte[N];`)
   - [ ] Template argument deduction (Function template argument deduction & CTAD):
     - [x] Basic function template argument deduction for primitive/direct type parameters and parameter packs (`fun id<T>(x: T)`, `fun fwd<Ts...>(args: Ts...)`).
     - [x] Comprehensive template argument deduction for functions (global, member, static, UCS) from invocation arguments:
@@ -36,11 +31,7 @@
   - [ ] Template constructors (independent of aggregate template)
   - [ ] SFINAE-like overload filtering based on template constraints
   - [ ] Variable templates (`template<typename T> const size : int = ...`)
-  - [x] Non-primitive value template arguments — **Phase 1+2 done**: enum constants,
-        dependent value-param propagation, compile-time-constant expressions (arithmetic,
-        logical, ternary, casts). **Phase 3 still open**: aggregate-typed value params
-        (e.g. `template<Point P>`). See detailed entry under "Current bugs and gaps to
-        fix" below.
+  - [x] Non-primitive value template arguments (enums, expressions, aggregates, propagation, mangling, KDI roundtrip)
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
 - Add unions, typed unions (discriminated/tagged unions à la std::variant)
     - [ ] Enum-based discriminant interrogation (`u.type()` → enum)
@@ -54,9 +45,9 @@
 - Better private visibility support
 - Improve log and debug messages
 - Add constant values expression computation at compile time, enhance compile-time evaluation capabilities
-  - [ ] Compile time evaluation of in-line structure initialization
+  - [x] Compile time evaluation of in-line structure initialization
   - [ ] Compile time evaluation of in-line array initialization
-  - [ ] Compile time evaluation of in-line union and enum initialization
+  - [x] Compile time evaluation of in-line union and enum initialization
   - [ ] Compile time evaluation of in-line complex object initialization
   - [ ] Compile time evaluation of in-line function calls, including constructors
 - Add static conditional statements and static compiler value definitions
@@ -233,24 +224,7 @@ Timeout follow-up and mitigation (same day):
       Workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
 - [x] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases;
       extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
-- [ ] **Broaden compile-time constant-expression support for template values and
-      compile-time configuration values.**
-      Current behavior still has a parser/evaluator gap in template value-argument
-      contexts: unparenthesized binary defaults such as `template<int N = 1 + 2>`
-      are rejected because `parse_template_arg_value_expr()` currently accepts only
-      unary-prefix + primary forms. Workaround today: `template<int N = (1 + 2)>`.
-      This should be addressed as part of a larger compile-time constant-expression
-      initiative, not as an isolated parser tweak.
-      - Scope expected for this workstream:
-        1. Full expression parsing in template value-arg/default contexts
-           (without breaking `<...>` disambiguation).
-        2. Shared/centralized constexpr evaluation usable beyond template args
-           (e.g. global initialization/instantiation optimization opportunities).
-        3. First-class compile-time parameter values exposed by the compiler
-           (for example target/platform-dependent constants).
-      - Goal: make compile-time values a coherent subsystem that can drive both
-        semantic correctness and optimization decisions (including global
-        instantiation paths).
+- [x] **Broaden compile-time constant-expression support for template values and configuration values** (unparenthesized binary/ternary/cast expressions, global/static const references)
 - [ ] **Exception cause chaining is unavailable for pointer-shaped throws.**
   `throw new MyError(...)` copies only the *pointer* into the
   `__cxa_allocate_exception` block, so the `_cause` / `_cause_handle` fields of

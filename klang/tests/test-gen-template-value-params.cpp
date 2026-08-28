@@ -682,3 +682,120 @@ TEST_CASE("[AA] M11: runtime ternary expression compiles and runs",
     REQUIRE(test_fn != nullptr);
     CHECK(test_fn() == 50);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AC] Unparenthesized binary arithmetic expression in template value arg
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AC] M11: unparenthesized binary arithmetic value arg",
+          "[milestone11][template][value-param][constexpr][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_value_params_29;
+        template<int N>
+        get_n() : int { return N; }
+
+        test() : int {
+            return get_n<1 + 2 * 3>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_294testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 7);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AD] Bitwise operators in template value arg
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AD] M11: bitwise operators in template value arg",
+          "[milestone11][template][value-param][constexpr][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_value_params_30;
+        template<int N>
+        get_n() : int { return N; }
+
+        test() : int {
+            return get_n<1 << 4 | 2>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_304testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 18);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AE] Global const variable in template value arg
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AE] M11: global const variable in template value arg",
+          "[milestone11][template][value-param][constexpr][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_value_params_31;
+
+        const CAPACITY : int = 64;
+
+        template<int N>
+        get_cap() : int { return N; }
+
+        test() : int {
+            return get_cap<CAPACITY>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_314testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 64);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AF] Multi-segment namespace-qualified enum in template value arg
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AF] M11: multi-segment namespace enum as template value arg",
+          "[milestone11][template][value-param][constexpr][enum][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_value_params_32;
+
+        namespace ui {
+            namespace theme {
+                enum ThemeMode { Light; Dark; Auto; }
+            }
+        }
+
+        template<ui::theme::ThemeMode M>
+        get_mode() : int { return M; }
+
+        test() : int {
+            return get_mode<ui::theme::ThemeMode::Dark>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_324testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 1);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AG] Unparenthesized template value parameter default
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AG] M11: unparenthesized binary default value parameter",
+          "[milestone11][template][value-param][constexpr][default][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_value_params_33;
+
+        template<int N = 10 + 5>
+        get_n() : int { return N; }
+
+        test() : int {
+            return get_n<>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN28gen_template_value_params_334testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 15);
+}
+

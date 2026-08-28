@@ -190,6 +190,16 @@ std::string mangler::mangle_template_args(const std::vector<template_argument>& 
         if (arg.is_type() && arg.type_arg) {
             s << mangle_type(*arg.type_arg);
         } else if (arg.is_value() && arg.value_arg.has_value()) {
+            if (arg.value_type) {
+                if (auto et = std::dynamic_pointer_cast<enum_type>(arg.value_type)) {
+                    s << "L" << mangle_type(*et);
+                    int64_t val = arg.value_as_int64();
+                    if (val < 0) s << "n" << (-val);
+                    else s << val;
+                    s << "E";
+                    continue;
+                }
+            }
             // L<type><value>E encoding
             std::visit([&s](auto&& v) {
                 using T = std::decay_t<decltype(v)>;

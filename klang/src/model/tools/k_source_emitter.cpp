@@ -21,6 +21,7 @@
 #include "../model.hpp"
 #include "../type.hpp"
 #include "../template.hpp"
+#include "../aggregate_value.hpp"
 #include "../expressions.hpp"
 #include "../operators.hpp"
 #include "../statements.hpp"
@@ -224,7 +225,30 @@ void k_source_emitter::emit_template_clause(const tpl_info& ti) {
             _os << " " << p.name;
             if (p.default_value.has_value()) {
                 _os << " = ";
-                emit_value(*p.default_value);
+                if (auto et = std::dynamic_pointer_cast<enum_type>(p.value_type)) {
+                    if (auto en = et->get_enumeration()) {
+                        int64_t v = 0;
+                        std::visit([&v](auto&& x) {
+                            using Tx = std::decay_t<decltype(x)>;
+                            if constexpr (std::is_integral_v<Tx>) v = static_cast<int64_t>(x);
+                        }, *p.default_value);
+                        bool found_entry = false;
+                        for (const auto& ent : en->entries()) {
+                            if (ent.value == v) {
+                                _os << fq_name_for_source(en->get_fq_name()) << "::" << ent.name;
+                                found_entry = true;
+                                break;
+                            }
+                        }
+                        if (!found_entry) {
+                            emit_value(*p.default_value);
+                        }
+                    } else {
+                        emit_value(*p.default_value);
+                    }
+                } else {
+                    emit_value(*p.default_value);
+                }
             }
         } else {
             // Type parameter
@@ -264,6 +288,20 @@ void k_source_emitter::emit_value(const k::value_type& val) {
             _os << "'" << v << "'";
         } else if constexpr (std::is_same_v<T, std::string>) {
             _os << "\"" << v << "\"";
+        } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
+            if (v) {
+                _os << "{ ";
+                bool first = true;
+                for (const auto& [fname, fval] : v->get_fields()) {
+                    if (!first) _os << ", ";
+                    first = false;
+                    _os << "." << fname << " = ";
+                    emit_value(fval);
+                }
+                _os << " }";
+            } else {
+                _os << "0";
+            }
         } else {
             _os << v;
         }

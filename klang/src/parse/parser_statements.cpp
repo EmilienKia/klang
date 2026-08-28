@@ -1165,6 +1165,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
 
             auto lind_or_close = _lexer.get();
             std::optional<lex::integer> int_index;
+            ast::expr_ptr size_expr;
             lex::opt_ref_any_lexeme lbrclose;
 
             if (lind_or_close == lex::punctuator::BRACKET_CLOSE) {
@@ -1178,14 +1179,23 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TYPE_ARRAY_EXPECT_CLOSE_BRACKET), lbrclose, "Type specifier array index expect a closing bracket");
                 }
             } else {
-                // Not a type suffix (e.g. expression subscript in tentative parsing).
-                // Roll back to before '[' so the caller can parse it in expression context.
+                // Try parsing as a template value / constant expression: [N] or [N * 2]
                 _lexer.unget();
-                holder.rollback();
-                break;
+                size_expr = parse_template_arg_value_expr();
+                if (size_expr) {
+                    lbrclose = _lexer.get();
+                    if (lbrclose != lex::punctuator::BRACKET_CLOSE) {
+                        _lexer.unget();
+                        holder.rollback();
+                        break;
+                    }
+                } else {
+                    holder.rollback();
+                    break;
+                }
             }
 
-            res = std::make_shared<ast::array_type_specifier>(res, lex::as<lex::punctuator>(lex), lex::as<lex::punctuator>(lbrclose), int_index);
+            res = std::make_shared<ast::array_type_specifier>(res, lex::as<lex::punctuator>(lex), lex::as<lex::punctuator>(lbrclose), int_index, size_expr);
             continue;
         }
 

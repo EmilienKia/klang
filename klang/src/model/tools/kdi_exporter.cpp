@@ -1849,20 +1849,39 @@ kdi::kdi_template_def kdi_builder::build_template_def(
         if (param.value_type)
             kparam.value_type = to_kdi_signature_type(param.value_type, ti);
         if (param.default_value.has_value()) {
-            kparam.default_value = std::visit([](auto&& v) -> std::string {
-                using T = std::decay_t<decltype(v)>;
-                if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
-                    return "0";
-                } else if constexpr (std::is_same_v<T, bool>) {
-                    return v ? "true" : "false";
-                } else if constexpr (std::is_same_v<T, std::string>) {
-                    return "\"" + v + "\"";
-                } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
-                    return v ? v->dump() : "<?null>";
-                } else {
-                    return std::to_string(v);
+            if (auto et = std::dynamic_pointer_cast<enum_type>(param.value_type)) {
+                if (auto en = et->get_enumeration()) {
+                    int64_t v = 0;
+                    std::visit([&v](auto&& x) {
+                        using Tx = std::decay_t<decltype(x)>;
+                        if constexpr (std::is_integral_v<Tx>) v = static_cast<int64_t>(x);
+                    }, *param.default_value);
+                    for (const auto& ent : en->entries()) {
+                        if (ent.value == v) {
+                            std::string fq = en->get_fq_name();
+                            if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') fq = fq.substr(2);
+                            kparam.default_value = fq + "::" + ent.name;
+                            break;
+                        }
+                    }
                 }
-            }, *param.default_value);
+            }
+            if (!kparam.default_value.has_value()) {
+                kparam.default_value = std::visit([](auto&& v) -> std::string {
+                    using T = std::decay_t<decltype(v)>;
+                    if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
+                        return "0";
+                    } else if constexpr (std::is_same_v<T, bool>) {
+                        return v ? "true" : "false";
+                    } else if constexpr (std::is_same_v<T, std::string>) {
+                        return "\"" + v + "\"";
+                    } else if constexpr (std::is_same_v<T, std::shared_ptr<k::model::aggregate_value>>) {
+                        return v ? v->dump() : "<?null>";
+                    } else {
+                        return std::to_string(v);
+                    }
+                }, *param.default_value);
+            }
         }
 
         def.params.push_back(std::move(kparam));

@@ -199,17 +199,26 @@ public:
     ast::template_arg_list parse_template_arg_list(bool* was_explicit = nullptr);
 
     /**
-     * TemplateArgValueExpr = [ '+' | '-' | '!' | '~' ] , TemplateArgValueExpr
-     *                      | PrimaryExpr ;
      * Parses a template *value* argument (or value-parameter default) expression.
-     * Value template arguments are grammatically restricted to primary
-     * expressions (literals, identifiers, parenthesised full expressions) with
-     * an optional leading non-ambiguous unary prefix operator (+, -, !, ~).
-     * Addresser/pointer-like unary operators (*, &, #, ++, --) are deliberately
-     * excluded here since they are not meaningful on compile-time constants and
-     * would be ambiguous with the surrounding '<' '>' template-argument syntax.
+     * Supports full compile-time expressions (binary arithmetic, bitwise, equality,
+     * ternary, casts, unary, primary expressions) while avoiding ambiguity with
+     * template chevron delimiters.
      */
     ast::expr_ptr parse_template_arg_value_expr();
+    ast::expr_ptr parse_template_conditional_expr();
+    ast::expr_ptr parse_template_logical_or_expr();
+    ast::expr_ptr parse_template_logical_and_expr();
+    ast::expr_ptr parse_template_bitwise_or_expr();
+    ast::expr_ptr parse_template_bitwise_xor_expr();
+    ast::expr_ptr parse_template_bitwise_and_expr();
+    ast::expr_ptr parse_template_equality_expr();
+    ast::expr_ptr parse_template_relational_expr();
+    ast::expr_ptr parse_template_shift_expr();
+    ast::expr_ptr parse_template_additive_expr();
+    ast::expr_ptr parse_template_multiplicative_expr();
+    ast::expr_ptr parse_template_pm_expr();
+    ast::expr_ptr parse_template_cast_expr();
+    ast::expr_ptr parse_template_unary_expr();
 
     /**
      * AggregateDecl = { AnnotationDef } , { Specifier } ,

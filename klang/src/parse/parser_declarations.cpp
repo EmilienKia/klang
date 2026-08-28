@@ -1010,6 +1010,299 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
 
 ast::expr_ptr parser::parse_template_arg_value_expr()
 {
+    return parse_template_conditional_expr();
+}
+
+ast::expr_ptr parser::parse_template_conditional_expr()
+{
+    ast::expr_ptr left = parse_template_logical_or_expr();
+    if (!left) return {};
+
+    auto lqm = _lexer.get();
+    if (lqm != lex::operator_::QUESTION_MARK) {
+        _lexer.unget();
+        return left;
+    }
+
+    ast::expr_ptr middle = parse_template_logical_or_expr();
+    if (!middle) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_COND_EXPECT_THEN_EXPR), _lexer.pick_current(),
+            "Conditional expression is expecting a sub expression after the question-mark '?' operator");
+    }
+
+    auto lcolon = _lexer.get();
+    if (lcolon != lex::operator_::COLON) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_COND_EXPECT_COLON), _lexer.pick_current(),
+            "Conditional expression is expecting a colon ':' operator after the first sub expression");
+    }
+
+    ast::expr_ptr right = parse_template_logical_or_expr();
+    if (!right) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_COND_EXPECT_ELSE_EXPR), _lexer.pick_current(),
+            "Conditional expression is expecting a sub expression after the colon ':' operator");
+    }
+
+    return std::make_shared<ast::conditional_expr>(
+        lex::as<lex::operator_>(lqm), lex::as<lex::operator_>(lcolon), left, middle, right);
+}
+
+ast::expr_ptr parser::parse_template_logical_or_expr()
+{
+    ast::expr_ptr left_expr = parse_template_logical_and_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOUBLE_PIPE) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_logical_and_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_LOGOR_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Logical-OR expression is expecting a sub expression after the double-pipe '||' operator");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_logical_and_expr()
+{
+    ast::expr_ptr left_expr = parse_template_bitwise_or_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOUBLE_AMPERSAND) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_bitwise_or_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_LOGAND_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Logical-AND expression is expecting a sub expression after the double-ampersand '&&' operator");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_bitwise_or_expr()
+{
+    ast::expr_ptr left_expr = parse_template_bitwise_xor_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::PIPE) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_bitwise_xor_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BITOR_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Binary-OR expression is expecting a sub expression after the pipe '|' operator");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_bitwise_xor_expr()
+{
+    ast::expr_ptr left_expr = parse_template_bitwise_and_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::CARET) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_bitwise_and_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BITXOR_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Binary-XOR expression is expecting a sub expression after the caret '^' operator");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_bitwise_and_expr()
+{
+    ast::expr_ptr left_expr = parse_template_equality_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::AMPERSAND) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_equality_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BITAND_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Binary-AND expression is expecting a sub expression after the ampersand '&' operator");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_equality_expr()
+{
+    ast::expr_ptr left_expr = parse_template_relational_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOUBLE_EQUAL && op != lex::operator_::EXCLAMATION_MARK_EQUAL) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_relational_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EQUALITY_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Equality expression is expecting a sub expression after '==' or '!='");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_relational_expr()
+{
+    ast::expr_ptr left_expr = parse_template_shift_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::CHEVRON_OPEN_EQUAL && op != lex::operator_::CHEVRON_CLOSE_EQUAL) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_shift_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_RELATIONAL_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Relational expression is expecting a sub expression after '<=' or '>='");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_shift_expr()
+{
+    ast::expr_ptr left_expr = parse_template_additive_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOUBLE_CHEVRON_OPEN) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_additive_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_SHIFT_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Shift expression is expecting a sub expression after '<<'");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_additive_expr()
+{
+    ast::expr_ptr left_expr = parse_template_multiplicative_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::PLUS && op != lex::operator_::MINUS) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_multiplicative_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ADDITIVE_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Additive expression is expecting a sub expression after '+' or '-'");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_multiplicative_expr()
+{
+    ast::expr_ptr left_expr = parse_template_pm_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (lex::is_none_of<
+                lex::operator_::STAR,
+                lex::operator_::SLASH,
+                lex::operator_::PERCENT>(op)) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_pm_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_MULTIPLICATIVE_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "Multiplicative expression is expecting a sub expression after '*', '/' or '%'");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_pm_expr()
+{
+    ast::expr_ptr left_expr = parse_template_cast_expr();
+    if (!left_expr) return {};
+
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOT_STAR && op != lex::operator_::ARROW_STAR) {
+            _lexer.unget();
+            return left_expr;
+        }
+
+        ast::expr_ptr right_expr = parse_template_cast_expr();
+        if (!right_expr) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CAST_EXPECT_SUBEXPR), _lexer.pick_current(),
+                "PM expression is expecting a sub expression after '.*' or '->*'");
+        }
+        left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+    }
+}
+
+ast::expr_ptr parser::parse_template_cast_expr()
+{
+    lex::lex_holder holder(_lexer);
+
+    if (auto lopenpar = _lexer.get(); lopenpar == lex::punctuator::PARENTHESIS_OPEN) {
+        auto type = parse_type_spec();
+        if (type) {
+            if (auto lclosepar = _lexer.get(); lclosepar == lex::punctuator::PARENTHESIS_CLOSE) {
+                auto expr = parse_template_cast_expr();
+                if (expr) {
+                    holder.sync();
+                    return std::make_shared<ast::cast_expr>(type, expr);
+                }
+            }
+        }
+    }
+
+    holder.rollback();
+    return parse_template_unary_expr();
+}
+
+ast::expr_ptr parser::parse_template_unary_expr()
+{
     lex::lex_holder holder(_lexer);
     if (auto lop = _lexer.get();
             lex::is_one_of<
@@ -1017,7 +1310,7 @@ ast::expr_ptr parser::parse_template_arg_value_expr()
                 lex::operator_::MINUS,
                 lex::operator_::EXCLAMATION_MARK,
                 lex::operator_::TILDE>(lop)) {
-        ast::expr_ptr sub_expr = parse_template_arg_value_expr();
+        ast::expr_ptr sub_expr = parse_template_cast_expr();
         if (sub_expr) {
             holder.sync();
             return std::make_shared<ast::unary_prefix_expr>(lex::as<lex::operator_>(lop), sub_expr);
@@ -1062,15 +1355,23 @@ ast::template_arg_list parser::parse_template_arg_list(bool* was_explicit)
         }
 
         // Try to parse the first argument as a type specifier
+        size_t arg_start = _lexer.tell();
         auto type_spec = parse_type_spec();
+        bool is_valid_type_arg = false;
         if (type_spec) {
+            auto peek = _lexer.get();
+            _lexer.unget();
+            if (peek == lex::punctuator::COMMA ||
+                peek == lex::operator_::CHEVRON_CLOSE ||
+                peek == lex::operator_::DOUBLE_CHEVRON_CLOSE) {
+                is_valid_type_arg = true;
+            }
+        }
+
+        if (is_valid_type_arg) {
             args.push_back(std::make_shared<ast::template_arg>(std::move(type_spec)));
         } else {
-            // Try as a value expression.
-            // Use parse_template_arg_value_expr() to avoid consuming '>' or ','
-            // as binary operators — template value args are restricted to simple
-            // expressions (literals, identifiers, parenthesised expressions),
-            // with an optional leading unary +/-/!/~ prefix.
+            _lexer.seek(arg_start);
             auto expr = parse_template_arg_value_expr();
             if (expr) {
                 args.push_back(std::make_shared<ast::template_arg>(std::move(expr)));
@@ -1087,10 +1388,22 @@ ast::template_arg_list parser::parse_template_arg_list(bool* was_explicit)
             lex::lex_holder comma_holder(_lexer);
             auto maybe_comma = _lexer.get();
             if (maybe_comma == lex::punctuator::COMMA) {
+                size_t arg2_start = _lexer.tell();
                 auto type_spec2 = parse_type_spec();
+                bool is_valid_type_arg2 = false;
                 if (type_spec2) {
+                    auto peek2 = _lexer.get();
+                    _lexer.unget();
+                    if (peek2 == lex::punctuator::COMMA ||
+                        peek2 == lex::operator_::CHEVRON_CLOSE ||
+                        peek2 == lex::operator_::DOUBLE_CHEVRON_CLOSE) {
+                        is_valid_type_arg2 = true;
+                    }
+                }
+                if (is_valid_type_arg2) {
                     args.push_back(std::make_shared<ast::template_arg>(std::move(type_spec2)));
                 } else {
+                    _lexer.seek(arg2_start);
                     auto expr2 = parse_template_arg_value_expr();
                     if (expr2) {
                         args.push_back(std::make_shared<ast::template_arg>(std::move(expr2)));

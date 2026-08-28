@@ -269,6 +269,63 @@ TEST_CASE("[G] Mangling: free template function instantiation has IiE encoding (
     CHECK(concrete->get_tpl_base_name() == "identity");
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [H] Enum value template args produce distinct mangled names for distinct enums
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[H] Mangling: enum value template args from different enums do not collide",
+          "[mangling][template][value-param][enum]") {
+    auto comp = compile_model(R"SRC(
+        module gen_template_mangling_08;
+
+        enum Color { Red; Green; Blue; }
+        enum Fruit { Apple; Banana; Cherry; }
+
+        template<Color C>
+        struct ColorBox {
+            val : int;
+        }
+
+        template<Fruit F>
+        struct FruitBox {
+            val : int;
+        }
+
+        struct User {
+            public c : ColorBox<Color::Red>;
+            public f : FruitBox<Fruit::Apple>;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto root_ns = comp->get_unit()->get_root_namespace();
+    auto user = root_ns->get_aggregate("User");
+    REQUIRE(user != nullptr);
+
+    auto var_c = user->get_variable("c");
+    auto var_f = user->get_variable("f");
+    REQUIRE(var_c != nullptr);
+    REQUIRE(var_f != nullptr);
+
+    auto color_box_type = std::dynamic_pointer_cast<k::model::struct_type>(var_c->get_type());
+    auto fruit_box_type = std::dynamic_pointer_cast<k::model::struct_type>(var_f->get_type());
+    REQUIRE(color_box_type != nullptr);
+    REQUIRE(fruit_box_type != nullptr);
+
+    auto color_box = color_box_type->get_struct();
+    auto fruit_box = fruit_box_type->get_struct();
+    REQUIRE(color_box != nullptr);
+    REQUIRE(fruit_box != nullptr);
+
+    auto m_color = color_box->get_mangled_name();
+    auto m_fruit = fruit_box->get_mangled_name();
+    CAPTURE(m_color, m_fruit);
+
+    CHECK(m_color != m_fruit);
+    CHECK(m_color.find("Color") != std::string::npos);
+    CHECK(m_fruit.find("Fruit") != std::string::npos);
+}
+
 TEST_CASE("[H] Mangling: generic synthesis keeps base symbol without template arg encoding",
           "[mangling][template][generic]") {
     auto comp = compile_model(R"SRC(

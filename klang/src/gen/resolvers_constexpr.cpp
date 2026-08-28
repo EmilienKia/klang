@@ -18,6 +18,7 @@
 
 #include "resolvers_constexpr.hpp"
 #include "resolvers_common.hpp"
+#include "resolvers_scope_lookup.hpp"
 
 #include "../model/model.hpp"
 #include "../model/aggregate_value.hpp"
@@ -81,8 +82,8 @@ struct eval_outcome {
 // Enum-entry / dependent value-parameter identifier resolution
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Mirrors the "EnumName::entryName" / "UnionName::Kind::entryName" resolution
- *  performed for ordinary symbol expressions in gen_expressions.cpp, but
+/** Mirrors the "EnumName::entryName" / "UnionName::Kind::entryName" / "ns::Enum::entryName"
+ *  resolution performed for ordinary symbol expressions in gen_expressions.cpp, but
  *  operating directly on the raw (unresolved) AST qualified-identifier. */
 std::shared_ptr<enumeration> lookup_enum_for_qualified_entry(
     const element& context_elem,
@@ -104,6 +105,48 @@ std::shared_ptr<enumeration> lookup_enum_for_qualified_entry(
         for (auto cur = context_elem.shared_as<const element>(); cur; cur = cur->parent<element>()) {
             if (auto uh = std::dynamic_pointer_cast<const union_holder>(cur)) {
                 if (auto un = uh->get_union(union_name)) return un->get_kind_enum();
+            }
+        }
+    } else {
+        // Multi-segment qualified enum: e.g. ns1::ns2::Enum::Entry
+        std::string enum_name = qident[qident.size() - 2];
+        std::vector<std::string> ns_parts;
+        for (size_t i = 0; i + 2 < qident.size(); ++i) ns_parts.push_back(qident[i]);
+
+        // Search starting from enclosing scopes
+        for (auto cur = context_elem.shared_as<const element>(); cur; cur = cur->parent<element>()) {
+            if (auto nspc = std::dynamic_pointer_cast<const ns>(cur)) {
+                auto target_ns = nspc;
+                bool ok = true;
+                for (const auto& part : ns_parts) {
+                    if (auto child = target_ns->get_child_namespace(part)) {
+                        target_ns = child;
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok && target_ns) {
+                    if (auto en = target_ns->get_enum(enum_name)) return en;
+                }
+            }
+        }
+
+        // Search from root namespace
+        auto root = scope_lookup::root_namespace(context_elem);
+        if (root) {
+            auto target_ns = root;
+            bool ok = true;
+            for (const auto& part : ns_parts) {
+                if (auto child = target_ns->get_child_namespace(part)) {
+                    target_ns = child;
+                } else {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok && target_ns) {
+                if (auto en = target_ns->get_enum(enum_name)) return en;
             }
         }
     }
@@ -209,6 +252,15 @@ eval_outcome eval_identifier(const identifier_expr& id,
         if (auto v = lookup_enclosing_instantiated_value_arg(context_elem, name)) {
             return eval_outcome::success(constant_value(*v));
         }
+
+        // Look for const variable in current scope
+        if (auto elem_ptr = context_elem.shared_as<const element>()) {
+            if (auto var = scope_lookup::lookup_variable(std::const_pointer_cast<element>(elem_ptr), name)) {
+                if (var->is_const() && var->is_constant()) {
+                    return eval_outcome::success(var->get_constant_value());
+                }
+            }
+        }
         return eval_outcome::defer();
     }
 
@@ -234,6 +286,19 @@ eval_outcome eval_identifier(const identifier_expr& id,
         }
         enum_value ev{en, idx, entry->value, entry->name};
         return eval_outcome::success(constant_value(ev));
+    }
+
+    // Check for static const member: StructName::CONST_VAR or ns::CONST_VAR
+    if (q.size() == 2 && !q.has_root_prefix()) {
+        if (auto elem_ptr = context_elem.shared_as<const element>()) {
+            if (auto agg = scope_lookup::lookup_structure(std::const_pointer_cast<element>(elem_ptr), q[0])) {
+                if (auto var = agg->get_variable(q[1])) {
+                    if (var->is_const() && var->is_constant()) {
+                        return eval_outcome::success(var->get_constant_value());
+                    }
+                }
+            }
+        }
     }
 
     return eval_outcome::defer();

@@ -21,6 +21,7 @@
 #include "type.hpp"
 #include "statements.hpp"
 #include "expressions.hpp"
+#include "operators.hpp"
 #include "imported.hpp"
 #include "aggregate_value.hpp"
 #include "../errors.hpp"
@@ -172,6 +173,9 @@ std::string build_instantiation_key(const std::vector<template_argument>& args) 
         } else if (args[i].is_type()) {
             oss << type_display_name(args[i].type_arg);
         } else if (args[i].value_arg.has_value()) {
+            if (args[i].value_type) {
+                oss << type_display_name(args[i].value_type) << ":";
+            }
             std::visit([&oss](auto&& v) {
                 using T = std::decay_t<decltype(v)>;
                 if constexpr (std::is_same_v<T, std::monostate>) {
@@ -273,6 +277,11 @@ std::string build_instantiated_name(const std::string& base_name,
         } else if (args[i].is_type()) {
             oss << escape_name_component(type_display_name(args[i].type_arg));
         } else if (args[i].value_arg.has_value()) {
+            if (args[i].value_type) {
+                if (auto et = std::dynamic_pointer_cast<enum_type>(args[i].value_type)) {
+                    oss << escape_name_component(type_display_name(et)) << "_";
+                }
+            }
             // `void`, `null`, `true`, `false` and numeric literals are all reserved words
             // or start with a digit / '-', so none of them can collide with an escaped type
             // name. String values can (`Box<"abc">` vs `Box<abc>`) and therefore keep an
@@ -742,6 +751,10 @@ void template_instantiator::substitute_expr_types(
     } else if (auto be = std::dynamic_pointer_cast<binary_expression>(expr)) {
         substitute_expr_types(be->left(), subst);
         substitute_expr_types(be->right(), subst);
+    } else if (auto te = std::dynamic_pointer_cast<ternary_expression>(expr)) {
+        substitute_expr_types(te->lexpr(), subst);
+        substitute_expr_types(te->mexpr(), subst);
+        substitute_expr_types(te->rexpr(), subst);
     } else if (auto fie = std::dynamic_pointer_cast<function_invocation_expression>(expr)) {
         substitute_expr_types(std::const_pointer_cast<expression>(fie->callee_expr()), subst);
         for (auto& arg : fie->arguments()) {
@@ -862,6 +875,16 @@ void template_instantiator::substitute_value_params(
         substitute_value_params(r, val_subst);
         if (l != be->left()) be->assign_left(l);
         if (r != be->right()) be->assign_right(r);
+    } else if (auto te = std::dynamic_pointer_cast<ternary_expression>(expr)) {
+        auto l = te->lexpr();
+        auto m = te->mexpr();
+        auto r = te->rexpr();
+        substitute_value_params(l, val_subst);
+        substitute_value_params(m, val_subst);
+        substitute_value_params(r, val_subst);
+        if (l != te->lexpr() || m != te->mexpr() || r != te->rexpr()) {
+            te->assign(l, m, r);
+        }
     } else if (auto mem_obj = std::dynamic_pointer_cast<member_of_object_expression>(expr)) {
         auto sub = std::const_pointer_cast<expression>(mem_obj->sub_expr());
         substitute_value_params(sub, val_subst);

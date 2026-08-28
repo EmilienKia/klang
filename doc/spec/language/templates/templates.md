@@ -163,15 +163,17 @@ count : unsigned int = 16
 ```
 
 - The type must be a **compile-time-evaluable type**: any primitive type (`bool`, `char`,
-  `byte`, `short`, `int`, `long`, `float`, `double`, and their `unsigned` variants), or
-  an `enum` type. Aggregates, indirections, arrays, and function references are not
-  permitted as value parameter types.
+  `byte`, `short`, `int`, `long`, `float`, `double`, and their `unsigned` variants),
+  an `enum` type, or an aggregate `struct` type. Indirections, unsized arrays, and function references
+  are not permitted as value parameter types.
 - The supplied value expression (at instantiation) must be a **constant expression**
-  resolvable at compile time (literal values).
+  resolvable at compile time: literal values, enum constants (e.g. `Color::Blue`),
+  designated aggregate initializers (e.g. `{ .x = 1, .y = 2 }`), global/static `const` variables,
+  or constant expressions (arithmetic `+ - * / %`, bitwise `& | ^ ~ <<`, logical `&& || !`,
+  equality `== !=`, relational `<= >=`, ternary `?:`, and casts).
 - An optional `= Expression` provides a default value.
-- All primitive types are stored as `k::value_type`, a variant covering `bool`, `char`,
-  `unsigned char`, `short`, `unsigned short`, `int`, `unsigned int`, `long`,
-  `unsigned long`, `long long`, `unsigned long long`, `float`, `double`.
+- Constant values are stored as `k::value_type`, a variant covering primitive types,
+  `std::string`, and compile-time `aggregate_value` pointers.
 
 ### 3.3 Parameter Ordering
 

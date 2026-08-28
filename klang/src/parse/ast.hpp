@@ -105,6 +105,8 @@ namespace k::parse {
         struct annotation_def;
         struct template_parameter;
         struct template_arg;
+        struct expression;
+        typedef std::shared_ptr<expression> expr_ptr;
 
         /** List of template parameters in a template declaration. */
         using template_param_list = std::vector<std::shared_ptr<template_parameter>>;
@@ -201,10 +203,12 @@ namespace k::parse {
             std::shared_ptr<type_specifier> subtype;
             lex::punctuator br_open, br_close;
             std::optional<lex::integer> lex_int;
+            expr_ptr size_expr;
 
             array_type_specifier(const std::shared_ptr<type_specifier> &subtype, const lex::punctuator &br_open,
-                                 const lex::punctuator &br_close, const std::optional<lex::integer> &lex_int):
-                    subtype(subtype), br_open(br_open), br_close(br_close), lex_int(lex_int) {}
+                                 const lex::punctuator &br_close, const std::optional<lex::integer> &lex_int,
+                                 const expr_ptr &size_expr = nullptr):
+                    subtype(subtype), br_open(br_open), br_close(br_close), lex_int(lex_int), size_expr(size_expr) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

@@ -661,7 +661,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         if (!eval.ok()) {
                             args_ok = false; break;
                         }
-                        model_args.push_back(template_argument::make_value(*eval.value));
+                        model_args.push_back(template_argument::make_value(*eval.value, expected_value_type));
                         continue;
                     }
                     if (ast_arg->is_type()) {
@@ -679,7 +679,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         if (!eval.ok()) {
                             args_ok = false; break;
                         }
-                        model_args.push_back(template_argument::make_value(*eval.value));
+                        model_args.push_back(template_argument::make_value(*eval.value, expected_value_type));
                     } else {
                         args_ok = false; break;
                     }
@@ -721,7 +721,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                     args_ok = false; break;
                                 }
                             }
-                            final_args.push_back(template_argument::make_value(*param.default_value));
+                            final_args.push_back(template_argument::make_value(*param.default_value, param.value_type));
                         } else if (param.is_pack) {
                             final_args.push_back(template_argument::make_pack({}));
                         } else { args_ok = false; break; }
@@ -1522,7 +1522,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             if (!eval.ok()) {
                                 args_ok = false; break;
                             }
-                            model_args.push_back(template_argument::make_value(*eval.value));
+                            model_args.push_back(template_argument::make_value(*eval.value, expected_value_type));
                             continue;
                         }
                         if (ast_arg->is_type()) {
@@ -1542,7 +1542,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             if (!eval.ok()) {
                                 args_ok = false; break;
                             }
-                            model_args.push_back(template_argument::make_value(*eval.value));
+                            model_args.push_back(template_argument::make_value(*eval.value, expected_value_type));
                         } else {
                             args_ok = false; break;
                         }
@@ -1567,7 +1567,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                     continue;
                                 }
                             }
-                            model_args.push_back(template_argument::make_value(*param.default_value));
+                            model_args.push_back(template_argument::make_value(*param.default_value, param.value_type));
                         } else if (!param.is_pack) { args_ok = false; }
                     }
                     // Resolve constraint types in template params if still unresolved

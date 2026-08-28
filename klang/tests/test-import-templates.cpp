@@ -1573,6 +1573,75 @@ TEST_CASE("cross-module template — intrinsic member template with variadic pac
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-enum-default] Template with enum value parameter and default value
+// exported to KDI and instantiated in consumer module.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — enum value parameter with default across modules",
+          "[import][e2e][template][cross-tpl][consumer-inst][enum][value-param]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module enum_val_lib;
+
+            enum Mode { Slow = 10; Fast = 40; Turbo = 50; }
+
+            template<Mode M = Mode::Fast>
+            struct SpeedController {
+                get_speed() : int { return M; }
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module enum_val_exe;
+            import enum_val_lib;
+
+            main() : int {
+                c_default : SpeedController<>;
+                c_explicit : SpeedController<Mode::Slow>;
+                return c_default.get_speed() + c_explicit.get_speed();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 50 ); // 40 + 10 = 50
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-constexpr-default] Template with unparenthesized constexpr binary default
+// exported to KDI and instantiated in consumer module.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — unparenthesized binary default across modules",
+          "[import][e2e][template][cross-tpl][consumer-inst][value-param][default]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module constexpr_def_lib;
+
+            template<int N = 20 + 22>
+            struct ConfigHolder {
+                get_val() : int { return N; }
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module constexpr_def_exe;
+            import constexpr_def_lib;
+
+            main() : int {
+                c : ConfigHolder<>;
+                return c.get_val();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // [homonym-imports] Known limitation — two *imported* templates with the same
 // short name from different modules.
 //

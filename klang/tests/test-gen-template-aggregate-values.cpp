@@ -317,3 +317,66 @@ TEST_CASE("[K12] M12: aggregate default value direct local usage",
     REQUIRE(fn != nullptr);
     CHECK(fn() == 6);
 }
+
+TEST_CASE("[L12] M12: aggregate value parameter with enum field",
+          "[milestone12][template][value-param][aggregate][enum][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_aggregate_values_11;
+
+        enum Color : int { Red = 1; Green = 2; Blue = 3; }
+
+        struct StyledPoint {
+            color : Color;
+            x : int;
+            y : int;
+        }
+
+        template<StyledPoint P>
+        get_style() : int {
+            return P.color * 100 + P.x + P.y;
+        }
+
+        test() : int {
+            return get_style<{ .color = Color::Blue, .x = 4, .y = 5 }>();
+        }
+    )SRC");
+
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN32gen_template_aggregate_values_114testEv");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 309);
+}
+
+TEST_CASE("[M12] M12: propagation of aggregate value param to nested template struct",
+          "[milestone12][template][value-param][aggregate][nested][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_template_aggregate_values_12;
+
+        struct Point {
+            x : int;
+            y : int;
+        }
+
+        template<Point P>
+        struct Inner {
+            get_sum() : int { return P.x + P.y; }
+        }
+
+        template<Point P>
+        struct Outer {
+            inner : Inner<P>;
+            get_inner_sum() : int { return inner.get_sum(); }
+        }
+
+        test() : int {
+            o : Outer<{ .x = 15, .y = 25 }>;
+            return o.get_inner_sum();
+        }
+    )SRC");
+
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN32gen_template_aggregate_values_124testEv");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 40);
+}
+
