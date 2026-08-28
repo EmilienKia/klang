@@ -130,6 +130,17 @@ target_compile_definitions(klang-test-helpers PUBLIC
 )
 
 # ---------------------------------------------------------------------------
+# Helper macro: register a non-JIT frontend test executable.
+# Usage: klang_add_test(<target> <timeout_s> <source1> [<source2> ...])
+# ---------------------------------------------------------------------------
+macro(klang_add_test TARGET TIMEOUT)
+    add_executable(${TARGET} ${ARGN})
+    target_link_libraries(${TARGET} klang-test-helpers Catch2::Catch2WithMain)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+    set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
+endmacro()
+
+# ---------------------------------------------------------------------------
 # Helper macro: register a standard codegen test executable.
 # All JIT-based gen test executables share the same setup:
 #   - link against klang-test-helpers and Catch2
@@ -150,7 +161,7 @@ endmacro()
 # Group 1 — Frontend: lexer, parser, file-resolver, process
 # No JIT, no libk dependency — runnable even before libk is built.
 # ---------------------------------------------------------------------------
-add_executable(klang-tests-frontend
+klang_add_test(klang-tests-frontend 30
         tests/test-lexer.cpp
         tests/test-unicode.cpp
         tests/test-parser.cpp
@@ -160,9 +171,6 @@ add_executable(klang-tests-frontend
         tests/test-file-resolver.cpp
         tests/test-process.cpp
 )
-target_link_libraries(klang-tests-frontend klang-test-helpers Catch2::Catch2WithMain)
-add_test(NAME klang-tests-frontend COMMAND klang-tests-frontend)
-set_tests_properties(klang-tests-frontend PROPERTIES TIMEOUT 30)
 
 # ---------------------------------------------------------------------------
 # Group 2 — Model: model analysis, template instantiator, phase pipeline
@@ -182,24 +190,35 @@ klang_gen_test(klang-tests-model 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 3a — Codegen core: basic codegen, resolution, visibility, variables
-# Estimated wall-clock: ~60s on a low-spec VM.
+# Group 3a — Codegen core: basic codegen, string literals, variable init
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-core 180
+klang_gen_test(klang-tests-gen-core 120
         tests/test-gen.cpp
-        tests/test-gen-resolution.cpp
-        tests/test-gen-visibility.cpp
-        tests/test-gen-varargs.cpp
-        tests/test-gen-extern.cpp
-        tests/test-gen-intrinsic.cpp
         tests/test-gen-string-literal.cpp
         tests/test-gen-variable-init.cpp
-        tests/test-gen-diagnostic-suppression.cpp
-        tests/test-multi-source.cpp
 )
 
 # ---------------------------------------------------------------------------
-# Group 3b — Codegen: functions, callables, lambdas, func-refs
+# Group 3b — Codegen resolution: symbol resolution, visibility, multi-source
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-resolution 120
+        tests/test-gen-resolution.cpp
+        tests/test-gen-visibility.cpp
+        tests/test-multi-source.cpp
+        tests/test-gen-diagnostic-suppression.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 3c — Codegen ABI & FFI: extern C, intrinsics, varargs
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-extern-intrinsics 120
+        tests/test-gen-extern.cpp
+        tests/test-gen-intrinsic.cpp
+        tests/test-gen-varargs.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 3d — Codegen: functions, callables, lambdas, func-refs
 # Estimated wall-clock: ~60s on a low-spec VM.
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-functions 120
@@ -213,7 +232,7 @@ klang_gen_test(klang-tests-gen-functions 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 3c — Codegen: statements, control flow, init order, static lifecycle
+# Group 3e — Codegen: statements, control flow, init order, static lifecycle
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-control 120
         tests/test-gen-statements.cpp
@@ -228,39 +247,54 @@ klang_gen_test(klang-tests-gen-control 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 3d — Exception model and throw contracts
+# Group 3f — Exception model and throw contracts
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-exceptions 120
         tests/test-gen-exceptions.cpp
 )
 
 # ---------------------------------------------------------------------------
-# Group 3e — Ternary expression matrix
+# Group 3g — Ternary expression matrix
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-ternary 120
         tests/test-gen-ternary-comprehensive.cpp
 )
 
 # ---------------------------------------------------------------------------
-# Group 4a — Arithmetic operators (all numeric types)
-# Split into integer and floating-point/boolean/increment test executables.
+# Group 4a — Arithmetic operators: 8/16-bit integers (byte, ubyte, short, ushort)
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arithmetic-int 120
-        tests/test-gen-arithmetic-int.cpp
+klang_gen_test(klang-tests-gen-arithmetic-int8-16 120
+        tests/test-gen-arithmetic-int8-16.cpp
 )
+
+# ---------------------------------------------------------------------------
+# Group 4b — Arithmetic operators: 32/64-bit integers (int, uint, long, ulong)
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-arithmetic-int32-64 120
+        tests/test-gen-arithmetic-int32-64.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 4c — Arithmetic operators: floating-point, boolean, increment/decrement
+# ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-arithmetic-float 120
         tests/test-gen-arithmetic-float.cpp
 )
 
 # ---------------------------------------------------------------------------
-# Group 4b — Operator overloads, comparison, spaceship, assign, casts
-# Estimated wall-clock: ~60s on a low-spec VM.
+# Group 4d — Operator overloads, comparison fallback, spaceship, assignment
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-operators 120
         tests/test-gen-operator-overload.cpp
         tests/test-gen-comparison-fallback.cpp
         tests/test-gen-spaceship.cpp
         tests/test-gen-assign-operator.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 4e — Casts and conversions: scalar casts, indirection casts
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-casts 120
         tests/test-gen-cast.cpp
         tests/test-gen-cast-indirection.cpp
 )
@@ -323,15 +357,20 @@ klang_gen_test(klang-tests-gen-virtuality 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 7 — Memory model: ownership, indirection, arrays, drain
-# Estimated wall-clock: ~60s on a low-spec VM.
+# Group 7a — Memory model: ownership, drain, and indirection
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-memory 120
+klang_gen_test(klang-tests-gen-memory-ownership 120
         tests/test-gen-owner.cpp
         tests/test-gen-drain.cpp
         tests/test-gen-indirection.cpp
         tests/test-gen-indirection-downcast.cpp
         tests/test-gen-recursive-indirection.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 7b — Memory model: fixed/dynamic arrays and foreach iteration
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-arrays 120
         tests/test-gen-array-init.cpp
         tests/test-gen-new-array.cpp
         tests/test-gen-uniform-array-init.cpp
@@ -367,23 +406,28 @@ klang_gen_test(klang-tests-gen-scoping 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 9 — Templates and generics
-# Estimated wall-clock: ~45s on a low-spec VM.
+# Group 9a — Templates: functions, instantiation, mangling, member templates
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-templates 120
+klang_gen_test(klang-tests-gen-templates-core 120
         tests/test-gen-template-functions.cpp
         tests/test-gen-template-instantiation.cpp
         tests/test-gen-template-mangling.cpp
         tests/test-gen-template-func-calls.cpp
+        tests/test-gen-member-template.cpp
+        tests/test-gen-template-recursion-guard.cpp
+        tests/test-gen-template-comprehensive.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 9b — Templates: deduction, constraints, packs, value params, generics
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-templates-deduction 120
         tests/test-gen-template-constraints.cpp
         tests/test-gen-template-value-params.cpp
         tests/test-gen-template-aggregate-values.cpp
-        tests/test-gen-template-comprehensive.cpp
-        tests/test-gen-generic.cpp
-        tests/test-gen-template-packs.cpp
         tests/test-gen-template-deduction.cpp
-        tests/test-gen-member-template.cpp
-        tests/test-gen-template-recursion-guard.cpp
+        tests/test-gen-template-packs.cpp
+        tests/test-gen-generic.cpp
         tests/test-gen-nested-generics.cpp
 )
 

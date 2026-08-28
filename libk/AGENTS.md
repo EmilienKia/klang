@@ -116,8 +116,12 @@ Scope: K stdlib modules, runtime C substrate, FFI bridges, and libk test executa
 
 ## 5. Tests in this subtree
 
-- `libk-tests-core`: functional core stdlib tests (exceptions, RTTI, strings, math, shared).
-- `libk-tests-collections-io`: collections and synchronous stream/file/path I/O tests.
+- `libk-tests-rtti-exceptions`: functional RTTI and exception handling tests.
+- `libk-tests-strings`: string and string builder tests.
+- `libk-tests-types`: foundational types, optional, expected, shared, math, and application tests.
+- `libk-tests-io`: synchronous stream/file/path I/O tests.
+- `libk-tests-collections-sequential`: sequential collection tests (List, Vector, Sequences).
+- `libk-tests-collections-associative`: associative collection tests (Set, Map).
 - `libk-thread-io-tests`: thread/future/sync/file/network tests.
 - `libk-perf-tests` (optional): stress/perf suite (`-DLIBK_PERF_TESTS=ON`).
 
@@ -127,7 +131,7 @@ If in a working session, only `libk` changes (`.c` and/or `.k`), only recompile 
 
 ```bash
 # Build libk tests
-cd cmake-build-debug && ninja -j3 libk-tests-core libk-tests-collections-io libk-thread-io-tests
+cd cmake-build-debug && ninja -j3 libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests
 
 # Run libk tests
 cd cmake-build-debug && ctest -R "libk-tests|libk-thread-io-tests" --output-on-failure

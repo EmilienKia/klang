@@ -77,7 +77,7 @@ cd cmake-build-debug && ctest --output-on-failure
 - If in a working session, only `libk` changes (`.c` and/or `.k`), then only recompile `libk` and run `libk` tests each time. No need to run all project tests (the compiler and kdi tools are unaffected).
 ```bash
 # Build libk tests
-cd cmake-build-debug && ninja -j3 libk-tests-core libk-tests-collections-io libk-thread-io-tests
+cd cmake-build-debug && ninja -j3 libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests
 
 # Run libk tests
 cd cmake-build-debug && ctest -R "libk-tests|libk-thread-io-tests" --output-on-failure
