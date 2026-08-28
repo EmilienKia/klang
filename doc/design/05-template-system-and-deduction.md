@@ -151,6 +151,45 @@ A decayed → T=A    Recurse subtypes     A: struct_type(Vec)  Recurse ret/param
 - A pack parameter at the end of the signature collects all remaining call-site arguments into a `template_argument::make_pack(...)`.
 - Top-level references are stripped from individual elements.
 
+### 4.2. Return-Type & Contextual Target-Type Deduction
+
+When a function template has template parameters that do not appear in its parameter list (or are only partially deducible from argument expressions), Klang utilizes **bidirectional contextual type inference**:
+
+```
+[ Surrounding Context ] (val x: TargetType =, return, (TargetType)...)
+         │
+         ▼
+[ type_reference_resolver ] ─── Pushes expected TargetType via target_scope
+         │
+         ▼
+[ deduce_template_arguments ]
+         │  1. Deduce from arguments (params vs args)
+         │  2. If un-deduced params remain: match tpl_return_type vs expected_target_type
+         │  3. Reject candidate if deduction conflicts with argument deduction
+         │  4. Fill remaining defaulted parameters
+         ▼
+[ Concrete Instantiation & Overload Selection ]
+```
+
+#### 1. Contextual Deduction Algorithm
+1. `deduce_template_arguments` first processes all call arguments against declared parameter types.
+2. If any type/value parameters remain un-deduced, and an `expected_target_type` is provided by the enclosing resolver context:
+   - Top-level references/drains are unwrapped unless the template return type is explicitly a reference.
+   - `deduce_from_types(tpl_return_type, clean_target, ...)` recursively matches the declared return pattern against the target type.
+   - Deduces bare types (`T`), wrapped pointers/owners (`T*`, `T!`), composites (`Box<T>`, `Pair<T, U>`), and sized arrays (`T[N]`).
+3. If deduction from the return type produces a conflict with a parameter already deduced from call arguments, the candidate fails deduction (`match_status::CONFLICT`) and is discarded from the overload set.
+
+#### 2. Supported Contextual Producers
+Target types are propagated down the AST during Pass D (`type_reference_resolver`) across:
+- **Variable Definitions**: `val x: int = make_default();`
+- **Return Statements**: `fun get(): int { return make_default(); }`
+- **Assignments**: `x = make_default();`, `obj.field = make_default();`
+- **Explicit Casts**: `(int) make_default()`
+- **Ternary Expressions**: `cond ? make_default() : fallback`
+- **Array Initializers**: `arr : int[2] { make_default(), make_default() };`
+- **Designated Struct Initializers**: `Point{ .x = make_default(), .y = make_default() }`
+- **Function Arguments**: `consume(make_default())` when `consume(int)` parameter type is known.
+
 ---
 
 ## 5. Overload Resolution Integration

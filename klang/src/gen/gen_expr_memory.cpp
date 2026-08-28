@@ -251,11 +251,6 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
         return;
     }
 
-    // Resolve sub-expressions
-    for (size_t i = 0; i < expr.size(); ++i) {
-        if (auto e = expr.element(i)) e->accept(*this);
-    }
-
     // Step 1: Determine expected array/element types.
     auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
     std::shared_ptr<sized_array_type> arr_type;
@@ -281,12 +276,43 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
         expr._array_size = expr.size();
         expr.set_type(arr_type->get_reference());
     } else {
-        if (!var_def) return;
-        auto var_type = var_def->get_type();
-        if (!type::is_sized_array(var_type)) return;
-        arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
-        elem_type = arr_type->get_subtype();
+        if (!var_def) {
+            // Check if outer context provided a sized array type
+            auto expected = current_expected_type();
+            if (expected) {
+                if (type::is_reference(expected) || type::is_drain(expected)) {
+                    expected = expected->get_subtype();
+                }
+                if (type::is_sized_array(expected)) {
+                    arr_type = std::dynamic_pointer_cast<sized_array_type>(expected);
+                    elem_type = arr_type->get_subtype();
+                }
+            }
+        } else {
+            auto var_type = var_def->get_type();
+            if (type::is_sized_array(var_type)) {
+                arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
+                elem_type = arr_type->get_subtype();
+            }
+        }
     }
+
+    // Resolve sub-expressions with expected element type context
+    for (size_t i = 0; i < expr.size(); ++i) {
+        if (auto e = expr.element(i)) {
+            _replacement_expr = nullptr;
+            {
+                target_scope scope(*this, elem_type, target_context_kind::ARRAY_ELEMENT);
+                e->accept(*this);
+            }
+            if (_replacement_expr) {
+                expr.assign_element(i, _replacement_expr);
+                _replacement_expr = nullptr;
+            }
+        }
+    }
+
+    if (!arr_type) return;
 
     // Validate element count
     size_t arr_size = arr_type->get_size();
@@ -444,14 +470,6 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
  *   4. Validate that all designators refer to valid fields.
  */
 void type_reference_resolver::visit_designated_struct_init_expression(designated_struct_init_expression& expr) {
-    // Resolve sub-expressions in each member initializer
-    for (auto& m : expr.members_mutable()) {
-        if (m.value) m.value->accept(*this);
-        for (auto& a : m.args) {
-            if (a) a->accept(*this);
-        }
-    }
-
     // Step 1: Determine the target struct type.
     // For temporaries, resolve from the type name.
     // For top-level designated inits, derive from the constructed variable's type.
@@ -635,8 +653,31 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
         m.resolved_member = resolved_mem;
         m.resolved_owner = resolved_owner;
 
-        // Type-check the initializer value
+        // Resolve value / arguments with expected field type context
         auto member_type = resolved_mem->get_type();
+        if (m.value) {
+            _replacement_expr = nullptr;
+            {
+                target_scope scope(*this, member_type, target_context_kind::STRUCT_FIELD);
+                m.value->accept(*this);
+            }
+            if (_replacement_expr) {
+                m.value = _replacement_expr;
+                _replacement_expr = nullptr;
+            }
+        }
+        for (size_t a_idx = 0; a_idx < m.args.size(); ++a_idx) {
+            if (m.args[a_idx]) {
+                _replacement_expr = nullptr;
+                m.args[a_idx]->accept(*this);
+                if (_replacement_expr) {
+                    m.args[a_idx] = _replacement_expr;
+                    _replacement_expr = nullptr;
+                }
+            }
+        }
+
+        // Type-check the initializer value
         if (m.is_call_form) {
             // Constructor form: .member(args...)
             if (auto mem_st_type = std::dynamic_pointer_cast<struct_type>(member_type)) {

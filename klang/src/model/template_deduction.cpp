@@ -661,7 +661,9 @@ deduction_result deduce_template_arguments(
     const tpl_info& ti,
     const std::vector<std::shared_ptr<parameter>>& params,
     const std::vector<std::shared_ptr<type>>& arg_types,
-    const std::vector<template_argument>& explicit_args)
+    const std::vector<template_argument>& explicit_args,
+    const std::shared_ptr<type>& tpl_return_type,
+    const std::shared_ptr<type>& expected_target_type)
 {
     deduction_result result;
 
@@ -741,6 +743,42 @@ deduction_result deduce_template_arguments(
         ++arg_idx;
     }
 
+    // Contextual / target-type return deduction:
+    // If some template parameters remain un-deduced and an expected target type is provided,
+    // attempt pattern matching against the template function's declared return type.
+    bool needs_more_deduction = false;
+    for (const auto& tpl_param : ti.params) {
+        if (tpl_param.is_type_param()) {
+            if (!tpl_param.is_pack && type_deductions.find(tpl_param.name) == type_deductions.end()) {
+                needs_more_deduction = true;
+                break;
+            }
+        } else if (tpl_param.is_value_param()) {
+            if (value_deductions.find(tpl_param.name) == value_deductions.end()) {
+                needs_more_deduction = true;
+                break;
+            }
+        }
+    }
+
+    if (needs_more_deduction && tpl_return_type && expected_target_type) {
+        auto clean_target = expected_target_type;
+        if ((type::is_reference(clean_target) || type::is_drain(clean_target)) &&
+            !type::is_reference(tpl_return_type) && !type::is_drain(tpl_return_type)) {
+            clean_target = clean_target->get_subtype();
+        }
+        auto status = deduce_from_types(
+            tpl_return_type, clean_target,
+            type_param_names, value_param_names,
+            type_deductions, value_deductions);
+        if (status == match_status::CONFLICT) {
+            result.success = false;
+            result.failure_reason = "Type conflict deducing return type against expected target type '" +
+                expected_target_type->to_string() + "'";
+            return result;
+        }
+    }
+
     // Build the final template arguments vector
     std::vector<template_argument> deduced_args;
     for (const auto& tpl_param : ti.params) {
@@ -761,7 +799,7 @@ deduction_result deduce_template_arguments(
             } else {
                 result.success = false;
                 result.failure_reason = "Cannot deduce template parameter '" + tpl_param.name +
-                    "': not referenced in any function parameter";
+                    "': not referenced in any function parameter and no compatible target type provided";
                 return result;
             }
         } else {

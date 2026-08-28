@@ -507,15 +507,30 @@ void type_reference_resolver::visit_conditional_expression(conditional_expressio
         _replacement_expr = nullptr;
     }
 
+    auto expected = current_expected_type();
+
     _replacement_expr = nullptr;
-    then_expr->accept(*this);
+    {
+        target_scope scope(*this, expected, target_context_kind::TERNARY_BRANCH);
+        then_expr->accept(*this);
+    }
     if (_replacement_expr) {
         expr.mexpr() = _replacement_expr;
         _replacement_expr = nullptr;
     }
 
+    // If no expected type was provided from outer context, but then_expr resolved to a concrete type,
+    // use it as candidate expected type for else_expr.
+    auto else_expected = expected;
+    if (!else_expected && expr.mexpr()->get_type() && type::is_resolved(expr.mexpr()->get_type())) {
+        else_expected = expr.mexpr()->get_type();
+    }
+
     _replacement_expr = nullptr;
-    else_expr->accept(*this);
+    {
+        target_scope scope(*this, else_expected, target_context_kind::TERNARY_BRANCH);
+        else_expr->accept(*this);
+    }
     if (_replacement_expr) {
         expr.rexpr() = _replacement_expr;
         _replacement_expr = nullptr;

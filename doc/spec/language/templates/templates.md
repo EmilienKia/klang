@@ -37,10 +37,17 @@ The following template features are fully implemented, tested, and usable:
 - Template function declarations (free and member functions).
 - Template aggregate declarations (`struct`, `class`, `interface`).
 - Type parameters (`typename`, `struct`, `class`, `interface`).
-- Value parameters (compile-time constant integers, booleans, etc.).
+- Value parameters (compile-time constant integers, booleans, enums, aggregate values, constant expressions).
+- Variadic template parameters / parameter packs (`typename... Ts`).
 - Type constraints (base-type requirement).
 - Default parameter values and default types.
 - Full explicit instantiation: `MyTemplate<int, 42>`.
+- **Function template argument deduction**:
+  - Deduction of type and value parameters from invocation arguments (`id(42)` $\to$ `id<int>`).
+  - Deduction across composite templates (`Vector<T>`, `Pair<T, U>`), indirections (`T*`, `T&`, `T!`, `T?`), and callables (`*(T):R`).
+  - Parameter pack deduction from argument lists.
+- **Return-type and contextual target-type deduction**:
+  - Deduction of un-deduced template parameters from expected return types in variable declarations (`val x: int = make()`), return statements (`return make()`), assignments (`x = make()`), explicit casts (`(int) make()`), ternary branches, array initializers, designated struct initializers, and function arguments.
 - Cross-module templates: define a template in one module, import and instantiate it in
   another (via KDI export/import with reconstructed source fragments).
 - Name mangling of template instantiations.
@@ -50,9 +57,8 @@ The following template features are fully implemented, tested, and usable:
 
 The following features are planned for future development:
 - Template specialization (partial or full).
-- Template template parameters.
-- Variadic template parameters (parameter packs).
-- Deduction of template arguments from function call arguments.
+- Template template parameters (`template<template<typename> class C>`).
+- Class Template Argument Deduction (CTAD) for constructors (`Pair(1, 2)` -> `Pair<int, int>`).
 - Concepts or type traits beyond simple base-type constraints.
 - Templates on constructors, destructors, operators, or enumerations independently.
 - `extern template` declarations.
@@ -251,23 +257,79 @@ TemplateArg:
 
 ### 5.1 Explicit Instantiation
 
-In Phase 1, all template arguments must be supplied explicitly. There is no deduction.
+Template arguments may be supplied explicitly in angle brackets:
 
 ```k
 p : Pair<int>;
 swap<float>(&a, &b);
 ```
 
-### 5.2 Instantiation Semantics
+Trailing arguments with default types or values may be omitted.
 
-When the compiler encounters a template instantiation `Name<Args...>`:
+### 5.2 Template Argument Deduction
+
+Function templates support automated template argument deduction at call sites, eliminating
+the need for explicit `<...>` arguments when the types can be unambiguously inferred.
+
+#### 5.2.1 Deduction from Invocation Arguments
+Template type and value parameters are deduced by pattern-matching the types of call arguments
+against the declared parameter types:
+
+```k
+template<typename T>
+fun identity(x: T) : T { return x; }
+
+val a = identity(42);       // T deduced as int
+val b = identity(3.14);     // T deduced as double
+```
+
+Deduction supports composite types (`Vector<T>`), pointer/indirection types (`T*`, `T&`, `T!`),
+callable types (`*(T):R`), sized arrays (`T[N]`), and parameter packs (`Ts...`).
+
+#### 5.2.2 Return-Type and Contextual Target-Type Deduction
+When template parameters appear in the function's return type but not in its parameter list
+(or when arguments only partially determine the template arguments), Klang deduces the
+remaining template parameters from the **expected target type** imposed by the surrounding context:
+
+```k
+template<typename T>
+fun make_default() : T {
+    x : T = (T) 0;
+    return x;
+}
+
+template<typename In, typename Out>
+fun convert(v: In) : Out {
+    return (Out) v;
+}
+
+// Target type deduced from variable definition:
+val x: int = make_default();                // T deduced as int
+
+// Mixed argument and return-type deduction:
+val y: double = convert(42);                // In deduced as int, Out as double
+
+// Context deduction across statements and expressions:
+return make_default();                      // Deduced from enclosing function return type
+x = make_default();                         // Deduced from LHS variable type
+val casted = (int) make_default();          // Deduced from cast target type
+val t = flag ? make_default() : 0;          // Deduced from ternary branch context
+arr : int[2] { make_default(), make_default() }; // Deduced from array element type
+pt : Point = Point{ .x = make_default() };  // Deduced from struct field type
+consume(make_default());                    // Deduced from callee parameter type
+```
+
+If a template call occurs in a context without a target type (e.g. `val x = make_default();`
+with type inference, or as an expression statement `make_default();`), and the template
+parameters cannot be deduced from arguments, compilation fails with an error requiring
+explicit template arguments (`make_default<int>()`).
+
+### 5.3 Instantiation Semantics
+
+When the compiler encounters a template instantiation `Name<Args...>` or a deduced function call:
 1. Look up the template declaration for `Name` in the current scope.
-2. Match each argument to the corresponding parameter:
-   - For type parameters: the argument must be a valid type satisfying any kind filter
-     and constraint.
-   - For value parameters: the argument must be a constant expression of the declared
-     type (or implicitly convertible to it).
-3. Apply defaults for any trailing parameters not explicitly supplied.
+2. Match each argument to the corresponding parameter (via explicit args, argument deduction, or contextual return-type deduction).
+3. Apply defaults for any trailing parameters not explicitly supplied or deduced.
 4. Validate type constraints (kind filter and base-type constraint).
 5. Check whether this exact combination has already been instantiated (cache lookup).
 6. If not, perform **monomorphization**: clone the template's model-level members
@@ -278,7 +340,7 @@ When the compiler encounters a template instantiation `Name<Args...>`:
 7. Register the resulting concrete entity so that future uses of the same arguments
    reuse it.
 
-### 5.3 Instantiation Context
+### 5.4 Instantiation Context
 
 Template instantiation occurs lazily (on first use). The instantiated entity is placed in
 the same namespace/scope as the template definition. Multiple translation units

@@ -26,6 +26,23 @@
 
 namespace k::model::gen {
 
+enum class target_context_kind {
+    UNCONSTRAINED,
+    VARIABLE_INIT,
+    RETURN_STMT,
+    ASSIGNMENT_RHS,
+    CAST_DESTINATION,
+    TERNARY_BRANCH,
+    FUNCTION_ARGUMENT,
+    ARRAY_ELEMENT,
+    STRUCT_FIELD
+};
+
+struct target_type_info {
+    std::shared_ptr<type> expected_type;
+    target_context_kind kind = target_context_kind::UNCONSTRAINED;
+};
+
 /**
  * Unit type resolver
  * This helper class will resolve all types usages, and particularly set types for expressions and variables.
@@ -92,7 +109,36 @@ protected:
      */
     std::unordered_set<aggregate*> _resolved_instantiations;
 
+    /**
+     * Stack of expected/target type contexts pushed by parent expressions or statements.
+     * Used for bidirectional type inference (e.g. return-type template argument deduction,
+     * literal context typing).
+     */
+    std::vector<target_type_info> _target_context_stack;
+
 public:
+
+    /** Return the current expected/target type from the enclosing context, or nullptr. */
+    std::shared_ptr<type> current_expected_type() const {
+        return _target_context_stack.empty() ? nullptr : _target_context_stack.back().expected_type;
+    }
+
+    /** Return the current context kind. */
+    target_context_kind current_context_kind() const {
+        return _target_context_stack.empty() ? target_context_kind::UNCONSTRAINED : _target_context_stack.back().kind;
+    }
+
+    /** RAII helper to push and pop an expected target type context during AST visitation. */
+    struct target_scope {
+        type_reference_resolver& resolver;
+        target_scope(type_reference_resolver& r, std::shared_ptr<type> t, target_context_kind k = target_context_kind::UNCONSTRAINED)
+            : resolver(r) {
+            resolver._target_context_stack.push_back({std::move(t), k});
+        }
+        ~target_scope() {
+            resolver._target_context_stack.pop_back();
+        }
+    };
 
     type_reference_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
     k::log::logger_relay(logger),

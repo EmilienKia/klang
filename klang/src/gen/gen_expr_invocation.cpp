@@ -228,10 +228,27 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             "('obj.*mfp(args)') are supported");
     }
 
+    // Helper to determine expected argument type at arg_idx
+    auto get_expected_arg_type = [&](size_t arg_idx) -> std::shared_ptr<type> {
+        if (callee) {
+            if (auto func = callee->get_function()) {
+                if (!func->is_template() && arg_idx < func->parameters().size()) {
+                    auto p = func->parameters()[arg_idx];
+                    return p ? p->get_type() : nullptr;
+                }
+            }
+        }
+        return nullptr;
+    };
+
     // Resolve and type-check all arguments first
     for(size_t arg_idx = 0; arg_idx < expr.arguments().size(); ++arg_idx) {
         _replacement_expr = nullptr;
-        expr.arguments()[arg_idx]->accept(*this);
+        auto expected_arg_t = get_expected_arg_type(arg_idx);
+        {
+            target_scope scope(*this, expected_arg_t, target_context_kind::FUNCTION_ARGUMENT);
+            expr.arguments()[arg_idx]->accept(*this);
+        }
         if (_replacement_expr) {
             expr.assign_argument(arg_idx, _replacement_expr);
             _replacement_expr = nullptr;
@@ -701,7 +718,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
                 std::vector<template_argument> final_args;
                 if (model_args.size() < ti->params.size() && !has_pack) {
-                    auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), call_types, model_args);
+                    auto deduction = k::model::deduce_template_arguments(
+                        *ti, tpl_func->parameters(), call_types, model_args,
+                        tpl_func->get_return_type(), current_expected_type());
                     if (!deduction.success) continue;
                     final_args = std::move(deduction.deduced_args);
                 } else {
@@ -853,7 +872,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     }
                     call_types.insert(call_types.end(), expr_arg_types.begin(), expr_arg_types.end());
 
-                    auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), call_types);
+                    auto deduction = k::model::deduce_template_arguments(
+                        *ti, tpl_func->parameters(), call_types, {},
+                        tpl_func->get_return_type(), current_expected_type());
                     if (!deduction.success) continue;
                     size_t err_idx;
                     std::string err_reason;
@@ -1691,7 +1712,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                     }
 
-                    auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), arg_types);
+                    auto deduction = k::model::deduce_template_arguments(
+                        *ti, tpl_func->parameters(), arg_types, {},
+                        tpl_func->get_return_type(), current_expected_type());
                     if (!deduction.success) continue;
 
                     // Validate constraints

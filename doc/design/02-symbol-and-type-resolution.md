@@ -221,6 +221,20 @@ Pass D performs full type inference, expression type decoration, type checking, 
 ### 6.1 Expression Type Deduction & Adaptation
 
 Every expression node is visited to deduce its `_type`:
+- **Bidirectional Contextual Type Inference (`_target_context_stack`)**:
+  - `type_reference_resolver` maintains a stack of expected target types pushed via RAII guard `target_scope`.
+  - Context producers establish expected types before visiting sub-expressions:
+    * Variable definitions (`val x: T = expr`) push declared type `T`.
+    * Return statements (`return expr;`) push enclosing function return type `T`.
+    * Assignments (`lhs = rhs;`) resolve `lhs` first and push target type for `rhs`.
+    * Explicit casts (`(T) expr`) resolve target type `T` first and push `T` to `expr`.
+    * Ternary expressions (`cond ? a : b`) propagate outer expected type to branches `a` and `b`.
+    * Array initializers (`arr : T[N] { e1, e2 }`) push element type `T` to each element expression.
+    * Designated struct initializers (`Point{ .x = e1, .y = e2 }`) push field types to value expressions.
+    * Function invocations (`consume(arg)`) propagate parameter types when the callee signature is unambiguous.
+  - Consumers leverage `current_expected_type()`:
+    * **Return-Type Template Deduction**: Invocations of function templates deduce un-deduced template parameters from the expected return type.
+    * **Literal Context Typing**: Integer and null literals adapt directly to the expected target type where safe.
 - **Literal Expressions**: Mapped to primitive types (`int`, `double`, `bool`, `char[]`, `null`).
 - **Binary & Arithmetic Expressions**: Evaluates operand type compatibility, applies promotion rules (e.g. `int` + `long` -> `long`), or selects user-defined operator overloads.
 - **Member Access (`.` and `->`)**: Resolves field offsets, handles implicit dereferencing, and performs automatic struct upcasting when accessing base members.

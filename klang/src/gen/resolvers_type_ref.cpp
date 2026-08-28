@@ -2099,6 +2099,11 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
     auto init_expr_base = var.get_init_expr();
     if (init_expr_base) {
         _replacement_expr = nullptr;
+        std::shared_ptr<type> expected = var.get_type();
+        if (expected && !type::is_resolved(expected)) {
+            expected = _context->resolve_type(expected);
+        }
+        target_scope scope(*this, expected, target_context_kind::VARIABLE_INIT);
         init_expr_base->accept(*this);
         if (_replacement_expr) {
             var.set_init_expr(_replacement_expr);

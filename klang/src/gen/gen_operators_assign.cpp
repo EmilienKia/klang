@@ -144,13 +144,37 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
 }
 
 void type_reference_resolver::visit_assignation_expression(assignation_expression &expr) {
-    // TODO Rework conversions and promotions and mutualize with symbol_type_resolver::process_arithmetic(...)
-    visit_binary_expression(expr);
+    // Resolve left operand first to determine the target assignment type
+    _replacement_expr = nullptr;
+    expr.left()->accept(*this);
+    if (_replacement_expr) {
+        expr.assign_left(_replacement_expr);
+        _replacement_expr = nullptr;
+    }
 
     auto left = expr.left();
-    auto right = expr.right();
-
     auto left_type = left->get_type();
+    std::shared_ptr<type> target_type = nullptr;
+    if (left_type) {
+        if (type::is_reference(left_type) || type::is_drain(left_type) || type::is_owner(left_type)) {
+            target_type = left_type->get_subtype();
+        } else {
+            target_type = left_type;
+        }
+    }
+
+    // Resolve right operand with the expected target type context
+    _replacement_expr = nullptr;
+    {
+        target_scope scope(*this, target_type, target_context_kind::ASSIGNMENT_RHS);
+        expr.right()->accept(*this);
+    }
+    if (_replacement_expr) {
+        expr.assign_right(_replacement_expr);
+        _replacement_expr = nullptr;
+    }
+
+    auto right = expr.right();
 
     // ── Assignment to a struct rvalue via an operator= overload ──────────────
     // K normally requires the LHS of '=' to be an lvalue (a reference). However a
@@ -201,7 +225,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             {left_type ? left_type->to_string() : "?"});
     }
     auto ref_target_type = std::dynamic_pointer_cast<reference_type>(left_type);
-    auto target_type = ref_target_type->get_subtype();
+    target_type = ref_target_type->get_subtype();
 
     // ── Const-check ──────────────────────────────────────────────────────────
     // If the target type is const-qualified (ref<const T>), assignment is forbidden.

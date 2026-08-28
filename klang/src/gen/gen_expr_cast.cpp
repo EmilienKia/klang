@@ -41,13 +41,9 @@ namespace k::model::gen {
 // cast_expression, dynamic_cast, null_check
 
 void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
-    auto sub_expr = expr.sub_expr();
-    sub_expr->accept(*this);
-
-    auto source_type = sub_expr->get_type();
     auto target_type = expr.get_cast_type();
 
-    // Step 1: Resolve the sub-expression and the target type
+    // Step 1: Resolve the target type first so it can be passed as expected type to sub_expr
     // ── Resolve the target type if it is not yet resolved ────────────────────
     // A `(Type)expr` cast produces an unresolved type for named types (struct/class/interface).
     // We must resolve it here before any validation.
@@ -106,6 +102,20 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
             }
         }
     }
+
+    auto sub_expr = expr.sub_expr();
+    _replacement_expr = nullptr;
+    {
+        target_scope scope(*this, target_type, target_context_kind::CAST_DESTINATION);
+        sub_expr->accept(*this);
+    }
+    if (_replacement_expr) {
+        expr.sub_expr() = _replacement_expr;
+        sub_expr = _replacement_expr;
+        _replacement_expr = nullptr;
+    }
+
+    auto source_type = sub_expr->get_type();
 
     // ── Alias / typedef casts ────────────────────────────────────────────────
     // A cast to or from an alias is valid exactly when the same cast between the

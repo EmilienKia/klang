@@ -1523,9 +1523,9 @@ their unsigned variants) are supported as value parameter types.
 Type and value parameters may be mixed freely. Once a parameter has a default, all subsequent
 parameters must also have defaults.
 
-### 25.3 Template Instantiation
+### 25.3 Template Instantiation & Argument Deduction
 
-Templates are instantiated by supplying concrete arguments in angle brackets:
+Templates can be instantiated explicitly with concrete arguments in angle brackets:
 
 ```
 TemplateArgList:
@@ -1541,8 +1541,13 @@ result : int = max<int>(x, y);
 arr : FixedArray<float, 10>;
 ```
 
-In Phase 1, all template arguments must be supplied explicitly (no deduction). Trailing
-arguments with defaults may be omitted, including the `<>` syntax for all-defaulted templates.
+#### Function Template Argument Deduction
+Function templates support automated deduction of type and value arguments from call-site
+arguments and contextual target types:
+- **Invocation Arguments**: `val a = identity(42);` (deduces `T=int`). Supports composites (`Vector<T>`), indirections (`T*`, `T&`, `T!`), callables (`*(T):R`), sized arrays (`T[N]`), and parameter packs (`Ts...`).
+- **Contextual Return-Type Deduction**: When a template parameter only appears in the return type (or is partially deduced), Klang infers it from the expected target type in variable declarations (`val x: int = make()`), return statements (`return make()`), assignments (`x = make()`), casts (`(int) make()`), ternary branches, array initializers, designated struct initializers, and function arguments.
+
+Trailing arguments with defaults may be omitted.
 
 ### 25.4 Instantiation Semantics
 

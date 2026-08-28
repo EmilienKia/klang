@@ -698,7 +698,10 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
 
         // Step 2: Adapt the expression type to match the enclosing function's return type
         _replacement_expr = nullptr;
-        expr->accept(*this);
+        {
+            target_scope scope(*this, ret_type, target_context_kind::RETURN_STMT);
+            expr->accept(*this);
+        }
         if (_replacement_expr) {
             stmt.set_expression(_replacement_expr);
             expr = _replacement_expr;

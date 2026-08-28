@@ -24,7 +24,7 @@
       - [x] Callable types and member function reference types deduction (`*(T):R`, `Class::*(T):void`).
       - [x] Dependent return type materialization and instantiation from deduced parameters (`Vector<T>`, `T*`, `Pair<T, U>`).
       - [x] Full overload resolution integration: non-template preference tie-breaking, SFINAE-like rejection on deduction failure, constraint validation.
-    - [ ] Return-type-only template argument deduction (target-type inference / context deduction, deferred to later phase).
+    - [x] Return-type-only template argument deduction (target-type inference / context deduction).
     - [ ] Class Template Argument Deduction (CTAD) for constructors (`Pair(1, 2)` -> `Pair<int, int>`).
   - [ ] Concepts / type traits / static_if on template parameters
   - [ ] Standalone template enum declarations

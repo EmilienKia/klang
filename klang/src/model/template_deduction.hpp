@@ -45,7 +45,7 @@ struct deduction_result {
 };
 
 /**
- * Attempt to deduce template arguments from call-site argument types.
+ * Attempt to deduce template arguments from call-site argument types and/or target return type.
  *
  * Uses exact matching only — no implicit conversions.
  * Supports:
@@ -53,17 +53,23 @@ struct deduction_result {
  *   - Wrapper deduction (param type is T* → arg type int* deduces T=int)
  *   - Pack deduction (pack expansion param collects remaining arg types)
  *   - Consistency checking (same param deduced to different types → failure)
+ *   - Return-type / target-type contextual deduction (deduces un-deduced params from expected return type)
  *
- * @param ti           Template info of the candidate function.
- * @param params       The function's parameter list (to detect pack expansions).
- * @param arg_types    Types of the actual call-site argument expressions.
- * @return             Deduction result with success/failure and deduced arguments.
+ * @param ti                   Template info of the candidate function.
+ * @param params               The function's parameter list (to detect pack expansions).
+ * @param arg_types            Types of the actual call-site argument expressions.
+ * @param explicit_args        Explicit template arguments provided at the call site (if any).
+ * @param tpl_return_type      Declared return type of the template function (if any).
+ * @param expected_target_type Expected target / return type from the surrounding context (if any).
+ * @return                     Deduction result with success/failure and deduced arguments.
  */
 deduction_result deduce_template_arguments(
     const tpl_info& ti,
     const std::vector<std::shared_ptr<parameter>>& params,
     const std::vector<std::shared_ptr<type>>& arg_types,
-    const std::vector<template_argument>& explicit_args = {});
+    const std::vector<template_argument>& explicit_args = {},
+    const std::shared_ptr<type>& tpl_return_type = nullptr,
+    const std::shared_ptr<type>& expected_target_type = nullptr);
 
 } // namespace k::model
 
