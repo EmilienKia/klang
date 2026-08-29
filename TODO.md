@@ -8,24 +8,11 @@
     type names and deferred symbol references.
 
 - Add templates advanced features (partial specialization, variadic templates, template template parameters, etc.)
-  - [x] Tests: name mangling tests for template entities
   - [ ] Partial and full template specialization
   - [ ] Template template parameters (`template<template<typename> class C>`)
   - [ ] Variadic template parameters (parameter packs, fold expressions)
   - [ ] `extern template` (explicit instantiation declarations)
   - [ ] Value template parameters in parameterised aliases (`template<int N> alias Buf : byte[N];`)
-  - [ ] Template argument deduction (Function template argument deduction & CTAD):
-    - [x] Basic function template argument deduction for primitive/direct type parameters and parameter packs (`fun id<T>(x: T)`, `fun fwd<Ts...>(args: Ts...)`).
-    - [x] Comprehensive template argument deduction for functions (global, member, static, UCS) from invocation arguments:
-      - [x] Composite/aggregate template types deduction (`Vector<T>`, `Pair<T, U>`, `Map<K, V>`).
-      - [x] Nested composite template types deduction (`Vector<Vector<T>>`, `Optional<Vector<T>>`).
-      - [x] Value template parameter deduction from sized arrays (`T[N]`) and aggregate value args (`Array<T, N>`).
-      - [x] Indirection qualifiers pattern matching (`*`, `&`, `+`, `?`, `!`, `#`, `const`) on scalar and composite types.
-      - [x] Callable types and member function reference types deduction (`*(T):R`, `Class::*(T):void`).
-      - [x] Dependent return type materialization and instantiation from deduced parameters (`Vector<T>`, `T*`, `Pair<T, U>`).
-      - [x] Full overload resolution integration: non-template preference tie-breaking, SFINAE-like rejection on deduction failure, constraint validation.
-    - [x] Return-type-only template argument deduction (target-type inference / context deduction).
-    - [x] Class Template Argument Deduction (CTAD) for constructors (`Pair(1, 2)` -> `Pair<int, int>`).
   - [ ] Concepts / type traits / static_if on template parameters
   - [ ] Standalone template enum declarations
   - [ ] Template constructors (independent of aggregate template)
@@ -34,12 +21,7 @@
   - [x] Non-primitive value template arguments (enums, expressions, aggregates, propagation, mangling, KDI roundtrip)
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
 - Add unions, typed unions (discriminated/tagged unions à la std::variant)
-    - [x] Enum-based discriminant interrogation (`u.index()` → uint / `Kind` enum)
-    - [x] Union extension / inheritance (derive union from another union)
-    - [x] Polymorphic access when all alternatives share a common base class/interface
-    - [x] Cast union to alternative type (`(int) myUnion`)
     - [ ] Pattern matching / `match` expression on union alternatives
-    - [x] Template unions (`template<T> union Optional { ... }`)
     - [ ] RTTI-only discriminant optimization (all-class alternatives)
 - Add state classes
 - Better private visibility support
@@ -58,9 +40,6 @@
 - Exceptions: core support already implemented (`throw`/`try`/`catch`/`finally`/`rethrow`, `throws` clauses with
   checked-exception enforcement, KDI import/export of `throws` clauses, stdlib exception hierarchy, cause
   chaining). Remaining gaps:
-    - [x] Exception specifications on function pointer/reference types — **Done in Phase B.2**: Callable types 
-      now carry explicit throws clauses like free functions; KDI import/export and variance checking all 
-      respect the throws set. Parenthesised syntax `throws(...)` eliminates greedy-comma parameter ambiguity.
     - [ ] `noexcept` conditional expression (`noexcept(expr)`)
     - [ ] Exception handling in static constructors/destructors
     - [ ] Unhandled FatalError diagnostic: when an uncaught FatalError propagates past `main()`, the runtime should print a diagnostic message (exception type, code, optional stack trace) before terminating the process
@@ -87,28 +66,6 @@
   - [ ] Callables in generic bodies (currently unsupported due to fat-pointer size)
   - [ ] Callables as non-type template parameters (value-template instantiation)
   - [ ] Thread-local callable state (for thread factories, event handlers)
-
-#### Latest full test-suite backlog (2026-08-11, updated 2026-08-11)
-
-Full baseline run (HEAD `75d3feb`) executed with:
-
-- `cd cmake-build-debug && ninja -j3 && ctest --output-on-failure`
-
-Result: **92% tests passed, 2 tests failed out of 26**.
-
-Timeout follow-up and mitigation (same day):
-
-- `klang-tests-gen-core` was close to the 120s budget and timed out under `ctest`
-  despite passing standalone; timeout increased to **180s**.
-- `libk-tests` was too large for a stable 120s budget under `ctest`; it was split
-  into two functional targets:
-    - `libk-tests-core` (exceptions/RTTI/strings/value types)
-    - `libk-tests-collections-io` (collections + stream/file/path I/O)
-  Both received a **180s** timeout budget.
-- Targeted verification run:
-  - `ctest -R "^(klang-tests-gen-core|libk-tests-core|libk-tests-collections-io)$" --output-on-failure`
-  - **100% passed (3/3)**.
-
 
 #### Current bugs and gaps to fix
 
@@ -196,16 +153,6 @@ Timeout follow-up and mitigation (same day):
       Repro/target-behaviour test: `test-import.cpp`, "Known-limitation: homonymous imported
       templates from different modules" (`[.][import][template][homonym-imports]`).
 
-- **Callable `throws` clause in a parameter list is greedy.** The type specification
-  `*(int):int throws A, B` reads its exception list until a token that cannot start a type,
-  so inside a parameter list the comma separating the parameters is swallowed by the throws
-  clause: `f(p: *(int):int throws Boom, v: int)` fails to parse. A callable parameter that
-  declares a `throws` clause must therefore currently be the **last** parameter. Options:
-  parenthesise the throws list, terminate it with an explicit token, or restrict the greedy
-  scan when the callable type is parsed inside a parameter list. Repro/target-behaviour test:
-  `test-gen-callable-alias.cpp`, "callable throws clause in a parameter list is greedy"
-  (`[.][gen][callable][throws][parser-limitation]`).
-
 ### K Compiler
 
 #### Features to add
@@ -222,9 +169,6 @@ Timeout follow-up and mitigation (same day):
 
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts. 
       Workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
-- [x] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases;
-      extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
-- [x] **Broaden compile-time constant-expression support for template values and configuration values** (unparenthesized binary/ternary/cast expressions, global/static const references)
 - [ ] **Exception cause chaining is unavailable for pointer-shaped throws.**
   `throw new MyError(...)` copies only the *pointer* into the
   `__cxa_allocate_exception` block, so the `_cause` / `_cause_handle` fields of
@@ -255,8 +199,8 @@ Timeout follow-up and mitigation (same day):
   - log facade
   - filesystem
   - process
-  - [x] threading and synchronisation (`Thread`, `Mutex`, `Semaphore`, `Future<T>`, …)
-  - [x] asynchronous file I/O (`FileChannel`, `AsyncFile*Stream`, io_uring backend)
+  - [ ] threading and synchronisation (`Thread`, `Mutex`, `Semaphore`, `Future<T>`, …)
+  - [ ] asynchronous file I/O (`FileChannel`, `AsyncFile*Stream`, io_uring backend)
   - networking
 - Add sub libraries for:
   - security (crypto, authn, authz)
