@@ -84,8 +84,8 @@ use() {
 | `Derived+` → `Base+` (init or rebind) | OK |
 | `Derived?` → `Base?` (init) | OK |
 | `Derived*` → `Base*` (init or rebind) | OK |
-| Nullable source (`?` or `*`) → non-null target (`+` or `&`) | Warning 0x4505 + runtime null-check |
-| Types have no inheritance relationship | Compile error (0x4005 / 0x4506 / 0x4605 / 0x4700) |
+| Nullable source (`?` or `*`) → non-null target (`+` or `&`) | Warning 0x0C04 + runtime null-check |
+| Types have no inheritance relationship | Compile error (0x0D07 / 0x0D0B / 0x0D0E / 0x0922) |
 | Rebinding an immutable indirection (`ref`, `view`) | Compile error |
 
 *See also:* [Types — §11.3](../basic/types.md#113-static-indirection-upcast-aggregate-types)

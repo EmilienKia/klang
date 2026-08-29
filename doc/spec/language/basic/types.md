@@ -476,7 +476,7 @@ test() {
     obj : Foo! = make_foo();   // ownership transferred to obj
     consume(obj);              // MOVE: obj ← null; f owns Foo inside consume
     // obj is null here
-    make_foo();                // Warning 0x5010: Foo(99) deleted immediately
+    make_foo();                // Warning 0x0E05: Foo(99) deleted immediately
 }
 ```
 
@@ -526,7 +526,7 @@ a : Animal! = d;           // static upcast; d ← null; a owns the Dog
 *Polymorphic types — dynamic downcast (base → derived):*
 
 An owner of a base class or interface can be assigned to an owner of a derived class, but
-this requires a runtime RTTI check.  A **compile-time Warning 0x5001** is always emitted.
+this requires a runtime RTTI check.  A **compile-time Warning 0x0922** is always emitted.
 
 | RTTI result | Effect |
 |---|---|
@@ -535,11 +535,11 @@ this requires a runtime RTTI check.  A **compile-time Warning 0x5001** is always
 
 ```k
 a : Animal! = new Dog();  // a owns a Dog (stored as Animal!)
-d : Dog!;                 // Warning 0x5001: dynamic owner downcast
+d : Dog!;                 // Warning 0x0922: dynamic owner downcast
 d = a;                    // RTTI OK → a ← null; d owns Dog
 
 a2 : Animal! = new Cat();
-d2 : Dog!;                // Warning 0x5001
+d2 : Dog!;                // Warning 0x0922
 d2 = a2;                  // RTTI fail → Cat deleted; a2 ← null; d2 ← null
 ```
 
@@ -1201,12 +1201,12 @@ This applies to all four indirection types:
 **Rules:**
 
 1. `Base` must be a direct or transitive base class/struct/interface of `Derived`. The relationship is verified at compile time.
-2. If the types have no inheritance relationship, a **compile-time error** is emitted (`0x4506` for links, `0x4605` for view, `0x4700` for pointers, `0x4005` for references).
+2. If the types have no inheritance relationship, a **compile-time error** is emitted (`0x0D0B` for links, `0x0D0E` for view, `0x0922` for pointers, `0x0D07` for references).
 3. Rebind constraints are respected:
    - `ref` (`&`) and `view` (`?`) can only be bound at construction — no rebind (compile-time error).
    - `link` (`+`) and `ptr` (`*`) can be rebound at any time.
 4. Null-safety is preserved:
-   - Assigning a nullable source (ptr* or `view?`) to a non-null destination (`link+` or `ref&`) inserts a **runtime null-check** (throws `NullAssignationError` if null) and emits **warning 0x4505**.
+   - Assigning a nullable source (ptr* or `view?`) to a non-null destination (`link+` or `ref&`) inserts a **runtime null-check** (throws `NullAssignationError` if null) and emits **warning 0x0C04**.
 5. Transitive upcasts (e.g. `C*→A*` where `C→B→A`) are supported via chained GEP.
 6. Virtual base upcasts are supported via the vbptr mechanism.
 
@@ -1269,12 +1269,12 @@ use() {
 
     // Init lien from ptr (nullable → non-null: null-check inserted)
     dp : Dog* = &d;
-    lnk2 : Animal+ = dp;    // Warning 0x4505: null-check at runtime
+    lnk2 : Animal+ = dp;    // Warning 0x0C04: null-check at runtime
 
     // Error: unrelated type
     // struct Cat { name_hash : int; Cat() : name_hash(0) {} }
     // c : Cat();
-    // bad : Animal* = &c;   // ERROR 0x4700: Cat does not inherit from Animal
+    // bad : Animal* = &c;   // ERROR 0x0922: Cat does not inherit from Animal
 }
 ```
 
@@ -1409,7 +1409,7 @@ a : Animal! = d;           // static upcast; d ← null; a owns the Dog
 #### Polymorphic types — dynamic downcast (base → derived)
 
 When a `Base!` is assigned to a `Derived!`, a runtime RTTI check is required.  The compiler
-always emits **Warning 0x5001** for such assignments.
+always emits **Warning 0x0922** for such assignments.
 
 Behaviour at runtime:
 
@@ -1424,11 +1424,11 @@ class Dog    : public Animal { Dog()    : Animal() {} }
 class Cat    : public Animal { Cat()    : Animal() {} }
 
 a  : Animal! = new Dog();
-d  : Dog!;                  // Warning 0x5001: dynamic owner downcast
+d  : Dog!;                  // Warning 0x0922: dynamic owner downcast
 d  = a;                     // RTTI OK: Dog → a ← null; d owns Dog
 
 a2 : Animal! = new Cat();
-d2 : Dog!;                  // Warning 0x5001
+d2 : Dog!;                  // Warning 0x0922
 d2 = a2;                    // RTTI fail: Cat deleted; a2 ← null; d2 ← null
 ```
 
@@ -1539,10 +1539,10 @@ test() : int {
 
 | Situation | Result |
 |-----------|--------|
-| Source and target have no inheritance relationship | Compile error `0x40033` |
-| Target is a `struct` type and source is derived class (no RTTI) | Compile error `0x40033` |
-| Ref source and target have no inheritance relationship | Compile error `0x40034` |
-| Target type name cannot be resolved | Compile error `0x40035` |
+| Source and target have no inheritance relationship | Compile error `0x0922` |
+| Target is a `struct` type and source is derived class (no RTTI) | Compile error `0x0922` |
+| Ref source and target have no inheritance relationship | Compile error `0x0D07` |
+| Target type name cannot be resolved | Compile error `0x0901` |
 
 #### 13.6.3 Implicit cast in function call arguments
 

@@ -73,7 +73,7 @@ i++;
 
 > **Note:** If an expression statement produces an owner type (`T!`) — for example a bare
 > `new Foo();` or a call to a function returning `T!` — the compiler emits
-> **Warning 0x5010** and the object is deleted immediately after construction.
+> **Warning 0x0E05** and the object is deleted immediately after construction.
 > See [Dynamic Allocation — Unassigned result](../memory/new-delete.md#1-new-expression--single-object).
 
 > **Note:** If an expression statement produces struct-typed temporaries (e.g. function calls

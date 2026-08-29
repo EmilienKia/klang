@@ -328,8 +328,8 @@ Errors:
 
 | Condition | Diagnostic |
 |---|---|
-| The interface / abstract class has zero or more than one abstract slot | `ERR_CALLABLE_NOT_FUNCTIONAL_IFACE` (0x01D7) |
-| The single abstract method does not match the callable prototype | `ERR_CALLABLE_IFACE_SIGNATURE_MISMATCH` (0x01D8) |
+| The interface / abstract class has zero or more than one abstract slot | `ERR_CALLABLE_NOT_FUNCTIONAL_IFACE` (0x1308) |
+| The single abstract method does not match the callable prototype | `ERR_CALLABLE_IFACE_SIGNATURE_MISMATCH` (0x1309) |
 
 When the receiver also declares an `operator()`, the functor rule of [§6.5](#65-functor--object-with-operator) wins: `operator()` is looked up first.
 
@@ -530,7 +530,7 @@ Declare the addresser on the `typedef` itself instead:
 
 ```k
 typedef G : (int) : bool;   // bare prototype
-g : G&;                     // error 0x0253 — declare 'typedef G : &(int) : bool;'
+g : G&;                     // error 0x0B04 — declare 'typedef G : &(int) : bool;'
 ```
 
 ### Template alias

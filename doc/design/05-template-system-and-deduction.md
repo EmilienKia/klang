@@ -220,7 +220,7 @@ In `type_reference_resolver::resolve_ctad`:
 1. Viable candidates are instantiated and their internal types resolved via `instantiate_template_aggregate`.
 2. Candidates are evaluated against argument expressions with `get_best_matching_constructor`.
 3. Overload resolution ranks candidates by lowest conversion weight (`cast_weight`), fewest defaulted parameters, and copy guide preference.
-4. Ambiguous deductions with equal score but distinct concrete specializations are rejected with `ERR_CTAD_AMBIGUOUS` (0x0189).
+4. Ambiguous deductions with equal score but distinct concrete specializations are rejected with `ERR_CTAD_AMBIGUOUS` (0x100A).
 
 ---
 

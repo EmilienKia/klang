@@ -369,7 +369,9 @@ TEST_CASE("cross-module callable — mangling stays stable across import",
         R"K(
             module import_interop_17;
 
-            public class Boom { }
+            public class Boom : public Throwable {
+                public Boom() {}
+            }
 
             public byPtr(f: *(int):int, v: int) : int { return f(v); }
             public byRef(f: &(int):int, v: int) : int { return f(v); }

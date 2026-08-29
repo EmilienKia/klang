@@ -889,10 +889,10 @@ ThrowStatement
     (* The first form throws a new exception. The expression must evaluate to a
        value of a type that derives from ::k::Throwable or is ::k::Throwable itself.
        Exceptions are strictly thrown by value; throwing pointers, owners ('throw new ...'),
-       or non-Throwable types is a compile-time error (0x01C0).
+       or non-Throwable types is a compile-time error (0x1201).
        The second form (bare 'throw;') is a rethrow — it re-throws the exception
        currently being handled. It is only valid inside a catch block; using it
-       elsewhere is a compile-time error (0x01C9). *)
+       elsewhere is a compile-time error (0x120A). *)
 
 TryCatchStatement
     = 'try' , BlockStatement , { CatchClause } , [ FinallyClause ]

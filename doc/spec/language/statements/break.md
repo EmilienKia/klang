@@ -57,7 +57,7 @@ For owner-typed local variables (`T!`), if the owner is still non-null when the 
 ---
 ## 4. Restrictions
 - `break` can only appear inside the body of a `while` or `for` loop.
-- Using `break` outside a loop is a **compile-time error** (diagnostic `0x017C`).
+- Using `break` outside a loop is a **compile-time error** (diagnostic `0x042E`).
 
 ```k
 bad() : int {

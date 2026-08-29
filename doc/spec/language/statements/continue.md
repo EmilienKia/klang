@@ -59,7 +59,7 @@ For owner-typed local variables (`T!`), if the owner is still non-null when the 
 ---
 ## 4. Restrictions
 - `continue` can only appear inside the body of a `while` or `for` loop.
-- Using `continue` outside a loop is a **compile-time error** (diagnostic `0x017D`).
+- Using `continue` outside a loop is a **compile-time error** (diagnostic `0x042F`).
 
 ```k
 bad() : int {

@@ -263,9 +263,9 @@ The golden rule:
 
 | Rule                                                   | Error code |
 |--------------------------------------------------------|------------|
-| `struct` uses `virtual` in base clause                 | `0x30034`  |
-| `class` inherits from `struct` (or vice-versa)         | `0x30035`  |
-| `private` function in class overrides a virtual method | `0x30037`  |
+| `struct` uses `virtual` in base clause                 | `0x0420`  |
+| `class` inherits from `struct` (or vice-versa)         | `0x0605`  |
+| `private` function in class overrides a virtual method | `0x0606`  |
 
 ### Examples of errors
 
@@ -549,12 +549,12 @@ abstract class Shape {
 
 | Constraint | Effect on violation |
 |---|---|
-| Must NOT have a body `{ … }` | Error `0x20026` |
-| Must NOT be `static` | Error `0x20024` |
-| Must NOT be `final` | Error `0x20025` |
-| Must NOT be `private` | Error `0x20029` |
-| Only inside a `class`, not a `struct` | Error `0x20027` |
-| Owning class must also be `abstract` | Error `0x30038` |
+| Must NOT have a body `{ … }` | Error `0x0426` |
+| Must NOT be `static` | Error `0x0424` |
+| Must NOT be `final` | Error `0x0425` |
+| Must NOT be `private` | Error `0x0427` |
+| Only inside a `class`, not a `struct` | Error `0x0423` |
+| Owning class must also be `abstract` | Error `0x0611` |
 
 **Semantics:**
 - The abstract method is assigned a vtable slot like any other virtual method.
@@ -582,16 +582,16 @@ Attempting to instantiate an abstract class is a compile-time error:
 
 ```k
 test() : int {
-    s: Shape;       // error 0x40032: cannot instantiate abstract class 'Shape'
+    s: Shape;       // error 0x0917: cannot instantiate abstract class 'Shape'
     return 0;
 }
 ```
 
-This also applies to dynamic allocation with `new` (**Error 0x0057**):
+This also applies to dynamic allocation with `new` (**Error 0x0917**):
 
 ```k
 test() : int {
-    s : Shape! = new Shape();   // error 0x0057: cannot 'new' abstract class 'Shape'
+    s : Shape! = new Shape();   // error 0x0917: cannot 'new' abstract class 'Shape'
     return 0;
 }
 ```
@@ -632,7 +632,7 @@ class Leaf : public Mid {
 }
 ```
 
-If a derived class omits the `abstract` specifier but still has unimplemented abstract methods, it is a compile-time error (`0x30039`).
+If a derived class omits the `abstract` specifier but still has unimplemented abstract methods, it is a compile-time error (`0x0612`).
 
 ### 12.4 Virtual dispatch through an abstract base reference
 
@@ -814,9 +814,9 @@ test() : int {
 
 | Code     | Phase         | Condition |
 |----------|---------------|-----------|
-| `0x40034`| Type resolver | Mutable member function called on a `const` object or `const T&` parameter |
-| `0x40080`| Type resolver | Assignment to a field inside a const member function |
-| `0x20009`| Model builder | `const` and `static` combined on a member function |
+| `0x0922`| Type resolver | Mutable member function called on a `const` object or `const T&` parameter |
+| `0x0C05`| Type resolver | Assignment to a field inside a const member function |
+| `0x0418`| Model builder | `const` and `static` combined on a member function |
 
 ---
 
@@ -965,7 +965,7 @@ test() : int {
 
 | Code | Condition |
 |------|-----------|
-| `0x4700` | Source and target have no inheritance relationship — compile-time error |
+| `0x0922` | Source and target have no inheritance relationship — compile-time error |
 | *(runtime)* | RTTI mismatch on non-null target → throws `NullCastError` |
 
 *See also:* [Types — §11.4](../basic/types.md#114-dynamic-indirection-downcast-classinterface) · [Inheritance — Dynamic downcast](inheritance.md#dynamic-indirection-downcast-classinterface-only)
@@ -1015,14 +1015,14 @@ Override matching uses method name + member `const`-qualification + parameter ty
 
 | Constraint | Effect on violation |
 |---|---|
-| The function must actually override an inherited virtual slot | Error `0x0177` |
-| Must NOT be combined with `abstract` | Error `0x0179` |
-| Must NOT be combined with `static` | Error `0x0178` |
-| Must NOT be placed on a constructor or destructor | Error `0x017A` |
-| Must NOT be used in a `struct` (only `class` / `interface` implementations) | Error `0x017B` |
-| Overriding without `override` specifier | Warning `0x0176` |
-| Overriding a `final` slot with `override` | Error `0x0177` |
-| Overriding a `final` slot without `override` | Warning `0x0175` (new vtable slot) |
+| The function must actually override an inherited virtual slot | Error `0x0615` |
+| Must NOT be combined with `abstract` | Error `0x0429` |
+| Must NOT be combined with `static` | Error `0x0428` |
+| Must NOT be placed on a constructor or destructor | Error `0x042A` |
+| Must NOT be used in a `struct` (only `class` / `interface` implementations) | Error `0x042B` |
+| Overriding without `override` specifier | Warning `0x0614` |
+| Overriding a `final` slot with `override` | Error `0x0615` |
+| Overriding a `final` slot without `override` | Warning `0x0613` (new vtable slot) |
 
 ### 16.3 Examples
 
@@ -1099,7 +1099,7 @@ class Base {
 }
 class Derived : public Base {
     Derived() {}
-    override other() : int { return 2; }  // Error 0x0177: 'other' is not in Base
+    override other() : int { return 2; }  // Error 0x0615: 'other' is not in Base
 }
 ```
 
@@ -1112,7 +1112,7 @@ class Base {
 }
 class Derived : public Base {
     Derived() {}
-    val() : int { return 2; }             // Warning 0x0176: overrides but no 'override'
+    val() : int { return 2; }             // Warning 0x0614: overrides but no 'override'
 }
 ```
 

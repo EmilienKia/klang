@@ -234,11 +234,11 @@ it is a uniform array allocation; otherwise, it is a single-object allocation.
 
 | Code | Severity | Condition |
 |------|----------|-----------|
-| 0x4230 | Error | Uniform array init: element type is abstract. |
-| 0x4231 | Error | Uniform array init: no matching constructor for the provided arguments. |
-| 0x4232 | Error | Uniform array init: cannot convert value to primitive element type. |
-| 0x4233 | Error | Uniform array init: array size must be a compile-time constant (stack) or convertible to `unsigned int` (heap). |
-| 0x4234 | Error | Uniform array init: array size must be non-negative. |
+| 0x092A | Error | Uniform array init: element type is abstract. |
+| 0x092B | Error | Uniform array init: no matching constructor for the provided arguments. |
+| 0x0929 | Error | Uniform array init: cannot convert value to primitive element type. |
+| 0x0926 | Error | Uniform array init: array size must be a compile-time constant (stack) or convertible to `unsigned int` (heap). |
+| 0x0933 | Error | Uniform array init: array size must be non-negative. |
 
 ---
 

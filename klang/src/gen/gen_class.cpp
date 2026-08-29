@@ -676,6 +676,23 @@ llvm::Constant* build_annotation_instance_constant(
 
 static int s_nested_ann_counter = 0;
 
+static std::optional<struct_type::field> find_annotation_base_field(
+    const std::shared_ptr<struct_type>& ann_st_type, const aggregate& ann_type) {
+    if (!ann_st_type) return std::nullopt;
+    for (auto& bs : ann_type.get_bases()) {
+        if (bs.base && (bs.base->get_short_name() == "Annotation" || bs.raw_name.find("Annotation") != std::string::npos)) {
+            std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
+            auto field = ann_st_type->get_member(subobj_name);
+            if (field.has_value()) return field;
+        }
+    }
+    auto f1 = ann_st_type->get_member("__base_Annotation__");
+    if (f1.has_value()) return f1;
+    auto f2 = ann_st_type->get_member("__base_k_Annotation__");
+    if (f2.has_value()) return f2;
+    return std::nullopt;
+}
+
 /**
  * @param gep_ann_to_base  When true, annotation_init_expr results are GEP'd
  *                         to their __base_Annotation__ sub-object (for
@@ -779,7 +796,7 @@ llvm::Constant* evaluate_ast_expr_to_constant(
         // GEP to the __base_Annotation__ sub-object.  Otherwise return the full
         // object pointer (for typed arrays like Tag?[]).
         if (gep_ann_to_base) {
-            auto base_field = ann_st_type->get_member("__base_Annotation__");
+            auto base_field = find_annotation_base_field(ann_st_type, *ann_type);
             if (base_field.has_value()) {
                 llvm::Constant* zero = llvm::ConstantInt::get(
                     llvm::Type::getInt32Ty(ctx->module().getContext()), 0);
@@ -1650,10 +1667,6 @@ void type_reference_resolver::visit_klass(klass& klass) {
     auto vt = klass.get_vtable();
 
     // Step 3: Resolve member variable types
-    // If aggregate_type_resolver already built the LLVM vtable struct type (Phase 1.a),
-    // there is nothing left to do here. This avoids a duplicate-type-name error in LLVM.
-    if (vt->llvm_type) return;
-
     size_t num_slots = vt->slot_count();
 
     llvm::LLVMContext& llvm_ctx = **_context;
@@ -1665,9 +1678,20 @@ void type_reference_resolver::visit_klass(klass& klass) {
     for (size_t i = 0; i < num_slots; ++i) {
         vtable_fields.push_back(ptr_ty);
     }
+    if (vt->llvm_type) {
+        if (vt->llvm_type->getNumElements() != vtable_fields.size()) {
+            vt->llvm_type->setBody(vtable_fields);
+        }
+        return;
+    }
     std::string vtable_struct_name = "__vtable_" + klass.get_short_name() + "__";
-    llvm::StructType* vtable_llvm_type = llvm::StructType::create(llvm_ctx, vtable_fields, vtable_struct_name);
-    vt->llvm_type = vtable_llvm_type;
+    auto* existing = llvm::StructType::getTypeByName(llvm_ctx, vtable_struct_name);
+    if (!existing) {
+        existing = llvm::StructType::create(llvm_ctx, vtable_fields, vtable_struct_name);
+    } else if (existing->getNumElements() != vtable_fields.size()) {
+        existing->setBody(vtable_fields);
+    }
+    vt->llvm_type = existing;
 }
 
 // declaration_generator::visit_klass
@@ -2507,7 +2531,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                 // must point to the __base_Annotation__ sub-object inside the
                 // annotation instance, not to the start of the full struct.
                 // (Same as how a Base* points to the Base sub-object in a Derived.)
-                auto base_field = ann_st_type->get_member("__base_Annotation__");
+                auto base_field = find_annotation_base_field(ann_st_type, ann_type);
                 if (base_field.has_value()) {
                     // GEP to the __base_Annotation__ sub-object within the global
                     llvm::Constant* zero = llvm::ConstantInt::get(
@@ -2592,7 +2616,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                         ann_init, ann_global_name);
                     ann_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-                    auto base_field = ann_st_type->get_member("__base_Annotation__");
+                    auto base_field = find_annotation_base_field(ann_st_type, ann_type);
                     if (base_field.has_value()) {
                         llvm::Constant* zero = llvm::ConstantInt::get(
                             llvm::Type::getInt32Ty(llvm_ctx), 0);
@@ -2827,7 +2851,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                             ann_init, ann_global_name);
                         ann_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-                        auto base_field = ann_st_type->get_member("__base_Annotation__");
+                        auto base_field = find_annotation_base_field(ann_st_type, ann_type);
                         if (base_field.has_value()) {
                             llvm::Constant* zero = llvm::ConstantInt::get(
                                 llvm::Type::getInt32Ty(llvm_ctx), 0);
@@ -3791,7 +3815,7 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
 
             // The annotation array stores Annotation? pointers. GEP to the
             // __base_Annotation__ sub-object for correct pointer adjustment.
-            auto base_field = ann_st_type->get_member("__base_Annotation__");
+            auto base_field = find_annotation_base_field(ann_st_type, ann_type);
             if (base_field.has_value()) {
                 llvm::Constant* zero = llvm::ConstantInt::get(
                     llvm::Type::getInt32Ty(llvm_ctx), 0);

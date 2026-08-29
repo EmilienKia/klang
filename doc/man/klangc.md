@@ -199,7 +199,7 @@ standard output regardless of `--log-file`.
 
 **`--ignore-diagnostic=`_code_** (repeatable)  
 Silence a specific diagnostic code, given as a decimal (`368`) or `0x`-prefixed
-hexadecimal (`0x0170`) value. This is useful to reduce log noise from a
+hexadecimal (`0x0947`) value. This is useful to reduce log noise from a
 specific, well-understood warning (e.g. a recurring implicit-conversion or
 implicit-copy-constructor-generation warning) without raising the global
 `--log-level` threshold and losing every other warning.  
@@ -214,7 +214,7 @@ May be repeated to ignore several codes; cumulative with the
 Example:
 
 ```sh
-klangc --ignore-diagnostic 0x0170 --ignore-diagnostic 0x0193 mylib.k
+klangc --ignore-diagnostic 0x0947 --ignore-diagnostic 0x061B mylib.k
 ```
 
 ---
@@ -398,17 +398,17 @@ automatically (e.g. `output.opt.ll`).
 ## DIAGNOSTICS
 
 Error codes are sequential hexadecimal numbers. User-facing codes range from
-`0x0001` upward; internal compiler errors use the `0xF000+` range.
+`0x0101` upward (where high byte is group ID and low byte is index in group); internal compiler errors use the `0xF001+` range (group `0xF0`).
 
 | Code | Severity | Condition |
 |---|---|---|
-| `0x0003` | Error | Namespace root collision between two imported modules |
-| `0x0004` | Error | `--enforce-ns-collision`: imported root collides with the unit's own root |
-| `0x0005` | Error | **Circular import dependency detected** — message includes the full cycle path, e.g. `A → B → C → A` |
-| `0x0006` | Error | KDI file not found for an imported module |
-| `0x0007` | Error | KDI file found but failed to parse (corrupt or wrong schema version) |
-| `0x0008` | Warning | **Imported module declared but none of its symbols are used** — emitted once per unused `import` declaration after all resolver passes complete |
-| `0x0193` | Warning | A struct/class has bases or struct members but no user-defined copy constructor; a default one is generated |
+| `0x0103` | Error | Namespace root collision between two imported modules |
+| `0x0104` | Error | `--enforce-ns-collision`: imported root collides with the unit's own root |
+| `0x0105` | Error | **Circular import dependency detected** — message includes the full cycle path, e.g. `A → B → C → A` |
+| `0x0106` | Error | KDI file not found for an imported module |
+| `0x0107` | Error | KDI file found but failed to parse (corrupt or wrong schema version) |
+| `0x0108` | Warning | **Imported module declared but none of its symbols are used** — emitted once per unused `import` declaration after all resolver passes complete |
+| `0x061B` | Warning | A struct/class has bases or struct members but no user-defined copy constructor; a default one is generated |
 
 Diagnostic messages are printed to **stderr** in the following format:
 
@@ -421,7 +421,7 @@ Diagnostic messages are printed to **stderr** in the following format:
 Severity levels are `Info`, `Warning`, `Error` and `Fatal`. Error codes are
 displayed as zero-padded five-digit hexadecimal values.
 
-Repeated or noisy warning codes (e.g. `0x0193` above, or an implicit-conversion
+Repeated or noisy warning codes (e.g. `0x061B` above, or an implicit-conversion
 warning) can be silenced individually with `--ignore-diagnostic` or the
 `KLANG_IGNORE_DIAGNOSTICS` environment variable — see *Diagnostic / Logging
 Options* above.
@@ -825,7 +825,7 @@ before the system directories.  The variable name can be overridden with
 
 **`KLANG_IGNORE_DIAGNOSTICS`**  
 Comma- or colon-separated list of diagnostic codes (decimal or `0x`-hex,
-e.g. `0x0170,0x0193`) to silence, cumulative with `--ignore-diagnostic`.
+e.g. `0x0947,0x061B`) to silence, cumulative with `--ignore-diagnostic`.
 Same scope restriction applies: only `trace`/`debug`/`info`/`warning`
 diagnostics with a non-zero code can be silenced this way; `error`/`fatal`
 diagnostics are never affected.

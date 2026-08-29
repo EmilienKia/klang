@@ -153,7 +153,7 @@ test_ctad() : int {
 }
 ```
 
-If no constructor matches or deduction fails, `ERR_CTAD_NO_MATCH` (0x0188) is emitted.
+If no constructor matches or deduction fails, `ERR_CTAD_NO_MATCH` (0x1009) is emitted.
 
 ---
 

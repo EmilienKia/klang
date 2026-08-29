@@ -54,7 +54,10 @@
 namespace {
 
 /** Warnings emitted by the deliberately redundant re-declarations of the diamond tests. */
-const IgnoredDiagCodes REDECL_WARNINGS = {0x0176, 0x017F};
+const IgnoredDiagCodes REDECL_WARNINGS = {
+    static_cast<unsigned int>(k::diag::structure_diag::WARN_MISSING_OVERRIDE),
+    static_cast<unsigned int>(k::diag::structure_diag::WARN_REDUNDANT_INHERITED_REDECL)
+};
 
 } // anonymous namespace
 

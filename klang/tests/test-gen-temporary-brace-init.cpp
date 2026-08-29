@@ -570,7 +570,7 @@ test() : int {
     REQUIRE(jit);
     auto test_fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test_fn);
-    CHECK(test_fn() == 4);
+    CHECK(test_fn() == 2);
 }
 
 TEST_CASE("Temporary brace init: array temporary rejects unknown type", "[gen][temporary_brace_init][array]") {

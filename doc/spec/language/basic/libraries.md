@@ -125,11 +125,11 @@ A module that cannot be resolved is a **fatal compilation error** — there is n
 mechanism for optional imports.
 
 An `import` declaration whose symbols are never referenced produces
-**warning `0x80010`** (emitted after all resolver passes).  Remove the unused
+**warning `0x0108`** (emitted after all resolver passes).  Remove the unused
 `import` to suppress it.
 
 Cycles in the import graph (A depends on B which depends on A) produce
-**error `0x80003`** with the full cycle path: `A → B → A`.  Cycles can only
+**error `0x0105`** with the full cycle path: `A → B → A`.  Cycles can only
 arise from hand-crafted or corrupted `.kdi` files.
 
 Multiple libraries may be imported in the same file; each must have a unique

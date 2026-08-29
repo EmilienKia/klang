@@ -332,8 +332,8 @@ ImportDeclaration:
 - After the `module`, before other declarations.
 - Resolution via `.kdi` file (CBOR description).
 - Automatic transitive imports (recursive dependency loading).
-- Unresolved import = fatal error. Circular import = fatal error (`0x80003`).
-- Unused import = warning `0x80010`.
+- Unresolved import = fatal error. Circular import = fatal error (`0x0105`).
+- Unused import = warning `0x0108`.
 - Root namespace collision between two imports = error.
 - **An import does NOT inject names** into the current namespace. Every imported symbol must be referenced by its fully qualified name.
 
@@ -523,7 +523,7 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 ### 9.2 Expression Statement
 
 `expr ;` — used for side effects. `;` alone = empty statement.
-- If produces an unassigned `T!`: warning `0x5010`, object destroyed immediately.
+- If produces an unassigned `T!`: warning `0x0E05`, object destroyed immediately.
 - Struct temporaries and temporary arrays are destroyed at end of statement in reverse order.
 
 ### 9.3 Variable Declaration
@@ -1331,8 +1331,8 @@ Annotation types are exported via `.kdi`. Instances attached to classes/interfac
 
 - Allocates via `malloc(sizeof(T))`, calls the constructor, returns `T!`.
 - `TypeName` = raw type name (no indirection suffix).
-- Forbidden on abstract classes (error `0x0057`).
-- Unassigned result: warning `0x5010`, object destroyed immediately.
+- Forbidden on abstract classes (error `0x0917`).
+- Unassigned result: warning `0x0E05`, object destroyed immediately.
 
 ### 21.2 `new` — Array
 
@@ -1348,7 +1348,7 @@ Annotation types are exported via `.kdi`. Instances attached to classes/interfac
 | `new T{e₀,…,eₖ}` | `T[k]!` |
 | `new T{}` | `T[0]!` |
 
-- Static or dynamic size. Init list forbidden with dynamic size (`0x422A`).
+- Static or dynamic size. Init list forbidden with dynamic size (`0x092F`).
 - Uninitialized elements = zero (primitives) or default constructor (structs).
 - Empty slots (`, ,`) = default-init.
 - Internal layout: `{ uint32 count; T[N] data; }`.
@@ -1360,7 +1360,7 @@ Annotation types are exported via `.kdi`. Instances attached to classes/interfac
 ```
 
 - `OwnerExpr` = modifiable lvalue of type `T!`, `T[N]!`, or `T[]!`.
-- `delete` on non-owner = error (`0x005A`).
+- `delete` on non-owner = error (`0x091A`).
 - If null: no-op. Otherwise: destructor (virtual dispatch for classes) + `free` + owner ← null.
 - Arrays: destructors in reverse order (last → first), then `free`.
 - Result type: `void`.
@@ -1370,7 +1370,7 @@ Annotation types are exported via `.kdi`. Instances attached to classes/interfac
 - **Scope-based deletion**: non-null owner on scope exit → auto-delete.
 - **Assignment**: the previous object is destroyed before transfer.
 - **`= null`**: destroys the object and sets the owner to null.
-- **Unassigned return**: warning `0x5010`, object destroyed immediately.
+- **Unassigned return**: warning `0x0E05`, object destroyed immediately.
 
 ### 21.5 Interaction with Observer Indirections
 
@@ -1577,9 +1577,9 @@ restricts the type argument to that specific aggregate kind.
 The optional `: BaseType` constraint requires the argument to be or derive from `BaseType`.
 
 Both are validated at instantiation time. Violations produce diagnostic errors:
-- `0x0184` — type argument is not an aggregate (for `struct`/`class`/`interface` kind filter)
-- `0x0182` — type argument is wrong aggregate kind
-- `0x0183` — type argument does not satisfy base-type constraint
+- `0x1005` — type argument is not an aggregate (for `struct`/`class`/`interface` kind filter)
+- `0x1003` — type argument is wrong aggregate kind
+- `0x1004` — type argument does not satisfy base-type constraint
 
 ### 25.6 Name Mangling
 
@@ -1703,7 +1703,7 @@ class Util {
 ### 26.2 Generic Parameters
 
 Only **type parameters** are allowed. Value parameters (`N : unsigned int`) are
-rejected at parse time with diagnostic `0x01A0`
+rejected at parse time with diagnostic `0x0381`
 (`ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED`).
 
 | Keyword     | Constraint                                | Owner (`!`) allowed |
@@ -1727,9 +1727,9 @@ opaque pointers, making value-type layout unknown.
 | `T&`, `T*`, `T?`       | ✓      | —          |
 | `T+`, `T#`             | ✓      | —          |
 | `T!` with `class T`    | ✓      | —          |
-| `T!` with `typename T` | ✗      | `0x01B1`   |
-| `T!` with `struct T`   | ✗      | `0x01B1`   |
-| `T` (bare)             | ✗      | `0x01B0`   |
+| `T!` with `typename T` | ✗      | `0x1102`   |
+| `T!` with `struct T`   | ✗      | `0x1102`   |
+| `T` (bare)             | ✗      | `0x1101`   |
 
 The **owner** addresser (`!`) requires a `class` or `interface` constraint
 because the uniform synthesised code calls the virtual destructor through the
@@ -1827,10 +1827,10 @@ with a checked/unchecked distinction:
 
 **Only types derived from `::k::Throwable` (or `Throwable` itself) may be thrown.**
 
-- Throwing a struct or class that does not derive from `::k::Throwable` → compile-time error `0x01C0`.
-- Throwing a non-class type (primitive, array, etc.) → compile-time error `0x01C0`.
+- Throwing a struct or class that does not derive from `::k::Throwable` → compile-time error `0x1201`.
+- Throwing a non-class type (primitive, array, etc.) → compile-time error `0x1201`.
 - Throwing pointers, owners, links, views, or dynamic allocations (`throw new Type(...)`, `throw ptr`) →
-  compile-time error `0x01C0`. Exceptions must always be thrown by value.
+  compile-time error `0x1201`. Exceptions must always be thrown by value.
 - This constraint is enforced whenever the stdlib is available (i.e. for all modules except `k` itself).
 
 User-defined exception types should inherit from `Exception` (checked) or `FatalError` (unchecked):
@@ -1857,7 +1857,7 @@ At runtime, the compiler:
 3. Calls `__cxa_throw` to initiate stack unwinding.
 
 The second form (`throw;`) is a **rethrow** — it re-throws the exception currently being handled.
-It is only valid inside a `catch` block (compile-time error `0x01C9` otherwise).
+It is only valid inside a `catch` block (compile-time error `0x120A` otherwise).
 At runtime, it calls `__cxa_rethrow()` without allocating or copying.
 The rethrown exception type is subject to the same contract rules as a normal throw.
 
@@ -1898,7 +1898,7 @@ Rules:
 - Match is by exact type or base class (if the thrown type derives from the caught type).
 - Unmatched exceptions propagate to the next enclosing try-catch or out of the function.
 - The catch parameter receives a **reference** (`T&`) to the exception object.
-- Catch parameter types must derive from `::k::Throwable` (error `0x01C1` otherwise).
+- Catch parameter types must derive from `::k::Throwable` (error `0x1202` otherwise).
 - All function calls within a try block are compiled as LLVM `invoke` instructions
   (instead of `call`) to enable unwinding through the landing pad.
 - The `finally` block, if present, **always executes** regardless of whether:
@@ -1937,8 +1937,8 @@ myFunc(a: int) : int throws(IOException, ParseException) {
 ```
 
 Rules:
-- All types in the `throws` clause must derive from `::k::Throwable` (error `0x01C4` otherwise).
-- A type in the `throws` clause that cannot be resolved → error `0x01C3`.
+- All types in the `throws` clause must derive from `::k::Throwable` (error `0x1205` otherwise).
+- A type in the `throws` clause that cannot be resolved → error `0x1204`.
 - The throws clause is part of the function's public interface and exported in `.kdi` files.
 
 ### 27.5 Exception Contract Rules (Checked Exceptions)
@@ -1951,14 +1951,14 @@ When a function declares a `throws` clause, the compiler enforces static contrac
    - Declared in the function's `throws` clause, **or**
    - Caught by an enclosing `try-catch` within the same function.
    
-   Violation → error `0x01C5`.
+   Violation → error `0x1206`.
 
 2. **Call check:** Any call to a function that itself has a `throws` clause must
    have all its declared exception types either:
    - Caught by an enclosing `try-catch`, **or**
    - Declared in the caller's own `throws` clause (propagation).
    
-   Violation → error `0x01C6`.
+   Violation → error `0x1207`.
 
 **Unchecked types** (derived from `::k::FatalError`) are exempt from contract enforcement —
 they may be thrown from any function without declaration. This allows runtime errors like
@@ -1993,13 +1993,13 @@ When an exception propagates through a stack frame:
 
 | Code | Identifier | Description |
 |------|-----------|-------------|
-| `0x01C0` | `ERR_THROW_NOT_EXCEPTION_TYPE` | Thrown type does not derive from `::k::Throwable` |
-| `0x01C1` | `ERR_CATCH_NOT_EXCEPTION_TYPE` | Catch clause type does not derive from `::k::Throwable` |
-| `0x01C2` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use reference addresser (`&`) |
-| `0x01C3` | `ERR_THROWS_TYPE_NOT_FOUND` | Type in throws clause cannot be resolved |
-| `0x01C4` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Throwable` |
-| `0x01C5` | `ERR_THROW_NOT_IN_THROWS_SPEC` | Throw of undeclared checked exception in function with throws clause |
-| `0x01C6` | `ERR_CALL_UNHANDLED_EXCEPTION` | Call to throwing function without handling/declaring its checked exceptions |
+| `0x1201` | `ERR_THROW_NOT_EXCEPTION_TYPE` | Thrown type does not derive from `::k::Throwable` |
+| `0x1202` | `ERR_CATCH_NOT_EXCEPTION_TYPE` | Catch clause type does not derive from `::k::Throwable` |
+| `0x1203` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use reference addresser (`&`) |
+| `0x1204` | `ERR_THROWS_TYPE_NOT_FOUND` | Type in throws clause cannot be resolved |
+| `0x1205` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Throwable` |
+| `0x1206` | `ERR_THROW_UNDECLARED_EXCEPTION` | Throw of undeclared checked exception in function with throws clause |
+| `0x1207` | `ERR_UNCAUGHT_EXCEPTION` | Call to throwing function without handling/declaring its checked exceptions |
 
 ### 27.9 Known Limitations
 

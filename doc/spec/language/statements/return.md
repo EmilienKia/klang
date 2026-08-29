@@ -56,7 +56,7 @@ make() : Foo! {
 ```
 
 If the caller does not assign the returned owner to a variable, the compiler emits
-**Warning 0x5010** and the object is immediately deleted at the call site.
+**Warning 0x0E05** and the object is immediately deleted at the call site.
 See [Dynamic Allocation — Ownership and lifetime](../memory/new-delete.md#4-ownership-and-lifetime).
 
 ### Struct return (by value)
@@ -129,7 +129,7 @@ When a function declares a [named return variable](../functions/named-return.md)
 |-----------|-----------|
 | *(end of function body)* | Implicitly returns the named variable. |
 | `return;` | Returns the named variable (early exit). |
-| `return expr;` | **Warning 0x6001.** Assigns `expr` to the named variable, then returns it. |
+| `return expr;` | **Warning 0x0E06.** Assigns `expr` to the named variable, then returns it. |
 
 The named return variable is **not** destroyed during scope cleanup (it lives in the
 caller's storage via NRVO).  All other local variables are destroyed normally.

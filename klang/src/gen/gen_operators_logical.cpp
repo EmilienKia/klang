@@ -1397,12 +1397,21 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 
     // ── Address comparison for indirection types ─────────────────────────────
     auto is_addr = [](const std::shared_ptr<type>& t) {
-        return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
-            || type::is_owner(t)   || type::is_null(t)
-            || type::is_fat_callable(t);
+        if (!t) return false;
+        auto inner = type::is_reference(t) ? t->get_subtype() : t;
+        inner = type::remove_const(inner);
+        return type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)
+            || type::is_owner(inner)   || type::is_null(inner)
+            || type::is_fat_callable(inner);
     };
     if (is_addr(left_type) || is_addr(right_type)) {
         auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        if (type::is_reference(left_type) && is_addr(left_type)) {
+            left = _builder->CreateLoad(ptr_ty, left, "left_addr");
+        }
+        if (type::is_reference(right_type) && is_addr(right_type)) {
+            right = _builder->CreateLoad(ptr_ty, right, "right_addr");
+        }
         // A callable compares by its target address only; the context is irrelevant.
         if (type::is_fat_callable(left_type)) left = extract_fn(*_builder, left);
         if (type::is_fat_callable(right_type)) right = extract_fn(*_builder, right);
@@ -1466,12 +1475,21 @@ void implementation_generator::visit_different_expression(different_expression& 
 
     // ── Address comparison for indirection types ─────────────────────────────
     auto is_addr = [](const std::shared_ptr<type>& t) {
-        return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
-            || type::is_owner(t)   || type::is_null(t)
-            || type::is_fat_callable(t);
+        if (!t) return false;
+        auto inner = type::is_reference(t) ? t->get_subtype() : t;
+        inner = type::remove_const(inner);
+        return type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)
+            || type::is_owner(inner)   || type::is_null(inner)
+            || type::is_fat_callable(inner);
     };
     if (is_addr(left_type) || is_addr(right_type)) {
         auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        if (type::is_reference(left_type) && is_addr(left_type)) {
+            left = _builder->CreateLoad(ptr_ty, left, "left_addr");
+        }
+        if (type::is_reference(right_type) && is_addr(right_type)) {
+            right = _builder->CreateLoad(ptr_ty, right, "right_addr");
+        }
         // A callable compares by its target address only; the context is irrelevant.
         if (type::is_fat_callable(left_type)) left = extract_fn(*_builder, left);
         if (type::is_fat_callable(right_type)) right = extract_fn(*_builder, right);

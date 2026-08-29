@@ -153,11 +153,11 @@ with the `@ffi::CString` annotation:
 | `char?` (view) | ✅ OK | `char*` | View is a nullable pointer internally. |
 | `char+` (link) | ✅ OK | `char*` | Link is a pointer internally. |
 | `char!` (owner) | ✅ OK | `char*` | Owner is a pointer internally. Ownership is **not** transferred across FFI. |
-| `char#` (drain) | ⚠️ Warning 0x008A | `char*` | Drain is not meaningful for C FFI; treated as reference. |
-| `byte&` / `byte*` / etc. | ⚠️ Warning 0x008D | `char*` | `byte` = `unsigned char`; accepted but warned. |
-| `char` (bare value) | ❌ Error 0x008B | — | Not an addresser; cannot represent a C string. |
-| `int&`, `short*`, etc. | ❌ Error 0x008C | — | Addressed type must be `char`. |
-| Non-extern function | ❌ Error 0x0089 | — | `@CString` requires `@ffi::Extern("C")` on the function. |
+| `char#` (drain) | ⚠️ Warning 0x0804 | `char*` | Drain is not meaningful for C FFI; treated as reference. |
+| `byte&` / `byte*` / etc. | ⚠️ Warning 0x0807 | `char*` | `byte` = `unsigned char`; accepted but warned. |
+| `char` (bare value) | ❌ Error 0x0808 | — | Not an addresser; cannot represent a C string. |
+| `int&`, `short*`, etc. | ❌ Error 0x0803 | — | Addressed type must be `char`. |
+| Non-extern function | ❌ Error 0x0801 | — | `@CString` requires `@ffi::Extern("C")` on the function. |
 
 ---
 
@@ -167,17 +167,17 @@ with the `@ffi::CString` annotation:
 
 | Code | Phase | Condition | Message |
 |------|-------|-----------|---------|
-| `0x0080` | Symbol resolver | `@Extern` function has a body, or language parameter is missing/empty/unsupported, or function is both `@Extern` and abstract. | Various messages depending on sub-condition. |
-| `0x0089` | Symbol resolver | `@CString` used on a parameter of a non-`@Extern("C")` function. | `@ffi::CString on parameter '…' of function '…': @ffi::CString is only valid on parameters of @ffi::Extern("C") functions` |
-| `0x008B` | Symbol resolver | `@CString` parameter type is not an addresser (e.g. bare `char`). | `@ffi::CString on parameter '…': the parameter type must be an addresser (reference, pointer, view, link or owner) to char, but got '…'` |
-| `0x008C` | Symbol resolver | `@CString` addressed type is not `char` (e.g. `int&`, `short*`). | `@ffi::CString on parameter '…': the addressed type must be char, but got '…'` |
+| `0x0802` | Symbol resolver | `@Extern` function has a body, or language parameter is missing/empty/unsupported, or function is both `@Extern` and abstract. | Various messages depending on sub-condition. |
+| `0x0801` | Symbol resolver | `@CString` used on a parameter of a non-`@Extern("C")` function. | `@ffi::CString on parameter '…' of function '…': @ffi::CString is only valid on parameters of @ffi::Extern("C") functions` |
+| `0x0808` | Symbol resolver | `@CString` parameter type is not an addresser (e.g. bare `char`). | `@ffi::CString on parameter '…': the parameter type must be an addresser (reference, pointer, view, link or owner) to char, but got '…'` |
+| `0x0803` | Symbol resolver | `@CString` addressed type is not `char` (e.g. `int&`, `short*`). | `@ffi::CString on parameter '…': the addressed type must be char, but got '…'` |
 
 ### Warnings
 
 | Code | Phase | Condition | Message |
 |------|-------|-----------|---------|
-| `0x008A` | Symbol resolver | `@CString` parameter uses drain (`#`) indirection. | `@ffi::CString on parameter '…': drain indirection (#) is not meaningful for C FFI; treating as reference` |
-| `0x008D` | Symbol resolver | `@CString` addressed type is `unsigned char` / `byte`. | `@ffi::CString on parameter '…': unsigned char will be treated as char for C FFI` |
+| `0x0804` | Symbol resolver | `@CString` parameter uses drain (`#`) indirection. | `@ffi::CString on parameter '…': drain indirection (#) is not meaningful for C FFI; treating as reference` |
+| `0x0807` | Symbol resolver | `@CString` addressed type is `unsigned char` / `byte`. | `@ffi::CString on parameter '…': unsigned char will be treated as char for C FFI` |
 
 ---
 

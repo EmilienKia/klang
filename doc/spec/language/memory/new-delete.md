@@ -37,7 +37,7 @@ manages the allocated object.
 
 `TypeName` is a plain type name (a qualified identifier or a primitive type keyword) — not a
 type with indirection suffixes.  Allocating an abstract class or an interface directly is
-forbidden (they cannot be instantiated); the compiler emits **Error 0x0057** in that case.
+forbidden (they cannot be instantiated); the compiler emits **Error 0x0917** in that case.
 
 **Semantics (in order):**
 
@@ -84,10 +84,10 @@ p : Pair<int, int>! = new Pair(10, 20); // Deduced as new Pair<int, int>(10, 20)
 
 If the result of `new` is not assigned to an owner variable — for example, it is used as a
 bare expression statement or passed to a non-owner parameter — the compiler emits
-**Warning 0x5010** and the object is deleted immediately after construction:
+**Warning 0x0E05** and the object is deleted immediately after construction:
 
 ```k
-new Foo(1);          // Warning 0x5010: result of 'new' immediately discarded
+new Foo(1);          // Warning 0x0E05: result of 'new' immediately discarded
                      // Foo(1) is constructed then deleted on the same line
 ```
 
@@ -136,7 +136,7 @@ The array size is determined by exactly one of the following rules:
 | `new T[]{}` | `0` | Empty init list; valid empty array (0 elements). |
 | `new T{e₀, e₁, …, eₖ}` | `k` | Bare-brace form; equivalent to `new T[]{e₀, …, eₖ}`. |
 | `new T{}` | `0` | Bare-brace empty; equivalent to `new T[]{}` — valid empty array. |
-| `new T[]` | — | **Error 0x4229**: no explicit size and no init list — size cannot be inferred. |
+| `new T[]` | — | **Error 0x0918**: no explicit size and no init list — size cannot be inferred. |
 
 **Dynamic (runtime) forms:**
 
@@ -147,8 +147,8 @@ The array size is determined by exactly one of the following rules:
 When the bracket expression is not a compile-time integer literal, it is treated as a
 **dynamic-sized** allocation:
 
-- The size expression must be convertible to `unsigned int` (**Error 0x4221** if not).
-- **Brace initializer lists are forbidden** with dynamic-sized arrays (**Error 0x422A**).
+- The size expression must be convertible to `unsigned int` (**Error 0x0926** if not).
+- **Brace initializer lists are forbidden** with dynamic-sized arrays (**Error 0x092F**).
   All elements are default-initialized (zero for primitives, default constructor for structs).
 - For struct element types, a default constructor (zero arguments) must exist.
 - The result type is `T[]!` — an owner of an **unsized** array type.
@@ -167,7 +167,7 @@ When the bracket expression is not a compile-time integer literal, it is treated
 - An explicit element must be a constructor invocation: `new Point[2]{Point(1,2), Point(3,4)}`.
 - Empty slots (`, ,`) or elements beyond the init list use the **default constructor** (zero
   arguments).  If no default constructor exists, this is a compile-time error.
-- The element type must not be abstract (**Error 0x4226**).
+- The element type must not be abstract (**Error 0x092A**).
 
 **Empty slots in the init list:**
 
@@ -181,12 +181,12 @@ arr : int[3]! = new int[3]{1, , 3};    // arr[1] = 0 (default)
 **Too many initializers:**
 
 If the init list has more elements than the explicit array size, the compiler emits
-**Error 0x4222**.
+**Error 0x0927**.
 
 **Fewer initializers:**
 
 If the init list has fewer elements than the explicit array size (but at least one), the
-compiler emits **Warning 0x4223** and the remaining elements are default-initialized.
+compiler emits **Warning 0x0928** and the remaining elements are default-initialized.
 
 ### 2.3 Internal representation
 
@@ -287,7 +287,7 @@ the owner to `null`.
 ```
 
 `OwnerExpr` must be a **modifiable lvalue** of an owner type (`T!`, `T[N]!`, or `T[]!`).
-Passing a non-owner indirection to `delete` is a **compile-time error** (**Error 0x005A**).
+Passing a non-owner indirection to `delete` is a **compile-time error** (**Error 0x091A**).
 
 **Semantics (only when the owner is non-null; no-op otherwise):**
 
@@ -416,13 +416,13 @@ p = null;               // no-op
 ### Unassigned return value
 
 If a function returns a `T!` and the caller does not assign the result to an owner variable,
-the compiler emits **Warning 0x5010** and the returned object is deleted immediately:
+the compiler emits **Warning 0x0E05** and the returned object is deleted immediately:
 
 ```k
 make() : Foo! { return new Foo(5); }
 
 test() {
-    make();              // Warning 0x5010: Foo(5) constructed and immediately deleted
+    make();              // Warning 0x0E05: Foo(5) constructed and immediately deleted
     obj : Foo! = make(); // OK: obj takes ownership of Foo(5)
 }
 ```
@@ -569,19 +569,19 @@ TypeSuffix:
 
 | Code | Severity | Condition |
 |------|----------|-----------|
-| 0x0057 | Error | Cannot `new` an abstract class (single-object form). |
-| 0x005A | Error | `delete` applied to a non-owner type. |
-| 0x4221 | Error | Array size expression for `new[]` is not convertible to `unsigned int`. |
-| 0x4222 | Error | Init list has more elements than the explicit array size. |
-| 0x4223 | Warning | Init list has fewer elements than the array size; remaining elements are default-initialized. |
-| 0x4224 | Error | Cannot convert an init list element to the array element type. |
-| 0x4225 | Error | Struct for array element type is not resolved. |
-| 0x4226 | Error | Cannot `new` an array of an abstract class. |
-| 0x4227 | Error | No matching constructor for an element in the init list. |
-| 0x4228 | Error | No matching single-parameter constructor for an implicit element. |
-| 0x4229 | Error | Cannot infer array size: no explicit size and no init list provided. |
-| 0x422A | Error | Brace initializer lists are not allowed for dynamically-sized `new[]` arrays. |
-| 0x5010 | Warning | Result of `new` (or function returning `T!`) is immediately discarded — the object is deleted right after construction. |
+| 0x0917 | Error | Cannot `new` an abstract class (single-object form). |
+| 0x091A | Error | `delete` applied to a non-owner type. |
+| 0x0926 | Error | Array size expression for `new[]` is not convertible to `unsigned int`. |
+| 0x0927 | Error | Init list has more elements than the explicit array size. |
+| 0x0928 | Warning | Init list has fewer elements than the array size; remaining elements are default-initialized. |
+| 0x0929 | Error | Cannot convert an init list element to the array element type. |
+| 0x092E | Error | Struct for array element type is not resolved. |
+| 0x092A | Error | Cannot `new` an array of an abstract class. |
+| 0x092B | Error | No matching constructor for an element in the init list. |
+| 0x092C | Error | No matching single-parameter constructor for an implicit element. |
+| 0x0918 | Error | Cannot infer array size: no explicit size and no init list provided. |
+| 0x092F | Error | Brace initializer lists are not allowed for dynamically-sized `new[]` arrays. |
+| 0x0E05 | Warning | Result of `new` (or function returning `T!`) is immediately discarded — the object is deleted right after construction. |
 
 ### Runtime exceptions
 

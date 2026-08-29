@@ -326,7 +326,7 @@ An interface is **implicitly and unconditionally abstract** — it can never be 
 Writing `abstract interface …` is accepted syntactically but **redundant**.
 
 ```k
-abstract interface Marker {   // Warning 0x2002A: 'abstract' is implicit on interfaces
+abstract interface Marker {   // Warning 0x041D: 'abstract' is implicit on interfaces
     check() : int;
 }
 ```
@@ -338,7 +338,7 @@ Writing `abstract method() : …;` is also redundant.
 
 ```k
 interface Printer {
-    abstract print() : int;   // Warning 0x2002B: 'abstract' is implicit on interface methods
+    abstract print() : int;   // Warning 0x041E: 'abstract' is implicit on interface methods
 }
 ```
 
@@ -348,12 +348,12 @@ The code still compiles and the semantics are identical to the non-redundant for
 
 A method marked `final` inside an interface is **not** implicitly abstract (the `final` modifier suppresses the implicit abstraction).  
 Such a method is a *non-virtual new final method*, and it still requires a body.  
-Without a body it is an error (error `0x2002C`).
+Without a body it is an error (error `0x041F`).
 
 ### `static` methods — not abstract
 
 A method marked `static` inside an interface is also **not** implicitly abstract.  
-Explicitly combining `abstract` and `static` is an error (`0x20024`).
+Explicitly combining `abstract` and `static` is an error (`0x0424`).
 
 ---
 
@@ -380,25 +380,25 @@ Explicitly combining `abstract` and `static` is an error (`0x20024`).
 
 | Code       | Phase          | Condition                                                                  |
 |------------|----------------|----------------------------------------------------------------------------|
-| `0x20024`  | Model builder  | Interface method is `abstract` and `static`                                |
-| `0x20025`  | Model builder  | Interface method is `abstract` and `final`                                 |
-| `0x20026`  | Model builder  | Interface method has a body `{ … }` (implicit or explicit abstract)        |
-| `0x20029`  | Model builder  | `abstract` interface method has `private` visibility                       |
-| `0x2002C`  | Model builder  | Non-abstract interface method (`final` or `static`) has no body            |
-| `0x0018B`  | Model builder  | `default` specifier used outside an interface                              |
-| `0x0018C`  | Model builder  | `default` method has no body                                               |
-| `0x0018D`  | Model builder  | `default` combined with `static`, `final`, `abstract` or an aliasing `->`  |
-| `0x0018E`  | Model builder  | `default` method has `private` visibility                                  |
-| `0x0018F`  | Model builder  | `default` used on a constructor or destructor                              |
-| `0x30039`  | Symbol resolver| Class inherits unimplemented interface methods but is not `abstract`       |
-| `0x40032`  | Type resolver  | Direct instantiation of an interface                                       |
+| `0x0424`  | Model builder  | Interface method is `abstract` and `static`                                |
+| `0x0425`  | Model builder  | Interface method is `abstract` and `final`                                 |
+| `0x0426`  | Model builder  | Interface method has a body `{ … }` (implicit or explicit abstract)        |
+| `0x0427`  | Model builder  | `abstract` interface method has `private` visibility                       |
+| `0x041F`  | Model builder  | Non-abstract interface method (`final` or `static`) has no body            |
+| `0x0430`  | Model builder  | `default` specifier used outside an interface                              |
+| `0x0431`  | Model builder  | `default` method has no body                                               |
+| `0x0432`  | Model builder  | `default` combined with `static`, `final`, `abstract` or an aliasing `->`  |
+| `0x0433`  | Model builder  | `default` method has `private` visibility                                  |
+| `0x0434`  | Model builder  | `default` used on a constructor or destructor                              |
+| `0x0612`  | Symbol resolver| Class inherits unimplemented interface methods but is not `abstract`       |
+| `0x0917`  | Type resolver  | Direct instantiation of an interface                                       |
 
 ### Warnings
 
 | Code       | Phase          | Condition                                                                  |
 |------------|----------------|----------------------------------------------------------------------------|
-| `0x2002A`  | Model builder  | `abstract` specifier used on an `interface` declaration (redundant)        |
-| `0x2002B`  | Model builder  | `abstract` specifier used on an interface method (redundant)               |
+| `0x041D`  | Model builder  | `abstract` specifier used on an `interface` declaration (redundant)        |
+| `0x041E`  | Model builder  | `abstract` specifier used on an interface method (redundant)               |
 
 ---
 

@@ -31,6 +31,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
 
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
@@ -1726,7 +1727,7 @@ TEST_CASE("unused import — declared but never used emits warning 0x0008",
 
     bool found_warning = false;
     for (const auto& d : diags) {
-        if (d.level == k::log::diagnostic::severity::warning && d.code == 0x0008)
+        if (d.level == k::log::diagnostic::severity::warning && d.code == static_cast<unsigned int>(k::diag::compiler_diag::WARN_UNUSED_IMPORT))
             found_warning = true;
     }
     REQUIRE(found_warning);
@@ -1800,7 +1801,7 @@ TEST_CASE("unused import — one used one unused, only unused triggers warning",
     bool warned_about_unused = false;
     bool warned_about_used = false;
     for (const auto& d : diags) {
-        if (d.level == k::log::diagnostic::severity::warning && d.code == 0x0008) {
+        if (d.level == k::log::diagnostic::severity::warning && d.code == static_cast<unsigned int>(k::diag::compiler_diag::WARN_UNUSED_IMPORT)) {
             ++warning_count;
             for (const auto& arg : d.args) {
                 if (arg.find("lib_unused") != std::string::npos) warned_about_unused = true;

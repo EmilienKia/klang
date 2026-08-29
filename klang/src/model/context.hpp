@@ -369,10 +369,7 @@ public:
      * Look up the LLVM Function* for a model function.
      * Returns nullptr if not yet declared.
      */
-    llvm::Function* lookup_llvm_function(const std::shared_ptr<function>& func) const {
-        auto it = _functions.find(func);
-        return (it != _functions.end()) ? it->second : nullptr;
-    }
+    llvm::Function* lookup_llvm_function(const std::shared_ptr<function>& func) const;
 
 protected:
 

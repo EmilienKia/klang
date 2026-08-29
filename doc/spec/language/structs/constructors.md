@@ -352,8 +352,8 @@ p4 : Pair = Pair(p1);         // Deduced as Pair<int, int>
 ### Positive and Negative Rules
 
 - **Positive:** Argument deduction matches explicit constructor parameters, default arguments, and synthesized copy guides.
-- **Negative:** If constructor arguments cannot deduce all un-defaulted template parameters or conflict, compilation fails with `ERR_CTAD_NO_MATCH` (0x0188).
-- **Negative:** If multiple constructor overloads deduce conflicting specializations with equal conversion score, compilation fails with `ERR_CTAD_AMBIGUOUS` (0x0189).
+- **Negative:** If constructor arguments cannot deduce all un-defaulted template parameters or conflict, compilation fails with `ERR_CTAD_NO_MATCH` (0x1009).
+- **Negative:** If multiple constructor overloads deduce conflicting specializations with equal conversion score, compilation fails with `ERR_CTAD_AMBIGUOUS` (0x100A).
 
 ---
 *See also:* [Structures](structs.md) · [Destructors](destructors.md) · [Function Overloading](../functions/overloading.md) · [Exception Handling](../statements/exceptions.md) · [Templates](../templates/templates.md)

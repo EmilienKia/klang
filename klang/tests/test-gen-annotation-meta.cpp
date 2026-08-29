@@ -27,6 +27,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/Support/raw_ostream.h>
@@ -1363,15 +1364,15 @@ TEST_CASE("Constructor annotation: RUNTIME annotation on public constructor — 
         }
     )SRC", nullptr, logger);
     CHECK(ok);
-    // No 0x00C3 warning should be emitted for a public constructor with annotations
-    bool has_003D = false;
+    // No WARN_UNUSED_PRIVATE_CTOR warning should be emitted for a public constructor with annotations
+    bool has_unused_ctor_warn = false;
     for (auto& diag : logger.diagnostics) {
-        if (diag.code == 0x00C3) {
-            has_003D = true;
+        if (diag.code == static_cast<unsigned int>(k::diag::symbol_diag::WARN_UNUSED_PRIVATE_CTOR)) {
+            has_unused_ctor_warn = true;
             break;
         }
     }
-    CHECK_FALSE(has_003D);
+    CHECK_FALSE(has_unused_ctor_warn);
 }
 
 

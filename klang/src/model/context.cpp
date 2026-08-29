@@ -1738,6 +1738,17 @@ std::shared_ptr<callable_type> context::readdress(
                              callable->get_throws());
 }
 
+llvm::Function* context::lookup_llvm_function(const std::shared_ptr<function>& func) const {
+    if (!func) return nullptr;
+    auto it = _functions.find(func);
+    if (it != _functions.end()) return it->second;
+    if (!func->get_mangled_name().empty() && _module) {
+        return _module->getFunction(func->get_mangled_name());
+    }
+    return nullptr;
+}
+
+
 std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& t) {
     if (!t) return nullptr;
     // An indirection applied to a name that turns out to denote a callable

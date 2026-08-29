@@ -32,10 +32,10 @@ in the standard library. The hierarchy separates **checked exceptions**
 **Only types derived from `::k::Throwable` (or `Throwable` itself) may be thrown.**
 
 - Throwing a struct or class that does not derive from `::k::Throwable` →
-  compile-time error `0x01C0`.
-- Throwing a non-class type (primitive, array, etc.) → compile-time error `0x01C0`.
+  compile-time error `0x1201`.
+- Throwing a non-class type (primitive, array, etc.) → compile-time error `0x1201`.
 - Throwing pointers, owners, links, views, or dynamic allocations (`throw new Type(...)`, `throw ptr`) →
-  compile-time error `0x01C0`. Exceptions must always be thrown by value.
+  compile-time error `0x1201`. Exceptions must always be thrown by value.
 - This constraint is enforced whenever the stdlib is available (i.e. for all
   modules except `k` itself).
 
@@ -131,7 +131,7 @@ from the current catch handler.
 
 **Constraints:**
 - `throw;` is only valid inside the body of a `catch` clause.
-  Using it outside a catch block is a compile-time error (`0x01C9`).
+  Using it outside a catch block is a compile-time error (`0x120A`).
 - The rethrown exception type (from the enclosing catch) is subject to the same
   exception contract rules as a normal throw: the type must be declared in the
   function's `throws` clause or caught by an outer enclosing `try-catch`.
@@ -197,9 +197,9 @@ CatchParameterDecl:
 - Unmatched exceptions propagate to the next enclosing try-catch or out of the
   function.
 - The catch parameter receives a **reference** (`T&`) to the exception object.
-- Catch parameter types must derive from `::k::Throwable` (error `0x01C1`
+- Catch parameter types must derive from `::k::Throwable` (error `0x1202`
   otherwise).
-- Catch parameter must use a reference addresser (`T&`) (error `0x01C2` otherwise).
+- Catch parameter must use a reference addresser (`T&`) (error `0x1203` otherwise).
   References guarantee that the caught exception is never null and its address
   is non-reassignable.
 - All function calls within a try block are compiled as LLVM `invoke`
@@ -300,8 +300,8 @@ myFunc(a: int) : int throws(IOException, ParseException) {
 ### Rules
 
 - All types in the `throws` clause must derive from `::k::Throwable` (error
-  `0x01C4` otherwise).
-- A type in the `throws` clause that cannot be resolved → error `0x01C3`.
+  `0x1205` otherwise).
+- A type in the `throws` clause that cannot be resolved → error `0x1204`.
 - The throws clause is part of the function's public interface and exported in
   `.kdi` files.
 - Constructors can also have a `throws` clause (see below).
@@ -321,7 +321,7 @@ type must throw a type that is either:
 - Declared in the function's `throws` clause, **or**
 - Caught by an enclosing `try-catch` within the same function.
 
-Violation → error `0x01C5`.
+Violation → error `0x1206`.
 
 ### Call check
 
@@ -330,7 +330,7 @@ have all its declared exception types either:
 - Caught by an enclosing `try-catch`, **or**
 - Declared in the caller's own `throws` clause (propagation).
 
-Violation → error `0x01C6`.
+Violation → error `0x1207`.
 
 ### Unchecked types
 
@@ -494,14 +494,14 @@ riskyWork() : int {
 
 | Code | Identifier | Description |
 |------|-----------|-------------|
-| `0x01C0` | `ERR_THROW_NOT_EXCEPTION_TYPE` | Thrown type does not derive from `::k::Throwable` |
-| `0x01C1` | `ERR_CATCH_NOT_EXCEPTION_TYPE` | Catch clause type does not derive from `::k::Throwable` |
-| `0x01C2` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use reference addresser (`&`) |
-| `0x01C3` | `ERR_THROWS_TYPE_NOT_FOUND` | Type in throws clause cannot be resolved |
-| `0x01C4` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Throwable` |
-| `0x01C5` | `ERR_THROW_NOT_IN_THROWS_SPEC` | Throw of undeclared checked exception in function with throws clause |
-| `0x01C6` | `ERR_CALL_UNHANDLED_EXCEPTION` | Call to throwing function without handling/declaring its checked exceptions |
-| `0x01C9` | `ERR_RETHROW_OUTSIDE_CATCH` | Bare `throw;` (rethrow) used outside a catch block |
+| `0x1201` | `ERR_THROW_NOT_EXCEPTION_TYPE` | Thrown type does not derive from `::k::Throwable` |
+| `0x1202` | `ERR_CATCH_NOT_EXCEPTION_TYPE` | Catch clause type does not derive from `::k::Throwable` |
+| `0x1203` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use reference addresser (`&`) |
+| `0x1204` | `ERR_THROWS_TYPE_NOT_FOUND` | Type in throws clause cannot be resolved |
+| `0x1205` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Throwable` |
+| `0x1206` | `ERR_THROW_UNDECLARED_EXCEPTION` | Throw of undeclared checked exception in function with throws clause |
+| `0x1207` | `ERR_UNCAUGHT_EXCEPTION` | Call to throwing function without handling/declaring its checked exceptions |
+| `0x120A` | `ERR_RETHROW_OUTSIDE_CATCH` | Bare `throw;` (rethrow) used outside a catch block |
 
 ---
 

@@ -27,105 +27,105 @@ namespace k::diag {
 // Operator diagnostics (arithmetic, comparison, assignment, overload resolution)
 // ────────────────────────────────────────────────────────────────────────────
 enum class operator_diag : unsigned int {
-    ERR_ARITH_TYPE_MISMATCH                       = 0x00DF,
-    ERR_ARITH_NO_COMMON_TYPE                      = 0x00E0,
-    ERR_ARITH_MODULO_NOT_INT                      = 0x00E1,
-    ERR_ASSIGN_INCOMPATIBLE                       = 0x00E6,
-    ERR_ASSIGN_TO_CONST                           = 0x00E7,
-    ERR_MAIN_WRONG_RETURN_TYPE                    = 0x00E8,
-    ERR_MAIN_WRONG_PARAMS                         = 0x00E9,
-    ERR_PREINC_NOT_REF                            = 0x010B,
-    ERR_PREINC_NOT_NUMERIC                        = 0x010C,
-    ERR_PREDEC_NOT_REF                            = 0x010D,
-    ERR_POSTINC_NOT_REF                           = 0x010E,
-    ERR_POSTINC_NOT_NUMERIC                       = 0x010F,
-    ERR_SHIFT_NOT_INT                             = 0x0118,
-    ERR_SHIFT_INCOMPATIBLE                        = 0x0119,
-    ERR_LOGICAL_NOT_BOOL                          = 0x011A,
-    ERR_LOGICAL_AND_INCOMPATIBLE                  = 0x011B,
-    WARN_IMPLICIT_LOSSY_CAST                      = 0x011C,
-    ERR_OVERLOAD_CALL_NO_MATCH                    = 0x011D,
-    ERR_OVERLOAD_ARG_TYPE_MISMATCH                = 0x011F,
-    ERR_OVERLOAD_RETURN_TYPE_MISMATCH             = 0x0120,
-    ERR_OVERLOAD_CONST_MISMATCH                   = 0x0121,
-    ERR_OVERLOAD_VISIBILITY_DENIED                = 0x0122,
-    ERR_OVERLOAD_NOT_FOUND                        = 0x0123,
-    ERR_BINARY_OVERLOAD_BAD_RECEIVER              = 0x0124,
-    ERR_UNARY_OVERLOAD_BAD_RECEIVER               = 0x0125,
-    ERR_PM_EXPR_BAD_TYPE                          = 0x0126,
-    ERR_PM_EXPR_NOT_MEMBER_PTR                    = 0x0127,
-    ERR_PM_EXPR_INCOMPATIBLE                      = 0x0128,
-    ERR_SUBSCRIPT_OVERLOAD_NOT_FOUND              = 0x012A,
-    ERR_SUBSCRIPT_OVERLOAD_CONST                  = 0x012B,
-    ERR_SUBSCRIPT_OVERLOAD_BAD_RETURN             = 0x012C,
-    ERR_BITWISE_AND_INCOMPATIBLE                  = 0x0168,
-    ERR_BITWISE_OR_INCOMPATIBLE                   = 0x0169,
-    ERR_BITWISE_XOR_INCOMPATIBLE                  = 0x016A,
-    ERR_SHIFT_ASSIGN_INCOMPATIBLE                 = 0x016B,
-    ERR_BITWISE_ASSIGN_INCOMPATIBLE               = 0x016C,
-    ERR_ADD_ASSIGN_INCOMPATIBLE                   = 0x016D,
-    ERR_MUL_ASSIGN_INCOMPATIBLE                   = 0x016F,
-    ERR_SUB_ASSIGN_INCOMPATIBLE                   = 0x0171,
-    ERR_DIV_ASSIGN_INCOMPATIBLE                   = 0x0172,
-    ERR_SPACESHIP_OVERLOAD_NOT_FOUND               = 0x0173,
-    ERR_SPACESHIP_BAD_RETURN_TYPE                  = 0x0174,
-    ERR_SPACESHIP_NOT_PRIMITIVE                    = 0x0175,
+    ERR_ARITH_TYPE_MISMATCH                       = 0x0C01,
+    ERR_ARITH_NO_COMMON_TYPE                      = 0x0C02,
+    ERR_ARITH_MODULO_NOT_INT                      = 0x0C03,
+    ERR_ASSIGN_INCOMPATIBLE                       = 0x0C04,
+    ERR_ASSIGN_TO_CONST                           = 0x0C05,
+    ERR_MAIN_WRONG_RETURN_TYPE                    = 0x0C06,
+    ERR_MAIN_WRONG_PARAMS                         = 0x0C07,
+    ERR_PREINC_NOT_REF                            = 0x0C08,
+    ERR_PREINC_NOT_NUMERIC                        = 0x0C09,
+    ERR_PREDEC_NOT_REF                            = 0x0C0A,
+    ERR_POSTINC_NOT_REF                           = 0x0C0B,
+    ERR_POSTINC_NOT_NUMERIC                       = 0x0C0C,
+    ERR_SHIFT_NOT_INT                             = 0x0C0D,
+    ERR_SHIFT_INCOMPATIBLE                        = 0x0C0E,
+    ERR_LOGICAL_NOT_BOOL                          = 0x0C0F,
+    ERR_LOGICAL_AND_INCOMPATIBLE                  = 0x0C10,
+    WARN_IMPLICIT_LOSSY_CAST                      = 0x0C11,
+    ERR_OVERLOAD_CALL_NO_MATCH                    = 0x0C12,
+    ERR_OVERLOAD_ARG_TYPE_MISMATCH                = 0x0C13,
+    ERR_OVERLOAD_RETURN_TYPE_MISMATCH             = 0x0C14,
+    ERR_OVERLOAD_CONST_MISMATCH                   = 0x0C15,
+    ERR_OVERLOAD_VISIBILITY_DENIED                = 0x0C16,
+    ERR_OVERLOAD_NOT_FOUND                        = 0x0C17,
+    ERR_BINARY_OVERLOAD_BAD_RECEIVER              = 0x0C18,
+    ERR_UNARY_OVERLOAD_BAD_RECEIVER               = 0x0C19,
+    ERR_PM_EXPR_BAD_TYPE                          = 0x0C1A,
+    ERR_PM_EXPR_NOT_MEMBER_PTR                    = 0x0C1B,
+    ERR_PM_EXPR_INCOMPATIBLE                      = 0x0C1C,
+    ERR_SUBSCRIPT_OVERLOAD_NOT_FOUND              = 0x0C1D,
+    ERR_SUBSCRIPT_OVERLOAD_CONST                  = 0x0C1E,
+    ERR_SUBSCRIPT_OVERLOAD_BAD_RETURN             = 0x0C1F,
+    ERR_BITWISE_AND_INCOMPATIBLE                  = 0x0C20,
+    ERR_BITWISE_OR_INCOMPATIBLE                   = 0x0C21,
+    ERR_BITWISE_XOR_INCOMPATIBLE                  = 0x0C22,
+    ERR_SHIFT_ASSIGN_INCOMPATIBLE                 = 0x0C23,
+    ERR_BITWISE_ASSIGN_INCOMPATIBLE               = 0x0C24,
+    ERR_ADD_ASSIGN_INCOMPATIBLE                   = 0x0C25,
+    ERR_MUL_ASSIGN_INCOMPATIBLE                   = 0x0C26,
+    ERR_SUB_ASSIGN_INCOMPATIBLE                   = 0x0C27,
+    ERR_DIV_ASSIGN_INCOMPATIBLE                   = 0x0C28,
+    ERR_SPACESHIP_OVERLOAD_NOT_FOUND              = 0x0C29,
+    ERR_SPACESHIP_BAD_RETURN_TYPE                 = 0x0C2A,
+    ERR_SPACESHIP_NOT_PRIMITIVE                   = 0x0C2B,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
 // Variable definition diagnostics (initialization, type compatibility)
 // ────────────────────────────────────────────────────────────────────────────
 enum class variable_diag : unsigned int {
-    ERR_VAR_TYPE_UNRESOLVED                       = 0x00E2,
-    ERR_VAR_INIT_TYPE_MISMATCH                    = 0x00E3,
-    ERR_VAR_INIT_ARG_MISMATCH                     = 0x00E4,
-    ERR_STRUCT_VAR_NO_CTOR                        = 0x012F,
-    ERR_STRUCT_VAR_CTOR_AMBIGUOUS                 = 0x0130,
-    ERR_STRUCT_VAR_CTOR_ARG_MISMATCH              = 0x0131,
-    ERR_STRUCT_VAR_CTOR_NOT_FOUND                 = 0x0132,
-    ERR_REF_VAR_NEEDS_INIT                        = 0x0136,
-    ERR_REF_VAR_INCOMPATIBLE_INIT                 = 0x0137,
-    ERR_REF_VAR_WRONG_SUBTYPE                     = 0x0138,
-    ERR_REF_VAR_CONST_MISMATCH                    = 0x0139,
-    ERR_REF_VAR_MULTIPLE_INIT                     = 0x013A,
-    ERR_SIZED_ARRAY_INIT_MISMATCH                 = 0x013B,
-    ERR_LINK_VAR_NEEDS_INIT                       = 0x015A,
-    ERR_LINK_VAR_INIT_MISMATCH                    = 0x015B,
-    WARN_NARROWING_INIT                           = 0x015C,
-    ERR_LINK_VAR_WRONG_TYPE                       = 0x015D,
-    ERR_VIEW_VAR_NEEDS_INIT                       = 0x015E,
-    ERR_VIEW_VAR_INIT_MISMATCH                    = 0x015F,
-    ERR_VIEW_VAR_WRONG_TYPE                       = 0x0160,
-    ERR_POINTER_VAR_INIT_MISMATCH                 = 0x0161,
-    ERR_OWNER_VAR_NEEDS_INIT                      = 0x0162,
-    ERR_OWNER_VAR_INIT_MISMATCH                   = 0x0163,
+    ERR_VAR_TYPE_UNRESOLVED                       = 0x0D01,
+    ERR_VAR_INIT_TYPE_MISMATCH                    = 0x0D02,
+    ERR_VAR_INIT_ARG_MISMATCH                     = 0x0D03,
+    ERR_STRUCT_VAR_NO_CTOR                        = 0x0D04,
+    ERR_STRUCT_VAR_CTOR_AMBIGUOUS                 = 0x0D05,
+    ERR_STRUCT_VAR_CTOR_ARG_MISMATCH              = 0x0D06,
+    ERR_STRUCT_VAR_CTOR_NOT_FOUND                 = 0x0D07,
+    ERR_REF_VAR_NEEDS_INIT                        = 0x0D08,
+    ERR_REF_VAR_INCOMPATIBLE_INIT                 = 0x0D09,
+    ERR_REF_VAR_WRONG_SUBTYPE                     = 0x0D0A,
+    ERR_REF_VAR_CONST_MISMATCH                    = 0x0D0B,
+    ERR_REF_VAR_MULTIPLE_INIT                     = 0x0D0C,
+    ERR_SIZED_ARRAY_INIT_MISMATCH                 = 0x0D0D,
+    ERR_LINK_VAR_NEEDS_INIT                       = 0x0D0E,
+    ERR_LINK_VAR_INIT_MISMATCH                    = 0x0D0F,
+    WARN_NARROWING_INIT                           = 0x0D10,
+    ERR_LINK_VAR_WRONG_TYPE                       = 0x0D11,
+    ERR_VIEW_VAR_NEEDS_INIT                       = 0x0D12,
+    ERR_VIEW_VAR_INIT_MISMATCH                    = 0x0D13,
+    ERR_VIEW_VAR_WRONG_TYPE                       = 0x0D14,
+    ERR_POINTER_VAR_INIT_MISMATCH                 = 0x0D15,
+    ERR_OWNER_VAR_NEEDS_INIT                      = 0x0D16,
+    ERR_OWNER_VAR_INIT_MISMATCH                   = 0x0D17,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
 // Statement diagnostics (return, if, while, for, expression statements)
 // ────────────────────────────────────────────────────────────────────────────
 enum class statement_diag : unsigned int {
-    ERR_RETURN_TYPE_MISMATCH                      = 0x00EA,
-    ERR_IF_COND_NOT_BOOL                          = 0x00EB,
-    ERR_WHILE_COND_NOT_BOOL                       = 0x00EC,
-    ERR_FOR_COND_NOT_BOOL                         = 0x00ED,
-    WARN_UNUSED_EXPR_RESULT                       = 0x0164,
-    WARN_UNREACHABLE_AFTER_RETURN                 = 0x0165,
-    ERR_LOCAL_VAR_TYPE_UNRESOLVED                 = 0x0167,
+    ERR_RETURN_TYPE_MISMATCH                      = 0x0E01,
+    ERR_IF_COND_NOT_BOOL                          = 0x0E02,
+    ERR_WHILE_COND_NOT_BOOL                       = 0x0E03,
+    ERR_FOR_COND_NOT_BOOL                         = 0x0E04,
+    WARN_UNUSED_EXPR_RESULT                       = 0x0E05,
+    WARN_UNREACHABLE_AFTER_RETURN                 = 0x0E06,
+    ERR_LOCAL_VAR_TYPE_UNRESOLVED                 = 0x0E07,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
 // Code generation diagnostics (LLVM IR, vtable, constructors, internal errors)
 // ────────────────────────────────────────────────────────────────────────────
 enum class codegen_diag : unsigned int {
-    ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS               = 0x011E,
+    ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS               = 0x0F01,
 
     /**
      * A model element that must be emitted (or exported through a KDI) produced an
      * empty mangled name. An empty name makes distinct entities indistinguishable at
      * link time, so it is always a compiler bug rather than a user error.
      */
-    ERR_MANGLED_NAME_EMPTY                        = 0x0200,
+    ERR_MANGLED_NAME_EMPTY                        = 0x0F02,
 
     /**
      * Two distinct model elements of the same unit produced the same mangled name.
@@ -133,7 +133,7 @@ enum class codegen_diag : unsigned int {
      * group keyed by the mangled name, such a collision would silently make the linker
      * keep a single, arbitrarily chosen definition.
      */
-    ERR_DUPLICATE_MANGLED_NAME                    = 0x0201,
+    ERR_DUPLICATE_MANGLED_NAME                    = 0x0F03,
 
     /**
      * An LLVM type name reaching the KDI exporter contains a '.' — the marker of LLVM's
@@ -141,27 +141,27 @@ enum class codegen_diag : unsigned int {
      * order and are therefore not stable across builds nor usable for cross-module type
      * identity.
      */
-    ERR_LLVM_TYPE_NAME_NOT_CANONICAL               = 0x0202,
+    ERR_LLVM_TYPE_NAME_NOT_CANONICAL              = 0x0F04,
 
     /**
      * Two imported KDI entries declare the same LLVM type name with different bodies.
      * Deduplicating them by name would give one of the two entities the other's layout.
      */
-    ERR_KDI_TYPE_LAYOUT_CONFLICT                   = 0x0203,
+    ERR_KDI_TYPE_LAYOUT_CONFLICT                  = 0x0F05,
 
     /**
      * A non-trivial lvalue copy reached code generation without any available copy
      * constructor. Bytewise copying such a type would duplicate owned resources and
      * can cause double frees or use-after-free.
      */
-    ERR_TYPE_NOT_COPYABLE                          = 0x0204,
+    ERR_TYPE_NOT_COPYABLE                         = 0x0F06,
 
     /**
      * `mangler::mangle_type()` was given a type it cannot encode. `mangle_type()` is
      * total by contract: returning an empty string here would silently collapse distinct
      * symbols.
      */
-    INTERNAL_ERR_MANGLE_TYPE                      = 0xF020,
+    INTERNAL_ERR_MANGLE_TYPE                      = 0xF001,
 
     /**
      * Null sub-expression in a unary expression reaching symbol resolution, a
@@ -555,13 +555,13 @@ enum class codegen_diag : unsigned int {
 // Template diagnostics (instantiation, constraints, argument validation)
 // ────────────────────────────────────────────────────────────────────────────
 enum class template_diag : unsigned int {
-    ERR_TPL_TOO_MANY_ARGS                         = 0x0180,
-    ERR_TPL_TOO_FEW_ARGS                          = 0x0181,
-    ERR_TPL_ARG_WRONG_KIND                        = 0x0182,
-    ERR_TPL_ARG_CONSTRAINT_VIOLATED               = 0x0183,
-    ERR_TPL_ARG_NOT_AGGREGATE                     = 0x0184,
-    ERR_TPL_VALUE_ARG_NOT_CONSTANT                = 0x0185,
-    ERR_TPL_VALUE_ARG_TYPE_MISMATCH               = 0x0186,
+    ERR_TPL_TOO_MANY_ARGS                         = 0x1001,
+    ERR_TPL_TOO_FEW_ARGS                          = 0x1002,
+    ERR_TPL_ARG_WRONG_KIND                        = 0x1003,
+    ERR_TPL_ARG_CONSTRAINT_VIOLATED               = 0x1004,
+    ERR_TPL_ARG_NOT_AGGREGATE                     = 0x1005,
+    ERR_TPL_VALUE_ARG_NOT_CONSTANT                = 0x1006,
+    ERR_TPL_VALUE_ARG_TYPE_MISMATCH               = 0x1007,
 
     /**
      * Template aggregate instantiation recursed past the maximum allowed
@@ -570,9 +570,9 @@ enum class template_diag : unsigned int {
      * `template<typename T> class Node : public Node<T*> { }`). Raised
      * instead of letting the compiler overflow its own call stack.
      */
-    ERR_TPL_INSTANTIATION_DEPTH_EXCEEDED           = 0x0187,
-    ERR_CTAD_NO_MATCH                             = 0x0188,
-    ERR_CTAD_AMBIGUOUS                            = 0x0189,
+    ERR_TPL_INSTANTIATION_DEPTH_EXCEEDED          = 0x1008,
+    ERR_CTAD_NO_MATCH                             = 0x1009,
+    ERR_CTAD_AMBIGUOUS                            = 0x100A,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -584,7 +584,7 @@ enum class generic_diag : unsigned int {
      * E.g., a member variable 'val: T' where T is a generic param is forbidden;
      * use 'val: T!' or 'val: T&' instead.
      */
-    ERR_GENERIC_DIRECT_TYPE_USAGE                 = 0x01B0,
+    ERR_GENERIC_DIRECT_TYPE_USAGE                 = 0x1101,
 
     /**
      * An owner addresser ('!') is applied to a generic type parameter whose
@@ -592,25 +592,25 @@ enum class generic_diag : unsigned int {
      * Owner of a generic type param requires a class/interface constraint so
      * that the virtual destructor is reachable from the unifom synthesised code.
      */
-    ERR_GENERIC_OWNER_REQUIRES_CLASS              = 0x01B1,
+    ERR_GENERIC_OWNER_REQUIRES_CLASS              = 0x1102,
 
     /**
      * A generic aggregate or function was instantiated with a concrete type
      * argument that does not satisfy the declared constraint.
      */
-    ERR_GENERIC_ARG_CONSTRAINT_VIOLATED           = 0x01B2,
+    ERR_GENERIC_ARG_CONSTRAINT_VIOLATED           = 0x1103,
 
     /**
      * A generic aggregate or function was instantiated with too many type
      * arguments.
      */
-    ERR_GENERIC_TOO_MANY_ARGS                     = 0x01B3,
+    ERR_GENERIC_TOO_MANY_ARGS                     = 0x1104,
 
     /**
      * A generic aggregate or function was instantiated with too few type
      * arguments (and no defaults are available).
      */
-    ERR_GENERIC_TOO_FEW_ARGS                      = 0x01B4,
+    ERR_GENERIC_TOO_FEW_ARGS                      = 0x1105,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -620,54 +620,54 @@ enum class exception_diag : unsigned int {
     /**
      * The expression in a throw statement does not derive from ::k::Throwable.
      */
-    ERR_THROW_NOT_EXCEPTION_TYPE                  = 0x01C0,
+    ERR_THROW_NOT_EXCEPTION_TYPE                  = 0x1201,
 
     /**
      * A catch clause uses a type that does not derive from ::k::Throwable.
      */
-    ERR_CATCH_NOT_EXCEPTION_TYPE                  = 0x01C1,
+    ERR_CATCH_NOT_EXCEPTION_TYPE                  = 0x1202,
 
     /**
      * A catch clause must catch by reference (&) addresser.
      */
-    ERR_CATCH_MUST_BE_REFERENCE                   = 0x01C2,
+    ERR_CATCH_MUST_BE_REFERENCE                   = 0x1203,
 
     /**
      * A type name in a throws clause could not be resolved to a known type.
      */
-    ERR_THROWS_TYPE_NOT_FOUND                     = 0x01C3,
+    ERR_THROWS_TYPE_NOT_FOUND                     = 0x1204,
 
     /**
      * A type in a throws clause does not derive from ::k::Throwable.
      */
-    ERR_THROWS_NOT_EXCEPTION_TYPE                 = 0x01C4,
+    ERR_THROWS_NOT_EXCEPTION_TYPE                 = 0x1205,
 
     /**
      * A function throws an exception type not declared in its throws clause.
      */
-    ERR_THROW_UNDECLARED_EXCEPTION                = 0x01C5,
+    ERR_THROW_UNDECLARED_EXCEPTION                = 0x1206,
 
     /**
      * A call to a throwing function is not inside a try-catch block and the
      * calling function does not declare the exception in its own throws clause.
      */
-    ERR_UNCAUGHT_EXCEPTION                        = 0x01C6,
+    ERR_UNCAUGHT_EXCEPTION                        = 0x1207,
 
     /**
      * A catch clause catches a type that is a supertype of a previous catch
      * clause in the same try-catch — the later clause is unreachable.
      */
-    WARN_CATCH_UNREACHABLE                        = 0x01C7,
+    WARN_CATCH_UNREACHABLE                        = 0x1208,
 
     /**
      * Duplicate exception type in a throws clause.
      */
-    WARN_THROWS_DUPLICATE_TYPE                    = 0x01C8,
+    WARN_THROWS_DUPLICATE_TYPE                    = 0x1209,
 
     /**
      * A bare 'throw;' (rethrow) statement appears outside a catch block.
      */
-    ERR_RETHROW_OUTSIDE_CATCH                     = 0x01C9,
+    ERR_RETHROW_OUTSIDE_CATCH                     = 0x120A,
 };
 
 
@@ -677,37 +677,37 @@ enum class exception_diag : unsigned int {
  */
 enum class callable_diag : unsigned int {
     /** A bare prototype (no addresser) was used where a value type is required. */
-    ERR_CALLABLE_PROTOTYPE_NOT_INSTANTIABLE       = 0x01D0,
+    ERR_CALLABLE_PROTOTYPE_NOT_INSTANTIABLE       = 0x1301,
     /** An addresser that a callable does not support (`!`, `#`, `[]`) was applied. */
-    ERR_CALLABLE_BAD_ADDRESSER                    = 0x01D1,
+    ERR_CALLABLE_BAD_ADDRESSER                    = 0x1302,
     /** `null` was assigned to a non-null callable (`+` or `&`). */
-    ERR_CALLABLE_NULL_TO_NONNULL                  = 0x01D2,
+    ERR_CALLABLE_NULL_TO_NONNULL                  = 0x1303,
     /** A non-rebindable callable (`?` or `&`) was assigned after initialisation. */
-    ERR_CALLABLE_NOT_REBINDABLE                   = 0x01D3,
+    ERR_CALLABLE_NOT_REBINDABLE                   = 0x1304,
     /** The bound target signature is not compatible with the callable prototype. */
-    ERR_CALLABLE_INCOMPATIBLE_SIGNATURE           = 0x01D4,
+    ERR_CALLABLE_INCOMPATIBLE_SIGNATURE           = 0x1305,
     /** No overload of the named function matches the callable prototype. */
-    ERR_CALLABLE_NO_MATCHING_OVERLOAD             = 0x01D5,
+    ERR_CALLABLE_NO_MATCHING_OVERLOAD             = 0x1306,
     /** Several overloads of the named function match the callable prototype. */
-    ERR_CALLABLE_AMBIGUOUS_OVERLOAD               = 0x01D6,
+    ERR_CALLABLE_AMBIGUOUS_OVERLOAD               = 0x1307,
     /** The target type is not a functional interface (exactly one abstract slot). */
-    ERR_CALLABLE_NOT_FUNCTIONAL_IFACE             = 0x01D7,
+    ERR_CALLABLE_NOT_FUNCTIONAL_IFACE             = 0x1308,
     /** The functional interface method signature does not match the callable prototype. */
-    ERR_CALLABLE_IFACE_SIGNATURE_MISMATCH         = 0x01D8,
+    ERR_CALLABLE_IFACE_SIGNATURE_MISMATCH         = 0x1309,
     /** An operator that is not defined on callables was applied to one. */
-    ERR_CALLABLE_OP_FORBIDDEN                     = 0x01D9,
+    ERR_CALLABLE_OP_FORBIDDEN                     = 0x130A,
     /** Binding a non-static member function requires a receiver object. */
-    ERR_CALLABLE_MEMBER_BIND_REQUIRES_OBJECT      = 0x01DA,
+    ERR_CALLABLE_MEMBER_BIND_REQUIRES_OBJECT      = 0x130B,
     /** A co/contravariant binding would require a representation adjustment. */
-    ERR_CALLABLE_COVARIANCE_NEEDS_ADJUSTMENT      = 0x01DB,
+    ERR_CALLABLE_COVARIANCE_NEEDS_ADJUSTMENT      = 0x130C,
     /** Several `operator()` overloads match the call arguments. */
-    ERR_CALLABLE_AMBIGUOUS_OPERATOR_CALL          = 0x01DC,
+    ERR_CALLABLE_AMBIGUOUS_OPERATOR_CALL          = 0x130D,
     /** The callee expression is not invocable. */
-    ERR_CALLABLE_NOT_INVOCABLE                    = 0x01DD,
+    ERR_CALLABLE_NOT_INVOCABLE                    = 0x130E,
     /** The number of call arguments does not match the callable prototype. */
-    ERR_CALLABLE_ARG_COUNT_MISMATCH               = 0x01DE,
+    ERR_CALLABLE_ARG_COUNT_MISMATCH               = 0x130F,
     /** A callable may outlive the context object it is bound to. */
-    WARN_CALLABLE_DANGLING_CONTEXT                = 0x01DF,
+    WARN_CALLABLE_DANGLING_CONTEXT                = 0x1310,
 };
 
 /**
@@ -716,7 +716,7 @@ enum class callable_diag : unsigned int {
  */
 enum class lambda_diag : unsigned int {
     /** A lambda capture list uses an unsupported or malformed spelling. */
-    ERR_LAMBDA_BAD_CAPTURE_SYNTAX                = 0x01E0,
+    ERR_LAMBDA_BAD_CAPTURE_SYNTAX                 = 0x1401,
 };
 
 /**
@@ -727,16 +727,16 @@ enum class lambda_diag : unsigned int {
 enum class application_diag : unsigned int {
     /** A user-declared `class Application` does not (directly or transitively)
      * extend `::k::Application`. */
-    ERR_APPLICATION_MUST_EXTEND_K_APPLICATION    = 0x01F0,
+    ERR_APPLICATION_MUST_EXTEND_K_APPLICATION     = 0x1501,
     /** A user-declared `class Application` is missing a usable (non-deleted,
      * non-abstract) `main` method. */
-    ERR_APPLICATION_NO_USABLE_MAIN               = 0x01F1,
+    ERR_APPLICATION_NO_USABLE_MAIN                = 0x1502,
     /** A user-declared `class Application` declares more than one usable
      * (non-deleted, non-abstract) `main` method. */
-    ERR_APPLICATION_MULTIPLE_MAIN                = 0x01F2,
+    ERR_APPLICATION_MULTIPLE_MAIN                 = 0x1503,
     /** A user-declared `class Application` is itself abstract; it must be
      * concrete/instantiable. */
-    ERR_APPLICATION_MUST_NOT_BE_ABSTRACT         = 0x01F3,
+    ERR_APPLICATION_MUST_NOT_BE_ABSTRACT          = 0x1504,
 
     // ── Phase 4: abstract Application-chain diagnostics ──────────────────────
 
@@ -745,25 +745,25 @@ enum class application_diag : unsigned int {
      * (`main()`, `main():int`, `main(args:const String[])`,
      * `main(args:const String[]):int`) is left non-deleted; exactly one must
      * remain active to decide (or continue) the entry-point chain. */
-    ERR_APPLICATION_CHAIN_BAD_ACTIVE_MAIN_COUNT   = 0x01F4,
+    ERR_APPLICATION_CHAIN_BAD_ACTIVE_MAIN_COUNT   = 0x1505,
     /** An implemented standard `main` that delegates to a custom abstract
      * `main` must be paired with exactly one custom (non-standard-shaped)
      * abstract `main` method declared in the same class. */
-    ERR_APPLICATION_CHAIN_BAD_DELEGATE_COUNT      = 0x01F5,
+    ERR_APPLICATION_CHAIN_BAD_DELEGATE_COUNT      = 0x1506,
     /** The custom `main` used as a delegation target (or as a further
      * delegation point down the chain) must be abstract (no body). */
-    ERR_APPLICATION_CHAIN_DELEGATE_NOT_ABSTRACT   = 0x01F6,
+    ERR_APPLICATION_CHAIN_DELEGATE_NOT_ABSTRACT   = 0x1507,
     /** A class in the `::k::Application` chain declares a `main` overload
      * that does not match the signature currently required by an outer
      * (less-derived) class in the chain. */
-    ERR_APPLICATION_CHAIN_UNEXPECTED_MAIN         = 0x01F7,
+    ERR_APPLICATION_CHAIN_UNEXPECTED_MAIN         = 0x1508,
     /** A class in the `::k::Application` chain marks the currently required
      * `main` override as deleted; the required entry-point method cannot be
      * deleted once selected by an outer class. */
-    ERR_APPLICATION_CHAIN_REQUIRED_MAIN_DELETED   = 0x01F8,
+    ERR_APPLICATION_CHAIN_REQUIRED_MAIN_DELETED   = 0x1509,
     /** The final, concrete `class Application` does not implement the `main`
      * signature required by the abstract `::k::Application` chain above it. */
-    ERR_APPLICATION_CHAIN_FINAL_MAIN_NOT_IMPLEMENTED = 0x01F9,
+    ERR_APPLICATION_CHAIN_FINAL_MAIN_NOT_IMPLEMENTED = 0x150A,
 };
 
 } // namespace k::diag

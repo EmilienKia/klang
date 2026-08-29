@@ -183,12 +183,12 @@ use() {
 
     // Nullable source → non-null target: warning + runtime null-check
     dp : Dog* = &d;
-    lnk2 : Animal+ = dp;   // Warning 0x4505 — null-check at runtime
+    lnk2 : Animal+ = dp;   // Warning 0x0C04 — null-check at runtime
 
     // Type mismatch
     // struct Cat {}
     // c : Cat();
-    // bad : Animal* = &c; // ERROR 0x4700: Cat does not inherit from Animal
+    // bad : Animal* = &c; // ERROR 0x0C04: Cat does not inherit from Animal
 }
 ```
 

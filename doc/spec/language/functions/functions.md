@@ -120,9 +120,9 @@ sum(values... : int) : int {
 - Template parameter packs, expansion, and fold expressions are **not** supported.
 
 **Errors** (compile-time):
-- `0x01B0` — Varargs parameter is not the last parameter.
-- `0x01B1` — Varargs parameter has a default value.
-- `0x01B2` — Multiple varargs parameters in a single function.
+- `0x0378` — Varargs parameter is not the last parameter.
+- `0x0379` — Varargs parameter has a default value.
+- `0x037A` — Multiple varargs parameters in a single function.
 ---
 ## 3. Return type
 The return type follows `:` after the parameter list.  

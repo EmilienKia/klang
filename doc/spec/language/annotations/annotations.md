@@ -690,7 +690,7 @@ annotation Target {
 | Rule | Description |
 |------|-------------|
 | **Absent `@Target`** | If `@Target` is not present on an annotation type, the annotation can be applied to **any** supported element type (class, interface, annotation, function, or constructor). |
-| **Enforcement** | When `@Target` is present, applying the annotation to an element type not in the `value` array causes a compile-time error (`0x003C`). |
+| **Enforcement** | When `@Target` is present, applying the annotation to an element type not in the `value` array causes a compile-time error (`0x0609`). |
 | **Multiple targets** | The `value` array can contain any combination of `ElementType` entries: `@Target({ElementType::CLASS, ElementType::INTERFACE})`. |
 | **Self-applicable** | `@Target` is itself restricted to `ANNOTATION` targets (it can only be applied to annotation types). |
 
@@ -707,7 +707,7 @@ annotation ClassOnly {}
 class Good { /* ... */ }       // OK
 
 // @ClassOnly
-// interface Bad { /* ... */ }  // ERROR 0x003C: @Target restricts to [CLASS]
+// interface Bad { /* ... */ }  // ERROR 0x0609: @Target restricts to [CLASS]
 ```
 
 ```k
@@ -724,7 +724,7 @@ class MyClass { /* ... */ }    // OK
 interface MyIface { /* ... */ } // OK
 
 // @Documented
-// annotation MyAnn {}          // ERROR 0x003C: @Target restricts to [CLASS, INTERFACE]
+// annotation MyAnn {}          // ERROR 0x0609: @Target restricts to [CLASS, INTERFACE]
 ```
 
 ### Combining meta-annotations
@@ -984,12 +984,12 @@ AggregateDecl:
 
 | Code | Phase | Condition |
 |------|-------|-----------|
-| `0x0024` | Model builder | Annotations applied to a struct (only classes, interfaces, and annotations are supported). |
-| `0x003A` | Symbol resolver | Annotation type not found. |
-| `0x003B` | Symbol resolver | Target is not an annotation type. |
-| `0x003C` | Symbol resolver | `@Target` violation: annotation applied to an element type not in the allowed list. Error message includes the annotation name, the disallowed element kind, and the allowed set. |
-| `0x0080` | Parser | Missing annotation type name after `@`. |
-| `0x0081` | Parser | Missing `)` after annotation arguments. |
+| `0x0421` | Model builder | Annotations applied to a struct (only classes, interfaces, and annotations are supported). |
+| `0x0607` | Symbol resolver | Annotation type not found. |
+| `0x0608` | Symbol resolver | Target is not an annotation type. |
+| `0x0609` | Symbol resolver | `@Target` violation: annotation applied to an element type not in the allowed list. Error message includes the annotation name, the disallowed element kind, and the allowed set. |
+| `0x0375` | Parser | Missing annotation type name after `@`. |
+| `0x0376` | Parser | Missing `)` after annotation arguments. |
 
 ---
 

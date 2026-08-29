@@ -542,13 +542,13 @@ Template aliases (parameterized `using`) are not supported in Phase 1.
 
 | Code     | Name                               | Description                                                   |
 |----------|------------------------------------|---------------------------------------------------------------|
-| `0x0180` | `ERR_TPL_NO_MATCHING`              | No matching template found                                    |
-| `0x0181` | `ERR_TPL_ARG_COUNT_MISMATCH`       | Wrong number of template arguments                            |
-| `0x0182` | `ERR_TPL_ARG_WRONG_KIND`           | Type argument is wrong aggregate kind (e.g., class instead of struct) |
-| `0x0183` | `ERR_TPL_ARG_CONSTRAINT_VIOLATED`  | Type argument does not satisfy base-type constraint            |
-| `0x0184` | `ERR_TPL_ARG_NOT_AGGREGATE`        | Type argument is not an aggregate (for struct/class/interface filter) |
-| `0x0185` | `ERR_TPL_VALUE_ARG_TYPE_MISMATCH`  | Value argument type mismatch                                  |
-| `0x0186` | `ERR_TPL_VALUE_ARG_NOT_CONST`      | Value argument is not a compile-time constant                 |
+| `0x1001` | `ERR_TPL_TOO_MANY_ARGS`              | No matching template found                                    |
+| `0x1002` | `ERR_TPL_TOO_FEW_ARGS`       | Wrong number of template arguments                            |
+| `0x1003` | `ERR_TPL_ARG_WRONG_KIND`           | Type argument is wrong aggregate kind (e.g., class instead of struct) |
+| `0x1004` | `ERR_TPL_ARG_CONSTRAINT_VIOLATED`  | Type argument does not satisfy base-type constraint            |
+| `0x1005` | `ERR_TPL_ARG_NOT_AGGREGATE`        | Type argument is not an aggregate (for struct/class/interface filter) |
+| `0x1006` | `ERR_TPL_VALUE_ARG_NOT_CONSTANT`  | Value argument type mismatch                                  |
+| `0x1007` | `ERR_TPL_VALUE_ARG_TYPE_MISMATCH`      | Value argument is not a compile-time constant                 |
 
 ### 9.2 Error Propagation
 

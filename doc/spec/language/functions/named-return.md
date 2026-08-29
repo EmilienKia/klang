@@ -72,7 +72,7 @@ The initialiser follows the same rules as any variable declaration:
 |-----------|---------------------------|
 | *end of `}`* | Implicitly returns the named variable |
 | `return;` | Returns the named variable (early exit) |
-| `return expr;` | **Warning 0x6001**: assigns `expr` to the named variable, then returns |
+| `return expr;` | **Warning 0x0E06**: assigns `expr` to the named variable, then returns |
 
 A function with a named return variable does not require an explicit `return` statement.
 Reaching the closing `}` of the function body is sufficient.

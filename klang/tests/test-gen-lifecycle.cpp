@@ -34,6 +34,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
 
 // =============================================================================
 // Category 1: Static allocation — stack-allocated struct variables
@@ -1433,7 +1434,7 @@ TEST_CASE("Lifecycle Cat8: lvalue copy of non-copyable struct is rejected",
 
     bool has_type_not_copyable = false;
     for (const auto& diag : logger.diagnostics) {
-        if (diag.code == 0x0204) {
+        if (diag.code == static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE)) {
             has_type_not_copyable = true;
             break;
         }
@@ -1623,7 +1624,7 @@ TEST_CASE("Lifecycle Cat8: lvalue init of non-copyable struct is rejected (site 
 
     bool has_type_not_copyable = false;
     for (const auto& diag : logger.diagnostics) {
-        if (diag.code == 0x0204) {
+        if (diag.code == static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE)) {
             has_type_not_copyable = true;
             break;
         }

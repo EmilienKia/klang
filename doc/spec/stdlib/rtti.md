@@ -811,7 +811,7 @@ annotation Target {
 
 Restricts the kinds of program elements to which the annotated annotation
 type may be applied. The compiler checks this at compile time and emits
-error `0x003C` on violations.
+error `0x0609` on violations.
 
 #### Inner enum `Target.ElementType`
 

@@ -1649,6 +1649,8 @@ void aggregate_type_resolver::visit_klass(klass& klass) {
     auto* existing = llvm::StructType::getTypeByName(llvm_ctx, vtable_struct_name);
     if (!existing) {
         existing = llvm::StructType::create(llvm_ctx, vtable_fields, vtable_struct_name);
+    } else if (existing->getNumElements() != vtable_fields.size()) {
+        existing->setBody(vtable_fields);
     }
     vt->llvm_type = existing;
 }

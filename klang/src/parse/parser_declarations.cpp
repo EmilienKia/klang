@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 //
-// Note: Last parser log number: 0x1003C
 //
 
 #include "parser.hpp"
@@ -771,14 +770,14 @@ ast::template_param_list parser::parse_template_declaration(const char** out_tem
     // Expect '<'
     auto lopen = _lexer.get();
     if (lopen != lex::operator_::CHEVRON_OPEN) {
-        throw_error(0x10040, _lexer.pick_current(), "Expected '<' after 'template' keyword");
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_EXPECT_OPEN_CHEVRON), _lexer.pick_current(), "Expected '<' after 'template' keyword");
     }
 
     // Parse template parameters
     ast::template_param_list params;
     auto first_param = parse_template_parameter();
     if (!first_param) {
-        throw_error(0x10041, _lexer.pick_current(), "Expected at least one template parameter");
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_EXPECT_PARAM), _lexer.pick_current(), "Expected at least one template parameter");
     }
     params.push_back(std::move(first_param));
 
@@ -788,7 +787,7 @@ ast::template_param_list parser::parse_template_declaration(const char** out_tem
         if (maybe_comma == lex::punctuator::COMMA) {
             auto param = parse_template_parameter();
             if (!param) {
-                throw_error(0x10042, _lexer.pick_current(), "Expected template parameter after ','");
+                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_EXPECT_PARAM_AFTER_COMMA), _lexer.pick_current(), "Expected template parameter after ','");
             }
             params.push_back(std::move(param));
         } else {
@@ -812,7 +811,7 @@ ast::template_param_list parser::parse_template_declaration(const char** out_tem
         }
         _lexer.unget(); // unget so the '>' can be consumed by the caller
     } else if (lclose != lex::operator_::CHEVRON_CLOSE) {
-        throw_error(0x10043, _lexer.pick_current(), "Expected '>' to close template parameter list");
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_EXPECT_CLOSE_CHEVRON), _lexer.pick_current(), "Expected '>' to close template parameter list");
     }
 
     return params;
@@ -836,14 +835,14 @@ ast::template_param_list parser::parse_generic_declaration(bool* out_is_generic)
     // Expect '<'
     auto lopen = _lexer.get();
     if (lopen != lex::operator_::CHEVRON_OPEN) {
-        throw_error(0x10050, _lexer.pick_current(), "Expected '<' after 'generic' keyword");
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_GENERIC_EXPECT_OPEN_CHEVRON), _lexer.pick_current(), "Expected '<' after 'generic' keyword");
     }
 
     // Parse type parameters (value parameters are forbidden)
     ast::template_param_list params;
     auto first_param = parse_template_parameter();
     if (!first_param) {
-        throw_error(0x10051, _lexer.pick_current(), "Expected at least one generic type parameter");
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_GENERIC_EXPECT_PARAM), _lexer.pick_current(), "Expected at least one generic type parameter");
     }
     if (first_param->is_value_param()) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED),
@@ -858,7 +857,7 @@ ast::template_param_list parser::parse_generic_declaration(bool* out_is_generic)
         if (maybe_comma == lex::punctuator::COMMA) {
             auto param = parse_template_parameter();
             if (!param) {
-                throw_error(0x10052, _lexer.pick_current(), "Expected generic type parameter after ','");
+                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_GENERIC_EXPECT_PARAM_AFTER_COMMA), _lexer.pick_current(), "Expected generic type parameter after ','");
             }
             if (param->is_value_param()) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED),
@@ -883,7 +882,7 @@ ast::template_param_list parser::parse_generic_declaration(bool* out_is_generic)
         }
         _lexer.unget();
     } else if (lclose != lex::operator_::CHEVRON_CLOSE) {
-        throw_error(0x10053, _lexer.pick_current(), "Expected '>' to close generic parameter list");
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_GENERIC_EXPECT_CLOSE_CHEVRON), _lexer.pick_current(), "Expected '>' to close generic parameter list");
     }
 
     return params;
@@ -919,7 +918,7 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
         // Expect parameter name
         auto lname = _lexer.get();
         if (lex::is_not<lex::identifier>(lname)) {
-            throw_error(0x10044, _lexer.pick_current(), "Expected template parameter name");
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_PARAM_EXPECT_NAME), _lexer.pick_current(), "Expected template parameter name");
         }
         auto param_name = lex::as<lex::identifier>(lname);
 
@@ -928,11 +927,11 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
             lex::lex_holder check_holder(_lexer);
             auto next = _lexer.get();
             if (next == lex::operator_::COLON) {
-                throw_error(0x10047, _lexer.pick_current(),
+                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_PARAM_PACK_NO_CONSTRAINT), _lexer.pick_current(),
                     "Parameter pack '{}' cannot have a type constraint",
                     {std::string{param_name.content}});
             } else if (next == lex::operator_::EQUAL) {
-                throw_error(0x10048, _lexer.pick_current(),
+                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_PARAM_PACK_NO_DEFAULT), _lexer.pick_current(),
                     "Parameter pack '{}' cannot have a default type",
                     {std::string{param_name.content}});
             } else {
@@ -949,7 +948,7 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
             if (maybe_colon == lex::operator_::COLON) {
                 constraint = parse_type_spec();
                 if (!constraint) {
-                    throw_error(0x10045, _lexer.pick_current(), "Expected type specifier after ':' in template parameter constraint");
+                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_PARAM_EXPECT_CONSTRAINT_TYPE), _lexer.pick_current(), "Expected type specifier after ':' in template parameter constraint");
                 }
             } else {
                 colon_holder.rollback();
@@ -964,7 +963,7 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
             if (maybe_eq == lex::operator_::EQUAL) {
                 default_type_spec = parse_type_spec();
                 if (!default_type_spec) {
-                    throw_error(0x10046, _lexer.pick_current(), "Expected type specifier after '=' in template parameter default");
+                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_PARAM_EXPECT_DEFAULT_TYPE), _lexer.pick_current(), "Expected type specifier after '=' in template parameter default");
                 }
             } else {
                 eq_holder.rollback();
@@ -999,7 +998,7 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
         if (maybe_eq == lex::operator_::EQUAL) {
             default_expr = parse_template_arg_value_expr();
             if (!default_expr) {
-                throw_error(0x10047, _lexer.pick_current(), "Expected expression after '=' in template value parameter default");
+                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_VALUE_PARAM_EXPECT_DEFAULT_EXPR), _lexer.pick_current(), "Expected expression after '=' in template value parameter default");
             }
         } else {
             eq_holder.rollback();

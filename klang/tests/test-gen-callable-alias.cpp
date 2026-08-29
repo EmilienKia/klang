@@ -378,7 +378,9 @@ TEST_CASE("callable throws clause in a parameter list with trailing parameters",
           "[gen][callable][throws]") {
     auto jit = gen_jit(R"SRC(
         module gen_callable_alias_17;
-        class Boom { }
+        class Boom : public Throwable {
+            public Boom() {}
+        }
         twice(x: int) : int { return x * 2; }
         call(f: *(int):int throws(Boom), v: int) : int throws(Boom) { return f(v); }
         run() : int throws(Boom) { return call(twice, 21); }

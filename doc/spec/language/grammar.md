@@ -167,8 +167,8 @@ Grammar notation used here:
     {{ [AnnotationDef](#annotationdef) }} `[` [TemplateDeclaration](#templatedeclaration) `]` {{ [Specifier](#specifier) }} `(` `'struct'` | `'class'` | `'interface'` | `'annotation'` `)` [Identifier](#identifier) `[` `':'` [BaseClause](#baseclause) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
 
     *Notes:*
-    - *`'abstract'` in [Specifier](#specifier) is only valid with `'class'`, not `'struct'`. For `'interface'` it is accepted but redundant (warning `0x2002A`).*
-    - *`'interface'` bodies may not contain fields, constructors, or destructors. Method bodies are forbidden (implicit abstract, warning `0x2002B` if `abstract` is written explicitly).*
+    - *`'abstract'` in [Specifier](#specifier) is only valid with `'class'`, not `'struct'`. For `'interface'` it is accepted but redundant (warning `0x041D`).*
+    - *`'interface'` bodies may not contain fields, constructors, or destructors. Method bodies are forbidden (implicit abstract, warning `0x041E` if `abstract` is written explicitly).*
     - *`'annotation'` declares an annotation type. The body may contain variable declarations and methods. Annotation types are implicitly `const`. See [Annotations](annotations/annotations.md).*
     - *[AnnotationDef](#annotationdef) elements appear before the specifiers and aggregate keyword.*
 

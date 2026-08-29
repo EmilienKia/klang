@@ -149,7 +149,7 @@ fully reconstructed.
 **Unused imports:**
 
 An `import` declaration whose module's symbols are never referenced in the
-current compilation unit produces **warning `0x80010`**:
+current compilation unit produces **warning `0x0108`**:
 
 ```
 Warning 80010 : Imported module 'math::vec' is declared but none of its
@@ -162,7 +162,7 @@ complete.  Remove the unused `import` declaration to suppress it.
 **Circular imports:**
 
 Cycles in the import graph (`A` imports `B` which imports `A`) are a
-**fatal error** (`0x80003`).  The error message includes the full cycle path:
+**fatal error** (`0x0105`).  The error message includes the full cycle path:
 
 ```
 Error 80003 : Circular import dependency detected: cycle_a → cycle_b → cycle_a
