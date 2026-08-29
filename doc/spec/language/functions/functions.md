@@ -130,14 +130,16 @@ If absent, the return type is **deduced from the function body**:
 - If the function body contains no `return` statements (or only empty `return;`), the function returns `void` (returns nothing).
 - If the function body returns expressions (`return expr;`), the return type is inferred from the returned expression types. All return expressions must be compatible with the deduced return type.
 
+> **Style & diagnostic rule:** Explicit return type annotation is strongly encouraged for non-void classic functions and methods. Omitting the return type on a classic function that returns a value (non-void) emits a compiler warning (`WARN_FUNC_RETURN_TYPE_OMITTED`, code `0x080E`). Functions returning `void` may omit `: void` without warning. For lambda expressions, return type omission is standard and emits no warning.
+
 ```k
-// Explicit return type (int)
+// Explicit return type (int) — recommended
 increment(i: int) : int { return i + 1; }
 
-// Deduced return type (int) from return expression
+// Deduced return type (int) from return expression (emits warning 0x080E)
 add(a: int, b: int) { return a + b; }
 
-// Deduced void (no return statements)
+// Deduced void (no warning)
 init() {
     a = 4;
     b = 5;

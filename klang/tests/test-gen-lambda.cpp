@@ -23,6 +23,9 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
+#include "../src/parse/parser.hpp"
+#include "../src/model/model_builder.hpp"
 
 TEST_CASE("Lambda: capture-free lambda binds to a callable", "[gen][lambda]") {
     auto jit = gen_jit(R"SRC(
@@ -385,5 +388,102 @@ TEST_CASE("Functions: reject inconsistent return types in deduced function", "[g
             return bad(true);
         }
     )SRC", nullptr));
+}
+
+TEST_CASE("Functions: warning emitted when classic function omits return type and returns non-void", "[gen][function][deduction][warning]") {
+    test_logger logger;
+    auto src = R"SRC(
+        module gen_fn_deduce_07;
+        compute(x: int) {
+            return x * 2;
+        }
+    )SRC";
+    k::parse::parser parser(logger);
+    k::source source(src);
+    parser.parse(source);
+    auto ast_unit = parser.parse_unit();
+    REQUIRE(ast_unit);
+    auto ctx = k::model::context::create();
+    auto unit = k::model::unit::create(ctx);
+    k::model::model_builder::visit(logger, ctx, *ast_unit, *unit);
+    k::model::gen::symbol_resolver var_resolver(logger, ctx, *unit);
+    var_resolver.resolve();
+    ctx->resolve_types();
+    k::model::gen::aggregate_type_resolver agg_type_resolver(logger, ctx, *unit);
+    agg_type_resolver.resolve();
+    k::model::gen::model_materializer materializer(logger, ctx, *unit);
+    materializer.materialize();
+    k::model::gen::type_reference_resolver type_ref_resolver(logger, ctx, *unit);
+    type_ref_resolver.resolve();
+    bool has_omitted_ret_warning = std::any_of(logger.diagnostics.begin(), logger.diagnostics.end(), [](const auto& d) {
+        return d.code == static_cast<unsigned int>(k::diag::function_diag::WARN_FUNC_RETURN_TYPE_OMITTED);
+    });
+    CHECK(has_omitted_ret_warning);
+}
+
+TEST_CASE("Functions: no warning when classic function returns void with omitted return type", "[gen][function][deduction][warning]") {
+    test_logger logger;
+    auto src = R"SRC(
+        module gen_fn_deduce_08;
+        proc(x: int&) {
+            x = x + 1;
+        }
+    )SRC";
+    k::parse::parser parser(logger);
+    k::source source(src);
+    parser.parse(source);
+    auto ast_unit = parser.parse_unit();
+    REQUIRE(ast_unit);
+    auto ctx = k::model::context::create();
+    auto unit = k::model::unit::create(ctx);
+    k::model::model_builder::visit(logger, ctx, *ast_unit, *unit);
+    k::model::gen::symbol_resolver var_resolver(logger, ctx, *unit);
+    var_resolver.resolve();
+    ctx->resolve_types();
+    k::model::gen::aggregate_type_resolver agg_type_resolver(logger, ctx, *unit);
+    agg_type_resolver.resolve();
+    k::model::gen::model_materializer materializer(logger, ctx, *unit);
+    materializer.materialize();
+    k::model::gen::type_reference_resolver type_ref_resolver(logger, ctx, *unit);
+    type_ref_resolver.resolve();
+    bool has_omitted_ret_warning = std::any_of(logger.diagnostics.begin(), logger.diagnostics.end(), [](const auto& d) {
+        return d.code == static_cast<unsigned int>(k::diag::function_diag::WARN_FUNC_RETURN_TYPE_OMITTED);
+    });
+    CHECK_FALSE(has_omitted_ret_warning);
+}
+
+TEST_CASE("Lambda: no warning when lambda omits return type", "[gen][lambda][deduction][warning]") {
+    test_logger logger;
+    auto src = R"SRC(
+        module gen_fn_deduce_09;
+        apply(f: *(int):int, x: int) : int {
+            return f(x);
+        }
+        test() : int {
+            fp : *(int):int = [](x: int) { return x * 2; };
+            return apply([](n: int) { return n + 1; }, 41);
+        }
+    )SRC";
+    k::parse::parser parser(logger);
+    k::source source(src);
+    parser.parse(source);
+    auto ast_unit = parser.parse_unit();
+    REQUIRE(ast_unit);
+    auto ctx = k::model::context::create();
+    auto unit = k::model::unit::create(ctx);
+    k::model::model_builder::visit(logger, ctx, *ast_unit, *unit);
+    k::model::gen::symbol_resolver var_resolver(logger, ctx, *unit);
+    var_resolver.resolve();
+    ctx->resolve_types();
+    k::model::gen::aggregate_type_resolver agg_type_resolver(logger, ctx, *unit);
+    agg_type_resolver.resolve();
+    k::model::gen::model_materializer materializer(logger, ctx, *unit);
+    materializer.materialize();
+    k::model::gen::type_reference_resolver type_ref_resolver(logger, ctx, *unit);
+    type_ref_resolver.resolve();
+    bool has_omitted_ret_warning = std::any_of(logger.diagnostics.begin(), logger.diagnostics.end(), [](const auto& d) {
+        return d.code == static_cast<unsigned int>(k::diag::function_diag::WARN_FUNC_RETURN_TYPE_OMITTED);
+    });
+    CHECK_FALSE(has_omitted_ret_warning);
 }
 

@@ -200,6 +200,7 @@ enum class function_diag : unsigned int {
     ERR_FUNC_CTOR_ACCESS_DENIED                   = 0x080B,
     ERR_FUNC_CTOR_VISIBILITY_MISMATCH             = 0x080C,
     ERR_FUNC_INTERFACE_NOT_IMPLEMENTED            = 0x080D,
+    WARN_FUNC_RETURN_TYPE_OMITTED                 = 0x080E,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

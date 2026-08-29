@@ -762,6 +762,19 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
                 func->update_mangled_name();
             }
             ret_type = deduced_t;
+
+            // Emit warning only for classic (non-lambda) functions returning non-void without explicit type annotation
+            if (deduced_t && !func->is_lambda()
+                && func->get_short_name().rfind("__lambda_", 0) != 0
+                && func->get_short_name() != "__invoke") {
+                lex::opt_any_lexeme fn_lex;
+                if (auto ast_fd = func->get_ast_function_decl()) {
+                    fn_lex = lex::any_lexeme{ast_fd->name};
+                }
+                warn(static_cast<unsigned int>(k::diag::function_diag::WARN_FUNC_RETURN_TYPE_OMITTED), fn_lex,
+                    "Function '{}' omits an explicit return type and returns non-void ('{}'); explicit return type annotation is recommended for non-lambda functions",
+                    {func->get_fq_name(), deduced_t->to_string()});
+            }
         }
         // Temporary array return: keep the temporary as a reference so codegen can
         // copy from the materialized stack object into the sret destination.
