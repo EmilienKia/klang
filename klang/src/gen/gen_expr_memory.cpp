@@ -378,6 +378,21 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                 expr.assign_element(i, cast);
             }
         }
+    } else if (type::is_callable(type::canonical(elem_type))) {
+        auto canon_elem = type::canonical(elem_type);
+        for (size_t i = 0; i < init_count; ++i) {
+            auto e = expr.element(i);
+            if (!e) continue;
+            auto cast = adapt_type(e, canon_elem);
+            if (!cast) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_INIT_MEMBER_NOT_FOUND), expr.first_lexeme(),
+                    "Cannot convert array element {} to callable type '{}' for array '{}'",
+                    {std::to_string(i), elem_type->to_string(),
+                     var_def ? var_def->get_fq_name() : "<temporary>"});
+            } else if (cast != e) {
+                expr.assign_element(i, cast);
+            }
+        }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
         auto struct_model = st_type->get_struct();
         for (size_t i = 0; i < init_count; ++i) {
@@ -904,7 +919,7 @@ void implementation_generator::visit_array_init_expression(array_init_expression
             llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
                 llvm_arr_type, data_ptr, 0, i, "arr_elem_" + std::to_string(i));
 
-            if (type::is_primitive(elem_type) || type::is_any_indirection(elem_type)) {
+            if (type::is_primitive(elem_type) || type::is_any_indirection(elem_type) || type::is_callable(type::canonical(elem_type))) {
                 _value = nullptr;
                 elem_expr->accept(*this);
                 if (_value) {

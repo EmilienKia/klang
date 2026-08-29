@@ -1484,6 +1484,8 @@ void template_instantiator::populate_function_from_template(
     const pack_substitution_map& pack_subst)
 {
     // Set return type
+    dst->set_has_explicit_return_type(src.has_explicit_return_type());
+    dst->set_lambda(src.is_lambda());
     if (src.has_return_type()) {
         dst->set_return_type(substitute_type(
             std::const_pointer_cast<type>(src.get_return_type()), subst));

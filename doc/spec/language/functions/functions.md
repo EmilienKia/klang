@@ -125,17 +125,25 @@ sum(values... : int) : int {
 - `0x037A` — Multiple varargs parameters in a single function.
 ---
 ## 3. Return type
-The return type follows `:` after the parameter list.  
-If absent, the function is void (returns nothing).
+The return type optionally follows `:` after the parameter list.  
+If absent, the return type is **deduced from the function body**:
+- If the function body contains no `return` statements (or only empty `return;`), the function returns `void` (returns nothing).
+- If the function body returns expressions (`return expr;`), the return type is inferred from the returned expression types. All return expressions must be compatible with the deduced return type.
+
 ```k
-// Returns int
+// Explicit return type (int)
 increment(i: int) : int { return i + 1; }
-// Returns void (no return type)
+
+// Deduced return type (int) from return expression
+add(a: int, b: int) { return a + b; }
+
+// Deduced void (no return statements)
 init() {
     a = 4;
     b = 5;
 }
-// Returns double
+
+// Explicit double
 half(x: double) : double { return x / 2.0d; }
 ```
 

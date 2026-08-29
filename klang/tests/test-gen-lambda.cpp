@@ -181,3 +181,209 @@ TEST_CASE("Lambda: re-assignment of owned callable cleans up old closure", "[gen
     REQUIRE(test_fn() == 1);
 }
 
+TEST_CASE("Lambda: contextual return type deduction in variable initialization", "[gen][lambda][deduction]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lambda_10;
+        test() : int {
+            fp : *(int):int = [](x: int) { return x + 10; };
+            return fp(32);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Lambda: contextual return type deduction in capturing lambda", "[gen][lambda][deduction][capture]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lambda_11;
+        test() : int {
+            base : int = 40;
+            fp : !(int):int = [base](x: int) { return base + x; };
+            return fp(2);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Lambda: contextual return type deduction in assignment", "[gen][lambda][deduction][assign]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lambda_12;
+        test() : int {
+            fp : *(int):int = [](x: int) { return x + 1; };
+            fp = [](x: int) { return x * 2; };
+            return fp(21);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Lambda: contextual return type deduction in return statement", "[gen][lambda][deduction][return]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lambda_13;
+        makeMultiplier(factor : int) : !(int):int {
+            return [factor](x: int) { return factor * x; };
+        }
+        test() : int {
+            f : !(int):int = makeMultiplier(6);
+            return f(7);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Lambda: contextual return type deduction in ternary branches", "[gen][lambda][deduction][ternary]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lambda_14;
+        test() : int {
+            cond : bool = true;
+            fp : *(int):int = cond ? [](x: int) { return x + 2; } : [](x: int) { return x - 2; };
+            return fp(40);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Lambda: contextual return type deduction in array literal", "[gen][lambda][deduction][array]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lambda_15;
+        alias Fn : *(int):int;
+        test() : int {
+            arr : Fn[2] { [](x: int) { return x + 10; }, [](x: int) { return x + 20; } };
+            return arr[0](12) + arr[1](10);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 52);
+}
+
+TEST_CASE("Lambda: immediately invoked lambda with deduced return type", "[gen][lambda][iife][deduction]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lambda_16;
+        test() : int {
+            return ((x: int) { return x * 3; })(14);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Functions: return type deduction from function body", "[gen][function][deduction]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_fn_deduce_01;
+        add(a: int, b: int) {
+            return a + b;
+        }
+        test() : int {
+            return add(20, 22);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Functions: return type deduction with if/else branches", "[gen][function][deduction][branch]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_fn_deduce_02;
+        absVal(n: int) {
+            if (n < 0) {
+                return -n;
+            }
+            return n;
+        }
+        test() : int {
+            return absVal(-42);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Functions: recursive function with return type deduction", "[gen][function][deduction][recursive]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_fn_deduce_03;
+        fib(n: int) {
+            if (n <= 1) {
+                return n;
+            }
+            return fib(n - 1) + fib(n - 2);
+        }
+        test() : int {
+            return fib(7);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 13);
+}
+
+TEST_CASE("Functions: void function with deduced return type", "[gen][function][deduction][void]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_fn_deduce_04;
+        increment(n: int&) {
+            n = n + 1;
+        }
+        test() : int {
+            val : int = 41;
+            increment(val);
+            return val;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Functions: reject mixing void return and non-void return in deduced function", "[gen][function][deduction][error]") {
+    REQUIRE(compile_should_fail(R"SRC(
+        module gen_fn_deduce_05;
+        bad(cond: bool) {
+            if (cond) {
+                return;
+            }
+            return 42;
+        }
+        test() : int {
+            return bad(true);
+        }
+    )SRC", nullptr));
+}
+
+TEST_CASE("Functions: reject inconsistent return types in deduced function", "[gen][function][deduction][error]") {
+    REQUIRE(compile_should_fail(R"SRC(
+        module gen_fn_deduce_06;
+        bad(cond: bool) {
+            if (cond) {
+                return 42;
+            }
+            return "error";
+        }
+        test() : int {
+            return bad(true);
+        }
+    )SRC", nullptr));
+}
+

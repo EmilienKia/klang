@@ -222,6 +222,24 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     auto ptr_member_callee = std::dynamic_pointer_cast<member_of_pointer_expression>(expr.callee_expr());
 
     if(!callee && !member_callee && !pm_callee && !ptr_member_callee) {
+        if (expr.callee_expr()) {
+            _replacement_expr = nullptr;
+            expr.callee_expr()->accept(*this);
+            if (_replacement_expr) {
+                expr.callee_expr(_replacement_expr);
+                _replacement_expr = nullptr;
+            }
+            auto ct = peel_to_callable(expr.callee_expr()->get_type());
+            if (ct) {
+                auto callable_inv = callable_invocation_expression::make_shared(
+                    expr.callee_expr(), expr.arguments());
+                callable_inv->set_ast_expression(expr.get_ast_expression());
+                callable_inv->accept(*this);
+                expr.set_type(callable_inv->get_type());
+                _replacement_expr = callable_inv;
+                return;
+            }
+        }
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_NOT_CALLABLE), expr.first_lexeme(),
             "Unsupported call expression form: only direct function calls ('func(args)'), "
             "member function calls ('obj.method(args)') and pointer-to-member calls "

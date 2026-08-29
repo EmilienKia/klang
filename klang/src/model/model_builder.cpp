@@ -1603,6 +1603,17 @@ namespace k::model {
                 throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STATIC_DTOR_HAS_RETURN_TYPE), func.name, "Static destructor '~{}' must not have a return type; static destructors are void by definition", {std::string{func.name.content}});
             } else {
                 function->set_return_type(_context->from_type_specifier(*func.type));
+                function->set_has_explicit_return_type(true);
+            }
+        } else {
+            bool is_ctor_dtor = std::dynamic_pointer_cast<constructor>(function)
+                             || std::dynamic_pointer_cast<destructor>(function)
+                             || std::dynamic_pointer_cast<static_constructor>(function)
+                             || std::dynamic_pointer_cast<static_destructor>(function);
+            if (is_ctor_dtor || function->is_abstract_func() || function->is_extern()) {
+                function->set_has_explicit_return_type(true);
+            } else {
+                function->set_has_explicit_return_type(false);
             }
         }
 
@@ -2709,6 +2720,8 @@ namespace k::model {
                     "Failed to materialise lambda target '{}'",
                     {lambda_name});
             }
+            target->set_lambda(true);
+            target->set_has_explicit_return_type(expr.return_type != nullptr);
             auto bind = model::callable_bind_expression::make_shared(
                 model::callable_bind_expression::kind::lambda,
                 target,
@@ -2863,6 +2876,8 @@ namespace k::model {
                     "Failed to materialise lambda invoke method '{}'",
                     {"__invoke"});
             }
+            invoke_fn->set_lambda(true);
+            invoke_fn->set_has_explicit_return_type(expr.return_type != nullptr);
 
             auto ctor_call = model::temporary_construction_expression::make_shared(closure_st, capture_args);
             auto bind = model::callable_bind_expression::make_shared(

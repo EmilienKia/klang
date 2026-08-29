@@ -112,6 +112,9 @@ enum class statement_diag : unsigned int {
     WARN_UNUSED_EXPR_RESULT                       = 0x0E05,
     WARN_UNREACHABLE_AFTER_RETURN                 = 0x0E06,
     ERR_LOCAL_VAR_TYPE_UNRESOLVED                 = 0x0E07,
+    ERR_RETURN_TYPE_INCONSISTENT_DEDUCTION        = 0x0E08,
+    ERR_RETURN_VOID_AND_NONVOID                   = 0x0E09,
+    ERR_RETURN_DEDUCTION_CYCLE                    = 0x0E0A,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

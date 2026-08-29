@@ -138,6 +138,7 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
         tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
         tgt_st->get_struct()->has_rtti()) {
         auto dc = cast_expression::make_shared(arg, target_type, null_is_fatal);
+        dc->set_type(target_type);
         assign_arg(dc);
         return true;
     }

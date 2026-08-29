@@ -155,7 +155,54 @@ void type_reference_resolver::visit_callable_bind_expression(callable_bind_expre
 }
 
 void type_reference_resolver::visit_lambda_expression(lambda_expression& expr) {
-    if (expr.bind()) expr.bind()->accept(*this);
+    auto bind = expr.bind();
+    if (!bind) return;
+
+    auto target = bind->get_target();
+    if (target) {
+        auto expected = current_expected_type();
+        std::shared_ptr<callable_type> dest_ct;
+        if (expected) {
+            auto eff = type::remove_const(expected);
+            if (type::is_reference(eff)) {
+                eff = type::remove_const(std::dynamic_pointer_cast<reference_type>(eff)->get_subtype());
+            }
+            dest_ct = std::dynamic_pointer_cast<callable_type>(eff);
+        }
+
+        if (dest_ct && !dest_ct->is_unbound_member() && !dest_ct->is_prototype() && dest_ct->get_return_type()) {
+            if (!target->has_return_type()) {
+                target->set_return_type(dest_ct->get_return_type());
+                if (!target->is_extern()) {
+                    target->update_mangled_name();
+                }
+            }
+        }
+
+        auto target_sp = target;
+        visit_function(*target_sp);
+
+        // Rebuild lambda's callable type with the deduced/assigned return type
+        callable_type_builder builder(_context);
+        if (auto cur_ct = std::dynamic_pointer_cast<callable_type>(expr.get_type())) {
+            builder.addresser(cur_ct->get_addresser());
+        } else {
+            builder.addresser(callable_type::addresser::reference);
+        }
+        if (target->has_return_type()) {
+            builder.return_type(target->get_return_type());
+        }
+        for (const auto& param : target->parameters()) {
+            if (param && param->get_type()) {
+                builder.append_parameter_type(param->get_type());
+            }
+        }
+        auto new_ct = builder.build();
+        expr.set_type(new_ct);
+        bind->set_type(new_ct);
+    }
+
+    if (bind) expr.bind()->accept(*this);
 }
 
 // ── Member function binding (phase B.4) ────────────────────────────────────

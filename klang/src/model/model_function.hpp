@@ -219,6 +219,9 @@ protected:
     std::shared_ptr<function> _redirect_target = nullptr;
 
     std::shared_ptr<type> _return_type;
+    bool _has_explicit_return_type = false;
+    bool _is_lambda = false;
+    bool _has_bare_return = false;
     std::vector<std::shared_ptr<parameter>> _parameters;
     std::shared_ptr<parameter> _this_param;
     std::shared_ptr<block> _block;
@@ -283,6 +286,15 @@ public:
     bool has_return_type() const {return _return_type != nullptr;}
     std::shared_ptr<type> get_return_type() {return _return_type;}
     std::shared_ptr<const type> get_return_type() const {return _return_type;}
+
+    bool has_explicit_return_type() const { return _has_explicit_return_type; }
+    void set_has_explicit_return_type(bool v) { _has_explicit_return_type = v; }
+
+    bool is_lambda() const { return _is_lambda; }
+    void set_lambda(bool v) { _is_lambda = v; }
+
+    bool has_bare_return() const { return _has_bare_return; }
+    void set_has_bare_return(bool v) { _has_bare_return = v; }
 
     // ── Exception specification ──────────────────────────────────────────────
     /** True if this function has an explicit throws clause (even if empty after resolution). */

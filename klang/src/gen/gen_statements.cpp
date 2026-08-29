@@ -679,12 +679,52 @@ void symbol_resolver::visit_return_statement(return_statement& stmt)
  */
 void type_reference_resolver::visit_return_statement(return_statement& stmt)
 {
-    auto func = stmt.get_block()->get_function();
+    auto func = stmt.get_block() ? stmt.get_block()->get_function() : nullptr;
+    if (!func && !_function_stack.empty()) {
+        func = _function_stack.back();
+    }
+    if (!func) return;
+
+    bool is_ctor_dtor = std::dynamic_pointer_cast<constructor>(func)
+                     || std::dynamic_pointer_cast<destructor>(func)
+                     || std::dynamic_pointer_cast<static_constructor>(func)
+                     || std::dynamic_pointer_cast<static_destructor>(func);
+
+    auto expr = stmt.get_expression();
+
+    if (!expr) {
+        // Bare return;
+        if (!func->has_explicit_return_type()) {
+            if (func->has_return_type()) {
+                lex::opt_any_lexeme ret_lex;
+                if (stmt.get_ast_return_statement()) ret_lex = lex::any_lexeme{stmt.get_ast_return_statement()->ret};
+                throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_VOID_AND_NONVOID),
+                    ret_lex, "Function '{}' with deduced return type cannot mix 'return;' with 'return <expression>;'",
+                    {func->get_fq_name()});
+            }
+            func->set_has_bare_return(true);
+        }
+        return;
+    }
+
+    if (is_ctor_dtor) {
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH),
+            stmt.get_ast_return_statement() ? lex::any_lexeme{stmt.get_ast_return_statement()->ret} : lex::opt_any_lexeme{},
+            "Constructors and destructors cannot return a value");
+    }
+
+    if (!func->has_explicit_return_type() && func->has_bare_return()) {
+        lex::opt_any_lexeme ret_lex;
+        if (stmt.get_ast_return_statement()) ret_lex = lex::any_lexeme{stmt.get_ast_return_statement()->ret};
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_VOID_AND_NONVOID),
+            ret_lex, "Function '{}' with deduced return type cannot mix 'return;' with 'return <expression>;'",
+            {func->get_fq_name()});
+    }
+
     auto ret_type = func->get_return_type();
-    // TODO check if return type is void to prevent to return sometinhg
 
     // Step 1: Resolve the return expression (if any)
-    if(auto expr = stmt.get_expression()) {
+    if(expr) {
         // Warn if function uses named return variable and return has an expression
         if (func->has_named_return_var()) {
             if (stmt.get_ast_return_statement()) {
@@ -706,6 +746,22 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
             stmt.set_expression(_replacement_expr);
             expr = _replacement_expr;
             _replacement_expr = nullptr;
+        }
+
+        // Deduce return type if not explicit and not yet set
+        if (!func->has_explicit_return_type() && !func->has_return_type()) {
+            auto deduced_t = expr->get_type();
+            if (deduced_t) {
+                if (type::is_reference(deduced_t)) {
+                    deduced_t = std::dynamic_pointer_cast<reference_type>(deduced_t)->get_subtype();
+                }
+                deduced_t = type::remove_const(deduced_t);
+            }
+            func->set_return_type(deduced_t);
+            if (!func->is_extern()) {
+                func->update_mangled_name();
+            }
+            ret_type = deduced_t;
         }
         // Temporary array return: keep the temporary as a reference so codegen can
         // copy from the materialized stack object into the sret destination.
