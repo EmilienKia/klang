@@ -926,6 +926,11 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
     auto var_sub_nc = type::remove_const(var_sub);
 
     if (!type::are_equal(arg_sub_nc, var_sub_nc)) {
+        auto adapted = adapt_type(arg, ctx.var_type);
+        if (adapted) {
+            ctx.init_expr->assign_argument(0, adapted);
+            return;
+        }
         bool ok = check_and_insert_inheritance_cast(
             arg_sub_nc, var_sub_nc, arg, ctx.var_type,
             [&](std::shared_ptr<expression> e) { ctx.init_expr->assign_argument(0, e); },
@@ -1015,6 +1020,11 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
     auto src_sub_nc = type::remove_const(src_sub);
     auto tgt_sub_nc = type::remove_const(tgt_sub);
     if (!type::are_equal(src_sub_nc, tgt_sub_nc)) {
+        auto adapted = adapt_type(arg, ctx.var_type);
+        if (adapted) {
+            ctx.assign_single_init_arg(adapted);
+            return;
+        }
         // Step 6: Check type compatibility: exact match or inheritance cast (upcast/downcast)
         bool ok = check_and_insert_inheritance_cast(
             src_sub_nc, tgt_sub_nc, arg, ctx.var_type,
@@ -1113,6 +1123,11 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
 
         // Step 2: The initialiser must be an indirection type (reference, link, view, pointer, or owner)
         if (src_pointed_nc && !type::are_equal(src_pointed_nc, link_sub_nc)) {
+            auto adapted = adapt_type(arg, ctx.var_type);
+            if (adapted) {
+                ctx.assign_single_init_arg(adapted);
+                return;
+            }
             // Step 5: Check type compatibility: exact match or inheritance cast (upcast/downcast)
             bool ok = check_and_insert_inheritance_cast(
                 src_pointed_nc, link_sub_nc, arg, ctx.var_type,
@@ -1194,6 +1209,11 @@ void type_reference_resolver::validate_view_variable(var_init_context& ctx) {
 
         // Step 3: The initialiser must be an indirection or owner type if not null
         if (src_pointed_nc && !type::are_equal(src_pointed_nc, view_sub_nc)) {
+            auto adapted = adapt_type(arg, ctx.var_type);
+            if (adapted) {
+                ctx.assign_single_init_arg(adapted);
+                return;
+            }
             // Step 4: Check type compatibility: exact match or inheritance cast (upcast/downcast)
             bool ok = check_and_insert_inheritance_cast(
                 src_pointed_nc, view_sub_nc, arg, ctx.var_type,

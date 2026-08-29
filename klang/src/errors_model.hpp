@@ -179,6 +179,8 @@ enum class union_diag : unsigned int {
     ERR_UNION_POLYMORPHIC_ALT_NOT_CLASS           = 0x018C,  ///< Alternative in polymorphic union is not a class type
     ERR_UNION_POLYMORPHIC_ALT_NOT_DERIVED         = 0x018D,  ///< Alternative in polymorphic union does not inherit from the polymorphic base
     ERR_UNION_POLYMORPHIC_ALT_ABSTRACT            = 0x018E,  ///< Alternative in polymorphic union cannot be an abstract class or interface
+    ERR_UNION_CAST_AMBIGUOUS                      = 0x018F,  ///< Multiple alternatives match cast target type
+    ERR_UNION_CAST_TYPE_NOT_FOUND                 = 0x0198,  ///< No alternative matches cast target type
 };
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -236,9 +236,124 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                             "the referenced types have no inheritance relationship",
                             {source_type->to_string(), target_type->to_string()});
                     }
+                } else if (!src_agg) {
+                    // Source is a union reference: check union alternatives or polymorphic base
+                    auto root_ns = _unit.get_root_namespace();
+                    auto union_def = find_union_by_struct_type(root_ns, src_st_type);
+                    if (union_def) {
+                        bool matched = false;
+                        if (union_def->is_polymorphic() && union_def->get_polymorphic_base()) {
+                            auto poly_base = union_def->get_polymorphic_base();
+                            if (poly_base->get_struct_type() == tgt_st_type ||
+                                (tgt_agg && poly_base->is_derived_from(tgt_agg))) {
+                                matched = true;
+                                expr.set_null_is_fatal(true);
+                            }
+                        }
+                        if (!matched) {
+                            std::vector<const union_alternative*> alts_match;
+                            for (const auto* alt : union_def->all_alternatives_ptrs()) {
+                                if (alt->resolved_type && type::remove_const(alt->resolved_type) == tgt_sub_nc) {
+                                    alts_match.push_back(alt);
+                                }
+                            }
+                            if (alts_match.size() > 1) {
+                                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_CAST_AMBIGUOUS), expr.first_lexeme(),
+                                    "Cast of union '{}' to type '{}' is ambiguous: multiple alternatives have this type",
+                                    {union_def->get_short_name(), target_type->to_string()});
+                            }
+                            if (alts_match.empty()) {
+                                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_CAST_TYPE_NOT_FOUND), expr.first_lexeme(),
+                                    "Cannot cast union '{}' to type '{}': no alternative matches this type",
+                                    {union_def->get_short_name(), target_type->to_string()});
+                            }
+                            expr.set_null_is_fatal(true);
+                        }
+                    }
                 }
             }
             // Keep as-is (no load_value replacement).
+        }
+
+        // ── Case: union source → alternative type or polymorphic base ────────────
+        else if ([&]() -> bool {
+            auto bare_src = type::remove_const(effective_source);
+            if (type::is_reference(bare_src)) {
+                bare_src = type::remove_const(std::dynamic_pointer_cast<reference_type>(bare_src)->get_subtype());
+            }
+            std::shared_ptr<struct_type> union_st;
+            bool is_address_of_union = false;
+            if (type::is_link(bare_src)) {
+                union_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(std::dynamic_pointer_cast<link_type>(bare_src)->get_linked_type()));
+                is_address_of_union = true;
+            } else if (type::is_pointer(bare_src)) {
+                union_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(std::dynamic_pointer_cast<pointer_type>(bare_src)->get_pointed_type()));
+                is_address_of_union = true;
+            } else if (type::is_view(bare_src)) {
+                union_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(std::dynamic_pointer_cast<view_type>(bare_src)->get_viewed_type()));
+                is_address_of_union = true;
+            } else if (auto st = std::dynamic_pointer_cast<struct_type>(bare_src)) {
+                if (!st->get_struct()) {
+                    union_st = st;
+                }
+            }
+
+            if (!union_st || union_st->get_struct()) return false; // not a union
+
+            auto root_ns = _unit.get_root_namespace();
+            auto union_def = find_union_by_struct_type(root_ns, union_st);
+            if (!union_def) return false;
+
+            // Target type analysis:
+            auto bare_tgt = type::remove_const(target_type);
+            if (type::is_reference(bare_tgt)) {
+                bare_tgt = type::remove_const(std::dynamic_pointer_cast<reference_type>(bare_tgt)->get_subtype());
+            } else if (type::is_link(bare_tgt)) {
+                bare_tgt = type::remove_const(std::dynamic_pointer_cast<link_type>(bare_tgt)->get_linked_type());
+            } else if (type::is_pointer(bare_tgt)) {
+                bare_tgt = type::remove_const(std::dynamic_pointer_cast<pointer_type>(bare_tgt)->get_pointed_type());
+            } else if (type::is_view(bare_tgt)) {
+                bare_tgt = type::remove_const(std::dynamic_pointer_cast<view_type>(bare_tgt)->get_viewed_type());
+            }
+
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(bare_tgt);
+            // 1. Polymorphic union base target
+            if (union_def->is_polymorphic()) {
+                auto poly_base = union_def->get_polymorphic_base();
+                if (poly_base) {
+                    auto poly_st = poly_base->get_struct_type();
+                    if (poly_st && (tgt_st == poly_st || (tgt_st && tgt_st->get_struct() && poly_base->is_derived_from(tgt_st->get_struct())))) {
+                        expr.set_null_is_fatal(target_is_nonnull(target_type));
+                        return true;
+                    }
+                }
+            }
+
+            // 2. Specific alternative target
+            std::vector<const union_alternative*> matches;
+            for (const auto* alt : union_def->all_alternatives_ptrs()) {
+                if (!alt->resolved_type) continue;
+                auto alt_bare = type::remove_const(alt->resolved_type);
+                if (type::are_equal(alt_bare, bare_tgt)) {
+                    matches.push_back(alt);
+                }
+            }
+
+            if (matches.size() > 1) {
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_CAST_AMBIGUOUS), expr.first_lexeme(),
+                    "Cast of union '{}' to type '{}' is ambiguous: multiple alternatives have this type",
+                    {union_def->get_short_name(), target_type->to_string()});
+            }
+            if (matches.empty()) {
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_CAST_TYPE_NOT_FOUND), expr.first_lexeme(),
+                    "Cannot cast union '{}' to type '{}': no alternative matches this type",
+                    {union_def->get_short_name(), target_type->to_string()});
+            }
+
+            expr.set_null_is_fatal(target_is_nonnull(target_type) || !is_address_of_union);
+            return true;
+        }()) {
+            // Valid union cast
         }
 
         // Step 2: Check for casting operator overload on the source struct type
@@ -601,6 +716,157 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 return;
             }
             return;
+        }
+    }
+
+    // ── Union cast to alternative / polymorphic base / addresser ─────────────
+    {
+        auto bare_src = type::remove_const(source_type);
+        if (type::is_reference(bare_src)) {
+            bare_src = type::remove_const(std::dynamic_pointer_cast<reference_type>(bare_src)->get_subtype());
+        }
+        std::shared_ptr<struct_type> union_st;
+        bool is_address_of_union = false;
+        if (type::is_link(bare_src)) {
+            union_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(std::dynamic_pointer_cast<link_type>(bare_src)->get_linked_type()));
+            is_address_of_union = true;
+        } else if (type::is_pointer(bare_src)) {
+            union_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(std::dynamic_pointer_cast<pointer_type>(bare_src)->get_pointed_type()));
+            is_address_of_union = true;
+        } else if (type::is_view(bare_src)) {
+            union_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(std::dynamic_pointer_cast<view_type>(bare_src)->get_viewed_type()));
+            is_address_of_union = true;
+        } else if (auto st = std::dynamic_pointer_cast<struct_type>(bare_src)) {
+            if (!st->get_struct()) {
+                union_st = st;
+            }
+        }
+
+        if (union_st && !union_st->get_struct()) {
+            auto root_ns = _unit.get_root_namespace();
+            auto udef = find_union_by_struct_type(root_ns, union_st);
+            if (udef) {
+                auto bare_tgt = type::remove_const(target_type);
+                bool tgt_is_ref = type::is_reference(target_type);
+                bool tgt_is_ptr = type::is_pointer(bare_tgt);
+                bool tgt_is_view = type::is_view(bare_tgt);
+                bool tgt_is_link = type::is_link(bare_tgt);
+
+                if (tgt_is_ref) {
+                    bare_tgt = type::remove_const(std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype());
+                } else if (tgt_is_ptr) {
+                    bare_tgt = type::remove_const(std::dynamic_pointer_cast<pointer_type>(bare_tgt)->get_pointed_type());
+                } else if (tgt_is_view) {
+                    bare_tgt = type::remove_const(std::dynamic_pointer_cast<view_type>(bare_tgt)->get_viewed_type());
+                } else if (tgt_is_link) {
+                    bare_tgt = type::remove_const(std::dynamic_pointer_cast<link_type>(bare_tgt)->get_linked_type());
+                }
+
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(bare_tgt);
+                // 1. Polymorphic union base cast
+                if (udef->is_polymorphic()) {
+                    auto poly_base = udef->get_polymorphic_base();
+                    if (poly_base) {
+                        auto poly_st = poly_base->get_struct_type();
+                        if (poly_st && (tgt_st == poly_st || (tgt_st && tgt_st->get_struct() && poly_base->is_derived_from(tgt_st->get_struct())))) {
+                            _value = nullptr;
+                            expr.sub_expr()->accept(*this);
+                            if (!_value) return;
+
+                            llvm::Value* union_ptr = _value;
+                            auto* union_llvm_type = union_st->get_llvm_type();
+                            if (!union_ptr->getType()->isPointerTy()) {
+                                auto* temp_alloca = _builder->CreateAlloca(union_llvm_type, nullptr, "poly_cast_tmp");
+                                _builder->CreateStore(union_ptr, temp_alloca);
+                                union_ptr = temp_alloca;
+                            }
+
+                            auto* base_ptr = emit_polymorphic_union_to_base_ptr(
+                                _builder.get(), _context.get(), *udef, poly_base.get(), union_ptr);
+                            if (tgt_st && tgt_st->get_struct() && poly_base.get() != tgt_st->get_struct().get()) {
+                                base_ptr = emit_class_upcast(
+                                    _builder.get(), _context.get(), poly_base.get(), poly_st.get(),
+                                    tgt_st->get_struct().get(), base_ptr);
+                            }
+
+                            if (!tgt_is_ref && !tgt_is_ptr && !tgt_is_view && !tgt_is_link) {
+                                _value = _builder->CreateLoad(_context->get_llvm_type(bare_tgt), base_ptr, "poly_val_load");
+                            } else {
+                                _value = base_ptr;
+                            }
+                            return;
+                        }
+                    }
+                }
+
+                // 2. Alternative cast
+                const union_alternative* matched_alt = nullptr;
+                for (const auto* alt : udef->all_alternatives_ptrs()) {
+                    if (!alt->resolved_type) continue;
+                    auto alt_bare = type::remove_const(alt->resolved_type);
+                    if (type::are_equal(alt_bare, bare_tgt)) {
+                        matched_alt = alt;
+                        break;
+                    }
+                }
+
+                if (matched_alt) {
+                    _value = nullptr;
+                    expr.sub_expr()->accept(*this);
+                    if (!_value) return;
+
+                    llvm::Value* union_ptr = _value;
+                    auto union_llvm_type = union_st->get_llvm_type();
+                    if (!union_ptr->getType()->isPointerTy()) {
+                        auto* temp_alloca = _builder->CreateAlloca(union_llvm_type, nullptr, "union_cast_tmp");
+                        _builder->CreateStore(union_ptr, temp_alloca);
+                        union_ptr = temp_alloca;
+                    }
+                    auto& llvm_ctx = _context->llvm_context();
+                    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+                    auto* cur_fn = _builder->GetInsertBlock()->getParent();
+
+                    // Load discriminant from field 0
+                    auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_ptr, 0, "union_cast_disc_ptr");
+                    auto* disc_val = _builder->CreateLoad(i32_ty, disc_ptr, "union_cast_disc");
+                    auto* cmp = _builder->CreateICmpEQ(
+                        disc_val, llvm::ConstantInt::get(i32_ty, matched_alt->index), "union_cast_cmp");
+
+                    auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, union_ptr, 1, "union_storage");
+
+                    // Handle nullable addresser targets (T* or T?)
+                    if (tgt_is_ptr || tgt_is_view) {
+                        auto* null_ptr = llvm::ConstantPointerNull::get(llvm::PointerType::get(llvm_ctx, 0));
+                        _value = _builder->CreateSelect(cmp, storage_ptr, null_ptr, "union_cast_ptr");
+                        return;
+                    }
+
+                    // For non-nullable targets (value, ref, link):
+                    auto* failure_bb = _union_failure_bb ? _union_failure_bb : _null_failure_bb;
+
+                    auto* ok_bb = llvm::BasicBlock::Create(llvm_ctx, "union_cast_ok", cur_fn);
+                    if (failure_bb) {
+                        _builder->CreateCondBr(cmp, ok_bb, failure_bb);
+                    } else {
+                        auto* fail_bb = llvm::BasicBlock::Create(llvm_ctx, "union_cast_fail", cur_fn);
+                        _builder->CreateCondBr(cmp, ok_bb, fail_bb);
+
+                        _builder->SetInsertPoint(fail_bb);
+                        auto* fatal_fn = get_or_declare_fatal_null_function("__k_fatal_null_dyncast");
+                        _builder->CreateCall(fatal_fn);
+                        _builder->CreateUnreachable();
+                    }
+
+                    _builder->SetInsertPoint(ok_bb);
+                    if (tgt_is_ref || tgt_is_link) {
+                        _value = storage_ptr;
+                    } else {
+                        auto elem_llvm_type = _context->get_llvm_type(bare_tgt);
+                        _value = _builder->CreateLoad(elem_llvm_type, storage_ptr, "union_cast_val");
+                    }
+                    return;
+                }
+            }
         }
     }
 

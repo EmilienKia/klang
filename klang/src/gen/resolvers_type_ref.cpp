@@ -2865,6 +2865,79 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         effective_src = std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype();
     }
 
+    // --- Union conversion to alternative or polymorphic base ---
+    {
+        auto bare_src_un = type::remove_const(effective_src);
+        if (type::is_reference(bare_src_un)) {
+            bare_src_un = type::remove_const(std::dynamic_pointer_cast<reference_type>(bare_src_un)->get_subtype());
+        }
+        if (auto src_st = std::dynamic_pointer_cast<struct_type>(bare_src_un)) {
+            if (!src_st->get_struct()) {
+                auto root_ns = _unit.get_root_namespace();
+                if (auto udef = find_union_by_struct_type(root_ns, src_st)) {
+                    auto bare_tgt = type::remove_const(tgt_nc);
+                    if (type::is_reference(bare_tgt)) {
+                        bare_tgt = type::remove_const(std::dynamic_pointer_cast<reference_type>(bare_tgt)->get_subtype());
+                    }
+                    auto tgt_st = std::dynamic_pointer_cast<struct_type>(bare_tgt);
+                    // 1. Polymorphic union base
+                    if (udef->is_polymorphic() && udef->get_polymorphic_base()) {
+                        auto poly_base = udef->get_polymorphic_base();
+                        if (poly_base->get_struct_type() && (tgt_st == poly_base->get_struct_type() ||
+                            (tgt_st && tgt_st->get_struct() && poly_base->is_derived_from(tgt_st->get_struct())))) {
+                            return CAST_WIDENING;
+                        }
+                    }
+                    // 2. Union alternative
+                    for (const auto* alt : udef->all_alternatives_ptrs()) {
+                        if (!alt || !alt->resolved_type) continue;
+                        if (type::are_equal(type::remove_const(alt->resolved_type), bare_tgt)) {
+                            return CAST_NARROWING;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    {
+        auto bare_src_un = type::remove_const(effective_src);
+        std::shared_ptr<struct_type> src_st;
+        if (type::is_link(bare_src_un)) {
+            src_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(std::dynamic_pointer_cast<link_type>(bare_src_un)->get_linked_type()));
+        } else if (type::is_pointer(bare_src_un)) {
+            src_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(std::dynamic_pointer_cast<pointer_type>(bare_src_un)->get_pointed_type()));
+        } else if (type::is_view(bare_src_un)) {
+            src_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(std::dynamic_pointer_cast<view_type>(bare_src_un)->get_viewed_type()));
+        }
+        if (src_st && !src_st->get_struct()) {
+            auto root_ns = _unit.get_root_namespace();
+            if (auto udef = find_union_by_struct_type(root_ns, src_st)) {
+                auto bare_tgt = type::remove_const(tgt_nc);
+                if (type::is_pointer(bare_tgt)) {
+                    bare_tgt = type::remove_const(std::dynamic_pointer_cast<pointer_type>(bare_tgt)->get_pointed_type());
+                } else if (type::is_view(bare_tgt)) {
+                    bare_tgt = type::remove_const(std::dynamic_pointer_cast<view_type>(bare_tgt)->get_viewed_type());
+                } else if (type::is_link(bare_tgt)) {
+                    bare_tgt = type::remove_const(std::dynamic_pointer_cast<link_type>(bare_tgt)->get_linked_type());
+                }
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(bare_tgt);
+                if (udef->is_polymorphic() && udef->get_polymorphic_base()) {
+                    auto poly_base = udef->get_polymorphic_base();
+                    if (poly_base->get_struct_type() && (tgt_st == poly_base->get_struct_type() ||
+                        (tgt_st && tgt_st->get_struct() && poly_base->is_derived_from(tgt_st->get_struct())))) {
+                        return CAST_WIDENING;
+                    }
+                }
+                for (const auto* alt : udef->all_alternatives_ptrs()) {
+                    if (!alt || !alt->resolved_type) continue;
+                    if (type::are_equal(type::remove_const(alt->resolved_type), bare_tgt)) {
+                        return CAST_NARROWING;
+                    }
+                }
+            }
+        }
+    }
+
     // --- Reference cases ---
     if (type::is_reference(effective_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(effective_src);

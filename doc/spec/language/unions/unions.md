@@ -15,16 +15,17 @@ alternative is currently active.
 3. [Memory Layout](#3-memory-layout)
 4. [Construction](#4-construction)
 5. [Member Access](#5-member-access)
-6. [Discriminant and `index()`](#6-discriminant-and-index)
-7. [Kind Enum](#7-kind-enum)
-8. [Destruction](#8-destruction)
-9. [Passing to Functions](#9-passing-to-functions)
-10. [Nested Unions](#10-nested-unions)
-11. [Union Inheritance](#11-union-inheritance)
-12. [Polymorphic Unions](#12-polymorphic-unions)
-13. [Template Unions](#13-template-unions)
-14. [Cross-Module Export and Import](#14-cross-module-export-and-import)
-15. [Restrictions](#15-restrictions)
+6. [Casting and Type Adaptation](#6-casting-and-type-adaptation)
+7. [Discriminant and `index()`](#7-discriminant-and-index)
+8. [Kind Enum](#8-kind-enum)
+9. [Destruction](#9-destruction)
+10. [Passing to Functions](#10-passing-to-functions)
+11. [Nested Unions](#11-nested-unions)
+12. [Union Inheritance](#12-union-inheritance)
+13. [Polymorphic Unions](#13-polymorphic-unions)
+14. [Template Unions](#14-template-unions)
+15. [Cross-Module Export and Import](#15-cross-module-export-and-import)
+16. [Restrictions](#16-restrictions)
 
 ---
 
@@ -202,7 +203,107 @@ branching safely to `else` (or continuing past the `if`).
 
 ---
 
-## 6. Discriminant and `index()`
+## 6. Casting and Type Adaptation
+
+Unions support explicit casting and implicit type adaptation to their alternative types
+or to the common base of a polymorphic union.
+
+### 6.1 Explicit Casts
+
+A union value or reference can be cast directly to an alternative type by value,
+mutable reference, or const reference:
+
+```k
+union Value {
+    i: int;
+    d: double;
+}
+
+v : Value;
+v.i = 42;
+
+x : int = (int) v;               // Cast by value
+(int&) v = 100;                  // Cast by reference (mutates active alternative)
+cr : const int& = (const int&) v; // Cast by const reference
+```
+
+- **Runtime Check**: Casting evaluates the active discriminant. If the requested alternative
+  is active, access succeeds. If mismatched, a fatal trap (`NullCastError`) is triggered.
+- **Ambiguity Rule**: If multiple alternatives share the exact same type, casting to that type
+  is rejected at compile-time (`ERR_UNION_CAST_AMBIGUOUS`). Explicit member access (`v.alt`)
+  must be used instead.
+
+### 6.2 Implicit Type Adaptation
+
+A union can be implicitly adapted to an alternative type in variable initializations,
+assignments, and function arguments:
+
+```k
+print_int(x: int) : void { /* ... */ }
+
+v : Value;
+v.i = 10;
+
+a : int = v;        // Variable initialization
+b : int = 0;
+b = v;              // Assignment
+print_int(v);       // Function parameter passing
+```
+
+### 6.3 Soft-fail in `if` Conditions
+
+When a union cast or implicit adaptation is used in an `if` condition-variable binding,
+an alternative mismatch follows the soft-fail path (branches to `else` without throwing or trapping):
+
+```k
+v : Value;
+v.d = 3.14;
+
+if (x : int = v) {
+    // Skipped because active alternative is 'd', not 'int'
+} else {
+    // Safely entered
+}
+```
+
+### 6.4 Addresser Conversions with `&u`
+
+Applying the address-of operator `&` to a union `u` allows converting to addressers (`*`, `?`, `+`):
+
+- **Nullable addressers (`*` pointer, `?` view)**:
+  - If the active alternative matches, returns a non-null pointer/view to the storage.
+  - If the active alternative does not match, returns `null` (no exception/trap).
+  - In an `if` condition, `if (p : int* = &u)` evaluates to `false` when `p == null`.
+- **Non-nullable addressers (`+` link)**:
+  - Requires the alternative to match; mismatch triggers a fatal trap (or soft-fail in `if`).
+
+```k
+v : Value;
+v.d = 3.14;
+
+p : int* = &v;   // p is null because 'd' is active (no trap)
+if (q : int* = &v) {
+    // Not executed because q == null
+}
+```
+
+### 6.5 Polymorphic Union Base Casting
+
+For a polymorphic union (`union AnyAnimal : Animal`), casting to the base type (`Animal&`, `Animal*`, `Animal?`, `Animal+`)
+or any of its ancestors (`Object&`) is **guaranteed to succeed at runtime** for any active member,
+automatically performing the dynamic upcast:
+
+```k
+a : AnyAnimal;
+a.dog = Dog();
+
+ref : Animal& = a;   // Always succeeds, binds to active Dog as Animal&
+ptr : Animal* = &a;  // Produces non-null Animal* pointer
+```
+
+---
+
+## 7. Discriminant and `index()`
 
 Every union value exposes a synthetic member function:
 
@@ -216,7 +317,7 @@ v.index()    // returns the uint32 discriminant of the active alternative
 
 ---
 
-## 7. Kind Enum
+## 8. Kind Enum
 
 The compiler synthesizes a **Kind** enum for each union:
 
@@ -236,12 +337,12 @@ union Value {
   if (v.index() == Value::Kind::d) { /* ... */ }
   ```
 
-- For unions with [inheritance](#11-union-inheritance), the Kind enum covers
+- For unions with [inheritance](#12-union-inheritance), the Kind enum covers
   the full inheritance chain (parent alternatives first, own alternatives after).
 
 ---
 
-## 8. Destruction
+## 9. Destruction
 
 When a union value goes out of scope:
 
@@ -256,7 +357,7 @@ active.
 
 ---
 
-## 9. Passing to Functions
+## 10. Passing to Functions
 
 Unions can be passed to functions:
 
@@ -275,7 +376,7 @@ consume(v: Value) : double {
 
 ---
 
-## 10. Nested Unions
+## 11. Nested Unions
 
 A union may be declared **inside** a struct or class:
 
@@ -298,7 +399,7 @@ struct Container {
 
 ---
 
-## 11. Union Inheritance
+## 12. Union Inheritance
 
 A union may inherit from **exactly one** parent union:
 
@@ -314,14 +415,14 @@ union Derived : Base {
 }
 ```
 
-### 11.1 Rules
+### 12.1 Rules
 
 - Single inheritance only — at most one parent.
 - The parent must itself be a union (not a struct, class, or enum).
 - Multi-level chains are supported: `A → B → C`.
 - Circular inheritance is detected and rejected.
 
-### 11.2 Discriminant Numbering
+### 12.2 Discriminant Numbering
 
 - Parent alternatives keep their original discriminant values (0, 1, … for `Base`).
 - New alternatives in the derived union are numbered starting at
@@ -336,7 +437,7 @@ Example (`Derived` above):
 | `s` (own) | 2 |
 | `b` (own) | 3 |
 
-### 11.3 Kind Enum
+### 12.3 Kind Enum
 
 The derived union's synthesized Kind enum covers the full chain:
 
@@ -344,12 +445,12 @@ The derived union's synthesized Kind enum covers the full chain:
 enum Derived::Kind { i = 0; d = 1; s = 2; b = 3; }
 ```
 
-### 11.4 Storage
+### 12.4 Storage
 
 Storage is sized to the largest alternative across the **full** inheritance
 chain. A derived union is always at least as large as its parent.
 
-### 11.5 Alternative Access
+### 12.5 Alternative Access
 
 All parent alternatives are directly accessible on the derived union:
 
@@ -359,7 +460,7 @@ v.i = 42;         // inherited alternative — valid
 v.s = "hello";    // own alternative — valid
 ```
 
-### 11.6 Upcast and Downcast
+### 12.6 Upcast and Downcast
 
 | Direction | Semantics |
 |-----------|-----------|
@@ -377,14 +478,14 @@ derived.s = "hi";
 base = derived;     // upcast — FATAL TRAP (alternative 's' not in Base)
 ```
 
-### 11.7 Restrictions
+### 12.7 Restrictions
 
 - Template unions **cannot** have an inheritance clause (compile-time error).
 - Inheriting from a type that is neither a union nor a class/interface is rejected.
 
 ---
 
-## 12. Polymorphic Unions
+## 13. Polymorphic Unions
 
 A **polymorphic union** is a union of concrete class types that all inherit directly
 or indirectly from a common base class (which may be concrete, or abstract and therefore
@@ -415,20 +516,20 @@ union AnyAnimal : Animal {
 }
 ```
 
-### 12.1 Resolution and Disambiguation
+### 13.1 Resolution and Disambiguation
 
 At symbol resolution time, there is no ambiguity with traditional union inheritance:
 - If the type named after `:` resolves to another union, union inheritance applies.
 - If it resolves to a `class` or `interface`, it is a polymorphic union with that type as its base.
 - If it resolves to any other type (such as a `struct`, `enum`, or primitive), compilation fails with an error.
 
-### 12.2 Rules for Alternatives
+### 13.2 Rules for Alternatives
 
 1. Every alternative declared in a polymorphic union must be a **concrete class** (not an abstract class, interface, struct, primitive, or pointer).
 2. Every alternative must directly or indirectly inherit from the common base class or interface.
 3. If the base class is concrete, it may also be one of the alternatives.
 
-### 12.3 Polymorphic Union Inheritance
+### 13.3 Polymorphic Union Inheritance
 
 A union may inherit from a polymorphic union:
 
@@ -446,7 +547,7 @@ union ExtendedAnimal : AnyAnimal {
 - `ExtendedAnimal` inherits `Animal` as its polymorphic base.
 - All new alternatives declared in `ExtendedAnimal` must also be descendants of `Animal`.
 
-### 12.4 Operators `->` and `*`
+### 13.4 Operators `->` and `*`
 
 Polymorphic unions provide direct polymorphic access to the active member without explicit downcasting:
 
@@ -469,7 +570,7 @@ If `u` is `const`, `*u` returns `const BaseType&`, and `u->` only permits access
 
 ---
 
-## 13. Template Unions
+## 14. Template Unions
 
 Unions can be parameterized with template type or value parameters:
 
@@ -481,7 +582,7 @@ union Optional {
 }
 ```
 
-### 13.1 Instantiation
+### 14.1 Instantiation
 
 ```k
 opt: Optional<int>;
@@ -491,7 +592,7 @@ opt.value = 42;
 Each distinct set of template arguments produces a separate union type
 (monomorphization), with its own Kind enum and discriminant numbering.
 
-### 13.2 Template Unions in Template Structs
+### 14.2 Template Unions in Template Structs
 
 A union may be nested inside a template struct. During instantiation, the
 union's alternatives have their types substituted along with the rest of the
@@ -511,19 +612,19 @@ w: Wrapper<double>;
 w._storage.val = 3.14;     // type of 'val' is double
 ```
 
-### 13.3 Cross-Module Template Unions
+### 14.3 Cross-Module Template Unions
 
 Template union definitions are exported to `.kdi` files including their template
 parameters and alternative declarations. Importing modules can instantiate
 them with their own type arguments.
 
-### 13.4 Restrictions
+### 14.4 Restrictions
 
 - Template unions cannot have an inheritance clause.
 
 ---
 
-## 14. Cross-Module Export and Import
+## 15. Cross-Module Export and Import
 
 Union types are exported in `.kdi` files and can be imported by other modules:
 
@@ -556,7 +657,7 @@ check() : int {
 
 ---
 
-## 15. Restrictions
+## 16. Restrictions
 
 The following are **not** allowed inside a union body:
 

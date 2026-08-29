@@ -34,12 +34,12 @@
   - [x] Non-primitive value template arguments (enums, expressions, aggregates, propagation, mangling, KDI roundtrip)
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
 - Add unions, typed unions (discriminated/tagged unions à la std::variant)
-    - [ ] Enum-based discriminant interrogation (`u.type()` → enum)
-    - [ ] Union extension / inheritance (derive union from another union)
-    - [ ] Polymorphic access when all alternatives share a common base class/interface
-    - [ ] Cast union to alternative type (`(int) myUnion`)
+    - [x] Enum-based discriminant interrogation (`u.index()` → uint / `Kind` enum)
+    - [x] Union extension / inheritance (derive union from another union)
+    - [x] Polymorphic access when all alternatives share a common base class/interface
+    - [x] Cast union to alternative type (`(int) myUnion`)
     - [ ] Pattern matching / `match` expression on union alternatives
-    - [ ] Template unions (`template<T> union Optional { ... }`)
+    - [x] Template unions (`template<T> union Optional { ... }`)
     - [ ] RTTI-only discriminant optimization (all-class alternatives)
 - Add state classes
 - Better private visibility support
