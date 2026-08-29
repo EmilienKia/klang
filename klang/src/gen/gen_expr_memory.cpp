@@ -318,6 +318,11 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
     size_t arr_size = arr_type->get_size();
     size_t init_count = expr.size();
 
+    if (!var_def) {
+        expr._array_size = arr_size;
+        expr.set_type(arr_type->get_reference());
+    }
+
     if (init_count > arr_size) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_INIT_NOT_STRUCT), expr.first_lexeme(),
             "Array initializer list has {} elements, but the array '{}' has size {}: too many initializers",
@@ -345,6 +350,15 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                     {std::to_string(i), elem_type->to_string(),
                      var_def ? var_def->get_fq_name() : "<temporary>"});
             } else if (cast != e) {
+                expr.assign_element(i, cast);
+            }
+        }
+    } else if (type::is_sized_array(elem_type)) {
+        for (size_t i = 0; i < init_count; ++i) {
+            auto e = expr.element(i);
+            if (!e) continue;
+            auto cast = adapt_type(e, elem_type);
+            if (cast && cast != e) {
                 expr.assign_element(i, cast);
             }
         }
@@ -778,7 +792,7 @@ void implementation_generator::visit_array_init_expression(array_init_expression
     std::shared_ptr<sized_array_type> arr_type;
     llvm::Value* arr_alloca = nullptr;
 
-    if (expr.is_temporary()) {
+    if (expr.is_temporary() || !expr.constructed_symbol()) {
         auto expr_type = type::remove_const(expr.get_type());
         if (type::is_reference(expr_type)) {
             expr_type = expr_type->get_subtype();
@@ -811,6 +825,25 @@ void implementation_generator::visit_array_init_expression(array_init_expression
     auto elem_type = arr_type->get_subtype();
     llvm::Type* llvm_elem_type = _context->get_llvm_type(elem_type);
     size_t arr_size = arr_type->get_size();
+
+    // Fast-path: compile-time constant array store
+    if (expr.is_constant()) {
+        auto* const_arr = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), arr_type);
+        if (const_arr) {
+            _builder->CreateStore(const_arr, arr_alloca);
+            if (expr.is_temporary() || !expr.constructed_symbol()) {
+                auto* temp_alloca = llvm::dyn_cast<llvm::AllocaInst>(arr_alloca);
+                if (temp_alloca) {
+                    auto elem_t = arr_type->get_subtype();
+                    if (std::dynamic_pointer_cast<struct_type>(elem_t) || std::dynamic_pointer_cast<owner_type>(elem_t)) {
+                        _expression_temporaries.push_back({temp_alloca, nullptr, arr_type});
+                    }
+                }
+            }
+            _value = arr_alloca;
+            return;
+        }
+    }
 
     // Zero-init the entire array struct first
     _builder->CreateStore(llvm::ConstantAggregateZero::get(struct_llvm), arr_alloca);
@@ -877,12 +910,27 @@ void implementation_generator::visit_array_init_expression(array_init_expression
                 if (_value) {
                     _builder->CreateStore(_value, elem_ptr);
                 }
-            } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
-                // For struct elements, we need to call the constructor
+            } else if (type::is_sized_array(elem_type)) {
                 _value = nullptr;
                 elem_expr->accept(*this);
                 if (_value) {
-                    _builder->CreateStore(_value, elem_ptr);
+                    if (_value->getType()->isPointerTy()) {
+                        auto* loaded = _builder->CreateLoad(llvm_elem_type, _value, "inner_arr_val");
+                        _builder->CreateStore(loaded, elem_ptr);
+                    } else {
+                        _builder->CreateStore(_value, elem_ptr);
+                    }
+                }
+            } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+                _value = nullptr;
+                elem_expr->accept(*this);
+                if (_value) {
+                    if (_value->getType()->isPointerTy()) {
+                        auto* loaded = _builder->CreateLoad(llvm_elem_type, _value, "elem_st_val");
+                        _builder->CreateStore(loaded, elem_ptr);
+                    } else {
+                        _builder->CreateStore(_value, elem_ptr);
+                    }
                 }
             }
         }

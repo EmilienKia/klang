@@ -3018,9 +3018,23 @@ namespace k::model {
             // No constructed_symbol for nested inits — target_aggregate resolved later
             _expr = model::designated_struct_init_expression::make_shared(
                 std::shared_ptr<model::symbol_expression>{}, nullptr, members);
+            if (_expr) _expr->set_ast_expression(init.shared_as<parse::ast::brace_init_list>());
         } else {
-            // Non-designated brace init list used as expression — not yet supported
-            _expr = nullptr;
+            // Positional brace init list used as nested/anonymous array expression: { expr1, expr2, ... }
+            std::vector<std::shared_ptr<model::expression>> elements;
+            for (auto& elem_ast : init.elements) {
+                if (elem_ast) {
+                    _expr.reset();
+                    elem_ast->visit(*this);
+                    elements.push_back(_expr);
+                    _expr.reset();
+                } else {
+                    elements.push_back(nullptr); // default-init slot
+                }
+            }
+            _expr = model::array_init_expression::make_shared(
+                std::shared_ptr<model::symbol_expression>{}, elements);
+            if (_expr) _expr->set_ast_expression(init.shared_as<parse::ast::brace_init_list>());
         }
     }
 

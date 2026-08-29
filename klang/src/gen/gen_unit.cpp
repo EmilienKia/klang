@@ -1583,13 +1583,21 @@ void implementation_generator::visit_global_variable_definition(global_variable_
     // Generate initialization
     llvm::Constant* constInitValue = nullptr;
 
-    auto init_expr_ctor = std::dynamic_pointer_cast<constructor_invocation_expression>(var.get_init_expr());
-    if (type::is_primitive(var.get_type()) && init_expr_ctor && init_expr_ctor->size() == 1) {
-        if (auto value = std::dynamic_pointer_cast<value_expression>(init_expr_ctor->argument(0))) {
-            // Constant init expression
-            if (auto constant = get_llvm_constant_from_value_expr(*value)) {
-                // TODO Implement type conversion
-                constInitValue = constant;
+    if (var.is_constant()) {
+        constInitValue = _context->get_llvm_constant_from_constant_value(var.get_constant_value(), var.get_type());
+    } else if (var.get_init_expr() && var.get_init_expr()->is_constant()) {
+        constInitValue = _context->get_llvm_constant_from_constant_value(var.get_init_expr()->get_constant_value(), var.get_type());
+    }
+
+    if (!constInitValue) {
+        auto init_expr_ctor = std::dynamic_pointer_cast<constructor_invocation_expression>(var.get_init_expr());
+        if (type::is_primitive(var.get_type()) && init_expr_ctor && init_expr_ctor->size() == 1) {
+            if (auto value = std::dynamic_pointer_cast<value_expression>(init_expr_ctor->argument(0))) {
+                // Constant init expression
+                if (auto constant = get_llvm_constant_from_value_expr(*value)) {
+                    // TODO Implement type conversion
+                    constInitValue = constant;
+                }
             }
         }
     }

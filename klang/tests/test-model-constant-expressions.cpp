@@ -596,19 +596,127 @@ TEST_CASE("Constant expression — direct LLVM IR constant emission", "[model][c
         }
 
         const G_PT : Point = Point{ .x = 10, .y = 20 };
+        const G_ARR : int[3] { 100, 200, 300 };
 
         test_fold() : int {
             const a : int = 15;
             const b : int = 25;
-            return (a + b) * 2 + G_PT.x;
+            return (a + b) * 2 + G_PT.x + G_ARR[1];
         }
     )SRC", false, false); // optimize=false to verify unoptimized frontend emission
 
     REQUIRE(jit != nullptr);
     auto fn = jit->lookup_symbol<int(*)()>("test_fold");
     REQUIRE(fn != nullptr);
-    // (15 + 25) * 2 + 10 = 90
-    CHECK(fn() == 90);
+    // (15 + 25) * 2 + 10 + 200 = 290
+    CHECK(fn() == 290);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  14. Advanced in-line array initialization (empty slots, padding, uniform)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Constant expression — in-line array empty slots, padding and uniform init", "[model][const_expr][array_advanced]") {
+    auto comp = compile_model(R"SRC(
+        module model_constant_expressions_14;
+
+        const ARR_EMPTY_SLOTS : int[5] { 10, , 30 };
+        const ARR_PADDING : int[4] { 7, 8 };
+        const ARR_UNIFORM : int(42)[4];
+
+        test_empty_slot_val() : int { return ARR_EMPTY_SLOTS[0]; }
+        test_empty_slot_default() : int { return ARR_EMPTY_SLOTS[1]; }
+        test_empty_slot_after() : int { return ARR_EMPTY_SLOTS[2]; }
+        test_empty_slot_pad() : int { return ARR_EMPTY_SLOTS[3]; }
+        test_empty_slot_size() : unsigned int { return ARR_EMPTY_SLOTS.size; }
+
+        test_padding_val0() : int { return ARR_PADDING[0]; }
+        test_padding_val1() : int { return ARR_PADDING[1]; }
+        test_padding_pad2() : int { return ARR_PADDING[2]; }
+        test_padding_pad3() : int { return ARR_PADDING[3]; }
+
+        test_uniform_0() : int { return ARR_UNIFORM[0]; }
+        test_uniform_3() : int { return ARR_UNIFORM[3]; }
+        test_uniform_size() : unsigned int { return ARR_UNIFORM.size; }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto check_fn = [&](const std::string& name, int64_t expected) {
+        auto expr = get_return_expr(comp, name);
+        REQUIRE(expr != nullptr);
+        CHECK(expr->is_constant());
+        CHECK(expr->get_constant_value().get_int64() == expected);
+    };
+
+    check_fn("test_empty_slot_val", 10);
+    check_fn("test_empty_slot_default", 0);
+    check_fn("test_empty_slot_after", 30);
+    check_fn("test_empty_slot_pad", 0);
+    check_fn("test_empty_slot_size", 5);
+
+    check_fn("test_padding_val0", 7);
+    check_fn("test_padding_val1", 8);
+    check_fn("test_padding_pad2", 0);
+    check_fn("test_padding_pad3", 0);
+
+    check_fn("test_uniform_0", 42);
+    check_fn("test_uniform_3", 42);
+    check_fn("test_uniform_size", 4);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  15. Structs containing arrays and array comparisons
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Constant expression — struct with array and array comparisons", "[model][const_expr][array_struct_cmp]") {
+    auto comp = compile_model(R"SRC(
+        module model_constant_expressions_15;
+
+        struct Packet {
+            public header : int;
+            public payload : int[3];
+        }
+
+        const PKT : Packet = Packet{ .header = 100, .payload = int[]{ 10, 20, 30 } };
+        const PKT_NESTED : Packet = Packet{ .header = 200, .payload = { 40, 50, 60 } };
+
+        test_pkt_header() : int { return PKT.header; }
+        test_pkt_payload_0() : int { return PKT.payload[0]; }
+        test_pkt_payload_2() : int { return PKT.payload[2]; }
+        test_pkt_payload_size() : unsigned int { return PKT.payload.size; }
+
+        test_pkt_nested_0() : int { return PKT_NESTED.payload[0]; }
+        test_pkt_nested_1() : int { return PKT_NESTED.payload[1]; }
+
+        test_arr_elem_eq() : bool { return int[]{ 1, 2, 3 }[1] == int[]{ 1, 2, 3 }[1]; }
+        test_arr_elem_ne() : bool { return int[]{ 1, 2, 3 }[2] != int[]{ 1, 2, 4 }[2]; }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto check_int = [&](const std::string& name, int64_t expected) {
+        auto expr = get_return_expr(comp, name);
+        REQUIRE(expr != nullptr);
+        CHECK(expr->is_constant());
+        CHECK(expr->get_constant_value().get_int64() == expected);
+    };
+
+    auto check_bool = [&](const std::string& name, bool expected) {
+        auto expr = get_return_expr(comp, name);
+        REQUIRE(expr != nullptr);
+        CHECK(expr->is_constant());
+        CHECK(expr->get_constant_value().get_bool() == expected);
+    };
+
+    check_int("test_pkt_header", 100);
+    check_int("test_pkt_payload_0", 10);
+    check_int("test_pkt_payload_2", 30);
+    check_int("test_pkt_payload_size", 3);
+
+    check_int("test_pkt_nested_0", 40);
+    check_int("test_pkt_nested_1", 50);
+
+    check_bool("test_arr_elem_eq", true);
+    check_bool("test_arr_elem_ne", true);
 }
 
 

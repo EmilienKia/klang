@@ -656,6 +656,83 @@ eval_outcome eval_aggregate_init(const brace_init_list& bil,
     return eval_outcome::success(*res);
 }
 
+eval_outcome eval_array_init(const brace_init_list& bil,
+                             const element& context_elem,
+                             const std::shared_ptr<context>& ctx,
+                             const std::shared_ptr<type>& expected_type,
+                             unit* unit_ptr) {
+    if (!expected_type || !ctx) {
+        return eval_outcome::defer();
+    }
+
+    auto resolved_expected = expected_type;
+    if (!type::is_resolved(resolved_expected)) {
+        auto rt = ctx->resolve_type(resolved_expected);
+        if (!rt || !type::is_resolved(rt)) return eval_outcome::defer();
+        resolved_expected = rt;
+    }
+
+    auto expected_arr = std::dynamic_pointer_cast<array_type>(type::remove_const(resolved_expected));
+    if (!expected_arr) {
+        return eval_outcome::defer();
+    }
+
+    if (bil.is_designated) {
+        return eval_outcome::error(
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
+            "array template value arguments must use positional brace initialization");
+    }
+
+    auto elem_type = expected_arr->get_subtype();
+    if (elem_type && !type::is_resolved(elem_type)) {
+        auto resolved_elem = ctx->resolve_type(elem_type);
+        if (resolved_elem && type::is_resolved(resolved_elem)) {
+            elem_type = resolved_elem;
+        }
+    }
+
+    auto sarr = std::dynamic_pointer_cast<sized_array_type>(expected_arr);
+    size_t target_size = sarr ? sarr->get_size() : bil.elements.size();
+
+    if (bil.elements.size() > target_size) {
+        return eval_outcome::error(
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_TYPE_MISMATCH),
+            "too many initializers in array template value argument");
+    }
+
+    std::vector<constant_value> elements;
+    elements.reserve(target_size);
+
+    auto default_elem = constant_evaluator::default_value_for_type(elem_type);
+
+    for (size_t i = 0; i < target_size; ++i) {
+        if (i < bil.elements.size() && bil.elements[i]) {
+            auto elem_eval = evaluate_template_value_arg(
+                bil.elements[i].get(), context_elem, ctx, elem_type, unit_ptr);
+            if (elem_eval.is_error()) {
+                return eval_outcome::error(elem_eval.error_code, elem_eval.message, elem_eval.message_args);
+            }
+            if (!elem_eval.ok()) {
+                return eval_outcome::error(
+                    static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+                    "array element is not a compile-time constant");
+            }
+            elements.emplace_back(*elem_eval.value);
+        } else {
+            if (!default_elem) {
+                return eval_outcome::error(
+                    static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_VALUE_ARG_NOT_CONSTANT),
+                    "cannot default-initialize array element in template value argument");
+            }
+            elements.push_back(*default_elem);
+        }
+    }
+
+    auto final_arr_type = sarr ? sarr : (elem_type ? elem_type->get_array(elements.size()) : nullptr);
+    auto av = std::make_shared<array_value>(final_arr_type, std::move(elements));
+    return eval_outcome::success(constant_value(av));
+}
+
 eval_outcome eval_raw(const expression* expr,
                        const element& context_elem,
                        const std::shared_ptr<context>& ctx,
@@ -688,23 +765,42 @@ constexpr_eval_result evaluate_template_value_arg(
     constexpr_eval_result out;
     if (!expr) return out;
 
-    // Special-case aggregate brace-init when the expected type is an aggregate.
+    // Special-case aggregate or array brace-init when the expected type is specified.
     if (auto bil = dynamic_cast<const brace_init_list*>(expr)) {
-        auto agg_eval = eval_aggregate_init(*bil, context_elem, ctx, expected_type, unit_ptr);
-        if (agg_eval.ok) {
-            auto vt = agg_eval.value.to_value_type();
-            if (vt.has_value()) {
-                out.status = constexpr_eval_status::OK;
-                out.value = *vt;
+        if (expected_type && type::is_array(type::remove_const(expected_type))) {
+            auto arr_eval = eval_array_init(*bil, context_elem, ctx, expected_type, unit_ptr);
+            if (arr_eval.ok) {
+                auto vt = arr_eval.value.to_value_type();
+                if (vt.has_value()) {
+                    out.status = constexpr_eval_status::OK;
+                    out.value = *vt;
+                    return out;
+                }
+            }
+            if (arr_eval.is_hard_error()) {
+                out.status = constexpr_eval_status::ERROR;
+                out.error_code = arr_eval.error_code;
+                out.message = arr_eval.message;
+                out.message_args = arr_eval.message_args;
                 return out;
             }
-        }
-        if (agg_eval.is_hard_error()) {
-            out.status = constexpr_eval_status::ERROR;
-            out.error_code = agg_eval.error_code;
-            out.message = agg_eval.message;
-            out.message_args = agg_eval.message_args;
-            return out;
+        } else {
+            auto agg_eval = eval_aggregate_init(*bil, context_elem, ctx, expected_type, unit_ptr);
+            if (agg_eval.ok) {
+                auto vt = agg_eval.value.to_value_type();
+                if (vt.has_value()) {
+                    out.status = constexpr_eval_status::OK;
+                    out.value = *vt;
+                    return out;
+                }
+            }
+            if (agg_eval.is_hard_error()) {
+                out.status = constexpr_eval_status::ERROR;
+                out.error_code = agg_eval.error_code;
+                out.message = agg_eval.message;
+                out.message_args = agg_eval.message_args;
+                return out;
+            }
         }
     }
 

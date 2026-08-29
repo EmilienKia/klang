@@ -336,3 +336,74 @@ TEST_CASE("Array brace init — global array inferred size", "[gen][brace-init][
     REQUIRE(get_elem(3) == 20);
 }
 
+TEST_CASE("Array brace init — global const array with compile-time expressions", "[gen][brace-init][global][const]") {
+    auto jit = gen_jit(R"SRC(
+    module gen_array_init_13;
+    const G_ARR : int[3] { 10 + 5, 20 * 2, 30 - 3 };
+    get_elem(idx : int) : int {
+        return G_ARR[idx];
+    }
+    sum() : int {
+        return G_ARR[0] + G_ARR[1] + G_ARR[2];
+    }
+    )SRC");
+    REQUIRE(jit);
+
+    auto get_elem = jit->lookup_symbol<int(*)(int)>("get_elem");
+    REQUIRE(get_elem != nullptr);
+    REQUIRE(get_elem(0) == 15);
+    REQUIRE(get_elem(1) == 40);
+    REQUIRE(get_elem(2) == 27);
+
+    auto sum = jit->lookup_symbol<int(*)()>("sum");
+    REQUIRE(sum != nullptr);
+    REQUIRE(sum() == (15 + 40 + 27));
+}
+
+TEST_CASE("Array brace init — global const array of structs", "[gen][brace-init][global][struct]") {
+    auto jit = gen_jit(R"SRC(
+    module gen_array_init_14;
+    struct Point {
+        public x : int;
+        public y : int;
+    }
+    const G_PTS : Point[2] {
+        Point{ .x = 10, .y = 20 },
+        Point{ .x = 30, .y = 40 }
+    };
+    get_pt_x(idx : int) : int {
+        return G_PTS[idx].x;
+    }
+    get_pt_y(idx : int) : int {
+        return G_PTS[idx].y;
+    }
+    )SRC");
+    REQUIRE(jit);
+
+    auto get_pt_x = jit->lookup_symbol<int(*)(int)>("get_pt_x");
+    REQUIRE(get_pt_x != nullptr);
+    REQUIRE(get_pt_x(0) == 10);
+    REQUIRE(get_pt_x(1) == 30);
+
+    auto get_pt_y = jit->lookup_symbol<int(*)(int)>("get_pt_y");
+    REQUIRE(get_pt_y != nullptr);
+    REQUIRE(get_pt_y(0) == 20);
+    REQUIRE(get_pt_y(1) == 40);
+}
+
+TEST_CASE("Array brace init — local const array folding in return", "[gen][brace-init][local][fold]") {
+    auto jit = gen_jit(R"SRC(
+    module gen_array_init_15;
+    test_fold() : int {
+        const arr : int[4] { 1, 2, 3, 4 };
+        return arr[0] + arr[1] * arr[2] + arr[3];
+    }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_fold = jit->lookup_symbol<int(*)()>("test_fold");
+    REQUIRE(test_fold != nullptr);
+    // 1 + 2 * 3 + 4 = 11
+    REQUIRE(test_fold() == 11);
+}
+

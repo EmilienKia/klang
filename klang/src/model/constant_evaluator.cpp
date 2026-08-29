@@ -140,8 +140,37 @@ std::optional<constant_value> constant_evaluator::cast_to_type(
         }
     }
 
-    if (auto arr_type = std::dynamic_pointer_cast<array_type>(bare_target)) {
+    if (auto arr_target = std::dynamic_pointer_cast<array_type>(bare_target)) {
         if (val.is_array()) {
+            auto av = val.get_array();
+            if (!av) return std::nullopt;
+            if (auto sarr_target = std::dynamic_pointer_cast<sized_array_type>(arr_target)) {
+                if (av->size() != sarr_target->get_size()) {
+                    return std::nullopt;
+                }
+            }
+            auto target_elem = arr_target->get_subtype();
+            std::vector<constant_value> cast_elements;
+            cast_elements.reserve(av->size());
+            bool needed_elem_cast = false;
+            for (const auto& elem : av->get_elements()) {
+                auto ce = cast_to_type(elem, target_elem);
+                if (!ce) return std::nullopt;
+                if (!(*ce == elem)) needed_elem_cast = true;
+                cast_elements.push_back(std::move(*ce));
+            }
+            if (needed_elem_cast || (std::dynamic_pointer_cast<sized_array_type>(arr_target) && av->get_type() != arr_target)) {
+                std::shared_ptr<sized_array_type> sized_res;
+                if (auto sarr = std::dynamic_pointer_cast<sized_array_type>(arr_target)) {
+                    sized_res = sarr;
+                } else if (av->get_type() && av->get_type()->is_sized()) {
+                    sized_res = std::dynamic_pointer_cast<sized_array_type>(av->get_type());
+                } else if (target_elem) {
+                    sized_res = target_elem->get_array(cast_elements.size());
+                }
+                auto new_av = std::make_shared<array_value>(sized_res, std::move(cast_elements));
+                return constant_value(new_av);
+            }
             return val;
         }
     }
@@ -194,6 +223,15 @@ std::optional<constant_value> constant_evaluator::default_value_for_type(
         if (agg) {
             return eval_struct_init(agg, {});
         }
+    }
+
+    if (auto arr_type = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+        auto elem_type = arr_type->get_subtype();
+        auto default_elem = default_value_for_type(elem_type);
+        if (!default_elem) return std::nullopt;
+        std::vector<constant_value> elements(arr_type->get_size(), *default_elem);
+        auto av = std::make_shared<array_value>(arr_type, std::move(elements));
+        return constant_value(av);
     }
 
     if (type::is_any_indirection(bare)) {
@@ -301,6 +339,47 @@ std::optional<constant_value> constant_evaluator::eval_comparison(
                 if (s1 < s2) return constant_value(-1);
                 if (s1 == s2) return constant_value(0);
                 return constant_value(1);
+        }
+    }
+
+    if (left.is_array() && right.is_array()) {
+        auto a1 = left.get_array();
+        auto a2 = right.get_array();
+        if (a1 && a2) {
+            bool eq = (*a1 == *a2);
+            if (op == comparison_op::EQUAL) return constant_value(eq);
+            if (op == comparison_op::NOT_EQUAL) return constant_value(!eq);
+        }
+        return std::nullopt;
+    }
+
+    if (left.is_struct() && right.is_struct()) {
+        auto s1 = left.get_struct();
+        auto s2 = right.get_struct();
+        if (s1 && s2) {
+            bool eq = (*s1 == *s2);
+            if (op == comparison_op::EQUAL) return constant_value(eq);
+            if (op == comparison_op::NOT_EQUAL) return constant_value(!eq);
+        }
+        return std::nullopt;
+    }
+
+    if (left.is_enum() && right.is_enum()) {
+        const auto& e1 = left.get_enum();
+        const auto& e2 = right.get_enum();
+        if (e1.enum_def == e2.enum_def) {
+            switch (op) {
+                case comparison_op::EQUAL: return constant_value(e1 == e2);
+                case comparison_op::NOT_EQUAL: return constant_value(e1 != e2);
+                case comparison_op::LESS: return constant_value(e1.raw_value < e2.raw_value);
+                case comparison_op::LESS_EQUAL: return constant_value(e1.raw_value <= e2.raw_value);
+                case comparison_op::GREATER: return constant_value(e1.raw_value > e2.raw_value);
+                case comparison_op::GREATER_EQUAL: return constant_value(e1.raw_value >= e2.raw_value);
+                case comparison_op::SPACESHIP:
+                    if (e1.raw_value < e2.raw_value) return constant_value(-1);
+                    if (e1.raw_value == e2.raw_value) return constant_value(0);
+                    return constant_value(1);
+            }
         }
     }
 

@@ -895,6 +895,58 @@ llvm::Constant* context::get_llvm_constant_from_constant_value(const constant_va
         return llvm::ConstantStruct::get(llvm_st, fields);
     }
 
+    if (value.is_array()) {
+        auto av = value.get_array();
+        if (!av) return nullptr;
+        auto arr_type = std::dynamic_pointer_cast<sized_array_type>(expected_nc);
+        if (!arr_type && av->get_type()) {
+            arr_type = std::dynamic_pointer_cast<sized_array_type>(av->get_type());
+        }
+        if (!arr_type) return nullptr;
+
+        auto elem_type = arr_type->get_subtype();
+        auto* struct_llvm = arr_type->get_llvm_struct_type();
+        auto* arr_data_llvm = arr_type->get_llvm_data_array_type();
+        if (!struct_llvm || !arr_data_llvm) return nullptr;
+
+        size_t count = arr_type->get_size();
+        std::vector<llvm::Constant*> elem_consts;
+        elem_consts.reserve(count);
+
+        for (size_t i = 0; i < count; ++i) {
+            auto elem_val = av->get_element(i);
+            llvm::Constant* field_const = nullptr;
+            if (elem_val.has_value()) {
+                field_const = get_llvm_constant_from_constant_value(*elem_val, elem_type);
+            }
+            if (!field_const && elem_type) {
+                field_const = elem_type->generate_default_value_initializer();
+            }
+            if (!field_const) {
+                field_const = llvm::Constant::getNullValue(arr_data_llvm->getElementType());
+            }
+            auto* expected_elem = arr_data_llvm->getElementType();
+            if (field_const->getType() != expected_elem) {
+                if (auto* ci = llvm::dyn_cast<llvm::ConstantInt>(field_const);
+                    ci && expected_elem->isIntegerTy()) {
+                    field_const = llvm::ConstantInt::get(
+                        expected_elem,
+                        ci->getValue().sextOrTrunc(expected_elem->getIntegerBitWidth()));
+                } else if (field_const->isNullValue()) {
+                    field_const = llvm::Constant::getNullValue(expected_elem);
+                } else {
+                    return nullptr;
+                }
+            }
+            elem_consts.push_back(field_const);
+        }
+
+        auto* size_const = llvm::ConstantInt::get(
+            llvm::Type::getInt32Ty(*_context), count, false);
+        auto* data_const = llvm::ConstantArray::get(arr_data_llvm, elem_consts);
+        return llvm::ConstantStruct::get(struct_llvm, {size_const, data_const});
+    }
+
     if (value.is_float()) {
         double d = value.get_double();
         llvm::Type* target = expected_nc ? expected_nc->get_llvm_type() : llvm::Type::getDoubleTy(*_context);

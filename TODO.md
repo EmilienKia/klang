@@ -46,7 +46,7 @@
 - Improve log and debug messages
 - Add constant values expression computation at compile time, enhance compile-time evaluation capabilities
   - [x] Compile time evaluation of in-line structure initialization
-  - [ ] Compile time evaluation of in-line array initialization
+  - [x] Compile time evaluation of in-line array initialization
   - [x] Compile time evaluation of in-line union and enum initialization
   - [ ] Compile time evaluation of in-line complex object initialization
   - [ ] Compile time evaluation of in-line function calls, including constructors
