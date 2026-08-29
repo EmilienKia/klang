@@ -203,7 +203,7 @@ Grammar notation used here:
     falls off the closing `'}'` or executes a bare `'return'` `';'`.  See [Named Return Variables](functions/named-return.md).*
 
 <a id="throwsclause"></a>**ThrowsClause:**
-    `'throws'` [TypeSpec](#typespec) {{ `','` [TypeSpec](#typespec) }}
+    `'throws'` `'('` [TypeSpec](#typespec) {{ `','` [TypeSpec](#typespec) }} `')'`
 
     *Note: all types in the throws clause must derive from `::k::Throwable`.*
 

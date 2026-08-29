@@ -193,11 +193,12 @@ class ast_dump_visitor : public k::parse::ast_visitor {
                 frt.return_type->visit(*this);
             }
             if (!frt.throws_spec.empty()) {
-                _stm << " throws ";
+                _stm << " throws(";
                 for (size_t i = 0; i < frt.throws_spec.size(); ++i) {
                     if (i > 0) _stm << ", ";
                     frt.throws_spec[i]->visit(*this);
                 }
+                _stm << ")";
             }
         }
 

@@ -84,7 +84,7 @@ TEST_CASE("Exception: throws clause on function declaration", "[gen][exceptions]
 
         class MyError : public Exception { }
 
-        may_throw() : int throws MyError {
+        may_throw() : int throws(MyError) {
             return 7;
         }
     )");
@@ -101,7 +101,7 @@ TEST_CASE("Exception: throws clause with multiple types", "[gen][exceptions]") {
         class ErrorA : public Exception { }
         class ErrorB : public Exception { }
 
-        may_throw_multi() : int throws ErrorA, ErrorB {
+        may_throw_multi() : int throws(ErrorA, ErrorB) {
             return 99;
         }
     )");
@@ -122,7 +122,7 @@ TEST_CASE("Exception: throws clause type resolution — model inspection", "[gen
 
         class MyException : public Exception { }
 
-        risky() : int throws MyException {
+        risky() : int throws(MyException) {
             return 1;
         }
     )");
@@ -148,7 +148,7 @@ TEST_CASE("Exception: throws clause unknown type fails", "[gen][exceptions][reso
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
         module gen_exceptions_06;
 
-        bad_throws() : int throws NonExistentType {
+        bad_throws() : int throws(NonExistentType) {
             return 0;
         }
     )"), k::log::compiler_error);
@@ -165,7 +165,7 @@ TEST_CASE("Exception: throw statement compiles", "[gen][exceptions]") {
 
         class Err : public Exception { }
 
-        will_throw() : void throws Err {
+        will_throw() : void throws(Err) {
             e : Err;
             throw e;
         }
@@ -405,7 +405,7 @@ TEST_CASE("Exception contract: throw undeclared type in function with throws cla
         class ErrA : public Exception { }
         class ErrB : public Exception { }
 
-        risky() : void throws ErrA {
+        risky() : void throws(ErrA) {
             e : ErrB;
             throw e;
         }
@@ -419,7 +419,7 @@ TEST_CASE("Exception contract: throw declared type in function with throws claus
 
         class ErrA : public Exception { }
 
-        risky() : void throws ErrA {
+        risky() : void throws(ErrA) {
             e : ErrA;
             throw e;
         }
@@ -440,7 +440,7 @@ TEST_CASE("Exception contract: throw inside try-catch does not require throws cl
         class ErrA : public Exception { }
         class ErrB : public Exception { }
 
-        guarded() : int throws ErrA {
+        guarded() : int throws(ErrA) {
             result : int = 0;
             try {
                 e : ErrB;
@@ -465,12 +465,12 @@ TEST_CASE("Exception contract: call to throwing function not handled fails",
         class ErrA : public Exception { }
         class ErrB : public Exception { }
 
-        thrower() : void throws ErrB {
+        thrower() : void throws(ErrB) {
             e : ErrB;
             throw e;
         }
 
-        caller() : void throws ErrA {
+        caller() : void throws(ErrA) {
             thrower();
         }
     )"), k::log::compiler_error);
@@ -483,12 +483,12 @@ TEST_CASE("Exception contract: call to throwing function propagated via throws c
 
         class ErrB : public Exception { }
 
-        thrower() : void throws ErrB {
+        thrower() : void throws(ErrB) {
             e : ErrB;
             throw e;
         }
 
-        caller() : void throws ErrB {
+        caller() : void throws(ErrB) {
             thrower();
         }
 
@@ -508,12 +508,12 @@ TEST_CASE("Exception contract: call to throwing function caught in try-catch pas
         class ErrA : public Exception { }
         class ErrB : public Exception { }
 
-        thrower() : void throws ErrB {
+        thrower() : void throws(ErrB) {
             e : ErrB;
             throw e;
         }
 
-        caller() : int throws ErrA {
+        caller() : int throws(ErrA) {
             result : int = 0;
             try {
                 thrower();
@@ -559,7 +559,7 @@ TEST_CASE("Exception contract: calling unspec function from throws function need
         unspec() : void {
         }
 
-        caller() : void throws ErrA {
+        caller() : void throws(ErrA) {
             unspec();
         }
 
@@ -757,7 +757,7 @@ TEST_CASE("Exception contract: constructor with throws clause — new caught in 
         class Widget {
             val : int;
             public:
-            Widget(v: int) throws ErrA {
+            Widget(v: int) throws(ErrA) {
                 if (v < 0) {
                     throw ErrA(v);
                 }
@@ -813,12 +813,12 @@ TEST_CASE("Exception contract: constructor with throws clause — new not handle
         class Widget {
             val : int;
             public:
-            Widget(v: int) throws ErrA {
+            Widget(v: int) throws(ErrA) {
                 val = v;
             }
         }
 
-        caller() : int throws ErrB {
+        caller() : int throws(ErrB) {
             w : Widget! = new Widget(10);
             delete w;
             return 0;
@@ -840,7 +840,7 @@ TEST_CASE("Exception contract: constructor with throws clause — propagated via
         class Widget {
             val : int;
             public:
-            Widget(v: int) throws ErrA {
+            Widget(v: int) throws(ErrA) {
                 if (v < 0) {
                     throw ErrA(v);
                 }
@@ -849,7 +849,7 @@ TEST_CASE("Exception contract: constructor with throws clause — propagated via
             getVal() : int { return val; }
         }
 
-        make_widget(v: int) : Widget! throws ErrA {
+        make_widget(v: int) : Widget! throws(ErrA) {
             return new Widget(v);
         }
 
@@ -876,7 +876,7 @@ TEST_CASE("Exception contract: struct constructor with throws clause — local v
         struct Point {
             x : int;
             y : int;
-            Point(px: int, py: int) throws ErrA {
+            Point(px: int, py: int) throws(ErrA) {
                 if (px < 0) {
                     throw ErrA(px);
                 }
@@ -929,13 +929,13 @@ TEST_CASE("Exception contract: struct constructor with throws clause — local v
         struct Point {
             x : int;
             y : int;
-            Point(px: int, py: int) throws ErrA {
+            Point(px: int, py: int) throws(ErrA) {
                 x = px;
                 y = py;
             }
         }
 
-        caller() : int throws ErrB {
+        caller() : int throws(ErrB) {
             p : Point(5, 10);
             return p.x + p.y;
         }
@@ -955,7 +955,7 @@ TEST_CASE("Exception contract: temporary construction with throws clause — cau
 
         class Gadget : public Exception {
             public:
-            Gadget(v: int) throws ErrA {
+            Gadget(v: int) throws(ErrA) {
                 if (v < 0) {
                     throw ErrA(v);
                 }
@@ -1013,7 +1013,7 @@ TEST_CASE("Exception contract: constructor without throws clause — no enforcem
             getVal() : int { return val; }
         }
 
-        caller() : int throws ErrA {
+        caller() : int throws(ErrA) {
             s : Simple! = new Simple(42);
             result : int = s->getVal();
             delete s;
@@ -1050,7 +1050,7 @@ TEST_CASE("Exception contract: cross-module constructor throws — local and new
             class Sensor {
                 value : int;
                 public:
-                Sensor(v: int) throws InitError {
+                Sensor(v: int) throws(InitError) {
                     if (v < 0) {
                         throw InitError(v);
                     }
@@ -1153,7 +1153,7 @@ TEST_CASE("ConstructionException: UniSlot construct catches throwing constructor
         class Widget {
             val : int;
             public:
-            Widget(v: int) throws InitErr {
+            Widget(v: int) throws(InitErr) {
                 if (v < 0) {
                     throw InitErr(v);
                 }
@@ -1209,7 +1209,7 @@ TEST_CASE("ConstructionException: MultiSlot construct catches throwing construct
         class Widget {
             val : int;
             public:
-            Widget(v: int) throws InitErr {
+            Widget(v: int) throws(InitErr) {
                 if (v < 0) {
                     throw InitErr(v);
                 }
@@ -1305,12 +1305,12 @@ TEST_CASE("ConstructionException: no throws declaration needed — FatalError pr
         class Widget {
             val : int;
             public:
-            Widget(v: int) throws InitErr {
+            Widget(v: int) throws(InitErr) {
                 val = v;
             }
         }
 
-        caller() : int throws InitErr {
+        caller() : int throws(InitErr) {
             slot : UniSlot<Widget>;
             slot.construct<int>(10);
             return 0;
@@ -1495,7 +1495,7 @@ TEST_CASE("Exception: bare throw rethrows to caller", "[gen][exceptions][rethrow
             AppErr() : Exception(7) { }
         }
 
-        rethrower() : void throws AppErr {
+        rethrower() : void throws(AppErr) {
             try {
                 throw AppErr();
             } catch (e: AppErr&) {
@@ -1526,7 +1526,7 @@ TEST_CASE("Exception: bare throw outside catch block fails compilation", "[gen][
 
         class MyErr : public Exception { }
 
-        bad_rethrow() : void throws MyErr {
+        bad_rethrow() : void throws(MyErr) {
             throw;
         }
     )"), k::log::compiler_error);
@@ -1539,7 +1539,7 @@ TEST_CASE("Exception: bare throw outside catch in function body fails", "[gen][e
 
         class MyErr : public Exception { }
 
-        bad_rethrow() : void throws MyErr {
+        bad_rethrow() : void throws(MyErr) {
             try {
                 throw;
             } catch (e: MyErr&) {
@@ -1619,7 +1619,7 @@ TEST_CASE("Exception: bare throw with contract — declared in throws clause", "
             ErrB() : Exception(55) { }
         }
 
-        rethrower_declared() : void throws ErrB {
+        rethrower_declared() : void throws(ErrB) {
             try {
                 throw ErrB();
             } catch (e: ErrB&) {
@@ -1679,7 +1679,7 @@ TEST_CASE("Exception: finally executes after catch", "[gen][exceptions][finally]
             TestErr() : Exception(200) { }
         }
 
-        thrower() : void throws TestErr {
+        thrower() : void throws(TestErr) {
             throw TestErr();
         }
 
@@ -1736,7 +1736,7 @@ TEST_CASE("Exception: finally executes on unmatched exception", "[gen][exception
             ErrY() : Exception(301) { }
         }
 
-        thrower_x() : void throws ErrX {
+        thrower_x() : void throws(ErrX) {
             throw ErrX();
         }
 
@@ -1816,7 +1816,7 @@ TEST_CASE("Exception: finally does not suppress exception", "[gen][exceptions][f
             PropErr() : Exception(400) { }
         }
 
-        thrower_prop() : void throws PropErr {
+        thrower_prop() : void throws(PropErr) {
             throw PropErr();
         }
 
@@ -1900,7 +1900,7 @@ TEST_CASE("Exception: finally runs on return from catch body", "[gen][exceptions
             ErrP2() : Exception(500) { }
         }
 
-        thrower_p2() : void throws ErrP2 {
+        thrower_p2() : void throws(ErrP2) {
             throw ErrP2();
         }
 
@@ -2001,7 +2001,7 @@ TEST_CASE("Exception: finally runs on break from catch body in loop", "[gen][exc
             ErrLoop() : Exception(501) { }
         }
 
-        thrower_loop() : void throws ErrLoop {
+        thrower_loop() : void throws(ErrLoop) {
             throw ErrLoop();
         }
 
@@ -2253,12 +2253,12 @@ TEST_CASE("Exception chaining: cause survives after inner catch exits", "[gen][e
             OuterErr(cause: Throwable?) : Exception(66, cause) {}
         }
 
-        risky() : void throws InnerErr {
+        risky() : void throws(InnerErr) {
             e : InnerErr;
             throw e;
         }
 
-        wrapper() : void throws OuterErr {
+        wrapper() : void throws(OuterErr) {
             try {
                 risky();
             } catch (inner : InnerErr&) {
@@ -2909,7 +2909,7 @@ TEST_CASE("Exception: throw through a virtual call on a local interface is catch
 
         class Failing : public Task {
         public:
-            override perform() : int throws Exception {
+            override perform() : int throws(Exception) {
                 throw Exception(7);
             }
         }
@@ -2946,7 +2946,7 @@ TEST_CASE("Exception: throw through a virtual call on a local class is catchable
         class Derived : public Base {
         public:
             Derived() {}
-            override perform() : int throws Exception {
+            override perform() : int throws(Exception) {
                 throw Exception(9);
             }
         }
@@ -2992,7 +2992,7 @@ TEST_CASE("Exception: virtual call unwinding runs destructors of live locals",
 
         class Failing : public Task {
         public:
-            override perform() : int throws Exception {
+            override perform() : int throws(Exception) {
                 throw Exception(3);
             }
         }
@@ -3044,7 +3044,7 @@ TEST_CASE("exceptions: a landing pad reached before an owner declaration must no
 
             // The throw happens before `p` exists; unwinding must not treat the
             // still-uninitialised owner slot as a live allocation.
-            work(fail: bool) : int throws Exception {
+            work(fail: bool) : int throws(Exception) {
                 if (fail) {
                     throw Exception(7);
                 }

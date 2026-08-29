@@ -74,7 +74,7 @@ public interface Lock {
      * Acquire the lock, honouring interruption.
      * @throws ThreadInterruptionException the calling thread was interrupted.
      */
-    lockInterruptibly() : void throws ThreadInterruptionException;
+    lockInterruptibly() : void throws(ThreadInterruptionException);
 
     /**
      * Try to acquire the lock without blocking.
@@ -86,7 +86,7 @@ public interface Lock {
      * Release the lock.
      * @throws IllegalMonitorStateException the calling thread does not hold it.
      */
-    unlock() : void throws IllegalMonitorStateException;
+    unlock() : void throws(IllegalMonitorStateException);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -153,7 +153,7 @@ public class Mutex : public Lock {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared.
      */
-    override lockInterruptibly() : void throws ThreadInterruptionException {
+    override lockInterruptibly() : void throws(ThreadInterruptionException) {
         rc : int = __k_mutex_lock_interruptibly(_native, -1L);
         if (rc == SYNC_INTERRUPTED) {
             Thread::interrupted();
@@ -178,7 +178,7 @@ public class Mutex : public Lock {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared.
      */
-    tryLock(timeout: Duration&) : bool throws ThreadInterruptionException {
+    tryLock(timeout: Duration&) : bool throws(ThreadInterruptionException) {
         rc : int = __k_mutex_lock_interruptibly(_native, timeout.toNanos());
         if (rc == SYNC_INTERRUPTED) {
             Thread::interrupted();
@@ -191,7 +191,7 @@ public class Mutex : public Lock {
      * Release the lock.
      * @throws IllegalMonitorStateException the calling thread does not hold it.
      */
-    override unlock() : void throws IllegalMonitorStateException {
+    override unlock() : void throws(IllegalMonitorStateException) {
         if (__k_mutex_unlock(_native) != SYNC_OK) {
             throw IllegalMonitorStateException();
         }
@@ -296,7 +296,7 @@ public class Condition {
      * @throws IllegalMonitorStateException the calling thread does not hold the
      *         associated lock.
      */
-    await() : void throws ThreadInterruptionException, IllegalMonitorStateException {
+    await() : void throws(ThreadInterruptionException, IllegalMonitorStateException) {
         rc : int = __k_cond_await(_native, -1L, 1);
         if (rc == SYNC_ILLEGAL) {
             throw IllegalMonitorStateException();
@@ -317,7 +317,7 @@ public class Condition {
      * @throws IllegalMonitorStateException the calling thread does not hold the
      *         associated lock.
      */
-    await(timeout: Duration&) : bool throws ThreadInterruptionException, IllegalMonitorStateException {
+    await(timeout: Duration&) : bool throws(ThreadInterruptionException, IllegalMonitorStateException) {
         rc : int = __k_cond_await(_native, timeout.toNanos(), 1);
         if (rc == SYNC_ILLEGAL) {
             throw IllegalMonitorStateException();
@@ -337,7 +337,7 @@ public class Condition {
      * @throws IllegalMonitorStateException the calling thread does not hold the
      *         associated lock.
      */
-    awaitUninterruptibly() : void throws IllegalMonitorStateException {
+    awaitUninterruptibly() : void throws(IllegalMonitorStateException) {
         if (__k_cond_await(_native, -1L, 0) == SYNC_ILLEGAL) {
             throw IllegalMonitorStateException();
         }
@@ -348,7 +348,7 @@ public class Condition {
      * @throws IllegalMonitorStateException the calling thread does not hold the
      *         associated lock.
      */
-    signal() : void throws IllegalMonitorStateException {
+    signal() : void throws(IllegalMonitorStateException) {
         if (__k_cond_signal(_native) != SYNC_OK) {
             throw IllegalMonitorStateException();
         }
@@ -359,7 +359,7 @@ public class Condition {
      * @throws IllegalMonitorStateException the calling thread does not hold the
      *         associated lock.
      */
-    signalAll() : void throws IllegalMonitorStateException {
+    signalAll() : void throws(IllegalMonitorStateException) {
         if (__k_cond_signal_all(_native) != SYNC_OK) {
             throw IllegalMonitorStateException();
         }

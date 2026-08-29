@@ -1415,3 +1415,125 @@ TEST_CASE("No doc-comment leaves node doc as nullopt",
     REQUIRE_FALSE(unit->declarations[0]->doc.has_value());
 }
 
+//
+// Throws clause tests
+//
+
+TEST_CASE("Parse function declaration with throws clause", "[parser][function][throws]") {
+    test_logger log;
+    k::source src{"foo() : int throws(MyError);"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+
+    REQUIRE(decl);
+    REQUIRE(decl->has_throws_clause);
+    REQUIRE(decl->throws_spec.size() == 1);
+    REQUIRE(decl->throws_spec[0]->names.size() == 1);
+    CHECK(decl->throws_spec[0]->names[0].content == "MyError");
+}
+
+TEST_CASE("Parse function declaration with multiple throws types", "[parser][function][throws]") {
+    test_logger log;
+    k::source src{"bar() : void throws(ErrorA, ErrorB) {}"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+
+    REQUIRE(decl);
+    REQUIRE(decl->has_throws_clause);
+    REQUIRE(decl->throws_spec.size() == 2);
+    CHECK(decl->throws_spec[0]->names[0].content == "ErrorA");
+    CHECK(decl->throws_spec[1]->names[0].content == "ErrorB");
+}
+
+TEST_CASE("Parse function declaration with empty throws clause", "[parser][function][throws]") {
+    test_logger log;
+    k::source src{"baz() : void throws() {}"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+
+    REQUIRE(decl);
+    REQUIRE(decl->has_throws_clause);
+    REQUIRE(decl->throws_spec.empty());
+}
+
+TEST_CASE("Parse callable type specifier with throws clause", "[parser][type][callable][throws]") {
+    test_logger log;
+    k::source src{"*(int):int throws(MyError)"};
+    k::parse::parser parser(log, src);
+    auto type = parser.parse_type_spec();
+
+    REQUIRE(type);
+    auto frt = std::dynamic_pointer_cast<ast::callable_type_specifier>(type);
+    REQUIRE(frt);
+    REQUIRE(frt->throws_spec.size() == 1);
+}
+
+TEST_CASE("Parse callable type specifier with multiple throws types", "[parser][type][callable][throws]") {
+    test_logger log;
+    k::source src{"*(int):int throws(ErrorA, ErrorB)"};
+    k::parse::parser parser(log, src);
+    auto type = parser.parse_type_spec();
+
+    REQUIRE(type);
+    auto frt = std::dynamic_pointer_cast<ast::callable_type_specifier>(type);
+    REQUIRE(frt);
+    REQUIRE(frt->throws_spec.size() == 2);
+}
+
+TEST_CASE("Parse throws clause without open paren throws ERR_THROWS_EXPECT_OPEN_PAREN", "[parser][function][throws][error]") {
+    test_logger log;
+    k::source src{"foo() : int throws MyError;"};
+    k::parse::parser parser(log, src);
+
+    try {
+        (void)parser.parse_function_decl();
+        FAIL("Expected parsing_error");
+    } catch (const k::parse::parsing_error& err) {
+        REQUIRE(err.get_diagnostic().code
+                == static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_OPEN_PAREN));
+    }
+}
+
+TEST_CASE("Parse throws clause without close paren throws ERR_THROWS_EXPECT_CLOSE_PAREN", "[parser][function][throws][error]") {
+    test_logger log;
+    k::source src{"foo() : int throws(MyError;"};
+    k::parse::parser parser(log, src);
+
+    try {
+        (void)parser.parse_function_decl();
+        FAIL("Expected parsing_error");
+    } catch (const k::parse::parsing_error& err) {
+        REQUIRE(err.get_diagnostic().code
+                == static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_CLOSE_PAREN));
+    }
+}
+
+TEST_CASE("Parse callable throws clause without open paren throws ERR_THROWS_EXPECT_OPEN_PAREN", "[parser][type][callable][throws][error]") {
+    test_logger log;
+    k::source src{"*(int):int throws MyError"};
+    k::parse::parser parser(log, src);
+
+    try {
+        (void)parser.parse_type_spec();
+        FAIL("Expected parsing_error");
+    } catch (const k::parse::parsing_error& err) {
+        REQUIRE(err.get_diagnostic().code
+                == static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_OPEN_PAREN));
+    }
+}
+
+TEST_CASE("Parse callable throws clause without close paren throws ERR_THROWS_EXPECT_CLOSE_PAREN", "[parser][type][callable][throws][error]") {
+    test_logger log;
+    k::source src{"*(int):int throws(MyError"};
+    k::parse::parser parser(log, src);
+
+    try {
+        (void)parser.parse_type_spec();
+        FAIL("Expected parsing_error");
+    } catch (const k::parse::parsing_error& err) {
+        REQUIRE(err.get_diagnostic().code
+                == static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_CLOSE_PAREN));
+    }
+}
+
+

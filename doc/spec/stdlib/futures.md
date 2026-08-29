@@ -155,13 +155,13 @@ class Producer : public Runnable {
     _p : Promise<int>*;
     public:
     Producer(p: Promise<int>*) { _p = p; }
-    override run() : void throws Throwable {
+    override run() : void throws(Throwable) {
         Thread::sleep(Duration::ofMillis(50L));
         _p->trySuccess(42);
     }
 }
 
-compute() : int throws Throwable {
+compute() : int throws(Throwable) {
     p : Promise<int>;
     f : Future<int>! = p.future();
 

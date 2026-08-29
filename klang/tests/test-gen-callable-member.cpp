@@ -405,14 +405,14 @@ TEST_CASE("Callable member: a bound callable called inside a try catches the thr
         }
         struct Thrower {
             base : int;
-            go(x : int) : int throws Boom {
+            go(x : int) : int throws(Boom) {
                 throw Boom(base + x);
             }
         }
         test() : int {
             t : Thrower;
             t.base = 2;
-            f : *(int):int throws Boom = t.go;
+            f : *(int):int throws(Boom) = t.go;
             try {
                 f(40);
             } catch (e : Boom&) {

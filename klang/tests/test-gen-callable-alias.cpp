@@ -343,7 +343,7 @@ TEST_CASE("callable mangling — addresser, return type and throws are all encod
         byLink(f: +(int):int) : void { }
         byView(f: ?(int):int) : void { }
         otherRet(f: *(int):bool) : void { }
-        withThrows(f: *(int):int throws Err) : void { }
+        withThrows(f: *(int):int throws(Err)) : void { }
     )SRC");
 
     auto mangled = [&](const std::string& name) {
@@ -371,21 +371,17 @@ TEST_CASE("callable mangling — addresser, return type and throws are all encod
 }
 
 // =============================================================================
-// Known limitation (see TODO.md, "Callable throws clause in a parameter list")
+// Disambiguation of callable throws clause in parameter lists
 // =============================================================================
 
-// The `throws` list of a callable type specification is parsed greedily, so the
-// comma that separates two parameters is swallowed by the exception list and the
-// declaration below fails to parse. Until the grammar disambiguates the two
-// commas, a callable parameter carrying a `throws` clause must come last.
-TEST_CASE("callable throws clause in a parameter list is greedy",
-          "[.][gen][callable][throws][parser-limitation]") {
+TEST_CASE("callable throws clause in a parameter list with trailing parameters",
+          "[gen][callable][throws]") {
     auto jit = gen_jit(R"SRC(
         module gen_callable_alias_17;
         class Boom { }
         twice(x: int) : int { return x * 2; }
-        call(f: *(int):int throws Boom, v: int) : int throws Boom { return f(v); }
-        run() : int throws Boom { return call(twice, 21); }
+        call(f: *(int):int throws(Boom), v: int) : int throws(Boom) { return f(v); }
+        run() : int throws(Boom) { return call(twice, 21); }
     )SRC");
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);

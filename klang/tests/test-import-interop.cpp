@@ -378,7 +378,7 @@ TEST_CASE("cross-module callable — mangling stays stable across import",
             // The throws clause of a callable parameter type is greedy, so such a
             // parameter must come last (see TODO.md, "callable throws clause in a
             // parameter list").
-            public withThrows(v: int, f: *(int):int throws Boom) : int throws Boom { return f(v); }
+            public withThrows(v: int, f: *(int):int throws(Boom)) : int throws(Boom) { return f(v); }
         )K",
         R"K(
             module import_interop_18;

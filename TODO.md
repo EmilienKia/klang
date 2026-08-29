@@ -60,7 +60,7 @@
   chaining). Remaining gaps:
     - [x] Exception specifications on function pointer/reference types — **Done in Phase B.2**: Callable types 
       now carry explicit throws clauses like free functions; KDI import/export and variance checking all 
-      respect the throws set.
+      respect the throws set. Parenthesised syntax `throws(...)` eliminates greedy-comma parameter ambiguity.
     - [ ] `noexcept` conditional expression (`noexcept(expr)`)
     - [ ] Exception handling in static constructors/destructors
     - [ ] Unhandled FatalError diagnostic: when an uncaught FatalError propagates past `main()`, the runtime should print a diagnostic message (exception type, code, optional stack trace) before terminating the process

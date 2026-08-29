@@ -333,7 +333,7 @@ Default error code: **11**.
 
 ```k
 // Checked exception: must be declared in throws clause
-riskyOperation() : int throws IllegalArgumentException {
+riskyOperation() : int throws(IllegalArgumentException) {
     throw IllegalArgumentException();
 }
 

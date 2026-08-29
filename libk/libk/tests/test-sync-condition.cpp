@@ -151,7 +151,7 @@ TEST_CASE("Condition: await returns once another thread signals", "[libk][sync][
             _s : Shared*;
             public:
             Producer(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 Thread::sleep(Duration::ofMillis(50L));
                 _s->lock.lock();
                 _s->value = 42;
@@ -214,7 +214,7 @@ TEST_CASE("Condition: signalAll releases every waiter", "[libk][sync][condition]
             _s : Shared*;
             public:
             Waiter(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 _s->lock.lock();
                 while (!_s->open) {
                     _s->cond->await();
@@ -283,7 +283,7 @@ TEST_CASE("Condition: a blocked await is interruptible", "[libk][sync][condition
             _outcome : int = 0;
             _heldOnExit : bool = false;
             Waiter(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 _s->lock.lock();
                 try {
                     _s->ready->countDown();

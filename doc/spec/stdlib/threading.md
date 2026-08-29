@@ -124,7 +124,7 @@ since an unspecified epoch.
 
 ```k
 public interface Runnable {
-    run() : void throws Throwable;
+    run() : void throws(Throwable);
 }
 ```
 
@@ -177,8 +177,8 @@ and join explicitly when you need a bounded shutdown.
 
 | Signature | Description |
 |-----------|-------------|
-| `join() : void throws ThreadInterruptionException` | Block until the thread terminates. |
-| `join(timeout: const Duration&) : void throws ThreadInterruptionException, TimeoutException` | Block until the thread terminates or `timeout` elapses, in which case `TimeoutException` is thrown and the thread keeps running. |
+| `join() : void throws(ThreadInterruptionException)` | Block until the thread terminates. |
+| `join(timeout: const Duration&) : void throws(ThreadInterruptionException, TimeoutException)` | Block until the thread terminates or `timeout` elapses, in which case `TimeoutException` is thrown and the thread keeps running. |
 
 ### Interruption
 
@@ -187,7 +187,7 @@ and join explicitly when you need a bounded shutdown.
 | `interrupt() : void` | Set this thread's interrupted flag and wake it from any blocking point. Does not terminate the thread. |
 | `const isInterrupted() : bool` | Read this thread's flag without clearing it. |
 | `static interrupted() : bool` | Read **and clear** the calling thread's flag. |
-| `static checkInterrupted() : void throws ThreadInterruptionException` | Throw (and clear the flag) if the calling thread has been interrupted. |
+| `static checkInterrupted() : void throws(ThreadInterruptionException)` | Throw (and clear the flag) if the calling thread has been interrupted. |
 
 A thread blocked in `Thread::sleep()` or `join()` when it is interrupted wakes
 up immediately, clears its flag, and throws `ThreadInterruptionException`.
@@ -197,7 +197,7 @@ up immediately, clears its flag, and throws `ThreadInterruptionException`.
 | Signature | Description |
 |-----------|-------------|
 | `static current() : Thread!` | A non-owning `Thread` wrapper on the calling thread. Its destructor does not join anything. |
-| `static sleep(duration: const Duration&) : void throws ThreadInterruptionException` | Suspend the calling thread for at least `duration`. A non-positive duration returns immediately. |
+| `static sleep(duration: const Duration&) : void throws(ThreadInterruptionException)` | Suspend the calling thread for at least `duration`. A non-positive duration returns immediately. |
 | `static yield() : void` | Hint to the scheduler that the calling thread is willing to give up the CPU. |
 
 ### Example — interrupting a sleeper

@@ -45,7 +45,7 @@ public interface Runnable {
      *
      * @throws Throwable any error raised by the task body.
      */
-    run() : void throws Throwable;
+    run() : void throws(Throwable);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -171,7 +171,7 @@ public:
      * @throws ThreadInterruptionException if the calling thread is interrupted
      *         while waiting.
      */
-    join() : void throws ThreadInterruptionException {
+    join() : void throws(ThreadInterruptionException) {
         const result : int = __k_thread_join(_native);
         if (result == 1) {
             throw ThreadInterruptionException();
@@ -185,7 +185,7 @@ public:
      * @throws ThreadInterruptionException if the calling thread is interrupted.
      * @throws TimeoutException if the timeout elapses before termination.
      */
-    join(timeout: const Duration&) : void throws ThreadInterruptionException, TimeoutException {
+    join(timeout: const Duration&) : void throws(ThreadInterruptionException, TimeoutException) {
         const result : int = __k_thread_join_timed(_native, timeout.toNanos());
         if (result == 1) {
             throw ThreadInterruptionException();
@@ -243,7 +243,7 @@ public:
      *
      * @throws ThreadInterruptionException if interrupted.
      */
-    static checkInterrupted() : void throws ThreadInterruptionException {
+    static checkInterrupted() : void throws(ThreadInterruptionException) {
         if (__k_thread_interrupted_and_clear()) {
             throw ThreadInterruptionException();
         }
@@ -256,7 +256,7 @@ public:
      * @param duration Time to sleep.
      * @throws ThreadInterruptionException if the thread is interrupted.
      */
-    static sleep(duration: const Duration&) : void throws ThreadInterruptionException {
+    static sleep(duration: const Duration&) : void throws(ThreadInterruptionException) {
         const result : int = __k_thread_sleep_nanos(duration.toNanos());
         if (result == 1) {
             throw ThreadInterruptionException();

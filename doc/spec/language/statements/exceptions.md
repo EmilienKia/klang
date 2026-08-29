@@ -158,7 +158,7 @@ retry(attempts: int) : int {
 }
 
 // Rethrow to the caller:
-relay() : void throws NetError {
+relay() : void throws(NetError) {
     try {
         throw NetError();
     } catch (e: NetError&) {
@@ -280,14 +280,14 @@ trace() : int {
 
 ```
 ThrowsClause:
-    'throws' TypeSpec { ',' TypeSpec }
+    'throws' '(' [ TypeSpec { ',' TypeSpec } ] ')'
 ```
 
 The `throws` clause appears after the return type and before the function body
 (or `-> default` / `-> delete`):
 
 ```k
-myFunc(a: int) : int throws IOException, ParseException {
+myFunc(a: int) : int throws(IOException, ParseException) {
     // ...
 }
 ```
@@ -356,7 +356,7 @@ class InitError : public Exception {
 class Sensor {
     value : int;
     public:
-    Sensor(v: int) throws InitError {
+    Sensor(v: int) throws(InitError) {
         if (v < 0) {
             throw InitError(v);
         }
@@ -412,7 +412,7 @@ class NetworkError : public Exception {
 }
 
 // This function declares its exception contract
-fetchData() : int throws NetworkError {
+fetchData() : int throws(NetworkError) {
     throw NetworkError();
 }
 
@@ -428,7 +428,7 @@ process() : int {
 }
 
 // Caller propagates the exception
-proxy() : int throws NetworkError {
+proxy() : int throws(NetworkError) {
     return fetchData();  // OK — NetworkError is declared in our throws clause
 }
 ```

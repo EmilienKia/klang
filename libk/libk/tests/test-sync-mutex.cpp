@@ -192,7 +192,7 @@ TEST_CASE("Mutex: concurrent increments are serialised", "[libk][sync][mutex][th
                 _shared = s;
                 _rounds = rounds;
             }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 i : int = 0;
                 while (i < _rounds) {
                     _shared->lock.lock();
@@ -246,7 +246,7 @@ TEST_CASE("Mutex: tryLock fails while another thread holds the lock", "[libk][sy
             _s : Shared*;
             public:
             Holder(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 _s->lock.lock();
                 _s->ready->countDown();
                 _s->done->await();
@@ -316,7 +316,7 @@ TEST_CASE("Mutex: lockInterruptibly honours a pending interruption", "[libk][syn
             public:
             _outcome : int = 0;
             Blocker(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 try {
                     _s->ready->countDown();
                     _s->lock.lockInterruptibly();

@@ -148,7 +148,7 @@ TEST_CASE("CountDownLatch: await returns once every worker counted down", "[libk
                 _latch = l;
                 _delayMillis = delayMillis;
             }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 Thread::sleep(Duration::ofMillis(_delayMillis));
                 _latch->countDown();
             }
@@ -203,7 +203,7 @@ TEST_CASE("CountDownLatch: a blocked await is interruptible", "[libk][sync][latc
             public:
             _outcome : int = 0;
             Blocker(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 try {
                     _s->ready->countDown();
                     _s->gate->await();
@@ -333,7 +333,7 @@ TEST_CASE("CyclicBarrier: every party crosses together", "[libk][sync][barrier][
                 _s = s;
                 _delayMillis = delayMillis;
             }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 Thread::sleep(Duration::ofMillis(_delayMillis));
                 _s->lock.lock();
                 _s->beforeCount = _s->beforeCount + 1;
@@ -401,7 +401,7 @@ TEST_CASE("CyclicBarrier: an interrupted party breaks the barrier", "[libk][sync
             public:
             _outcome : int = 0;
             Party(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 try {
                     _s->ready->countDown();
                     _s->barrier->await();

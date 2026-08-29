@@ -79,11 +79,12 @@ std::string params_to_string(const std::vector<kdi_param>& params) {
 std::string throws_to_string(const std::vector<kdi_type>& throws_spec) {
     if (throws_spec.empty()) return {};
     std::ostringstream out;
-    out << " throws ";
+    out << " throws(";
     for (std::size_t i = 0; i < throws_spec.size(); ++i) {
         if (i) out << ", ";
         out << kdi_type_to_string(throws_spec[i]);
     }
+    out << ")";
     return out.str();
 }
 
@@ -343,11 +344,12 @@ std::string kdi_type_to_string(const kdi_type& type) {
                 out << " : " << kdi_type_to_string(*v.ret);
             }
             if (!v.throws.empty()) {
-                out << " throws ";
+                out << " throws(";
                 for (std::size_t i = 0; i < v.throws.size(); ++i) {
                     if (i) out << ", ";
                     out << (v.throws[i] ? kdi_type_to_string(*v.throws[i]) : "?");
                 }
+                out << ")";
             }
             return out.str();
         }

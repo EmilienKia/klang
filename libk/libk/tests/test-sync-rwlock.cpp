@@ -142,7 +142,7 @@ TEST_CASE("ReadWriteLock: a reader waits for the writer to finish", "[libk][sync
             _s : Shared*;
             public:
             Writer(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 _s->lock->writeLock();
                 _s->ready->countDown();
                 Thread::sleep(Duration::ofMillis(80L));
@@ -211,7 +211,7 @@ TEST_CASE("ReadWriteLock: a writer waits for readers to leave", "[libk][sync][rw
             public:
             _blockedWhileReading : bool = false;
             Writer(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 _s->ready->await();
                 _blockedWhileReading = !_s->lock->tryWriteLock(Duration::ofMillis(20L));
                 _s->done->countDown();
@@ -282,7 +282,7 @@ TEST_CASE("ReadWriteLock: readers never observe a torn write", "[libk][sync][rwl
             _s : Shared*;
             public:
             Mutator(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 i : int = 0;
                 while (i < 500) {
                     _s->lock->writeLock();
@@ -302,7 +302,7 @@ TEST_CASE("ReadWriteLock: readers never observe a torn write", "[libk][sync][rwl
             _torn : int = 0;
             _reads : long = 0L;
             Reader(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 i : int = 0;
                 while (i < 500) {
                     _s->lock->readLock();

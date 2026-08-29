@@ -326,7 +326,7 @@ TEST_CASE("Future: get() blocks until another thread publishes", "[libk][future]
                 _p = p;
                 _delayMillis = delayMillis;
             }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 Thread::sleep(Duration::ofMillis(_delayMillis));
                 _p->trySuccess(99);
             }
@@ -365,7 +365,7 @@ TEST_CASE("Future: a failure published from another thread reaches get()", "[lib
             _p : Promise<int>*;
             public:
             Failer(p: Promise<int>*) { _p = p; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 Thread::sleep(Duration::ofMillis(40L));
                 _p->tryFailure(new Exception(31));
             }
@@ -414,7 +414,7 @@ TEST_CASE("Future: a blocking get() is interruptible", "[libk][future][thread]")
             public:
             _outcome : int = 0;
             Waiter(f: Future<int>*) { _f = f; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 try {
                     v : int = _f->get();
                     _outcome = 1;
@@ -459,7 +459,7 @@ TEST_CASE("Future: completion wins over a concurrent interruption", "[libk][futu
             public:
             _outcome : int = 0;
             Waiter(f: Future<int>*) { _f = f; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 try {
                     _outcome = _f->get();
                 } catch (e: ThreadInterruptionException&) {
@@ -506,7 +506,7 @@ TEST_CASE("Future: an already-interrupted thread fails a blocking get()", "[libk
             public:
             _outcome : int = 0;
             Waiter(f: Future<int>*) { _f = f; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 self : Thread! = Thread::current();
                 self->interrupt();
                 try {

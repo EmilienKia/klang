@@ -974,11 +974,12 @@ std::string callable_type::to_string() const {
     stm << ")";
     if (_return_type) stm << ":" << _return_type->to_string();
     if (!_throws.empty()) {
-        stm << " throws ";
+        stm << " throws(";
         for (size_t n = 0; n < _throws.size(); ++n) {
             if (n > 0) stm << ", ";
             stm << (_throws[n] ? _throws[n]->to_string() : "<null>");
         }
+        stm << ")";
     }
     return stm.str();
 }

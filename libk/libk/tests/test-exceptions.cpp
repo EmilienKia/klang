@@ -163,7 +163,7 @@ TEST_CASE("Exception: throwing Exception itself compiles", "[libk][exception]") 
     auto jit = jit_k(R"SRC(
         module __test_exc_throw_base__;
 
-        thrower() : void throws Exception {
+        thrower() : void throws(Exception) {
             e : Exception(99);
             throw e;
         }
@@ -212,7 +212,7 @@ TEST_CASE("Exception: catch by base Throwable", "[libk][exception][run][.][throw
     auto jit = jit_k(R"SRC(
         module __test_exc_catch_base__;
 
-        thrower() : void throws NullPointerException {
+        thrower() : void throws(NullPointerException) {
             throw NullPointerException();
         }
 

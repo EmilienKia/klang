@@ -84,7 +84,7 @@ public class Semaphore {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared and no permit is consumed.
      */
-    acquire() : void throws ThreadInterruptionException {
+    acquire() : void throws(ThreadInterruptionException) {
         if (__k_sem_acquire(_native, 1, -1L) == SYNC_INTERRUPTED) {
             Thread::interrupted();
             throw ThreadInterruptionException();
@@ -99,7 +99,7 @@ public class Semaphore {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared and no permit is consumed.
      */
-    acquire(permits: int) : void throws ThreadInterruptionException {
+    acquire(permits: int) : void throws(ThreadInterruptionException) {
         if (__k_sem_acquire(_native, permits, -1L) == SYNC_INTERRUPTED) {
             Thread::interrupted();
             throw ThreadInterruptionException();
@@ -131,7 +131,7 @@ public class Semaphore {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared and no permit is consumed.
      */
-    tryAcquire(timeout: Duration&) : bool throws ThreadInterruptionException {
+    tryAcquire(timeout: Duration&) : bool throws(ThreadInterruptionException) {
         rc : int = __k_sem_acquire(_native, 1, timeout.toNanos());
         if (rc == SYNC_INTERRUPTED) {
             Thread::interrupted();
@@ -149,7 +149,7 @@ public class Semaphore {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared and no permit is consumed.
      */
-    tryAcquire(permits: int, timeout: Duration&) : bool throws ThreadInterruptionException {
+    tryAcquire(permits: int, timeout: Duration&) : bool throws(ThreadInterruptionException) {
         rc : int = __k_sem_acquire(_native, permits, timeout.toNanos());
         if (rc == SYNC_INTERRUPTED) {
             Thread::interrupted();

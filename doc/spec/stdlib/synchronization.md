@@ -90,9 +90,9 @@ try {
 ```k
 public interface Lock {
     lock() : void;
-    lockInterruptibly() : void throws ThreadInterruptionException;
+    lockInterruptibly() : void throws(ThreadInterruptionException);
     tryLock() : bool;
-    unlock() : void throws IllegalMonitorStateException;
+    unlock() : void throws(IllegalMonitorStateException);
 }
 ```
 

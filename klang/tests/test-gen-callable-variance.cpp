@@ -680,12 +680,12 @@ TEST_CASE("Callable variance: the same throws set is accepted",
     auto res = build_and_exec(R"SRC(
         module gen_callable_variance_33;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
-        may_throw(x : int) : int throws Boom {
+        may_throw(x : int) : int throws(Boom) {
             if (x < 0) { throw Boom(1); }
             return x;
         }
         main() : int {
-            f : *(int):int throws Boom = may_throw;
+            f : *(int):int throws(Boom) = may_throw;
             return f(42);
         }
     )SRC");
@@ -699,12 +699,12 @@ TEST_CASE("Callable variance: a throws subset is accepted",
         module gen_callable_variance_34;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         class Bang : public Exception { public: Bang(c : int) : Exception(c) {} }
-        may_throw(x : int) : int throws Boom {
+        may_throw(x : int) : int throws(Boom) {
             if (x < 0) { throw Boom(1); }
             return x;
         }
         main() : int {
-            f : *(int):int throws Boom, Bang = may_throw;
+            f : *(int):int throws(Boom, Bang) = may_throw;
             return f(42);
         }
     )SRC");
@@ -718,12 +718,12 @@ TEST_CASE("Callable variance: a throws base class covers a derived thrown type",
         module gen_callable_variance_35;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         class Bigger : public Boom { public: Bigger(c : int) : Boom(c) {} }
-        may_throw(x : int) : int throws Bigger {
+        may_throw(x : int) : int throws(Bigger) {
             if (x < 0) { throw Bigger(1); }
             return x;
         }
         main() : int {
-            f : *(int):int throws Boom = may_throw;
+            f : *(int):int throws(Boom) = may_throw;
             return f(42);
         }
     )SRC");
@@ -737,12 +737,12 @@ TEST_CASE("Callable variance: a throws superset is rejected",
         module gen_callable_variance_36;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         class Bang : public Exception { public: Bang(c : int) : Exception(c) {} }
-        may_throw(x : int) : int throws Boom, Bang {
+        may_throw(x : int) : int throws(Boom, Bang) {
             if (x < 0) { throw Boom(1); }
             return x;
         }
         test() : int {
-            f : *(int):int throws Boom = may_throw;
+            f : *(int):int throws(Boom) = may_throw;
             return 0;
         }
     )SRC", k::diag::callable_model_diag::ERR_CALLABLE_THROWS_NOT_SUBSET);
@@ -754,7 +754,7 @@ TEST_CASE("Callable variance: a missing throws clause on the callable is rejecte
     expect_diag(R"SRC(
         module gen_callable_variance_37;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
-        may_throw(x : int) : int throws Boom {
+        may_throw(x : int) : int throws(Boom) {
             if (x < 0) { throw Boom(1); }
             return x;
         }
@@ -774,7 +774,7 @@ TEST_CASE("Callable variance: a non-throwing target binds to a throwing callable
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         safe(x : int) : int { return x; }
         main() : int {
-            f : *(int):int throws Boom = safe;
+            f : *(int):int throws(Boom) = safe;
             return f(42);
         }
     )SRC");
@@ -788,12 +788,12 @@ TEST_CASE("Callable variance: a callable-to-callable throws superset is rejected
     expect_diag(R"SRC(
         module gen_callable_variance_39;
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
-        may_throw(x : int) : int throws Boom {
+        may_throw(x : int) : int throws(Boom) {
             if (x < 0) { throw Boom(1); }
             return x;
         }
         test() : int {
-            a : *(int):int throws Boom = may_throw;
+            a : *(int):int throws(Boom) = may_throw;
             b : *(int):int = a;
             return 0;
         }
@@ -858,7 +858,7 @@ TEST_CASE("Callable variance: a bound member function must satisfy the throws ru
         class Boom : public Exception { public: Boom(c : int) : Exception(c) {} }
         struct Thrower {
             base : int;
-            go(x : int) : int throws Boom { throw Boom(base + x); }
+            go(x : int) : int throws(Boom) { throw Boom(base + x); }
         }
         test() : int {
             t : Thrower;

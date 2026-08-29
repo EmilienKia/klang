@@ -75,9 +75,13 @@ std::string type_str(const kdi_type& t) {
             s += ")";
             if (v.ret && !std::holds_alternative<kdi_void_type>(v.ret->value))
                 s += " : " + type_str(*v.ret);
-            for (size_t i = 0; i < v.throws.size(); ++i) {
-                s += (i ? ", " : " throws ");
-                s += (v.throws[i] ? type_str(*v.throws[i]) : "?");
+            if (!v.throws.empty()) {
+                s += " throws(";
+                for (size_t i = 0; i < v.throws.size(); ++i) {
+                    if (i) s += ", ";
+                    s += (v.throws[i] ? type_str(*v.throws[i]) : "?");
+                }
+                s += ")";
             }
             return s;
         }

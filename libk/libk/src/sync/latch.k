@@ -82,7 +82,7 @@ public class CountDownLatch {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared.
      */
-    await() : void throws ThreadInterruptionException {
+    await() : void throws(ThreadInterruptionException) {
         if (__k_latch_await(_native, -1L) == SYNC_INTERRUPTED) {
             Thread::interrupted();
             throw ThreadInterruptionException();
@@ -97,7 +97,7 @@ public class CountDownLatch {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared.
      */
-    await(timeout: Duration&) : bool throws ThreadInterruptionException {
+    await(timeout: Duration&) : bool throws(ThreadInterruptionException) {
         rc : int = __k_latch_await(_native, timeout.toNanos());
         if (rc == SYNC_INTERRUPTED) {
             Thread::interrupted();
@@ -185,7 +185,7 @@ public class CyclicBarrier {
      * @throws BrokenBarrierException another party left the barrier abnormally
      *         or the barrier was reset while waiting.
      */
-    await() : int throws ThreadInterruptionException, BrokenBarrierException {
+    await() : int throws(ThreadInterruptionException, BrokenBarrierException) {
         rc : int = __k_barrier_await(_native, -1L);
         if (rc == -1) {
             Thread::interrupted();
@@ -208,7 +208,7 @@ public class CyclicBarrier {
      * @throws BrokenBarrierException another party left the barrier abnormally
      *         or the barrier was reset while waiting.
      */
-    await(timeout: Duration&) : int throws ThreadInterruptionException, BrokenBarrierException {
+    await(timeout: Duration&) : int throws(ThreadInterruptionException, BrokenBarrierException) {
         rc : int = __k_barrier_await(_native, timeout.toNanos());
         if (rc == -1) {
             Thread::interrupted();

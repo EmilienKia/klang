@@ -1070,21 +1070,43 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                 }
 
                 if (!failed) {
-                    // Optional `throws A, B` clause: the declared checked-exception set
+                    // Optional `throws(A, B)` clause: the declared checked-exception set
                     // of the callable. Absent means "throws nothing".
                     std::vector<std::shared_ptr<ast::type_specifier>> throws_spec;
                     if (auto lthrows = _lexer.get(); lthrows == lex::keyword::THROWS) {
-                        while (true) {
-                            auto tt = parse_type_spec(stop_before_bracket);
-                            if (!tt) {
-                                if (tentative) { failed = true; break; }
-                                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BRACE_INIT_NESTED_ERROR), _lexer.pick_current(),
-                                    "Expected a type specifier in the 'throws' clause of a callable type");
+                        auto lopen = _lexer.get();
+                        if (lopen != lex::punctuator::PARENTHESIS_OPEN) {
+                            if (tentative) { failed = true; }
+                            else {
+                                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_OPEN_PAREN),
+                                    _lexer.pick_current(), "Expected '(' after 'throws'");
                             }
-                            throws_spec.push_back(tt);
-                            if (auto sep = _lexer.get(); sep != lex::punctuator::COMMA) {
+                        }
+                        if (!failed) {
+                            auto maybe_close = _lexer.get();
+                            if (maybe_close == lex::punctuator::PARENTHESIS_CLOSE) {
+                                // empty throws clause: throws()
+                            } else {
                                 _lexer.unget();
-                                break;
+                                while (true) {
+                                    auto tt = parse_type_spec(stop_before_bracket);
+                                    if (!tt) {
+                                        if (tentative) { failed = true; break; }
+                                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_TYPE),
+                                            _lexer.pick_current(), "Expected a type specifier in the 'throws' clause of a callable type");
+                                    }
+                                    throws_spec.push_back(tt);
+                                    auto sep = _lexer.get();
+                                    if (sep == lex::punctuator::COMMA) {
+                                        continue;
+                                    } else if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                                        break;
+                                    } else {
+                                        if (tentative) { failed = true; break; }
+                                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_CLOSE_PAREN),
+                                            _lexer.pick_current(), "Expected ')' or ',' in 'throws' clause of callable type");
+                                    }
+                                }
                             }
                         }
                     } else {

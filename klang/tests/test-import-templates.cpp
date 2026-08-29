@@ -2123,7 +2123,7 @@ TEST_CASE("import exception — exception thrown in a library is caught by the e
                 LibError(code: int) : Exception(code) {}
             }
 
-            public boom(code: int) : int throws LibError {
+            public boom(code: int) : int throws(LibError) {
                 throw LibError(code);
             }
         )K",

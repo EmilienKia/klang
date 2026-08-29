@@ -92,7 +92,7 @@ public class ReadWriteLock {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared and the lock is not acquired.
      */
-    readLockInterruptibly() : void throws ThreadInterruptionException {
+    readLockInterruptibly() : void throws(ThreadInterruptionException) {
         if (__k_rwlock_read_lock(_native, -1L, 1) == SYNC_INTERRUPTED) {
             Thread::interrupted();
             throw ThreadInterruptionException();
@@ -115,7 +115,7 @@ public class ReadWriteLock {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared and the lock is not acquired.
      */
-    tryReadLock(timeout: Duration&) : bool throws ThreadInterruptionException {
+    tryReadLock(timeout: Duration&) : bool throws(ThreadInterruptionException) {
         rc : int = __k_rwlock_read_lock(_native, timeout.toNanos(), 1);
         if (rc == SYNC_INTERRUPTED) {
             Thread::interrupted();
@@ -128,7 +128,7 @@ public class ReadWriteLock {
      * Release one shared read hold.
      * @throws IllegalMonitorStateException no read lock is currently held.
      */
-    readUnlock() : void throws IllegalMonitorStateException {
+    readUnlock() : void throws(IllegalMonitorStateException) {
         if (__k_rwlock_read_unlock(_native) != SYNC_OK) {
             throw IllegalMonitorStateException();
         }
@@ -147,7 +147,7 @@ public class ReadWriteLock {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared and the lock is not acquired.
      */
-    writeLockInterruptibly() : void throws ThreadInterruptionException {
+    writeLockInterruptibly() : void throws(ThreadInterruptionException) {
         if (__k_rwlock_write_lock(_native, -1L, 1) == SYNC_INTERRUPTED) {
             Thread::interrupted();
             throw ThreadInterruptionException();
@@ -170,7 +170,7 @@ public class ReadWriteLock {
      * @throws ThreadInterruptionException the calling thread was interrupted;
      *         the interrupted flag is cleared and the lock is not acquired.
      */
-    tryWriteLock(timeout: Duration&) : bool throws ThreadInterruptionException {
+    tryWriteLock(timeout: Duration&) : bool throws(ThreadInterruptionException) {
         rc : int = __k_rwlock_write_lock(_native, timeout.toNanos(), 1);
         if (rc == SYNC_INTERRUPTED) {
             Thread::interrupted();
@@ -184,7 +184,7 @@ public class ReadWriteLock {
      * @throws IllegalMonitorStateException the calling thread does not hold the
      *         write lock.
      */
-    writeUnlock() : void throws IllegalMonitorStateException {
+    writeUnlock() : void throws(IllegalMonitorStateException) {
         if (__k_rwlock_write_unlock(_native) != SYNC_OK) {
             throw IllegalMonitorStateException();
         }

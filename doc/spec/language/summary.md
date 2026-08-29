@@ -1923,13 +1923,13 @@ Rules:
 
 ```
 ThrowsClause:
-    'throws' TypeSpec { ',' TypeSpec }
+    'throws' '(' [ TypeSpec { ',' TypeSpec } ] ')'
 ```
 
 The `throws` clause appears after the return type and before the function body:
 
 ```k
-myFunc(a: int) : int throws IOException, ParseException {
+myFunc(a: int) : int throws(IOException, ParseException) {
     // ...
 }
 ```

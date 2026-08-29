@@ -277,7 +277,7 @@ public:
     std::shared_ptr<ast::function_decl> parse_function_decl();
 
     /**
-     * ThrowsClause = 'throws' , QualifiedIdentifier , { ',' , QualifiedIdentifier } ;
+     * ThrowsClause = 'throws' , '(' , [ QualifiedIdentifier , { ',' , QualifiedIdentifier } ] , ')' ;
      * Returns the list of exception type names. Called after return type, before body.
      */
     std::vector<std::shared_ptr<ast::qualified_identifier>> parse_throws_clause();

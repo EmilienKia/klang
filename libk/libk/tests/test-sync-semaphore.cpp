@@ -160,7 +160,7 @@ TEST_CASE("Semaphore: acquire blocks until another thread releases", "[libk][syn
             _s : Semaphore*;
             public:
             Releaser(s: Semaphore*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 Thread::sleep(Duration::ofMillis(50L));
                 _s->release();
             }
@@ -212,7 +212,7 @@ TEST_CASE("Semaphore: bounds the number of threads in a section", "[libk][sync][
             _s : Shared*;
             public:
             Worker(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 i : int = 0;
                 while (i < 40) {
                     _s->sem->acquire();
@@ -292,7 +292,7 @@ TEST_CASE("Semaphore: a blocked acquire is interruptible", "[libk][sync][semapho
             public:
             _outcome : int = 0;
             Blocker(s: Shared*) { _s = s; }
-            override run() : void throws Throwable {
+            override run() : void throws(Throwable) {
                 try {
                     _s->ready->countDown();
                     _s->sem->acquire();

@@ -238,6 +238,8 @@ enum class parser_diag : unsigned int {
     ERR_THROWS_EXPECT_TYPE                        = 0x01DA,
     ERR_TRY_EXPECT_FINALLY_BODY                   = 0x01DB,
     ERR_SPACESHIP_EXPECT_SUBEXPR                  = 0x01DC,
+    ERR_THROWS_EXPECT_OPEN_PAREN                  = 0x01DD,
+    ERR_THROWS_EXPECT_CLOSE_PAREN                 = 0x01DE,
     // Foreach statement parser errors (0x01F3–0x01FF)
     ERR_FOREACH_EXPECT_INIT_EXPR                  = 0x01F3,
     ERR_FOREACH_EXPECT_CLOSE_OR_SEMICOLON         = 0x01F4,

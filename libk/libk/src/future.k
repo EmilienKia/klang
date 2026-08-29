@@ -223,7 +223,7 @@ public final struct Future {
      * @throws ExecutionException The computation terminated with a throwable;
      *         the original throwable is the cause.
      */
-    get() : T throws ThreadInterruptionException, CancellationException, ExecutionException {
+    get() : T throws(ThreadInterruptionException, CancellationException, ExecutionException) {
         r : int = __k_future_wait(_native, -1L);
         if (r == FUTURE_WAIT_INTERRUPTED) {
             throw ThreadInterruptionException();
@@ -251,7 +251,7 @@ public final struct Future {
      * @throws ExecutionException The computation terminated with a throwable;
      *         the original throwable is the cause.
      */
-    get(timeout: Duration&) : T throws ThreadInterruptionException, TimeoutException, CancellationException, ExecutionException {
+    get(timeout: Duration&) : T throws(ThreadInterruptionException, TimeoutException, CancellationException, ExecutionException) {
         nanos : long = timeout.toNanos();
         if (nanos < 0L) {
             nanos = 0L;

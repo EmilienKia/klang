@@ -683,7 +683,7 @@ TEST_CASE("Template method body preserves throw / try / catch statements",
 
             Checked() : _v(0) {}
 
-            raise() : void throws Boom {
+            raise() : void throws(Boom) {
                 throw Boom();
             }
 

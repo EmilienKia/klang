@@ -198,13 +198,14 @@ std::string encode_type_specifier(const std::shared_ptr<ast::type_specifier>& ts
             result += encode_type_specifier(frt->return_type);
         }
         if (!frt->throws_spec.empty()) {
-            result += " throws ";
+            result += " throws(";
             for (size_t i = 0; i < frt->throws_spec.size(); ++i) {
                 if (i > 0) {
                     result += ", ";
                 }
                 result += encode_type_specifier(frt->throws_spec[i]);
             }
+            result += ")";
         }
         return result;
     }
@@ -2660,8 +2661,24 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
 std::vector<std::shared_ptr<ast::qualified_identifier>> parser::parse_throws_clause()
 {
     // Called after the 'throws' keyword has been consumed.
-    // Parse: QualifiedIdentifier { ',' QualifiedIdentifier }
+    // Parse: '(' [ QualifiedIdentifier { ',' QualifiedIdentifier } ] ')'
+    auto lopen = _lexer.get();
+    if (lopen != lex::punctuator::PARENTHESIS_OPEN) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_OPEN_PAREN),
+                    _lexer.pick_current(), "Expected '(' after 'throws'");
+    }
+
     std::vector<std::shared_ptr<ast::qualified_identifier>> types;
+
+    // Check for empty throws clause: throws()
+    {
+        lex::lex_holder close_holder(_lexer);
+        auto maybe_close = _lexer.get();
+        if (maybe_close == lex::punctuator::PARENTHESIS_CLOSE) {
+            return types;
+        }
+        close_holder.rollback();
+    }
 
     auto first = parse_qualified_identifier();
     if (!first) {
@@ -2683,6 +2700,12 @@ std::vector<std::shared_ptr<ast::qualified_identifier>> parser::parse_throws_cla
                         _lexer.pick_current(), "Throws clause expects an exception type name after ','");
         }
         types.push_back(next_type);
+    }
+
+    auto lclose = _lexer.get();
+    if (lclose != lex::punctuator::PARENTHESIS_CLOSE) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_CLOSE_PAREN),
+                    _lexer.pick_current(), "Expected ')' to close throws clause");
     }
 
     return types;

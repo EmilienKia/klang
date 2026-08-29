@@ -599,7 +599,7 @@ FunctionHead
     ;
 
 ThrowsClause
-    = 'throws' , TypeSpec , { ',' , TypeSpec }
+    = 'throws' , '(' , [ TypeSpec , { ',' , TypeSpec } ] , ')'
     ;
 
 DestructorHead
@@ -739,7 +739,7 @@ TypeSpec
      &():int                        -- reference (non-null, non-rebindable)
      !(int):int                     -- owner (exclusive ownership of heap closure, move-only)
      const *(int):int               -- const callable pointer (non-rebindable)
-     (int):int throws IOException   -- callable with checked-exception contract
+     (int):int throws(IOException)  -- callable with checked-exception contract
    K has no 'void' keyword: void return = omitted return type.
    '#' addresser is FORBIDDEN on callables (ERR_CALLABLE_BAD_ADDRESSER).             *)
 CallableTypeSpec

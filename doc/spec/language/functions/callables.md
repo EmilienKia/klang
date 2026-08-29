@@ -43,7 +43,7 @@ A *callable* is a **fat pointer** — a pair `{function pointer, context pointer
 A callable type is written by placing an **addresser** directly before the parameter list:
 
 ```
-addresser '(' [ TypeList ] ')' [ ':' ReturnType ] [ 'throws' ThrowsList ]
+addresser '(' [ TypeList ] ')' [ ':' ReturnType ] [ 'throws(' ThrowsList ')' ]
 ```
 
 The four permitted addressers are:
@@ -126,12 +126,12 @@ fp3 : *(int) : void;  // ERROR — 'void' is not a type in K
 A callable type may declare which checked exceptions its implementation is allowed to raise, using the same `throws` syntax as function declarations:
 
 ```
-'*' '(' TypeList ')' ':' ReturnType 'throws' ThrowableType { ',' ThrowableType }
+'*' '(' TypeList ')' ':' ReturnType 'throws(' ThrowableType { ',' ThrowableType } ')'
 ```
 
 ```k
-fp  : *(int) : int throws IOException;                  // may throw IOException
-fp2 : *(int) : int throws IOException, NetworkException; // may throw either
+fp  : *(int) : int throws(IOException);                  // may throw IOException
+fp2 : *(int) : int throws(IOException, NetworkException); // may throw either
 fp3 : *(int) : int;                                     // throws nothing (checked)
 ```
 
@@ -141,11 +141,11 @@ fp3 : *(int) : int;                                     // throws nothing (check
 - A function that throws exceptions **not** listed in the callable's `throws` clause **cannot** be bound — this is a compile-time error.
 
 ```k
-readInt(fd : int) : int throws IOException { ... }
+readInt(fd : int) : int throws(IOException) { ... }
 
-fp  : *(int) : int throws IOException = readInt;   // OK
-fp2 : *(int) : int                    = readInt;   // ERROR — readInt throws IOException
-                                                   // but fp2 declares no throws clause
+fp  : *(int) : int throws(IOException) = readInt;   // OK
+fp2 : *(int) : int                     = readInt;   // ERROR — readInt throws IOException
+                                                    // but fp2 declares no throws clause
 ```
 
 ---
@@ -446,11 +446,11 @@ The source's checked-exception set must be a **subset** of the target's declared
 interface Failure {}
 interface IOError : public Failure {}
 
-read(fd : int) : int throws IOError { ... }
+read(fd : int) : int throws(IOError) { ... }
 
-fp : *(int) : int throws Failure = read;    // OK — IOError ⊆ {Failure}
-fp2 : *(int) : int               = read;    // ERROR — read may throw IOError,
-                                            // fp2 declares no throws clause
+fp : *(int) : int throws(Failure) = read;    // OK — IOError ⊆ {Failure}
+fp2 : *(int) : int                = read;    // ERROR — read may throw IOError,
+                                             // fp2 declares no throws clause
 ```
 
 ### Summary table
@@ -559,10 +559,6 @@ template<typename T> alias Predicate : Function<T, bool>;
 Parameterised aliases over callables are exported to KDI as source text and re-materialised
 on import, so `k::functional`-style abstractions work unchanged across module boundaries.
 
-> **Limitation.** The `throws` clause of a callable type specification is parsed greedily, so
-> a callable parameter that declares one must be the **last** parameter of its function
-> (see `TODO.md`).
-
 ---
 
 ## 11. Overload disambiguation
@@ -635,7 +631,7 @@ ReturnTypeSpec:
 
 -- Throws clause:
 ThrowsClause:
-    'throws' TypeSpec { ',' TypeSpec }
+    'throws' '(' [ TypeSpec { ',' TypeSpec } ] ')'
 
 -- Binding expressions:
 CallableExpr:
