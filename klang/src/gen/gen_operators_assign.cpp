@@ -864,15 +864,20 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                                 // Destroy the previously-active alternative (handles
                                 // owner alternatives — frees their buffer).
                                 emit_union_cleanup_on_reassign(union_base, *union_def, alt->index);
-                                // Store the new value. For owner/pointer alternatives a
-                                // null RHS yields a null LLVM value: store an explicit
-                                // null pointer instead.
-                                llvm::Value* store_val = right;
-                                if (!store_val) {
-                                    store_val = llvm::ConstantPointerNull::get(
-                                        llvm::PointerType::get(_builder->getContext(), 0));
+                                // Store the new value.
+                                auto alt_type = alt->resolved_type;
+                                auto bare_alt = alt_type ? type::remove_const(alt_type) : nullptr;
+                                auto alt_st = std::dynamic_pointer_cast<struct_type>(bare_alt);
+                                if (alt_st && right->getType()->isPointerTy()) {
+                                    emit_value_copy_or_move(left, right, alt_st, /*destroy_dest_first=*/false, expr.first_lexeme(), "=");
+                                } else {
+                                    llvm::Value* store_val = right;
+                                    if (!store_val) {
+                                        store_val = llvm::ConstantPointerNull::get(
+                                            llvm::PointerType::get(_builder->getContext(), 0));
+                                    }
+                                    _builder->CreateStore(store_val, left);
                                 }
-                                _builder->CreateStore(store_val, left);
                                 // Update the discriminant.
                                 auto* union_llvm_type = st_type->get_llvm_type();
                                 auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_disc_upd");

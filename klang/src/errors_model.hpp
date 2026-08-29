@@ -175,6 +175,10 @@ enum class union_diag : unsigned int {
     ERR_UNION_TEMPLATE_INHERITANCE_NOT_SUPPORTED  = 0x0188,  ///< Template union with base not supported
     ERR_UNION_CIRCULAR_INHERITANCE                = 0x0189,  ///< Circular union inheritance chain
     ERR_UNION_ASSIGN_TYPE_MISMATCH                = 0x018A,  ///< Union assignment between unrelated types
+    ERR_UNION_POLYMORPHIC_BASE_INVALID            = 0x018B,  ///< Base type in union declaration is neither a union nor a class/interface
+    ERR_UNION_POLYMORPHIC_ALT_NOT_CLASS           = 0x018C,  ///< Alternative in polymorphic union is not a class type
+    ERR_UNION_POLYMORPHIC_ALT_NOT_DERIVED         = 0x018D,  ///< Alternative in polymorphic union does not inherit from the polymorphic base
+    ERR_UNION_POLYMORPHIC_ALT_ABSTRACT            = 0x018E,  ///< Alternative in polymorphic union cannot be an abstract class or interface
 };
 
 // ────────────────────────────────────────────────────────────────────────────

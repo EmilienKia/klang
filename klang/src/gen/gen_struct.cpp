@@ -1676,8 +1676,8 @@ void symbol_resolver::visit_union(union_type_def& un) {
         un.set_struct_type(st_type);
     }
 
-    // ── Resolve base union (if any) ──────────────────────────────────────────
-    if (un.has_base_union() && !un.get_base_union()) {
+    // ── Resolve base union or polymorphic base (if any) ──────────────────────
+    if (un.has_base_clause() && !un.get_base_union() && !un.get_direct_polymorphic_base()) {
         // Cycle detection: if we are already resolving this union, it means
         // the base chain has a cycle.
         if (un._resolving) {
@@ -1712,36 +1712,56 @@ void symbol_resolver::visit_union(union_type_def& un) {
                 }
             }
         }
-        if (!base_un) {
-            lex::opt_any_lexeme un_lexeme;
-            if (auto ast_decl = un.get_ast_aggregate_decl()) {
-                un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+        if (base_un) {
+            // Circularity check via already-resolved chain or via _resolving flag on base
+            if (scope_lookup::is_base_union_of(un, *base_un) || base_un.get() == &un || base_un->_resolving) {
+                lex::opt_any_lexeme un_lexeme;
+                if (auto ast_decl = un.get_ast_aggregate_decl()) {
+                    un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+                }
+                un._resolving = false;
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_CIRCULAR_INHERITANCE),
+                    un_lexeme,
+                    "Circular union inheritance detected involving union '{}'",
+                    {un.get_short_name()});
             }
-            un._resolving = false;
-            throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_BASE_NOT_UNION),
-                un_lexeme,
-                "Base '{}' of union '{}' is not a known union type",
-                {raw, un.get_short_name()});
-        }
-        // Circularity check via already-resolved chain or via _resolving flag on base
-        if (scope_lookup::is_base_union_of(un, *base_un) || base_un.get() == &un || base_un->_resolving) {
-            lex::opt_any_lexeme un_lexeme;
-            if (auto ast_decl = un.get_ast_aggregate_decl()) {
-                un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+            // Recursively resolve the base if not yet done
+            if (!base_un->get_struct_type()) {
+                visit_union(*base_un);
             }
+            un.set_base_union(base_un);
+            un.reindex_own_alternatives();
             un._resolving = false;
-            throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_CIRCULAR_INHERITANCE),
-                un_lexeme,
-                "Circular union inheritance detected involving union '{}'",
-                {un.get_short_name()});
+        } else {
+            // Not a base union. Check if it is a polymorphic base (class or interface).
+            auto base_agg = scope_lookup::lookup_structure_or_import(_unit, _context, un.shared_as<element>(), raw);
+            if (base_agg) {
+                if (base_agg->is_class() || base_agg->is_interface()) {
+                    un.set_polymorphic_base(base_agg);
+                    un._resolving = false;
+                } else {
+                    lex::opt_any_lexeme un_lexeme;
+                    if (auto ast_decl = un.get_ast_aggregate_decl()) {
+                        un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+                    }
+                    un._resolving = false;
+                    throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_POLYMORPHIC_BASE_INVALID),
+                        un_lexeme,
+                        "Base '{}' of union '{}' is a struct or non-class aggregate; polymorphic unions require a class or interface base",
+                        {raw, un.get_short_name()});
+                }
+            } else {
+                lex::opt_any_lexeme un_lexeme;
+                if (auto ast_decl = un.get_ast_aggregate_decl()) {
+                    un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+                }
+                un._resolving = false;
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_POLYMORPHIC_BASE_INVALID),
+                    un_lexeme,
+                    "Base '{}' of union '{}' is neither a known union nor a class or interface type",
+                    {raw, un.get_short_name()});
+            }
         }
-        // Recursively resolve the base if not yet done
-        if (!base_un->get_struct_type()) {
-            visit_union(*base_un);
-        }
-        un.set_base_union(base_un);
-        un.reindex_own_alternatives();
-        un._resolving = false;
     }
 
     // Union alternatives have their types already stored from model building.

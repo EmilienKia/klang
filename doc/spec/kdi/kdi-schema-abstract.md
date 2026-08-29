@@ -449,6 +449,31 @@ Compatibility rules:
 
 ---
 
+## KdiUnion
+
+```
+KdiUnion {
+  name                     : string
+  fq_name                  : string
+  mangled_name             : string
+  visibility               : "public" | "protected"
+  alternatives             : [KdiUnionAlternative]
+  base_union_fq_name       : string?   -- parent union for union inheritance
+  polymorphic_base_fq_name : string?   -- base class or interface for polymorphic unions
+  llvm_def                 : string    -- LLVM IR struct definition, e.g. "{ i32, [8 x i8] }"
+  template_origin          : KdiTemplateOrigin?
+  doc                      : KdiDocBlock?
+}
+
+KdiUnionAlternative {
+  name     : string
+  type     : KdiType
+  is_const : bool
+}
+```
+
+---
+
 ## KdiFunction
 
 ```

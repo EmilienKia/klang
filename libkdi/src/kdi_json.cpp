@@ -780,6 +780,45 @@ static kdi_aggregate_kind agg_kind_from_str(const std::string& s) {
     return kdi_aggregate_kind::struct_;
 }
 
+static json to_json(const kdi_union& u) {
+    json uobj = {{"name", u.name}, {"fq_name", u.fq_name}, {"mangled_name", u.mangled_name},
+                 {"visibility", vis_to_str(u.visibility)}};
+    if (!u.base_union_fq_name.empty()) uobj["base_union"] = u.base_union_fq_name;
+    if (!u.polymorphic_base_fq_name.empty()) uobj["polymorphic_base"] = u.polymorphic_base_fq_name;
+    json alts = json::array();
+    for (auto& alt : u.alternatives) {
+        json aobj = {{"name", alt.name}, {"is_const", alt.is_const},
+                     {"type", to_json(alt.type)}};
+        alts.push_back(std::move(aobj));
+    }
+    uobj["alternatives"] = std::move(alts);
+    if (!u.llvm_def.empty()) uobj["llvm_def"] = u.llvm_def;
+    if (u.template_origin) uobj["template_origin"] = to_json(*u.template_origin);
+    if (u.doc) uobj["doc"] = to_json(*u.doc);
+    return uobj;
+}
+
+static kdi_union from_json_union(const json& u) {
+    kdi_union ku;
+    ku.name         = u.at("name");
+    ku.fq_name      = u.value("fq_name", "");
+    ku.mangled_name = u.value("mangled_name", "");
+    ku.visibility   = vis_from_str(u.value("visibility", "public"));
+    ku.base_union_fq_name       = u.value("base_union", "");
+    ku.polymorphic_base_fq_name = u.value("polymorphic_base", "");
+    for (auto& alt : u.value("alternatives", json::array())) {
+        kdi_union_alternative ka;
+        ka.name     = alt.at("name");
+        ka.is_const = alt.value("is_const", false);
+        if (alt.contains("type")) ka.type = from_json_type(alt.at("type"));
+        ku.alternatives.push_back(std::move(ka));
+    }
+    ku.llvm_def = u.value("llvm_def", "");
+    if (u.contains("template_origin")) ku.template_origin = from_json_template_origin(u.at("template_origin"));
+    if (u.contains("doc")) ku.doc = from_json_doc_block(u.at("doc"));
+    return ku;
+}
+
 static json to_json(const kdi_aggregate& a) {
     json bases = json::array();
     for (auto& b : a.bases)
@@ -804,19 +843,7 @@ static json to_json(const kdi_aggregate& a) {
 
     json nested_uns = json::array();
     for (auto& u : a.nested_unions) {
-        json uobj = {{"name", u.name}, {"fq_name", u.fq_name}, {"mangled_name", u.mangled_name},
-                     {"visibility", vis_to_str(u.visibility)}};
-        json alts = json::array();
-        for (auto& alt : u.alternatives) {
-            json aobj = {{"name", alt.name}, {"is_const", alt.is_const},
-                         {"type", to_json(alt.type)}};
-            alts.push_back(std::move(aobj));
-        }
-        uobj["alternatives"] = std::move(alts);
-        if (!u.llvm_def.empty()) uobj["llvm_def"] = u.llvm_def;
-        if (u.template_origin) uobj["template_origin"] = to_json(*u.template_origin);
-        if (u.doc) uobj["doc"] = to_json(*u.doc);
-        nested_uns.push_back(std::move(uobj));
+        nested_uns.push_back(to_json(u));
     }
 
     json obj = {
@@ -891,22 +918,7 @@ static kdi_aggregate from_json_aggregate(const json& j) {
     for (auto& n : j.value("nested", json::array()))
         a.nested.push_back(from_json_aggregate(n));
     for (auto& u : j.value("nested_unions", json::array())) {
-        kdi_union ku;
-        ku.name         = u.at("name");
-        ku.fq_name      = u.value("fq_name", "");
-        ku.mangled_name = u.value("mangled_name", "");
-        ku.visibility   = vis_from_str(u.value("visibility", "public"));
-        for (auto& alt : u.value("alternatives", json::array())) {
-            kdi_union_alternative ka;
-            ka.name     = alt.at("name");
-            ka.is_const = alt.value("is_const", false);
-            if (alt.contains("type")) ka.type = from_json_type(alt.at("type"));
-            ku.alternatives.push_back(std::move(ka));
-        }
-        ku.llvm_def = u.value("llvm_def", "");
-        if (u.contains("template_origin")) ku.template_origin = from_json_template_origin(u.at("template_origin"));
-        if (u.contains("doc")) ku.doc = from_json_doc_block(u.at("doc"));
-        a.nested_unions.push_back(std::move(ku));
+        a.nested_unions.push_back(from_json_union(u));
     }
     a.llvm_def = j.at("llvm_def");
     a.default_constructor_mangled_name = j.value("default_constructor_mangled_name", "");
@@ -1029,6 +1041,8 @@ static json to_json(const kdi_namespace& ns) {
     for (auto& n : ns.namespaces) sub.push_back(to_json(n));
     json aggs = json::array();
     for (auto& a : ns.aggregates) aggs.push_back(to_json(a));
+    json uns = json::array();
+    for (auto& u : ns.unions) uns.push_back(to_json(u));
     json enums = json::array();
     for (auto& e : ns.enums) enums.push_back(to_json(e));
     json fns = json::array();
@@ -1042,6 +1056,7 @@ static json to_json(const kdi_namespace& ns) {
     json obj = {{"name",ns.name},{"fq_name",ns.fq_name},
             {"namespaces",sub},{"aggregates",aggs},{"enums",enums},
             {"functions",fns},{"variables",vars}};
+    if (!uns.empty()) obj["unions"] = uns;
     if (!tdefs.empty()) obj["template_defs"] = tdefs;
     if (!als.empty()) obj["aliases"] = als;
     if (ns.doc) obj["doc"] = to_json(*ns.doc);
@@ -1056,6 +1071,8 @@ static kdi_namespace from_json_namespace(const json& j) {
         ns.namespaces.push_back(from_json_namespace(n));
     for (auto& a : j.value("aggregates", json::array()))
         ns.aggregates.push_back(from_json_aggregate(a));
+    for (auto& u : j.value("unions", json::array()))
+        ns.unions.push_back(from_json_union(u));
     for (auto& e : j.value("enums", json::array()))
         ns.enums.push_back(from_json_enum(e));
     for (auto& f : j.value("functions", json::array()))

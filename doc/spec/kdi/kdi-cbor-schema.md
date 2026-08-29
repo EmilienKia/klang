@@ -533,3 +533,29 @@ Compatibility:
 
 - Integer-backed enums omit typed metadata fields.
 - Older payloads (without typed-enum fields) remain valid and must be accepted.
+
+---
+
+## Union
+
+```
+Union = {
+  "name"                  : text,
+  "fq_name"               : text,
+  "mangled_name"          : text,
+  "visibility"            : Visibility,
+  ?"base_union"           : text,      -- base union for union inheritance
+  ?"polymorphic_base"     : text,      -- base class or interface for polymorphic unions
+  ?"llvm_def"             : text,
+  "alternatives"          : array[UnionAlternative],
+  ?"template_origin"      : TemplateOrigin,
+  ?"doc"                  : DocBlock
+}
+
+UnionAlternative = {
+  "name"      : text,
+  "type"      : Type,
+  ?"is_const" : bool
+}
+```
+

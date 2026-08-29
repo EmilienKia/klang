@@ -1283,6 +1283,13 @@ void kdi_builder::visit_union(union_type_def& un) {
                                 ? base_fq.substr(2) : base_fq;
     }
 
+    // Export polymorphic base class/interface name (if this is a polymorphic union)
+    if (un.is_polymorphic() && un.get_direct_polymorphic_base()) {
+        const std::string& base_fq = un.get_direct_polymorphic_base()->get_fq_name();
+        ku.polymorphic_base_fq_name = (base_fq.size() >= 2 && base_fq[0] == ':' && base_fq[1] == ':')
+                                      ? base_fq.substr(2) : base_fq;
+    }
+
     // Template origin for concrete instantiations
     if (un.has_tpl_args()) {
         std::string inst_fq = un.get_fq_name();

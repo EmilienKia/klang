@@ -531,14 +531,22 @@ EnumEntry
 UnionDecl
     = { AnnotationDef } , { Specifier } ,
       'union' , Identifier ,
-      [ ':' , QualifiedIdentifier ]  (* optional single parent union *)
+      [ ':' , QualifiedIdentifier ]  (* optional single parent union or polymorphic base class/interface *)
       '{' , { UnionMemberDecl } , '}'
     ;
     (* A discriminated (tagged) union.  At runtime a hidden uint32 discriminant
        tracks which alternative is active.  Member access performs a runtime
        check; assignment to a different alternative updates the discriminant.
 
-       Inheritance:
+       Inheritance & Polymorphic Unions:
+       - If the base type is a union, traditional union inheritance applies.
+       - If the base type is a class (concrete or abstract) or interface, this is a
+         polymorphic union. All alternatives must be concrete classes deriving from
+         the specified base.
+       - Polymorphic unions support the '->' operator (access members on the base)
+         and prefix '*' operator (dereference to a reference of the base type).
+       - Polymorphic union inheritance is supported: derived unions inherit the base
+         and must also have all new alternatives derive from the common base type.
        - A union may inherit from exactly one parent union.
        - All parent alternatives are accessible with their original discriminant values.
        - New alternatives are assigned discriminant values starting at

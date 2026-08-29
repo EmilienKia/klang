@@ -3083,6 +3083,18 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
 
             // Create a this-adjustment thunk: adjust Base* → Derived* then call the override.
             ptrdiff_t offset = spec.base_offset;
+            auto kl_st_type = klass.get_struct_type();
+            if (kl_st_type && spec.base_class) {
+                std::string subobj_name = "__base_" + spec.base_class->get_short_name() + "__";
+                if (auto field = kl_st_type->get_member(subobj_name)) {
+                    if (auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(kl_st_type->get_llvm_type())) {
+                        if (!llvm_st->isOpaque()) {
+                            const auto& dl = _context->module().getDataLayout();
+                            offset = static_cast<ptrdiff_t>(dl.getStructLayout(llvm_st)->getElementOffset(field->index));
+                        }
+                    }
+                }
+            }
             std::string thunk_name = real_llvm_func->getName().str()
                 + "_thunk_adj" + std::to_string(offset);
             llvm::Function* thunk = _context->module().getFunction(thunk_name);

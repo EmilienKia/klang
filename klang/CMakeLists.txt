@@ -308,6 +308,7 @@ klang_gen_test(klang-tests-gen-types-enums-unions 120
         tests/test-gen-union.cpp
         tests/test-gen-union-template.cpp
         tests/test-gen-union-inheritance.cpp
+        tests/test-gen-union-polymorphic.cpp
 )
 klang_gen_test(klang-tests-gen-types-const-meta 120
         tests/test-gen-const.cpp

@@ -80,6 +80,9 @@ protected:
     /** Resolved parent union (nullptr = root union; set during symbol resolution). */
     std::shared_ptr<union_type_def> _base_union;
 
+    /** Resolved polymorphic base class or interface (if this is a polymorphic union). */
+    std::shared_ptr<aggregate> _polymorphic_base;
+
     /** For concrete instantiations of template unions: original template base name. */
     std::string _tpl_base_name;
 
@@ -204,17 +207,43 @@ public:
     }
 
     //
-    // Inheritance
+    // Inheritance and Polymorphic Base
     //
 
-    /** True if this union has a base union (either raw name or resolved). */
-    bool has_base_union() const { return !_base_union_raw_name.empty(); }
+    /** True if this union has a base clause in source (union inheritance or polymorphic base). */
+    bool has_base_clause() const { return !_base_union_raw_name.empty(); }
+
+    /** True if this union has a base union (either raw name before resolution, or resolved base union). */
+    bool has_base_union() const {
+        return _base_union != nullptr || (!_polymorphic_base && !_base_union_raw_name.empty());
+    }
 
     const std::string& get_base_union_raw_name() const { return _base_union_raw_name; }
     void set_base_union_raw_name(const std::string& n) { _base_union_raw_name = n; }
 
     std::shared_ptr<union_type_def> get_base_union() const { return _base_union; }
     void set_base_union(std::shared_ptr<union_type_def> base) { _base_union = std::move(base); }
+
+    /** True if this is a polymorphic union (has a polymorphic base class/interface directly or inherited). */
+    bool is_polymorphic() const {
+        return get_polymorphic_base() != nullptr;
+    }
+
+    /** Returns the polymorphic base aggregate (class or interface), or nullptr if not polymorphic. */
+    std::shared_ptr<aggregate> get_polymorphic_base() const {
+        if (_polymorphic_base) return _polymorphic_base;
+        if (_base_union) return _base_union->get_polymorphic_base();
+        return nullptr;
+    }
+
+    /** Direct polymorphic base declared on this union (not inherited). */
+    std::shared_ptr<aggregate> get_direct_polymorphic_base() const {
+        return _polymorphic_base;
+    }
+
+    void set_polymorphic_base(std::shared_ptr<aggregate> base) {
+        _polymorphic_base = std::move(base);
+    }
 
     /** Force-reset and re-synthesize the Kind enum (e.g. after the base is resolved
      *  and indices have been updated). */

@@ -356,6 +356,38 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
     expr.sub_expr()->accept(*this);
     auto type = expr.sub_expr()->get_type();
 
+    // Check if the operand is a polymorphic union (either ref<poly_union> or value poly_union)
+    auto check_poly_union = [&](const std::shared_ptr<k::model::type>& t, bool is_const_ctx) -> bool {
+        auto bare = type::remove_const(t);
+        if (auto ref_t = std::dynamic_pointer_cast<reference_type>(bare)) {
+            bare = type::remove_const(ref_t->get_subtype());
+        }
+        if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
+            if (!st->get_struct()) {
+                auto root_ns = _unit.get_root_namespace();
+                if (auto udef = find_union_by_struct_type(root_ns, st)) {
+                    if (udef->is_polymorphic()) {
+                        auto base_agg = udef->get_polymorphic_base();
+                        if (base_agg && base_agg->get_struct_type()) {
+                            auto base_st = base_agg->get_struct_type();
+                            if (is_const_ctx || type::is_const(t) || type::is_const(bare)) {
+                                expr.set_type(base_st->get_const()->get_reference());
+                            } else {
+                                expr.set_type(base_st->get_reference());
+                            }
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    };
+
+    if (check_poly_union(type, type::is_const(type))) {
+        return;
+    }
+
     // Unwrap one level of reference if the referred-to type is an indirection
     if(auto ref_type = std::dynamic_pointer_cast<reference_type>(type)) {
         auto sub = ref_type->get_subtype();
@@ -385,7 +417,7 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
     } else {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ADDRESS_OF_NOT_REF), expr.first_lexeme(),
             "Cannot dereference a non-pointer expression: "
-            "the dereference operator ('*') requires a pointer (*), link (+), view (?) or owner (!), "
+            "the dereference operator ('*') requires a pointer (*), link (+), view (?), owner (!) or polymorphic union, "
             "but the operand has type '{}'",
             {type ? type->to_string() : "?"});
     }
@@ -397,6 +429,27 @@ void implementation_generator::visit_dereference_expression(dereference_expressi
     expr.sub_expr()->accept(*this);
 
     auto sub_type = expr.sub_expr()->get_type();
+
+    // Check if sub_type is a polymorphic union
+    auto bare_sub = type::remove_const(sub_type);
+    if (auto ref_t = std::dynamic_pointer_cast<reference_type>(bare_sub)) {
+        bare_sub = type::remove_const(ref_t->get_subtype());
+    }
+    if (auto st = std::dynamic_pointer_cast<struct_type>(bare_sub)) {
+        if (!st->get_struct()) {
+            auto root_ns = _unit.get_root_namespace();
+            if (auto udef = find_union_by_struct_type(root_ns, st)) {
+                if (udef->is_polymorphic()) {
+                    auto base_agg = udef->get_polymorphic_base();
+                    if (base_agg) {
+                        _value = emit_polymorphic_union_to_base_ptr(
+                            _builder.get(), _context.get(), *udef, base_agg.get(), _value);
+                        return;
+                    }
+                }
+            }
+        }
+    }
 
     // If sub is ref<indirection>, load the stored address from the alloca
     std::shared_ptr<k::model::type> inner_type;

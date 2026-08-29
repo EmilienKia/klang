@@ -836,9 +836,29 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
         // Allow -> on owner: syntactic sugar for (*owner).member
         pointed_type = own_t->get_owned_type();
     } else {
-        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH), expr.first_lexeme(),
-            "The '->' operator requires a pointer (*), link (+), view (?) or owner (!) on the LHS, "
-            "but got '{}'", {type ? type->to_string() : "?"});
+        // Check if `type` is a polymorphic union struct type
+        auto bare_type = type::remove_const(type);
+        if (auto st = std::dynamic_pointer_cast<struct_type>(bare_type)) {
+            if (!st->get_struct()) {
+                auto root_ns = _unit.get_root_namespace();
+                if (auto udef = find_union_by_struct_type(root_ns, st)) {
+                    if (udef->is_polymorphic()) {
+                        auto base_agg = udef->get_polymorphic_base();
+                        if (base_agg && base_agg->get_struct_type()) {
+                            pointed_type = base_agg->get_struct_type();
+                            if (type::is_const(type)) {
+                                pointed_type = pointed_type->get_const();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (!pointed_type) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH), expr.first_lexeme(),
+                "The '->' operator requires a pointer (*), link (+), view (?), owner (!) or polymorphic union on the LHS, "
+                "but got '{}'", {type ? type->to_string() : "?"});
+        }
     }
 
     // ── Virtual member: array->size ─────────────────────────────────────────
@@ -948,6 +968,35 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
     expr.sub_expr()->accept(*this);
 
     auto sub_type = expr.sub_expr()->get_type();
+
+    // Check if sub_type is a polymorphic union
+    auto bare_sub = type::remove_const(sub_type);
+    if (auto ref_t = std::dynamic_pointer_cast<reference_type>(bare_sub)) {
+        bare_sub = type::remove_const(ref_t->get_subtype());
+    }
+    if (auto st = std::dynamic_pointer_cast<struct_type>(bare_sub)) {
+        if (!st->get_struct()) {
+            auto root_ns = _unit.get_root_namespace();
+            if (auto udef = find_union_by_struct_type(root_ns, st)) {
+                if (udef->is_polymorphic()) {
+                    auto base_agg = udef->get_polymorphic_base();
+                    if (base_agg) {
+                        _value = emit_polymorphic_union_to_base_ptr(
+                            _builder.get(), _context.get(), *udef, base_agg.get(), _value);
+                        auto base_st = base_agg->get_struct_type();
+                        const auto& member_name = expr.symbol();
+                        if (auto field = base_st->get_member(member_name.get_name())) {
+                            _value = _builder->CreateStructGEP(
+                                _context->get_llvm_type(base_st), _value,
+                                (unsigned)field->index, member_name.get_name().to_string() + "_ptr");
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     std::shared_ptr<k::model::type> inner_type;
     if (auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type)) {
         inner_type = ref_type->get_subtype();

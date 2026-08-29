@@ -21,9 +21,10 @@ alternative is currently active.
 9. [Passing to Functions](#9-passing-to-functions)
 10. [Nested Unions](#10-nested-unions)
 11. [Union Inheritance](#11-union-inheritance)
-12. [Template Unions](#12-template-unions)
-13. [Cross-Module Export and Import](#13-cross-module-export-and-import)
-14. [Restrictions](#14-restrictions)
+12. [Polymorphic Unions](#12-polymorphic-unions)
+13. [Template Unions](#13-template-unions)
+14. [Cross-Module Export and Import](#14-cross-module-export-and-import)
+15. [Restrictions](#15-restrictions)
 
 ---
 
@@ -379,11 +380,96 @@ base = derived;     // upcast — FATAL TRAP (alternative 's' not in Base)
 ### 11.7 Restrictions
 
 - Template unions **cannot** have an inheritance clause (compile-time error).
-- Inheriting from a non-union type is rejected.
+- Inheriting from a type that is neither a union nor a class/interface is rejected.
 
 ---
 
-## 12. Template Unions
+## 12. Polymorphic Unions
+
+A **polymorphic union** is a union of concrete class types that all inherit directly
+or indirectly from a common base class (which may be concrete, or abstract and therefore
+not directly an alternative) or an interface.
+
+The common base class or interface is specified in place of the parent union in the
+declaration:
+
+```k
+abstract class Animal {
+public:
+    abstract speak() : void;
+}
+
+class Dog : Animal {
+public:
+    override speak() : void { print("Woof!"); }
+}
+
+class Cat : Animal {
+public:
+    override speak() : void { print("Meow!"); }
+}
+
+union AnyAnimal : Animal {
+    dog: Dog;
+    cat: Cat;
+}
+```
+
+### 12.1 Resolution and Disambiguation
+
+At symbol resolution time, there is no ambiguity with traditional union inheritance:
+- If the type named after `:` resolves to another union, union inheritance applies.
+- If it resolves to a `class` or `interface`, it is a polymorphic union with that type as its base.
+- If it resolves to any other type (such as a `struct`, `enum`, or primitive), compilation fails with an error.
+
+### 12.2 Rules for Alternatives
+
+1. Every alternative declared in a polymorphic union must be a **concrete class** (not an abstract class, interface, struct, primitive, or pointer).
+2. Every alternative must directly or indirectly inherit from the common base class or interface.
+3. If the base class is concrete, it may also be one of the alternatives.
+
+### 12.3 Polymorphic Union Inheritance
+
+A union may inherit from a polymorphic union:
+
+```k
+class Bird : Animal {
+public:
+    override speak() : void { print("Chirp!"); }
+}
+
+union ExtendedAnimal : AnyAnimal {
+    bird: Bird;
+}
+```
+
+- `ExtendedAnimal` inherits `Animal` as its polymorphic base.
+- All new alternatives declared in `ExtendedAnimal` must also be descendants of `Animal`.
+
+### 12.4 Operators `->` and `*`
+
+Polymorphic unions provide direct polymorphic access to the active member without explicit downcasting:
+
+- **Arrow operator (`->`)**: When applied to a polymorphic union value `u`, member access (methods, fields) is resolved directly against the common base class or interface:
+  ```k
+  a : AnyAnimal;
+  a.dog = Dog();
+  a->speak();   // calls Dog::speak() via virtual dispatch on Animal
+  ```
+- **Prefix dereference operator (`*`)**: When applied to a polymorphic union value `u`, it returns a reference to the active member upcast to the base type (`BaseType&` or `const BaseType&`):
+  ```k
+  feed(animal: Animal&) : void { /* ... */ }
+
+  a : AnyAnimal;
+  a.cat = Cat();
+  feed(*a);     // passes Cat upcast to Animal&
+  ```
+
+If `u` is `const`, `*u` returns `const BaseType&`, and `u->` only permits access to `const` members of the base.
+
+---
+
+## 13. Template Unions
 
 Unions can be parameterized with template type or value parameters:
 
@@ -395,7 +481,7 @@ union Optional {
 }
 ```
 
-### 12.1 Instantiation
+### 13.1 Instantiation
 
 ```k
 opt: Optional<int>;
@@ -405,7 +491,7 @@ opt.value = 42;
 Each distinct set of template arguments produces a separate union type
 (monomorphization), with its own Kind enum and discriminant numbering.
 
-### 12.2 Template Unions in Template Structs
+### 13.2 Template Unions in Template Structs
 
 A union may be nested inside a template struct. During instantiation, the
 union's alternatives have their types substituted along with the rest of the
@@ -425,19 +511,19 @@ w: Wrapper<double>;
 w._storage.val = 3.14;     // type of 'val' is double
 ```
 
-### 12.3 Cross-Module Template Unions
+### 13.3 Cross-Module Template Unions
 
 Template union definitions are exported to `.kdi` files including their template
 parameters and alternative declarations. Importing modules can instantiate
 them with their own type arguments.
 
-### 12.4 Restrictions
+### 13.4 Restrictions
 
 - Template unions cannot have an inheritance clause.
 
 ---
 
-## 13. Cross-Module Export and Import
+## 14. Cross-Module Export and Import
 
 Union types are exported in `.kdi` files and can be imported by other modules:
 
@@ -465,12 +551,12 @@ check() : int {
 - Union layout (discriminant + storage size) is preserved across module
   boundaries.
 - Template unions can also be exported and instantiated by importing modules.
-- Union inheritance relationships are preserved in KDI: a derived union's parent
-  is recorded and resolved at import time.
+- Union inheritance and polymorphic base relationships are preserved in KDI: a derived
+  or polymorphic union's base is recorded and resolved at import time.
 
 ---
 
-## 14. Restrictions
+## 15. Restrictions
 
 The following are **not** allowed inside a union body:
 
@@ -482,10 +568,10 @@ The following are **not** allowed inside a union body:
 | Destructors | ✗ |
 | Nested types (struct, class, enum, union) | ✗ |
 | Static members | ✗ |
-| Inheritance from non-union types | ✗ |
-| Multiple parent unions | ✗ |
+| Base type other than union, class, or interface | ✗ |
+| Multiple base types | ✗ |
 | Drain addresser (`#`) on alternative types | ✗ |
-| Template union with inheritance clause | ✗ |
+| Template union with inheritance / base clause | ✗ |
 
 ---
 

@@ -2038,6 +2038,47 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
         }
     }
 
+    // ── Validate polymorphic union alternatives ──────────────────────────────
+    if (un.is_polymorphic()) {
+        auto poly_base = un.get_polymorphic_base();
+        for (const auto& alt : un.alternatives()) {
+            if (!alt.resolved_type) continue;
+            auto bare_alt = type::remove_const(alt.resolved_type);
+            auto st_type = std::dynamic_pointer_cast<struct_type>(bare_alt);
+            if (!st_type || !st_type->get_struct()) {
+                lex::opt_any_lexeme un_lexeme;
+                if (auto ast_decl = un.get_ast_aggregate_decl()) {
+                    un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+                }
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_POLYMORPHIC_ALT_NOT_CLASS),
+                    un_lexeme,
+                    "Alternative '{}' in polymorphic union '{}' has type '{}' which is not a class type",
+                    {alt.name, un.get_short_name(), alt.resolved_type->to_string()});
+            }
+            auto alt_agg = st_type->get_struct();
+            if (alt_agg->is_abstract() || alt_agg->is_interface()) {
+                lex::opt_any_lexeme un_lexeme;
+                if (auto ast_decl = un.get_ast_aggregate_decl()) {
+                    un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+                }
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_POLYMORPHIC_ALT_ABSTRACT),
+                    un_lexeme,
+                    "Alternative '{}' in polymorphic union '{}' is {} '{}'; abstract classes and interfaces cannot be union alternatives",
+                    {alt.name, un.get_short_name(), alt_agg->is_interface() ? "an interface" : "an abstract class", alt_agg->get_short_name()});
+            }
+            if (alt_agg.get() != poly_base.get() && !alt_agg->is_derived_from(poly_base)) {
+                lex::opt_any_lexeme un_lexeme;
+                if (auto ast_decl = un.get_ast_aggregate_decl()) {
+                    un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+                }
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_POLYMORPHIC_ALT_NOT_DERIVED),
+                    un_lexeme,
+                    "Alternative '{}' of type '{}' in polymorphic union '{}' does not inherit from base type '{}'",
+                    {alt.name, alt_agg->get_short_name(), un.get_short_name(), poly_base->get_short_name()});
+            }
+        }
+    }
+
     // If the union already has a struct_type with an LLVM type attached
     // (set during template instantiation or KDI import materialisation),
     // skip LLVM type creation to avoid replacing the struct_type pointer

@@ -24,6 +24,7 @@
 #include "../model/template_instantiator.hpp"
 #include "../parse/ast.hpp"
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/DataLayout.h>
 #include <queue>
 #include <set>
 #include <unordered_set>
@@ -385,10 +386,10 @@ void model_materializer::compute_secondary_vtable_specs(klass& kl) {
 
     constexpr size_t PTR_SIZE = 8; // bytes, 64-bit assumption
 
-    // Helper: compute byte offset of a named field in an LLVM struct type
+    // Helper: compute byte offset of a named field in an LLVM struct type (safe estimation when bodies are not yet set)
     auto field_byte_offset = [&](llvm::StructType* sty, unsigned field_idx) -> size_t {
         size_t off = 0;
-        for (unsigned fi = 0; fi < field_idx; ++fi) {
+        for (unsigned fi = 0; sty && !sty->isOpaque() && fi < field_idx && fi < sty->getNumElements(); ++fi) {
             llvm::Type* ft = sty->getElementType(fi);
             if (!ft) { off += PTR_SIZE; continue; }
             if (ft->isPointerTy())      off += PTR_SIZE;

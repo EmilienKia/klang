@@ -754,6 +754,216 @@ inline std::shared_ptr<union_type_def> find_union_by_struct_type(
 }
 
 /**
+ * Upcast a derived class pointer to a base class or interface pointer at LLVM IR level.
+ */
+inline llvm::Value* emit_class_upcast(
+    llvm::IRBuilder<>* builder,
+    context* ctx,
+    aggregate* src_st,
+    struct_type* src_st_type,
+    aggregate* tgt_st,
+    llvm::Value* src_ptr)
+{
+    if (!src_st || !tgt_st || src_st == tgt_st || !src_ptr) {
+        return src_ptr;
+    }
+    if (!src_st_type) {
+        src_st_type = src_st->get_struct_type().get();
+    }
+    if (!src_st_type) return src_ptr;
+
+    auto& llvm_ctx = ctx->llvm_context();
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    // Direct base
+    std::string subobj_name;
+    for (auto& bs : src_st->get_bases()) {
+        if (bs.base && bs.base.get() == tgt_st) {
+            if (bs.is_virtual) {
+                std::string vbptr_name = "__vbptr_" + bs.base->get_short_name() + "__";
+                if (auto vbptr_field = src_st_type->get_member(vbptr_name)) {
+                    auto src_llvm_type = ctx->get_llvm_type(src_st_type->shared_from_this());
+                    llvm::Value* vbptr_addr = builder->CreateStructGEP(
+                        src_llvm_type, src_ptr, (unsigned)vbptr_field->index,
+                        "vbptr_" + tgt_st->get_short_name() + "_addr");
+                    return builder->CreateLoad(ptr_ty, vbptr_addr,
+                        "vbase_" + tgt_st->get_short_name() + "_ptr");
+                }
+                subobj_name = "__vbase_" + bs.sanitised_name() + "__";
+            } else {
+                subobj_name = "__base_" + bs.sanitised_name() + "__";
+            }
+            break;
+        }
+    }
+    if (!subobj_name.empty()) {
+        auto src_llvm_type = ctx->get_llvm_type(src_st_type->shared_from_this());
+        if (auto field = src_st_type->get_member(subobj_name)) {
+            return builder->CreateStructGEP(
+                src_llvm_type,
+                src_ptr,
+                (unsigned)field->index,
+                "base_" + tgt_st->get_short_name() + "_ptr"
+            );
+        }
+    }
+
+    // Transitive upcast via DFS
+    std::function<llvm::Value*(aggregate*, struct_type*, llvm::Value*)> dfs_gep;
+    dfs_gep = [&](aggregate* cur_agg, struct_type* cur_st_type, llvm::Value* cur_ptr) -> llvm::Value* {
+        for (auto& bs : cur_agg->get_bases()) {
+            if (!bs.base) continue;
+
+            auto base_agg = bs.base;
+            auto base_st_type = base_agg->get_struct_type();
+            if (!base_st_type) continue;
+            llvm::Type* cur_llvm_type = cur_st_type->get_llvm_type();
+            if (!cur_llvm_type) continue;
+
+            llvm::Value* base_ptr = nullptr;
+            if (bs.is_virtual) {
+                std::string vbptr_name = "__vbptr_" + bs.base->get_short_name() + "__";
+                auto vbptr_field = cur_st_type->get_member(vbptr_name);
+                if (!vbptr_field) continue;
+                llvm::Value* vbptr_addr = builder->CreateStructGEP(
+                    cur_llvm_type, cur_ptr, (unsigned)vbptr_field->index,
+                    "trans_vbptr_" + bs.sanitised_name() + "_addr");
+                base_ptr = builder->CreateLoad(ptr_ty, vbptr_addr,
+                    "trans_vbase_" + bs.sanitised_name() + "_ptr");
+            } else {
+                std::string field_name = "__base_" + bs.sanitised_name() + "__";
+                auto field = cur_st_type->get_member(field_name);
+                if (!field) continue;
+                base_ptr = builder->CreateStructGEP(
+                    cur_llvm_type, cur_ptr, (unsigned)field->index,
+                    "trans_base_" + bs.sanitised_name() + "_ptr");
+            }
+
+            if (bs.base.get() == tgt_st) {
+                return base_ptr;
+            }
+
+            std::string vbptr_name2 = "__vbptr_" + tgt_st->get_short_name() + "__";
+            if (auto vbptr_field2 = base_st_type->get_member(vbptr_name2)) {
+                llvm::Type* inter_llvm_type = base_st_type->get_llvm_type();
+                if (inter_llvm_type) {
+                    llvm::Value* vbptr_addr = builder->CreateStructGEP(
+                        inter_llvm_type, base_ptr, (unsigned)vbptr_field2->index,
+                        "trans_vbptr_" + tgt_st->get_short_name() + "_addr");
+                    return builder->CreateLoad(ptr_ty, vbptr_addr,
+                        "trans_vbase_" + tgt_st->get_short_name() + "_ptr");
+                }
+            }
+            if (auto res = dfs_gep(bs.base.get(), base_st_type.get(), base_ptr)) {
+                return res;
+            }
+            std::string vbase_name2 = "__vbase_" + tgt_st->get_short_name() + "__";
+            if (auto vbase_field2 = base_st_type->get_member(vbase_name2)) {
+                llvm::Type* inter_llvm_type = base_st_type->get_llvm_type();
+                if (!inter_llvm_type) continue;
+                return builder->CreateStructGEP(
+                    inter_llvm_type, base_ptr, (unsigned)vbase_field2->index,
+                    "trans_vbase_" + tgt_st->get_short_name() + "_ptr");
+            }
+        }
+        return nullptr;
+    };
+    if (auto res = dfs_gep(src_st, src_st_type, src_ptr)) {
+        return res;
+    }
+
+    // Direct vbptr
+    {
+        std::string vbptr_name = "__vbptr_" + tgt_st->get_short_name() + "__";
+        auto src_llvm_type = ctx->get_llvm_type(src_st_type->shared_from_this());
+        if (auto vbptr_field = src_st_type->get_member(vbptr_name)) {
+            llvm::Value* vbptr_addr = builder->CreateStructGEP(
+                src_llvm_type, src_ptr, (unsigned)vbptr_field->index,
+                "vbptr_" + tgt_st->get_short_name() + "_addr");
+            return builder->CreateLoad(ptr_ty, vbptr_addr,
+                "vbase_" + tgt_st->get_short_name() + "_ptr");
+        }
+    }
+    // Direct vbase
+    {
+        std::string vbase_name = "__vbase_" + tgt_st->get_short_name() + "__";
+        auto src_llvm_type = ctx->get_llvm_type(src_st_type->shared_from_this());
+        if (auto vbase_field = src_st_type->get_member(vbase_name)) {
+            return builder->CreateStructGEP(
+                src_llvm_type, src_ptr, (unsigned)vbase_field->index,
+                "vbase_" + tgt_st->get_short_name() + "_ptr");
+        }
+    }
+
+    return src_ptr;
+}
+
+/**
+ * Switch on a polymorphic union's active discriminant and return a pointer to the common base class/interface.
+ */
+inline llvm::Value* emit_polymorphic_union_to_base_ptr(
+    llvm::IRBuilder<>* builder,
+    context* ctx,
+    const union_type_def& union_def,
+    aggregate* poly_base,
+    llvm::Value* union_ptr)
+{
+    auto& llvm_ctx = ctx->llvm_context();
+    auto* cur_fn = builder->GetInsertBlock()->getParent();
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    auto st_type = union_def.get_struct_type();
+    auto* union_llvm_type = st_type ? st_type->get_llvm_type() : nullptr;
+
+    // Load discriminant from field 0
+    auto* disc_ptr = builder->CreateStructGEP(union_llvm_type, union_ptr, 0, "poly_union_disc_ptr");
+    auto* disc_val = builder->CreateLoad(i32_ty, disc_ptr, "poly_union_disc");
+
+    auto alts = union_def.all_alternatives_ptrs();
+
+    auto* merge_bb = llvm::BasicBlock::Create(llvm_ctx, "poly_union_merge", cur_fn);
+    auto* fail_bb = llvm::BasicBlock::Create(llvm_ctx, "poly_union_fail", cur_fn);
+
+    auto* switch_inst = builder->CreateSwitch(disc_val, fail_bb, alts.size());
+
+    std::vector<std::pair<llvm::Value*, llvm::BasicBlock*>> incoming;
+
+    for (const auto* alt : alts) {
+        auto* case_bb = llvm::BasicBlock::Create(llvm_ctx, "poly_union_case_" + alt->name, cur_fn);
+        switch_inst->addCase(llvm::ConstantInt::get(i32_ty, alt->index), case_bb);
+
+        builder->SetInsertPoint(case_bb);
+        // GEP to storage (field 1)
+        auto* storage_ptr = builder->CreateStructGEP(union_llvm_type, union_ptr, 1, "union_storage");
+        llvm::Value* base_ptr = storage_ptr;
+        auto bare_alt = type::remove_const(alt->resolved_type);
+        if (auto alt_st_type = std::dynamic_pointer_cast<struct_type>(bare_alt)) {
+            if (auto alt_agg = alt_st_type->get_struct()) {
+                base_ptr = emit_class_upcast(builder, ctx, alt_agg.get(), alt_st_type.get(), poly_base, storage_ptr);
+            }
+        }
+        auto* end_case_bb = builder->GetInsertBlock();
+        incoming.push_back({base_ptr, end_case_bb});
+        builder->CreateBr(merge_bb);
+    }
+
+    // Fail BB: emit trap
+    builder->SetInsertPoint(fail_bb);
+    auto* trap_fn = llvm::Intrinsic::getDeclaration(&ctx->module(), llvm::Intrinsic::trap);
+    builder->CreateCall(trap_fn);
+    builder->CreateUnreachable();
+
+    // Merge BB
+    builder->SetInsertPoint(merge_bb);
+    auto* phi = builder->CreatePHI(ptr_ty, incoming.size(), "poly_union_base_ptr");
+    for (auto& [val, bb] : incoming) {
+        phi->addIncoming(val, bb);
+    }
+    return phi;
+}
+
+/**
  * Tell whether an aggregate's RTTI global is defined by another module.
  *
  * Only aggregates carrying a vtable get an RTTI global emitted, so an imported

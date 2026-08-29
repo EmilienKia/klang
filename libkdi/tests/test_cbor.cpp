@@ -654,3 +654,46 @@ TEST_CASE("CBOR: object-backed enum metadata round-trips", "[cbor][enum][typed]"
     REQUIRE(ren.entries[0].object_init_members.size() == 2);
 }
 
+TEST_CASE("CBOR: polymorphic union round-trips", "[cbor][union][polymorphic]") {
+    kdi_file f;
+    f.header.module_name = "test::cbor";
+    f.header.lib_base    = "test.cbor";
+    f.unit.name          = "test::cbor";
+
+    kdi_union un;
+    un.name                      = "AnyAnimal";
+    un.fq_name                   = "test::cbor::AnyAnimal";
+    un.mangled_name              = "_KU9AnyAnimal";
+    un.visibility                = kdi_visibility::public_;
+    un.polymorphic_base_fq_name = "test::cbor::Animal";
+    un.llvm_def                  = "{ i32, [8 x i8] }";
+
+    kdi_union_alternative alt1;
+    alt1.name = "dog";
+    alt1.type = kdi_type::make_aggregate("test::cbor::Dog");
+    un.alternatives.push_back(alt1);
+
+    kdi_union_alternative alt2;
+    alt2.name = "cat";
+    alt2.type = kdi_type::make_aggregate("test::cbor::Cat");
+    un.alternatives.push_back(alt2);
+
+    f.unit.root_ns.unions.push_back(un);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+    std::istringstream iss(oss.str(), std::ios::binary);
+    kdi_file restored;
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(iss));
+
+    REQUIRE(restored.unit.root_ns.unions.size() == 1);
+    auto& run = restored.unit.root_ns.unions[0];
+    REQUIRE(run.name == "AnyAnimal");
+    REQUIRE(run.fq_name == "test::cbor::AnyAnimal");
+    REQUIRE(run.polymorphic_base_fq_name == "test::cbor::Animal");
+    REQUIRE(run.alternatives.size() == 2);
+    REQUIRE(run.alternatives[0].name == "dog");
+    REQUIRE(run.alternatives[1].name == "cat");
+}
+
+

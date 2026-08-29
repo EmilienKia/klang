@@ -1086,6 +1086,36 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
             }
         }
     }
+
+    // ── Link polymorphic base (if declared) ──────────────────────────────────
+    if (!un.polymorphic_base_fq_name.empty()) {
+        std::vector<std::string> base_parts;
+        std::size_t pos = 0;
+        while (true) {
+            auto s = un.polymorphic_base_fq_name.find("::", pos);
+            if (s == std::string::npos) { base_parts.push_back(un.polymorphic_base_fq_name.substr(pos)); break; }
+            base_parts.push_back(un.polymorphic_base_fq_name.substr(pos, s - pos));
+            pos = s + 2;
+        }
+        if (!base_parts.empty()) {
+            k::name qname{false, base_parts};
+            if (auto base_agg = _unit.get_or_create_imported_aggregate(qname, ctx)) {
+                udef->set_base_union_raw_name(un.polymorphic_base_fq_name);
+                udef->set_polymorphic_base(std::dynamic_pointer_cast<aggregate>(base_agg));
+            } else if (auto root_ns = _unit.get_root_namespace()) {
+                std::shared_ptr<ns> cur_ns = root_ns;
+                for (size_t i = 0; i + 1 < base_parts.size() && cur_ns; ++i) {
+                    cur_ns = cur_ns->get_child_namespace(base_parts[i]);
+                }
+                if (cur_ns) {
+                    if (auto loc_agg = cur_ns->get_aggregate(base_parts.back())) {
+                        udef->set_base_union_raw_name(un.polymorphic_base_fq_name);
+                        udef->set_polymorphic_base(loc_agg);
+                    }
+                }
+            }
+        }
+    }
 }
 
 void kdi_importer::materialise_variable(const kdi::kdi_variable& var,
