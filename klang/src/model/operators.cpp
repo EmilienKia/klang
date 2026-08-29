@@ -339,5 +339,45 @@ void spaceship_expression::accept(model_visitor &visitor) {
     visitor.visit_spaceship_expression(*this);
 }
 
+//
+// Ternary expression: get_first_lexeme / get_last_lexeme / get_interest_lexeme
+//
+
+lex::opt_any_lexeme ternary_expression::get_first_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_first_lexeme()) return lex;
+    }
+    if (_lexpr) {
+        if (auto lex = _lexpr->get_first_lexeme()) return lex;
+    }
+    if (_mexpr) {
+        return _mexpr->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme ternary_expression::get_last_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_last_lexeme()) return lex;
+    }
+    if (_rexpr) {
+        if (auto lex = _rexpr->get_last_lexeme()) return lex;
+    }
+    if (_mexpr) {
+        return _mexpr->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme ternary_expression::get_interest_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_interest_lexeme()) return lex;
+    }
+    if (_lexpr) {
+        return _lexpr->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
 
 } // namespace k::model

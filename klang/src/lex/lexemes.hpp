@@ -622,6 +622,15 @@ inline const lex::lexeme& as_lexeme(const lex::opt_ref_any_lexeme& lexeme) {
     return std::visit([](auto&& arg)->const lex::lexeme&{return (const lex::lexeme&)arg;}, lex);
 }
 
+inline const lex::lexeme& as_lexeme(const lex::any_lexeme& lexeme) {
+    return std::visit([](auto&& arg)->const lex::lexeme&{return (const lex::lexeme&)arg;}, lexeme);
+}
+
+inline const lex::lexeme& as_lexeme(const lex::opt_any_lexeme& lexeme) {
+    const auto& lex = lexeme.value();
+    return std::visit([](auto&& arg)->const lex::lexeme&{return (const lex::lexeme&)arg;}, lex);
+}
+
 
 } // k::lex
 #endif //KLANG_LEXEMES_HPP

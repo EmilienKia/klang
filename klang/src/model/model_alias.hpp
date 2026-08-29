@@ -194,6 +194,18 @@ public:
 
     const lex::opt_any_lexeme& get_decl_lexeme() const { return _decl_lexeme; }
     void set_decl_lexeme(lex::opt_any_lexeme lexeme) { _decl_lexeme = std::move(lexeme); }
+
+    void set_ast_alias_decl(std::shared_ptr<k::parse::ast::alias_decl> ast);
+    std::shared_ptr<k::parse::ast::alias_decl> get_ast_alias_decl() const;
+
+    lex::opt_any_lexeme get_first_lexeme() const override {
+        if (auto lex = element::get_first_lexeme()) return lex;
+        return _decl_lexeme;
+    }
+    lex::opt_any_lexeme get_interest_lexeme() const override {
+        if (auto lex = element::get_interest_lexeme()) return lex;
+        return _decl_lexeme;
+    }
 };
 
 

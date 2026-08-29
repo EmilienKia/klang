@@ -164,24 +164,31 @@ public:
     virtual std::shared_ptr<expression> clone() const = 0;
 
     /**
-     * Recursively retrieve the first (leftmost) lexeme covered by this expression's AST subtree.
+     * Retrieve the first (leftmost) lexeme covered by this expression.
      * Returns std::nullopt if no AST node is attached or no lexeme can be found.
      */
-    virtual std::optional<k::lex::any_lexeme> first_lexeme() const;
+    lex::opt_any_lexeme get_first_lexeme() const override;
 
     /**
-     * Recursively retrieve the last (rightmost) lexeme covered by this expression's AST subtree.
+     * Retrieve the last (rightmost) lexeme covered by this expression.
      * Returns std::nullopt if no AST node is attached or no lexeme can be found.
      */
-    virtual std::optional<k::lex::any_lexeme> last_lexeme() const;
+    lex::opt_any_lexeme get_last_lexeme() const override;
 
     /**
-     * Convenience: returns the source range (first, last) lexemes of this expression.
-     * Either or both may be std::nullopt if not available.
+     * Retrieve the lexeme that is considered the "interest point" of this expression (e.g. operator, name).
+     * Returns std::nullopt if no AST node is attached or no lexeme can be found.
      */
-    std::pair<std::optional<k::lex::any_lexeme>, std::optional<k::lex::any_lexeme>> source_range() const {
-        return { first_lexeme(), last_lexeme() };
-    }
+    lex::opt_any_lexeme get_interest_lexeme() const override;
+
+    /** Backward-compatible helper: returns get_first_lexeme(). */
+    virtual std::optional<k::lex::any_lexeme> first_lexeme() const { return get_first_lexeme(); }
+
+    /** Backward-compatible helper: returns get_last_lexeme(). */
+    virtual std::optional<k::lex::any_lexeme> last_lexeme() const { return get_last_lexeme(); }
+
+    /** Backward-compatible helper: returns get_interest_lexeme(). */
+    virtual std::optional<k::lex::any_lexeme> interest_lexeme() const { return get_interest_lexeme(); }
 };
 
 class value_expression : public expression {

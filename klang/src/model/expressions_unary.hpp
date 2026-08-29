@@ -87,8 +87,9 @@ public:
 
     std::shared_ptr<expression> clone() const override = 0;
 
-    std::optional<k::lex::any_lexeme> first_lexeme() const override;
-    std::optional<k::lex::any_lexeme> last_lexeme() const override;
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 class binary_expression : public expression {
@@ -170,8 +171,9 @@ public:
 
     std::shared_ptr<expression> clone() const override = 0;
 
-    std::optional<k::lex::any_lexeme> first_lexeme() const override;
-    std::optional<k::lex::any_lexeme> last_lexeme() const override;
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 /**
@@ -314,6 +316,10 @@ public:
     }
 
     std::shared_ptr<expression> clone() const override = 0;
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 class member_of_object_expression : public member_of_expression {
@@ -428,6 +434,10 @@ public:
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 class subscript_expression : public binary_expression {

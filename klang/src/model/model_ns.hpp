@@ -42,6 +42,9 @@ public:
 
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
+
+    void set_ast_variable_decl(std::shared_ptr<k::parse::ast::variable_decl> ast);
+    std::shared_ptr<k::parse::ast::variable_decl> get_ast_variable_decl() const;
 };
 
 
@@ -120,6 +123,9 @@ public:
     const std::vector<std::shared_ptr</*ns_element*/element>>& get_children() const {
         return _children;
     }
+
+    void set_ast_namespace_decl(std::shared_ptr<k::parse::ast::namespace_decl> ast);
+    std::shared_ptr<k::parse::ast::namespace_decl> get_ast_namespace_decl() const;
 };
 
 
@@ -267,6 +273,9 @@ public:
     static std::shared_ptr<unit> create(std::shared_ptr<context> context);
 
     void accept(model_visitor& visitor) override;
+
+    void set_ast_unit(std::shared_ptr<k::parse::ast::unit> ast);
+    std::shared_ptr<k::parse::ast::unit> get_ast_unit() const;
 
     /**
      * Get the model name.

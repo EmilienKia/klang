@@ -57,6 +57,7 @@ namespace k::model {
 
     void model_builder::visit_unit(parse::ast::unit &unit) {
         trace("[model_builder::visit_unit] begin");
+        _unit.set_ast_unit(unit.shared_as<parse::ast::unit>());
         // Push root ns context
         stack<ns_context> push(_contexts, _unit.get_root_namespace());
 
@@ -155,6 +156,7 @@ namespace k::model {
         std::shared_ptr<k::model::ns> namesp = parent_ns->get_child_namespace(std::string{ns.name->content});
 
         trace("[model_builder::visit_namespace_decl] namespace '{}'", {std::string{ns.name->content}});
+        namesp->set_ast_namespace_decl(ns.shared_as<parse::ast::namespace_decl>());
 
         if (has_doc(ns.doc) && !namesp->get_documentation()) {
             namesp->set_documentation(doc::build_typed_doc<doc::namespace_doc>(namesp, *ns.doc));
@@ -201,8 +203,9 @@ namespace k::model {
         }
 
         // Store the AST node for error reporting
-        // Note: using_decl has diamond inheritance (declaration + statement → ast_node),
-        // so shared_from_this() is ambiguous. We skip it; the using_kw token is enough.
+        if (_current_ast_decl) {
+            dir.ast_node = _current_ast_decl;
+        }
 
         // Find the current scope and add the directive
         // Try ns (namespace scope)
@@ -275,6 +278,11 @@ namespace k::model {
         auto alias = model::alias_definition::make_shared(parent_elem, alias_name, kind);
         alias->set_block_local(block_local);
         alias->set_decl_lexeme(decl.alias_kw);
+        if (_current_ast_decl) {
+            if (auto alias_decl_ptr = std::dynamic_pointer_cast<parse::ast::alias_decl>(_current_ast_decl)) {
+                alias->set_ast_alias_decl(alias_decl_ptr);
+            }
+        }
 
         // A parameterised alias renames a family of types. Its parameters are
         // recorded here; the target type is then built with the parameter names
@@ -415,6 +423,7 @@ namespace k::model {
         if (decl.qname) {
             dir.target_name = decl.qname->to_name();
         }
+        dir.ast_node = decl.shared_from_this();
 
         // Extract raw template argument names for later substitution at instantiation time.
         // For 'friend Foo<T, U>;', raw_template_arg_names will be ["T", "U"].
@@ -943,13 +952,14 @@ namespace k::model {
             }
         }
         // Store the AST node on the variable for source location reporting in diagnostics.
-        if (auto var_stmt = std::dynamic_pointer_cast<model::variable_statement>(var)) {
-            // variable_decl has diamond inheritance (declaration + statement from ast_node);
-            // use _current_ast_decl which was set by the parent visitor loop.
-            if (_current_ast_decl) {
-                auto var_decl_ptr = std::dynamic_pointer_cast<parse::ast::variable_decl>(_current_ast_decl);
-                if (var_decl_ptr) {
+        if (_current_ast_decl) {
+            if (auto var_decl_ptr = std::dynamic_pointer_cast<parse::ast::variable_decl>(_current_ast_decl)) {
+                if (auto var_stmt = std::dynamic_pointer_cast<model::variable_statement>(var)) {
                     var_stmt->set_ast_variable_decl(var_decl_ptr);
+                } else if (auto mv = std::dynamic_pointer_cast<model::member_variable_definition>(var)) {
+                    mv->set_ast_variable_decl(var_decl_ptr);
+                } else if (auto gv = std::dynamic_pointer_cast<model::global_variable_definition>(var)) {
+                    gv->set_ast_variable_decl(var_decl_ptr);
                 }
             }
         }
@@ -1763,6 +1773,7 @@ namespace k::model {
         }
 
         std::shared_ptr<model::block> block = std::make_shared<model::block>(parent_scope);
+        block->set_ast_block_statement(block_stmt.shared_as<parse::ast::block_statement>());
 
         // Push function context
         stack<block_context> push(_contexts, block);
@@ -1789,7 +1800,8 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_STATIC_CTOR_BAD_SCOPE), stmt.ret, "'return' statement cannot appear here; it must be inside a function body");
         }
 
-        std::shared_ptr<model::return_statement> ret_stmt = std::make_shared<model::return_statement>(parent_scope, stmt.shared_as<parse::ast::return_statement>());
+        std::shared_ptr<model::return_statement> ret_stmt = std::make_shared<model::return_statement>(parent_scope);
+        ret_stmt->set_ast_return_statement(stmt.shared_as<parse::ast::return_statement>());
 
         // Push function context
         stack<return_context> push(_contexts, ret_stmt);
@@ -1832,7 +1844,8 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BREAK_NOT_IN_LOOP), stmt.break_kw, "'break' statement can only appear inside a loop body (while or for)");
         }
 
-        std::shared_ptr<model::break_statement> break_stmt = std::make_shared<model::break_statement>(parent_scope, stmt.shared_as<parse::ast::break_statement>());
+        std::shared_ptr<model::break_statement> break_stmt = std::make_shared<model::break_statement>(parent_scope);
+        break_stmt->set_ast_break_statement(stmt.shared_as<parse::ast::break_statement>());
 
         _stmt = break_stmt;
     }
@@ -1863,7 +1876,8 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_CONTINUE_NOT_IN_LOOP), stmt.continue_kw, "'continue' statement can only appear inside a loop body (while or for)");
         }
 
-        std::shared_ptr<model::continue_statement> continue_stmt = std::make_shared<model::continue_statement>(parent_scope, stmt.shared_as<parse::ast::continue_statement>());
+        std::shared_ptr<model::continue_statement> continue_stmt = std::make_shared<model::continue_statement>(parent_scope);
+        continue_stmt->set_ast_continue_statement(stmt.shared_as<parse::ast::continue_statement>());
 
         _stmt = continue_stmt;
     }
@@ -1874,7 +1888,8 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BREAK_NOT_IN_LOOP), stmt.throw_kw, "'throw' statement cannot appear here; it must be inside a function body");
         }
 
-        auto throw_stmt = std::make_shared<model::throw_statement>(parent_scope, stmt.shared_as<parse::ast::throw_statement>());
+        auto throw_stmt = std::make_shared<model::throw_statement>(parent_scope);
+        throw_stmt->set_ast_throw_statement(stmt.shared_as<parse::ast::throw_statement>());
 
         // Build expression
         if(stmt.expr) {
@@ -1891,11 +1906,13 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BREAK_NOT_IN_LOOP), stmt.try_kw, "'try' statement cannot appear here; it must be inside a function body");
         }
 
-        auto try_stmt = std::make_shared<model::try_catch_statement>(parent_scope, stmt.shared_as<parse::ast::try_catch_statement>());
+        auto try_stmt = std::make_shared<model::try_catch_statement>(parent_scope);
+        try_stmt->set_ast_try_catch_statement(stmt.shared_as<parse::ast::try_catch_statement>());
 
         // Build try body
         if(stmt.try_body) {
             auto block_model = std::make_shared<model::block>(try_stmt);
+            block_model->set_ast_block_statement(stmt.try_body);
             stack<block_context> push(_contexts, block_model);
             for(auto& s : stmt.try_body->statements) {
                 s->visit(*this);
@@ -1909,6 +1926,7 @@ namespace k::model {
         // Build catch clauses
         for(auto& clause : stmt.catch_clauses) {
             auto catch_model = std::make_shared<model::catch_clause>(try_stmt);
+            catch_model->set_ast_catch_clause(clause);
             catch_model->set_const(clause->is_const);
 
             // Create the exception variable
@@ -1922,6 +1940,7 @@ namespace k::model {
             // Build catch body
             if(clause->body) {
                 auto body_block = std::make_shared<model::block>(catch_model);
+                body_block->set_ast_block_statement(clause->body);
                 stack<block_context> push2(_contexts, body_block);
                 for(auto& s : clause->body->statements) {
                     s->visit(*this);
@@ -1938,6 +1957,7 @@ namespace k::model {
         // Build finally body
         if(stmt.finally_body) {
             auto finally_block = std::make_shared<model::block>(try_stmt);
+            finally_block->set_ast_block_statement(stmt.finally_body);
             stack<block_context> push3(_contexts, finally_block);
             for(auto& s : stmt.finally_body->statements) {
                 s->visit(*this);
@@ -1961,7 +1981,8 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_IF_STMT_BAD_SCOPE), stmt.if_kw, "'if' statement cannot appear here; it must be inside a function or block body");
         }
 
-        std::shared_ptr<model::if_else_statement> if_else_stmt = std::make_shared<model::if_else_statement>(parent_scope, stmt.shared_as<parse::ast::if_else_statement>());
+        std::shared_ptr<model::if_else_statement> if_else_stmt = std::make_shared<model::if_else_statement>(parent_scope);
+        if_else_stmt->set_ast_if_else_stmt(stmt.shared_as<parse::ast::if_else_statement>());
 
         // Push function context
         stack<if_else_context> push(_contexts, if_else_stmt);
@@ -2037,7 +2058,8 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_WHILE_STMT_BAD_SCOPE), stmt.while_kw, "'while' statement cannot appear here; it must be inside a function or block body");
         }
 
-        auto while_stmt = std::make_shared<model::while_statement>(parent_scope, stmt.shared_as<parse::ast::while_statement>());
+        auto while_stmt = std::make_shared<model::while_statement>(parent_scope);
+        while_stmt->set_ast_while_stmt(stmt.shared_as<parse::ast::while_statement>());
 
         // Push function context
         stack<while_context> push(_contexts, while_stmt);
@@ -2077,7 +2099,8 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOR_STMT_BAD_SCOPE), stmt.for_kw, "'for' statement cannot appear here; it must be inside a function or block body");
         }
 
-        auto for_stmt = std::make_shared<model::for_statement>(parent_scope, stmt.shared_as<parse::ast::for_statement>());
+        auto for_stmt = std::make_shared<model::for_statement>(parent_scope);
+        for_stmt->set_ast_for_stmt(stmt.shared_as<parse::ast::for_statement>());
 
         // Push function context
         stack<for_context> push(_contexts, for_stmt);
@@ -2140,7 +2163,8 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOREACH_STMT_BAD_SCOPE), stmt.for_kw, "'for' (foreach) statement cannot appear here; it must be inside a function or block body");
         }
 
-        auto foreach_stmt = std::make_shared<model::foreach_statement>(parent_scope, stmt.shared_as<parse::ast::foreach_statement>());
+        auto foreach_stmt = std::make_shared<model::foreach_statement>(parent_scope);
+        foreach_stmt->set_ast_foreach_stmt(stmt.shared_as<parse::ast::foreach_statement>());
 
         // Push loop context (recognized by visit_break_statement/visit_continue_statement)
         stack<foreach_context> push(_contexts, foreach_stmt);
@@ -2206,7 +2230,8 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_EXPR_STMT_BAD_SCOPE), lex::opt_ref_any_lexeme{}, "Expression statement cannot appear here; expression statements are only allowed inside a function or block body");
         }
 
-        std::shared_ptr<model::expression_statement> expr = std::make_shared<model::expression_statement>(parent_scope, stmt.shared_as<parse::ast::expression_statement>());
+        std::shared_ptr<model::expression_statement> expr = std::make_shared<model::expression_statement>(parent_scope);
+        expr->set_ast_expression_statement(stmt.shared_as<parse::ast::expression_statement>());
 
         // Push function context
         stack<expr_stmt_context> push(_contexts, expr);

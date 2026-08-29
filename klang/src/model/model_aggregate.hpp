@@ -48,6 +48,9 @@ public:
 
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
+
+    void set_ast_variable_decl(std::shared_ptr<k::parse::ast::variable_decl> ast);
+    std::shared_ptr<k::parse::ast::variable_decl> get_ast_variable_decl() const;
 };
 
 /**

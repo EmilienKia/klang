@@ -473,6 +473,178 @@ void block::on_variable_defined(std::shared_ptr<variable_definition> var) {
     }
 }
 
+lex::opt_any_lexeme statement::get_first_lexeme() const {
+    if (_ast_node) {
+        return _ast_node->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme statement::get_last_lexeme() const {
+    if (_ast_node) {
+        return _ast_node->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme statement::get_interest_lexeme() const {
+    if (_ast_node) {
+        return _ast_node->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme return_statement::get_first_lexeme() const {
+    if (auto lex = statement::get_first_lexeme()) return lex;
+    if (_expression) return _expression->get_first_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme return_statement::get_last_lexeme() const {
+    if (auto lex = statement::get_last_lexeme()) return lex;
+    if (_expression) return _expression->get_last_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme return_statement::get_interest_lexeme() const {
+    if (auto lex = statement::get_interest_lexeme()) return lex;
+    if (_expression) return _expression->get_interest_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme if_else_statement::get_first_lexeme() const {
+    if (auto lex = statement::get_first_lexeme()) return lex;
+    if (_test_expr) return _test_expr->get_first_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme if_else_statement::get_last_lexeme() const {
+    if (auto lex = statement::get_last_lexeme()) return lex;
+    if (_else_stmt) return _else_stmt->get_last_lexeme();
+    if (_then_stmt) return _then_stmt->get_last_lexeme();
+    if (_test_expr) return _test_expr->get_last_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme if_else_statement::get_interest_lexeme() const {
+    if (auto lex = statement::get_interest_lexeme()) return lex;
+    if (_test_expr) return _test_expr->get_interest_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme while_statement::get_first_lexeme() const {
+    if (auto lex = statement::get_first_lexeme()) return lex;
+    if (_test_expr) return _test_expr->get_first_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme while_statement::get_last_lexeme() const {
+    if (auto lex = statement::get_last_lexeme()) return lex;
+    if (_nested_stmt) return _nested_stmt->get_last_lexeme();
+    if (_test_expr) return _test_expr->get_last_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme while_statement::get_interest_lexeme() const {
+    if (auto lex = statement::get_interest_lexeme()) return lex;
+    if (_test_expr) return _test_expr->get_interest_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme for_statement::get_first_lexeme() const {
+    if (auto lex = statement::get_first_lexeme()) return lex;
+    if (_decl_stmt) return _decl_stmt->get_first_lexeme();
+    if (_test_expr) return _test_expr->get_first_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme for_statement::get_last_lexeme() const {
+    if (auto lex = statement::get_last_lexeme()) return lex;
+    if (_nested_stmt) return _nested_stmt->get_last_lexeme();
+    if (_step_expr) return _step_expr->get_last_lexeme();
+    if (_test_expr) return _test_expr->get_last_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme for_statement::get_interest_lexeme() const {
+    if (auto lex = statement::get_interest_lexeme()) return lex;
+    if (_test_expr) return _test_expr->get_interest_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme foreach_statement::get_first_lexeme() const {
+    if (auto lex = statement::get_first_lexeme()) return lex;
+    if (_source_expr) return _source_expr->get_first_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme foreach_statement::get_last_lexeme() const {
+    if (auto lex = statement::get_last_lexeme()) return lex;
+    if (_nested_stmt) return _nested_stmt->get_last_lexeme();
+    if (_source_expr) return _source_expr->get_last_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme foreach_statement::get_interest_lexeme() const {
+    if (auto lex = statement::get_interest_lexeme()) return lex;
+    if (_source_expr) return _source_expr->get_interest_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme expression_statement::get_first_lexeme() const {
+    if (auto lex = statement::get_first_lexeme()) return lex;
+    if (_expression) return _expression->get_first_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme expression_statement::get_last_lexeme() const {
+    if (auto lex = statement::get_last_lexeme()) return lex;
+    if (_expression) return _expression->get_last_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme expression_statement::get_interest_lexeme() const {
+    if (auto lex = statement::get_interest_lexeme()) return lex;
+    if (_expression) return _expression->get_interest_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme variable_statement::get_first_lexeme() const {
+    if (auto lex = statement::get_first_lexeme()) return lex;
+    if (_init_expr) return _init_expr->get_first_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme variable_statement::get_last_lexeme() const {
+    if (auto lex = statement::get_last_lexeme()) return lex;
+    if (_init_expr) return _init_expr->get_last_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme variable_statement::get_interest_lexeme() const {
+    if (auto lex = statement::get_interest_lexeme()) return lex;
+    if (_init_expr) return _init_expr->get_interest_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme throw_statement::get_first_lexeme() const {
+    if (auto lex = statement::get_first_lexeme()) return lex;
+    if (_expression) return _expression->get_first_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme throw_statement::get_last_lexeme() const {
+    if (auto lex = statement::get_last_lexeme()) return lex;
+    if (_expression) return _expression->get_last_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme throw_statement::get_interest_lexeme() const {
+    if (auto lex = statement::get_interest_lexeme()) return lex;
+    if (_expression) return _expression->get_interest_lexeme();
+    return std::nullopt;
+}
+
 
 
 } // namespace k::model

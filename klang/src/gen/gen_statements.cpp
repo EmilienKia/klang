@@ -1982,7 +1982,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         // Push finally context (in_catch=true) so return/break/continue inside the catch
         // body will emit __cxa_end_catch + finally before exiting.
         if (finally_body) {
-            _finally_stack.push({finally_body, true, catch_lexeme});
+            _finally_stack.push({finally_body, true});
         }
 
         if (auto body = clauses[i]->get_body()) {

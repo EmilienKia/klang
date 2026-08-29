@@ -136,6 +136,10 @@ public:
         if (callee) c->assign(callee, args);
         return c;
     }
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 class constructor_invocation_expression : public expression {
@@ -222,6 +226,10 @@ public:
         if (sym) c->assign(sym, args);
         return c;
     }
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 /**

@@ -55,7 +55,10 @@ std::shared_ptr<ast::block_statement> parser::parse_statement_block()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BLOCK_MISSING_CLOSE_BRACE), _lexer.pick_current(), "Block is expecting a closing brace '}'");
     }
 
-    return std::make_shared<ast::block_statement>(*open_brace, *close_brace, statements);
+    auto block = std::make_shared<ast::block_statement>(*open_brace, *close_brace, statements);
+    block->set_open_brace(*open_brace);
+    block->set_close_brace(*close_brace);
+    return block;
 }
 
 std::shared_ptr<ast::return_statement> parser::parse_return_statement()
@@ -77,8 +80,9 @@ std::shared_ptr<ast::return_statement> parser::parse_return_statement()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_RETURN_MISSING_SEMICOLON), _lexer.pick_current(), "Return statement is expecting to finish by a semicolon ';'");
     }
 
-    return std::make_shared<ast::return_statement>(*ret, expr);
-
+    auto res = std::make_shared<ast::return_statement>(*ret, expr);
+    res->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return res;
 }
 
 std::shared_ptr<ast::break_statement> parser::parse_break_statement()
@@ -96,7 +100,9 @@ std::shared_ptr<ast::break_statement> parser::parse_break_statement()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BREAK_MISSING_SEMICOLON), _lexer.pick_current(), "Break statement is expecting to finish by a semicolon ';'");
     }
 
-    return std::make_shared<ast::break_statement>(lex::as<lex::keyword>(lbreak));
+    auto res = std::make_shared<ast::break_statement>(lex::as<lex::keyword>(lbreak));
+    res->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return res;
 }
 
 std::shared_ptr<ast::continue_statement> parser::parse_continue_statement()
@@ -114,7 +120,9 @@ std::shared_ptr<ast::continue_statement> parser::parse_continue_statement()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CONTINUE_MISSING_SEMICOLON), _lexer.pick_current(), "Continue statement is expecting to finish by a semicolon ';'");
     }
 
-    return std::make_shared<ast::continue_statement>(lex::as<lex::keyword>(lcontinue));
+    auto res = std::make_shared<ast::continue_statement>(lex::as<lex::keyword>(lcontinue));
+    res->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return res;
 }
 
 std::shared_ptr<ast::throw_statement> parser::parse_throw_statement()
@@ -130,8 +138,10 @@ std::shared_ptr<ast::throw_statement> parser::parse_throw_statement()
     // Allow bare "throw;" for rethrow (no expression)
     auto peek = _lexer.pick_current();
     if(peek == lex::punctuator::SEMICOLON) {
-        _lexer.get(); // consume semicolon
-        return std::make_shared<ast::throw_statement>(lex::as<lex::keyword>(lthrow), nullptr);
+        auto lsemi = _lexer.get(); // consume semicolon
+        auto res = std::make_shared<ast::throw_statement>(lex::as<lex::keyword>(lthrow), nullptr);
+        res->set_semicolon(lex::as<lex::punctuator>(lsemi));
+        return res;
     }
 
     auto expr = parse_expression();
@@ -146,7 +156,9 @@ std::shared_ptr<ast::throw_statement> parser::parse_throw_statement()
                     _lexer.pick_current(), "Throw statement expects a semicolon ';'");
     }
 
-    return std::make_shared<ast::throw_statement>(lex::as<lex::keyword>(lthrow), expr);
+    auto res = std::make_shared<ast::throw_statement>(lex::as<lex::keyword>(lthrow), expr);
+    res->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return res;
 }
 
 std::shared_ptr<ast::catch_clause> parser::parse_catch_clause()
@@ -167,11 +179,13 @@ std::shared_ptr<ast::catch_clause> parser::parse_catch_clause()
 
     // Optional 'const'
     bool is_const = false;
+    std::optional<lex::keyword> lconst_tok;
     {
         lex::lex_holder const_holder(_lexer);
         auto lconst = _lexer.get();
         if(lconst == lex::keyword::CONST) {
             is_const = true;
+            lconst_tok = lex::as<lex::keyword>(lconst);
         } else {
             const_holder.rollback();
         }
@@ -213,8 +227,13 @@ std::shared_ptr<ast::catch_clause> parser::parse_catch_clause()
                     _lexer.pick_current(), "Catch clause expects a block statement body");
     }
 
-    return std::make_shared<ast::catch_clause>(lex::as<lex::keyword>(lcatch), is_const,
+    auto res = std::make_shared<ast::catch_clause>(lex::as<lex::keyword>(lcatch), is_const,
                                                 var_name, var_type, body);
+    res->set_open_paren(lex::as<lex::punctuator>(lpopen));
+    res->set_close_paren(lex::as<lex::punctuator>(lpclose));
+    if (is_const && lconst_tok) res->set_const_kw(*lconst_tok);
+    res->set_colon(lex::as<lex::operator_>(lcolon));
+    return res;
 }
 
 std::shared_ptr<ast::try_catch_statement> parser::parse_try_catch_statement()
@@ -241,10 +260,12 @@ std::shared_ptr<ast::try_catch_statement> parser::parse_try_catch_statement()
 
     // Parse optional finally clause
     std::shared_ptr<ast::block_statement> finally_body;
+    std::optional<lex::keyword> lfinally_tok;
     {
         lex::lex_holder finally_holder(_lexer);
         auto lfinally = _lexer.get();
         if(lfinally == lex::keyword::FINALLY) {
+            lfinally_tok = lex::as<lex::keyword>(lfinally);
             finally_body = parse_statement_block();
             if(!finally_body) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TRY_EXPECT_FINALLY_BODY),
@@ -260,7 +281,9 @@ std::shared_ptr<ast::try_catch_statement> parser::parse_try_catch_statement()
                     _lexer.pick_current(), "Try statement requires at least one catch clause or a finally clause");
     }
 
-    return std::make_shared<ast::try_catch_statement>(lex::as<lex::keyword>(ltry), try_body, catch_clauses, finally_body);
+    auto res = std::make_shared<ast::try_catch_statement>(lex::as<lex::keyword>(ltry), try_body, catch_clauses, finally_body);
+    if (lfinally_tok) res->set_finally_kw(*lfinally_tok);
+    return res;
 }
 
 std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
@@ -276,6 +299,8 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
     if(lpopen != lex::punctuator::PARENTHESIS_OPEN) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_OPEN_PAREN), lpopen, "If statement expect an open parenthesis '(' after the 'if' keyword for the tested expression");
     }
+    auto open_paren_tok = lex::as<lex::punctuator>(lpopen);
+    std::optional<lex::punctuator> close_paren_tok;
 
     // Try to parse condition variable declaration(s) (if-let / if(vars; test) form):
     //   if (name : type = expr) { ... }                          — single var, classic if-let
@@ -306,6 +331,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                     if(lpclose_final != lex::punctuator::PARENTHESIS_CLOSE) {
                         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lpclose_final, "If statement expect a close parenthesis ')' after the test expression");
                     }
+                    close_paren_tok = lex::as<lex::punctuator>(lpclose_final);
                     var_holder.sync();
                 }
                 parsing_vars = false;
@@ -326,6 +352,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                     if(lpclose_final != lex::punctuator::PARENTHESIS_CLOSE) {
                         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lpclose_final, "If statement expect a close parenthesis ')' after the test expression");
                     }
+                    close_paren_tok = lex::as<lex::punctuator>(lpclose_final);
                     var_holder.sync();
                 }
                 parsing_vars = false;
@@ -344,6 +371,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                     if(lpclose_final != lex::punctuator::PARENTHESIS_CLOSE) {
                         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lpclose_final, "If statement expect a close parenthesis ')' after the test expression");
                     }
+                    close_paren_tok = lex::as<lex::punctuator>(lpclose_final);
                     var_holder.sync();
                 }
                 parsing_vars = false;
@@ -399,6 +427,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                 // Continue loop — next iteration will try to parse another var or test expr
             } else if(lnext == lex::punctuator::PARENTHESIS_CLOSE) {
                 // End of if condition
+                close_paren_tok = lex::as<lex::punctuator>(lnext);
                 single_var_holder.sync();
                 cond_vars.push_back(var);
                 var_holder.sync();
@@ -432,6 +461,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
         if(lpclose != lex::punctuator::PARENTHESIS_CLOSE) {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lpclose, "If statement expect a close parenthesis ')' after the tested expression");
         }
+        close_paren_tok = lex::as<lex::punctuator>(lpclose);
     }
 
     auto then_stmt = parse_statement();
@@ -448,9 +478,10 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_ELSE_BODY), lelse, "If statement expect a statement after the 'else' keyword");
         }
 
+        std::shared_ptr<ast::if_else_statement> res;
         if(!cond_vars.empty()) {
             if(test_expr) {
-                return std::make_shared<ast::if_else_statement>(
+                res = std::make_shared<ast::if_else_statement>(
                             lex::as<lex::keyword>(lif),
                             lex::as<lex::keyword>(lelse),
                             cond_vars,
@@ -460,7 +491,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                         );
             } else if(cond_vars.size() == 1) {
                 // Single var, classic if-let with else
-                return std::make_shared<ast::if_else_statement>(
+                res = std::make_shared<ast::if_else_statement>(
                             lex::as<lex::keyword>(lif),
                             lex::as<lex::keyword>(lelse),
                             cond_vars[0],
@@ -469,7 +500,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                         );
             } else {
                 // Multi-var soft-fail without test, with else
-                return std::make_shared<ast::if_else_statement>(
+                res = std::make_shared<ast::if_else_statement>(
                             lex::as<lex::keyword>(lif),
                             lex::as<lex::keyword>(lelse),
                             cond_vars,
@@ -479,7 +510,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                         );
             }
         } else {
-            return std::make_shared<ast::if_else_statement>(
+            res = std::make_shared<ast::if_else_statement>(
                         lex::as<lex::keyword>(lif),
                         lex::as<lex::keyword>(lelse),
                         test_expr,
@@ -487,11 +518,15 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                         else_stmt
                     );
         }
+        res->set_open_paren(open_paren_tok);
+        if (close_paren_tok) res->set_close_paren(*close_paren_tok);
+        return res;
     } else {
         holder.rollback();
+        std::shared_ptr<ast::if_else_statement> res;
         if(!cond_vars.empty()) {
             if(test_expr) {
-                return std::make_shared<ast::if_else_statement>(
+                res = std::make_shared<ast::if_else_statement>(
                         lex::as<lex::keyword>(lif),
                         cond_vars,
                         test_expr,
@@ -499,14 +534,14 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                 );
             } else if(cond_vars.size() == 1) {
                 // Single var, classic if-let without else
-                return std::make_shared<ast::if_else_statement>(
+                res = std::make_shared<ast::if_else_statement>(
                         lex::as<lex::keyword>(lif),
                         cond_vars[0],
                         then_stmt
                 );
             } else {
                 // Multi-var soft-fail without test, without else
-                return std::make_shared<ast::if_else_statement>(
+                res = std::make_shared<ast::if_else_statement>(
                         lex::as<lex::keyword>(lif),
                         cond_vars,
                         nullptr,
@@ -514,12 +549,15 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                 );
             }
         } else {
-            return std::make_shared<ast::if_else_statement>(
+            res = std::make_shared<ast::if_else_statement>(
                     lex::as<lex::keyword>(lif),
                     test_expr,
                     then_stmt
             );
         }
+        res->set_open_paren(open_paren_tok);
+        if (close_paren_tok) res->set_close_paren(*close_paren_tok);
+        return res;
     }
 }
 
@@ -552,11 +590,14 @@ std::shared_ptr<ast::while_statement> parser::parse_while_statement() {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_WHILE_EXPECT_BODY), lpclose, "While statement expect a statement after the close parenthesis ')'");
     }
 
-    return std::make_shared<ast::while_statement>(
+    auto res = std::make_shared<ast::while_statement>(
             lex::as<lex::keyword>(lwhile),
             test_expr,
             nested_stmt
     );
+    res->set_open_paren(lex::as<lex::punctuator>(lpopen));
+    res->set_close_paren(lex::as<lex::punctuator>(lpclose));
+    return res;
 }
 
 std::shared_ptr<ast::foreach_statement> parser::parse_foreach_statement()
@@ -625,11 +666,14 @@ std::shared_ptr<ast::foreach_statement> parser::parse_foreach_statement()
 
     auto decl_expr = std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, init_expr);
 
-    return std::make_shared<ast::foreach_statement>(
+    auto res = std::make_shared<ast::foreach_statement>(
             lex::as<lex::keyword>(lfor),
             decl_expr,
             nested_stmt
     );
+    res->set_open_paren(lex::as<lex::punctuator>(lpopen));
+    res->set_close_paren(lex::as<lex::punctuator>(lpclose_or_semicolon));
+    return res;
 }
 
 std::shared_ptr<ast::for_statement> parser::parse_for_statement()
@@ -684,15 +728,18 @@ std::shared_ptr<ast::for_statement> parser::parse_for_statement()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_FOR_EXPECT_BODY), lpclose, "For statement expect a statement after the close parenthesis ')'");
     }
 
-    return std::make_shared<ast::for_statement>(
+    auto res = std::make_shared<ast::for_statement>(
             lex::as<lex::keyword>(lfor),
-            *first_semicolon_kw,
-            *second_semicolon_kw,
             decl_stmt,
             test_expr,
             step_expr,
             nested_stmt
     );
+    res->set_open_paren(lex::as<lex::punctuator>(lpopen));
+    res->set_close_paren(lex::as<lex::punctuator>(lpclose));
+    if (first_semicolon_kw) res->set_first_semicolon(*first_semicolon_kw);
+    if (second_semicolon_kw) res->set_second_semicolon(*second_semicolon_kw);
+    return res;
 }
 
 std::shared_ptr<ast::statement> parser::parse_statement()
@@ -792,13 +839,17 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
     bool is_constructor = false;
     bool is_brace_init = false;
     ast::expr_ptr expr;
+    std::optional<lex::operator_> eq_tok;
+    std::optional<lex::punctuator> open_paren_tok, close_paren_tok;
     auto lequal_or_openp = _lexer.get();
     if(lequal_or_openp==lex::operator_::EQUAL) {
+        eq_tok = lex::as<lex::operator_>(lequal_or_openp);
         expr = parse_conditional_expr();
         if(!expr) {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_VARDECL_EXPECT_INIT_EXPR), _lexer.pick_current(), "Variable declaration expects an initialization expression after the equal operator '='");
         }
     } else if (lequal_or_openp==lex::punctuator::PARENTHESIS_OPEN) {
+        open_paren_tok = lex::as<lex::punctuator>(lequal_or_openp);
         // Parse arguments inside parentheses (could be constructor init or uniform array init)
         std::vector<ast::expr_ptr> paren_args;
         auto lclose_or_first = _lexer.get();
@@ -808,11 +859,16 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
                 auto arg = parse_conditional_expr();
                 paren_args.push_back(arg);
                 auto sep = _lexer.get();
-                if (sep == lex::punctuator::PARENTHESIS_CLOSE) break;
+                if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                    close_paren_tok = lex::as<lex::punctuator>(sep);
+                    break;
+                }
                 if (sep != lex::punctuator::COMMA) {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_DTOR_MUST_HAVE_NO_PARAMS), sep, "Variable declaration through constructor with parenthesis initialization expects ',' or closing parenthesis ')'");
                 }
             }
+        } else {
+            close_paren_tok = lex::as<lex::punctuator>(lclose_or_first);
         }
 
         // Check for uniform array init: T(args)[N]
@@ -828,11 +884,15 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
             var->is_uniform_array_init = true;
             var->uniform_ctor_args = std::move(paren_args);
             var->uniform_array_size = size_expr;
+            var->set_colon(lex::as<lex::operator_>(lcolon));
+            if (open_paren_tok) var->set_open_paren(*open_paren_tok);
+            if (close_paren_tok) var->set_close_paren(*close_paren_tok);
 
             auto lsemicolon = _lexer.get();
             if(lsemicolon!=lex::punctuator::SEMICOLON) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_VARDECL_MISSING_SEMICOLON), _lexer.pick_current(), "Variable declaration expects to finish by a semicolon ';'");
             }
+            var->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
             return var;
         } else {
             _lexer.unget();
@@ -860,7 +920,13 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_VARDECL_MISSING_SEMICOLON), _lexer.pick_current(), "Variable declaration expects to finish by a semicolon ';'");
     }
 
-    return std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr, is_constructor, is_brace_init);
+    auto var_res = std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr, is_constructor, is_brace_init);
+    var_res->set_colon(lex::as<lex::operator_>(lcolon));
+    if (eq_tok) var_res->set_equal_op(*eq_tok);
+    if (open_paren_tok) var_res->set_open_paren(*open_paren_tok);
+    if (close_paren_tok) var_res->set_close_paren(*close_paren_tok);
+    var_res->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return var_res;
 }
 
 /**
@@ -991,6 +1057,10 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
 
         // Now try to read the addresser (with or without owner), or a bare '('.
         std::optional<lex::operator_> addresser_op;
+        std::optional<lex::punctuator> callable_open_paren, callable_close_paren;
+        std::optional<lex::operator_> callable_colon;
+        std::optional<lex::keyword> callable_throws_kw;
+        std::optional<lex::punctuator> callable_throws_open, callable_throws_close;
         bool callable_open = false;
         {
             auto addr_tok = _lexer.get();
@@ -1003,6 +1073,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                 auto par_tok = _lexer.get();
                 if (par_tok == lex::punctuator::PARENTHESIS_OPEN) {
                     addresser_op = lex::as<lex::operator_>(addr_tok);
+                    callable_open_paren = lex::as<lex::punctuator>(par_tok);
                     callable_open = true;
                 } else {
                     _lexer.unget(); // unget par_tok
@@ -1012,6 +1083,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                 // Bare prototype candidate — only accept it when what follows the
                 // matching ')' cannot be the continuation of an expression.
                 if (is_callable_prototype_ahead()) {
+                    callable_open_paren = lex::as<lex::punctuator>(addr_tok);
                     callable_open = true;
                 } else {
                     _lexer.unget();
@@ -1040,6 +1112,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                     params.push_back(pt);
                     auto sep = _lexer.get();
                     if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                        callable_close_paren = lex::as<lex::punctuator>(sep);
                         break; // end of param list
                     } else if (sep == lex::punctuator::COMMA) {
                         continue; // next param
@@ -1049,6 +1122,8 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                             "Expected ',' or ')' in callable type parameter list");
                     }
                 }
+            } else {
+                callable_close_paren = lex::as<lex::punctuator>(close_par);
             }
 
             if (!failed) {
@@ -1057,6 +1132,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                 // an omitted ': TypeSpec' *is* the void return.
                 std::shared_ptr<ast::type_specifier> ret_type;
                 if (auto lcolon = _lexer.get(); lcolon == lex::operator_::COLON) {
+                    callable_colon = lex::as<lex::operator_>(lcolon);
                     ret_type = parse_type_spec(stop_before_bracket);
                     if (!ret_type) {
                         if (tentative) { failed = true; }
@@ -1074,6 +1150,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                     // of the callable. Absent means "throws nothing".
                     std::vector<std::shared_ptr<ast::type_specifier>> throws_spec;
                     if (auto lthrows = _lexer.get(); lthrows == lex::keyword::THROWS) {
+                        callable_throws_kw = lex::as<lex::keyword>(lthrows);
                         auto lopen = _lexer.get();
                         if (lopen != lex::punctuator::PARENTHESIS_OPEN) {
                             if (tentative) { failed = true; }
@@ -1081,11 +1158,14 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_OPEN_PAREN),
                                     _lexer.pick_current(), "Expected '(' after 'throws'");
                             }
+                        } else {
+                            callable_throws_open = lex::as<lex::punctuator>(lopen);
                         }
                         if (!failed) {
                             auto maybe_close = _lexer.get();
                             if (maybe_close == lex::punctuator::PARENTHESIS_CLOSE) {
                                 // empty throws clause: throws()
+                                callable_throws_close = lex::as<lex::punctuator>(maybe_close);
                             } else {
                                 _lexer.unget();
                                 while (true) {
@@ -1100,6 +1180,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                                     if (sep == lex::punctuator::COMMA) {
                                         continue;
                                     } else if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                                        callable_throws_close = lex::as<lex::punctuator>(sep);
                                         break;
                                     } else {
                                         if (tentative) { failed = true; break; }
@@ -1115,9 +1196,17 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
 
                     if (!failed) {
                         fn_holder.sync();
-                        std::shared_ptr<ast::type_specifier> result =
+                        auto call_spec =
                             std::make_shared<ast::callable_type_specifier>(addresser_op, owner_opt, params,
                                                                           ret_type, throws_spec);
+                        if (callable_open_paren) call_spec->set_open_paren(*callable_open_paren);
+                        if (callable_close_paren) call_spec->set_close_paren(*callable_close_paren);
+                        if (callable_colon) call_spec->set_colon(*callable_colon);
+                        if (callable_throws_kw) call_spec->set_throws_kw(*callable_throws_kw);
+                        if (callable_throws_open) call_spec->set_throws_open_paren(*callable_throws_open);
+                        if (callable_throws_close) call_spec->set_throws_close_paren(*callable_throws_close);
+
+                        std::shared_ptr<ast::type_specifier> result = call_spec;
                         if (callable_const_kw.has_value()) {
                             result = std::make_shared<ast::const_type_specifier>(*callable_const_kw, result);
                         }
@@ -1217,7 +1306,10 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                 }
             }
 
-            res = std::make_shared<ast::array_type_specifier>(res, lex::as<lex::punctuator>(lex), lex::as<lex::punctuator>(lbrclose), int_index, size_expr);
+            auto arr = std::make_shared<ast::array_type_specifier>(res, lex::as<lex::punctuator>(lex), lex::as<lex::punctuator>(lbrclose), int_index, size_expr);
+            arr->set_br_open(lex::as<lex::punctuator>(lex));
+            arr->set_br_close(lex::as<lex::punctuator>(lbrclose));
+            res = arr;
             continue;
         }
 
@@ -1233,9 +1325,11 @@ std::shared_ptr<ast::type_specifier> parser::parse_fundamental_type_spec() {
 
     // Look for type prefix
     bool is_unsigned = false;
+    std::optional<lex::keyword> lprefix_tok;
     auto lprefix = _lexer.get();
     if(lprefix == lex::keyword::UNSIGNED) {
         is_unsigned = true;
+        lprefix_tok = lex::as<lex::keyword>(lprefix);
     } else {
         _lexer.unget();
     }
@@ -1252,18 +1346,23 @@ std::shared_ptr<ast::type_specifier> parser::parse_fundamental_type_spec() {
             lex::keyword::FLOAT,
             lex::keyword::DOUBLE>(ltype)) {
         bool is_long_long = false;
+        std::optional<lex::keyword> lsecond_tok;
         if (ltype == lex::keyword::LONG) {
             lex::lex_holder long_holder(_lexer);
             auto lsecond = _lexer.get();
             if (lsecond == lex::keyword::LONG) {
                 is_long_long = true;
+                lsecond_tok = lex::as<lex::keyword>(lsecond);
                 long_holder.sync();
             } else {
                 _lexer.unget();
             }
         }
-        return std::make_shared<ast::keyword_type_specifier>(
+        auto kw_spec = std::make_shared<ast::keyword_type_specifier>(
             std::get<lex::keyword>(ltype.value().get()), is_unsigned, is_long_long);
+        if (lprefix_tok) kw_spec->set_unsigned_kw(*lprefix_tok);
+        if (lsecond_tok) kw_spec->set_second_kw(*lsecond_tok);
+        return kw_spec;
     }
     holder.rollback();
     return {};
@@ -1282,7 +1381,9 @@ std::shared_ptr<ast::expression_statement> parser::parse_expression_statement()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EXPRSTMT_MISSING_SEMICOLON), _lexer.pick_current(), "Expression statement expects to finish by a semicolon ';'");
     }
 
-    return std::make_shared<ast::expression_statement>(expr);
+    auto res = std::make_shared<ast::expression_statement>(expr);
+    res->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return res;
 }
 
 } // k::parse

@@ -737,6 +737,10 @@ public:
         _rexpr->set_parent_expression(shared_as<expression>());
     }
 
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
+
 protected:
     ternary_expression() = default;
     ternary_expression(const ternary_expression&) = default;

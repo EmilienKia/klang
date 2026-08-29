@@ -453,7 +453,8 @@ ast::expr_ptr parser::parse_cast_expr()
 {
     lex::lex_holder holder(_lexer);
 
-    if(auto lopenpar = _lexer.get(); lopenpar != lex::punctuator::PARENTHESIS_OPEN) {
+    auto lopenpar = _lexer.get();
+    if(lopenpar != lex::punctuator::PARENTHESIS_OPEN) {
         holder.rollback();
         return parse_unary_expr();
     }
@@ -464,7 +465,8 @@ ast::expr_ptr parser::parse_cast_expr()
         return parse_unary_expr();
     }
 
-    if(auto lclosepar = _lexer.get(); lclosepar != lex::punctuator::PARENTHESIS_CLOSE) {
+    auto lclosepar = _lexer.get();
+    if(lclosepar != lex::punctuator::PARENTHESIS_CLOSE) {
         holder.rollback();
         return parse_unary_expr();
     }
@@ -475,7 +477,10 @@ ast::expr_ptr parser::parse_cast_expr()
         return parse_unary_expr();
     }
 
-    return std::make_shared<ast::cast_expr>(type, expr);
+    auto cast = std::make_shared<ast::cast_expr>(type, expr);
+    cast->set_open_paren(lex::as<lex::punctuator>(lopenpar));
+    cast->set_close_paren(lex::as<lex::punctuator>(lclosepar));
+    return cast;
 }
 
 ast::expr_ptr parser::parse_unary_expr()
@@ -496,6 +501,8 @@ ast::expr_ptr parser::parse_unary_expr()
 
         // Check for array form: new T[expr] or new T[]
         if (auto peek_bracket = _lexer.get(); peek_bracket == lex::punctuator::BRACKET_OPEN) {
+            auto open_bracket_tok = lex::as<lex::punctuator>(peek_bracket);
+            std::optional<lex::punctuator> close_bracket_tok;
             // Array new — parse size expression inside brackets
             ast::expr_ptr size_expr;
             auto peek_close = _lexer.get();
@@ -508,6 +515,9 @@ ast::expr_ptr parser::parse_unary_expr()
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TYPE_ARRAY_EXPECT_CLOSE_BRACKET), close_bracket,
                         "'new' array size expression expects a closing bracket ']'");
                 }
+                close_bracket_tok = lex::as<lex::punctuator>(close_bracket);
+            } else {
+                close_bracket_tok = lex::as<lex::punctuator>(peek_close);
             }
             // else: unsized array new T[], size will be inferred from brace init
 
@@ -521,7 +531,10 @@ ast::expr_ptr parser::parse_unary_expr()
             }
 
             holder.sync();
-            return std::make_shared<ast::new_expr>(new_kw, type, size_expr, brace_init);
+            auto res = std::make_shared<ast::new_expr>(new_kw, type, size_expr, brace_init);
+            res->set_open_bracket(open_bracket_tok);
+            if (close_bracket_tok) res->set_close_bracket(*close_bracket_tok);
+            return res;
         } else {
             _lexer.unget(); // not a bracket — put token back
         }
@@ -539,9 +552,12 @@ ast::expr_ptr parser::parse_unary_expr()
 
         // Single-object form: new T(args)  OR  uniform array form: new T(args)[N]
         // Parse argument list '(' args ')'
-        if (auto lpar = _lexer.get(); lpar != lex::punctuator::PARENTHESIS_OPEN) {
+        auto lpar = _lexer.get();
+        if (lpar != lex::punctuator::PARENTHESIS_OPEN) {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_OPERATOR_PREINC_EXPECT_UNDERSCORE), _lexer.pick_current(), "'new' expects '(' after the type specifier, '[' for array allocation, or '{' for brace-initialized array");
         }
+        auto open_paren_tok = lex::as<lex::punctuator>(lpar);
+        std::optional<lex::punctuator> close_paren_tok;
         std::vector<ast::expr_ptr> args;
         auto lclose = _lexer.get();
         if (lclose != lex::punctuator::PARENTHESIS_CLOSE) {
@@ -553,28 +569,42 @@ ast::expr_ptr parser::parse_unary_expr()
                 }
                 args.push_back(arg);
                 auto sep = _lexer.get();
-                if (sep == lex::punctuator::PARENTHESIS_CLOSE) break;
+                if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                    close_paren_tok = lex::as<lex::punctuator>(sep);
+                    break;
+                }
                 if (sep != lex::punctuator::COMMA) {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_UNSUPPORTED_OPERATOR_SYMBOL), _lexer.pick_current(), "'new' argument list expects ',' or ')'");
                 }
             }
+        } else {
+            close_paren_tok = lex::as<lex::punctuator>(lclose);
         }
 
         // Check for uniform array form: new T(args)[N]
         if (auto peek_bracket = _lexer.get(); peek_bracket == lex::punctuator::BRACKET_OPEN) {
+            auto open_bracket_tok = lex::as<lex::punctuator>(peek_bracket);
             ast::expr_ptr size_expr = parse_conditional_expr();
             auto close_bracket = _lexer.get();
             if (close_bracket != lex::punctuator::BRACKET_CLOSE) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_POSTFIX_OPERATOR_EXPECT_INC_DEC), close_bracket, "'new' uniform array expects a closing bracket ']' after size expression");
             }
             holder.sync();
-            return std::make_shared<ast::new_expr>(new_kw, type, args, size_expr, /*uniform_tag=*/true);
+            auto res = std::make_shared<ast::new_expr>(new_kw, type, args, size_expr, /*uniform_tag=*/true);
+            res->set_open_paren(open_paren_tok);
+            if (close_paren_tok) res->set_close_paren(*close_paren_tok);
+            res->set_open_bracket(open_bracket_tok);
+            res->set_close_bracket(lex::as<lex::punctuator>(close_bracket));
+            return res;
         } else {
             _lexer.unget();
         }
 
         holder.sync();
-        return std::make_shared<ast::new_expr>(new_kw, type, args);
+        auto res = std::make_shared<ast::new_expr>(new_kw, type, args);
+        res->set_open_paren(open_paren_tok);
+        if (close_paren_tok) res->set_close_paren(*close_paren_tok);
+        return res;
     } else {
         _lexer.unget();
     }
@@ -729,7 +759,10 @@ ast::expr_ptr parser::parse_postfix_expr()
             if(lclose != lex::punctuator::BRACKET_CLOSE) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BRACKET_EXPECT_CLOSE), _lexer.pick_current(), "Bracket postfix expression expects closing bracket ']' after sub-expression");
             }
-            any = std::make_shared<ast::bracket_postifx_expr>(any, expr);
+            auto br_expr = std::make_shared<ast::bracket_postifx_expr>(any, expr);
+            br_expr->set_open_bracket(lex::as<lex::punctuator>(lop));
+            br_expr->set_close_bracket(lex::as<lex::punctuator>(lclose));
+            any = br_expr;
         } else if(lop == lex::punctuator::PARENTHESIS_OPEN) {
             ast::expr_ptr expr = parse_expression_list();
             // expr might be null if expression list is empty
@@ -737,7 +770,10 @@ ast::expr_ptr parser::parse_postfix_expr()
             if(lclose != lex::punctuator::PARENTHESIS_CLOSE) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_PAREN_POSTFIX_EXPECT_CLOSE), _lexer.pick_current(), "Parenthesis postfix expression expects closing parenthesis ')'");
             }
-            any = std::make_shared<ast::parenthesis_postifx_expr>(any, expr);
+            auto par_expr = std::make_shared<ast::parenthesis_postifx_expr>(any, expr);
+            par_expr->set_open_paren(lex::as<lex::punctuator>(lop));
+            par_expr->set_close_paren(lex::as<lex::punctuator>(lclose));
+            any = par_expr;
         } else if(lop == lex::operator_::ARROW || lop == lex::operator_::DOT) {
             ast::expr_ptr expr = parse_identifier_expr();
             auto ident_expr = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
@@ -803,7 +839,9 @@ ast::expr_ptr parser::parse_postfix_expr()
             }
         } else if(lop == lex::punctuator::ELLIPSIS) {
             // Pack expansion: expr...
-            any = std::make_shared<ast::pack_expansion_expr>(any);
+            auto pack_expr = std::make_shared<ast::pack_expansion_expr>(any);
+            pack_expr->set_ellipsis(lex::as<lex::punctuator>(lop));
+            any = pack_expr;
         } else {
             _lexer.unget();
             break;
@@ -827,12 +865,17 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
         bool capture_this = false;
         std::optional<lex::identifier> capture_name;
         ast::expr_ptr init_expr;
+        std::optional<lex::keyword> capture_const_kw;
+        std::optional<lex::operator_> capture_ref_op;
+        std::optional<lex::keyword> capture_this_kw;
+        std::optional<lex::operator_> capture_eq_op;
 
         {
             lex::lex_holder const_holder(_lexer);
             auto lconst = _lexer.get();
             if (lconst == lex::keyword::CONST) {
                 capture_const = true;
+                capture_const_kw = lex::as<lex::keyword>(lconst);
             } else {
                 const_holder.rollback();
             }
@@ -843,6 +886,7 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
             auto lamp = _lexer.get();
             if (lamp == lex::operator_::AMPERSAND) {
                 capture_ref = true;
+                capture_ref_op = lex::as<lex::operator_>(lamp);
             } else {
                 ref_holder.rollback();
             }
@@ -851,6 +895,7 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
         auto lname = _lexer.get();
         if (lname == lex::keyword::THIS) {
             capture_this = true;
+            capture_this_kw = lex::as<lex::keyword>(lname);
         } else if (lex::is<lex::identifier>(lname)) {
             capture_name = lex::as<lex::identifier>(lname);
         } else {
@@ -861,6 +906,7 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
             lex::lex_holder init_holder(_lexer);
             auto leq = _lexer.get();
             if (leq == lex::operator_::EQUAL) {
+                capture_eq_op = lex::as<lex::operator_>(leq);
                 init_expr = parse_conditional_expr();
                 if (!init_expr) {
                     throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
@@ -872,24 +918,33 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
             }
         }
 
-        return ast::lambda_capture(capture_const, capture_ref, capture_this, capture_name, init_expr);
+        ast::lambda_capture cap(capture_const, capture_ref, capture_this, capture_name, init_expr);
+        if (capture_const_kw) cap.set_const_kw(*capture_const_kw);
+        if (capture_ref_op) cap.set_ref_op(*capture_ref_op);
+        if (capture_this_kw) cap.set_this_kw(*capture_this_kw);
+        if (capture_eq_op) cap.set_equal_op(*capture_eq_op);
+        return cap;
     };
 
+    std::optional<lex::keyword> lambda_const_kw;
     {
         lex::lex_holder const_holder(_lexer);
         auto lconst = _lexer.get();
         if (lconst == lex::keyword::CONST) {
             is_const_lambda = true;
+            lambda_const_kw = lex::as<lex::keyword>(lconst);
         } else {
             const_holder.rollback();
         }
     }
 
+    std::optional<lex::punctuator> capture_open_bracket_tok, capture_close_bracket_tok;
     {
         lex::lex_holder capture_holder(_lexer);
         auto lbrack = _lexer.get();
         if (lbrack == lex::punctuator::BRACKET_OPEN) {
             has_capture_list = true;
+            capture_open_bracket_tok = lex::as<lex::punctuator>(lbrack);
             auto maybe_close = _lexer.get();
             if (maybe_close != lex::punctuator::BRACKET_CLOSE) {
                 _lexer.unget();
@@ -907,11 +962,14 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
                         continue;
                     }
                     if (sep == lex::punctuator::BRACKET_CLOSE) {
+                        capture_close_bracket_tok = lex::as<lex::punctuator>(sep);
                         break;
                     }
                     throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
                                 sep, "Lambda capture list expects ',' or ']'");
                 }
+            } else {
+                capture_close_bracket_tok = lex::as<lex::punctuator>(maybe_close);
             }
         } else {
             capture_holder.rollback();
@@ -927,6 +985,8 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
         throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
                     lparen, "Lambda expression expects a parameter list enclosed in '(' and ')'");
     }
+    auto param_open_paren_tok = lex::as<lex::punctuator>(lparen);
+    std::optional<lex::punctuator> param_close_paren_tok;
 
     std::vector<std::shared_ptr<ast::parameter_spec>> params;
     auto maybe_close = _lexer.get();
@@ -949,6 +1009,7 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
                 continue;
             }
             if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                param_close_paren_tok = lex::as<lex::punctuator>(sep);
                 break;
             }
             if (allow_fallback) {
@@ -958,13 +1019,17 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
             throw_error(static_cast<unsigned int>(k::diag::lambda_diag::ERR_LAMBDA_BAD_CAPTURE_SYNTAX),
                         sep, "Lambda parameter list expects ',' or ')'");
         }
+    } else {
+        param_close_paren_tok = lex::as<lex::punctuator>(maybe_close);
     }
 
     std::shared_ptr<ast::type_specifier> return_type;
+    std::optional<lex::operator_> lambda_colon_tok;
     {
         lex::lex_holder ret_holder(_lexer);
         auto maybe_colon = _lexer.get();
         if (maybe_colon == lex::operator_::COLON) {
+            lambda_colon_tok = lex::as<lex::operator_>(maybe_colon);
             return_type = parse_type_spec();
             if (!return_type) {
                 if (allow_fallback) {
@@ -992,9 +1057,16 @@ ast::expr_ptr parser::parse_lambda_expression(bool allow_fallback)
     }
 
     holder.sync();
-    return std::make_shared<ast::lambda_expression>(
+    auto lambda_res = std::make_shared<ast::lambda_expression>(
         is_const_lambda, has_capture_list, std::move(captures), std::move(params),
         std::move(return_type), std::move(body));
+    if (lambda_const_kw) lambda_res->set_const_kw(*lambda_const_kw);
+    if (capture_open_bracket_tok) lambda_res->set_capture_open_bracket(*capture_open_bracket_tok);
+    if (capture_close_bracket_tok) lambda_res->set_capture_close_bracket(*capture_close_bracket_tok);
+    lambda_res->set_param_open_paren(param_open_paren_tok);
+    if (param_close_paren_tok) lambda_res->set_param_close_paren(*param_close_paren_tok);
+    if (lambda_colon_tok) lambda_res->set_colon(*lambda_colon_tok);
+    return lambda_res;
 }
 
 namespace {
@@ -1100,6 +1172,10 @@ ast::expr_ptr parser::parse_primary_expr()
         lex::opt_ref_any_lexeme r = _lexer.get();
         if(r != lex::punctuator::PARENTHESIS_CLOSE) {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_PAREN_EXPECT_CLOSE), _lexer.pick_current(), "Parenthesis expression expects closing parenthesis ')' after sub-expression");
+        }
+        if (auto expr_list = std::dynamic_pointer_cast<ast::expr_list_expr>(expr)) {
+            expr_list->set_open_paren(lex::as<lex::punctuator>(l));
+            expr_list->set_close_paren(lex::as<lex::punctuator>(r));
         }
         return expr;
     } else if (l == lex::punctuator::AT_SIGN) {
@@ -1306,11 +1382,14 @@ std::shared_ptr<ast::brace_init_list> parser::parse_brace_init_list(const lex::p
                             _lexer.unget();
                             value = parse_conditional_expr();
                         }
-                        elements.push_back(std::make_shared<ast::designated_init_element>(
-                            dot, member_name, qualifier, value));
+                        auto des_elem = std::make_shared<ast::designated_init_element>(
+                            dot, member_name, qualifier, value);
+                        des_elem->set_equal_op(lex::as<lex::operator_>(after_name));
+                        elements.push_back(des_elem);
                     } else if (after_name == lex::punctuator::PARENTHESIS_OPEN) {
                         // Constructor form: .member(args...)
                         std::vector<ast::expr_ptr> args;
+                        std::optional<lex::punctuator> close_paren_tok;
                         auto peek_close = _lexer.get();
                         if (peek_close != lex::punctuator::PARENTHESIS_CLOSE) {
                             _lexer.unget();
@@ -1318,14 +1397,22 @@ std::shared_ptr<ast::brace_init_list> parser::parse_brace_init_list(const lex::p
                                 auto arg = parse_conditional_expr();
                                 args.push_back(arg);
                                 auto sep = _lexer.get();
-                                if (sep == lex::punctuator::PARENTHESIS_CLOSE) break;
+                                if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                                    close_paren_tok = lex::as<lex::punctuator>(sep);
+                                    break;
+                                }
                                 if (sep != lex::punctuator::COMMA) {
                                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_DESIGNATED_CTOR_EXPECT_COMMA_CLOSE), sep, "Designated initializer constructor form expects ',' or ')' after argument");
                                 }
                             }
+                        } else {
+                            close_paren_tok = lex::as<lex::punctuator>(peek_close);
                         }
-                        elements.push_back(std::make_shared<ast::designated_init_element>(
-                            dot, member_name, qualifier, args));
+                        auto des_elem = std::make_shared<ast::designated_init_element>(
+                            dot, member_name, qualifier, args);
+                        des_elem->set_open_paren(lex::as<lex::punctuator>(after_name));
+                        if (close_paren_tok) des_elem->set_close_paren(*close_paren_tok);
+                        elements.push_back(des_elem);
                     } else {
                         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_DESIGNATED_EXPECT_EQ_OR_PAREN), after_name, "Expected '=' or '(' after designated member name '." + std::string{member_name.content} + "'");
                     }

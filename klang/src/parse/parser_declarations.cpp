@@ -306,10 +306,13 @@ std::shared_ptr<ast::module_name> parser::parse_module_declaration()
     }
 
     // Expect a semicolon to end module declaration
-    if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
+    auto lsemicolon = _lexer.get();
+    if(lsemicolon!=lex::punctuator::SEMICOLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_MISSING_SEMICOLON_MODULE), _lexer.pick_previous(), "Semicolon is missing after module name at end of module declaration");
     }
-    return std::make_shared<ast::module_name>(lex::as<lex::keyword>(lmod), ident);
+    auto mod = std::make_shared<ast::module_name>(lex::as<lex::keyword>(lmod), ident);
+    mod->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return mod;
 }
 
 std::shared_ptr<ast::import> parser::parse_import()
@@ -332,11 +335,14 @@ std::shared_ptr<ast::import> parser::parse_import()
     }
 
     // Expect a semicolon to end import declaration
-    if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
+    auto lsemicolon = _lexer.get();
+    if(lsemicolon!=lex::punctuator::SEMICOLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_MISSING_SEMICOLON_IMPORT), _lexer.pick_current(), "Semicolon is missing after module name at end of import declaration");
     }
 
-    return std::make_shared<ast::import>(lex::as<lex::keyword>(limport), std::move(qname));
+    auto imp = std::make_shared<ast::import>(lex::as<lex::keyword>(limport), std::move(qname));
+    imp->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return imp;
 }
 
 std::vector<ast::decl_ptr> parser::parse_declarations()
@@ -433,7 +439,9 @@ std::shared_ptr<ast::visibility_decl> parser::parse_visibility_decl()
         if(lkw==lex::keyword::PUBLIC || lkw==lex::keyword::PROTECTED || lkw==lex::keyword::PRIVATE) {
             // Expect a colon
             if(lex::opt_ref_any_lexeme lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
-                return std::make_shared<ast::visibility_decl>(lex::as<lex::keyword>(lkw));
+                auto vis = std::make_shared<ast::visibility_decl>(lex::as<lex::keyword>(lkw));
+                vis->set_colon(lex::as<lex::operator_>(lcolon));
+                return vis;
             }
         }
     }
@@ -482,7 +490,10 @@ std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_MISSING_NS_CLOSE_BRACE), _lexer.pick_current(), "Namespace closing brace is expected");
     }
 
-    return std::make_shared<ast::namespace_decl>(*ns, *open_par, *close_par, name, declarations);
+    auto ns_decl = std::make_shared<ast::namespace_decl>(*ns, *open_par, *close_par, name, declarations);
+    ns_decl->set_open_brace(*open_par);
+    ns_decl->set_close_brace(*close_par);
+    return ns_decl;
 }
 
 std::shared_ptr<ast::using_decl> parser::parse_using_decl()
@@ -511,6 +522,7 @@ std::shared_ptr<ast::using_decl> parser::parse_using_decl()
     // Optionally consume an alias: identifier '='
     // 'using Foo = X::Y::bar;' or 'using M = namespace X::Y;'
     std::optional<lex::identifier> alias_name;
+    std::optional<lex::operator_> alias_equal;
     {
         auto l1 = _lexer.get();
         if (lex::is<lex::identifier>(l1)) {
@@ -518,6 +530,7 @@ std::shared_ptr<ast::using_decl> parser::parse_using_decl()
             if (l2 == lex::operator_::EQUAL) {
                 // Confirmed: this is an alias
                 alias_name = lex::as<lex::identifier>(l1);
+                alias_equal = lex::as<lex::operator_>(l2);
             } else {
                 // Not an alias — put both tokens back
                 _lexer.unget();
@@ -535,15 +548,19 @@ std::shared_ptr<ast::using_decl> parser::parse_using_decl()
     }
 
     // Expect a semicolon
-    if (auto lsemicolon = _lexer.get(); lsemicolon != lex::punctuator::SEMICOLON) {
+    auto lsemicolon = _lexer.get();
+    if (lsemicolon != lex::punctuator::SEMICOLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_USING_MISSING_SEMICOLON), _lexer.pick_current(), "Semicolon is missing at end of using declaration");
     }
 
-    return std::make_shared<ast::using_decl>(
+    auto res = std::make_shared<ast::using_decl>(
             lex::as<lex::keyword>(lusing),
             element_filter,
             alias_name,
             std::move(qname));
+    if (alias_equal) res->set_equal_op(*alias_equal);
+    res->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return res;
 }
 
 std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
@@ -576,9 +593,12 @@ std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
     }
 
     // Expect the ':' separator
+    std::optional<lex::operator_> colon_op;
     if (auto lcolon = _lexer.get(); lcolon != lex::operator_::COLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ALIAS_EXPECT_COLON), _lexer.pick_current(),
                     "Colon is missing after the {} name", {is_strong ? "typedef" : "alias"});
+    } else {
+        colon_op = lex::as<lex::operator_>(lcolon);
     }
 
     // Expect the aliased entity. A typedef always names a type. A soft alias may
@@ -604,12 +624,14 @@ std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
 
     // Expect a semicolon
     const char* src_end = nullptr;
+    std::optional<lex::punctuator> semi_tok;
     if (auto lsemicolon = _lexer.get(); lsemicolon != lex::punctuator::SEMICOLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ALIAS_MISSING_SEMICOLON), _lexer.pick_current(),
                     "Semicolon is missing at end of {} declaration", {is_strong ? "typedef" : "alias"});
     } else {
         auto semi = lex::as<lex::punctuator>(lsemicolon);
         src_end = semi.content.data() + semi.content.size();
+        semi_tok = semi;
     }
 
     auto result = std::make_shared<ast::alias_decl>(
@@ -620,6 +642,8 @@ std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
             std::move(type),
             std::move(template_params));
     result->specifiers = std::move(specifiers);
+    if (colon_op) result->set_colon(*colon_op);
+    if (semi_tok) result->set_semicolon(*semi_tok);
 
     // Capture the source text of a parameterised alias for KDI export: from the
     // 'template' keyword through the closing ';'.
@@ -664,16 +688,19 @@ std::shared_ptr<ast::friend_decl> parser::parse_friend_decl()
     ast::template_arg_list tpl_args = parse_template_arg_list(&had_explicit_tpl_args);
 
     // Expect a semicolon
-    if (auto lsemicolon = _lexer.get(); lsemicolon != lex::punctuator::SEMICOLON) {
+    auto lsemicolon = _lexer.get();
+    if (lsemicolon != lex::punctuator::SEMICOLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_FRIEND_MISSING_SEMICOLON), _lexer.pick_current(), "Semicolon is missing at end of friend declaration");
     }
 
-    return std::make_shared<ast::friend_decl>(
+    auto res = std::make_shared<ast::friend_decl>(
             lex::as<lex::keyword>(lfriend),
             element_filter,
             std::move(qname),
             std::move(tpl_args),
             had_explicit_tpl_args);
+    res->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
+    return res;
 }
 
 std::shared_ptr<ast::annotation_def> parser::parse_annotation_def()
@@ -698,6 +725,7 @@ std::shared_ptr<ast::annotation_def> parser::parse_annotation_def()
     auto peek = _lexer.get();
 
     if (peek == lex::punctuator::PARENTHESIS_OPEN) {
+        auto open_paren = lex::as<lex::punctuator>(peek);
         // Constructor-style initialization: @Name( [args] )
         std::vector<ast::expr_ptr> args;
 
@@ -705,7 +733,10 @@ std::shared_ptr<ast::annotation_def> parser::parse_annotation_def()
         auto peek_close = _lexer.get();
         if (peek_close == lex::punctuator::PARENTHESIS_CLOSE) {
             // @Name() — empty args
-            return std::make_shared<ast::annotation_def>(at_sign, std::move(qname), args);
+            auto ann = std::make_shared<ast::annotation_def>(at_sign, std::move(qname), args);
+            ann->set_open_paren(open_paren);
+            ann->set_close_paren(lex::as<lex::punctuator>(peek_close));
+            return ann;
         }
         _lexer.unget();
 
@@ -723,10 +754,14 @@ std::shared_ptr<ast::annotation_def> parser::parse_annotation_def()
         }
 
         // Expect closing parenthesis
-        if (auto lclose = _lexer.get(); lclose != lex::punctuator::PARENTHESIS_CLOSE) {
+        auto lclose = _lexer.get();
+        if (lclose != lex::punctuator::PARENTHESIS_CLOSE) {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ANNOTATION_EXPECT_CLOSE_PAREN), _lexer.pick_current(), "Expected ')' after annotation arguments");
         }
-        return std::make_shared<ast::annotation_def>(at_sign, std::move(qname), args);
+        auto ann = std::make_shared<ast::annotation_def>(at_sign, std::move(qname), args);
+        ann->set_open_paren(open_paren);
+        ann->set_close_paren(lex::as<lex::punctuator>(lclose));
+        return ann;
 
     } else if (peek == lex::punctuator::BRACE_OPEN) {
         // Brace initialization: @Name{ ... }
@@ -905,11 +940,13 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
 
         // Check for '...' (parameter pack)
         bool is_pack = false;
+        std::optional<lex::punctuator> ellipsis_tok;
         {
             lex::lex_holder ellipsis_holder(_lexer);
             auto maybe_ellipsis = _lexer.get();
             if (maybe_ellipsis == lex::punctuator::ELLIPSIS) {
                 is_pack = true;
+                ellipsis_tok = lex::as<lex::punctuator>(maybe_ellipsis);
             } else {
                 ellipsis_holder.rollback();
             }
@@ -937,15 +974,19 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
             } else {
                 check_holder.rollback();
             }
-            return std::make_shared<ast::template_parameter>(kind_kw, param_name, nullptr, nullptr, true);
+            auto res = std::make_shared<ast::template_parameter>(kind_kw, param_name, nullptr, nullptr, true);
+            if (ellipsis_tok) res->set_ellipsis(*ellipsis_tok);
+            return res;
         }
 
         // Optional constraint: ':' TypeSpec
         std::shared_ptr<ast::type_specifier> constraint;
+        std::optional<lex::operator_> colon_tok;
         {
             lex::lex_holder colon_holder(_lexer);
             auto maybe_colon = _lexer.get();
             if (maybe_colon == lex::operator_::COLON) {
+                colon_tok = lex::as<lex::operator_>(maybe_colon);
                 constraint = parse_type_spec();
                 if (!constraint) {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_PARAM_EXPECT_CONSTRAINT_TYPE), _lexer.pick_current(), "Expected type specifier after ':' in template parameter constraint");
@@ -957,10 +998,12 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
 
         // Optional default: '=' TypeSpec (for type parameters, the default is a type)
         std::shared_ptr<ast::type_specifier> default_type_spec;
+        std::optional<lex::operator_> eq_tok;
         {
             lex::lex_holder eq_holder(_lexer);
             auto maybe_eq = _lexer.get();
             if (maybe_eq == lex::operator_::EQUAL) {
+                eq_tok = lex::as<lex::operator_>(maybe_eq);
                 default_type_spec = parse_type_spec();
                 if (!default_type_spec) {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_PARAM_EXPECT_DEFAULT_TYPE), _lexer.pick_current(), "Expected type specifier after '=' in template parameter default");
@@ -970,7 +1013,10 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
             }
         }
 
-        return std::make_shared<ast::template_parameter>(kind_kw, param_name, std::move(constraint), std::move(default_type_spec));
+        auto res = std::make_shared<ast::template_parameter>(kind_kw, param_name, std::move(constraint), std::move(default_type_spec));
+        if (colon_tok) res->set_colon(*colon_tok);
+        if (eq_tok) res->set_equal_op(*eq_tok);
+        return res;
     }
 
     // Value parameter: the kind token was actually a type specifier
@@ -992,10 +1038,12 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
     // Optional default: '=' ConditionalExpr
     // Note: use primary_expr to avoid consuming '>' or '>>' as relational ops
     ast::expr_ptr default_expr;
+    std::optional<lex::operator_> eq_tok;
     {
         lex::lex_holder eq_holder(_lexer);
         auto maybe_eq = _lexer.get();
         if (maybe_eq == lex::operator_::EQUAL) {
+            eq_tok = lex::as<lex::operator_>(maybe_eq);
             default_expr = parse_template_arg_value_expr();
             if (!default_expr) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TEMPLATE_VALUE_PARAM_EXPECT_DEFAULT_EXPR), _lexer.pick_current(), "Expected expression after '=' in template value parameter default");
@@ -1005,7 +1053,9 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
         }
     }
 
-    return std::make_shared<ast::template_parameter>(std::move(value_type), param_name, std::move(default_expr));
+    auto res = std::make_shared<ast::template_parameter>(std::move(value_type), param_name, std::move(default_expr));
+    if (eq_tok) res->set_equal_op(*eq_tok);
+    return res;
 }
 
 ast::expr_ptr parser::parse_template_arg_value_expr()
@@ -1489,10 +1539,12 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
 
     // Optional base-class clause: ':' [vis] Name [',' [vis] Name]*
     std::vector<ast::aggregate_decl::base_clause_entry> bases;
+    std::optional<lex::operator_> base_colon_tok;
     {
         lex::lex_holder base_holder(_lexer);
         auto maybe_colon = _lexer.get();
         if (maybe_colon == lex::operator_::COLON) {
+            base_colon_tok = lex::as<lex::operator_>(maybe_colon);
             while (true) {
                 std::optional<lex::keyword> vis_kw;
                 lex::lex_holder vis_holder(_lexer);
@@ -1553,6 +1605,9 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
     auto result = std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations, annotations);
     result->template_params = std::move(template_params);
     result->is_generic = is_generic;
+    if (base_colon_tok) result->set_colon(*base_colon_tok);
+    result->set_open_brace(*open_brace);
+    result->set_close_brace(*close_brace);
 
     // Attach inner backward doc_comments to the aggregate (these sit between the
     // last member and the closing brace and document the aggregate itself).
@@ -1602,10 +1657,12 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
     // Optional enum type / base clause: ':' TypeSpec
     std::shared_ptr<ast::type_specifier> explicit_underlying_type;
     std::optional<std::string> base_name;
+    std::optional<lex::operator_> enum_colon_tok;
     {
         lex::lex_holder base_holder(_lexer);
         auto maybe_colon = _lexer.get();
         if (maybe_colon == lex::operator_::COLON) {
+            enum_colon_tok = lex::as<lex::operator_>(maybe_colon);
             explicit_underlying_type = parse_type_spec();
             if (!explicit_underlying_type) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EXPECTED_BASE_ENUM_NAME), _lexer.pick_current(), "Expected base enum name after ':' in enum declaration");
@@ -1665,10 +1722,13 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
         std::vector<ast::expr_ptr> ctor_args;
         std::shared_ptr<ast::brace_init_list> brace_init;
         bool has_paren_init = false;
+        std::optional<lex::operator_> entry_equal_tok;
+        std::optional<lex::punctuator> entry_open_paren, entry_close_paren;
         {
             lex::lex_holder init_holder(_lexer);
             auto maybe_init = _lexer.get();
             if(maybe_init == lex::operator_::EQUAL) {
+                entry_equal_tok = lex::as<lex::operator_>(maybe_init);
                 auto lval = _lexer.get();
                 if(lex::is<lex::integer>(lval)) {
                     literal_value = lex::any_literal{lex::as<lex::integer>(lval)};
@@ -1689,6 +1749,7 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
                 }
             } else if (maybe_init == lex::punctuator::PARENTHESIS_OPEN) {
                 has_paren_init = true;
+                entry_open_paren = lex::as<lex::punctuator>(maybe_init);
                 auto maybe_close = _lexer.get();
                 if (maybe_close != lex::punctuator::PARENTHESIS_CLOSE) {
                     _lexer.unget();
@@ -1700,12 +1761,15 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
                         ctor_args.push_back(arg);
                         auto sep = _lexer.get();
                         if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                            entry_close_paren = lex::as<lex::punctuator>(sep);
                             break;
                         }
                         if (sep != lex::punctuator::COMMA) {
                             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_ENTRY_EXPECT_VALUE), _lexer.pick_current(), "Expected ',' or ')' in enum entry constructor-style initializer");
                         }
                     }
+                } else {
+                    entry_close_paren = lex::as<lex::punctuator>(maybe_close);
                 }
             } else if (maybe_init == lex::punctuator::BRACE_OPEN) {
                 brace_init = parse_brace_init_list(lex::as<lex::punctuator>(maybe_init));
@@ -1716,23 +1780,32 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
 
         // Optional 'default' keyword
         bool is_default = false;
+        std::optional<lex::keyword> default_kw_tok;
         {
             lex::lex_holder def_holder(_lexer);
             auto maybe_default = _lexer.get();
             if(maybe_default == lex::keyword::DEFAULT) {
                 is_default = true;
+                default_kw_tok = lex::as<lex::keyword>(maybe_default);
             } else {
                 def_holder.rollback();
             }
         }
 
         // Expect semicolon
-        if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
+        auto lsemi = _lexer.get();
+        if(lsemi != lex::punctuator::SEMICOLON) {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_ENTRY_MISSING_SEMICOLON), _lexer.pick_current(), "Expected ';' after enum entry");
         }
 
-        entries.push_back(std::make_shared<ast::enum_entry>(
-            entry_name, literal_value, ref_value, is_default, ctor_args, brace_init, has_paren_init));
+        auto entry_node = std::make_shared<ast::enum_entry>(
+            entry_name, literal_value, ref_value, is_default, ctor_args, brace_init, has_paren_init);
+        if (entry_equal_tok) entry_node->set_equal_op(*entry_equal_tok);
+        if (entry_open_paren) entry_node->set_open_paren(*entry_open_paren);
+        if (entry_close_paren) entry_node->set_close_paren(*entry_close_paren);
+        if (default_kw_tok) entry_node->set_default_kw(*default_kw_tok);
+        entry_node->set_semicolon(lex::as<lex::punctuator>(lsemi));
+        entries.push_back(entry_node);
     }
 
     // Expect closing brace
@@ -1747,7 +1820,11 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
     // declaration. A spurious ';' here is tolerated as an empty declaration by
     // parse_declarations() (which emits a warning), like every block declaration.
 
-    return std::make_shared<ast::enum_decl>(specifiers, kw_enum, enum_name, explicit_underlying_type, base_name, open_brace_val, close_brace_val, entries);
+    auto enum_res = std::make_shared<ast::enum_decl>(specifiers, kw_enum, enum_name, explicit_underlying_type, base_name, open_brace_val, close_brace_val, entries);
+    if (enum_colon_tok) enum_res->set_colon(*enum_colon_tok);
+    enum_res->set_open_brace(open_brace_val);
+    enum_res->set_close_brace(close_brace_val);
+    return enum_res;
 }
 
 std::vector<lex::keyword> parser::parse_specifiers()
@@ -1873,6 +1950,13 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     auto lname= _lexer.get();
     lex::opt_any_lexeme loperator;
     lex::opt_any_lexeme loperator_name;
+
+    std::optional<lex::operator_> fn_tilde;
+    std::optional<lex::punctuator> fn_open_paren, fn_close_paren;
+    std::optional<lex::operator_> fn_colon;
+    std::optional<lex::keyword> fn_throws_kw;
+    std::optional<lex::operator_> fn_arrow;
+    std::optional<lex::punctuator> fn_semicolon;
 
     if(lname == lex::keyword::OPERATOR) {
         // Parse the operator symbol and map to canonical name
@@ -2024,6 +2108,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             // Normal operator handling continues below...
         }
     } else if(lname == lex::operator_::TILDE) {
+        fn_tilde = lex::as<lex::operator_>(lname);
         // Destructor: expect an identifier after the tilde
         auto lname2 = _lexer.get();
         if(lex::is_not<lex::identifier>(lname2)) {
@@ -2042,6 +2127,8 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         if(auto lopenpar = _lexer.get(); lopenpar!=lex::punctuator::PARENTHESIS_OPEN) {
             holder.rollback();
             return {};
+        } else {
+            fn_open_paren = lex::as<lex::punctuator>(lopenpar);
         }
     }
 
@@ -2080,6 +2167,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_FUNC_EXPECT_FINALIZE_2), _lexer.pick_current(), "Function declaration expects finalizing its declaration");
                 }
                 if(lex==lex::punctuator::PARENTHESIS_CLOSE) {
+                    fn_close_paren = lex::as<lex::punctuator>(lex);
                     break;
                 }
                 if(lex!=lex::punctuator::COMMA){
@@ -2123,6 +2211,8 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                     }
                 }
             }
+        } else {
+            fn_close_paren = lex::as<lex::punctuator>(lex);
         }
     }
 
@@ -2146,6 +2236,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             lex::lex_holder colon_holder(_lexer);
             auto maybe_colon = _lexer.get();
             if (maybe_colon == lex::operator_::COLON) {
+                fn_colon = lex::as<lex::operator_>(maybe_colon);
                 // It's a named return variable!
                 if (is_destructor) {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_FRIEND_EXPECT_QNAME), _lexer.pick_current(), "Destructor declaration must not have a named return variable");
@@ -2228,6 +2319,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     }
 
     if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
+        fn_colon = lex::as<lex::operator_>(lcolon);
         if(is_destructor) {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_DTOR_MUST_HAVE_NO_RETURN), _lexer.pick_current(), "Destructor declaration must not have a return type");
         }
@@ -2412,6 +2504,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         lex::lex_holder throws_holder(_lexer);
         auto maybe_throws = _lexer.get();
         if (maybe_throws == lex::keyword::THROWS) {
+            fn_throws_kw = lex::as<lex::keyword>(maybe_throws);
             has_throws_clause = true;
             throws_spec = parse_throws_clause();
         } else {
@@ -2425,6 +2518,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         lex::lex_holder alias_holder(_lexer);
         auto larrow = _lexer.get();
         if(larrow == lex::operator_::ARROW) {
+            fn_arrow = lex::as<lex::operator_>(larrow);
             if (has_named_return) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_NAMED_RET_NO_ALIAS), _lexer.pick_current(), "Function with named return variable must not use '->' aliasing");
             }
@@ -2437,9 +2531,11 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 } else {
                     aliasing = ast::function_decl::aliasing_spec_t::DELETE;
                 }
-                if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
+                auto lsemi = _lexer.get();
+                if(lsemi != lex::punctuator::SEMICOLON) {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ALIAS_EXPECT_SEMICOLON), _lexer.pick_current(), "Function aliasing declaration expects ';' after 'default'/'delete'");
                 }
+                fn_semicolon = lex::as<lex::punctuator>(lsemi);
                 // -> default / -> delete is allowed on non-static constructors and on assignment operator declarations.
                 if(is_destructor) {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ALIAS_EXPECT_BODY_DEFAULT_DELETE), _lexer.pick_current(),
@@ -2458,6 +2554,13 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 decl->annotations = std::move(annotations);
                 decl->template_params = std::move(template_params);
                 decl->is_generic = fn_is_generic;
+                if (fn_tilde) decl->set_tilde(*fn_tilde);
+                if (fn_open_paren) decl->set_open_paren(*fn_open_paren);
+                if (fn_close_paren) decl->set_close_paren(*fn_close_paren);
+                if (fn_colon) decl->set_colon(*fn_colon);
+                if (fn_arrow) decl->set_arrow(*fn_arrow);
+                if (fn_throws_kw) decl->set_throws_kw(*fn_throws_kw);
+                if (fn_semicolon) decl->set_semicolon(*fn_semicolon);
                 return decl;
             }
 
@@ -2505,14 +2608,23 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 }
             }
 
-            if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
+            auto lsemi = _lexer.get();
+            if(lsemi != lex::punctuator::SEMICOLON) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_REDIRECT_EXPECT_SEMICOLON), _lexer.pick_current(), "Function redirect declaration expects ';' after target");
             }
+            fn_semicolon = lex::as<lex::punctuator>(lsemi);
             auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params,
                 redirect_target, redirect_param_types, redirect_has_param_types);
             decl->annotations = std::move(annotations);
             decl->template_params = std::move(template_params);
             decl->is_generic = fn_is_generic;
+            if (fn_tilde) decl->set_tilde(*fn_tilde);
+            if (fn_open_paren) decl->set_open_paren(*fn_open_paren);
+            if (fn_close_paren) decl->set_close_paren(*fn_close_paren);
+            if (fn_colon) decl->set_colon(*fn_colon);
+            if (fn_arrow) decl->set_arrow(*fn_arrow);
+            if (fn_throws_kw) decl->set_throws_kw(*fn_throws_kw);
+            if (fn_semicolon) decl->set_semicolon(*fn_semicolon);
             return decl;
         }
         alias_holder.rollback();
@@ -2524,6 +2636,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             lex::lex_holder semi_holder(_lexer);
             auto lsemi = _lexer.get();
             if (lsemi == lex::punctuator::SEMICOLON) {
+                fn_semicolon = lex::as<lex::punctuator>(lsemi);
                 // Return a function_decl with no body and no aliasing
                 auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, nullptr, is_destructor);
                 decl->is_operator = is_operator;
@@ -2534,6 +2647,13 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                     decl->has_throws_clause = true;
                     decl->throws_spec = std::move(throws_spec);
                 }
+                if (fn_tilde) decl->set_tilde(*fn_tilde);
+                if (fn_open_paren) decl->set_open_paren(*fn_open_paren);
+                if (fn_close_paren) decl->set_close_paren(*fn_close_paren);
+                if (fn_colon) decl->set_colon(*fn_colon);
+                if (fn_arrow) decl->set_arrow(*fn_arrow);
+                if (fn_throws_kw) decl->set_throws_kw(*fn_throws_kw);
+                if (fn_semicolon) decl->set_semicolon(*fn_semicolon);
                 return decl;
             }
             semi_holder.rollback();
@@ -2560,6 +2680,13 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         decl->has_throws_clause = true;
         decl->throws_spec = std::move(throws_spec);
     }
+    if (fn_tilde) decl->set_tilde(*fn_tilde);
+    if (fn_open_paren) decl->set_open_paren(*fn_open_paren);
+    if (fn_close_paren) decl->set_close_paren(*fn_close_paren);
+    if (fn_colon) decl->set_colon(*fn_colon);
+    if (fn_arrow) decl->set_arrow(*fn_arrow);
+    if (fn_throws_kw) decl->set_throws_kw(*fn_throws_kw);
+    if (fn_semicolon) decl->set_semicolon(*fn_semicolon);
 
     // Capture template source text for KDI export: from 'template' keyword through closing '}'
     // Generic functions do not need source text (synthesised in their declaration module).
@@ -2583,6 +2710,8 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
 
     std::optional<lex::identifier> name;
     bool is_varargs = false;
+    std::optional<lex::operator_> colon_tok;
+    std::optional<lex::punctuator> ellipsis_tok;
     lex::lex_holder holder_name(_lexer);
     if(auto lname = _lexer.get(); lex::is<lex::identifier>(lname)) {
         // Check for '...' (varargs) before ':'
@@ -2593,6 +2722,8 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
             if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
                 name = lex::as<lex::identifier>(lname);
                 is_varargs = true;
+                ellipsis_tok = lex::as<lex::punctuator>(maybe_ellipsis);
+                colon_tok = lex::as<lex::operator_>(lcolon);
             } else {
                 holder_name.rollback();
             }
@@ -2601,6 +2732,7 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
             // Standard path: name : type
             if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
                 name = lex::as<lex::identifier>(lname);
+                colon_tok = lex::as<lex::operator_>(lcolon);
             } else {
                 holder_name.rollback();
             }
@@ -2625,6 +2757,7 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
             if (lex::is<lex::identifier>(maybe_name)) {
                 name = lex::as<lex::identifier>(maybe_name);
                 is_pack_expansion = true;
+                ellipsis_tok = lex::as<lex::punctuator>(maybe_ellipsis);
             } else {
                 pack_holder.rollback();
             }
@@ -2642,9 +2775,11 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
 
     // Parse optional default value: '=' CONDITIONAL_EXPR
     ast::expr_ptr default_expr;
+    std::optional<lex::operator_> eq_tok;
     {
         lex::lex_holder holder_default(_lexer);
         if(auto lequal = _lexer.get(); lequal == lex::operator_::EQUAL) {
+            eq_tok = lex::as<lex::operator_>(lequal);
             default_expr = parse_conditional_expr();
             if(!default_expr) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EXPECTED_BASE_CLASS_NAME), _lexer.pick_current(), "Expected expression after '=' in parameter default value");
@@ -2654,7 +2789,11 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
         }
     }
 
-    return std::make_shared<ast::parameter_spec>(std::move(annotations), specifiers, name, type, std::move(default_expr), is_varargs, is_pack_expansion);
+    auto res = std::make_shared<ast::parameter_spec>(std::move(annotations), specifiers, name, type, std::move(default_expr), is_varargs, is_pack_expansion);
+    if (colon_tok) res->set_colon(*colon_tok);
+    if (ellipsis_tok) res->set_ellipsis(*ellipsis_tok);
+    if (eq_tok) res->set_equal_op(*eq_tok);
+    return res;
 }
 
 std::vector<std::shared_ptr<ast::qualified_identifier>> parser::parse_throws_clause()

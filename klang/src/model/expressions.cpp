@@ -47,115 +47,256 @@ std::shared_ptr<const statement> expression::find_statement() const {
 };
 
 //
-// Expression: first_lexeme / last_lexeme default implementations
+// Expression: get_first_lexeme / get_last_lexeme / get_interest_lexeme default implementations
 //
 
-std::optional<k::lex::any_lexeme> expression::first_lexeme() const {
-    // Try to extract a lexeme from the AST node.
-    if (auto ast_expr = get_ast_node_as<parse::ast::expression>()) {
-        // literal_expr — extract the first (only) token from the literal
-        if (auto lit = std::dynamic_pointer_cast<parse::ast::literal_expr>(ast_expr)) {
-            // any_literal derives from literal. Use value() to get the base literal reference.
-            const k::lex::literal& base_lit = lit->literal.value();
-            return k::lex::any_lexeme{k::lex::identifier{base_lit.content}};
-        }
-        // keyword_expr (this, null, etc.)
-        if (auto kw = std::dynamic_pointer_cast<parse::ast::keyword_expr>(ast_expr)) {
-            return k::lex::any_lexeme{kw->keyword};
-        }
-        // identifier_expr
-        if (auto id = std::dynamic_pointer_cast<parse::ast::identifier_expr>(ast_expr)) {
-            if (id->qident.initial_doublecolon.has_value()) {
-                return k::lex::any_lexeme{*id->qident.initial_doublecolon};
-            }
-            if (!id->qident.names.empty()) {
-                return k::lex::any_lexeme{id->qident.names.front()};
-            }
-        }
-        // new_expr
-        if (auto ne = std::dynamic_pointer_cast<parse::ast::new_expr>(ast_expr)) {
-            return k::lex::any_lexeme{ne->new_kw};
-        }
-        // delete_expr
-        if (auto de = std::dynamic_pointer_cast<parse::ast::delete_expr>(ast_expr)) {
-            return k::lex::any_lexeme{de->delete_kw};
+lex::opt_any_lexeme expression::get_first_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_first_lexeme()) {
+            return lex;
         }
     }
     return std::nullopt;
 }
 
-std::optional<k::lex::any_lexeme> expression::last_lexeme() const {
-    // Try to extract a lexeme from the AST node.
-    if (auto ast_expr = get_ast_node_as<parse::ast::expression>()) {
-        // literal_expr
-        if (auto lit = std::dynamic_pointer_cast<parse::ast::literal_expr>(ast_expr)) {
-            const k::lex::literal& base_lit = lit->literal.value();
-            return k::lex::any_lexeme{k::lex::identifier{base_lit.content}};
+lex::opt_any_lexeme expression::get_last_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_last_lexeme()) {
+            return lex;
         }
-        // keyword_expr
-        if (auto kw = std::dynamic_pointer_cast<parse::ast::keyword_expr>(ast_expr)) {
-            return k::lex::any_lexeme{kw->keyword};
-        }
-        // identifier_expr
-        if (auto id = std::dynamic_pointer_cast<parse::ast::identifier_expr>(ast_expr)) {
-            if (!id->qident.names.empty()) {
-                return k::lex::any_lexeme{id->qident.names.back()};
-            }
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme expression::get_interest_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_interest_lexeme()) {
+            return lex;
         }
     }
     return std::nullopt;
 }
 
 //
-// Unary expression: first_lexeme / last_lexeme
+// Unary expression: get_first_lexeme / get_last_lexeme / get_interest_lexeme
 //
 
-std::optional<k::lex::any_lexeme> unary_expression::first_lexeme() const {
-    // For prefix operators, the operator token is the first lexeme.
-    if (auto ast_prefix = get_ast_node_as<parse::ast::unary_prefix_expr>()) {
-        return k::lex::any_lexeme{ast_prefix->op};
+lex::opt_any_lexeme unary_expression::get_first_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_first_lexeme()) return lex;
     }
-    // For postfix operators, the sub-expression's first lexeme is the first.
     if (_sub_expr) {
-        return _sub_expr->first_lexeme();
+        return _sub_expr->get_first_lexeme();
     }
-    // Fallback to base default
-    return expression::first_lexeme();
+    return std::nullopt;
 }
 
-std::optional<k::lex::any_lexeme> unary_expression::last_lexeme() const {
-    // For postfix operators, the operator token is the last lexeme.
-    if (auto ast_postfix = get_ast_node_as<parse::ast::unary_postfix_expr>()) {
-        return k::lex::any_lexeme{ast_postfix->op};
+lex::opt_any_lexeme unary_expression::get_last_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_last_lexeme()) return lex;
     }
-    // For prefix operators, the sub-expression's last lexeme is the last.
     if (_sub_expr) {
-        return _sub_expr->last_lexeme();
+        return _sub_expr->get_last_lexeme();
     }
-    // Fallback to base default
-    return expression::last_lexeme();
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme unary_expression::get_interest_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_interest_lexeme()) return lex;
+    }
+    if (_sub_expr) {
+        return _sub_expr->get_interest_lexeme();
+    }
+    return std::nullopt;
 }
 
 //
-// Binary expression: first_lexeme / last_lexeme
+// Binary expression: get_first_lexeme / get_last_lexeme / get_interest_lexeme
 //
 
-std::optional<k::lex::any_lexeme> binary_expression::first_lexeme() const {
+lex::opt_any_lexeme binary_expression::get_first_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_first_lexeme()) return lex;
+    }
     if (_left_expr) {
-        if (auto lex = _left_expr->first_lexeme()) {
-            return lex;
-        }
+        if (auto lex = _left_expr->get_first_lexeme()) return lex;
     }
-    return expression::first_lexeme();
+    if (_right_expr) {
+        return _right_expr->get_first_lexeme();
+    }
+    return std::nullopt;
 }
 
-std::optional<k::lex::any_lexeme> binary_expression::last_lexeme() const {
-    if (_right_expr) {
-        if (auto lex = _right_expr->last_lexeme()) {
-            return lex;
-        }
+lex::opt_any_lexeme binary_expression::get_last_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_last_lexeme()) return lex;
     }
-    return expression::last_lexeme();
+    if (_right_expr) {
+        if (auto lex = _right_expr->get_last_lexeme()) return lex;
+    }
+    if (_left_expr) {
+        return _left_expr->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme binary_expression::get_interest_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_interest_lexeme()) return lex;
+    }
+    if (_left_expr) {
+        return _left_expr->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
+//
+// Member of expression: get_first_lexeme / get_last_lexeme / get_interest_lexeme
+//
+
+lex::opt_any_lexeme member_of_expression::get_first_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_first_lexeme()) return lex;
+    }
+    if (_sub_expr) {
+        return _sub_expr->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme member_of_expression::get_last_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_last_lexeme()) return lex;
+    }
+    if (_symbol) {
+        return _symbol->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme member_of_expression::get_interest_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_interest_lexeme()) return lex;
+    }
+    if (_symbol) {
+        return _symbol->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
+//
+// Cast expression: get_first_lexeme / get_last_lexeme / get_interest_lexeme
+//
+
+lex::opt_any_lexeme cast_expression::get_first_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_first_lexeme()) return lex;
+    }
+    if (_sub_expr) {
+        return _sub_expr->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme cast_expression::get_last_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_last_lexeme()) return lex;
+    }
+    if (_sub_expr) {
+        return _sub_expr->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme cast_expression::get_interest_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_interest_lexeme()) return lex;
+    }
+    if (_sub_expr) {
+        return _sub_expr->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
+//
+// Function invocation expression: get_first_lexeme / get_last_lexeme / get_interest_lexeme
+//
+
+lex::opt_any_lexeme function_invocation_expression::get_first_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_first_lexeme()) return lex;
+    }
+    if (_callee_expr) {
+        return _callee_expr->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme function_invocation_expression::get_last_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_last_lexeme()) return lex;
+    }
+    if (!_arguments.empty() && _arguments.back()) {
+        if (auto lex = _arguments.back()->get_last_lexeme()) return lex;
+    }
+    if (_callee_expr) {
+        return _callee_expr->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme function_invocation_expression::get_interest_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_interest_lexeme()) return lex;
+    }
+    if (_callee_expr) {
+        return _callee_expr->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
+//
+// Constructor invocation expression: get_first_lexeme / get_last_lexeme / get_interest_lexeme
+//
+
+lex::opt_any_lexeme constructor_invocation_expression::get_first_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_first_lexeme()) return lex;
+    }
+    if (_constructed_symbol) {
+        if (auto lex = _constructed_symbol->get_first_lexeme()) return lex;
+    }
+    if (!_arguments.empty() && _arguments.front()) {
+        return _arguments.front()->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme constructor_invocation_expression::get_last_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_last_lexeme()) return lex;
+    }
+    if (!_arguments.empty() && _arguments.back()) {
+        return _arguments.back()->get_last_lexeme();
+    }
+    if (_constructed_symbol) {
+        return _constructed_symbol->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme constructor_invocation_expression::get_interest_lexeme() const {
+    if (_ast_node) {
+        if (auto lex = _ast_node->get_interest_lexeme()) return lex;
+    }
+    if (_constructed_symbol) {
+        if (auto lex = _constructed_symbol->get_interest_lexeme()) return lex;
+    }
+    if (!_arguments.empty() && _arguments.front()) {
+        return _arguments.front()->get_interest_lexeme();
+    }
+    return std::nullopt;
 }
 
 //

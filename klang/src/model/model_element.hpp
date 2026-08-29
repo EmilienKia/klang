@@ -57,10 +57,29 @@ public:
     /** Get the AST node associated with this model element (may be null). */
     std::shared_ptr<k::parse::ast::ast_node> get_ast_node() const { return _ast_node; }
 
+    /** Set the AST node associated with this model element. */
+    void set_ast_node(std::shared_ptr<k::parse::ast::ast_node> ast_node) {
+        _ast_node = std::move(ast_node);
+    }
+
     /** Get the AST node cast to a specific AST type (returns null if not set or wrong type). */
     template<typename T>
     std::shared_ptr<T> get_ast_node_as() const {
         return std::dynamic_pointer_cast<T>(_ast_node);
+    }
+
+    /** Returns the first lexeme of this model element, if any. */
+    virtual lex::opt_any_lexeme get_first_lexeme() const;
+
+    /** Returns the last lexeme of this model element, if any. */
+    virtual lex::opt_any_lexeme get_last_lexeme() const;
+
+    /** Returns the lexeme that is considered the "interest point" of this model element, if any. */
+    virtual lex::opt_any_lexeme get_interest_lexeme() const;
+
+    /** Convenience: returns the source range (first, last) lexemes of this element. */
+    std::pair<lex::opt_any_lexeme, lex::opt_any_lexeme> source_range() const {
+        return { get_first_lexeme(), get_last_lexeme() };
     }
 
     /** Get documentation associated with this element (may be null). */

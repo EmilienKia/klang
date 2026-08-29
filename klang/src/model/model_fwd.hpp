@@ -37,12 +37,17 @@
 namespace k::parse::ast {
 struct ast_node;
 struct documentation;
+struct declaration;
 struct function_decl;
 struct parameter_spec;
 struct aggregate_decl;
 struct enum_decl;
 struct annotation_def;
 struct brace_init_list;
+struct alias_decl;
+struct variable_decl;
+struct namespace_decl;
+struct unit;
 }
 
 namespace k::model {

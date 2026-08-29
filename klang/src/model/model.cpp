@@ -69,6 +69,27 @@ void element::set_documentation(std::shared_ptr<k::model::doc::doc_entity> docum
     }
 }
 
+lex::opt_any_lexeme element::get_first_lexeme() const {
+    if (_ast_node) {
+        return _ast_node->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme element::get_last_lexeme() const {
+    if (_ast_node) {
+        return _ast_node->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme element::get_interest_lexeme() const {
+    if (_ast_node) {
+        return _ast_node->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
 //
 // Bases of named element
 //
@@ -788,6 +809,19 @@ void member_variable_definition::accept(model_visitor &visitor) {
     visitor.visit_member_variable_definition(*this);
 }
 
+void member_variable_definition::set_ast_variable_decl(std::shared_ptr<k::parse::ast::variable_decl> ast) {
+    if (ast) {
+        k::parse::ast::ast_node* base = static_cast<k::parse::ast::declaration*>(ast.get());
+        _ast_node = std::shared_ptr<k::parse::ast::ast_node>(std::move(ast), base);
+    } else {
+        _ast_node.reset();
+    }
+}
+
+std::shared_ptr<k::parse::ast::variable_decl> member_variable_definition::get_ast_variable_decl() const {
+    return get_ast_node_as<k::parse::ast::variable_decl>();
+}
+
 
 //
 // Structure
@@ -1437,6 +1471,48 @@ const imported_module* unit::find_import(const k::name& module_name) const {
         if (imp.module_name == module_name) return &imp;
     }
     return nullptr;
+}
+
+void alias_definition::set_ast_alias_decl(std::shared_ptr<k::parse::ast::alias_decl> ast) {
+    if (ast) {
+        k::parse::ast::ast_node* base = static_cast<k::parse::ast::declaration*>(ast.get());
+        _ast_node = std::shared_ptr<k::parse::ast::ast_node>(std::move(ast), base);
+    } else {
+        _ast_node.reset();
+    }
+}
+
+std::shared_ptr<k::parse::ast::alias_decl> alias_definition::get_ast_alias_decl() const {
+    return get_ast_node_as<k::parse::ast::alias_decl>();
+}
+
+void global_variable_definition::set_ast_variable_decl(std::shared_ptr<k::parse::ast::variable_decl> ast) {
+    if (ast) {
+        k::parse::ast::ast_node* base = static_cast<k::parse::ast::declaration*>(ast.get());
+        _ast_node = std::shared_ptr<k::parse::ast::ast_node>(std::move(ast), base);
+    } else {
+        _ast_node.reset();
+    }
+}
+
+std::shared_ptr<k::parse::ast::variable_decl> global_variable_definition::get_ast_variable_decl() const {
+    return get_ast_node_as<k::parse::ast::variable_decl>();
+}
+
+void ns::set_ast_namespace_decl(std::shared_ptr<k::parse::ast::namespace_decl> ast) {
+    _ast_node = std::static_pointer_cast<k::parse::ast::ast_node>(std::move(ast));
+}
+
+std::shared_ptr<k::parse::ast::namespace_decl> ns::get_ast_namespace_decl() const {
+    return get_ast_node_as<k::parse::ast::namespace_decl>();
+}
+
+void unit::set_ast_unit(std::shared_ptr<k::parse::ast::unit> ast) {
+    _ast_node = std::static_pointer_cast<k::parse::ast::ast_node>(std::move(ast));
+}
+
+std::shared_ptr<k::parse::ast::unit> unit::get_ast_unit() const {
+    return get_ast_node_as<k::parse::ast::unit>();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

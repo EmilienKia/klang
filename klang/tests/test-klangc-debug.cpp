@@ -389,8 +389,8 @@ cast_line(v: short) : int {
 
     INFO(ir);
     REQUIRE(ir.find("!DILocation(line: 4,") != std::string::npos);
-    REQUIRE(ir.find("!DILocation(line: 6,") != std::string::npos);
-    REQUIRE(extract_dbg_line_for_instruction("sext i16") == 6);
+    REQUIRE(ir.find("!DILocation(line: 5,") != std::string::npos);
+    REQUIRE(extract_dbg_line_for_instruction("sext i16") == 5);
 }
 
 TEST_CASE("compiler: catch-return finally path anchors __cxa_end_catch on source line", "[klangc][debug][ir]") {
@@ -567,8 +567,8 @@ cast_to_derived(base: Base*) : Derived* {
     INFO(ir);
     const int rtti_cmp_line = extract_dbg_line_for_instruction("dyncast_rtti_match");
     const int result_line = extract_dbg_line_for_instruction("dyncast_result");
-    REQUIRE(rtti_cmp_line == 14);
-    REQUIRE(result_line == 14);
+    REQUIRE(rtti_cmp_line == 13);
+    REQUIRE(result_line == 13);
 }
 
 TEST_CASE("compiler: debug metadata anchors dynamic-cast nullable guard on cast line", "[klangc][debug][ir]") {
@@ -632,7 +632,7 @@ guarded(base: Base*) : int {
 
     INFO(ir);
     const int guard_line = extract_dbg_line_for_instruction("dyncast_src_null");
-    REQUIRE(guard_line == 14);
+    REQUIRE(guard_line == 13);
 }
 
 TEST_CASE("compiler: debug metadata anchors allocation null-check on new expression line", "[klangc][debug][ir]") {

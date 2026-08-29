@@ -58,6 +58,10 @@ public:
 
     virtual std::shared_ptr<function> get_function();
     virtual std::shared_ptr<const function> get_function() const;
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 /**
@@ -74,8 +78,6 @@ public:
     return_statement() = delete;
     return_statement(const std::shared_ptr<statement>& parent) :
             statement(parent) {}
-    return_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::return_statement>& ast) :
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
@@ -95,6 +97,10 @@ public:
         set_this_as_parent_to(_expression);
         return *this;
     }
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 /**
@@ -106,8 +112,6 @@ public:
     break_statement() = delete;
     break_statement(const std::shared_ptr<statement>& parent) :
             statement(parent) {}
-    break_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::break_statement>& ast) :
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
@@ -129,8 +133,6 @@ public:
     continue_statement() = delete;
     continue_statement(const std::shared_ptr<statement>& parent) :
             statement(parent) {}
-    continue_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::continue_statement>& ast) :
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
@@ -162,8 +164,6 @@ protected:
 public:
     if_else_statement() = delete;
     if_else_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
-    if_else_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::if_else_statement>& ast) :
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
@@ -228,6 +228,10 @@ public:
 
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 
@@ -243,8 +247,6 @@ protected:
 public:
     while_statement() = delete;
     while_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
-    while_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::while_statement>& ast) :
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
@@ -274,6 +276,9 @@ public:
         return _nested_stmt;
     }
 
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 
@@ -295,8 +300,6 @@ protected:
 public:
     for_statement() = delete;
     for_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
-    for_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::for_statement>& ast) :
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
@@ -322,6 +325,10 @@ public:
 
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 
@@ -414,8 +421,6 @@ protected:
 public:
     foreach_statement() = delete;
     foreach_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
-    foreach_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::foreach_statement>& ast) :
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
@@ -463,6 +468,10 @@ public:
 
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 
@@ -492,8 +501,6 @@ private:
 public:
     expression_statement() = delete;
     expression_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
-    expression_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::expression_statement>& ast):
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
@@ -513,6 +520,10 @@ public:
         set_this_as_parent_to(_expression);
         return *this;
     }
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 /**
@@ -576,6 +587,10 @@ public:
     }
 
     virtual variable_definition& set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr) override;
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 
@@ -591,10 +606,16 @@ public:
     throw_statement() = delete;
     throw_statement(const std::shared_ptr<statement>& parent) :
             statement(parent) {}
-    throw_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::throw_statement>& ast) :
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
+
+    void set_ast_throw_statement(std::shared_ptr<k::parse::ast::throw_statement> ast) {
+        _ast_node = std::move(ast);
+    }
+
+    std::shared_ptr<const k::parse::ast::throw_statement> get_ast_throw_statement() const {
+        return get_ast_node_as<k::parse::ast::throw_statement>();
+    }
 
     std::shared_ptr<expression> get_expression() { return _expression; }
     std::shared_ptr<const expression> get_expression() const { return _expression; }
@@ -604,6 +625,10 @@ public:
         set_this_as_parent_to(_expression);
         return *this;
     }
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 /**
@@ -628,6 +653,14 @@ public:
             statement(parent) {}
 
     void accept(model_visitor& visitor) override;
+
+    void set_ast_catch_clause(std::shared_ptr<k::parse::ast::catch_clause> ast) {
+        _ast_node = std::move(ast);
+    }
+
+    std::shared_ptr<const k::parse::ast::catch_clause> get_ast_catch_clause() const {
+        return get_ast_node_as<k::parse::ast::catch_clause>();
+    }
 
     bool is_const() const { return _is_const; }
     void set_const(bool c) { _is_const = c; }
@@ -661,10 +694,16 @@ public:
     try_catch_statement() = delete;
     try_catch_statement(const std::shared_ptr<statement>& parent) :
             statement(parent) {}
-    try_catch_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::try_catch_statement>& ast) :
-            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
+
+    void set_ast_try_catch_statement(std::shared_ptr<k::parse::ast::try_catch_statement> ast) {
+        _ast_node = std::move(ast);
+    }
+
+    std::shared_ptr<const k::parse::ast::try_catch_statement> get_ast_try_catch_statement() const {
+        return get_ast_node_as<k::parse::ast::try_catch_statement>();
+    }
 
     std::shared_ptr<block> get_try_body() { return _try_body; }
     std::shared_ptr<const block> get_try_body() const { return _try_body; }
@@ -717,6 +756,14 @@ public:
     block(const std::shared_ptr<element>& parent) : statement(parent) {}
 
     void accept(model_visitor& visitor) override;
+
+    void set_ast_block_statement(std::shared_ptr<k::parse::ast::block_statement> ast) {
+        _ast_node = std::move(ast);
+    }
+
+    std::shared_ptr<const k::parse::ast::block_statement> get_ast_block_statement() const {
+        return get_ast_node_as<k::parse::ast::block_statement>();
+    }
 
     const std::vector<std::shared_ptr<statement>>& get_statements() const {
         return _statements;

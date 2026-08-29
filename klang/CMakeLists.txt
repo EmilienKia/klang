@@ -178,6 +178,7 @@ klang_add_test(klang-tests-frontend 30
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-model 120
         tests/test-model-documentation.cpp
+        tests/test-model-lexemes.cpp
         tests/test-model-annotation.cpp
         tests/test-model-constructor-rtti.cpp
         tests/test-model-materializer.cpp

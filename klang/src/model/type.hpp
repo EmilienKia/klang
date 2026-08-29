@@ -25,6 +25,7 @@
 #include <unordered_map>
 
 #include "../common/common.hpp"
+#include "../lex/lexemes.hpp"
 
 namespace llvm {
     class ArrayType;
@@ -225,6 +226,15 @@ public:
     virtual llvm::Constant* generate_default_value_initializer() const;
 
     virtual std::string to_string() const =0;
+
+    /** Returns the first lexeme associated with this type, if any. */
+    virtual lex::opt_any_lexeme get_first_lexeme() const;
+
+    /** Returns the last lexeme associated with this type, if any. */
+    virtual lex::opt_any_lexeme get_last_lexeme() const;
+
+    /** Returns the lexeme that is considered the "interest point" of this type (e.g. name of struct/enum/alias), if any. */
+    virtual lex::opt_any_lexeme get_interest_lexeme() const;
 };
 
 /**
@@ -333,6 +343,10 @@ public:
     llvm::Type* get_llvm_type() const override {
         return _resolved ? _resolved->get_llvm_type() : nullptr;
     }
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 
 };
 
@@ -839,6 +853,10 @@ public:
     std::optional<field> get_member(const std::string& name) const;
 
     llvm::Constant* generate_default_value_initializer() const override;
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 class struct_type_builder {
@@ -1117,6 +1135,10 @@ public:
     llvm::Type* get_llvm_type() const override;
     llvm::Constant* generate_default_value_initializer() const override;
     std::string to_string() const override;
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 inline bool type::is_enum(const std::shared_ptr<type>& t) {
@@ -1186,6 +1208,10 @@ public:
     }
 
     std::string to_string() const override;
+
+    lex::opt_any_lexeme get_first_lexeme() const override;
+    lex::opt_any_lexeme get_last_lexeme() const override;
+    lex::opt_any_lexeme get_interest_lexeme() const override;
 };
 
 inline bool type::is_alias(const std::shared_ptr<type>& t) {

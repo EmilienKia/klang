@@ -262,6 +262,27 @@ llvm::Constant* type::generate_default_value_initializer() const {
     return nullptr;
 }
 
+lex::opt_any_lexeme type::get_first_lexeme() const {
+    if (auto sub = get_subtype()) {
+        return sub->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme type::get_last_lexeme() const {
+    if (auto sub = get_subtype()) {
+        return sub->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme type::get_interest_lexeme() const {
+    if (auto sub = get_subtype()) {
+        return sub->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
 
 //
 // Unresolved type
@@ -269,6 +290,27 @@ llvm::Constant* type::generate_default_value_initializer() const {
 
 std::string unresolved_type::to_string() const {
     return "<<unresolved:" + _type_id.to_string() + ">>";
+}
+
+lex::opt_any_lexeme unresolved_type::get_first_lexeme() const {
+    if (_resolved) {
+        return _resolved->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme unresolved_type::get_last_lexeme() const {
+    if (_resolved) {
+        return _resolved->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme unresolved_type::get_interest_lexeme() const {
+    if (_resolved) {
+        return _resolved->get_interest_lexeme();
+    }
+    return std::nullopt;
 }
 
 std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
@@ -926,6 +968,27 @@ llvm::Constant* struct_type::generate_default_value_initializer() const {
     return _default_init_constant!=nullptr ? _default_init_constant : llvm::ConstantAggregateZero::get(get_llvm_type());
 }
 
+lex::opt_any_lexeme struct_type::get_first_lexeme() const {
+    if (auto st = get_struct()) {
+        return st->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme struct_type::get_last_lexeme() const {
+    if (auto st = get_struct()) {
+        return st->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme struct_type::get_interest_lexeme() const {
+    if (auto st = get_struct()) {
+        return st->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
 
 //
 // Function reference type
@@ -1137,12 +1200,63 @@ std::string alias_type::to_string() const {
     return _fq_name.empty() ? "<alias>" : _fq_name;
 }
 
+lex::opt_any_lexeme alias_type::get_first_lexeme() const {
+    if (auto a = get_alias()) {
+        return a->get_first_lexeme();
+    }
+    if (_underlying) {
+        return _underlying->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme alias_type::get_last_lexeme() const {
+    if (auto a = get_alias()) {
+        return a->get_last_lexeme();
+    }
+    if (_underlying) {
+        return _underlying->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme alias_type::get_interest_lexeme() const {
+    if (auto a = get_alias()) {
+        return a->get_interest_lexeme();
+    }
+    if (_underlying) {
+        return _underlying->get_interest_lexeme();
+    }
+    return std::nullopt;
+}
+
 std::string enum_type::to_string() const {
     auto e = _enumeration.lock();
     if (e) {
         return "enum " + e->get_short_name();
     }
     return "enum <unknown>";
+}
+
+lex::opt_any_lexeme enum_type::get_first_lexeme() const {
+    if (auto e = get_enumeration()) {
+        return e->get_first_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme enum_type::get_last_lexeme() const {
+    if (auto e = get_enumeration()) {
+        return e->get_last_lexeme();
+    }
+    return std::nullopt;
+}
+
+lex::opt_any_lexeme enum_type::get_interest_lexeme() const {
+    if (auto e = get_enumeration()) {
+        return e->get_interest_lexeme();
+    }
+    return std::nullopt;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
