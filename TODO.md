@@ -169,17 +169,6 @@
 
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts. 
       Workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
-- [ ] **Exception cause chaining is unavailable for pointer-shaped throws.**
-  `throw new MyError(...)` copies only the *pointer* into the
-  `__cxa_allocate_exception` block, so the `_cause` / `_cause_handle` fields of
-  `Throwable` cannot be written (they would land outside the 8-byte allocation).
-  Cause chaining is therefore skipped for that form
-  (`implementation_generator::visit_throw_statement`, guard
-  `exception_stored_by_value` in `gen/gen_statements.cpp`). The by-value idiom
-  `throw MyError(...)` — used throughout `libk` — is unaffected.
-  Proper support requires boxing the pointed-to object (or storing the cause out
-  of line) and adjusting the catch-side base-offset arithmetic, which currently
-  assumes the exception storage *is* the object.
 
 ### Auxiliary Tools (libkdi / kditool)
 

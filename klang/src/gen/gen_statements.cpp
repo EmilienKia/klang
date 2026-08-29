@@ -1101,11 +1101,11 @@ void type_reference_resolver::visit_throw_statement(throw_statement& stmt)
                 }
                 // If ::k::Throwable is not found (e.g. module 'k' itself), skip the check
             } else {
-                // Non-struct type (primitive, etc.) — cannot be thrown
+                // Non-struct type (primitive, pointer, owner, array, etc.) — cannot be thrown
                 throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROW_NOT_EXCEPTION_TYPE),
                             expr->first_lexeme(),
-                            "Cannot throw a non-class type: only types derived from ::k::Throwable can be thrown",
-                            {});
+                            "Cannot throw type '{}': only value types derived from ::k::Throwable can be thrown (throwing pointers or 'new' expressions is forbidden)",
+                            {expr_type->to_string()});
             }
 
             // Exception contract check: verify thrown type is declared in the function's throws clause
@@ -1246,17 +1246,10 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     //    named _KTI<mangled_type> that serves as the type identifier.
     //    For matching in the catch clause, both throw and catch must use the
     //    same global — pointer equality is all that matters.
-    //    Peel addresser wrappers (reference, pointer, const) to get the inner type.
+    //    Peel reference/const wrappers to get the inner struct type.
     auto inner_type = obj_type;
-    // Every addresser (pointer, reference, owner, link, view, drain) and const
-    // wrapper must be peeled: `throw new MyError()` yields a `MyError!` owner,
-    // and leaving the wrapper in place would name a `_KTI_<type>` placeholder
-    // that no catch clause can ever match.
     while (inner_type && inner_type->get_subtype() &&
-           (type::is_pointer(inner_type) || type::is_reference(inner_type) ||
-            type::is_owner(inner_type) || type::is_link(inner_type) ||
-            type::is_view(inner_type) || type::is_drain(inner_type) ||
-            type::is_const(inner_type))) {
+           (type::is_reference(inner_type) || type::is_const(inner_type))) {
         inner_type = inner_type->get_subtype();
     }
     std::string typeinfo_name;
@@ -1397,13 +1390,7 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     auto* current_func = _builder->GetInsertBlock()->getParent();
     llvm::Value* dtor_fn_val = llvm::ConstantPointerNull::get(ptr_ty);
 
-    // Exception chaining writes the cause fields directly into the exception
-    // storage, which is only the object itself when the thrown value was copied
-    // in by value.  A pointer-shaped throw (`throw new MyError()`) stores just
-    // the pointer, so the cause offsets would land outside the allocation.
-    const bool exception_stored_by_value = llvm_exc_type->isAggregateType();
-
-    if (thrown_agg && exception_stored_by_value) {
+    if (thrown_agg && llvm_exc_type->isAggregateType()) {
         // Find the Throwable aggregate (local or imported)
         std::shared_ptr<aggregate> throwable_class;
         auto root_ns = _unit.get_root_namespace();
@@ -1623,18 +1610,9 @@ void type_reference_resolver::visit_try_catch_statement(try_catch_statement& stm
 
     _try_catch_stack.pop_back();
 
-    // Visit catch clause bodies (which are outside the try scope)
+    // Visit catch clauses (which validates parameter types and visits catch bodies)
     for(auto& clause : stmt.get_catch_clauses()) {
-        if(auto body = clause->get_body()) {
-            // Push catch scope so that bare 'throw;' inside the body can be validated
-            catch_scope cs;
-            if (auto var = clause->get_exception_var()) {
-                cs.caught_type = var->get_type();
-            }
-            _catch_clause_stack.push_back(std::move(cs));
-            body->accept(*this);
-            _catch_clause_stack.pop_back();
-        }
+        clause->accept(*this);
     }
 
     // Visit finally body
@@ -2146,6 +2124,11 @@ void type_reference_resolver::visit_catch_clause(catch_clause& clause)
                                     {caught_agg->get_short_name()});
                     }
                 }
+            } else {
+                throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_CATCH_NOT_EXCEPTION_TYPE),
+                            var_lexeme,
+                            "Catch parameter type '{}' does not derive from ::k::Throwable",
+                            {var_type->to_string()});
             }
         }
     }
@@ -2176,12 +2159,10 @@ void implementation_generator::visit_catch_clause(catch_clause& clause) {
 std::shared_ptr<aggregate> type_reference_resolver::get_exception_aggregate(const std::shared_ptr<type>& t)
 {
     if (!t) return nullptr;
-    // Peel addresser wrappers (pointer, reference, const, link, view, owner, drain)
+    // Peel reference and const wrappers only (exceptions are strictly value types)
     auto inner = t;
     while (inner && inner->get_subtype() &&
-           (type::is_pointer(inner) || type::is_reference(inner) ||
-            type::is_const(inner) || type::is_link(inner) ||
-            type::is_view(inner) || type::is_owner(inner))) {
+           (type::is_reference(inner) || type::is_const(inner))) {
         inner = inner->get_subtype();
     }
     if (auto st = std::dynamic_pointer_cast<struct_type>(inner)) {

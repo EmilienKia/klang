@@ -1825,10 +1825,12 @@ with a checked/unchecked distinction:
 
 ### 27.1 Throwable Type Constraint
 
-**Only classes derived from `::k::Throwable` (or `Throwable` itself) may be thrown.**
+**Only types derived from `::k::Throwable` (or `Throwable` itself) may be thrown.**
 
 - Throwing a struct or class that does not derive from `::k::Throwable` → compile-time error `0x01C0`.
 - Throwing a non-class type (primitive, array, etc.) → compile-time error `0x01C0`.
+- Throwing pointers, owners, links, views, or dynamic allocations (`throw new Type(...)`, `throw ptr`) →
+  compile-time error `0x01C0`. Exceptions must always be thrown by value.
 - This constraint is enforced whenever the stdlib is available (i.e. for all modules except `k` itself).
 
 User-defined exception types should inherit from `Exception` (checked) or `FatalError` (unchecked):
@@ -1848,7 +1850,7 @@ ThrowStatement:
     'throw' ';'
 ```
 
-The first form throws a new exception. The expression must evaluate to a class type derived from `::k::Throwable`.
+The first form throws a new exception. The expression must evaluate to a value of a type derived from `::k::Throwable` (throws are strictly by-value; `throw new ...` is forbidden).
 At runtime, the compiler:
 1. Allocates exception storage via `__cxa_allocate_exception`.
 2. Copies the value into the exception storage.

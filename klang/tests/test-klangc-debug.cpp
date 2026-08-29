@@ -151,7 +151,7 @@ TEST_CASE("compiler: debug metadata covers loop scopes and catch variables", "[k
             }
             try {
                 ++result;
-            } catch (caught: Exception*) {
+            } catch (caught: Exception&) {
                 result = 0;
             }
             return result;
@@ -192,7 +192,7 @@ TEST_CASE("klangc: debug DWARF contains catch variables and lexical blocks", "[k
                 result: int = a;
                 try {
                     throw MyErr();
-                } catch (caught: Exception*) {
+                } catch (caught: Exception&) {
                     result = 0;
                 }
                 return result;
@@ -289,7 +289,7 @@ flow(a: int) : int {
     }
     try {
         throw MyErr();
-    } catch (caught: Exception*) {
+    } catch (caught: Exception&) {
         return a;
     }
 }
@@ -407,7 +407,7 @@ class MyErr : public Exception { }
 flow(a: int) : int {
     try {
         throw MyErr();
-    } catch (caught: Exception*) {
+    } catch (caught: Exception&) {
         return a;
     } finally {
         ++a;

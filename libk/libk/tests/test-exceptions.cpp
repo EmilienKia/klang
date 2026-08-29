@@ -178,12 +178,9 @@ TEST_CASE("Exception: throwing Exception itself compiles", "[libk][exception]") 
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  3. Throw and catch stdlib exception types
-//  NOTE: Throwing polymorphic classes (with vtables) via temporary construction
-//  (e.g. `throw OutOfMemory()`) is not yet fully supported by the codegen.
-//  These tests are SKIPPED until the throw codegen handles vtable-bearing objects.
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Exception: throw and catch OutOfMemory", "[libk][exception][run][.][throw-class]") {
+TEST_CASE("Exception: throw and catch OutOfMemory", "[libk][exception][run][throw-class]") {
     auto jit = jit_k(R"SRC(
         module __test_exc_throw_catch__;
 
@@ -208,7 +205,7 @@ TEST_CASE("Exception: throw and catch OutOfMemory", "[libk][exception][run][.][t
     REQUIRE(fn() == 1);
 }
 
-TEST_CASE("Exception: catch by base Throwable", "[libk][exception][run][.][throw-class]") {
+TEST_CASE("Exception: catch by base Throwable", "[libk][exception][run][throw-class]") {
     auto jit = jit_k(R"SRC(
         module __test_exc_catch_base__;
 

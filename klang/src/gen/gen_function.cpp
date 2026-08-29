@@ -784,14 +784,20 @@ void type_reference_resolver::visit_function(function& fn) {
         if (auto ast_fd = fn.get_ast_function_decl()) throws_lexeme = lex::any_lexeme{ast_fd->name};
 
         for (const auto& raw_name : fn.get_throws_spec_raw()) {
+            std::shared_ptr<aggregate> agg;
+            std::shared_ptr<type> throws_type;
+
             // Look up the type by name (it should resolve to a struct/class)
             auto unres = _context->create_unresolved(k::name(raw_name));
             auto resolved = _context->resolve_type(unres);
             if (resolved && type::is_resolved(resolved)) {
-                fn.add_throws_type(resolved);
+                if (auto st = std::dynamic_pointer_cast<struct_type>(resolved)) {
+                    agg = st->get_struct();
+                }
+                throws_type = resolved;
             } else {
                 // Try scope lookup — the type may be in the same namespace
-                auto agg = scope_lookup::lookup_structure(fn.shared_as<element>(), raw_name);
+                agg = scope_lookup::lookup_structure(fn.shared_as<element>(), raw_name);
                 if (!agg) {
                     // Try imported aggregates (e.g. Exception from stdlib)
                     k::name type_name(raw_name);
@@ -799,20 +805,51 @@ void type_reference_resolver::visit_function(function& fn) {
                 }
                 if (agg) {
                     auto st = agg->get_struct_type();
-                    if (st) {
-                        fn.add_throws_type(st);
-                    } else {
+                    if (!st) {
                         // Create a struct_type for the aggregate
                         st = std::make_shared<struct_type>(agg->get_short_name(), agg);
                         _context->add_struct(st);
                         agg->set_struct_type(st);
-                        fn.add_throws_type(st);
                     }
+                    throws_type = st;
                 } else {
                     throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
                                 throws_lexeme, "Cannot resolve type '{}' in throws clause of function '{}'",
                                 {raw_name, fn.get_short_name()});
                 }
+            }
+
+            // Validate that the throws type derives from ::k::Throwable
+            if (agg) {
+                std::shared_ptr<aggregate> throwable_class;
+                auto root_ns = _unit.get_root_namespace();
+                if (root_ns) {
+                    auto k_ns = root_ns->get_child_namespace("k");
+                    if (k_ns) {
+                        throwable_class = k_ns->get_aggregate("Throwable");
+                    }
+                }
+                if (!throwable_class) {
+                    k::name thr_name(false, {"k", "Throwable"});
+                    throwable_class = _unit.get_or_create_imported_aggregate(thr_name, _context);
+                }
+                if (throwable_class) {
+                    if (agg != throwable_class && !agg->is_derived_from(throwable_class)) {
+                        throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_NOT_EXCEPTION_TYPE),
+                                    throws_lexeme,
+                                    "Type '{}' in throws clause of function '{}' does not derive from ::k::Throwable",
+                                    {agg->get_short_name(), fn.get_short_name()});
+                    }
+                }
+            } else {
+                throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_NOT_EXCEPTION_TYPE),
+                            throws_lexeme,
+                            "Type '{}' in throws clause of function '{}' does not derive from ::k::Throwable",
+                            {raw_name, fn.get_short_name()});
+            }
+
+            if (throws_type) {
+                fn.add_throws_type(throws_type);
             }
         }
     }

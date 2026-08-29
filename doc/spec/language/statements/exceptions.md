@@ -29,11 +29,13 @@ in the standard library. The hierarchy separates **checked exceptions**
 
 ## 1. Throwable type constraint
 
-**Only classes derived from `::k::Throwable` (or `Throwable` itself) may be thrown.**
+**Only types derived from `::k::Throwable` (or `Throwable` itself) may be thrown.**
 
 - Throwing a struct or class that does not derive from `::k::Throwable` →
   compile-time error `0x01C0`.
 - Throwing a non-class type (primitive, array, etc.) → compile-time error `0x01C0`.
+- Throwing pointers, owners, links, views, or dynamic allocations (`throw new Type(...)`, `throw ptr`) →
+  compile-time error `0x01C0`. Exceptions must always be thrown by value.
 - This constraint is enforced whenever the stdlib is available (i.e. for all
   modules except `k` itself).
 
@@ -71,8 +73,11 @@ ThrowStatement:
     'throw' ';'
 ```
 
-The first form throws a new exception. The expression must evaluate to a class
-type derived from `::k::Throwable`.
+The first form throws a new exception. The expression must evaluate to a value
+of a type derived from `::k::Throwable`.
+
+> **Note:** Throwing a heap-allocated pointer (such as `throw new MyError(...)` or `throw ptr;`)
+> is strictly forbidden in K. Throws are always by-value: `throw MyError(...)` or `throw e;`.
 
 The second form (`throw;`) is a **rethrow** — it re-throws the exception
 currently being handled. It is only valid inside a `catch` block.

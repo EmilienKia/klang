@@ -41,7 +41,7 @@ TEST_CASE("Exception: try-catch parses without error", "[gen][exceptions]") {
             result : int = 0;
             try {
                 result = 42;
-            } catch (e: Exception*) {
+            } catch (e: Exception&) {
                 result = -1;
             }
             return result;
@@ -64,9 +64,9 @@ TEST_CASE("Exception: multiple catch clauses parse", "[gen][exceptions]") {
             result : int = 0;
             try {
                 result = 10;
-            } catch (e: ErrA*) {
+            } catch (e: ErrA&) {
                 result = -1;
-            } catch (e: ErrB*) {
+            } catch (e: ErrB&) {
                 result = -2;
             }
             return result;
@@ -190,7 +190,7 @@ TEST_CASE("Exception: try-catch with throw in try body compiles", "[gen][excepti
             result : int = 0;
             try {
                 result = 5;
-            } catch (p: Problem*) {
+            } catch (p: Problem&) {
                 result = -1;
             }
             return result;
@@ -218,7 +218,7 @@ TEST_CASE("Exception: throw inside try-catch is caught at runtime", "[gen][excep
                 e : MyErr;
                 throw e;
                 result = 999;
-            } catch (p: MyErr*) {
+            } catch (p: MyErr&) {
                 result = 77;
             }
             return result;
@@ -250,7 +250,7 @@ TEST_CASE("Exception: throw in called function caught by caller via invoke", "[g
             try {
                 thrower();
                 result = 999;
-            } catch (p: AppError*) {
+            } catch (p: AppError&) {
                 result = 42;
             }
             return result;
@@ -283,9 +283,9 @@ TEST_CASE("Exception: type-based catch dispatch selects correct handler", "[gen]
             try {
                 throw_b();
                 result = 999;
-            } catch (a: ErrA*) {
+            } catch (a: ErrA&) {
                 result = 10;
-            } catch (b: ErrB*) {
+            } catch (b: ErrB&) {
                 result = 20;
             }
             return result;
@@ -314,9 +314,9 @@ TEST_CASE("Exception: first matching catch clause wins", "[gen][exceptions][run]
             try {
                 throw_a();
                 result = 999;
-            } catch (a: ErrA*) {
+            } catch (a: ErrA&) {
                 result = 100;
-            } catch (b: ErrB*) {
+            } catch (b: ErrB&) {
                 result = 200;
             }
             return result;
@@ -346,10 +346,10 @@ TEST_CASE("Exception: unmatched type resumes unwinding to outer try-catch", "[ge
                 try {
                     throw_c();
                     result = 999;
-                } catch (a: ErrA*) {
+                } catch (a: ErrA&) {
                     result = 10;
                 }
-            } catch (c: ErrC*) {
+            } catch (c: ErrC&) {
                 result = 30;
             }
             return result;
@@ -377,10 +377,10 @@ TEST_CASE("Exception: nested try-catch blocks", "[gen][exceptions][run][nested]"
                 try {
                     e : ErrA;
                     throw e;
-                } catch (p: ErrA*) {
+                } catch (p: ErrA&) {
                     result = 55;
                 }
-            } catch (p: ErrA*) {
+            } catch (p: ErrA&) {
                 result = 999;
             }
             return result;
@@ -445,7 +445,7 @@ TEST_CASE("Exception contract: throw inside try-catch does not require throws cl
             try {
                 e : ErrB;
                 throw e;
-            } catch (b: ErrB*) {
+            } catch (b: ErrB&) {
                 result = 99;
             }
             return result;
@@ -517,7 +517,7 @@ TEST_CASE("Exception contract: call to throwing function caught in try-catch pas
             result : int = 0;
             try {
                 thrower();
-            } catch (b: ErrB*) {
+            } catch (b: ErrB&) {
                 result = 55;
             }
             return result;
@@ -604,6 +604,113 @@ TEST_CASE("Exception: throwing a non-Exception class fails compilation",
         thrower() : void {
             e : NotAnException;
             throw e;
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: throwing a primitive type fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module gen_exceptions_24_prim;
+
+        thrower() : void {
+            throw 42;
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: throwing via 'throw new ...' fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module gen_exceptions_24_new;
+
+        class MyErr : public Exception { }
+
+        thrower() : void {
+            throw new MyErr();
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: throwing a pointer fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module gen_exceptions_24_ptr;
+
+        class MyErr : public Exception { }
+
+        thrower() : void {
+            e : MyErr;
+            p : MyErr* = &e;
+            throw p;
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: catch parameter with pointer addresser fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module gen_exceptions_24_catch_ptr;
+
+        class MyErr : public Exception { }
+
+        test() : void {
+            try {
+                throw MyErr();
+            } catch (e: MyErr*) {
+            }
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: catch parameter with non-Throwable class fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module gen_exceptions_24_catch_non_throwable;
+
+        class NotAnError { }
+
+        test() : void {
+            try {
+                x : int = 1;
+            } catch (e: NotAnError&) {
+            }
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: catch parameter with primitive type fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module gen_exceptions_24_catch_prim;
+
+        test() : void {
+            try {
+                x : int = 1;
+            } catch (e: int&) {
+            }
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: throws clause with non-Throwable class fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module gen_exceptions_24_throws_non_throwable;
+
+        class NotAnError { }
+
+        bad_throws() : void throws(NotAnError) {
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: throws clause with primitive type fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module gen_exceptions_24_throws_prim;
+
+        bad_throws() : void throws(int) {
         }
     )"), k::log::compiler_error);
 }
@@ -1656,7 +1763,7 @@ TEST_CASE("Exception: finally executes on normal flow", "[gen][exceptions][final
             result : int = 0;
             try {
                 result = 1;
-            } catch (e: Exception*) {
+            } catch (e: Exception&) {
                 result = -1;
             } finally {
                 result += 10;
@@ -1688,7 +1795,7 @@ TEST_CASE("Exception: finally executes after catch", "[gen][exceptions][finally]
             try {
                 thrower();
                 result = 1;
-            } catch (e: TestErr*) {
+            } catch (e: TestErr&) {
                 result = 5;
             } finally {
                 result += 10;
@@ -1745,12 +1852,12 @@ TEST_CASE("Exception: finally executes on unmatched exception", "[gen][exception
             try {
                 try {
                     thrower_x();
-                } catch (e: ErrY*) {
+                } catch (e: ErrY&) {
                     result = -1;
                 } finally {
                     result += 100;
                 }
-            } catch (e: ErrX*) {
+            } catch (e: ErrX&) {
                 result += 5;
             }
             return result;
@@ -1828,7 +1935,7 @@ TEST_CASE("Exception: finally does not suppress exception", "[gen][exceptions][f
                 } finally {
                     result += 50;
                 }
-            } catch (e: PropErr*) {
+            } catch (e: PropErr&) {
                 result += 7;
             }
             return result;

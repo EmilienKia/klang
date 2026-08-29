@@ -63,7 +63,7 @@ Root base class for all types that can be thrown in K.
 | Signature | Description |
 |-----------|-------------|
 | `const getCode() : int` | Return the error code |
-| `const getCause() : Throwable?` | Return a view to the causing exception, or null |
+| `const getCause() : Throwable*` | Return a pointer to the causing exception, or null |
 | `const hasCause() : bool` | Return true if this exception has a cause |
 
 ### Exception Chaining
