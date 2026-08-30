@@ -897,8 +897,7 @@ type_reference_resolver::adapt_from_reference(
             auto loaded = load_value_expression::make_shared(expr);
             loaded->set_type(inner);
             // Now adapt the loaded indirection to the target indirection type
-            auto adapted = adapt_type(loaded, type_nc);
-            return adapted ? adapted : loaded;
+            return adapt_type(loaded, type_nc);
         }
     } else {
         // ref<ptr/lnk/view<T>> → ref<T>: load indirection value, reinterpret as reference

@@ -1680,13 +1680,11 @@ void implementation_generator::emit_dynamic_cast(
     set_debug_location(expr.first_lexeme());
     llvm::Value* base_raw = _value;
 
-    // If source is an indirection (variable alloca) or ref<lnk/pin/ptr>, load the stored pointer value.
+    // If source is ref<lnk/pin/ptr/owner>, load the stored pointer value.
     {
-        if (type::is_any_indirection(source_type)) {
-            base_raw = _builder->CreateLoad(ptr_ty, base_raw, "dyncast_load_indir");
-        } else if (auto ref_t = std::dynamic_pointer_cast<reference_type>(source_type)) {
-            auto inner = ref_t->get_referenced_type();
-            if (type::is_any_indirection(inner)) {
+        if (auto ref_t = std::dynamic_pointer_cast<reference_type>(source_type)) {
+            auto inner = type::remove_const(ref_t->get_referenced_type());
+            if (type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner) || type::is_owner(inner)) {
                 base_raw = _builder->CreateLoad(ptr_ty, base_raw, "dyncast_load_indir");
             }
         }
