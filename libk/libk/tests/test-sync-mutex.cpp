@@ -362,3 +362,89 @@ TEST_CASE("Mutex: lockInterruptibly honours a pending interruption", "[libk][syn
     REQUIRE(fn);
     REQUIRE(fn() == 2);
 }
+
+// =============================================================================
+// MutexLocker RAII tests
+// =============================================================================
+
+TEST_CASE("MutexLocker: automatically locks on entry and unlocks on scope exit", "[libk][sync][mutex][locker]") {
+    auto jit = jit_k(R"SRC(
+        module __sync_mutex_locker_basic__;
+        test() : int {
+            m : Mutex;
+            r : int = 0;
+            if (!m.isHeldByCurrentThread()) { ++r; }
+            {
+                locker : MutexLocker(m);
+                if (m.isHeldByCurrentThread()) { r += 2; }
+                if (m.holdCount() == 1) { r += 4; }
+            }
+            if (!m.isHeldByCurrentThread()) { r += 8; }
+            if (m.holdCount() == 0) { r += 16; }
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 31);
+}
+
+TEST_CASE("MutexLocker: sequential scopes acquire and release correctly", "[libk][sync][mutex][locker]") {
+    auto jit = jit_k(R"SRC(
+        module __sync_mutex_locker_scopes__;
+        test() : int {
+            m : Mutex;
+            r : int = 0;
+            {
+                locker1 : MutexLocker(m);
+                if (m.isHeldByCurrentThread()) { ++r; }
+            }
+            if (!m.isHeldByCurrentThread()) { r += 2; }
+            {
+                locker2 : MutexLocker(m);
+                if (m.isHeldByCurrentThread()) { r += 4; }
+            }
+            if (!m.isHeldByCurrentThread()) { r += 8; }
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 15);
+}
+
+TEST_CASE("MutexLocker: unlocks on exception unwinding", "[libk][sync][mutex][locker]") {
+    auto jit = jit_k(R"SRC(
+        module __sync_mutex_locker_unwind__;
+
+        class CustomErr : public Exception {
+        public:
+            CustomErr() : Exception(123) {}
+        }
+
+        failingFunc(m: Mutex&) : void throws(CustomErr) {
+            locker : MutexLocker(m);
+            throw CustomErr();
+        }
+
+        test() : int {
+            m : Mutex;
+            res : int = 0;
+            try {
+                failingFunc(m);
+            } catch (e: CustomErr&) {
+                if (!m.isHeldByCurrentThread()) {
+                    res = 42;
+                }
+            }
+            return res;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);
+}
+

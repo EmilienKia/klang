@@ -62,6 +62,8 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/event_loop.k
     # ── Phase 7: functional programming ───────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/functional.k
+    # ── Phase 8: executors and thread pools ───────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/executor.k
     # ── Application entry-point infrastructure ────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/application.k
 )
@@ -523,6 +525,11 @@ libk_add_test(libk-thread-io-tests 120
     tests/test-io-unix-socket-native.cpp
     tests/test-io-event-loop.cpp
     tests/test-io-selector.cpp
+)
+
+# ── libk executor and thread pool tests ─────────────────────────────────────
+libk_add_test(libk-tests-executor 120
+    tests/test-executor.cpp
 )
 
 # ── libk performance / stress tests ──────────────────────────────────────────

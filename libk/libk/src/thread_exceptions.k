@@ -170,3 +170,24 @@ public:
      */
     BrokenBarrierException(code: int) : Exception(code) {}
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RejectedExecutionException
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * RejectedExecutionException — thrown by an Executor when a task cannot be
+ * accepted for execution (e.g. after the executor has been shut down).
+ */
+public class RejectedExecutionException : public IllegalStateException {
+public:
+    /** Construct with default error code 107. */
+    RejectedExecutionException() : IllegalStateException(107) {}
+
+    /**
+     * Construct with a custom error code.
+     * @param code Application-defined subcode.
+     */
+    RejectedExecutionException(code: int) : IllegalStateException(code) {}
+}
+

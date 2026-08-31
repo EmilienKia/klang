@@ -236,6 +236,49 @@ public class ReentrantLock : public Mutex {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// MutexLocker — RAII scope guard for a Lock / Mutex.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * MutexLocker — a scoped RAII helper for locking and unlocking a Lock/Mutex.
+ *
+ * Acquires the lock upon construction and automatically releases it upon
+ * destruction when leaving scope (normal return or exception unwinding).
+ * Holds a non-null, immutable reference to the lock throughout its lifetime.
+ *
+ * Usage:
+ * ```k
+ * {
+ *     locker : MutexLocker(mutex);
+ *     // critical section
+ * } // automatically unlocked here
+ * ```
+ */
+public struct MutexLocker {
+private:
+    _lock : Lock&;
+
+public:
+    /**
+     * Lock the given Lock immediately.
+     * @param lock Reference to the lock to acquire and manage.
+     */
+    MutexLocker(lock: Lock&) : _lock(lock) {
+        _lock.lock();
+    }
+
+    /**
+     * Release the lock on destruction.
+     */
+    ~MutexLocker() {
+        try {
+            _lock.unlock();
+        } catch (e: IllegalMonitorStateException&) {
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Condition — wait/notify bound to a Lock.
 // ═════════════════════════════════════════════════════════════════════════════
 

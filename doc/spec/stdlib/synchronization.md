@@ -22,6 +22,7 @@ They complement the [threading layer](threading.md) — which provides `Thread`,
 | [`Lock`](#3-lock) | Interface implemented by every mutual-exclusion primitive. |
 | [`Mutex`](#4-mutex) | Plain, non-reentrant mutual exclusion. |
 | [`ReentrantLock`](#5-reentrantlock) | A `Mutex` its owner may re-acquire. |
+| [`MutexLocker`](#51-mutexlocker) | Scoped RAII guard for automatic lock acquisition and release. |
 | [`Condition`](#6-condition) | Wait queue attached to a `Mutex`. |
 | [`Semaphore`](#7-semaphore) | Counting permit dispenser. |
 | [`CountDownLatch`](#8-countdownlatch) | One-shot gate opening when a counter reaches zero. |
@@ -157,6 +158,37 @@ Identical to `Mutex` except that the owning thread may acquire it several times.
 `holdCount()` reports the nesting depth; the lock becomes free only when the
 count drops back to zero. Every `lock()` / `tryLock()` must be matched by exactly
 one `unlock()`.
+
+---
+
+## 5.1 `MutexLocker`
+
+A scoped RAII guard struct for `Lock` and `Mutex`. Binds to an immutable, non-null
+reference `Lock&`, acquires the lock on construction, and automatically releases
+it upon scope exit (on normal return, `break`, `return`, or exception unwinding).
+
+```k
+public struct MutexLocker {
+public:
+    MutexLocker(lock: Lock&);
+    ~MutexLocker();
+}
+```
+
+### Example
+
+```k
+public struct Counter {
+    lock  : Mutex;
+    value : long;
+}
+
+increment(c: Counter+) : void {
+    locker : MutexLocker(c->lock);
+    c->value = c->value + 1L;
+} // lock is automatically released here
+```
+
 
 ```k
 l : ReentrantLock;
