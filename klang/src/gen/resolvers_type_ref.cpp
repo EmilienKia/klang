@@ -1965,13 +1965,9 @@ std::shared_ptr<type> type_reference_resolver::rewrap_like(
     const std::shared_ptr<type>& model,
     const std::shared_ptr<type>& sub)
 {
-    if (std::dynamic_pointer_cast<pointer_type>(model))   return sub->get_pointer();
-    if (std::dynamic_pointer_cast<reference_type>(model)) return sub->get_reference();
-    if (std::dynamic_pointer_cast<owner_type>(model))     return sub->get_owner();
-    if (std::dynamic_pointer_cast<link_type>(model))      return sub->get_link();
-    if (std::dynamic_pointer_cast<view_type>(model))      return sub->get_view();
-    if (std::dynamic_pointer_cast<drain_type>(model))     return sub->get_drain();
-    if (std::dynamic_pointer_cast<const_type>(model))     return sub->get_const();
+    if (auto pinned = type::make_pinned_wrapper(model, sub)) {
+        return pinned;
+    }
     if (auto sarr = std::dynamic_pointer_cast<sized_array_type>(model))
         return sub->get_array(sarr->get_size());
     if (std::dynamic_pointer_cast<array_type>(model))     return sub->get_array();
@@ -2494,7 +2490,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto tgt_sub = tgt_nc->get_subtype();
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc == tgt_sub_nc) {
+            if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
                 // const T* <- T*: allowed (widening), T* <- const T*: forbidden
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
@@ -2530,7 +2526,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         if (type::is_reference(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
             auto src_sub_nc = type::remove_const(type_src->get_subtype());
-            if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
+            if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
         }
         return CAST_IMPOSSIBLE;
@@ -2543,7 +2539,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto tgt_sub = tgt_nc->get_subtype();
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc == tgt_sub_nc) {
+            if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
@@ -2804,7 +2800,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 auto tgt_sub = tgt_nc->get_subtype();
                 auto src_sub_nc = type::remove_const(src_sub);
                 auto tgt_sub_nc = type::remove_const(tgt_sub);
-                if (src_sub_nc == tgt_sub_nc) {
+                if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
                     if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                     return CAST_REF_CONV;
                 }
@@ -2989,7 +2985,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         }
         // ref -> value: need a load
         auto sub = type::remove_const(ref_src->get_subtype());
-        if (sub == tgt_nc) {
+        if (sub == tgt_nc || type::are_equal(sub, tgt_nc)) {
             return CAST_REF_CONV;
         }
         // ref<T> → link<T>: passing an object by reference as a link parameter (implicit borrow)
@@ -3193,11 +3189,14 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // Step 5: Reference cases: const widening, struct upcast, value load, primitive cast
     // --- Upcast: struct ref → base struct ref (implicit) ---
     if (type::is_reference(tgt_nc) && type::is_reference(effective_src)) {
-        auto src_st_type = std::dynamic_pointer_cast<struct_type>(
-            std::dynamic_pointer_cast<reference_type>(effective_src)->get_referenced_type());
-        auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(
-            std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_referenced_type());
+        auto src_ref_sub = std::dynamic_pointer_cast<reference_type>(effective_src)->get_referenced_type();
+        auto tgt_ref_sub = std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_referenced_type();
+        auto src_st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(src_ref_sub));
+        auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(tgt_ref_sub));
         if (src_st_type && tgt_st_type && src_st_type != tgt_st_type) {
+            if (type::is_const(src_ref_sub) && !type::is_const(tgt_ref_sub)) {
+                return CAST_IMPOSSIBLE;
+            }
             auto src_st = src_st_type->get_struct();
             auto tgt_st = tgt_st_type->get_struct();
             if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
@@ -3388,6 +3387,10 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
         for (size_t i = 0; i < arg_count; ++i) {
             auto param_type = params[i]->get_type();
+            if (param_type && !type::is_resolved(param_type)) {
+                visit_parameter(*params[i]);
+                param_type = params[i]->get_type();
+            }
             cast_weight w = compute_cast_weight(args[i], param_type);
             if (w == CAST_IMPOSSIBLE) {
                 has_impossible = true;

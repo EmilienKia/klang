@@ -1090,6 +1090,10 @@ public:
     bool is_resolved() const override { return !!_resolved; }
     std::shared_ptr<type> get_resolved() const { return _resolved; }
 
+    llvm::Type* get_llvm_type() const override {
+        return _resolved ? _resolved->get_llvm_type() : nullptr;
+    }
+
     std::string to_string() const override;
 };
 
@@ -1296,6 +1300,12 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
         return r2 && are_equal(r1->get_subtype(), r2->get_subtype());
     }
 
+    // Equality for primitive types
+    if (auto p1 = std::dynamic_pointer_cast<primitive_type>(type1)) {
+        auto p2 = std::dynamic_pointer_cast<primitive_type>(type2);
+        return p2 && *p1 == *p2;
+    }
+
     // Nominal equality for struct/aggregate types: same underlying aggregate
     if (auto s1 = std::dynamic_pointer_cast<struct_type>(type1)) {
         auto s2 = std::dynamic_pointer_cast<struct_type>(type2);
@@ -1341,6 +1351,21 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
     if (auto u2 = std::dynamic_pointer_cast<unresolved_type>(type2)) {
         if (u2->is_resolved()) {
             return are_equal(type1, u2->get_resolved());
+        }
+        return false;
+    }
+
+    if (auto uc1 = std::dynamic_pointer_cast<unresolved_callable_type>(type1)) {
+        if (uc1->is_resolved()) return are_equal(uc1->get_resolved(), type2);
+        if (auto uc2 = std::dynamic_pointer_cast<unresolved_callable_type>(type2)) {
+            if (uc2->is_resolved()) return are_equal(type1, uc2->get_resolved());
+            return uc1->to_string() == uc2->to_string();
+        }
+        return false;
+    }
+    if (auto uc2 = std::dynamic_pointer_cast<unresolved_callable_type>(type2)) {
+        if (uc2->is_resolved()) {
+            return are_equal(type1, uc2->get_resolved());
         }
         return false;
     }

@@ -54,7 +54,12 @@ bool type::is_resolved() const
 
 bool type::contains_unresolved(const std::shared_ptr<type>& t) {
     if (!t) return false;
-    if (std::dynamic_pointer_cast<unresolved_type>(t)) return true;
+    if (auto u = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        return !u->is_resolved() || contains_unresolved(u->get_resolved());
+    }
+    if (auto uc = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        return !uc->is_resolved() || contains_unresolved(uc->get_resolved());
+    }
     return contains_unresolved(t->get_subtype());
 }
 
@@ -76,8 +81,14 @@ std::shared_ptr<type> type::canonical(const std::shared_ptr<type>& t) {
     // A resolved unresolved_type may itself stand for an alias.
     if (auto unres = std::dynamic_pointer_cast<unresolved_type>(current)) {
         if (unres->is_resolved()) {
-            auto resolved = canonical(unres->get_resolved());
-            if (resolved != unres->get_resolved()) return resolved;
+            return canonical(unres->get_resolved());
+        }
+        return current;
+    }
+
+    if (auto unres_ct = std::dynamic_pointer_cast<unresolved_callable_type>(current)) {
+        if (unres_ct->is_resolved()) {
+            return canonical(unres_ct->get_resolved());
         }
         return current;
     }
