@@ -31,6 +31,13 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/text_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/encoded_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/codecs.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/codec_stream.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/base_n.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/base64.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/hex.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/base2.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/base32.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/percent_codec.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/buffered_reader.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/text_scanner.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/array_stream.k
@@ -492,6 +499,7 @@ libk_add_test(libk-tests-io 120
     tests/test-io-data-streams.cpp
     tests/test-io-print-stream.cpp
     tests/test-io-text-codecs.cpp
+    tests/test-io-codecs.cpp
     tests/test-io-buffered-reader.cpp
     tests/test-io-text-scanner.cpp
     tests/test-io-text-printer.cpp
