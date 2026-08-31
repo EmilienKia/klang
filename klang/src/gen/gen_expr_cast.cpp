@@ -166,7 +166,12 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
         bool source_unwrapped_ref = false;
         if (type::is_reference(source_type)) {
             auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
-            if (type::is_link(inner) || type::is_view(inner) || type::is_pointer(inner)) {
+            if (type::is_link(inner) || type::is_view(inner) || type::is_pointer(inner) || type::is_owner(inner) || type::is_drain(inner)) {
+                auto loaded = load_value_expression::make_shared(sub_expr);
+                loaded->set_type(inner);
+                expr.assign(loaded);
+                sub_expr = expr.sub_expr();
+                source_type = inner;
                 effective_source = inner;
                 source_unwrapped_ref = true;
             }
@@ -1115,7 +1120,8 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         bool src_is_indir = type::is_link(effective_source) || type::is_view(effective_source)
             || type::is_pointer(effective_source) || type::is_owner(effective_source)
             || type::is_drain(effective_source);
-        bool tgt_is_indir = type::is_link(target_type) || type::is_view(target_type) || type::is_pointer(target_type);
+        bool tgt_is_indir = type::is_link(target_type) || type::is_view(target_type)
+            || type::is_pointer(target_type) || type::is_owner(target_type);
 
         // ref<Derived> → view/link/ptr<Base>: the ref is already an address; GEP to base sub-object
         if (!src_is_indir && tgt_is_indir && type::is_reference(source_type)) {

@@ -2386,6 +2386,9 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
                 _value = _builder->CreateLoad(llvm_st, alloca, "struct_arg_load");
             }
+        } else if (arg->get_type() && type::is_fat_callable(arg->get_type()) && _value->getType()->isPointerTy()) {
+            auto* callable_llvm_type = _context->get_or_create_callable_llvm_type();
+            _value = _builder->CreateLoad(callable_llvm_type, _value, "callable_arg_load");
         }
         args.push_back(_value);
     }
@@ -2528,6 +2531,12 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 }
 
                 if (late_ret_type) {
+                    if (function->get_mangled_name().empty()) {
+                        if (auto owner = function->get_owner()) {
+                            if (owner->get_mangled_name().empty()) owner->update_mangled_name();
+                        }
+                        function->update_mangled_name();
+                    }
                     llvm::FunctionType* late_ft = llvm::FunctionType::get(late_ret_type, late_param_types, false);
                     llvm::Function* late_fn = _context->_module->getFunction(function->get_mangled_name());
                     if (!late_fn) {

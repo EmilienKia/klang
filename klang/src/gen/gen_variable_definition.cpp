@@ -303,19 +303,19 @@ void type_reference_resolver::resolve_variable_type(
         std::shared_ptr<type> resolved;
         if (type::is_pointer(var.get_type())) {
             auto inner = resolve_inner_type(var.get_type()->get_subtype(), var_elem);
-            if (inner && type::is_resolved(inner)) resolved = strip_ref_array(inner)->get_pointer();
+            if (inner && type::is_resolved(inner)) resolved = type::make_pinned_pointer(strip_ref_array(inner));
         } else if (type::is_link(var.get_type())) {
             auto inner = resolve_inner_type(var.get_type()->get_subtype(), var_elem);
-            if (inner && type::is_resolved(inner)) resolved = strip_ref_array(inner)->get_link();
+            if (inner && type::is_resolved(inner)) resolved = type::make_pinned_link(strip_ref_array(inner));
         } else if (type::is_view(var.get_type())) {
             auto inner = resolve_inner_type(var.get_type()->get_subtype(), var_elem);
-            if (inner && type::is_resolved(inner)) resolved = strip_ref_array(inner)->get_view();
+            if (inner && type::is_resolved(inner)) resolved = type::make_pinned_view(strip_ref_array(inner));
         } else if (type::is_reference(var.get_type())) {
             auto inner = resolve_inner_type(var.get_type()->get_subtype(), var_elem);
-            if (inner && type::is_resolved(inner)) resolved = inner->get_reference();
+            if (inner && type::is_resolved(inner)) resolved = type::make_pinned_reference(inner);
         } else if (type::is_drain(var.get_type())) {
             auto inner = resolve_inner_type(var.get_type()->get_subtype(), var_elem);
-            if (inner && type::is_resolved(inner)) resolved = inner->get_drain();
+            if (inner && type::is_resolved(inner)) resolved = type::make_pinned_drain(inner);
         } else if (auto sarr = std::dynamic_pointer_cast<sized_array_type>(var.get_type())) {
             auto inner = resolve_inner_type(sarr->get_subtype(), var_elem);
             if (!inner || !type::is_resolved(inner)) {

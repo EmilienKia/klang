@@ -339,6 +339,28 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             }
         }
 
+        // Late resolution of locals/parameters inside template-instantiated bodies.
+        if (!symbol.is_resolved()) {
+            for (auto cur = symbol.ancestor<statement>(); cur; cur = cur->ancestor<statement>()) {
+                if (auto vh = cur->get_variable_holder()) {
+                    if (auto local = vh->get_variable(symbol.get_name().to_string())) {
+                        symbol.set_target(local);
+                        break;
+                    }
+                }
+            }
+        }
+        if (!symbol.is_resolved()) {
+            for (auto cur = symbol.ancestor<element>(); cur; cur = cur->parent<element>()) {
+                if (auto func = std::dynamic_pointer_cast<function>(cur)) {
+                    if (auto p = func->get_parameter(symbol.get_name().to_string())) {
+                        symbol.set_target(std::const_pointer_cast<parameter>(p));
+                        break;
+                    }
+                }
+            }
+        }
+
         // Late resolution of imported globals inside template-instantiated bodies.
         // symbol_resolver never runs over a body cloned by template_instantiator,
         // and the lightweight pass that instantiator performs only binds locals,
@@ -361,7 +383,26 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
     }
     if (symbol.is_variable_def()) {
         auto var_def = symbol.get_variable_def();
+        if (var_def && (!var_def->get_type() || !type::is_resolved(var_def->get_type()))) {
+            for (auto cur = symbol.ancestor<statement>(); cur; cur = cur->ancestor<statement>()) {
+                if (auto vh = cur->get_variable_holder()) {
+                    if (auto local = vh->get_variable(symbol.get_name().to_string())) {
+                        if (local->get_type()) {
+                            symbol.set_target(local);
+                            var_def = local;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         auto var_type = var_def->get_type();
+        if (var_type && !type::is_resolved(var_type)) {
+            var_type = resolve_type_chain(var_type, &symbol);
+            if (var_type && type::is_resolved(var_type)) {
+                var_def->set_type(var_type);
+            }
+        }
         // If the variable is declared const (flag), propagate const-ness through the type system.
         // For primitive/struct types: wrap in const_type → "const int", "const MyStruct".
         // For indirection types (link, pointer, view): apply const to the pointed-at subtype
@@ -409,6 +450,50 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
         // It can be freely assigned to a pointer (*), pin (^) or link (+) variable.
         auto func = symbol.get_function();
         if (func) {
+            // Retarget static member functions on template aggregates (e.g. Type<T>::method)
+            // to the concrete instantiated aggregate's method.
+            if (symbol.has_qualifier_template_args() && symbol.has_ast_template_args()) {
+                const auto& sym_name = symbol.get_name();
+                if (sym_name.size() >= 2) {
+                    std::vector<lex::identifier> q_names;
+                    for (size_t i = 0; i + 1 < sym_name.size(); ++i) {
+                        q_names.emplace_back(sym_name[i]);
+                    }
+                    std::optional<lex::punctuator> p_init = sym_name.has_root_prefix()
+                        ? std::make_optional(lex::punctuator{"::", lex::punctuator::DOUBLE_COLON}) : std::nullopt;
+                    const std::string& terminal_name = sym_name.back();
+                    parse::ast::qualified_identifier ast_qid(p_init, q_names);
+                    parse::ast::identified_type_specifier ast_identified(ast_qid, symbol.get_ast_template_args(), true);
+                    auto qualifier_type = _context->from_type_specifier(ast_identified);
+                    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(qualifier_type)) {
+                        auto resolved_type = try_instantiate_template_type(unres, symbol);
+                        if (auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_type)) {
+                            if (auto concrete_agg = st_type->get_struct()) {
+                                if (auto concrete_fn = concrete_agg->get_function(terminal_name)) {
+                                    symbol.set_target(concrete_fn);
+                                    func = concrete_fn;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (func->get_owner() && func->get_owner()->is_template()) {
+                auto tpl_agg = func->get_owner();
+                if (symbol.has_ast_template_args()) {
+                    auto unres = _context->create_unresolved(tpl_agg->get_name());
+                    unres->set_ast_template_args(symbol.get_ast_template_args());
+                    auto resolved_type = try_instantiate_template_type(unres, symbol);
+                    if (auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_type)) {
+                        if (auto concrete_agg = st_type->get_struct()) {
+                            if (auto concrete_fn = concrete_agg->get_function(func->get_short_name())) {
+                                symbol.set_target(concrete_fn);
+                                func = concrete_fn;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Build the callable_type for this function.
             callable_type_builder builder(_context);
             builder.addresser(callable_type::addresser::link);
@@ -766,7 +851,13 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         }
 
         if(ptr && type) {
-            if (type::is_reference(var_type) || type::is_drain(var_type)) {
+            bool is_constructed_symbol = false;
+            if (auto parent_expr = symbol.get_parent_expression()) {
+                if (auto ctor_inv = std::dynamic_pointer_cast<constructor_invocation_expression>(parent_expr)) {
+                    if (ctor_inv->constructed_symbol().get() == &symbol) is_constructed_symbol = true;
+                }
+            }
+            if (!is_constructed_symbol && (type::is_reference(var_type) || type::is_drain(var_type))) {
                 // Type is a reference/drain (indirection), so value is loaded from the alloca
                 _value = _builder->CreateLoad(type, ptr, name + "_ref");
             } else {

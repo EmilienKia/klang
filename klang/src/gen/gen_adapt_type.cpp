@@ -84,14 +84,22 @@ type_reference_resolver::adapt_callable_type(
     const std::shared_ptr<type>& type_src,
     const std::shared_ptr<type>& type_nc)
 {
+    std::shared_ptr<type> eff_type_nc = type_nc;
+    if (auto uct = std::dynamic_pointer_cast<unresolved_callable_type>(eff_type_nc)) {
+        eff_type_nc = resolve_callable_type(uct, expr ? *expr : static_cast<const element&>(_unit));
+    }
+
     // ── null → callable ──────────────────────────────────────────────────────
     // `null` is a valid target only for a nullable callable (`*` or `?`); it
     // materialises the zeroed `{ null, null }` fat value.
     if (type::is_null(type_src)) {
-        auto dest_ct = std::dynamic_pointer_cast<callable_type>(type_nc);
-        if (!dest_ct && type::is_reference(type_nc)) {
-            dest_ct = std::dynamic_pointer_cast<callable_type>(
-                type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype()));
+        auto dest_ct = std::dynamic_pointer_cast<callable_type>(eff_type_nc);
+        if (!dest_ct && type::is_reference(eff_type_nc)) {
+            auto sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(eff_type_nc)->get_subtype());
+            if (auto uct = std::dynamic_pointer_cast<unresolved_callable_type>(sub)) {
+                sub = resolve_callable_type(uct, expr ? *expr : static_cast<const element&>(_unit));
+            }
+            dest_ct = std::dynamic_pointer_cast<callable_type>(sub);
         }
         if (dest_ct && !dest_ct->is_unbound_member()) {
             if (!dest_ct->is_nullable()) {
@@ -115,10 +123,13 @@ type_reference_resolver::adapt_callable_type(
     // The destination may be the callable itself or a reference to it (assignment
     // to a callable-typed variable or data member).
     {
-        auto dest_ct = std::dynamic_pointer_cast<callable_type>(type_nc);
-        if (!dest_ct && type::is_reference(type_nc)) {
-            dest_ct = std::dynamic_pointer_cast<callable_type>(
-                type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype()));
+        auto dest_ct = std::dynamic_pointer_cast<callable_type>(eff_type_nc);
+        if (!dest_ct && type::is_reference(eff_type_nc)) {
+            auto sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(eff_type_nc)->get_subtype());
+            if (auto uct = std::dynamic_pointer_cast<unresolved_callable_type>(sub)) {
+                sub = resolve_callable_type(uct, expr ? *expr : static_cast<const element&>(_unit));
+            }
+            dest_ct = std::dynamic_pointer_cast<callable_type>(sub);
         }
         if (dest_ct && !dest_ct->is_unbound_member() && !dest_ct->is_prototype()) {
             if (auto lambda = std::dynamic_pointer_cast<lambda_expression>(expr)) {
@@ -159,7 +170,7 @@ type_reference_resolver::adapt_callable_type(
             if (auto bound = try_bind_functional_interface_callable(expr, dest_ct)) return bound;
         }
     }
-    if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(type_nc)) {
+    if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(eff_type_nc)) {
         if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type_src)) {
             // Source is already a bare frt — no load needed, but the prototypes must
             // still satisfy the co/contravariance rules (phase B.7).
@@ -263,6 +274,13 @@ type_reference_resolver::adapt_from_pointer(
         auto tgt_sub = type_nc->get_subtype();
         auto src_sub_nc = type::remove_const(src_sub);
         auto tgt_sub_nc = type::remove_const(tgt_sub);
+        if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
+            if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return {};
+            if (type_nc == type_src) return expr;
+            auto cast = cast_expression::make_shared(expr, type_nc);
+            cast->set_type(type_nc);
+            return cast;
+        }
         if (src_sub_nc != tgt_sub_nc) {
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
@@ -362,6 +380,12 @@ type_reference_resolver::adapt_from_link(
         auto tgt_sub = type_nc->get_subtype();
         auto src_sub_nc = type::remove_const(src_sub);
         auto tgt_sub_nc = type::remove_const(tgt_sub);
+        if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
+            if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return {};
+            auto cast = cast_expression::make_shared(expr, type_nc);
+            cast->set_type(type_nc);
+            return cast;
+        }
         if (src_sub_nc != tgt_sub_nc) {
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
@@ -454,6 +478,12 @@ type_reference_resolver::adapt_from_view(
         auto tgt_sub = type_nc->get_subtype();
         auto src_sub_nc = type::remove_const(src_sub);
         auto tgt_sub_nc = type::remove_const(tgt_sub);
+        if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
+            if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return {};
+            auto cast = cast_expression::make_shared(expr, type_nc);
+            cast->set_type(type_nc);
+            return cast;
+        }
         if (src_sub_nc != tgt_sub_nc) {
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
@@ -1001,6 +1031,17 @@ type_reference_resolver::adapt_from_reference(
             return upcast;
         }
         return {}; // incompatible owner types
+    }
+    if (auto ct_src = std::dynamic_pointer_cast<callable_type>(ref_subtype)) {
+        if (auto ct_tgt = std::dynamic_pointer_cast<callable_type>(type_nc)) {
+            if (ct_src->is_owner() && ct_tgt->is_owner()) {
+                if (type::are_equal(ct_src, ct_tgt)) {
+                    auto move = owner_move_expression::make_shared(expr);
+                    move->set_type(type_nc);
+                    return move;
+                }
+            }
+        }
     }
     // ─────────────────────────────────────────────────────────────────────
 

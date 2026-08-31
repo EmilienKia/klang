@@ -670,8 +670,12 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<lambda_expression> c{new lambda_expression()};
         c->_type = _type;
-        c->_bind = _bind;
-        c->_captures = _captures;
+        c->_bind = _bind ? std::dynamic_pointer_cast<callable_bind_expression>(_bind->clone()) : nullptr;
+        if (c->_bind) c->_bind->set_parent_expression(c);
+        std::vector<std::shared_ptr<expression>> caps;
+        for (auto& cap : _captures) caps.push_back(cap ? cap->clone() : nullptr);
+        c->_captures = caps;
+        for (auto& cap : c->_captures) if (cap) cap->set_parent_expression(c);
         c->_capture_free = _capture_free;
         return c;
     }

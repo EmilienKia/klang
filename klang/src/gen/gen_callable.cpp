@@ -184,7 +184,16 @@ void type_reference_resolver::visit_lambda_expression(lambda_expression& expr) {
 
         // Rebuild lambda's callable type with the deduced/assigned return type
         callable_type_builder builder(_context);
-        if (auto cur_ct = std::dynamic_pointer_cast<callable_type>(expr.get_type())) {
+        if (dest_ct && dest_ct->is_owner()) {
+            builder.addresser(callable_type::addresser::owner);
+            if (bind->get_context()) {
+                if (auto tce = std::dynamic_pointer_cast<temporary_construction_expression>(bind->get_context())) {
+                    auto new_expr = new_expression::make_shared(tce->constructed_type(), tce->arguments());
+                    new_expr->set_type(tce->constructed_type()->get_owner());
+                    bind->set_context(new_expr);
+                }
+            }
+        } else if (auto cur_ct = std::dynamic_pointer_cast<callable_type>(expr.get_type())) {
             builder.addresser(cur_ct->get_addresser());
         } else {
             builder.addresser(callable_type::addresser::reference);
@@ -867,17 +876,21 @@ llvm::Value* implementation_generator::build_callable_from_function(
     llvm::Value* ctx_ptr,
     const std::optional<k::lex::any_lexeme>& where)
 {
-    auto it = _context->_functions.find(func);
-    if (it == _context->_functions.end() || !it->second) {
+    if (!func) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05B), where,
+            "Internal error: null function while binding a callable");
+    }
+    llvm::Function* llvm_fn = ensure_function_declared(*func);
+    if (!llvm_fn) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05B), where,
             "Internal error: LLVM declaration not found for function '{}' while binding a callable",
-            {func ? func->get_fq_name() : "<null>"});
+            {func->get_fq_name()});
     }
     auto* callable_ty = _context->get_or_create_callable_llvm_type();
     llvm::Value* ctx = ctx_ptr
         ? ctx_ptr
         : static_cast<llvm::Value*>(llvm::ConstantPointerNull::get(llvm::PointerType::get(**_context, 0)));
-    return build_callable_value(*_builder, callable_ty, it->second, ctx);
+    return build_callable_value(*_builder, callable_ty, llvm_fn, ctx);
 }
 
 llvm::Function* implementation_generator::get_or_create_closure_drop_function(

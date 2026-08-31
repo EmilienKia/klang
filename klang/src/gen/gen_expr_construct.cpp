@@ -141,6 +141,22 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                 expr.assign_argument(0, cast);
             }
         }
+    } else if (type::is_reference(var_type) || type::is_link(var_type) || type::is_pointer(var_type) || type::is_view(var_type)) {
+        // Indirection member init: e.g. _lock(lock)
+        if (!expr.empty()) {
+            auto cast = adapt_type(expr.argument(0), var_type);
+            if (cast && cast != expr.argument(0)) {
+                expr.assign_argument(0, cast);
+            }
+        }
+    } else if (auto ct = std::dynamic_pointer_cast<callable_type>(var_type)) {
+        // Callable member init: e.g. _task(task)
+        if (!expr.empty()) {
+            auto cast = adapt_type(expr.argument(0), var_type);
+            if (cast && cast != expr.argument(0)) {
+                expr.assign_argument(0, cast);
+            }
+        }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         auto st = st_type->get_struct();
         std::vector<std::shared_ptr<expression>> ctor_args = expr.arguments();
@@ -689,16 +705,16 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         }
         _value = object_ref;
 
-    } else if (auto ptr_var_type = std::dynamic_pointer_cast<pointer_type>(var_type)) {
+    } else if (auto ptr_var_type = std::dynamic_pointer_cast<pointer_type>(type::canonical(var_type))) {
         // Pointer (*) variable: store the address of the pointed-to object.
         // For ref<indirection> source, load the indirection value; for ref<struct>, the alloca address IS the pointer.
         if (!expr.empty()) {
             _value = nullptr;
             expr.argument(0)->accept(*this);
             if (_value) {
-                auto arg_type = expr.argument(0)->get_type();
+                auto arg_type = type::canonical(expr.argument(0)->get_type());
                 if (arg_type && type::is_reference(arg_type)) {
-                    auto inner = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
+                    auto inner = type::canonical(std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype());
                     // Only load if inner is an indirection (ptr/link/pin); for a plain struct the alloca IS the pointer.
                     if (type::is_any_indirection(inner)) {
                         _value = _builder->CreateLoad(_context->get_llvm_type(inner), _value, "ptr_init_load");
@@ -709,7 +725,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         }
         _value = object_ref;
 
-    } else if (type::is_link(var_type) || type::is_view(var_type)) {
+    } else if (type::is_link(type::canonical(var_type)) || type::is_view(type::canonical(var_type))) {
         // Link (+) or view (?) variable: store the address of the linked object.
         if (!expr.empty()) {
             _value = nullptr;
@@ -718,28 +734,28 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 // If the argument type is ref<link/pin/ptr<T>>, load the stored indirection value.
                 // If the argument type is ref<struct_T> (a direct object reference), the alloca
                 // address IS the link value — no load needed.
-                auto arg_type = expr.argument(0)->get_type();
+                auto arg_type = type::canonical(expr.argument(0)->get_type());
                 if (arg_type && type::is_reference(arg_type)) {
-                    auto inner = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
+                    auto inner = type::canonical(std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype());
                     if (type::is_any_indirection(inner)) {
                         // ref<link/pin/ptr<T>>: load the stored pointer value
                         _value = _builder->CreateLoad(_context->get_llvm_type(inner), _value, "ind_init_load");
                     }
                     // else: ref<struct T> — _value is already the address of the object (= the link)
                 }
-                if (type::is_link(var_type)) {
+                if (type::is_link(type::canonical(var_type))) {
                     // Non-null required: emit null-check if source is nullable.
                     // If the argument is a cast_expression (e.g. upcast Derived→Base), pierce through to
                     // the original source type to check its nullability.
                     auto effective_type = arg_type;
                     if (effective_type && type::is_reference(effective_type)) {
-                        effective_type = std::dynamic_pointer_cast<reference_type>(effective_type)->get_subtype();
+                        effective_type = type::canonical(std::dynamic_pointer_cast<reference_type>(effective_type)->get_subtype());
                     }
                     // Pierce cast_expression to find the real source nullability
                     if (auto cast_arg = std::dynamic_pointer_cast<cast_expression>(expr.argument(0))) {
-                        auto inner_type = cast_arg->sub_expr()->get_type();
+                        auto inner_type = type::canonical(cast_arg->sub_expr()->get_type());
                         if (inner_type && type::is_reference(inner_type)) {
-                            inner_type = std::dynamic_pointer_cast<reference_type>(inner_type)->get_subtype();
+                            inner_type = type::canonical(std::dynamic_pointer_cast<reference_type>(inner_type)->get_subtype());
                         }
                         if (inner_type && type::is_nullable_indirection(inner_type)) {
                             effective_type = inner_type;
@@ -753,6 +769,25 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 }
                 _builder->CreateStore(_value, object_ref);
             }
+        }
+        _value = object_ref;
+
+    } else if (auto ct = std::dynamic_pointer_cast<callable_type>(var_type)) {
+        // Callable variable initialization: store the %__k.callable { ptr, ptr } value into object_ref
+        if (!expr.empty()) {
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            if (_value) {
+                auto* callable_llvm_type = _context->get_or_create_callable_llvm_type();
+                if (_value->getType()->isPointerTy()) {
+                    _value = _builder->CreateLoad(callable_llvm_type, _value, "callable_init_val");
+                }
+                _builder->CreateStore(_value, object_ref);
+            }
+        } else {
+            // Default init: store { null, null }
+            auto* callable_llvm_type = _context->get_or_create_callable_llvm_type();
+            _builder->CreateStore(llvm::ConstantAggregateZero::get(callable_llvm_type), object_ref);
         }
         _value = object_ref;
 

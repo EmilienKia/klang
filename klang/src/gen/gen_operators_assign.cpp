@@ -979,15 +979,20 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     }
 
     // ------------------------------------------------------------------
-    // Owned callable assignment: cleanup old closure (if any), store new fat callable
+    // Callable assignment: cleanup old closure if owner, store fat callable
     // ------------------------------------------------------------------
     if (auto ct = std::dynamic_pointer_cast<callable_type>(target_type)) {
-        if (ct->is_owner()) {
-            emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
-                left, _context->get_or_create_callable_llvm_type(), "owned_callable_asgn", /*null_out=*/false);
+        if (!ct->is_unbound_member()) {
+            auto* callable_llvm_type = _context->get_or_create_callable_llvm_type();
+            if (ct->is_owner()) {
+                emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
+                    left, callable_llvm_type, "owned_callable_asgn", /*null_out=*/false);
+            }
             llvm::Value* new_callable = right;
             if (!new_callable) {
-                new_callable = llvm::ConstantAggregateZero::get(_context->get_or_create_callable_llvm_type());
+                new_callable = llvm::ConstantAggregateZero::get(callable_llvm_type);
+            } else if (new_callable->getType()->isPointerTy()) {
+                new_callable = _builder->CreateLoad(callable_llvm_type, new_callable, "callable_asgn_val");
             }
             _builder->CreateStore(new_callable, left);
             _value = left;
