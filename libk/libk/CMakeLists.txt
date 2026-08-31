@@ -27,11 +27,18 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/map.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stream.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/text_exceptions.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/text_stream.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/encoded_stream.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/codecs.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/buffered_reader.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/text_scanner.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/array_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/filter_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/transform_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/buffered_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/data_stream.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/text_printer.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/print_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stdio.k
@@ -477,13 +484,18 @@ libk_add_test(libk-tests-types 120
 )
 
 # ── libk basic stream I/O tests ──────────────────────────────────────────────
-libk_add_test(libk-tests-io 60
+libk_add_test(libk-tests-io 120
     tests/test-io-byte-array-streams.cpp
     tests/test-io-filter-streams.cpp
     tests/test-io-transform-streams.cpp
     tests/test-io-buffered-streams.cpp
     tests/test-io-data-streams.cpp
     tests/test-io-print-stream.cpp
+    tests/test-io-text-codecs.cpp
+    tests/test-io-buffered-reader.cpp
+    tests/test-io-text-scanner.cpp
+    tests/test-io-text-printer.cpp
+    tests/test-io-utf8-pipelines.cpp
     tests/test-io-stdio.cpp
     tests/test-io-byte-buffer.cpp
     tests/test-io-path.cpp

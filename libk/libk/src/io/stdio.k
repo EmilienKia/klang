@@ -35,21 +35,55 @@ private _stdinStream  : FileInputStream(__k_io_file_get_stdin());
 private _stdoutStream : FileOutputStream(__k_io_file_get_stdout());
 private _stderrStream : FileOutputStream(__k_io_file_get_stderr());
 
-// ── Private backing objects: PrintStream wrappers ────────────────────────
+// ── Private backing objects: UTF-8 readers/writers and text printers ────
+private _stdinUtf8Reader     : Utf8Reader(&_stdinStream);
+private _stdinBufferedReader : BufferedReader(&_stdinUtf8Reader);
+
+private _stdoutUtf8Writer   : Utf8Writer(&_stdoutStream);
+private _stdoutTextPrinter  : TextPrinter(&_stdoutUtf8Writer);
+
+private _stderrUtf8Writer   : Utf8Writer(&_stderrStream);
+private _stderrTextPrinter  : TextPrinter(&_stderrUtf8Writer);
+
 private _stdoutPrint : PrintStream(&_stdoutStream);
 private _stderrPrint : PrintStream(&_stderrStream);
+
+/**
+ * Read raw bytes from the process standard input stream.
+ */
+public stdinBytes  : InputStream<byte>& = _stdinStream;
+/**
+ * Write raw bytes to the process standard output stream.
+ */
+public stdoutBytes : OutputStream<byte>& = _stdoutStream;
+/**
+ * Write raw bytes to the process standard error stream.
+ */
+public stderrBytes : OutputStream<byte>& = _stderrStream;
 
 /**
  * Read bytes from the process standard input stream.
  */
 public stdin  : InputStream<byte>& = _stdinStream;
+
+/**
+ * Read buffered Unicode text from the process standard input stream (UTF-8).
+ */
+public stdinReader : BufferedReader& = _stdinBufferedReader;
+
 /**
  * Write formatted text to the process standard output stream.
  */
-public stdout : PrintStream& = _stdoutPrint;
+public stdout : TextPrinter& = _stdoutTextPrinter;
 /**
  * Write formatted text to the process standard error stream.
  */
-public stderr : PrintStream& = _stderrPrint;
+public stderr : TextPrinter& = _stderrTextPrinter;
+
+/**
+ * Legacy PrintStream wrappers.
+ */
+public stdoutPrint : PrintStream& = _stdoutPrint;
+public stderrPrint : PrintStream& = _stderrPrint;
 
 } // namespace io

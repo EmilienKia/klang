@@ -28,6 +28,19 @@ The hierarchy:
 InputStream<T> (interface)
 ├── ArrayInputStream<T>
 ├── FileInputStream          (InputStream<byte>)
+├── Reader                   (InputStream<char>)
+│   ├── StringReader
+│   ├── FilterReader
+│   │   ├── BufferedReader
+│   │   ├── LineReader
+│   │   └── TextScanner
+│   ├── Utf8Reader
+│   ├── Utf16Reader
+│   └── Utf32Reader
+├── Utf8Input                (InputStream<unsigned byte>)
+│   └── ValidUtf8Input
+│       └── Utf8Validator
+├── Utf16Input               (InputStream<unsigned short>)
 └── FilterInputStream<T>
     ├── BufferedInputStream   (FilterInputStream<byte>)
     └── DataInputStream       (FilterInputStream<byte>, also implements DataInput)
@@ -40,6 +53,16 @@ InputStream<T> (interface)
 OutputStream<T> (interface)
 ├── ArrayOutputStream<T>
 ├── FileOutputStream         (OutputStream<byte>)
+├── Writer                   (OutputStream<char>)
+│   ├── StringWriter
+│   ├── FilterWriter
+│   │   ├── BufferedWriter
+│   │   └── TextPrinter
+│   ├── Utf8Writer
+│   ├── Utf16Writer
+│   └── Utf32Writer
+├── Utf8Output               (OutputStream<unsigned byte>)
+├── Utf16Output              (OutputStream<unsigned short>)
 └── FilterOutputStream<T>
     ├── BufferedOutputStream  (FilterOutputStream<byte>)
     ├── DataOutputStream      (FilterOutputStream<byte>, also implements DataOutput)
@@ -421,9 +444,197 @@ class DataOutputStream : public FilterOutputStream<byte>, public DataOutput {
 
 ---
 
+## Textual Streams (Reader & Writer)
+
+**Sources:** `libk/libk/src/io/text_stream.k`, `codecs.k`, `buffered_reader.k`, `text_scanner.k`, `text_printer.k`
+
+The textual stream hierarchy provides high-level abstractions for reading and writing Unicode text (32-bit `char` code points) as well as native encoded code-unit pipelines.
+
+### Reader & Writer Interfaces
+
+```k
+interface Reader : public InputStream<char> {
+}
+
+interface Writer : public OutputStream<char> {
+    write(str: const String&) : Writer&;
+    write(str: const char[]) : Writer&;
+    writeLine() : Writer&;
+    writeLine(str: const String&) : Writer&;
+    writeLine(str: const char[]) : Writer&;
+}
+```
+
+### StringReader & StringWriter
+
+In-memory character streams backed by `String` and `StringBuilder`:
+
+```k
+class StringReader : public Reader {
+    StringReader(str: const String&);
+    StringReader(src: const char[]);
+}
+
+class StringWriter : public Writer {
+    StringWriter();
+
+    toString() : String;
+    size() : unsigned int;
+    reset();
+}
+```
+
+### Unicode Codecs
+
+Convert between raw byte streams and Unicode character streams with explicit error handling policies (`CodingErrorAction::Report`, `Replace`, `Ignore`):
+
+```k
+class Utf8Reader : public Reader {
+    Utf8Reader(input: InputStream<byte>*, action: CodingErrorAction);
+    Utf8Reader(input: InputStream<byte>*);
+    Utf8Reader(input: InputStream<byte>!, action: CodingErrorAction);
+    Utf8Reader(input: InputStream<byte>!);
+    Utf8Reader(input: ValidUtf8Input*);
+    Utf8Reader(input: ValidUtf8Input!);
+}
+
+class Utf8Writer : public Writer {
+    Utf8Writer(output: OutputStream<byte>*, action: CodingErrorAction);
+    Utf8Writer(output: OutputStream<byte>*);
+    Utf8Writer(output: OutputStream<byte>!, action: CodingErrorAction);
+    Utf8Writer(output: OutputStream<byte>!);
+}
+
+class Utf16Reader : public Reader {
+    Utf16Reader(input: InputStream<byte>*, order: ByteOrder, action: CodingErrorAction);
+    Utf16Reader(input: InputStream<byte>*, order: ByteOrder);
+    Utf16Reader(input: InputStream<byte>*);
+}
+
+class Utf16Writer : public Writer {
+    Utf16Writer(output: OutputStream<byte>*, order: ByteOrder, action: CodingErrorAction);
+    Utf16Writer(output: OutputStream<byte>*, order: ByteOrder);
+    Utf16Writer(output: OutputStream<byte>*);
+}
+
+class Utf32Reader : public Reader {
+    Utf32Reader(input: InputStream<byte>*, order: ByteOrder, action: CodingErrorAction);
+    Utf32Reader(input: InputStream<byte>*);
+}
+
+class Utf32Writer : public Writer {
+    Utf32Writer(output: OutputStream<byte>*, order: ByteOrder, action: CodingErrorAction);
+    Utf32Writer(output: OutputStream<byte>*);
+}
+```
+
+### Native UTF-8 Validation Pipelines
+
+```k
+class Utf8Validator : public ValidUtf8Input {
+    Utf8Validator(input: InputStream<byte>*, action: CodingErrorAction);
+    Utf8Validator(input: InputStream<byte>*);
+}
+```
+
+### BufferedReader, BufferedWriter & LineReader
+
+```k
+class BufferedReader : public FilterReader {
+    BufferedReader(input: Reader*, size: int);
+    BufferedReader(input: Reader*);
+
+    peek() : Optional<char>;
+    readLine() : Optional<String>;
+}
+
+class BufferedWriter : public FilterWriter {
+    BufferedWriter(output: Writer*, size: int);
+    BufferedWriter(output: Writer*);
+
+    newLine() : BufferedWriter&;
+}
+
+class LineReader : public FilterReader {
+    LineReader(input: Reader*);
+
+    readLine() : Optional<String>;
+}
+```
+
+### TextScanner
+
+Formatted structured text parsing for tokens, booleans, integers (with custom radix), and floating-point numbers:
+
+```k
+class TextScanner : public FilterReader {
+    TextScanner(input: Reader*);
+
+    hasNext() : bool;
+    nextToken() : Optional<String>;
+    nextLine() : Optional<String>;
+
+    readBool() : bool;
+    readInt() : int;
+    readInt(radix: unsigned int) : int;
+    readLong() : long;
+    readLong(radix: unsigned int) : long;
+    readUnsignedInt() : unsigned int;
+    readUnsignedInt(radix: unsigned int) : unsigned int;
+    readUnsignedLong() : unsigned long;
+    readUnsignedLong(radix: unsigned int) : unsigned long;
+    readFloat() : float;
+    readDouble() : double;
+}
+```
+
+### TextPrinter
+
+Fluent, type-safe formatted character printing with custom integer and floating-point formats:
+
+```k
+class TextPrinter : public FilterWriter {
+    TextPrinter(out: Writer*);
+
+    print(v: bool) : TextPrinter&;
+    print(v: char) : TextPrinter&;
+    print(v: byte) : TextPrinter&;
+    print(v: short) : TextPrinter&;
+    print(v: int) : TextPrinter&;
+    print(v: long) : TextPrinter&;
+    print(v: long, fmt: const IntegerFormat&) : TextPrinter&;
+    print(v: unsigned short) : TextPrinter&;
+    print(v: unsigned int) : TextPrinter&;
+    print(v: unsigned long) : TextPrinter&;
+    print(v: unsigned long, fmt: const IntegerFormat&) : TextPrinter&;
+    print(v: float) : TextPrinter&;
+    print(v: double) : TextPrinter&;
+    print(v: double, fmt: const FloatFormat&) : TextPrinter&;
+    print(str: const String&) : TextPrinter&;
+    print(str: const char[]) : TextPrinter&;
+
+    println() : TextPrinter&;
+    println(v: bool) : TextPrinter&;
+    println(v: char) : TextPrinter&;
+    println(v: byte) : TextPrinter&;
+    println(v: short) : TextPrinter&;
+    println(v: int) : TextPrinter&;
+    println(v: long) : TextPrinter&;
+    println(v: unsigned short) : TextPrinter&;
+    println(v: unsigned int) : TextPrinter&;
+    println(v: unsigned long) : TextPrinter&;
+    println(v: float) : TextPrinter&;
+    println(v: double) : TextPrinter&;
+    println(str: const String&) : TextPrinter&;
+    println(str: const char[]) : TextPrinter&;
+}
+```
+
+---
+
 ### PrintStream
 
-Adds convenient `print` / `println` methods to an `OutputStream`.  Converts
+Adds convenient `print` / `println` methods to an `OutputStream<byte>`.  Converts
 primitive values to their textual representation and writes them to the
 underlying stream.  All `print`/`println` methods return `PrintStream&` for
 fluent chaining.
@@ -466,33 +677,25 @@ class PrintStream : public FilterOutputStream<byte> {
 }
 ```
 
-| Method | Description |
-|--------|-------------|
-| `print(v)` | Write the textual representation of `v` (boolean → `"true"`/`"false"`, char → single byte, numbers → decimal string, `const char[]` → characters without trailing null). |
-| `println()` | Write a newline (`\n`). |
-| `println(v)` | `print(v)` followed by a newline. |
-
 ---
 
 ## Standard I/O Streams
 
 **Source:** `libk/libk/src/io/stdio.k`
 
-Three global references provide access to the process standard streams,
-connected to the underlying libc `stdin`, `stdout`, and `stderr` handles.
-They are available as soon as global initialisation completes (before
-`main()` is called).
+Global references provide access to the process standard streams:
 
 | Reference | Type | Backed by | Description |
 |-----------|------|-----------|-------------|
-| `k::io::stdin` | `InputStream<byte>&` | `FileInputStream` wrapping libc `stdin` | Standard input stream. |
-| `k::io::stdout` | `PrintStream&` | `PrintStream` wrapping a `FileOutputStream` on libc `stdout` | Standard output stream. |
-| `k::io::stderr` | `PrintStream&` | `PrintStream` wrapping a `FileOutputStream` on libc `stderr` | Standard error stream. |
+| `k::io::stdin` | `InputStream<byte>&` | `FileInputStream` on libc `stdin` | Standard byte input stream. |
+| `k::io::stdinReader` | `BufferedReader&` | UTF-8 `BufferedReader` on `stdin` | Standard buffered character reader. |
+| `k::io::stdout` | `TextPrinter&` | UTF-8 `TextPrinter` on libc `stdout` | Standard text output printer. |
+| `k::io::stderr` | `TextPrinter&` | UTF-8 `TextPrinter` on libc `stderr` | Standard text error printer. |
+| `k::io::stdinBytes` | `InputStream<byte>&` | `FileInputStream` on libc `stdin` | Explicit binary standard input. |
+| `k::io::stdoutBytes` | `OutputStream<byte>&` | `FileOutputStream` on libc `stdout` | Explicit binary standard output. |
+| `k::io::stderrBytes` | `OutputStream<byte>&` | `FileOutputStream` on libc `stderr` | Explicit binary standard error. |
 
-The backing objects (`FileInputStream`, `FileOutputStream`, `PrintStream`
-instances) are **private** to the library.  Only the three references above
-are public.  The compiler's global init-order resolver ensures that
-dependent objects are constructed in the correct order.
+The backing objects are **private** to the library.
 
 ### Usage
 

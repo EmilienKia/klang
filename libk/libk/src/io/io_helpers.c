@@ -123,6 +123,30 @@ int32_t __k_io_double_to_str(double v, uint8_t* buf, int32_t bufLen) {
     return (int32_t)(n < bufLen ? n : bufLen - 1);
 }
 
+int32_t __k_io_format_double(double v, int32_t notation, int32_t precision, uint8_t* buf, int32_t bufLen) {
+    int n = 0;
+    if (notation == 1) { // Fixed
+        if (precision >= 0) {
+            n = snprintf((char*)buf, (size_t)bufLen, "%.*f", (int)precision, v);
+        } else {
+            n = snprintf((char*)buf, (size_t)bufLen, "%f", v);
+        }
+    } else if (notation == 2) { // Scientific
+        if (precision >= 0) {
+            n = snprintf((char*)buf, (size_t)bufLen, "%.*e", (int)precision, v);
+        } else {
+            n = snprintf((char*)buf, (size_t)bufLen, "%e", v);
+        }
+    } else { // Standard (%g)
+        if (precision >= 0) {
+            n = snprintf((char*)buf, (size_t)bufLen, "%.*g", (int)precision, v);
+        } else {
+            n = snprintf((char*)buf, (size_t)bufLen, "%g", v);
+        }
+    }
+    return (int32_t)(n < bufLen ? n : bufLen - 1);
+}
+
 /* ── char-to-byte helper (used by PrintStream) ──────────────────────────── */
 
 /* Encode `len` UTF-32 code points from `src` into UTF-8 bytes in `dst`.
@@ -150,3 +174,19 @@ int32_t __k_io_chars_to_bytes(const uint32_t* src, uint8_t* dst, int32_t len) {
     }
     return out;
 }
+
+/* ── String-to-number parsing helper ────────────────────────────────────── */
+
+#include <stdlib.h>
+
+int32_t __k_io_parse_double(const uint8_t* str, double* outVal) {
+    if (!str || !outVal) return 0;
+    char* endptr = NULL;
+    double d = strtod((const char*)str, &endptr);
+    if (endptr == (const char*)str || *endptr != '\0') {
+        return 0;
+    }
+    *outVal = d;
+    return 1;
+}
+

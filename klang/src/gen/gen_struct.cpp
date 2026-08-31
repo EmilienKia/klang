@@ -406,6 +406,10 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                                     {"char", primitive_type::CHAR}, {"short", primitive_type::SHORT},
                                     {"int", primitive_type::INT}, {"long", primitive_type::LONG},
                                     {"float", primitive_type::FLOAT}, {"double", primitive_type::DOUBLE},
+                                    {"unsigned byte", primitive_type::UNSIGNED_BYTE},
+                                    {"unsigned short", primitive_type::UNSIGNED_SHORT},
+                                    {"unsigned int", primitive_type::UNSIGNED_INT},
+                                    {"unsigned long", primitive_type::UNSIGNED_LONG},
                                 };
                                 auto prim_it = prim_map.find(arg_name);
                                 if (prim_it != prim_map.end()) {
