@@ -38,6 +38,9 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/base2.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/base32.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/percent_codec.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/uri_exceptions.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/query_params.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/uri.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/buffered_reader.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/text_scanner.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/array_stream.k
@@ -507,6 +510,7 @@ libk_add_test(libk-tests-io 120
     tests/test-io-stdio.cpp
     tests/test-io-byte-buffer.cpp
     tests/test-io-path.cpp
+    tests/test-io-uri.cpp
 )
 
 # ── libk sequential collection tests (List, Vector, Sequences) ───────────────

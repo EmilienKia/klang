@@ -39,7 +39,7 @@ module k;
  */
 template<typename T>
 class Vector : public MutableIndexedCollection<T>, public MutableReversibleSequence<T> {
-private:
+protected:
     _slot : MultiSlot<T>;
     _size : unsigned int = 0;
     _capacity : unsigned int = 0;
