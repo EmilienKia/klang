@@ -1313,6 +1313,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             // namespace this template was declared in within the current KDI.
             std::string origin = tdef.origin_module;
             if (origin.empty()) {
+                const std::string& ns_fq = parent_kdi_ns.fq_name;
                 origin = (ns_fq.size() >= 2 && ns_fq[0] == ':' && ns_fq[1] == ':')
                          ? ns_fq.substr(2) : ns_fq;
             } else if (origin.size() >= 2 && origin[0] == ':' && origin[1] == ':') {

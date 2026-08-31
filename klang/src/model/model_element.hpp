@@ -161,9 +161,9 @@ protected:
     std::string _mangled_name;
 
     virtual void update_names();
-    virtual void update_mangled_name() = 0;
 
 public:
+    virtual void update_mangled_name() = 0;
     named_element() = default;
     named_element(const named_element&) = default;
     named_element(named_element&&) = default;

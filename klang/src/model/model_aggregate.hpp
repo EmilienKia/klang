@@ -193,9 +193,9 @@ protected:
         _type = st_type;
     }
 
-    void update_mangled_name() override;
-
 public:
+
+    void update_mangled_name() override;
 
     void accept(model_visitor& visitor) override;
 

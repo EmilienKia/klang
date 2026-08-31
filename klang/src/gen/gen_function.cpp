@@ -299,14 +299,14 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                 if (res_type && (type::is_resolved(res_type) || !type::contains_unresolved(res_type))) {
                     for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
                         switch (*it) {
-                            case WrapKind::Ref:   res_type = res_type->get_reference(); break;
-                            case WrapKind::Ptr:   res_type = res_type->get_pointer();   break;
-                            case WrapKind::Link:  res_type = res_type->get_link();      break;
-                            case WrapKind::View:   res_type = res_type->get_view();    break;
-                            case WrapKind::Const: res_type = res_type->get_const();     break;
-                            case WrapKind::Owner: res_type = res_type->get_owner();     break;
-                            case WrapKind::Drain: res_type = res_type->get_drain();     break;
-                            case WrapKind::Array: res_type = res_type->get_array();     break;
+                            case WrapKind::Ref:   res_type = type::make_pinned_reference(res_type); break;
+                            case WrapKind::Ptr:   res_type = type::make_pinned_pointer(res_type);   break;
+                            case WrapKind::Link:  res_type = type::make_pinned_link(res_type);      break;
+                            case WrapKind::View:  res_type = type::make_pinned_view(res_type);      break;
+                            case WrapKind::Const: res_type = type::make_pinned_const(res_type);     break;
+                            case WrapKind::Owner: res_type = type::make_pinned_owner(res_type);     break;
+                            case WrapKind::Drain: res_type = type::make_pinned_drain(res_type);     break;
+                            case WrapKind::Array: res_type = type::make_pinned_array(res_type);     break;
                         }
                     }
                 }
@@ -993,6 +993,25 @@ void declaration_generator::visit_function(function &function) {
         ret_type = llvm::Type::getVoidTy(**_context);
     }
 
+    if (function.get_mangled_name().empty()) {
+        if (function.get_fq_name().empty()) {
+            if (auto anc = function.ancestor<named_element>()) {
+                function.assign_name(anc->get_name().with_back(function.get_short_name()));
+            }
+        }
+        if (auto owner = function.get_owner()) {
+            if (owner->get_mangled_name().empty()) {
+                if (owner->get_fq_name().empty()) {
+                    if (auto anc = owner->ancestor<named_element>()) {
+                        owner->assign_name(anc->get_name().with_back(owner->get_short_name()));
+                    }
+                }
+                owner->update_mangled_name();
+            }
+        }
+        function.update_mangled_name();
+    }
+
     // create the function:
     llvm::FunctionType *func_type = llvm::FunctionType::get(ret_type, param_types, false);
     llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.get_mangled_name(), *_context->_module);
@@ -1038,6 +1057,25 @@ void declaration_generator::visit_function(function &function) {
 llvm::Function* implementation_generator::ensure_function_declared(k::model::function& function) {
     auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
     if (func_it != _context->_functions.end()) return func_it->second;
+
+    if (function.get_mangled_name().empty()) {
+        if (function.get_fq_name().empty()) {
+            if (auto anc = function.ancestor<named_element>()) {
+                function.assign_name(anc->get_name().with_back(function.get_short_name()));
+            }
+        }
+        if (auto owner = function.get_owner()) {
+            if (owner->get_mangled_name().empty()) {
+                if (owner->get_fq_name().empty()) {
+                    if (auto anc = owner->ancestor<named_element>()) {
+                        owner->assign_name(anc->get_name().with_back(owner->get_short_name()));
+                    }
+                }
+                owner->update_mangled_name();
+            }
+        }
+        function.update_mangled_name();
+    }
 
     // Late materialization path: template-instantiated functions (and their
     // transitively-instantiated base constructors) can appear after the main

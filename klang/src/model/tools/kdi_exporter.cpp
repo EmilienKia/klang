@@ -1347,6 +1347,9 @@ void kdi_builder::visit_function(function& fn) {
                      ? fn.get_short_name()
                      : _ns_stack.back()->fq_name + "::" + fn.get_short_name();
             }
+            if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') {
+                fq = fq.substr(2);
+            }
             _ns_stack.back()->template_defs.push_back(
                 build_template_def(fn.get_short_name(), fq, "function",
                                    fn.get_visibility(), *fn.get_tpl_info(), &fn));

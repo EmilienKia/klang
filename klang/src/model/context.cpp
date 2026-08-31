@@ -611,7 +611,9 @@ std::shared_ptr<type> context::from_literal(const k::lex::any_literal &literal) 
 }
 
 llvm::Type* context::get_llvm_type(const std::shared_ptr<type>& type) {
-    return type ? type->get_llvm_type() : nullptr;
+    if (!type) return nullptr;
+    auto canon = type::canonical(type);
+    return canon ? canon->get_llvm_type() : nullptr;
 }
 
 

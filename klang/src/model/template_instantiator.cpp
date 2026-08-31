@@ -798,6 +798,11 @@ void template_instantiator::substitute_expr_types(
         }
     } else if (auto de = std::dynamic_pointer_cast<delete_expression>(expr)) {
         substitute_expr_types(std::const_pointer_cast<expression>(de->sub_expr()), subst);
+    } else if (auto le = std::dynamic_pointer_cast<lambda_expression>(expr)) {
+        if (le->bind()) substitute_expr_types(le->bind(), subst);
+        for (auto& cap : le->captures()) {
+            substitute_expr_types(std::const_pointer_cast<expression>(cap), subst);
+        }
     }
 }
 
