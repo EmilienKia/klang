@@ -83,6 +83,10 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/executor.k
     # ── Application entry-point infrastructure ────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/application.k
+    # ── Cryptography and identifiers ──────────────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/md5.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/sha1.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/uuid.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -373,13 +377,27 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile UUID FFI helpers ──────────────────────────────────────────────
+set(UUID_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/uuid_ffi.c)
+set(UUID_FFI_OBJ ${LIBK_OUTPUT_DIR}/uuid_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${UUID_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${UUID_FFI_OBJ} ${UUID_FFI_C}
+    DEPENDS ${UUID_FFI_C}
+    COMMENT "Compiling K UUID FFI helpers (uuid_ffi.c)"
+    VERBATIM
+)
+
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
                    ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
                    ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}
                    ${NETWORK_FFI_OBJ}
-                   ${APP_FFI_OBJ})
+                   ${APP_FFI_OBJ}
+                   ${UUID_FFI_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -554,6 +572,11 @@ libk_add_test(libk-thread-io-tests 120
 # ── libk executor and thread pool tests ─────────────────────────────────────
 libk_add_test(libk-tests-executor 120
     tests/test-executor.cpp
+)
+
+# ── libk UUID & Cryptographic hash tests ─────────────────────────────────────
+libk_add_test(libk-tests-uuid 120
+    tests/test-uuid.cpp
 )
 
 # ── libk performance / stress tests ──────────────────────────────────────────
