@@ -1915,9 +1915,13 @@ namespace k::model {
             block_model->set_ast_block_statement(stmt.try_body);
             stack<block_context> push(_contexts, block_model);
             for(auto& s : stmt.try_body->statements) {
+                _stmt.reset();
+                _current_ast_decl = std::dynamic_pointer_cast<parse::ast::declaration>(s);
                 s->visit(*this);
+                _current_ast_decl.reset();
                 if(_stmt) {
                     block_model->append_statement(_stmt);
+                    _stmt.reset();
                 }
             }
             try_stmt->set_try_body(block_model);
@@ -1943,9 +1947,13 @@ namespace k::model {
                 body_block->set_ast_block_statement(clause->body);
                 stack<block_context> push2(_contexts, body_block);
                 for(auto& s : clause->body->statements) {
+                    _stmt.reset();
+                    _current_ast_decl = std::dynamic_pointer_cast<parse::ast::declaration>(s);
                     s->visit(*this);
+                    _current_ast_decl.reset();
                     if(_stmt) {
                         body_block->append_statement(_stmt);
+                        _stmt.reset();
                     }
                 }
                 catch_model->set_body(body_block);
@@ -1960,9 +1968,13 @@ namespace k::model {
             finally_block->set_ast_block_statement(stmt.finally_body);
             stack<block_context> push3(_contexts, finally_block);
             for(auto& s : stmt.finally_body->statements) {
+                _stmt.reset();
+                _current_ast_decl = std::dynamic_pointer_cast<parse::ast::declaration>(s);
                 s->visit(*this);
+                _current_ast_decl.reset();
                 if(_stmt) {
                     finally_block->append_statement(_stmt);
+                    _stmt.reset();
                 }
             }
             try_stmt->set_finally_body(finally_block);
