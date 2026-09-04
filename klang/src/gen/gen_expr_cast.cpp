@@ -164,17 +164,29 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
         // Allows explicit casts like (Base*)(ref<ptr<Derived>>)
         auto effective_source = source_type;
         bool source_unwrapped_ref = false;
-        if (!type::is_reference(target_type) && type::is_reference(source_type)) {
-            auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+        bool should_unwrap_ref_indir = false;
+        if (type::is_reference(source_type)) {
+            auto inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype());
             if (type::is_link(inner) || type::is_view(inner) || type::is_pointer(inner) || type::is_owner(inner) || type::is_drain(inner)) {
-                auto loaded = load_value_expression::make_shared(sub_expr);
-                loaded->set_type(inner);
-                expr.assign(loaded);
-                sub_expr = expr.sub_expr();
-                source_type = inner;
-                effective_source = inner;
-                source_unwrapped_ref = true;
+                if (!type::is_reference(target_type)) {
+                    should_unwrap_ref_indir = true;
+                } else {
+                    auto tgt_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype());
+                    if (!type::is_link(tgt_inner) && !type::is_view(tgt_inner) && !type::is_pointer(tgt_inner) && !type::is_owner(tgt_inner) && !type::is_drain(tgt_inner)) {
+                        should_unwrap_ref_indir = true;
+                    }
+                }
             }
+        }
+        if (should_unwrap_ref_indir) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            auto loaded = load_value_expression::make_shared(sub_expr);
+            loaded->set_type(inner);
+            expr.assign(loaded);
+            sub_expr = expr.sub_expr();
+            source_type = inner;
+            effective_source = inner;
+            source_unwrapped_ref = true;
         }
 
         // ── Case: ptr/lnk/pin source → ptr/lnk/pin target ────────────────────
