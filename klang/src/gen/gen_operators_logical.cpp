@@ -410,7 +410,7 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
     }
 
     // Step 3: For non-bool types: insert implicit cast to bool
-    static auto bool_type = _context->from_type(primitive_type::BOOL);
+    auto bool_type = _context->from_type(primitive_type::BOOL);
     auto cast = adapt_type(sub, bool_type);
     if(!cast) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_MEMBER_NO_MATCH), expr.first_lexeme(),
@@ -902,7 +902,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         expr.assign_left(left);
         expr.assign_right(right);
 
-        static auto bool_type = _context->from_type(primitive_type::BOOL);
+        auto bool_type = _context->from_type(primitive_type::BOOL);
         expr.set_type(bool_type);
         return;
     }
@@ -966,7 +966,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
                         if (op_func->has_return_type() && result->synthesis == cmp_synthesis::DIRECT) {
                             expr.set_type(op_func->get_return_type());
                         } else {
-                            static auto bool_type_cached = _context->from_type(primitive_type::BOOL);
+                            auto bool_type_cached = _context->from_type(primitive_type::BOOL);
                             expr.set_type(bool_type_cached);
                         }
 
@@ -1119,7 +1119,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
 
     // Step 5: Set result type to bool
     // For primitive type, logical is always returning boolean
-    static auto bool_type = _context->from_type(primitive_type::BOOL);
+    auto bool_type = _context->from_type(primitive_type::BOOL);
     expr.set_type(bool_type);
 
     if (!expr.has_operator_overload() && expr.left()->is_constant() && expr.right()->is_constant()) {
@@ -1438,7 +1438,6 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim_left = (type::is_reference(left_type) || type::is_drain(left_type)) ? left_type->get_subtype() : left_type;
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left));
 
@@ -1516,7 +1515,6 @@ void implementation_generator::visit_different_expression(different_expression& 
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim_left_ne = (type::is_reference(left_type) || type::is_drain(left_type)) ? left_type->get_subtype() : left_type;
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_ne));
 
@@ -1564,7 +1562,6 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim_left_lt = (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_lt));
 
@@ -1616,7 +1613,6 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim_left_gt = (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_gt));
 
@@ -1668,7 +1664,6 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim_left_le = (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_le));
 
@@ -1720,7 +1715,6 @@ void implementation_generator::visit_greater_equal_expression(greater_equal_expr
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim_left_ge = (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_ge));
 
