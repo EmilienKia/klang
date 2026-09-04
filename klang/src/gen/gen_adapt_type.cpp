@@ -965,7 +965,7 @@ type_reference_resolver::adapt_from_reference(
             return expr;
         }
         // Mutable → const widening: ref<T> → ref<const T>
-        if (src_sub_nc == tgt_sub_nc && type::is_const(tgt_sub) && !type::is_const(src_sub)) {
+        if ((src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) && type::is_const(tgt_sub) && !type::is_const(src_sub)) {
             // Bitwise-identical at IR level (just a different type annotation).
             // Wrap in a cast so implementation_generator passes the right LLVM type.
             auto cast = cast_expression::make_shared(expr, type_nc);

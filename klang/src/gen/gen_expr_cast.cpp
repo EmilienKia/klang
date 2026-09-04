@@ -164,7 +164,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
         // Allows explicit casts like (Base*)(ref<ptr<Derived>>)
         auto effective_source = source_type;
         bool source_unwrapped_ref = false;
-        if (type::is_reference(source_type)) {
+        if (!type::is_reference(target_type) && type::is_reference(source_type)) {
             auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
             if (type::is_link(inner) || type::is_view(inner) || type::is_pointer(inner) || type::is_owner(inner) || type::is_drain(inner)) {
                 auto loaded = load_value_expression::make_shared(sub_expr);

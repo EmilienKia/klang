@@ -2946,7 +2946,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
             // ref<T> → ref<const T>: allowed if base types are the same (strip const)
-            if (src_sub_nc == tgt_sub_nc) {
+            if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
                 // If target has const but source doesn't: widening
                 if (type::is_const(tgt_sub) && !type::is_const(src_sub)) return CAST_WIDENING;
                 // If source has const but target doesn't: narrowing (forbidden for assignments)
