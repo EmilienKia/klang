@@ -774,6 +774,19 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         }
         _value = object_ref;
 
+    } else if (auto mem_frt = std::dynamic_pointer_cast<member_function_reference_type>(var_type)) {
+        if (!expr.empty()) {
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            if (_value) {
+                _builder->CreateStore(_value, object_ref);
+            }
+        } else {
+            auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+            _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), object_ref);
+        }
+        _value = object_ref;
+
     } else if (auto ct = std::dynamic_pointer_cast<callable_type>(var_type)) {
         // Callable variable initialization: store the %__k.callable { ptr, ptr } value into object_ref
         if (!expr.empty()) {
