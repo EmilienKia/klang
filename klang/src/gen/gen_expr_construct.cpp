@@ -144,9 +144,11 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
     } else if (type::is_reference(var_type) || type::is_link(var_type) || type::is_pointer(var_type) || type::is_view(var_type)) {
         // Indirection member init: e.g. _lock(lock)
         if (!expr.empty()) {
-            auto cast = adapt_type(expr.argument(0), var_type);
-            if (cast && cast != expr.argument(0)) {
-                expr.assign_argument(0, cast);
+            if (!type::is_reference(var_type) || (expr.argument(0)->get_type() && type::is_reference(expr.argument(0)->get_type()))) {
+                auto cast = adapt_type(expr.argument(0), var_type);
+                if (cast && cast != expr.argument(0)) {
+                    expr.assign_argument(0, cast);
+                }
             }
         }
     } else if (auto ct = std::dynamic_pointer_cast<callable_type>(var_type)) {
