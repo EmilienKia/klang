@@ -2917,10 +2917,12 @@ namespace k::model {
             invoke_fn->set_has_explicit_return_type(expr.return_type != nullptr);
 
             auto ctor_call = model::temporary_construction_expression::make_shared(closure_st, capture_args);
+            ctor_call->set_ast_expression(expr.shared_as<parse::ast::lambda_expression>());
             auto bind = model::callable_bind_expression::make_shared(
                 model::callable_bind_expression::kind::bound_method,
                 invoke_fn,
                 ctor_call);
+            bind->set_ast_expression(expr.shared_as<parse::ast::lambda_expression>());
             _expr = model::lambda_expression::make_shared(bind, capture_args);
             if (_expr) {
                 callable_type_builder builder(_context);
@@ -2971,7 +2973,6 @@ namespace k::model {
             }
 
             _expr = model::new_expression::make_uniform_array_shared(alloc_type, size_expr, ctor_args);
-            if (_expr) _expr->set_ast_expression(expr.shared_as<parse::ast::new_expr>());
         } else if (expr.is_array) {
             // ── Array form: new T[N]{e0, e1, ...} ──
 
@@ -2998,7 +2999,6 @@ namespace k::model {
             }
 
             _expr = model::new_expression::make_array_shared(alloc_type, size_expr, init_elements, expr.brace_init != nullptr);
-            if (_expr) _expr->set_ast_expression(expr.shared_as<parse::ast::new_expr>());
         } else {
             // ── Single-object form: new T(args...) ──
 
@@ -3021,7 +3021,9 @@ namespace k::model {
             }
 
             _expr = model::new_expression::make_shared(alloc_type, args);
-            if (_expr) _expr->set_ast_expression(expr.shared_as<parse::ast::new_expr>());
+        }
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::new_expr>());
         }
     }
 

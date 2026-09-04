@@ -38,6 +38,8 @@
 #include <llvm/IR/Intrinsics.h>
 #include <unordered_set>
 #include "../errors.hpp"
+#include "../model/model_dump.hpp"
+
 namespace k::model::gen {
 // function_invocation_expression
 
@@ -3242,14 +3244,32 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         }
         auto [best_ctor, adapted_args] = get_best_matching_constructor(st->constructors(), expr.arguments());
         if (!best_ctor) {
-            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_ARRAY_BAD_INIT), expr.first_lexeme(),
-                "No matching constructor found for 'new {}': none of the available constructors "
+            auto diag = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_ARRAY_BAD_INIT),
+                "!!! No matching constructor found for 'new {}': none of the available constructors "
+                "can be called with the provided arguments of types ({})",
+                {st_type->to_string(), dump::readable_type_dump::type_list_from_exprs(expr.arguments())});
+            if (auto lexeme = expr.get_interest_lexeme()) diag.at(*lexeme);
+            if (auto lexeme = expr.get_first_lexeme()) diag.from(*lexeme);
+            if (auto lexeme = expr.get_last_lexeme()) diag.to(*lexeme);
+
+            for (const auto& ctor : st->constructors()) {
+                diag.add_note("Available constructor: {}({})",
+                    {ctor->get_short_name(), dump::readable_type_dump::type_list_from_params(ctor->parameters())}, ctor->get_interest_lexeme());
+            }
+
+            logger_relay::report(diag);
+            throw resolution_error(std::move(diag));
+
+            /*
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_ARRAY_BAD_INIT), expr.get_interest_lexeme(),
+                "!!! No matching constructor found for 'new {}': none of the available constructors "
                 "can be called with the provided arguments",
                 {st_type->to_string()});
+        */
         }
         check_constructor_visibility(*best_ctor, expr);
         // Check exception contract for throwing constructors
-        check_call_contract(*best_ctor, expr.first_lexeme());
+        check_call_contract(*best_ctor, expr.get_interest_lexeme());
         expr.set_constructor(best_ctor);
         expr.assign_arguments(adapted_args);
     } else if (type::is_primitive(alloc_type)) {

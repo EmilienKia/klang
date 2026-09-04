@@ -157,6 +157,7 @@ type_reference_resolver::adapt_callable_type(
                             auto new_expr = new_expression::make_shared(tmp->constructed_type(), tmp->arguments());
                             new_expr->set_type(tmp->constructed_type()->get_owner());
                             new_expr->accept(*this);
+                            new_expr->set_ast_expression(expr->get_ast_expression());
                             bind->set_context(new_expr);
                         }
                     } else if (bind->get_context()) {

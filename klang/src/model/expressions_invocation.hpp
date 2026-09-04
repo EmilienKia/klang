@@ -448,41 +448,7 @@ public:
 
     std::shared_ptr<constructor> uniform_constructor() const { return _uniform_constructor; }
 
-    std::shared_ptr<expression> clone() const override {
-        std::shared_ptr<new_expression> c{new new_expression()};
-        c->_type = _type;
-        c->_allocated_type = _allocated_type;
-        c->_constructor = _constructor;
-        c->_is_array = _is_array;
-        c->_is_dynamic_size = _is_dynamic_size;
-        c->_array_size = _array_size;
-        c->_has_brace_init = _has_brace_init;
-        c->_is_uniform_array = _is_uniform_array;
-        c->_uniform_constructor = _uniform_constructor;
-        if (!_is_array) {
-            std::vector<std::shared_ptr<expression>> args;
-            for (auto& a : _arguments) args.push_back(a->clone());
-            c->assign_arguments(args);
-        } else if (_is_uniform_array) {
-            if (_array_size_expr) {
-                c->_array_size_expr = _array_size_expr->clone();
-                c->_array_size_expr->set_parent_expression(c);
-            }
-            std::vector<std::shared_ptr<expression>> uargs;
-            for (auto& a : _uniform_ctor_args) uargs.push_back(a ? a->clone() : nullptr);
-            c->set_uniform_ctor_args(uargs);
-        } else {
-            if (_array_size_expr) {
-                c->_array_size_expr = _array_size_expr->clone();
-                c->_array_size_expr->set_parent_expression(c);
-            }
-            std::vector<std::shared_ptr<expression>> elems;
-            for (auto& e : _array_init_elements) elems.push_back(e ? e->clone() : nullptr);
-            c->set_array_init_elements(elems);
-            c->_element_constructors = _element_constructors;
-        }
-        return c;
-    }
+    std::shared_ptr<expression> clone() const override;
 };
 
 /**

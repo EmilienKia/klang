@@ -246,7 +246,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
 
         auto [best_constructor, adapted_args] = get_best_matching_constructor(st->constructors(), ctor_args);
         if (!best_constructor) {
-            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_MEMBER_NO_MATCH), expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_MEMBER_NO_MATCH), expr.get_interest_lexeme(),
                 "No matching constructor found for member initialisation of type '{}': "
                 "none of the available constructors can be called with the provided arguments",
                 {st_type->to_string()});
@@ -259,7 +259,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             bool is_subobject_init = (var_name.rfind("__base_", 0) == 0)
                                   || (var_name.rfind("__vbase_", 0) == 0);
             if (!is_subobject_init) {
-                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_FUNC_NO_MATCH), expr.first_lexeme(),
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_FUNC_NO_MATCH), expr.get_interest_lexeme(),
                     "Cannot instantiate abstract class '{}'; abstract classes cannot be directly instantiated",
                     {st->get_short_name()});
             }

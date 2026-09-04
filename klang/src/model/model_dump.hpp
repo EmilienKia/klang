@@ -858,6 +858,50 @@ public:
     }
 };
 
+class readable_type_dump {
+public:
+    readable_type_dump() = delete;
+
+    static std::string type_list_from_exprs(const std::vector<std::shared_ptr<expression>>& args) {
+        std::string result;
+        for(size_t i = 0; i < args.size(); ++i) {
+            if(i > 0) result += ", ";
+            if(args[i]->get_type()) {
+                result += args[i]->get_type()->to_string();
+            } else {
+                result += "<untyped>";
+            }
+        }
+        return result;
+    }
+
+    static std::string type_list_from_types(const std::vector<std::shared_ptr<type>>& types) {
+        std::string result;
+        for(size_t i = 0; i < types.size(); ++i) {
+            if(i > 0) result += ", ";
+            if(types[i]) {
+                result += types[i]->to_string();
+            } else {
+                result += "<untyped>";
+            }
+        }
+        return result;
+    }
+
+    static std::string type_list_from_params(const std::vector<std::shared_ptr<parameter>>& params) {
+        std::string result;
+        for(size_t i = 0; i < params.size(); ++i) {
+            if(i > 0) result += ", ";
+            if(params[i]->get_type()) {
+                result += params[i]->get_type()->to_string();
+            } else {
+                result += "<untyped>";
+            }
+        }
+        return result;
+    }
+};
+
 
 } // namespace k::model::dump
 #endif //KLANG_UNIT_DUMP_HPP

@@ -190,6 +190,7 @@ void type_reference_resolver::visit_lambda_expression(lambda_expression& expr) {
                 if (auto tce = std::dynamic_pointer_cast<temporary_construction_expression>(bind->get_context())) {
                     auto new_expr = new_expression::make_shared(tce->constructed_type(), tce->arguments());
                     new_expr->set_type(tce->constructed_type()->get_owner());
+                    new_expr->set_ast_expression(expr.get_ast_expression());
                     bind->set_context(new_expr);
                 }
             }
@@ -517,6 +518,7 @@ std::shared_ptr<expression> type_reference_resolver::make_member_bind(
 
         auto new_expr = new_expression::make_shared(closure_st, {borrowed_bind});
         new_expr->set_type(closure_st->get_owner());
+        new_expr->set_ast_expression(receiver->get_ast_expression());
         new_expr->accept(*this);
 
         auto bind = callable_bind_expression::make_shared(
