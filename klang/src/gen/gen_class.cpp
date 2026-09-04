@@ -424,6 +424,12 @@ build_vtable_layout(aggregate& st,
             // destructor (present because every klass gets one — explicit or
             // compiler-generated — once any base already has one: see
             // symbol_resolver::visit_aggregate's implicit-destructor logic).
+            if (!own_dtor && !st.is_interface()) {
+                own_dtor = st.create_destructor();
+                if (own_dtor) {
+                    own_dtor->set_compiler_generated(true);
+                }
+            }
             if (own_dtor) {
                 auto& dtor_entry = vt->entries[0];
                 own_dtor->set_virtual(true);
@@ -3140,6 +3146,7 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
 
                 llvm::Type* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
                 std::vector<llvm::Value*> fwd_args;
+                llvm::Value* this_adj = nullptr;
 
                 for (unsigned i = 0; i < thunk->arg_size(); ++i) {
                     llvm::Argument* arg = thunk->getArg(i);
@@ -3150,7 +3157,7 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
                             this_as_int,
                             llvm::ConstantInt::get(i64_ty, (uint64_t)offset),
                             "this_adj_int");
-                        llvm::Value* this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
+                        this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
                         fwd_args.push_back(this_adj);
                     } else {
                         fwd_args.push_back(arg);

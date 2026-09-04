@@ -336,6 +336,7 @@ public:
     const std::vector<std::shared_ptr<constructor>>& constructors() const { return _constructors; }
 
     std::shared_ptr<destructor> get_destructor() const { return _destructor; }
+    std::shared_ptr<destructor> create_destructor();
 
     /** Returns the static constructor (class initializer) if defined, nullptr otherwise. */
     std::shared_ptr<static_constructor> get_static_constructor() const { return _static_constructor; }

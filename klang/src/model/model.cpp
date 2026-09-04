@@ -1014,6 +1014,27 @@ std::shared_ptr<function> aggregate::define_function(const std::string &name, bo
     }
 }
 
+std::shared_ptr<destructor> aggregate::create_destructor() {
+    if (!_destructor) {
+        auto dtor = destructor::make_shared(shared_as<aggregate>());
+        if (dtor) {
+            auto parent_name = get_name();
+            if (!parent_name.has_root_prefix()) {
+                if (auto anc = ancestor<named_element>()) {
+                    parent_name = anc->get_name().with_back(get_short_name());
+                }
+            }
+            if (parent_name.has_root_prefix()) {
+                dtor->assign_name(parent_name.with_back(dtor->get_short_name()));
+                dtor->update_mangled_name();
+            }
+            _destructor = dtor;
+            _children.push_back(dtor);
+        }
+    }
+    return _destructor;
+}
+
 std::shared_ptr<function> aggregate::do_create_function(const std::string &name, bool is_static) {
     std::shared_ptr<aggregate> this_agg = shared_as<aggregate>();
     return std::shared_ptr<function>{function::make_shared(this_agg, name, is_static)};

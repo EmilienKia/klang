@@ -982,7 +982,28 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
             _builder->CreateRetVoid();
         }
     } else {
-        _builder->CreateRetVoid();
+        auto cur_fn = _builder->GetInsertBlock()->getParent();
+        if (cur_fn && cur_fn->getReturnType()->isPointerTy() && func && dynamic_cast<destructor*>(func.get())) {
+            llvm::AllocaInst* this_alloca = nullptr;
+            auto this_it = _context->_function_this_variables.find(func);
+            if (this_it != _context->_function_this_variables.end()) {
+                this_alloca = this_it->second;
+            } else if (auto this_param = func->get_this_parameter()) {
+                auto param_it = _context->_parameter_variables.find(this_param);
+                if (param_it != _context->_parameter_variables.end()) {
+                    this_alloca = param_it->second;
+                }
+            }
+            if (this_alloca) {
+                llvm::Value* this_ptr = _builder->CreateLoad(
+                    llvm::PointerType::get(**_context, 0), this_alloca, "this_ret");
+                _builder->CreateRet(this_ptr);
+            } else {
+                _builder->CreateRet(llvm::UndefValue::get(cur_fn->getReturnType()));
+            }
+        } else {
+            _builder->CreateRetVoid();
+        }
     }
 }
 

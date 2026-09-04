@@ -1251,6 +1251,10 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
     }
     concrete_agg->update_mangled_name();
 
+    if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete_agg)) {
+        ensure_klass_vtable_built(*kl);
+    }
+
     auto update_children_names = [](aggregate& agg) {
         for (auto& child : agg.get_children()) {
             if (auto fn = std::dynamic_pointer_cast<function>(child)) {
@@ -1283,10 +1287,6 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
                 kind_enum->assign_name(nested_un->get_name().with_back(kind_enum->get_short_name()));
             }
         }
-    }
-
-    if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete_agg)) {
-        ensure_klass_vtable_built(*kl);
     }
 
     std::unordered_map<aggregate*, std::shared_ptr<struct_type>> nested_remap;

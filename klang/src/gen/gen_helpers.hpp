@@ -127,19 +127,19 @@ inline bool should_merge_aggregate_symbols(const k::model::aggregate& agg)
  * @param st        The static K model type of the object being destroyed.
  * @param this_ptr  The (non-null) pointer to the object.
  */
-inline void emit_virtual_destructor_call(
+inline llvm::Value* emit_virtual_destructor_call(
     llvm::IRBuilder<>* builder,
     aggregate& st,
     llvm::Value* this_ptr)
 {
-    if (!st.has_vtable()) return;
+    if (!st.has_vtable()) return this_ptr;
 
     llvm::LLVMContext& llvm_ctx = builder->getContext();
     llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
     auto struct_type = st.get_struct_type();
     auto* struct_llvm_type = struct_type ? struct_type->get_llvm_type() : nullptr;
-    if (!struct_llvm_type) return;
+    if (!struct_llvm_type) return this_ptr;
 
     // Determine the vptr field index. Locally-declared aggregates always put
     // the (primary) vptr at field 0. Imported aggregates carry the actual
@@ -170,8 +170,8 @@ inline void emit_virtual_destructor_call(
         llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "dtor_slot_addr");
     llvm::Value* fn_ptr = builder->CreateLoad(ptr_ty, fn_ptr_addr, "dtor_fn_ptr");
 
-    auto* fn_type = llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
-    builder->CreateCall(fn_type, fn_ptr, {this_ptr});
+    auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    return builder->CreateCall(fn_type, fn_ptr, {this_ptr});
 }
 
 /**
@@ -199,6 +199,7 @@ inline void emit_owner_object_destroy(
 {
     auto& llvm_ctx = builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    llvm::Value* complete_ptr = ptr_value;
 
     // Handle array types: call destructors on each element in reverse order
     if (auto sized_arr = std::dynamic_pointer_cast<sized_array_type>(alloc_type)) {
@@ -285,7 +286,7 @@ inline void emit_owner_object_destroy(
         // typed as a base (e.g. deleting/releasing through an interface owner).
         auto st = st_type->get_struct();
         if (st && st->has_vtable()) {
-            emit_virtual_destructor_call(builder, *st, ptr_value);
+            complete_ptr = emit_virtual_destructor_call(builder, *st, ptr_value);
         } else {
             auto dtor = st ? st->get_destructor() : nullptr;
             if (dtor) {
@@ -305,7 +306,7 @@ inline void emit_owner_object_destroy(
         free_fn = llvm::Function::Create(
             free_type, llvm::Function::ExternalLinkage, "free", mod);
     }
-    builder->CreateCall(free_fn, {ptr_value});
+    builder->CreateCall(free_fn, {complete_ptr});
 }
 
 /**

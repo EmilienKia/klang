@@ -974,7 +974,7 @@ type_reference_resolver::adapt_from_reference(
         }
         // Array element const-widening: ref<array<T>> → ref<array<const<T>>>
         // At IR level this is a no-op (same pointer).
-        if (types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
+        if (type::is_array(src_sub_nc) && type::is_array(tgt_sub_nc) && types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
             auto cast = cast_expression::make_shared(expr, type_nc);
             cast->set_type(type_nc);
             return cast;

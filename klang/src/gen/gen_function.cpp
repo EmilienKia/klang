@@ -972,7 +972,10 @@ void declaration_generator::visit_function(function &function) {
     // Return type, if any:
     llvm::Type* ret_type = nullptr;
     bool use_sret = false;
-    if(const auto& ret = function.get_return_type()) {
+    if (dynamic_cast<destructor*>(&function) &&
+        (function.is_virtual() || (function.get_owner() && function.get_owner()->has_vtable()))) {
+        ret_type = llvm::PointerType::get(**_context, 0);
+    } else if(const auto& ret = function.get_return_type()) {
         // Check for unresolved "void" — treat as void (no LLVM type)
         if (auto unres = std::dynamic_pointer_cast<unresolved_type>(ret)) {
             if (unres->type_id().to_string() == "void") {
@@ -1119,7 +1122,10 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
 
     llvm::Type* late_ret_type = nullptr;
     bool late_use_sret = false;
-    if (const auto& ret = function.get_return_type()) {
+    if (dynamic_cast<destructor*>(&function) &&
+        (function.is_virtual() || (function.get_owner() && function.get_owner()->has_vtable()))) {
+        late_ret_type = llvm::PointerType::get(**_context, 0);
+    } else if (const auto& ret = function.get_return_type()) {
         if (needs_sret_return(ret)) {
             late_param_types.insert(late_param_types.begin(), llvm::PointerType::get(**_context, 0));
             late_ret_type = llvm::Type::getVoidTy(**_context);
@@ -2104,7 +2110,27 @@ void implementation_generator::emit_function_return_epilogue(function& function,
             _builder->CreateRet(llvm::UndefValue::get(ret_type));
         }
     } else if (needs_fallthrough_epilogue) {
-        _builder->CreateRetVoid();
+        if (dynamic_cast<destructor*>(&function) && func->getReturnType()->isPointerTy()) {
+            llvm::AllocaInst* this_alloca = nullptr;
+            auto this_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+            if (this_it != _context->_function_this_variables.end()) {
+                this_alloca = this_it->second;
+            } else if (auto this_param = function.get_this_parameter()) {
+                auto param_it = _context->_parameter_variables.find(this_param);
+                if (param_it != _context->_parameter_variables.end()) {
+                    this_alloca = param_it->second;
+                }
+            }
+            if (this_alloca) {
+                llvm::Value* this_ptr = _builder->CreateLoad(
+                    llvm::PointerType::get(**_context, 0), this_alloca, "this_ret");
+                _builder->CreateRet(this_ptr);
+            } else {
+                _builder->CreateRet(llvm::UndefValue::get(func->getReturnType()));
+            }
+        } else {
+            _builder->CreateRetVoid();
+        }
     }
 
     // Step 4: NRVO: replace NRVO candidate alloca with sret pointer

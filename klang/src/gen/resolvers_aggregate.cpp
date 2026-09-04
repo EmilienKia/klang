@@ -142,6 +142,12 @@ void ensure_klass_vtable_built(klass& kl) {
         auto own_dtor = kl.get_destructor();
 
         if (inherited_dtor_slot) {
+            if (!own_dtor && !kl.is_interface()) {
+                own_dtor = kl.create_destructor();
+                if (own_dtor) {
+                    own_dtor->set_compiler_generated(true);
+                }
+            }
             if (own_dtor) {
                 auto& dtor_entry = vt->entries[0];
                 own_dtor->set_virtual(true);
@@ -922,7 +928,13 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     }
     concrete->update_mangled_name();
 
-    // 5d. Update FQ names and mangled names for children (functions, constructors, etc.)
+    // 5d. Build vtable for class/interface instantiations (runs before child name
+    //     updating so that any compiler-generated destructor gets its FQ and mangled name set).
+    if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete)) {
+        ensure_klass_vtable_built(*kl);
+    }
+
+    // 5e. Update FQ names and mangled names for children (functions, constructors, etc.)
     for (auto& child : concrete->get_children()) {
         if (auto fn = std::dynamic_pointer_cast<function>(child)) {
             // Build FQ name from parent chain (mirrors symbol_resolver::visit_named_element).
@@ -971,19 +983,8 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         }
     }
 
-    // 5e. (base sub-object field injection moved earlier — see 4bb above,
+    // 5f. (base sub-object field injection moved earlier — see 4bb above,
     //     which must run before inject_constructor_member_inits.)
-
-    // 5f. Build vtable for class/interface instantiations (symbol_resolver didn't
-    //     visit them because they didn't exist yet during Pass A). See
-    //     ensure_klass_vtable_built() in resolvers_common.hpp for the recursive,
-    //     multi-level-hierarchy-aware implementation (fixes a bug where a
-    //     template interface hierarchy like MutableIndexedCollection<T> :
-    //     IndexedCollection<T>, MutableCollection<T> only got a "flattened"
-    //     own-methods-only vtable instead of the full inherited slot list).
-    if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete)) {
-        ensure_klass_vtable_built(*kl);
-    }
 
     // 5g. Transitively resolve member-variable types that still carry an
     //     unresolved nested template type (e.g. _slot : UniSlot<T> -> UniSlot<int>).
