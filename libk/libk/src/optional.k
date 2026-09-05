@@ -66,7 +66,7 @@ public:
     /**
      * Value constructor. Creates an Optional holding a copy of value.
      */
-    Optional(value : T&) {
+    Optional(value : const T&) {
         _slot.construct(value);
         _hasValue = true;
     }
@@ -124,7 +124,7 @@ public:
      * Set the Optional to hold a copy of value.
      * If a value was already present, it is destroyed first.
      */
-    set(value : T&) {
+    set(value : const T&) {
         if (_hasValue) {
             _slot.destruct();
         }

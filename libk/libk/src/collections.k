@@ -105,11 +105,16 @@ interface Sequence {
         return new SequenceFilter<T>(this, predicate);
     }
 
-/*
-    // TODO implement following manipulators:
-    map<U>(f: Function<T, U>) -> Sequence<U>;
-    // ...
- */
+    /**
+     * Return a new sequence containing the results of applying the given function to each element.
+     * @param f A callable that transforms each element.
+     * @return A new Sequence<U> containing the transformed elements.
+     */
+    template<typename U>
+    default const map(f : ::k::functional::Function<const T&, U>) : Sequence<U>! {
+        return new SequenceMap<T, U>(this, f);
+    }
+
     /**
      * Collect all elements of the sequence into an appendable collection.
      * @param collection An Appendable<T> to receive the elements, typically a collection.
@@ -469,5 +474,41 @@ class SequenceFilter : public Sequence<T> {
 
     const constIterator() : ConstIterator<T>! {
         return new FilteredConstIterator<T>(source.constIterator(), predicate);
+    }
+}
+
+
+template<typename T, typename U>
+class MappedConstIterator : public ConstIterator<U> {
+    source : ConstIterator<T>!;
+    mapper : functional::Function<const T&, U>;
+    current : Optional<U>;
+
+    MappedConstIterator(source : ConstIterator<T>!, mapper : functional::Function<const T&, U>)
+        : source(source), mapper(mapper), current() {
+    }
+
+    next() : OptionalConstRef<U> {
+        cur : OptionalConstRef<T> = source.next();
+        if (!cur.hasValue()) {
+            current.reset();
+            return OptionalConstRef<U>();
+        }
+        current.set(mapper(cur.get()));
+        return OptionalConstRef<U>(current.get());
+    }
+}
+
+template<typename T, typename U>
+class SequenceMap : public Sequence<U> {
+    source : const Sequence<T>&;
+    mapper : functional::Function<const T&, U>;
+
+    SequenceMap(source : const Sequence<T>&, mapper : functional::Function<const T&, U>)
+        : source(source), mapper(mapper) {
+    }
+
+    const constIterator() : ConstIterator<U>! {
+        return new MappedConstIterator<T, U>(source.constIterator(), mapper);
     }
 }

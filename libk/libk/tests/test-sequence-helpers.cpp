@@ -185,3 +185,47 @@ TEST_CASE("Vector<int> — filter elements", "[libk][vector][int][filter]") {
     REQUIRE(fn);
     CHECK(fn());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6 : Sequence::map
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — map elements", "[libk][vector][int][map]") {
+    auto j = jit_k(R"SRC(
+        module __vector_map__;
+
+        i_to_f(v : const int&) : float {
+            return 1.5f * v;
+        }
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5});
+            result : float = v.map<float>(i_to_f)
+                            ->accumulate<float>(0.0f, [](acc : float, v : const float&) { return acc + v; });
+
+            return result == 22.5f;  // (1*1.5)+(2*1.5)+(3*1.5)+(4*1.5)+(5*1.5) = 22.5
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — map elements with lambda", "[libk][vector][int][map]") {
+    auto j = jit_k(R"SRC(
+        module __vector_map_lambda__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5});
+            result : float = v.map<float>([](v : const int&) : float { return 1.5f * v; })
+                            ->accumulate<float>(0.0f, [](acc : float, v : const float&) { return acc + v; });
+
+            return result == 22.5f;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
