@@ -2211,7 +2211,8 @@ public:
     }
 
     /** Write a code point at the referenced position. */
-    operator =(c : char) : void {
+    operator =(c : char) : CharRef& {
         _sb->set(_idx, c);
+        return this;
     }
 }
