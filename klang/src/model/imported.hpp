@@ -180,6 +180,7 @@ public:
     static std::shared_ptr<imported_structure>
     make_shared(std::shared_ptr<element> parent, const kdi::kdi_aggregate* kdi_agg);
     void accept(model_visitor& visitor) override;
+    bool is_struct() const override { return true; }
     bool is_class() const override { return false; }
 };
 

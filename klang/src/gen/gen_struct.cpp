@@ -235,7 +235,7 @@ void symbol_resolver::resolve_and_validate_annotations(
 // 11. For const structs: implicitly promote non-static, non-ctor/dtor member functions to const.
 // 12. Visit all function children (methods, constructors, destructor).
 // 13. Generate a default (0-arg) constructor if none is present.
-// 14. Generate a default copy constructor if bases or struct-typed members exist and no
+// 14. For structs only: generate a default copy constructor if bases or struct-typed members exist and no
 //     copy constructor was declared.
 // 15. Generate an implicit destructor if any base or member struct has a destructor.
 // Note: class-specific processing (vtable layout, vptr injection) is done in visit_klass.
@@ -678,45 +678,49 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
     }
 
     // ── Copy constructor: generate if absent and struct has bases or struct members ──
-    bool needs_copy_ctor = st.has_bases();
-    if (!needs_copy_ctor) {
-        for (auto& [name, var] : st.variables()) {
-            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(var)) {
-                if (type::is_struct(mv->get_type())) { needs_copy_ctor = true; break; }
+    // Only for structs (not classes, interfaces, or annotations).
+    // Classes and annotations must not generate copy constructors automatically.
+    if (st.is_struct()) {
+        bool needs_copy_ctor = st.has_bases();
+        if (!needs_copy_ctor) {
+            for (auto& [name, var] : st.variables()) {
+                if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(var)) {
+                    if (type::is_struct(mv->get_type())) { needs_copy_ctor = true; break; }
+                }
             }
         }
-    }
-    // A memberwise bytewise (memcpy) default copy constructor is only safe to
-    // auto-generate when the struct is trivially copyable (no destructor and no
-    // copy constructor anywhere in its layout, recursively). For a struct that
-    // manages a resource (e.g. has its own destructor, such as Vector<T> owning a
-    // heap buffer), silently synthesizing a memcpy-based copy constructor would
-    // alias the resource between the original and the copy — a double-free
-    // waiting to happen. Leave get_copy_constructor() null in that case so the
-    // programmer must supply an explicit deep-copy constructor; callers that
-    // attempt to copy such a type without one are rejected at the copy site
-    // (see aggregate_type_has_resource_field() in gen_helpers.hpp).
-    if (needs_copy_ctor && st_type && !aggregate_type_is_trivially_copyable(st_type)) {
-        needs_copy_ctor = false;
-    }
-    if (needs_copy_ctor && !st.get_copy_constructor()) {
-        warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_IMPLICIT_COPY_CTOR_GENERATED), st_lexeme,
-            "struct '{}' has bases or struct members but no copy constructor; "
-            "a default copy constructor will be generated",
-            {st.get_short_name()});
-        auto copy_ctor = constructor::make_shared(st.shared_as<aggregate>());
-        copy_ctor->set_compiler_generated(true);
-        copy_ctor->set_copy_constructor(true);
-        copy_ctor->append_parameter("other", st_type->get_reference());
-        st._constructors.push_back(copy_ctor);
-        st._children.push_back(copy_ctor);
-        copy_ctor->accept(*this);
+        // A memberwise bytewise (memcpy) default copy constructor is only safe to
+        // auto-generate when the struct is trivially copyable (no destructor and no
+        // copy constructor anywhere in its layout, recursively). For a struct that
+        // manages a resource (e.g. has its own destructor, such as Vector<T> owning a
+        // heap buffer), silently synthesizing a memcpy-based copy constructor would
+        // alias the resource between the original and the copy — a double-free
+        // waiting to happen. Leave get_copy_constructor() null in that case so the
+        // programmer must supply an explicit deep-copy constructor; callers that
+        // attempt to copy such a type without one are rejected at the copy site
+        // (see aggregate_type_has_resource_field() in gen_helpers.hpp).
+        if (needs_copy_ctor && st_type && !aggregate_type_is_trivially_copyable(st_type)) {
+            needs_copy_ctor = false;
+        }
+        if (needs_copy_ctor && !st.get_copy_constructor()) {
+            warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_IMPLICIT_COPY_CTOR_GENERATED), st_lexeme,
+                "struct '{}' has bases or struct members but no copy constructor; "
+                "a default copy constructor will be generated",
+                {st.get_short_name()});
+            auto copy_ctor = constructor::make_shared(st.shared_as<aggregate>());
+            copy_ctor->set_compiler_generated(true);
+            copy_ctor->set_copy_constructor(true);
+            copy_ctor->append_parameter("other", st_type->get_reference());
+            st._constructors.push_back(copy_ctor);
+            st._children.push_back(copy_ctor);
+            copy_ctor->accept(*this);
+        }
     }
 
     // ── Implicit copy assignment operator for structs: generate if absent and not deleted ──
-    // Only for structs (not classes/interfaces). If the user explicitly declares
+    // Only for structs (not classes/interfaces/annotations). If the user explicitly declares
     // __operator_aS_ (with body or -> delete), we don't generate one.
-    if (!st.is_class() && !std::dynamic_pointer_cast<interface>(st.shared_as<aggregate>())) {
+    if (st.is_struct()) {
         auto existing_asgn = st.get_functions("__operator_aS_");
         bool has_user_asgn = false;
         for (auto& f : existing_asgn) {

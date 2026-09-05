@@ -245,6 +245,9 @@ public:
     /** Set whether this aggregate is a const aggregate. */
     void set_const_struct(bool v) { _is_const_struct = v; }
 
+    /** True if this is a struct (keyword 'struct'). */
+    virtual bool is_struct() const { return false; }
+
     /** True if this is a class (keyword 'class'), false if it is a struct (keyword 'struct'). */
     virtual bool is_class() const { return false; }
 
@@ -445,6 +448,7 @@ protected:
     static std::shared_ptr<structure> make_shared(std::shared_ptr<element> parent, const std::string &name);
 
 public:
+    bool is_struct() const override { return true; }
     bool is_class() const override { return false; }
 
     void accept(model_visitor& visitor) override;

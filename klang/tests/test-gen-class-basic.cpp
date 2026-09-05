@@ -35,8 +35,47 @@
  */
 
 #include <catch2/catch_all.hpp>
+#include <fstream>
+#include <sstream>
+#include <cstdio>
+#include <unistd.h>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
+
+namespace {
+
+std::string read_file_content(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+struct StdoutCapture {
+    int saved_fd;
+    std::filesystem::path path;
+
+    explicit StdoutCapture(std::filesystem::path p) : path(std::move(p)) {
+        fflush(stdout);
+        saved_fd = dup(fileno(stdout));
+        FILE* f = freopen(path.c_str(), "w", stdout);
+        (void)f;
+    }
+
+    ~StdoutCapture() {
+        fflush(stdout);
+        dup2(saved_fd, fileno(stdout));
+        ::close(saved_fd);
+    }
+
+    std::string content() {
+        fflush(stdout);
+        return read_file_content(path);
+    }
+};
+
+} // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parser tests
@@ -441,3 +480,108 @@ public:
 }
 )SRC", nullptr));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Copy constructor tests: classes and annotations do not auto-generate copy ctor
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Class inheritance does not auto-generate copy constructor or emit warning 0061B", "[gen][class][copy_ctor]") {
+    TmpDir dir;
+    auto cap_path = dir.path / "stdout.txt";
+    std::string out;
+    std::shared_ptr<k::compiler> comp;
+    {
+        StdoutCapture cap(cap_path);
+        comp = compile_model(R"SRC(
+module gen_class_basic_17;
+class Base {
+    public x: int;
+    public Base() : x(10) {}
+}
+class Derived : Base {
+    public y: int;
+    public Derived() : y(20) {}
+}
+)SRC");
+        out = cap.content();
+    }
+    REQUIRE(comp != nullptr);
+    CHECK(out.find("Warning 0061B") == std::string::npos);
+
+    auto derived = find_aggregate(comp, "Derived");
+    REQUIRE(derived != nullptr);
+    CHECK(derived->get_copy_constructor() == nullptr);
+}
+
+TEST_CASE("Annotation does not auto-generate copy constructor or emit warning 0061B", "[gen][annotation][copy_ctor]") {
+    TmpDir dir;
+    auto cap_path = dir.path / "stdout.txt";
+    std::string out;
+    std::shared_ptr<k::compiler> comp;
+    {
+        StdoutCapture cap(cap_path);
+        comp = compile_model(R"SRC(
+module gen_class_basic_18;
+annotation SimpleAnn {
+    value: int;
+}
+)SRC");
+        out = cap.content();
+    }
+    REQUIRE(comp != nullptr);
+    CHECK(out.find("Warning 0061B") == std::string::npos);
+
+    auto ann = find_annotation_type(comp, "SimpleAnn");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->get_copy_constructor() == nullptr);
+}
+
+TEST_CASE("Struct with base still auto-generates copy constructor and emits warning 0061B", "[gen][struct][copy_ctor]") {
+    TmpDir dir;
+    auto cap_path = dir.path / "stdout.txt";
+    std::string out;
+    std::shared_ptr<k::compiler> comp;
+    {
+        StdoutCapture cap(cap_path);
+        comp = compile_model(R"SRC(
+module gen_class_basic_19;
+struct BaseS {
+    x: int;
+}
+struct DerivedS : BaseS {
+    y: int;
+}
+)SRC");
+        out = cap.content();
+    }
+    REQUIRE(comp != nullptr);
+    CHECK(out.find("Warning 0061B") != std::string::npos);
+
+    auto derived = find_aggregate(comp, "DerivedS");
+    REQUIRE(derived != nullptr);
+    auto ctor = derived->get_copy_constructor();
+    REQUIRE(ctor != nullptr);
+    CHECK(ctor->is_compiler_generated());
+    CHECK(ctor->is_copy_constructor());
+}
+
+TEST_CASE("Class with explicit copy constructor can be copied", "[gen][class][copy_ctor]") {
+    auto jit = gen_jit(R"SRC(
+module gen_class_basic_20;
+class ExplicitCopy {
+    public x: int;
+    public ExplicitCopy() : x(10) {}
+    public ExplicitCopy(other: const ExplicitCopy&) : x(other.x * 2) {}
+}
+test() : int {
+    a: ExplicitCopy;
+    b: ExplicitCopy = a;
+    return b.x;
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN18gen_class_basic_204testEv");
+    REQUIRE(fn);
+    CHECK(fn() == 20);
+}
+

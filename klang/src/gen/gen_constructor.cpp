@@ -122,8 +122,11 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
             auto p0 = ctor.get_parameter(0);
             if (p0) {
                 auto ptype = p0->get_type();
+                if (type::is_const(ptype)) ptype = type::remove_const(ptype);
                 if (auto ref = std::dynamic_pointer_cast<reference_type>(ptype)) {
-                    if (auto sub_st = std::dynamic_pointer_cast<struct_type>(ref->get_referenced_type())) {
+                    auto sub = ref->get_referenced_type();
+                    if (type::is_const(sub)) sub = type::remove_const(sub);
+                    if (auto sub_st = std::dynamic_pointer_cast<struct_type>(sub)) {
                         if (sub_st->get_struct() && sub_st->get_struct().get() == st.get()) {
                             ctor.set_copy_constructor(true);
                         }
