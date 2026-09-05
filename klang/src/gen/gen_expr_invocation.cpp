@@ -525,7 +525,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             member_callee->sub_expr() = this_expr;
             member_callee->sub_expr()->set_parent_expression(member_callee->shared_as<expression>());
 
-            auto best = get_best_matching_function(qual_candidates, expr.arguments(), this_expr);
+            auto best = get_best_matching_function(qual_candidates, expr.arguments(), this_expr, nullptr,
+                                                   qualifying_class_name + "::" + func_short_name,
+                                                   expr.first_lexeme());
             if (!best.func) return;
 
             check_function_visibility(*best.func, expr);
@@ -657,6 +659,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             expr_arg_types.push_back(arg ? arg->get_type() : nullptr);
         }
 
+        std::vector<std::pair<std::shared_ptr<function>, std::string>> rejected_tpl_candidates;
+
         // ── Template function instantiation (explicit template args) ────────
         // If the callee carries explicit template arguments (e.g. obj.method<int>(...)),
         // find template candidates, instantiate them, and add concrete instances.
@@ -674,7 +678,12 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 if (!ti) continue;
                 bool has_pack = std::any_of(ti->params.begin(), ti->params.end(),
                     [](const template_param_descriptor& p) { return p.is_pack; });
-                if (ast_args.size() > ti->params.size() && !has_pack) continue;
+                if (ast_args.size() > ti->params.size() && !has_pack) {
+                    rejected_tpl_candidates.emplace_back(tpl_func,
+                        "template takes " + std::to_string(ti->params.size()) +
+                        " argument(s), but " + std::to_string(ast_args.size()) + " were provided");
+                    continue;
+                }
 
                 // Convert AST template args to model template_arguments
                 std::vector<template_argument> model_args;
@@ -741,7 +750,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     auto deduction = k::model::deduce_template_arguments(
                         *ti, tpl_func->parameters(), call_types, model_args,
                         tpl_func->get_return_type(), current_expected_type());
-                    if (!deduction.success) continue;
+                    if (!deduction.success) {
+                        rejected_tpl_candidates.emplace_back(tpl_func,
+                            deduction.failure_reason.empty() ? "template argument deduction failed" : deduction.failure_reason);
+                        continue;
+                    }
                     final_args = std::move(deduction.deduced_args);
                 } else {
                     final_args = std::move(model_args);
@@ -771,6 +784,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 size_t err_idx;
                 std::string err_reason;
                 if (!validate_template_arg_constraints(ti->params, final_args, err_idx, err_reason)) {
+                    rejected_tpl_candidates.emplace_back(tpl_func, "template constraint not satisfied: " + err_reason);
                     continue;
                 }
 
@@ -895,10 +909,15 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     auto deduction = k::model::deduce_template_arguments(
                         *ti, tpl_func->parameters(), call_types, {},
                         tpl_func->get_return_type(), current_expected_type());
-                    if (!deduction.success) continue;
+                    if (!deduction.success) {
+                        rejected_tpl_candidates.emplace_back(tpl_func,
+                            deduction.failure_reason.empty() ? "template argument deduction failed" : deduction.failure_reason);
+                        continue;
+                    }
                     size_t err_idx;
                     std::string err_reason;
                     if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
+                        rejected_tpl_candidates.emplace_back(tpl_func, "template constraint not satisfied: " + err_reason);
                         continue;
                     }
 
@@ -992,7 +1011,33 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             }
         }
 
-        auto best = get_best_matching_function(candidates, expr.arguments(), this_expr);
+        std::string callee_display_name;
+        if (callee) {
+            callee_display_name = callee->get_name().to_string();
+            if (callee->has_ast_template_args()) {
+                callee_display_name += "<";
+                const auto& ast_args = callee->get_ast_template_args();
+                for (size_t i = 0; i < ast_args.size(); ++i) {
+                    if (i > 0) callee_display_name += ", ";
+                    if (ast_args[i]->is_type() && ast_args[i]->type_arg) {
+                        auto t = _context->from_type_specifier(*ast_args[i]->type_arg);
+                        if (t) {
+                            auto rt = _context->resolve_type(t);
+                            callee_display_name += format_user_type(rt ? rt : t);
+                        } else {
+                            callee_display_name += "?";
+                        }
+                    } else {
+                        callee_display_name += "?";
+                    }
+                }
+                callee_display_name += ">";
+            }
+        }
+
+        auto best = get_best_matching_function(candidates, expr.arguments(), this_expr, nullptr,
+                                               callee_display_name, expr.first_lexeme(),
+                                               rejected_tpl_candidates);
         if (!best.func) {
             // get_best_matching_function already reported/threw an error
             return;
@@ -1911,7 +1956,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         FunctionCandidate best = get_best_matching_function(all_candidates,
                                                             this_candidate ? rest_args : args,
                                                             this_candidate,
-                                                            this_candidate ? &args : nullptr);
+                                                            this_candidate ? &args : nullptr,
+                                                            func_name,
+                                                            expr.first_lexeme());
         bool is_free_to_member_call = false;
 
         // Step 6: Adapt arguments to match selected function's parameter types

@@ -674,7 +674,10 @@ protected:
     get_best_matching_function(const std::vector<std::shared_ptr<function>>& candidates,
                                const std::vector<std::shared_ptr<expression>>& args,
                                const std::shared_ptr<expression>& this_expr = nullptr,
-                               const std::vector<std::shared_ptr<expression>>* direct_args = nullptr);
+                               const std::vector<std::shared_ptr<expression>>* direct_args = nullptr,
+                               const std::string& callee_name = "",
+                               const lex::opt_any_lexeme& call_lexeme = std::nullopt,
+                               const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates = {});
 
     /**
      * Check all groups of same-named free functions in a function_holder for arity-overlap
@@ -1020,6 +1023,11 @@ protected:
         const std::shared_ptr<type>& target_type,
         bool is_const_this = false);
 };
+
+std::string format_user_type(const std::shared_ptr<type>& t);
+std::string format_function_display_name(const std::shared_ptr<function>& fn);
+std::string format_function_signature(const std::shared_ptr<function>& fn);
+std::string format_template_function_signature(const std::shared_ptr<function>& fn);
 
 } // namespace k::model::gen
 

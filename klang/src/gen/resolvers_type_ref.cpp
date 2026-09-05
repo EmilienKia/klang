@@ -3484,6 +3484,255 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 }
 
 
+std::string format_user_type(const std::shared_ptr<type>& t) {
+    if (!t) return "<unknown>";
+    if (auto ct = std::dynamic_pointer_cast<const_type>(t)) {
+        return "const " + format_user_type(ct->get_subtype());
+    }
+    if (auto rt = std::dynamic_pointer_cast<reference_type>(t)) {
+        return format_user_type(rt->get_subtype()) + "&";
+    }
+    if (auto lt = std::dynamic_pointer_cast<link_type>(t)) {
+        return format_user_type(lt->get_subtype()) + "+";
+    }
+    if (auto pt = std::dynamic_pointer_cast<pointer_type>(t)) {
+        return format_user_type(pt->get_subtype()) + "*";
+    }
+    if (auto vt = std::dynamic_pointer_cast<view_type>(t)) {
+        return format_user_type(vt->get_subtype()) + "?";
+    }
+    if (auto ot = std::dynamic_pointer_cast<owner_type>(t)) {
+        return format_user_type(ot->get_subtype()) + "!";
+    }
+    if (auto dt = std::dynamic_pointer_cast<drain_type>(t)) {
+        return format_user_type(dt->get_subtype()) + "#";
+    }
+    if (auto sat = std::dynamic_pointer_cast<sized_array_type>(t)) {
+        return format_user_type(sat->get_subtype()) + "[" + std::to_string(sat->get_size()) + "]";
+    }
+    if (auto at = std::dynamic_pointer_cast<array_type>(t)) {
+        return format_user_type(at->get_subtype()) + "[]";
+    }
+    if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (ut->is_resolved()) {
+            return format_user_type(ut->get_resolved());
+        }
+        std::string n = ut->type_id().to_string();
+        if (n.rfind("::", 0) == 0) n = n.substr(2);
+        return n;
+    }
+    if (auto uct = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (uct->is_resolved()) {
+            return format_user_type(uct->get_resolved());
+        }
+        std::ostringstream stm;
+        switch (uct->get_addresser()) {
+            case callable_type::addresser::none:      break;
+            case callable_type::addresser::pointer:   stm << "*"; break;
+            case callable_type::addresser::view:      stm << "?"; break;
+            case callable_type::addresser::link:      stm << "+"; break;
+            case callable_type::addresser::reference: stm << "&"; break;
+            case callable_type::addresser::owner:     stm << "!"; break;
+        }
+        stm << "(";
+        const auto& params = uct->parameter_types();
+        for (size_t i = 0; i < params.size(); ++i) {
+            if (i > 0) stm << ", ";
+            stm << format_user_type(params[i]);
+        }
+        stm << ")";
+        if (uct->get_return_type()) {
+            stm << ":" << format_user_type(uct->get_return_type());
+        }
+        return stm.str();
+    }
+    if (auto callt = std::dynamic_pointer_cast<callable_type>(t)) {
+        std::ostringstream stm;
+        switch (callt->get_addresser()) {
+            case callable_type::addresser::none:      break;
+            case callable_type::addresser::pointer:   stm << "*"; break;
+            case callable_type::addresser::view:      stm << "?"; break;
+            case callable_type::addresser::link:      stm << "+"; break;
+            case callable_type::addresser::reference: stm << "&"; break;
+            case callable_type::addresser::owner:     stm << "!"; break;
+        }
+        stm << "(";
+        const auto& params = callt->get_parameter_types();
+        for (size_t i = 0; i < params.size(); ++i) {
+            if (i > 0) stm << ", ";
+            stm << format_user_type(params[i]);
+        }
+        stm << ")";
+        if (callt->get_return_type()) {
+            stm << ":" << format_user_type(callt->get_return_type());
+        }
+        return stm.str();
+    }
+    if (auto st = std::dynamic_pointer_cast<struct_type>(t)) {
+        if (auto agg = st->get_struct()) {
+            if (agg->has_tpl_args()) {
+                std::string res = agg->get_tpl_base_name() + "<";
+                const auto& targs = agg->get_tpl_args();
+                for (size_t i = 0; i < targs.size(); ++i) {
+                    if (i > 0) res += ", ";
+                    if (targs[i].is_type()) {
+                        res += format_user_type(targs[i].type_arg);
+                    } else if (targs[i].is_pack()) {
+                        for (size_t pi = 0; pi < targs[i].pack_types.size(); ++pi) {
+                            if (pi > 0) res += ", ";
+                            res += format_user_type(targs[i].pack_types[pi]);
+                        }
+                    } else if (targs[i].value_arg.has_value()) {
+                        std::visit([&res](auto&& v) {
+                            using T = std::decay_t<decltype(v)>;
+                            if constexpr (std::is_same_v<T, std::monostate>) res += "void";
+                            else if constexpr (std::is_same_v<T, std::nullptr_t>) res += "null";
+                            else if constexpr (std::is_same_v<T, bool>) res += (v ? "true" : "false");
+                            else if constexpr (std::is_same_v<T, std::string>) res += "\"" + v + "\"";
+                            else if constexpr (std::is_same_v<T, char>) res += "'" + std::string(1, v) + "'";
+                            else if constexpr (std::is_arithmetic_v<T>) res += std::to_string(v);
+                            else res += "?";
+                        }, *targs[i].value_arg);
+                    }
+                }
+                res += ">";
+                return res;
+            }
+            return agg->get_short_name();
+        }
+        std::string s = st->to_string();
+        if (s.rfind("struct:", 0) == 0) s = s.substr(7);
+        return s;
+    }
+    if (auto et = std::dynamic_pointer_cast<enum_type>(t)) {
+        if (auto e = et->get_enumeration()) return e->get_short_name();
+    }
+    std::string raw = t->to_string();
+    if (raw.rfind("struct:", 0) == 0) raw = raw.substr(7);
+    return raw;
+}
+
+std::string format_function_display_name(const std::shared_ptr<function>& fn) {
+    if (!fn) return "<unknown>";
+    std::string name;
+    if (fn->has_tpl_args()) {
+        name = fn->get_tpl_base_name() + "<";
+        const auto& targs = fn->get_tpl_args();
+        for (size_t i = 0; i < targs.size(); ++i) {
+            if (i > 0) name += ", ";
+            if (targs[i].is_type()) {
+                name += format_user_type(targs[i].type_arg);
+            } else if (targs[i].is_pack()) {
+                for (size_t pi = 0; pi < targs[i].pack_types.size(); ++pi) {
+                    if (pi > 0) name += ", ";
+                    name += format_user_type(targs[i].pack_types[pi]);
+                }
+            } else if (targs[i].value_arg.has_value()) {
+                std::visit([&name](auto&& v) {
+                    using T = std::decay_t<decltype(v)>;
+                    if constexpr (std::is_same_v<T, std::monostate>) name += "void";
+                    else if constexpr (std::is_same_v<T, std::nullptr_t>) name += "null";
+                    else if constexpr (std::is_same_v<T, bool>) name += (v ? "true" : "false");
+                    else if constexpr (std::is_same_v<T, std::string>) name += "\"" + v + "\"";
+                    else if constexpr (std::is_same_v<T, char>) name += "'" + std::string(1, v) + "'";
+                    else if constexpr (std::is_arithmetic_v<T>) name += std::to_string(v);
+                    else name += "?";
+                }, *targs[i].value_arg);
+            }
+        }
+        name += ">";
+    } else {
+        name = fn->get_short_name();
+    }
+
+    if (fn->is_member()) {
+        if (auto agg = fn->parent<aggregate>()) {
+            std::string agg_name;
+            if (agg->has_tpl_args()) {
+                agg_name = agg->get_tpl_base_name() + "<";
+                const auto& targs = agg->get_tpl_args();
+                for (size_t i = 0; i < targs.size(); ++i) {
+                    if (i > 0) agg_name += ", ";
+                    if (targs[i].is_type()) agg_name += format_user_type(targs[i].type_arg);
+                }
+                agg_name += ">";
+            } else {
+                agg_name = agg->get_short_name();
+            }
+            return agg_name + "::" + name;
+        }
+    }
+    return name;
+}
+
+std::string format_function_signature(const std::shared_ptr<function>& fn) {
+    if (!fn) return "<unknown>";
+    std::string sig = format_function_display_name(fn) + "(";
+    const auto& params = fn->parameters();
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i > 0) sig += ", ";
+        if (!params[i]->get_short_name().empty()) {
+            sig += params[i]->get_short_name() + " : ";
+        }
+        sig += format_user_type(params[i]->get_type());
+    }
+    sig += ")";
+    if (fn->has_return_type()) {
+        sig += " : " + format_user_type(fn->get_return_type());
+    }
+    if (fn->is_const_member()) {
+        sig += " const";
+    }
+    return sig;
+}
+
+std::string format_template_function_signature(const std::shared_ptr<function>& fn) {
+    if (!fn) return "<unknown>";
+    std::string name = fn->get_short_name();
+    if (auto* ti = fn->get_tpl_info()) {
+        name += "<";
+        for (size_t i = 0; i < ti->params.size(); ++i) {
+            if (i > 0) name += ", ";
+            name += ti->params[i].name;
+        }
+        name += ">";
+    }
+    if (fn->is_member()) {
+        if (auto agg = fn->parent<aggregate>()) {
+            std::string agg_name;
+            if (agg->has_tpl_args()) {
+                agg_name = agg->get_tpl_base_name() + "<";
+                const auto& targs = agg->get_tpl_args();
+                for (size_t i = 0; i < targs.size(); ++i) {
+                    if (i > 0) agg_name += ", ";
+                    if (targs[i].is_type()) agg_name += format_user_type(targs[i].type_arg);
+                }
+                agg_name += ">";
+            } else {
+                agg_name = agg->get_short_name();
+            }
+            name = agg_name + "::" + name;
+        }
+    }
+    std::string sig = name + "(";
+    const auto& params = fn->parameters();
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i > 0) sig += ", ";
+        if (!params[i]->get_short_name().empty()) {
+            sig += params[i]->get_short_name() + " : ";
+        }
+        sig += format_user_type(params[i]->get_type());
+    }
+    sig += ")";
+    if (fn->has_return_type()) {
+        sig += " : " + format_user_type(fn->get_return_type());
+    }
+    if (fn->is_const_member()) {
+        sig += " const";
+    }
+    return sig;
+}
+
 type_reference_resolver::FunctionCandidate
 /**
  * Choose the best-matching function among candidates given arguments.
@@ -3492,7 +3741,10 @@ type_reference_resolver::get_best_matching_function(
         const std::vector<std::shared_ptr<function>>& candidates,
         const std::vector<std::shared_ptr<expression>>& args,
         const std::shared_ptr<expression>& this_expr,
-        const std::vector<std::shared_ptr<expression>>* direct_args)
+        const std::vector<std::shared_ptr<expression>>* direct_args,
+        const std::string& callee_name,
+        const lex::opt_any_lexeme& call_lexeme,
+        const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates)
 {
     struct CandInfo {
         std::shared_ptr<function> func;
@@ -3829,15 +4081,81 @@ type_reference_resolver::get_best_matching_function(
             }
         }
 
-        std::string fname = candidates.empty() ? "<unknown>" : candidates.front()->get_short_name();
-        lex::opt_any_lexeme fn_lexeme;
-        if (!candidates.empty()) {
+        std::string fname;
+        if (!callee_name.empty()) {
+            fname = callee_name;
+        } else if (!candidates.empty() && candidates.front()) {
+            fname = format_function_display_name(candidates.front());
+        } else {
+            fname = "<unknown>";
+        }
+
+        lex::opt_any_lexeme fn_lexeme = call_lexeme;
+        if (!fn_lexeme && !candidates.empty()) {
             if (auto ast_fd = candidates.front()->get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
         }
-        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH), fn_lexeme,
-            "No viable overload found for '{}' with {} argument(s): "
+
+        std::string args_str;
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (i > 0) args_str += ", ";
+            args_str += format_user_type(args[i] ? args[i]->get_type() : nullptr);
+        }
+
+        auto diag = k::log::diagnostic::make_error(
+            static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH),
+            "No viable overload found for '{}' with argument(s) of type '({})': "
             "none of the {} candidate(s) can be called with the provided arguments",
-            {fname, std::to_string(args.size()), std::to_string(candidates.size())});
+            {fname, args_str, std::to_string(candidates.size())});
+
+        if (fn_lexeme) {
+            diag.at(*fn_lexeme);
+        }
+
+        for (const auto& cand : candidates) {
+            if (!cand) continue;
+            std::string cand_sig = format_function_signature(cand);
+            const auto& params = cand->parameters();
+            if (args.size() > params.size() && !cand->has_varargs()) {
+                diag.add_note("candidate: {} — too many arguments provided (expected at most {}, got {})",
+                              {cand_sig, std::to_string(params.size()), std::to_string(args.size())});
+            } else if (args.size() < params.size()) {
+                size_t min_required = 0;
+                for (const auto& p : params) {
+                    if (!p->has_default_expr()) ++min_required;
+                }
+                if (args.size() < min_required) {
+                    diag.add_note("candidate: {} — too few arguments provided (expected at least {}, got {})",
+                                  {cand_sig, std::to_string(min_required), std::to_string(args.size())});
+                }
+            } else {
+                std::string mismatch_detail;
+                for (size_t i = 0; i < args.size() && i < params.size(); ++i) {
+                    auto ptype = params[i]->get_type();
+                    auto w = compute_cast_weight(args[i], ptype);
+                    if (w == CAST_IMPOSSIBLE) {
+                        if (!mismatch_detail.empty()) mismatch_detail += "; ";
+                        mismatch_detail += "argument " + std::to_string(i + 1) + " of type '" +
+                                           format_user_type(args[i]->get_type()) +
+                                           "' cannot be converted to expected parameter type '" +
+                                           format_user_type(ptype) + "'";
+                    }
+                }
+                if (!mismatch_detail.empty()) {
+                    diag.add_note("candidate: {} — {}", {cand_sig, mismatch_detail});
+                } else {
+                    diag.add_note("candidate: {}", {cand_sig});
+                }
+            }
+        }
+
+        for (const auto& [tpl_cand, reason] : rejected_tpl_candidates) {
+            if (!tpl_cand) continue;
+            std::string tpl_sig = format_template_function_signature(tpl_cand);
+            diag.add_note("candidate template: {} — {}", {tpl_sig, reason});
+        }
+
+        logger_relay::report(diag);
+        throw resolution_error(std::move(diag));
     }
 
     cast_weight best_score = CAST_IMPOSSIBLE;
@@ -3876,19 +4194,12 @@ type_reference_resolver::get_best_matching_function(
     }
 
     if (best.size() > 1) {
-        std::string fname = best[0]->func ? best[0]->func->get_short_name() : "<unknown>";
+        std::string fname = best[0]->func ? format_function_display_name(best[0]->func) : "<unknown>";
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "Ambiguous call to '{}': {} equally viable overloads",
             {fname, std::to_string(best.size())});
         for (auto* c : best) {
-            std::string sig;
-            bool first = true;
-            for (auto& p : c->func->parameters()) {
-                if (!first) sig += ", ";
-                sig += p->get_type() ? p->get_type()->to_string() : "?";
-                first = false;
-            }
-            d.add_note("{} {}({})", {c->is_unified ? "[unified]" : "", c->func->get_fq_name(), sig});
+            d.add_note("{} {}", {c->is_unified ? "[unified]" : "", format_function_signature(c->func)});
         }
         report(d);
         return {nullptr, {}, false, nullptr};
