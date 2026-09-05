@@ -29,8 +29,8 @@
 
 namespace {
 
-std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
-    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
+std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src, bool dump = false) {
+    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR, dump);
 }
 
 } // anonymous namespace
@@ -157,6 +157,27 @@ TEST_CASE("Vector<int> — accumulate into a single value - uniform member form"
             result : int = v.accumulate<int>(0, [](acc : int, v : const int&) { return acc + v; });
 
             return result == 15;  // 1+2+3+4+5 = 15
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5 : Sequence::filter
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — filter elements", "[libk][vector][int][filter]") {
+    auto j = jit_k(R"SRC(
+        module __vector_filter__;
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+            result : int = v.filter([](v : const int&) { return v % 2 == 0; })
+                            ->accumulate<int>(0, [](acc : int, v : const int&) { return acc + v; });
+
+            return result == 30;  // 2+4+6+8+10 = 30
         }
     )SRC");
     REQUIRE(j);

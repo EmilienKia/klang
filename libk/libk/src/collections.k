@@ -96,10 +96,18 @@ interface Sequence {
         }
     }
 
+    /**
+     * Return a new sequence containing only the elements that satisfy the given predicate.
+     * @param predicate A callable that returns true for elements to keep.
+     * @return A new Sequence<T> containing only the elements that satisfy the predicate.
+     */
+    default const filter(predicate : functional::Predicate<const T&>) : Sequence<T>! {
+        return new SequenceFilter<T>(this, predicate);
+    }
+
 /*
     // TODO implement following manipulators:
     map<U>(f: Function<T, U>) -> Sequence<U>;
-    filter(predicate: Predicate<T>) -> Sequence<T>;
     // ...
  */
     /**
@@ -427,3 +435,39 @@ interface MutableIndexedCollection : public IndexedCollection<T>, public Mutable
 
 // TODO FiniteView<T> ?
 // TODO ReversibleSequence<T> ?
+
+template<typename T>
+class FilteredConstIterator : public ConstIterator<T> {
+    source : ConstIterator<T>!;
+    predicate : functional::Predicate<const T&>;
+
+    FilteredConstIterator(source : ConstIterator<T>!, predicate : functional::Predicate<const T&>)
+        : source(source), predicate(predicate) {
+    }
+
+    next() : OptionalConstRef<T> {
+        while (true) {
+            cur : OptionalConstRef<T> = source.next();
+            if (!cur.hasValue()) {
+                return OptionalConstRef<T>();
+            }
+            if (predicate(cur.get())) {
+                return cur;
+            }
+        }
+    }
+}
+
+template<typename T>
+class SequenceFilter : public Sequence<T> {
+    source : const Sequence<T>&;
+    predicate : functional::Predicate<const T&>;
+
+    SequenceFilter(source : const Sequence<T>&, predicate : functional::Predicate<const T&>)
+        : source(source), predicate(predicate) {
+    }
+
+    const constIterator() : ConstIterator<T>! {
+        return new FilteredConstIterator<T>(source.constIterator(), predicate);
+    }
+}
