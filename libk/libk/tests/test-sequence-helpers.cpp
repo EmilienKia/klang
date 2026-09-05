@@ -584,5 +584,103 @@ TEST_CASE("Vector<int> — skip pipeline chaining", "[libk][vector][int][skip]")
     CHECK(fn());
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 10 : Sequence::getFirst
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — getFirst on non-empty sequence", "[libk][vector][int][getFirst]") {
+    auto j = jit_k(R"SRC(
+        module __vector_get_first_non_empty__;
+
+        test() : bool {
+            v : Vector<int>(int[]{42, 10, 20});
+            first : Optional<int> = v.getFirst();
+
+            return first.hasValue() && first.get() == 42;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — getFirst on empty sequence", "[libk][vector][int][getFirst]") {
+    auto j = jit_k(R"SRC(
+        module __vector_get_first_empty__;
+
+        test() : bool {
+            v : Vector<int>;
+            first : Optional<int> = v.getFirst();
+
+            return !first.hasValue();
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — getFirst on pipeline", "[libk][vector][int][getFirst]") {
+    auto j = jit_k(R"SRC(
+        module __vector_get_first_pipeline__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5});
+
+            first : Optional<int> = v.filter([](x : const int&) { return x > 2; })
+                                    ->skip(1)
+                                    ->getFirst();
+
+            // filter (>2) -> [3, 4, 5], skip(1) -> [4, 5], getFirst -> 4
+            return first.hasValue() && first.get() == 4;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — getFirst on pipeline returning empty", "[libk][vector][int][getFirst]") {
+    auto j = jit_k(R"SRC(
+        module __vector_get_first_pipeline_empty__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3});
+
+            first : Optional<int> = v.filter([](x : const int&) { return x > 10; })
+                                    ->getFirst();
+
+            return !first.hasValue();
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — getFirst on map", "[libk][vector][int][getFirst]") {
+    auto j = jit_k(R"SRC(
+        module __vector_get_first_map__;
+
+        test() : bool {
+            v : Vector<int>(int[]{5, 10});
+
+            first : Optional<int> = v.map<int>([](x : const int&) { return x * 2; })
+                                    ->getFirst();
+
+            return first.hasValue() && first.get() == 10;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+
 
 

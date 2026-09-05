@@ -177,6 +177,19 @@ interface Sequence {
     }
 
     /**
+     * Return the first element of the sequence, or empty if the sequence is empty.
+     * @return An Optional<T> containing a copy of the first element, or empty.
+     */
+    default const getFirst() : Optional<T> {
+        it : ConstIterator<T>! = constIterator();
+        cur : OptionalConstRef<T> = it.next();
+        if (cur.hasValue()) {
+            return Optional<T>(cur.get());
+        }
+        return Optional<T>();
+    }
+
+    /**
      * Collect all elements of the sequence into an appendable collection.
      * @param collection An Appendable<T> to receive the elements, typically a collection.
      */

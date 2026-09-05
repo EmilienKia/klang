@@ -47,6 +47,7 @@ interface Sequence {
     template<typename C>
     default const count(c : C&) : SequenceCount<T, C>!;
     default const skip(skip : unsigned long, after : unsigned long = 0) : Sequence<T>!;
+    default const getFirst() : Optional<T>;
     default const collect(collection : Appendable<T>&);
     default const collect(collector : functional::Consumer<const T&>);
     template<typename R>
@@ -74,6 +75,7 @@ interface MutableSequence : public Sequence<T> {
 | `const count<C = unsigned long>() : SequenceCount<T, C>!` | Return a sequence tracking traversed elements in an internal counter (`unsigned long` by default, accessible via `.getCount()`). |
 | `const count<C>(c : C&) : SequenceCount<T, C>!` | Return a sequence incrementing external accumulator `c` via `operator++_()` without resetting it. |
 | `const skip(skip : unsigned long, after : unsigned long = 0) : Sequence<T>!` | Return a lazy sequence passing `after` elements, skipping the next `skip` elements, and passing all subsequent elements. |
+| `const getFirst() : Optional<T>` | Return an `Optional<T>` containing a copy of the first element, or empty if the sequence is empty. |
 | `const collect(collection : Appendable<T>&)` | Append all elements into an `Appendable<T>` collection. |
 | `const collect(collector : Consumer<const T&>)` | Feed all elements to a consumer callback. |
 | `const accumulate<R>(initial : const R&, accumulator : BiFunction<R, const T&, R>) : R` | Left-fold reduction combining elements with an accumulator. |
