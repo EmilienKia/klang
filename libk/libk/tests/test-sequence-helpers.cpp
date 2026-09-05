@@ -229,3 +229,91 @@ TEST_CASE("Vector<int> — map elements with lambda", "[libk][vector][int][map]"
     REQUIRE(fn);
     CHECK(fn());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 7 : Sequence::flatMap
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — flatten elements", "[libk][vector][int][flatten]") {
+    auto j = jit_k(R"SRC(
+        module __vector_flatten__;
+
+        test() : bool {
+            v : Vector<Vector<int> >;
+            v.append(Vector<int>(int[]{1, 2}));
+            v.append(Vector<int>(int[]{2, 4}));
+            v.append(Vector<int>(int[]{3, 6}));
+            result : int = v.flatten<int>()
+                            ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            return result == 18;  // (1+2)+(2+4)+(3+6) = 18
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — flatMap elements without args", "[libk][vector][int][flatMap][noargs]") {
+    auto j = jit_k(R"SRC(
+        module __vector_flatmap_noargs__;
+
+        test() : bool {
+            v : Vector<Vector<int> >;
+            v.append(Vector<int>(int[]{1, 2}));
+            v.append(Vector<int>(int[]{2, 4}));
+            v.append(Vector<int>(int[]{3, 6}));
+            result : int = v.flatMap<int>()
+                            ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            return result == 18;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — flatMap with mapping function", "[libk][vector][int][flatMap]") {
+    auto j = jit_k(R"SRC(
+        module __vector_flatmap__;
+
+        duplicate(x : const int&) : Sequence<int>! {
+            return new Vector<int>(int[]{x, x * 10});
+        }
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3});
+            result : int = v.flatMap<int>(duplicate)
+                            ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            return result == 66;  // (1+10)+(2+20)+(3+30) = 66
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — flatMap with lambda", "[libk][vector][int][flatMap]") {
+    auto j = jit_k(R"SRC(
+        module __vector_flatmap_lambda__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3});
+            result : int = v.flatMap<int>([](x : const int&) : Sequence<int>! {
+                                return new Vector<int>(int[]{x, x * 10});
+                            })
+                            ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            return result == 66;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}

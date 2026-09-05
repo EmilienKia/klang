@@ -116,6 +116,36 @@ interface Sequence {
     }
 
     /**
+     * Return a new sequence containing the results of applying the given function to each element,
+     * and flattening the resulting sequences into a single sequence.
+     * @param f A callable that transforms each element into an owned Sequence<U>!.
+     * @return A new Sequence<U> containing the flattened transformed elements.
+     */
+    template<typename U>
+    default const flatMap(f : ::k::functional::Function<const T&, Sequence<U>!>) : Sequence<U>! {
+        return new SequenceFlatMap<T, U>(this, f);
+    }
+
+    /**
+     * Flatten a sequence of sequences into a single sequence.
+     * Applicable when elements of this sequence are themselves sequences.
+     * @return A new Sequence<U> containing all elements of the sub-sequences.
+     */
+    template<typename U>
+    default const flatten() : Sequence<U>! {
+        return new SequenceFlatten<T, U>(this);
+    }
+
+    /**
+     * Return a new sequence by flattening this sequence when its elements are sequences.
+     * @return A new Sequence<U> containing the flattened elements.
+     */
+    template<typename U>
+    default const flatMap() : Sequence<U>! {
+        return new SequenceFlatten<T, U>(this);
+    }
+
+    /**
      * Collect all elements of the sequence into an appendable collection.
      * @param collection An Appendable<T> to receive the elements, typically a collection.
      */
@@ -510,5 +540,93 @@ class SequenceMap : public Sequence<U> {
 
     const constIterator() : ConstIterator<U>! {
         return new MappedConstIterator<T, U>(source.constIterator(), mapper);
+    }
+}
+
+template<typename T, typename U>
+class FlatMappedConstIterator : public ConstIterator<U> {
+    source : ConstIterator<T>!;
+    mapper : functional::Function<const T&, Sequence<U>!>;
+    currentSequence : Sequence<U>! = null;
+    currentIterator : ConstIterator<U>! = null;
+
+    FlatMappedConstIterator(source : ConstIterator<T>!, mapper : functional::Function<const T&, Sequence<U>!>)
+        : source(source), mapper(mapper), currentSequence(null), currentIterator(null) {
+    }
+
+    next() : OptionalConstRef<U> {
+        while (true) {
+            if (currentIterator != null) {
+                cur : OptionalConstRef<U> = currentIterator.next();
+                if (cur.hasValue()) {
+                    return cur;
+                }
+                currentIterator = null;
+                currentSequence = null;
+            }
+            curSource : OptionalConstRef<T> = source.next();
+            if (!curSource.hasValue()) {
+                return OptionalConstRef<U>();
+            }
+            currentSequence = mapper(curSource.get());
+            if (currentSequence != null) {
+                currentIterator = currentSequence.constIterator();
+            }
+        }
+    }
+}
+
+template<typename T, typename U>
+class SequenceFlatMap : public Sequence<U> {
+    source : const Sequence<T>&;
+    mapper : functional::Function<const T&, Sequence<U>!>;
+
+    SequenceFlatMap(source : const Sequence<T>&, mapper : functional::Function<const T&, Sequence<U>!>)
+        : source(source), mapper(mapper) {
+    }
+
+    const constIterator() : ConstIterator<U>! {
+        return new FlatMappedConstIterator<T, U>(source.constIterator(), mapper);
+    }
+}
+
+template<typename T, typename U>
+class FlattenConstIterator : public ConstIterator<U> {
+    source : ConstIterator<T>!;
+    currentIterator : ConstIterator<U>! = null;
+
+    FlattenConstIterator(source : ConstIterator<T>!)
+        : source(source), currentIterator(null) {
+    }
+
+    next() : OptionalConstRef<U> {
+        while (true) {
+            if (currentIterator != null) {
+                cur : OptionalConstRef<U> = currentIterator.next();
+                if (cur.hasValue()) {
+                    return cur;
+                }
+                currentIterator = null;
+            }
+            curSource : OptionalConstRef<T> = source.next();
+            if (!curSource.hasValue()) {
+                return OptionalConstRef<U>();
+            }
+            subSeq : const Sequence<U>& = (const Sequence<U>&)curSource.get();
+            currentIterator = subSeq.constIterator();
+        }
+    }
+}
+
+template<typename T, typename U>
+class SequenceFlatten : public Sequence<U> {
+    source : const Sequence<T>&;
+
+    SequenceFlatten(source : const Sequence<T>&)
+        : source(source) {
+    }
+
+    const constIterator() : ConstIterator<U>! {
+        return new FlattenConstIterator<T, U>(source.constIterator());
     }
 }

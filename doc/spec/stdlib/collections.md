@@ -31,14 +31,27 @@ destroyed).
 ```k
 template<typename T>
 interface Sequence {
-    const getSize() : int;
-    const isEmpty() : bool;
-    const forEach(consumer : functional::Consumer<const T&>);
+    const constIterator() : ConstIterator<T>!;
+    default const forEach(consumer : functional::Consumer<const T&>);
+    default const filter(predicate : functional::Predicate<const T&>) : Sequence<T>!;
+    template<typename U>
+    default const map(f : functional::Function<const T&, U>) : Sequence<U>!;
+    template<typename U>
+    default const flatMap(f : functional::Function<const T&, Sequence<U>!>) : Sequence<U>!;
+    template<typename U>
+    default const flatten() : Sequence<U>!;
+    template<typename U>
+    default const flatMap() : Sequence<U>!;
+    default const collect(collection : Appendable<T>&);
+    default const collect(collector : functional::Consumer<const T&>);
+    template<typename R>
+    default const accumulate(initial : const R&, accumulator : functional::BiFunction<R, const T&, R>) : R;
 }
 
 template<typename T>
 interface MutableSequence : public Sequence<T> {
-    forEach(consumer : functional::Consumer<T&>);
+    iterator() : Iterator<T>!;
+    default forEach(consumer : functional::Consumer<T&>);
 }
 ```
 
@@ -46,7 +59,17 @@ interface MutableSequence : public Sequence<T> {
 
 | Method | Description |
 |--------|-------------|
+| `const constIterator() : ConstIterator<T>!` | Return a read-only iterator over elements. |
 | `const forEach(consumer : Consumer<const T&>)` | Invoke `consumer` with a `const T&` reference for each element in sequence order. |
+| `const filter(predicate : Predicate<const T&>) : Sequence<T>!` | Return a lazy filtered sequence containing elements satisfying `predicate`. |
+| `const map<U>(f : Function<const T&, U>) : Sequence<U>!` | Return a lazy mapped sequence containing elements transformed by `f`. |
+| `const flatMap<U>(f : Function<const T&, Sequence<U>!>) : Sequence<U>!` | Return a lazy sequence containing flattened results of mapping each element to a `Sequence<U>!`. |
+| `const flatten<U>() : Sequence<U>!` | Flatten a sequence of sequences into a single sequence. |
+| `const flatMap<U>() : Sequence<U>!` | Convenience alias for `flatten<U>()`. |
+| `const collect(collection : Appendable<T>&)` | Append all elements into an `Appendable<T>` collection. |
+| `const collect(collector : Consumer<const T&>)` | Feed all elements to a consumer callback. |
+| `const accumulate<R>(initial : const R&, accumulator : BiFunction<R, const T&, R>) : R` | Left-fold reduction combining elements with an accumulator. |
+| `iterator() : Iterator<T>!` | Return a mutable iterator over elements. |
 | `forEach(consumer : Consumer<T&>)` | Invoke `consumer` with a mutable `T&` reference for each element in sequence order. |
 
 ---
