@@ -170,7 +170,7 @@ Keyword
     | 'static' | 'const'   | 'abstract'  | 'final'  | 'override'
     | 'public' | 'protected' | 'private'
     | 'this'   | 'return'
-    | 'if'     | 'else'    | 'while'     | 'for'    | 'break'
+    | 'if'     | 'else'    | 'while'     | 'for'    | 'break'   | 'continue'
     | 'new'    | 'delete'  | 'default'   | 'enum'   | 'union'
     | 'operator'
     | 'template' | 'typename' | 'generic'
@@ -798,6 +798,7 @@ Statement
     = BlockStatement
     | ReturnStatement
     | BreakStatement
+    | ContinueStatement
     | IfElseStatement
     | WhileStatement
     | ForStatement
@@ -819,6 +820,10 @@ ReturnStatement
 
 BreakStatement
     = 'break' , ';'
+    ;
+
+ContinueStatement
+    = 'continue' , ';'
     ;
 
 IfElseStatement
