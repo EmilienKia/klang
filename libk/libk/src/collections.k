@@ -167,6 +167,16 @@ interface Sequence {
     }
 
     /**
+     * Return a new sequence relaying this sequence by skipping elements after passing initial elements.
+     * @param skip Number of elements to ignore.
+     * @param after Number of initial elements to pass before ignoring (default: 0).
+     * @return A new Sequence<T>! relaying the elements.
+     */
+    default const skip(skip : unsigned long, after : unsigned long = 0) : Sequence<T>! {
+        return new SequenceSkip<T>(this, skip, after);
+    }
+
+    /**
      * Collect all elements of the sequence into an appendable collection.
      * @param collection An Appendable<T> to receive the elements, typically a collection.
      */
@@ -693,3 +703,52 @@ class SequenceCount : public Sequence<T> {
         return *counter;
     }
 }
+
+template<typename T>
+class SkippedConstIterator : public ConstIterator<T> {
+    source : ConstIterator<T>!;
+    toSkip : unsigned long;
+    afterCount : unsigned long;
+    passedCount : unsigned long = 0;
+    skippedCount : unsigned long = 0;
+
+    SkippedConstIterator(source : ConstIterator<T>!, toSkip : unsigned long, afterCount : unsigned long)
+        : source(source), toSkip(toSkip), afterCount(afterCount), passedCount(0), skippedCount(0) {
+    }
+
+    next() : OptionalConstRef<T> {
+        if (passedCount < afterCount) {
+            cur : OptionalConstRef<T> = source.next();
+            if (cur.hasValue()) {
+                ++passedCount;
+            }
+            return cur;
+        }
+
+        while (skippedCount < toSkip) {
+            cur : OptionalConstRef<T> = source.next();
+            if (!cur.hasValue()) {
+                return OptionalConstRef<T>();
+            }
+            ++skippedCount;
+        }
+
+        return source.next();
+    }
+}
+
+template<typename T>
+class SequenceSkip : public Sequence<T> {
+    source : const Sequence<T>&;
+    toSkip : unsigned long;
+    afterCount : unsigned long;
+
+    SequenceSkip(source : const Sequence<T>&, toSkip : unsigned long, afterCount : unsigned long = 0)
+        : source(source), toSkip(toSkip), afterCount(afterCount) {
+    }
+
+    const constIterator() : ConstIterator<T>! {
+        return new SkippedConstIterator<T>(source.constIterator(), toSkip, afterCount);
+    }
+}
+

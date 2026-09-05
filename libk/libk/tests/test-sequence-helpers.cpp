@@ -439,5 +439,150 @@ TEST_CASE("Vector<int> — count pipeline chaining", "[libk][vector][int][count]
     CHECK(fn());
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 9 : Sequence::skip
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — skip elements with default after", "[libk][vector][int][skip]") {
+    auto j = jit_k(R"SRC(
+        module __vector_skip_default_after__;
+
+        test() : bool {
+            v : Vector<int>(int[]{10, 20, 30, 40, 50});
+            counter : unsigned long = 0;
+
+            sum : int = v.skip(2)
+                         ->count<unsigned long>(counter)
+                         ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            // Skipped 10, 20. Remaining: 30, 40, 50.
+            // Sum: 30 + 40 + 50 = 120, count = 3
+            return sum == 120 && counter == 3;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — skip elements with explicit after", "[libk][vector][int][skip]") {
+    auto j = jit_k(R"SRC(
+        module __vector_skip_explicit_after__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5, 6, 7});
+            counter : unsigned long = 0;
+
+            sum : int = v.skip(3, 2)
+                         ->count<unsigned long>(counter)
+                         ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            // Pass 2 elements (1, 2), skip 3 elements (3, 4, 5), pass remaining (6, 7).
+            // Elements: 1, 2, 6, 7. Sum = 1 + 2 + 6 + 7 = 16, count = 4.
+            return sum == 16 && counter == 4;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — skip 0 elements", "[libk][vector][int][skip]") {
+    auto j = jit_k(R"SRC(
+        module __vector_skip_zero__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4});
+
+            sum1 : int = v.skip(0)
+                          ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            sum2 : int = v.skip(0, 2)
+                          ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            return sum1 == 10 && sum2 == 10;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — skip more elements than available", "[libk][vector][int][skip]") {
+    auto j = jit_k(R"SRC(
+        module __vector_skip_overflow__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3});
+
+            // Skip 10 with after=0: all skipped, empty
+            count1 : unsigned long = 0;
+            v.skip(10)->count<unsigned long>(count1)->collect([](x : const int&) {});
+
+            // Skip 10 with after=2: 1 and 2 passed, 3 skipped, count = 2, sum = 3
+            count2 : unsigned long = 0;
+            sum2 : int = v.skip(10, 2)
+                          ->count<unsigned long>(count2)
+                          ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            return count1 == 0 && count2 == 2 && sum2 == 3;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — skip when sequence shorter than after", "[libk][vector][int][skip]") {
+    auto j = jit_k(R"SRC(
+        module __vector_skip_shorter_than_after__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2});
+            count : unsigned long = 0;
+
+            sum : int = v.skip(5, 10)
+                         ->count<unsigned long>(count)
+                         ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            // Only 2 elements in vector, after=10: both pass, skip phase is never reached
+            return count == 2 && sum == 3;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — skip pipeline chaining", "[libk][vector][int][skip]") {
+    auto j = jit_k(R"SRC(
+        module __vector_skip_pipeline__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+
+            // Even numbers: 2, 4, 6, 8, 10
+            // skip(2, after: 1): pass 1 (2), skip 2 (4, 6), pass rest (8, 10) -> [2, 8, 10]
+            // map (*2): [4, 16, 20]
+            // sum: 4 + 16 + 20 = 40
+            total : int = v.filter([](x : const int&) { return x % 2 == 0; })
+                           ->skip(2, 1)
+                           ->map<int>([](x : const int&) { return x * 2; })
+                           ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            return total == 40;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
 
 
