@@ -146,6 +146,27 @@ interface Sequence {
     }
 
     /**
+     * Return a new sequence that counts the elements traversed by its iterator
+     * into an internal unsigned long counter.
+     * @return A new SequenceCount<T, C>! owning the counter.
+     */
+    template<typename C = unsigned long>
+    default const count() : SequenceCount<T, C>! {
+        return new SequenceCount<T, C>(this);
+    }
+
+    /**
+     * Return a new sequence that counts the elements traversed by its iterator
+     * into an external accumulator.
+     * @param c An external accumulator incremented via operator++ for each element.
+     * @return A new SequenceCount<T, C>! tracking the external accumulator.
+     */
+    template<typename C>
+    default const count(c : C&) : SequenceCount<T, C>! {
+        return new SequenceCount<T, C>(this, c);
+    }
+
+    /**
      * Collect all elements of the sequence into an appendable collection.
      * @param collection An Appendable<T> to receive the elements, typically a collection.
      */
@@ -628,5 +649,47 @@ class SequenceFlatten : public Sequence<U> {
 
     const constIterator() : ConstIterator<U>! {
         return new FlattenConstIterator<T, U>(source.constIterator());
+    }
+}
+
+template<typename T, typename C>
+class CountedConstIterator : public ConstIterator<T> {
+    source : ConstIterator<T>!;
+    counter : C&;
+
+    CountedConstIterator(source : ConstIterator<T>!, counter : C&)
+        : source(source), counter(counter) {
+    }
+
+    next() : OptionalConstRef<T> {
+        cur : OptionalConstRef<T> = source.next();
+        if (cur.hasValue()) {
+            ++counter;
+        }
+        return cur;
+    }
+}
+
+template<typename T, typename C>
+class SequenceCount : public Sequence<T> {
+    source : const Sequence<T>&;
+    ownedCounter : C;
+    counter : C* = null;
+
+    SequenceCount(source : const Sequence<T>&, counter : C&)
+        : source(source), ownedCounter(), counter(&counter) {
+    }
+
+    SequenceCount(source : const Sequence<T>&)
+        : source(source), ownedCounter(), counter(null) {
+        counter = &ownedCounter;
+    }
+
+    const constIterator() : ConstIterator<T>! {
+        return new CountedConstIterator<T, C>(source.constIterator(), *counter);
+    }
+
+    const getCount() : const C& {
+        return *counter;
     }
 }

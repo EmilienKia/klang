@@ -317,3 +317,127 @@ TEST_CASE("Vector<int> — flatMap with lambda", "[libk][vector][int][flatMap]")
     REQUIRE(fn);
     CHECK(fn());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 8 : Sequence::count
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<int> — count internal counter", "[libk][vector][int][count]") {
+    auto j = jit_k(R"SRC(
+        module __vector_count_internal__;
+
+        test() : bool {
+            v : Vector<int>(int[]{10, 20, 30, 40, 50});
+            seq : SequenceCount<int, unsigned long>! = v.count();
+            if (seq.getCount() != 0) {
+                return false;
+            }
+
+            it : ConstIterator<int>! = seq.constIterator();
+            cur : OptionalConstRef<int> = it.next();
+            while (cur.hasValue()) {
+                cur = it.next();
+            }
+
+            if (seq.getCount() != 5) {
+                return false;
+            }
+
+            // Second iteration: must continue accumulating without resetting to 0
+            it2 : ConstIterator<int>! = seq.constIterator();
+            cur2 : OptionalConstRef<int> = it2.next();
+            while (cur2.hasValue()) {
+                cur2 = it2.next();
+            }
+
+            return seq.getCount() == 10;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — count external primitive accumulator", "[libk][vector][int][count]") {
+    auto j = jit_k(R"SRC(
+        module __vector_count_external_primitive__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3});
+            acc : int = 100;
+
+            seq : Sequence<int>! = v.count<int>(acc);
+            seq.collect([](x : const int&) {});
+
+            if (acc != 103) {
+                return false;
+            }
+
+            // Re-iterate: no reset to zero, accumulates on top of previous value
+            seq.collect([](x : const int&) {});
+            return acc == 106;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — count external custom accumulator with operator++", "[libk][vector][int][count]") {
+    auto j = jit_k(R"SRC(
+        module __vector_count_external_custom__;
+
+        struct StepCounter {
+            steps : int = 10;
+            operator++_() : StepCounter& {
+                steps += 5;
+                return this;
+            }
+        }
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4});
+            counter : StepCounter;
+
+            seq : Sequence<int>! = v.count<StepCounter>(counter);
+            seq.collect([](x : const int&) {});
+
+            // 10 + 4 * 5 = 30
+            return counter.steps == 30;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+TEST_CASE("Vector<int> — count pipeline chaining", "[libk][vector][int][count]") {
+    auto j = jit_k(R"SRC(
+        module __vector_count_pipeline__;
+
+        test() : bool {
+            v : Vector<int>(int[]{1, 2, 3, 4, 5, 6, 7, 8});
+            counter : unsigned long = 0;
+
+            // Pipeline: filter even numbers -> count -> map(*10) -> accumulate
+            total : int = v.filter([](x : const int&) { return x % 2 == 0; })
+                           ->count<unsigned long>(counter)
+                           ->map<int>([](x : const int&) { return x * 10; })
+                           ->accumulate<int>(0, [](acc : int, x : const int&) { return acc + x; });
+
+            // Even numbers: 2, 4, 6, 8 -> count is 4
+            // Sum: 20 + 40 + 60 + 80 = 200
+            return counter == 4 && total == 200;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<bool(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn());
+}
+
+
+

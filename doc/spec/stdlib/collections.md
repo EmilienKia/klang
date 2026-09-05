@@ -42,6 +42,10 @@ interface Sequence {
     default const flatten() : Sequence<U>!;
     template<typename U>
     default const flatMap() : Sequence<U>!;
+    template<typename C = unsigned long>
+    default const count() : SequenceCount<T, C>!;
+    template<typename C>
+    default const count(c : C&) : SequenceCount<T, C>!;
     default const collect(collection : Appendable<T>&);
     default const collect(collector : functional::Consumer<const T&>);
     template<typename R>
@@ -66,6 +70,8 @@ interface MutableSequence : public Sequence<T> {
 | `const flatMap<U>(f : Function<const T&, Sequence<U>!>) : Sequence<U>!` | Return a lazy sequence containing flattened results of mapping each element to a `Sequence<U>!`. |
 | `const flatten<U>() : Sequence<U>!` | Flatten a sequence of sequences into a single sequence. |
 | `const flatMap<U>() : Sequence<U>!` | Convenience alias for `flatten<U>()`. |
+| `const count<C = unsigned long>() : SequenceCount<T, C>!` | Return a sequence tracking traversed elements in an internal counter (`unsigned long` by default, accessible via `.getCount()`). |
+| `const count<C>(c : C&) : SequenceCount<T, C>!` | Return a sequence incrementing external accumulator `c` via `operator++_()` without resetting it. |
 | `const collect(collection : Appendable<T>&)` | Append all elements into an `Appendable<T>` collection. |
 | `const collect(collector : Consumer<const T&>)` | Feed all elements to a consumer callback. |
 | `const accumulate<R>(initial : const R&, accumulator : BiFunction<R, const T&, R>) : R` | Left-fold reduction combining elements with an accumulator. |
