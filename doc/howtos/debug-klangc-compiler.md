@@ -42,6 +42,37 @@ public main() : int {
 }
 ```
 
+### 2.1 Locating the Standard Library (`k.kdi`)
+
+Any non-`k` module automatically injects `import k;`. To resolve standard library types (such as `Vector`, `String`, `Optional`, etc.), `klangc` needs to find the standard library metadata file `k.kdi`, generated during the build under `<build_dir>/libk/libk/`.
+
+If `klangc` cannot find `k.kdi`, compilation fails with `Error 00D01 : Unknown type '<Type>'...: no type with this name could be found in scope`.
+
+You can provide the lookup path in two ways:
+
+1. **Via the `-I` command-line option**:
+   ```bash
+   # From project root:
+   ./cmake-build-debug/klang/klangc -I cmake-build-debug/libk/libk /tmp/repro.k -o /tmp/repro
+
+   # Or when working inside cmake-build-debug/:
+   ./klang/klangc -I libk/libk /tmp/repro.k -o /tmp/repro
+   ```
+
+2. **Via the `KLANG_LIB_PATH` environment variable**:
+   ```bash
+   export KLANG_LIB_PATH=/path/to/build/libk/libk
+   ./cmake-build-debug/klang/klangc /tmp/repro.k -o /tmp/repro
+   ```
+   Inside GDB:
+   ```gdb
+   (gdb) set env KLANG_LIB_PATH cmake-build-debug/libk/libk
+   ```
+   Inside LLDB:
+   ```lldb
+   (lldb) env KLANG_LIB_PATH=cmake-build-debug/libk/libk
+   ```
+
 ---
 
 ## 3. Running `klangc` Under GDB
