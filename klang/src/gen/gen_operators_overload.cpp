@@ -977,7 +977,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
                         llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                             llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "op_imp_vtbl_slot");
                         llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "op_imp_fn_ptr");
-                        _builder->CreateCall(fn_type, fn_ptr, args);
+                        create_call_or_invoke(fn_type, fn_ptr, args);
                         _value = sret_tmp;
                         return true;
                     }
@@ -991,7 +991,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
                     llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                         llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "op_imp_vtbl_slot");
                     llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "op_imp_fn_ptr");
-                    _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                    _value = create_call_or_invoke(fn_type, fn_ptr, args,
                         fn_type->getReturnType()->isVoidTy() ? "" : "op_imp_vcall");
                     return true;
                 }
@@ -1010,10 +1010,10 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
     bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
     if (op_uses_sret) {
         auto* sret_dest = prepare_sret_for_op(args, true);
-        _builder->CreateCall(llvm_func, args);
+        create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
         _value = sret_dest;
     } else {
-        _value = _builder->CreateCall(llvm_func, args,
+        _value = create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args,
             llvm_func->getReturnType()->isVoidTy() ? "" : "op_call");
     }
     return true;
@@ -1161,7 +1161,7 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
                         llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                             llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "uop_imp_vtbl_slot");
                         llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "uop_imp_fn_ptr");
-                        _builder->CreateCall(fn_type, fn_ptr, args);
+                        create_call_or_invoke(fn_type, fn_ptr, args);
                         _value = sret_tmp;
                         return true;
                     }
@@ -1175,7 +1175,7 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
                     llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                         llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "uop_imp_vtbl_slot");
                     llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "uop_imp_fn_ptr");
-                    _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                    _value = create_call_or_invoke(fn_type, fn_ptr, args,
                         fn_type->getReturnType()->isVoidTy() ? "" : "uop_imp_vcall");
                     return true;
                 }
@@ -1193,10 +1193,10 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
     bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
     if (op_uses_sret) {
         auto* sret_tmp = prepare_sret_for_uop(args);
-        _builder->CreateCall(llvm_func, args);
+        create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
         _value = sret_tmp;
     } else {
-        _value = _builder->CreateCall(llvm_func, args,
+        _value = create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args,
             llvm_func->getReturnType()->isVoidTy() ? "" : "uop_call");
     }
     return true;
@@ -1361,7 +1361,7 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
                         llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                             llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "cast_imp_vtbl_slot");
                         llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "cast_imp_fn_ptr");
-                        _builder->CreateCall(fn_type, fn_ptr, args);
+                        create_call_or_invoke(fn_type, fn_ptr, args);
                         _value = sret_tmp;
                         return true;
                     }
@@ -1375,7 +1375,7 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
                     llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                         llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "cast_imp_vtbl_slot");
                     llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "cast_imp_fn_ptr");
-                    _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                    _value = create_call_or_invoke(fn_type, fn_ptr, args,
                         fn_type->getReturnType()->isVoidTy() ? "" : "cast_imp_vcall");
                     return true;
                 }
@@ -1394,10 +1394,10 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
     bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
     if (op_uses_sret) {
         auto* sret_dest = prepare_sret_for_cast(args, true);
-        _builder->CreateCall(llvm_func, args);
+        create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
         _value = sret_dest;
     } else {
-        _value = _builder->CreateCall(llvm_func, args,
+        _value = create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args,
             llvm_func->getReturnType()->isVoidTy() ? "" : "cast_call");
     }
     return true;

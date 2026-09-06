@@ -55,6 +55,9 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/math/math.k
     # ── Phase 1: time, threading ──────────────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/errors.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/arithmetic.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/gregorian.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
     # ── Phase 2: futures ──────────────────────────────────────────────────
@@ -592,6 +595,11 @@ libk_add_test(libk-tests-executor 120
 # ── libk UUID & Cryptographic hash tests ─────────────────────────────────────
 libk_add_test(libk-tests-uuid 120
     tests/test-uuid.cpp
+)
+
+# ── libk time API tests (Phase 1) ────────────────────────────────────────────
+libk_add_test(libk-tests-time 120
+    tests/time/test-time-arithmetic.cpp
 )
 
 # ── libk performance / stress tests ──────────────────────────────────────────

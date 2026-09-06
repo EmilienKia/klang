@@ -1244,7 +1244,7 @@ llvm::Value* implementation_generator::call_comparison_source_operator(
                 llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                     llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "cmp_imp_vtbl_slot");
                 llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "cmp_imp_fn_ptr");
-                auto* call = _builder->CreateCall(fn_type, fn_ptr, args, "cmp_imp_vcall");
+                auto* call = create_call_or_invoke(fn_type, fn_ptr, args, "cmp_imp_vcall");
                 return sret_dest ? static_cast<llvm::Value*>(sret_dest) : static_cast<llvm::Value*>(call);
             }
         }
@@ -1257,10 +1257,10 @@ llvm::Value* implementation_generator::call_comparison_source_operator(
     }
     if (op_needs_sret) {
         auto* sret_dest = prepare_sret();
-        _builder->CreateCall(llvm_func, args, "");
+        create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args, "");
         return sret_dest;
     }
-    return _builder->CreateCall(llvm_func, args, "cmp_call");
+    return create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args, "cmp_call");
 }
 
 /**
