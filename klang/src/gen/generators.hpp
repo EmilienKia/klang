@@ -459,6 +459,22 @@ public:
     void fill_imported_base_vtables(klass& klass);
     void visit_global_variable_definition(global_variable_definition &) override;
 
+    /** Map of generated thread-local initialization functions. */
+    std::unordered_map<const global_variable_definition*, llvm::Function*> _tls_init_functions;
+
+    /** Set of global_variable_definition currently being initialized in their TLS init function.
+     *  Prevents recursion in visit_symbol_expression. */
+    std::unordered_set<const global_variable_definition*> _tls_constructing_vars;
+
+    /** Determine whether a thread-local variable requires a lazy TLS init function. */
+    bool needs_tls_init_function(const global_variable_definition& var);
+
+    /** Get or create the lazy thread-local initialization function for a variable. */
+    llvm::Function* get_or_create_tls_init_function(global_variable_definition& var);
+
+    /** Get the pointer to a global (or thread-local) variable, initializing it if necessary. */
+    llvm::Value* get_global_or_thread_local_variable_pointer(global_variable_definition& var);
+
     /**
      * Fill the @_KVT<mangled> vtable global constant with the actual function pointers
      * and offset-to-top values for a polymorphic class.

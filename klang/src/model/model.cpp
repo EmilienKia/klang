@@ -111,11 +111,11 @@ void named_element::update_names() {
 // Abstract variable holder
 //
 
-std::shared_ptr<variable_definition> variable_holder::append_variable(const std::string& name, bool is_static) {
+std::shared_ptr<variable_definition> variable_holder::append_variable(const std::string& name, bool is_static, bool is_thread_local) {
     if (_vars.contains(name)) {
         // TODO throw exception : var is already defined.
     }
-    std::shared_ptr<variable_definition> var = do_create_variable(name, is_static);
+    std::shared_ptr<variable_definition> var = do_create_variable(name, is_static, is_thread_local);
     _vars[name] = var;
     on_variable_defined(var);
     return var;
@@ -544,16 +544,16 @@ void function::set_return_type(std::shared_ptr<type> return_type) {
     _return_type = return_type;
 }
 
-std::shared_ptr<variable_definition> function::append_variable(const std::string& name, bool is_static) {
+std::shared_ptr<variable_definition> function::append_variable(const std::string& name, bool is_static, bool is_thread_local) {
     // DO NOT USE METHOD, USE append_parameter instead
     // TODO throw exception
     std::cerr << "Error: function::append_variable is not supported, use append_parameter instead." << std::endl;
     return nullptr;
 }
 
-std::shared_ptr<variable_definition> function::do_create_variable(const std::string &name, bool is_static) {
-    if (is_static) {
-        std::clog << "A function parameter cannot be declared static : " << get_fq_name() << "::" << name << ", ignore it" << std::endl;
+std::shared_ptr<variable_definition> function::do_create_variable(const std::string &name, bool is_static, bool is_thread_local) {
+    if (is_static || is_thread_local) {
+        std::clog << "A function parameter cannot be declared static or threadlocal : " << get_fq_name() << "::" << name << ", ignore it" << std::endl;
     }
     return _parameters.emplace_back(parameter::make_shared(shared_as<function>(), name, _parameters.size()));
 }
@@ -1050,9 +1050,11 @@ void aggregate::on_function_removed(const std::shared_ptr<function>& func) {
         _children.end());
 }
 
-std::shared_ptr<variable_definition> aggregate::do_create_variable(const std::string &name, bool is_static) {
-    if (is_static) {
-        return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(shared_as<aggregate>(), name));
+std::shared_ptr<variable_definition> aggregate::do_create_variable(const std::string &name, bool is_static, bool is_thread_local) {
+    if (is_static || is_thread_local) {
+        auto var = global_variable_definition::make_shared(shared_as<aggregate>(), name);
+        if (is_thread_local) var->set_thread_local(true);
+        return var;
     } else {
         return std::shared_ptr<variable_definition>(member_variable_definition::make_shared(shared_as<aggregate>(), name));
     }
@@ -1334,11 +1336,13 @@ std::shared_ptr<const ns> ns::get_child_namespace(const std::string &child_name)
     }
 }
 
-std::shared_ptr<variable_definition> ns::do_create_variable(const std::string &name, bool is_static) {
+std::shared_ptr<variable_definition> ns::do_create_variable(const std::string &name, bool is_static, bool is_thread_local) {
     if (is_static) {
         std::clog << "A global variable cannot be declared static : " << get_fq_name() << "::" << name << ", ignore it" << std::endl;
     }
-    return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
+    auto var = global_variable_definition::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name);
+    if (is_thread_local) var->set_thread_local(true);
+    return var;
 }
 
 void ns::on_variable_defined(std::shared_ptr<variable_definition> var) {

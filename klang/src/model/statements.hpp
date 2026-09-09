@@ -158,7 +158,7 @@ protected:
     /** Condition variables (if-let / if(vars; test) forms). */
     std::vector<std::shared_ptr<variable_statement>> _cond_vars;
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static, bool is_thread_local = false) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
@@ -294,7 +294,7 @@ protected:
     std::shared_ptr<statement> _nested_stmt;
 
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static, bool is_thread_local = false) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
@@ -415,7 +415,7 @@ protected:
      */
     std::shared_ptr<expression> _current_expr;
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static, bool is_thread_local = false) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
@@ -644,7 +644,7 @@ protected:
     std::shared_ptr<variable_statement> _exception_var;
     std::shared_ptr<block> _body;
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static, bool is_thread_local = false) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
@@ -745,7 +745,7 @@ protected:
         _function = func;
     }
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static, bool is_thread_local = false) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:

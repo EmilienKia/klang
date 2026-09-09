@@ -83,7 +83,8 @@ namespace k::lex {
         {"throws", keyword::THROWS},
         {"finally", keyword::FINALLY},
         {"alias", keyword::ALIAS},
-        {"typedef", keyword::TYPEDEF}
+        {"typedef", keyword::TYPEDEF},
+        {"threadlocal", keyword::THREADLOCAL}
     };
 
     const std::map<std::string, punctuator::type_t> punctuators {

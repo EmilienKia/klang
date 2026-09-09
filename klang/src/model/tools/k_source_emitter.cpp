@@ -1010,8 +1010,12 @@ std::string k_source_emitter::emit_template_aggregate(const aggregate& agg) {
             _os << "\t";
             emit_function(*fn);
         } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
-            // Static member variables
-            _os << "\tstatic " << gv->get_short_name() << " : ";
+            // Static or threadlocal member variables
+            if (gv->is_thread_local()) {
+                _os << "\tthreadlocal " << gv->get_short_name() << " : ";
+            } else {
+                _os << "\tstatic " << gv->get_short_name() << " : ";
+            }
             emit_type(std::const_pointer_cast<type>(gv->get_type()));
             if (auto init = gv->get_init_expr()) {
                 _os << " = ";

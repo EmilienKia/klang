@@ -158,7 +158,8 @@ struct keyword : public lexeme {
         THROWS,
         FINALLY,
         ALIAS,
-        TYPEDEF
+        TYPEDEF,
+        THREADLOCAL
     };
 
     type_t type;

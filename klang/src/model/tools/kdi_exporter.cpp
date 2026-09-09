@@ -1484,9 +1484,10 @@ void kdi_builder::visit_global_variable_definition(global_variable_definition& v
     kv.name         = var.get_short_name();
     kv.fq_name      = var.get_fq_name();
     kv.visibility   = to_kdi_vis(var.get_visibility());
-    kv.type         = to_kdi_type(std::const_pointer_cast<type>(var.get_type()));
-    kv.is_const     = type::is_const(std::const_pointer_cast<type>(var.get_type()));
-    kv.mangled_name = var.get_mangled_name();
+    kv.type            = to_kdi_type(std::const_pointer_cast<type>(var.get_type()));
+    kv.is_const        = type::is_const(std::const_pointer_cast<type>(var.get_type()));
+    kv.is_thread_local = var.is_thread_local();
+    kv.mangled_name    = var.get_mangled_name();
     kv.doc          = to_kdi_doc_block(var);
 
     if (in_aggregate()) {

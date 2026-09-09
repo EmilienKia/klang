@@ -106,7 +106,10 @@ void catch_clause::accept(model_visitor &visitor) {
     visitor.visit_catch_clause(*this);
 }
 
-std::shared_ptr<variable_definition> catch_clause::do_create_variable(const std::string &name, bool is_static) {
+std::shared_ptr<variable_definition> catch_clause::do_create_variable(const std::string &name, bool is_static, bool is_thread_local) {
+    if (is_static || is_thread_local) {
+        std::clog << "A catch-declared variable cannot be declared static or threadlocal : " << name << ", ignore it" << std::endl;
+    }
     auto var = variable_statement::make_shared(shared_as<statement>(), name);
     _exception_var = var;
     return var;
@@ -147,9 +150,9 @@ std::shared_ptr<const variable_holder> if_else_statement::get_variable_holder() 
     return shared_as<const variable_holder>();
 }
 
-std::shared_ptr<variable_definition> if_else_statement::do_create_variable(const std::string &name, bool is_static) {
-    if (is_static) {
-        std::clog << "An if-declared variable cannot be declared static : " << name << ", ignore it" << std::endl;
+std::shared_ptr<variable_definition> if_else_statement::do_create_variable(const std::string &name, bool is_static, bool is_thread_local) {
+    if (is_static || is_thread_local) {
+        std::clog << "An if-declared variable cannot be declared static or threadlocal : " << name << ", ignore it" << std::endl;
     }
     return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<statement>(), name));
 }
@@ -244,9 +247,9 @@ std::shared_ptr<const variable_holder> for_statement::get_variable_holder() cons
     return shared_as<const variable_holder>();
 }
 
-std::shared_ptr<variable_definition> for_statement::do_create_variable(const std::string &name, bool is_static) {
-    if (is_static) {
-        std::clog << "A for-declared variable cannot be declared static : " << name << ", ignore it" << std::endl;
+std::shared_ptr<variable_definition> for_statement::do_create_variable(const std::string &name, bool is_static, bool is_thread_local) {
+    if (is_static || is_thread_local) {
+        std::clog << "A for-declared variable cannot be declared static or threadlocal : " << name << ", ignore it" << std::endl;
     }
     return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<statement>(), name));
 }
@@ -352,9 +355,9 @@ std::shared_ptr<const variable_holder> foreach_statement::get_variable_holder() 
     return shared_as<const variable_holder>();
 }
 
-std::shared_ptr<variable_definition> foreach_statement::do_create_variable(const std::string &name, bool is_static) {
-    if (is_static) {
-        std::clog << "A foreach-declared variable cannot be declared static : " << name << ", ignore it" << std::endl;
+std::shared_ptr<variable_definition> foreach_statement::do_create_variable(const std::string &name, bool is_static, bool is_thread_local) {
+    if (is_static || is_thread_local) {
+        std::clog << "A foreach-declared variable cannot be declared static or threadlocal : " << name << ", ignore it" << std::endl;
     }
     return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<statement>(), name));
 }
@@ -458,9 +461,11 @@ block::iterator block::insert_statement(block::const_iterator pos, std::shared_p
     return it;
 }
 
-std::shared_ptr<variable_definition> block::do_create_variable(const std::string &name, bool is_static) {
-    if (is_static) {
-        return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(shared_as<block>(), name));
+std::shared_ptr<variable_definition> block::do_create_variable(const std::string &name, bool is_static, bool is_thread_local) {
+    if (is_static || is_thread_local) {
+        auto var = global_variable_definition::make_shared(shared_as<block>(), name);
+        if (is_thread_local) var->set_thread_local(true);
+        return var;
     } else {
         return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<block>(), name));
     }

@@ -170,7 +170,7 @@ protected:
     aggregate(std::shared_ptr<element> parent) :
         element(parent) {}
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static, bool is_thread_local = false) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
     std::shared_ptr<function> do_create_function(const std::string &name, bool is_static) override;

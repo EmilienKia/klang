@@ -646,3 +646,44 @@ TEST_CASE("Thread.yield() does not throw", "[libk][thread][yield]") {
     REQUIRE(fn);
     REQUIRE(fn() == 0);
 }
+
+// =============================================================================
+// k::Thread with threadlocal variable destructor on thread exit
+// =============================================================================
+
+TEST_CASE("k::Thread: threadlocal variable destructor runs before join returns", "[libk][thread][tls]") {
+    auto jit = jit_k(R"SRC(
+        module __thread_tls__;
+
+        g_dtor_count : int = 0;
+
+        struct Resource {
+            val : int;
+            Resource(v: int) {
+                val = v;
+            }
+            ~Resource() {
+                ++g_dtor_count;
+            }
+        }
+
+        class Worker : public Runnable {
+        public:
+            override run() : void {
+                threadlocal r : Resource(42);
+            }
+        }
+
+        test() : int {
+            w : Worker! = new Worker();
+            t : Thread! = new Thread(w);
+            t.start();
+            t.join();
+            return g_dtor_count;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}

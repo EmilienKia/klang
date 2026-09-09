@@ -357,17 +357,19 @@ static json to_json(const kdi_variable& v) {
         {"is_const",     v.is_const},
         {"mangled_name", v.mangled_name},
     };
+    if (v.is_thread_local) j["is_thread_local"] = true;
     if (v.doc) j["doc"] = to_json(*v.doc);
     return j;
 }
 static kdi_variable from_json_variable(const json& j) {
     kdi_variable v;
-    v.name         = j.at("name");
-    v.fq_name      = j.at("fq_name");
-    v.visibility   = vis_from_str(j.value("visibility", "public"));
-    v.type         = from_json_type(j.at("type"));
-    v.is_const     = j.value("is_const", false);
-    v.mangled_name = j.value("mangled_name", "");
+    v.name            = j.at("name");
+    v.fq_name         = j.at("fq_name");
+    v.visibility      = vis_from_str(j.value("visibility", "public"));
+    v.type            = from_json_type(j.at("type"));
+    v.is_const        = j.value("is_const", false);
+    v.is_thread_local = j.value("is_thread_local", false);
+    v.mangled_name    = j.value("mangled_name", "");
     if (j.contains("doc")) v.doc = from_json_doc_block(j.at("doc"));
     return v;
 }

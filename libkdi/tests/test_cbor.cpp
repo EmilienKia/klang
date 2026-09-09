@@ -122,6 +122,30 @@ TEST_CASE("CBOR: minimal file round-trips", "[cbor]") {
     REQUIRE(restored.unit.root_ns.functions[0].mangled_name == "_KFN4test3mod6answerEv");
 }
 
+TEST_CASE("CBOR: global variable round-trips", "[cbor][variable]") {
+    kdi_file f = make_minimal_file();
+    kdi_variable v;
+    v.name            = "g_count";
+    v.fq_name         = "::g_count";
+    v.visibility      = kdi_visibility::public_;
+    v.type            = kdi_type::make_int(32);
+    v.is_thread_local = true;
+    v.mangled_name    = "_KN7g_countE";
+    f.unit.root_ns.variables.push_back(v);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+
+    std::istringstream iss(oss.str(), std::ios::binary);
+    kdi_file restored;
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(iss));
+
+    REQUIRE(restored.unit.root_ns.variables.size() == 1u);
+    REQUIRE(restored.unit.root_ns.variables[0].name == "g_count");
+    REQUIRE(restored.unit.root_ns.variables[0].is_thread_local == true);
+    REQUIRE(restored.unit.root_ns.variables[0].mangled_name == "_KN7g_countE");
+}
+
 TEST_CASE("CBOR: aggregate file round-trips", "[cbor]") {
     auto original = make_aggregate_file();
 

@@ -1485,6 +1485,17 @@ void implementation_generator::visit_global_main_function(global_main_function& 
         }
     }
 
+    // ── Run thread-local destructors for main thread ───────────────────────────
+    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+    auto* tls_exit_fn_ty = llvm::FunctionType::get(void_ty, false);
+    auto* tls_exit_fn = get_module().getFunction("__k_tls_thread_exit");
+    if (!tls_exit_fn) {
+        tls_exit_fn = llvm::Function::Create(
+            tls_exit_fn_ty, llvm::Function::ExternalLinkage,
+            "__k_tls_thread_exit", get_module());
+    }
+    _builder->CreateCall(tls_exit_fn_ty, tls_exit_fn);
+
     // ── Return ────────────────────────────────────────────────────────────────
     _builder->CreateRet(ret_val);
 }
@@ -1542,14 +1553,17 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
     debug("[type_reference_resolver::visit_global_variable_definition] '{}'", {var.get_short_name()});
     visit_variable_definition(var);
 
-    // Unconditionnally register global variable to global constructor for now, because we need to be sure it is registered before any possible use in other variable initialization expression.
-    // TODO Add registering condition for trivial primitive initialization
-    var.ancestor<unit>()->get_global_constructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
+    // Thread-local variables are initialized per-thread, not as part of the process-global constructor.
+    if (!var.is_thread_local()) {
+        // Unconditionnally register global variable to global constructor for now, because we need to be sure it is registered before any possible use in other variable initialization expression.
+        // TODO Add registering condition for trivial primitive initialization
+        var.ancestor<unit>()->get_global_constructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
 
-    // If the variable's type is a struct with a destructor, also register it for global destruction.
-    if (auto st_type = std::dynamic_pointer_cast<struct_type>(var.get_type())) {
-        if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
-            var.ancestor<unit>()->get_global_destructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
+        // If the variable's type is a struct with a destructor, also register it for global destruction.
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(var.get_type())) {
+            if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+                var.ancestor<unit>()->get_global_destructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
+            }
         }
     }
 }
@@ -1572,6 +1586,9 @@ void declaration_generator::visit_global_variable_definition(global_variable_def
         : llvm::GlobalValue::ExternalLinkage;
 
     auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, linkage, nullptr, var.get_mangled_name());
+    if (var.is_thread_local()) {
+        variable->setThreadLocalMode(llvm::GlobalValue::GeneralDynamicTLSModel);
+    }
     _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
 }
 
@@ -1712,11 +1729,246 @@ void implementation_generator::visit_global_variable_definition(global_variable_
             ? llvm::GlobalValue::InternalLinkage
             : llvm::GlobalValue::ExternalLinkage;
         auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, linkage, constInitValue, var.get_mangled_name());
+        if (var.is_thread_local()) {
+            variable->setThreadLocalMode(llvm::GlobalValue::GeneralDynamicTLSModel);
+        }
         _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
     } else {
         // Already declared, just add initializer
         variable_it->second->setInitializer(constInitValue);
     }
+}
+
+bool implementation_generator::needs_tls_init_function(const global_variable_definition& var) {
+    if (!var.is_thread_local()) return false;
+
+    // Check if type has a destructor or requires cleanup
+    auto var_type = var.get_type();
+    if (var_type) {
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(type::canonical(var_type))) {
+            if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+                return true;
+            }
+        } else if (type::is_owner(var_type)) {
+            return true;
+        }
+    }
+
+    // Check if initialization is non-constant
+    if (var.is_constant()) return false;
+
+    auto init = var.get_init_expr();
+    if (!init) return false;
+    if (init->is_constant()) return false;
+
+    // If it's a constructor_invocation_expression on a primitive with 1 constant arg:
+    auto init_ctor = std::dynamic_pointer_cast<constructor_invocation_expression>(init);
+    if (type::is_primitive(var_type) && init_ctor && init_ctor->size() == 1) {
+        if (auto val = std::dynamic_pointer_cast<value_expression>(init_ctor->argument(0))) {
+            if (_context->get_llvm_constant_from_value_expression(*val) != nullptr) {
+                return false;
+            }
+        }
+    }
+
+    // Default empty constructor on a primitive or simple struct without ctor
+    if (init_ctor && init_ctor->empty()) {
+        if (type::is_primitive(var_type)) return false;
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(type::canonical(var_type))) {
+            if (st_type->get_struct() && st_type->get_struct()->constructors().empty()) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+llvm::Value* implementation_generator::get_global_or_thread_local_variable_pointer(global_variable_definition& var) {
+    auto var_shared = var.shared_as<global_variable_definition>();
+    auto it = _context->_global_vars.find(var_shared);
+    llvm::GlobalVariable* gv = (it != _context->_global_vars.end()) ? it->second : nullptr;
+    if (!gv) {
+        visit_global_variable_definition(var);
+        gv = _context->_global_vars[var_shared];
+    }
+
+    if (!var.is_thread_local()) {
+        return gv;
+    }
+
+    // If this variable is currently being constructed inside its own TLS init function,
+    // return the raw storage pointer to avoid infinite recursion.
+    if (_tls_constructing_vars.count(&var)) {
+        return gv;
+    }
+
+    if (!needs_tls_init_function(var)) {
+        return gv;
+    }
+
+    llvm::Function* init_fn = get_or_create_tls_init_function(var);
+    return _builder->CreateCall(init_fn->getFunctionType(), init_fn, {}, var.get_short_name() + ".tls_ptr");
+}
+
+llvm::Function* implementation_generator::get_or_create_tls_init_function(global_variable_definition& var) {
+    auto it = _tls_init_functions.find(&var);
+    if (it != _tls_init_functions.end()) {
+        return it->second;
+    }
+
+    auto var_shared = var.shared_as<global_variable_definition>();
+    auto gv_it = _context->_global_vars.find(var_shared);
+    llvm::GlobalVariable* storage = (gv_it != _context->_global_vars.end()) ? gv_it->second : nullptr;
+    if (!storage) {
+        visit_global_variable_definition(var);
+        storage = _context->_global_vars[var_shared];
+    }
+
+    auto* ptr_ty = llvm::PointerType::get(**_context, 0);
+    auto* fn_ty = llvm::FunctionType::get(ptr_ty, false);
+    std::string fn_name = var.get_mangled_name() + ".tls_init";
+    llvm::Function* init_fn = llvm::Function::Create(
+        fn_ty, llvm::GlobalValue::InternalLinkage, fn_name, get_module());
+    _tls_init_functions[&var] = init_fn;
+
+    // Create the thread-local guard variable: i1 false
+    auto* i1_ty = llvm::Type::getInt1Ty(**_context);
+    std::string guard_name = var.get_mangled_name() + ".tls_guard";
+    auto* guard_var = new llvm::GlobalVariable(
+        get_module(), i1_ty, false, llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::getFalse(**_context), guard_name);
+    guard_var->setThreadLocalMode(llvm::GlobalValue::GeneralDynamicTLSModel);
+
+    // Save current IR builder insertion point
+    auto* prev_bb = _builder->GetInsertBlock();
+    auto prev_pt = _builder->GetInsertPoint();
+
+    // Create entry, do_init, and done basic blocks
+    auto* entry_bb = llvm::BasicBlock::Create(**_context, "entry", init_fn);
+    auto* do_init_bb = llvm::BasicBlock::Create(**_context, "do_init", init_fn);
+    auto* done_bb = llvm::BasicBlock::Create(**_context, "done", init_fn);
+
+    // entry block: check guard
+    _builder->SetInsertPoint(entry_bb);
+    auto* is_init = _builder->CreateLoad(i1_ty, guard_var, "is_init");
+    _builder->CreateCondBr(is_init, done_bb, do_init_bb);
+
+    // do_init block: initialize variable
+    _builder->SetInsertPoint(do_init_bb);
+    _tls_constructing_vars.insert(&var);
+
+    auto init = var.get_init_expr();
+    auto var_type = type::canonical(var.get_type());
+
+    if (type::is_owner(var_type) || type::is_pointer(var_type) || type::is_link(var_type) || type::is_view(var_type)) {
+        _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), storage);
+        if (init) {
+            _value = nullptr;
+            init->accept(*this);
+            if (_value) {
+                _builder->CreateStore(_value, storage);
+            }
+        }
+    } else if (init) {
+        bool set_sret = needs_sret_return(var_type);
+        if (set_sret) {
+            _sret_destination = storage;
+        }
+        _value = nullptr;
+        init->accept(*this);
+        if (set_sret) {
+            _sret_destination = nullptr;
+        }
+    }
+
+    _tls_constructing_vars.erase(&var);
+
+    // Register destructor if needed
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
+        if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+            auto dtor = st_type->get_struct()->get_destructor();
+            auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+            if (dtor_it != _context->_functions.end()) {
+                auto* dtor_llvm = dtor_it->second;
+                auto* void_ty = llvm::Type::getVoidTy(**_context);
+                auto* reg_fn_ty = llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty}, false);
+                auto* reg_fn = get_module().getFunction("__k_tls_register_dtor");
+                if (!reg_fn) {
+                    reg_fn = llvm::Function::Create(reg_fn_ty, llvm::GlobalValue::ExternalLinkage,
+                                                    "__k_tls_register_dtor", get_module());
+                }
+                _builder->CreateCall(reg_fn_ty, reg_fn, {storage, dtor_llvm});
+            }
+        }
+    } else if (type::is_owner(var_type)) {
+        auto own_type = std::dynamic_pointer_cast<owner_type>(var_type);
+        auto inner_type = own_type ? own_type->get_owned_type() : nullptr;
+        std::shared_ptr<struct_type> inner_st = inner_type ? std::dynamic_pointer_cast<struct_type>(type::canonical(type::remove_const(inner_type))) : nullptr;
+        std::shared_ptr<destructor> inner_dtor = (inner_st && inner_st->get_struct()) ? inner_st->get_struct()->get_destructor() : nullptr;
+
+        std::string thunk_name = var.get_mangled_name() + ".owner_dtor_thunk";
+        auto* void_ty = llvm::Type::getVoidTy(**_context);
+        auto* thunk_fn_ty = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+        auto* thunk_fn = llvm::Function::Create(thunk_fn_ty, llvm::GlobalValue::InternalLinkage, thunk_name, get_module());
+
+        auto* t_cur_b = _builder->GetInsertBlock();
+        auto t_cur_p = _builder->GetInsertPoint();
+
+        auto* t_entry = llvm::BasicBlock::Create(**_context, "entry", thunk_fn);
+        auto* t_destroy = llvm::BasicBlock::Create(**_context, "destroy", thunk_fn);
+        auto* t_done = llvm::BasicBlock::Create(**_context, "done", thunk_fn);
+
+        _builder->SetInsertPoint(t_entry);
+        auto* slot_arg = thunk_fn->getArg(0);
+        auto* raw_ptr = _builder->CreateLoad(ptr_ty, slot_arg, "raw_ptr");
+        auto* is_nonnull = _builder->CreateICmpNE(raw_ptr, llvm::ConstantPointerNull::get(ptr_ty), "is_nonnull");
+        _builder->CreateCondBr(is_nonnull, t_destroy, t_done);
+
+        _builder->SetInsertPoint(t_destroy);
+        if (inner_dtor) {
+            auto dtor_it = _context->_functions.find(inner_dtor->shared_as<function>());
+            if (dtor_it != _context->_functions.end()) {
+                _builder->CreateCall(dtor_it->second->getFunctionType(), dtor_it->second, {raw_ptr});
+            }
+        }
+        auto* free_fn_ty = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+        auto* free_fn = get_module().getFunction("free");
+        if (!free_fn) {
+            free_fn = llvm::Function::Create(free_fn_ty, llvm::GlobalValue::ExternalLinkage, "free", get_module());
+        }
+        _builder->CreateCall(free_fn_ty, free_fn, {raw_ptr});
+        _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), slot_arg);
+        _builder->CreateBr(t_done);
+
+        _builder->SetInsertPoint(t_done);
+        _builder->CreateRetVoid();
+
+        _builder->SetInsertPoint(t_cur_b, t_cur_p);
+
+        auto* reg_fn_ty = llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty}, false);
+        auto* reg_fn = get_module().getFunction("__k_tls_register_dtor");
+        if (!reg_fn) {
+            reg_fn = llvm::Function::Create(reg_fn_ty, llvm::GlobalValue::ExternalLinkage,
+                                            "__k_tls_register_dtor", get_module());
+        }
+        _builder->CreateCall(reg_fn_ty, reg_fn, {storage, thunk_fn});
+    }
+
+    // Mark initialized
+    _builder->CreateStore(llvm::ConstantInt::getTrue(**_context), guard_var);
+    _builder->CreateBr(done_bb);
+
+    // done block: return storage
+    _builder->SetInsertPoint(done_bb);
+    _builder->CreateRet(storage);
+
+    // Restore IR builder insertion point
+    if (prev_bb) {
+        _builder->SetInsertPoint(prev_bb, prev_pt);
+    }
+
+    return init_fn;
 }
 
 } // namespace k::model::gen

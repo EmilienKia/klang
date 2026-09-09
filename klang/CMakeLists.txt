@@ -245,6 +245,7 @@ klang_gen_test(klang-tests-gen-control 120
         tests/test-gen-init-order.cpp
         tests/test-gen-static-ctor-dtor.cpp
         tests/test-gen-static-local.cpp
+        tests/test-gen-thread-local.cpp
 )
 
 # ---------------------------------------------------------------------------

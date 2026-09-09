@@ -939,8 +939,24 @@ namespace k::model {
         }
 
         bool is_static = lex::keyword::has(decl.specifiers, lex::keyword::STATIC);
+        bool is_thread_local = lex::keyword::has(decl.specifiers, lex::keyword::THREADLOCAL);
         bool is_const  = lex::keyword::has(decl.specifiers, lex::keyword::CONST);
-        std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(std::string{decl.name.content}, is_static);
+
+        if (is_static && is_thread_local) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_THREADLOCAL_AND_STATIC), decl.name,
+                "Variable '{}' cannot be declared both 'threadlocal' and 'static'; thread-local storage already has thread-static duration",
+                {std::string{decl.name.content}});
+        }
+
+        if (is_thread_local) {
+            if (auto iface = current_context_content<model::interface>()) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_THREADLOCAL_BAD_SCOPE), decl.name,
+                    "Interface '{}' cannot declare variables, including 'threadlocal'",
+                    {iface->get_short_name()});
+            }
+        }
+
+        std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(std::string{decl.name.content}, is_static, is_thread_local);
         debug("[model_builder::visit_variable_decl] defined variable '{}'", {std::string{decl.name.content}});
         std::shared_ptr<parse::ast::variable_decl> var_decl_doc_source =
             std::dynamic_pointer_cast<parse::ast::variable_decl>(_current_ast_decl);
@@ -973,6 +989,7 @@ namespace k::model {
         }
         var->set_type(var_type);
         var->set_const(is_const);
+        var->set_thread_local(is_thread_local);
 
         // Resolve visibility for namespace/struct-level variables (global or member)
         // Local variables (inside functions/blocks) do not have visibility.
@@ -1007,9 +1024,9 @@ namespace k::model {
             }
         }
 
-        // Static local variables (declared inside a block) get PRIVATE visibility:
+        // Static and threadlocal local variables (declared inside a block) get PRIVATE visibility:
         // they are not accessible from outside their enclosing function.
-        if (is_static) {
+        if (is_static || is_thread_local) {
             if (auto gv = std::dynamic_pointer_cast<model::global_variable_definition>(var)) {
                 if (std::dynamic_pointer_cast<model::block>(parent_scope)) {
                     gv->set_visibility(model::PRIVATE);
@@ -1195,6 +1212,17 @@ namespace k::model {
                    && !type::is_view(var_type)) {
             // Non-indirection with no initializer: use empty constructor_invocation.
             var->set_init_expr(model::constructor_invocation_expression::make_shared(var, {}));
+        }
+
+        // For local thread-local variables in a block, register an access statement
+        // at the declaration point so it is lazily initialized on the first pass of the thread.
+        if (is_thread_local) {
+            if (auto blk = std::dynamic_pointer_cast<model::block>(parent_scope)) {
+                auto sym_expr = model::symbol_expression::from_variable(var);
+                auto expr_stmt = std::make_shared<model::expression_statement>(blk);
+                expr_stmt->set_expression(sym_expr);
+                blk->append_statement(expr_stmt);
+            }
         }
     }
 

@@ -180,9 +180,10 @@ struct kdi_param {
 struct kdi_variable {
     std::string    name;
     std::string    fq_name;
-    kdi_visibility visibility   = kdi_visibility::public_;
+    kdi_visibility visibility      = kdi_visibility::public_;
     kdi_type       type;
-    bool           is_const     = false;
+    bool           is_const        = false;
+    bool           is_thread_local = false;
     std::string    mangled_name;
     std::optional<kdi_doc_block> doc;
 };

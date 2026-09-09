@@ -229,13 +229,14 @@ Param = {
 
 ```
 Variable = {
-  "name"         : text,
-  "fq_name"      : text,
-  "visibility"   : Visibility,
-  "type"         : Type,
-  ?"is_const"    : bool,       -- omitted when false
-  "mangled_name" : text,
-  ?"doc"         : DocBlock
+  "name"             : text,
+  "fq_name"          : text,
+  "visibility"       : Visibility,
+  "type"             : Type,
+  ?"is_const"        : bool,       -- omitted when false
+  ?"is_thread_local" : bool,       -- omitted when false
+  "mangled_name"     : text,
+  ?"doc"             : DocBlock
 }
 ```
 

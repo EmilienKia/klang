@@ -32,6 +32,7 @@ They may **not** be used as ordinary identifiers.
 | `alias`     | Exported soft alias declaration: a transparent second name for a type, function or variable |
 | `typedef`   | Exported strong alias declaration: a nominally distinct type over an identical representation |
 | `static`    | Static storage / static member modifier |
+| `threadlocal` | Thread-local storage modifier |
 | `const`     | Constant qualifier: marks a variable or parameter as immutable after construction |
 | `public`    | Public visibility modifier |
 | `protected` | Protected visibility modifier |
@@ -57,7 +58,7 @@ Keyword: (one of)
     float    double   unsigned
     struct   class    interface   annotation   namespace   module   import   using
     alias    typedef
-    static   const    abstract   final   override
+    static   const    abstract   final   override   threadlocal
     public   protected   private
     this     return
     if       else     while    for      break

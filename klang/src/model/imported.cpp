@@ -833,6 +833,9 @@ unit::get_or_create_imported_variable(const kdi::kdi_variable* kdi_var,
     auto vtype = kdi_type_to_model_type(kdi_var->type, *this, ctx);
     if (vtype) var->set_type(vtype);
 
+    var->set_const(kdi_var->is_const);
+    var->set_thread_local(kdi_var->is_thread_local);
+
     var->set_visibility(kdi_var->visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
     if (auto doc = make_doc_entity(kdi_var->doc)) {
         var->set_documentation(std::move(doc));

@@ -630,6 +630,7 @@ cbor_item_t* encode_variable(const kdi_variable& v) {
     map_push(m, "visibility",   encode_visibility(v.visibility));
     map_push(m, "type",         encode_type(v.type));
     if (v.is_const) map_push(m, "is_const", cbor_bool(true));
+    if (v.is_thread_local) map_push(m, "is_thread_local", cbor_bool(true));
     map_push(m, "mangled_name", cbor_str(v.mangled_name));
     if (v.doc) map_push(m, "doc", encode_doc_block(*v.doc));
     return m;
@@ -637,14 +638,15 @@ cbor_item_t* encode_variable(const kdi_variable& v) {
 
 kdi_variable decode_variable(cbor_item_t* item, const std::string& path) {
     kdi_variable v;
-    v.name         = req_string(item, "name", path);
-    v.fq_name      = req_string(item, "fq_name", path);
-    v.visibility   = decode_visibility(item, "visibility", path);
+    v.name            = req_string(item, "name", path);
+    v.fq_name         = req_string(item, "fq_name", path);
+    v.visibility      = decode_visibility(item, "visibility", path);
     auto* tp = map_get(item, "type");
     if (!tp) throw kdi_parse_error("missing 'type' at " + path);
-    v.type         = decode_type(tp, path + ".type");
-    v.is_const     = opt_bool(item, "is_const");
-    v.mangled_name = req_string(item, "mangled_name", path);
+    v.type            = decode_type(tp, path + ".type");
+    v.is_const        = opt_bool(item, "is_const");
+    v.is_thread_local = opt_bool(item, "is_thread_local");
+    v.mangled_name    = req_string(item, "mangled_name", path);
     if (auto* doc = map_get(item, "doc")) v.doc = decode_doc_block(doc, path + ".doc");
     return v;
 }

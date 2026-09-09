@@ -272,7 +272,7 @@ protected:
 
     static std::shared_ptr<function> make_shared(std::shared_ptr<element> parent, const std::string& name, bool is_static = false);
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static, bool is_thread_local = false) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
     void update_mangled_name() override;
@@ -312,7 +312,7 @@ public:
         return _parameters;
     }
 
-    std::shared_ptr<variable_definition> append_variable(const std::string& name, bool is_static) override;
+    std::shared_ptr<variable_definition> append_variable(const std::string& name, bool is_static = false, bool is_thread_local = false) override;
 
     std::shared_ptr<parameter> append_parameter(const std::string& name, std::shared_ptr<type> type);
     std::shared_ptr<parameter> insert_parameter(const std::string& name, std::shared_ptr<type> type, size_t pos);

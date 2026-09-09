@@ -62,7 +62,7 @@
 bool     byte     char     short    int      long
 float    double   unsigned
 struct   class    interface   annotation   namespace   module   import   using   friend
-static   const    abstract   final   override
+static   const    abstract   final   override   threadlocal
 public   protected   private
 this     return
 if       else     while    for      break    continue
@@ -70,6 +70,7 @@ new      delete   default  enum     union
 operator
 template typename generic
 throw    try      catch    throws   finally
+alias    typedef
 ```
 
 All keywords are reserved and cannot be used as identifiers.
@@ -532,12 +533,13 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 { Specifier } Identifier ':' TypeSpec [ Initialiser ] ';'
 ```
 
-Specifiers: `static`, `const`.
+Specifiers: `static`, `const`, `threadlocal`.
 
 Initializer: `= expr`, `(args…)` (constructor), `(args…)[N]` (uniform array init), `{init…}` (brace-init), `{.member = expr, …}` (designated).
 
 - `const`: immutable after initialization.
 - `static` local: persists across calls, initializer evaluated once.
+- `threadlocal`: thread-local storage duration. Accepted on local variables (in free functions and methods), structure and class member variables, and namespace/global variables. Initialized once per thread on first pass/access; destroyed on thread termination (or program termination for the main thread) in LIFO order.
 - Lifetime: start = declaration, end = exit of enclosing block. Destruction in reverse order.
 - Owner variables (`T!`): auto-delete on scope exit.
 

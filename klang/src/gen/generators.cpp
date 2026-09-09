@@ -22,6 +22,8 @@
 
 #include "../model/context.hpp"
 
+#include <dlfcn.h>
+
 #include <llvm/IR/Verifier.h>
 
 #include "llvm/Transforms/InstCombine/InstCombine.h"
@@ -171,6 +173,11 @@ void jit::finalize_runtime() {
             std::cerr << "Cannot finalize JIT module before initialization." << std::endl;
             break;
         case INITIALIZED:
+            {
+                typedef void (*tls_exit_fn_t)();
+                auto fn = (tls_exit_fn_t)dlsym(RTLD_DEFAULT, "__k_tls_thread_exit");
+                if (fn) fn();
+            }
             if(_lljit->deinitialize(_main_dynlib)) {
                 std::cerr << "Error during JIT module finalization." << std::endl;
             }

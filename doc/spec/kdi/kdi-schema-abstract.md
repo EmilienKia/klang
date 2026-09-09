@@ -568,13 +568,14 @@ KdiDestructor {
 
 ```
 KdiVariable {
-  name         : string
-  fq_name      : string
-  visibility   : "public" | "protected"
-  type         : KdiType
-  is_const     : bool
-  mangled_name : string
-  doc          : KdiDocBlock?
+  name            : string
+  fq_name         : string
+  visibility      : "public" | "protected"
+  type            : KdiType
+  is_const        : bool
+  is_thread_local : bool?        -- optional, true if thread-local storage (omitted when false)
+  mangled_name    : string
+  doc             : KdiDocBlock?
 }
 ```
 

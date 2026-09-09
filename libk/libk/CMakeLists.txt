@@ -201,6 +201,20 @@ add_custom_command(
 )
 
 # ── Compile thread runtime (Phase 1) ─────────────────────────────────────
+set(RUNTIME_TLS_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_tls.c)
+set(RUNTIME_TLS_OBJ ${LIBK_OUTPUT_DIR}/runtime_tls.o)
+
+add_custom_command(
+    OUTPUT  ${RUNTIME_TLS_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${RUNTIME_TLS_OBJ} ${RUNTIME_TLS_C}
+    DEPENDS ${RUNTIME_TLS_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_tls.h
+    COMMENT "Compiling K runtime TLS substrate (runtime_tls.c)"
+    VERBATIM
+)
+
 set(RUNTIME_THREAD_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.c)
 set(RUNTIME_THREAD_OBJ ${LIBK_OUTPUT_DIR}/runtime_thread.o)
 
@@ -211,6 +225,7 @@ add_custom_command(
             -o ${RUNTIME_THREAD_OBJ} ${RUNTIME_THREAD_C}
     DEPENDS ${RUNTIME_THREAD_C}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_tls.h
     COMMENT "Compiling K runtime thread substrate (runtime_thread.c)"
     VERBATIM
 )
@@ -391,7 +406,7 @@ add_custom_command(
 )
 
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
-                   ${TIME_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
+                   ${TIME_OBJ} ${RUNTIME_TLS_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
                    ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}

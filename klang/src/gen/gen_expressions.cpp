@@ -584,7 +584,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
             ptr =  _context->_parameter_variables[param];
             name = param->get_short_name();
         } else if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_def)) {
-            ptr = _context->_global_vars[global_var];
+            ptr = get_global_or_thread_local_variable_pointer(*global_var);
             name = global_var->get_short_name();
         } else if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var_def)) {
             ptr = _context->_variables[local_var];

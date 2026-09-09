@@ -97,6 +97,9 @@ enum class model_diag : unsigned int {
     // Foreach statement model-building errors (0x01F6-0x01FF)
     ERR_FOREACH_STMT_BAD_SCOPE                    = 0x0444,
     ERR_FOREACH_STMT_NEEDS_BODY                   = 0x0445,
+    // Thread-local variable diagnostics
+    ERR_THREADLOCAL_AND_STATIC                    = 0x0446,
+    ERR_THREADLOCAL_BAD_SCOPE                     = 0x0447,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -2026,9 +2026,10 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
         } else if (auto fn = std::dynamic_pointer_cast<function>(child)) {
             clone_method(*fn, concrete, subst, val_subst);
         } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
-            // Static member variable — clone similarly to member variable
-            auto new_var = concrete->append_variable(gv->get_short_name(), /*is_static=*/true);
+            // Static or threadlocal member variable — clone similarly to member variable
+            auto new_var = concrete->append_variable(gv->get_short_name(), /*is_static=*/!gv->is_thread_local(), /*is_thread_local=*/gv->is_thread_local());
             if (new_var) {
+                new_var->set_thread_local(gv->is_thread_local());
                 auto src_type = std::const_pointer_cast<type>(gv->get_type());
                 new_var->set_type(substitute_type(src_type, subst));
                 new_var->set_const(gv->is_const());
@@ -2140,8 +2141,9 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
         } else if (auto fn = std::dynamic_pointer_cast<function>(child)) {
             clone_method(*fn, concrete, subst, val_subst);
         } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
-            auto new_var = concrete->append_variable(gv->get_short_name(), /*is_static=*/true);
+            auto new_var = concrete->append_variable(gv->get_short_name(), /*is_static=*/!gv->is_thread_local(), /*is_thread_local=*/gv->is_thread_local());
             if (new_var) {
+                new_var->set_thread_local(gv->is_thread_local());
                 auto src_type = std::const_pointer_cast<type>(gv->get_type());
                 new_var->set_type(substitute_type(src_type, subst));
                 new_var->set_const(gv->is_const());

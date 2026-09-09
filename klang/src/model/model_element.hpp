@@ -217,6 +217,9 @@ protected:
     /** True if this variable is declared const (immutable after construction). */
     bool _is_const = false;
 
+    /** True if this variable has thread-local storage duration. */
+    bool _is_thread_local = false;
+
     /** Optional initialization statement */
     std::shared_ptr<expression> _init_expr;
 
@@ -244,6 +247,9 @@ public:
     bool is_const() const { return _is_const; }
     variable_definition& set_const(bool c) { _is_const = c; return *this; }
 
+    bool is_thread_local() const { return _is_thread_local; }
+    variable_definition& set_thread_local(bool tl = true) { _is_thread_local = tl; return *this; }
+
     bool is_constant() const { return _constant_value.has_value() && _constant_value->is_valid(); }
     const constant_value& get_constant_value() const { return *_constant_value; }
     variable_definition& set_constant_value(constant_value val) { _constant_value = std::move(val); return *this; }
@@ -263,7 +269,7 @@ public:
 class variable_holder
 {
 public:
-    virtual std::shared_ptr<variable_definition> append_variable(const std::string& name, bool is_static = false);
+    virtual std::shared_ptr<variable_definition> append_variable(const std::string& name, bool is_static = false, bool is_thread_local = false);
     virtual std::shared_ptr<variable_definition> get_variable(const std::string& name) const;
 
     typedef std::map<std::string, std::shared_ptr<variable_definition>> variable_map_t;
@@ -273,7 +279,7 @@ protected:
     /** Map of all defined vars. */
     variable_map_t _vars;
 
-    virtual std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) =0;
+    virtual std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static, bool is_thread_local = false) =0;
     virtual void on_variable_defined(std::shared_ptr<variable_definition>) =0;
 
 public:

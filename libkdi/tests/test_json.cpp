@@ -239,16 +239,18 @@ TEST_CASE("JSON: function with params round-trips", "[json][function]") {
 TEST_CASE("JSON: global variable round-trips", "[json][variable]") {
     kdi_file f = make_minimal_file();
     kdi_variable v;
-    v.name         = "g_count";
-    v.fq_name      = "::g_count";
-    v.visibility   = kdi_visibility::public_;
-    v.type         = kdi_type::make_int(32);
-    v.mangled_name = "_KN7g_countE";
+    v.name            = "g_count";
+    v.fq_name         = "::g_count";
+    v.visibility      = kdi_visibility::public_;
+    v.type            = kdi_type::make_int(32);
+    v.is_thread_local = true;
+    v.mangled_name    = "_KN7g_countE";
     f.unit.root_ns.variables.push_back(v);
 
     auto f2 = json_round_trip(f);
     REQUIRE( f2.unit.root_ns.variables.size() == 1 );
     REQUIRE( f2.unit.root_ns.variables[0].name == "g_count" );
+    REQUIRE( f2.unit.root_ns.variables[0].is_thread_local == true );
     REQUIRE( f2.unit.root_ns.variables[0].mangled_name == "_KN7g_countE" );
 }
 

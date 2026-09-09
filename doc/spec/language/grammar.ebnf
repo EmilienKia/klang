@@ -175,7 +175,7 @@ Keyword
     | 'operator'
     | 'template' | 'typename' | 'generic'
     | 'throw'  | 'try'     | 'catch'     | 'throws'  | 'finally'
-    | 'alias'  | 'typedef'
+    | 'alias'  | 'typedef' | 'threadlocal'
     ;
 
 (* ---------- Literals ----------------------------------------------------- *)
@@ -715,6 +715,7 @@ Initialiser
 Specifier
     = 'public' | 'protected' | 'private'
     | 'static' | 'const' | 'abstract' | 'final' | 'override' | 'default'
+    | 'threadlocal'
     ;
     (* 'default' as a prefix specifier marks an interface member function as a   *)
     (* default method: a concrete, virtual method with a body that derived        *)

@@ -18,6 +18,7 @@
 
 #define _GNU_SOURCE
 #include "runtime_thread.h"
+#include "runtime_tls.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -105,6 +106,7 @@ static void* thread_trampoline(void* arg) {
         t->task_fn(t->task_arg);
     }
 
+    __k_tls_thread_exit();
     k_runtime_thread_exit(t);
     return NULL;
 }
