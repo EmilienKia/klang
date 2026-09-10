@@ -1736,13 +1736,13 @@ leap-second table.
 
 ### 4.6 Phase 1 acceptance checklist
 
-- [ ] `libk-tests-time` contains deterministic arithmetic, Gregorian, ISO,
+- [x] `libk-tests-time` contains deterministic arithmetic, Gregorian, ISO,
       error, and property tests.
-- [ ] The complete Phase 1 suite has no native clock, system zone, locale,
+- [x] The complete Phase 1 suite has no native clock, system zone, locale,
       environment, file, or network dependency.
-- [ ] The public reference documents the distinction among `Instant`,
+- [x] The public reference documents the distinction among `Instant`,
       `Duration`, `Period`, and `LocalDateTime`.
-- [ ] The current root-level monotonic `Instant` has not been misrepresented
+- [x] The current root-level monotonic `Instant` has not been misrepresented
       as the new absolute `::k::time::Instant`.
 
 ## 5. Phase 2 - local clock readings through private C adapters
@@ -2149,8 +2149,8 @@ provider is ICU through its stable C API.
 
 | Specification area | Phase | Status | Evidence to record on completion |
 | --- | --- | --- | --- |
-| `Duration`, `Instant`, deterministic Gregorian civil arithmetic | 1 | [ ] | `libk-tests-time` arithmetic and property cases |
-| Canonical ISO data-only text | 1 | [ ] | parse/format test vectors |
+| `Duration`, `Instant`, deterministic Gregorian civil arithmetic | 1 | [x] | `libk-tests-time` arithmetic and property cases |
+| Canonical ISO data-only text | 1 | [x] | parse/format test vectors in `test-time-iso.cpp` |
 | Separate wall-clock and monotonic domains | 2 | [ ] | fake-clock and native-adapter cases |
 | Explicit POSIX interoperability boundary | 2-3 | [ ] | conversion-policy vectors |
 | UTC leap seconds and current `SystemClock` to `Instant` | 3 | [ ] | pinned leap fixture cases |
