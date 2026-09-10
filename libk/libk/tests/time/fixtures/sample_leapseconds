@@ -1,0 +1,6 @@
+# Sample leap seconds fixture
+# NTP_timestamp TAI_offset
+2272060800	10	# 1 Jan 1972
+2287785600	11	# 1 Jul 1972
+3692217600	37	# 1 Jan 2017
+#@	3952041600

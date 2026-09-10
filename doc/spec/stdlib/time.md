@@ -1,4 +1,4 @@
-# Time API (Phase 1 & Phase 2)
+# Time API (Phase 1, Phase 2 & Phase 3 — Zone Data Core)
 **Module:** `k`  
 **Namespace:** `k::time`  
 **Sources:** `libk/libk/src/time/*.k`  
@@ -166,4 +166,44 @@ Normalized POSIX timestamp coordinate (`seconds` + `nanos`, `0 <= nanos < 1_000_
 - **Accessors:** `seconds()`, `nanoAdjustment()`.
 - **Arithmetic:** `plus(Duration)`, `minus(Duration)`, `minus(PosixTimestamp) -> Duration`, `until(PosixTimestamp) -> Duration`.
 - **Conversion:** `toInstant()` and `Instant::fromPosixTimestamp()` throw `TimeScaleDataUnavailableException(513)` in Phase 2.
+
+---
+
+## 5. Phase 3 Types: Zone Data Core (Package D6)
+
+### 5.1 `ZoneId`
+Immutable validated IANA-style time-zone identity (e.g. `Europe/Paris`, `America/New_York`, `UTC`, `Etc/GMT+1`).
+Equality compares normalized identifier text only, not offsets or rules.
+- **Factory:** `ZoneId::of(name: const String&) -> ZoneId throws(InvalidTemporalValueException)`
+  - Rejects empty strings, leading slash, trailing slash, consecutive `//`, path traversal `..`, and characters outside `[A-Za-z0-9/_+-]`.
+- **Accessor:** `name() -> String`
+- **Equality:** `operator==`, `operator!=`
+
+### 5.2 `PosixLeapSecondPolicy`
+Singletons defining how second 60 is mapped during POSIX interoperation:
+- `PosixLeapSecondPolicy::reject()`
+- `PosixLeapSecondPolicy::foldToPreviousSecond()`
+- `PosixLeapSecondPolicy::foldToFollowingSecond()`
+- `operator==`, `operator!=`
+
+### 5.3 `LeapSecondTable`
+Access to historical (1972–2017) and loaded leap seconds.
+- `isLeapSecond(epochSecond: long) -> bool`
+- `taiOffset(epochSecond: long) -> long`
+- `count() -> int`
+- `isLeapDate(year: long, month: int, day: int) -> bool`
+- `validateLeapSecond(year, month, day, hour, minute, second) throws(LeapSecondException, InvalidTemporalValueException)`
+- `validate(dateTime: const LocalDateTime&) throws(LeapSecondException)`
+- `load(filePath: const String&) -> int`
+
+### 5.4 `Tzdb`
+Access to the system time-zone database (default `/usr/share/zoneinfo`) and immutable `KZoneRulesSnapshot` handles.
+- `version() -> String`
+- `setRoot(rootPath: const String&)`
+- `isZoneAvailable(zoneId: const ZoneId&) -> bool`
+- `loadZone(zoneId: const ZoneId&) -> KZoneRulesSnapshot* throws(ZoneRulesUnavailableException)`
+- `releaseSnapshot(snap: KZoneRulesSnapshot*)`
+- `transitionCount`, `transitionTime`, `transitionOffset`, `transitionAbbrev`, `transitionIsDst`
+- `offsetAt`, `abbrevAt`, `isDstAt`, `posixTz`
+
 

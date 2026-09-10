@@ -71,6 +71,10 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/posix_timestamp.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/clock.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/monotonic.k
+    # ── Phase 3: zone data core ───────────────────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/zone_id.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/leap_seconds.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/tzdb.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
     # ── Phase 2: futures ──────────────────────────────────────────────────
@@ -436,6 +440,52 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile leap second runtime (Phase 3) ──────────────────────────────
+set(LEAP_SECOND_DATA_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/leap_second_data.c)
+set(LEAP_SECOND_DATA_OBJ ${LIBK_OUTPUT_DIR}/leap_second_data.o)
+
+add_custom_command(
+    OUTPUT  ${LEAP_SECOND_DATA_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time
+            -o ${LEAP_SECOND_DATA_OBJ} ${LEAP_SECOND_DATA_C}
+    DEPENDS ${LEAP_SECOND_DATA_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/leap_second_data.h
+    COMMENT "Compiling K runtime leap second data (leap_second_data.c)"
+    VERBATIM
+)
+
+# ── Compile TZif reader runtime (Phase 3) ────────────────────────────────
+set(TZIF_READER_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/tzif_reader.c)
+set(TZIF_READER_OBJ ${LIBK_OUTPUT_DIR}/tzif_reader.o)
+
+add_custom_command(
+    OUTPUT  ${TZIF_READER_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time
+            -o ${TZIF_READER_OBJ} ${TZIF_READER_C}
+    DEPENDS ${TZIF_READER_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/tzif_reader.h
+    COMMENT "Compiling K runtime TZif reader (tzif_reader.c)"
+    VERBATIM
+)
+
+# ── Compile system TZDB provider runtime (Phase 3) ───────────────────────
+set(TZDB_SYSTEM_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/tzdb_system.c)
+set(TZDB_SYSTEM_OBJ ${LIBK_OUTPUT_DIR}/tzdb_system.o)
+
+add_custom_command(
+    OUTPUT  ${TZDB_SYSTEM_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time
+            -o ${TZDB_SYSTEM_OBJ} ${TZDB_SYSTEM_C}
+    DEPENDS ${TZDB_SYSTEM_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/tzdb_system.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/tzif_reader.h
+    COMMENT "Compiling K runtime system TZDB provider (tzdb_system.c)"
+    VERBATIM
+)
+
 set(TIME_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/time_ffi.c)
 set(TIME_FFI_OBJ ${LIBK_OUTPUT_DIR}/time_ffi.o)
 
@@ -446,6 +496,9 @@ add_custom_command(
             -o ${TIME_FFI_OBJ} ${TIME_FFI_C}
     DEPENDS ${TIME_FFI_C}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/platform_clock.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/leap_second_data.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/tzif_reader.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/tzdb_system.h
     COMMENT "Compiling K runtime time FFI wrappers (time_ffi.c)"
     VERBATIM
 )
@@ -459,6 +512,9 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${APP_FFI_OBJ}
                    ${UUID_FFI_OBJ}
                    ${PLATFORM_CLOCK_POSIX_OBJ}
+                   ${LEAP_SECOND_DATA_OBJ}
+                   ${TZIF_READER_OBJ}
+                   ${TZDB_SYSTEM_OBJ}
                    ${TIME_FFI_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
@@ -541,6 +597,7 @@ macro(libk_add_test TARGET TIMEOUT)
     target_compile_definitions(${TARGET} PRIVATE
         LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
         LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
+        LIBK_TIME_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/time/fixtures"
     )
     add_test(NAME ${TARGET} COMMAND ${TARGET})
     set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
@@ -641,11 +698,12 @@ libk_add_test(libk-tests-uuid 120
     tests/test-uuid.cpp
 )
 
-# ── libk time API tests (Phase 1 & Phase 2) ──────────────────────────────────
+# ── libk time API tests (Phase 1, Phase 2 & Phase 3) ─────────────────────────
 libk_add_test(libk-tests-time 120
     tests/time/test-time-arithmetic.cpp
     tests/time/test-time-iso.cpp
     tests/time/test-time-clock.cpp
+    tests/time/test-time-tzdb.cpp
 )
 
 # ── libk performance / stress tests ──────────────────────────────────────────
