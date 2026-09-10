@@ -64,6 +64,9 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/local_time.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/local_date.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/local_date_time.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/zone_offset.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/iso_format.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/iso_parse.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
     # ── Phase 2: futures ──────────────────────────────────────────────────
@@ -606,6 +609,7 @@ libk_add_test(libk-tests-uuid 120
 # ── libk time API tests (Phase 1) ────────────────────────────────────────────
 libk_add_test(libk-tests-time 120
     tests/time/test-time-arithmetic.cpp
+    tests/time/test-time-iso.cpp
 )
 
 # ── libk performance / stress tests ──────────────────────────────────────────
