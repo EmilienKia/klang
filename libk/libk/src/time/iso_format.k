@@ -186,6 +186,55 @@ public:
         }
         return sb.toString();
     }
+
+    static formatInstant(value: const Instant&) : String {
+        utc : LocalDateTime = value.toUtcDateTime();
+        sb : StringBuilder;
+        appendYear(sb, utc.year());
+        sb.appendChar('-');
+        appendTwoDigits(sb, utc.month());
+        sb.appendChar('-');
+        appendTwoDigits(sb, utc.day());
+        sb.appendChar('T');
+        appendTwoDigits(sb, utc.hour());
+        sb.appendChar(':');
+        appendTwoDigits(sb, utc.minute());
+        sb.appendChar(':');
+        appendTwoDigits(sb, utc.second());
+        if (value.nanoAdjustment() > 0) {
+            appendFraction(sb, value.nanoAdjustment());
+        }
+        sb.appendChar('Z');
+        return sb.toString();
+    }
+
+    static formatZonedDateTime(value: const ZonedDateTime&) : String {
+        local : LocalDateTime = value.localDateTime();
+        offset : ZoneOffset = value.offset();
+        sb : StringBuilder;
+        appendYear(sb, local.year());
+        sb.appendChar('-');
+        appendTwoDigits(sb, local.month());
+        sb.appendChar('-');
+        appendTwoDigits(sb, local.day());
+        sb.appendChar('T');
+        appendTwoDigits(sb, local.hour());
+        sb.appendChar(':');
+        appendTwoDigits(sb, local.minute());
+        sb.appendChar(':');
+        appendTwoDigits(sb, local.second());
+        if (local.nano() > 0) {
+            appendFraction(sb, local.nano());
+        }
+        sb.append(formatZoneOffset(offset));
+        zoneName : String = value.zone().id().name();
+        if (!zoneName.empty()) {
+            sb.appendChar('[');
+            sb.append(zoneName);
+            sb.appendChar(']');
+        }
+        return sb.toString();
+    }
 }
 
 /**
@@ -211,6 +260,14 @@ public:
 
     static formatZoneOffset(value: const ZoneOffset&) : String {
         return IsoWriter::formatZoneOffset(value);
+    }
+
+    static formatInstant(value: const Instant&) : String {
+        return IsoWriter::formatInstant(value);
+    }
+
+    static formatZonedDateTime(value: const ZonedDateTime&) : String {
+        return IsoWriter::formatZonedDateTime(value);
     }
 
     static parseDuration(text: const String&) : Duration
@@ -261,6 +318,36 @@ public:
     static parseZoneOffset(text: const char[]) : ZoneOffset
         throws(TemporalParseException, InvalidTemporalValueException) {
         return parseZoneOffset(String(text));
+    }
+
+    static parseInstant(text: const String&) : Instant
+        throws(TemporalParseException, InvalidTemporalValueException, LeapSecondException, TemporalArithmeticException) {
+        return IsoReader::parseInstant(text);
+    }
+
+    static parseInstant(text: const char[]) : Instant
+        throws(TemporalParseException, InvalidTemporalValueException, LeapSecondException, TemporalArithmeticException) {
+        return parseInstant(String(text));
+    }
+
+    static parseZonedDateTime(text: const String&, resolver: const LocalDateTimeResolver&) : ZonedDateTime
+        throws(TemporalParseException, InvalidTemporalValueException, LocalTimeGapException, LocalTimeOverlapException, ZoneRulesUnavailableException, TemporalArithmeticException) {
+        return IsoReader::parseZonedDateTime(text, resolver);
+    }
+
+    static parseZonedDateTime(text: const char[], resolver: const LocalDateTimeResolver&) : ZonedDateTime
+        throws(TemporalParseException, InvalidTemporalValueException, LocalTimeGapException, LocalTimeOverlapException, ZoneRulesUnavailableException, TemporalArithmeticException) {
+        return parseZonedDateTime(String(text), resolver);
+    }
+
+    static parseZonedDateTime(text: const String&) : ZonedDateTime
+        throws(TemporalParseException, InvalidTemporalValueException, LocalTimeGapException, LocalTimeOverlapException, ZoneRulesUnavailableException, TemporalArithmeticException) {
+        return parseZonedDateTime(text, StrictResolver::instance());
+    }
+
+    static parseZonedDateTime(text: const char[]) : ZonedDateTime
+        throws(TemporalParseException, InvalidTemporalValueException, LocalTimeGapException, LocalTimeOverlapException, ZoneRulesUnavailableException, TemporalArithmeticException) {
+        return parseZonedDateTime(String(text));
     }
 }
 

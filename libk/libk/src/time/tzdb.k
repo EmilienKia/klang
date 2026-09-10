@@ -40,6 +40,14 @@ public struct KZoneRulesSnapshot {
 @ffi::Extern("C") private __k_tzdb_snapshot_abbrev_at(snap: const KZoneRulesSnapshot*, epoch_second: long) : unsigned byte[]!;
 @ffi::Extern("C") private __k_tzdb_snapshot_is_dst_at(snap: const KZoneRulesSnapshot*, epoch_second: long) : int;
 @ffi::Extern("C") private __k_tzdb_snapshot_posix_tz(snap: const KZoneRulesSnapshot*) : unsigned byte[]!;
+@ffi::Extern("C") private __k_tzdb_snapshot_retain(snap: KZoneRulesSnapshot*) : void;
+@ffi::Extern("C") private __k_tzdb_snapshot_resolve_local(snap: const KZoneRulesSnapshot*, local_sec: long) : void;
+@ffi::Extern("C") private __k_tzdb_snapshot_res_kind() : int;
+@ffi::Extern("C") private __k_tzdb_snapshot_res_before_offset() : int;
+@ffi::Extern("C") private __k_tzdb_snapshot_res_after_offset() : int;
+@ffi::Extern("C") private __k_tzdb_snapshot_res_trans_time() : long;
+@ffi::Extern("C") private __k_tzdb_set_system_zone_override(name: const byte*) : void;
+@ffi::Extern("C") private __k_tzdb_detect_system_zone() : unsigned byte[]!;
 
 /**
  * Tzdb — access to the system time zone database and zone snapshots.
@@ -163,6 +171,61 @@ public:
      */
     static posixTz(snap: const KZoneRulesSnapshot*) : String {
         bytes : unsigned byte[]! = __k_tzdb_snapshot_posix_tz(snap);
+        return String(bytes);
+    }
+
+    /**
+     * Retain a snapshot (increments reference count).
+     */
+    static retainSnapshot(snap: KZoneRulesSnapshot*) {
+        if (snap != null) {
+            __k_tzdb_snapshot_retain(snap);
+        }
+    }
+
+    /**
+     * Resolve a local epoch second against a snapshot.
+     */
+    static resolveLocal(snap: const KZoneRulesSnapshot*, localSec: long) {
+        __k_tzdb_snapshot_resolve_local(snap, localSec);
+    }
+
+    static resKind() : int {
+        return __k_tzdb_snapshot_res_kind();
+    }
+
+    static resBeforeOffset() : int {
+        return __k_tzdb_snapshot_res_before_offset();
+    }
+
+    static resAfterOffset() : int {
+        return __k_tzdb_snapshot_res_after_offset();
+    }
+
+    static resTransTime() : long {
+        return __k_tzdb_snapshot_res_trans_time();
+    }
+
+    /**
+     * Set system time zone override for testing.
+     */
+    static setSystemZoneOverride(name: const String&) {
+        u8 : unsigned byte[]! = name.toUtf8();
+        __k_tzdb_set_system_zone_override((const byte*) &u8[0]);
+    }
+
+    static clearSystemZoneOverride() {
+        __k_tzdb_set_system_zone_override(null);
+    }
+
+    /**
+     * Detect the system time zone identifier, or return empty String if unavailable.
+     */
+    static detectSystemZone() : String {
+        bytes : unsigned byte[]! = __k_tzdb_detect_system_zone();
+        if (bytes == null || bytes.size == 0u) {
+            return String();
+        }
         return String(bytes);
     }
 }

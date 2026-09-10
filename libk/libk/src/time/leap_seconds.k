@@ -26,6 +26,9 @@ namespace time {
 @ffi::Extern("C") private __k_time_leap_second_count() : int;
 @ffi::Extern("C") private __k_time_leap_second_load(file_path: const byte*) : int;
 @ffi::Extern("C") private __k_time_leap_second_is_leap_date(year: long, month: int, day: int) : int;
+@ffi::Extern("C") private __k_time_leap_second_posix_to_continuous(posix_sec: long) : long;
+@ffi::Extern("C") private __k_time_leap_second_continuous_to_posix(continuous_sec: long, policy: int, out_error: int*) : long;
+@ffi::Extern("C") private __k_time_leap_second_get_leap_date(continuous_sec: long, out_year: long*, out_month: int*, out_day: int*) : int;
 
 /**
  * Policy defining how a leap second (second label 60) is converted
@@ -147,6 +150,42 @@ public:
     static load(filePath: const String&) : int {
         u8 : unsigned byte[]! = filePath.toUtf8();
         return __k_time_leap_second_load((const byte*) &u8[0]);
+    }
+
+    /**
+     * Convert POSIX seconds to continuous timeline seconds.
+     */
+    static posixToContinuous(posixSec: long) : long {
+        return __k_time_leap_second_posix_to_continuous(posixSec);
+    }
+
+    /**
+     * Convert continuous timeline seconds to POSIX seconds under policy.
+     * Throws LeapSecondException(504) if policy is reject (0) and instant is a leap second.
+     */
+    static continuousToPosix(continuousSec: long, policy: int) : long throws(LeapSecondException) {
+        err : int = 0;
+        posix : long = __k_time_leap_second_continuous_to_posix(continuousSec, policy, &err);
+        if (err != 0) {
+            throw LeapSecondException(err);
+        }
+        return posix;
+    }
+
+    /**
+     * Convert continuous timeline seconds to POSIX seconds folding leap seconds to 23:59:59.
+     * Never throws.
+     */
+    static continuousToPosixFolded(continuousSec: long) : long {
+        err : int = 0;
+        return __k_time_leap_second_continuous_to_posix(continuousSec, 1, &err);
+    }
+
+    /**
+     * Return true if continuousSec is an inserted leap second and writes its civil date.
+     */
+    static getLeapDate(continuousSec: long, outYear: long*, outMonth: int*, outDay: int*) : bool {
+        return __k_time_leap_second_get_leap_date(continuousSec, outYear, outMonth, outDay) != 0;
     }
 }
 

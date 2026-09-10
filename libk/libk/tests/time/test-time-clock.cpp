@@ -203,19 +203,20 @@ TEST_CASE("SequenceClock: sequence progression and remaining count", "[libk][tim
 // 3. SystemClock tests
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("SystemClock: now() throws 513 in Phase 2, resolution succeeds", "[libk][time][clock][system]") {
+TEST_CASE("SystemClock: now() succeeds in Phase 3, resolution succeeds", "[libk][time][clock][system]") {
     auto jit = jit_k(R"SRC(
         module __test_system_clock__;
 
-        test_now_throws_513() : int {
+        test_now_succeeds() : int {
             clock : k::time::SystemClock& = k::time::SystemClock::instance();
             try {
-                clock.now();
-                return 0; // should not reach
-            } catch (e: k::time::TimeScaleDataUnavailableException&) {
-                return e.getCode(); // should be 513
-            } catch (e: k::time::TimeDataUnavailableException&) {
+                inst : k::time::Instant = clock.now();
+                if (inst.epochSeconds() <= 0L) return 0;
                 return 1;
+            } catch (e: k::time::TimeScaleDataUnavailableException&) {
+                return 0;
+            } catch (e: k::time::TimeDataUnavailableException&) {
+                return 0;
             }
         }
 
@@ -229,9 +230,9 @@ TEST_CASE("SystemClock: now() throws 513 in Phase 2, resolution succeeds", "[lib
     )SRC");
     REQUIRE(jit != nullptr);
 
-    auto fn_now = jit->lookup_symbol<int(*)()>("test_now_throws_513");
+    auto fn_now = jit->lookup_symbol<int(*)()>("test_now_succeeds");
     REQUIRE(fn_now != nullptr);
-    CHECK(fn_now() == 513);
+    CHECK(fn_now() == 1);
 
     auto fn_res = jit->lookup_symbol<int(*)()>("test_resolution");
     REQUIRE(fn_res != nullptr);
@@ -465,28 +466,18 @@ TEST_CASE("PosixTimestamp: normalization, ordering, duration arithmetic", "[libk
             return 0;
         }
 
-        test_to_instant_throws_513() : int {
+        test_to_instant_succeeds() : int {
             pt : k::time::PosixTimestamp = k::time::PosixTimestamp::ofSeconds(100L, 0);
-            try {
-                pt.toInstant();
-                return 0;
-            } catch (e: k::time::TimeScaleDataUnavailableException&) {
-                return e.getCode(); // 513
-            } catch (e: k::time::TemporalException&) {
-                return 1;
-            }
+            inst : k::time::Instant = pt.toInstant();
+            if (inst.epochSeconds() == 100L) return 1;
+            return 0;
         }
 
-        test_instant_from_posix_throws_513() : int {
+        test_instant_from_posix_succeeds() : int {
             pt : k::time::PosixTimestamp = k::time::PosixTimestamp::ofSeconds(100L, 0);
-            try {
-                k::time::Instant::fromPosixTimestamp(pt);
-                return 0;
-            } catch (e: k::time::TimeScaleDataUnavailableException&) {
-                return e.getCode(); // 513
-            } catch (e: k::time::TemporalException&) {
-                return 1;
-            }
+            inst : k::time::Instant = k::time::Instant::fromPosixTimestamp(pt);
+            if (inst.epochSeconds() == 100L) return 1;
+            return 0;
         }
 
         test_system_now() : int throws(k::time::TimeDataUnavailableException) {
@@ -510,13 +501,13 @@ TEST_CASE("PosixTimestamp: normalization, ordering, duration arithmetic", "[libk
     REQUIRE(fn_arith != nullptr);
     CHECK(fn_arith() == 0);
 
-    auto fn_to_inst = jit->lookup_symbol<int(*)()>("test_to_instant_throws_513");
+    auto fn_to_inst = jit->lookup_symbol<int(*)()>("test_to_instant_succeeds");
     REQUIRE(fn_to_inst != nullptr);
-    CHECK(fn_to_inst() == 513);
+    CHECK(fn_to_inst() == 1);
 
-    auto fn_from_posix = jit->lookup_symbol<int(*)()>("test_instant_from_posix_throws_513");
+    auto fn_from_posix = jit->lookup_symbol<int(*)()>("test_instant_from_posix_succeeds");
     REQUIRE(fn_from_posix != nullptr);
-    CHECK(fn_from_posix() == 513);
+    CHECK(fn_from_posix() == 1);
 
     auto fn_now = jit->lookup_symbol<int(*)()>("test_system_now");
     REQUIRE(fn_now != nullptr);

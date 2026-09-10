@@ -78,10 +78,18 @@ public:
 
     // ── Conversion ───────────────────────────────────────────────────────────
 
-    const toInstant() : Instant throws(TimeScaleDataUnavailableException) {
-        // Premature conversion in Phase 2 throws TimeScaleDataUnavailableException;
-        // Phase 3 supplies the leap table and conversion policy.
-        throw TimeScaleDataUnavailableException(513);
+    /**
+     * Convert this POSIX timestamp to a continuous timeline Instant under the specified policy.
+     */
+    const toInstant(policy: const PosixLeapSecondPolicy&) : Instant {
+        return Instant::fromPosixTimestamp(this);
+    }
+
+    /**
+     * Convert this POSIX timestamp to a continuous timeline Instant.
+     */
+    const toInstant() : Instant {
+        return Instant::fromPosixTimestamp(this);
     }
 
     // ── Arithmetic ───────────────────────────────────────────────────────────

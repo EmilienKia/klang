@@ -70,6 +70,15 @@ const char* k_zone_rules_snapshot_abbrev_at(const KZoneRulesSnapshot* snap, int6
 int32_t k_zone_rules_snapshot_is_dst_at(const KZoneRulesSnapshot* snap, int64_t epoch_second);
 const char* k_zone_rules_snapshot_posix_tz(const KZoneRulesSnapshot* snap);
 
+typedef struct {
+    int32_t kind;          /* 0 = unique, 1 = gap, 2 = overlap */
+    int32_t before_offset; /* seconds */
+    int32_t after_offset;  /* seconds */
+    int64_t trans_time;    /* UTC epoch second of transition */
+} KZoneLocalResolutionC;
+
+KZoneLocalResolutionC k_zone_rules_snapshot_resolve_local(const KZoneRulesSnapshot* snap, int64_t local_sec);
+
 #ifdef __cplusplus
 }
 #endif

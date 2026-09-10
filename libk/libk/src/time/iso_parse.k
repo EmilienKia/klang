@@ -423,6 +423,116 @@ public:
 
         return Duration(totalSec, totalNanos);
     }
+
+    static parseInstant(text: const String&) : Instant
+        throws(TemporalParseException, InvalidTemporalValueException, LeapSecondException, TemporalArithmeticException) {
+        sz : unsigned int = text.size();
+        if (sz < 19u) {
+            throw TemporalParseException();
+        }
+        lastChar : char = text.at(sz - 1u);
+        if (lastChar == 'Z' || lastChar == 'z') {
+            dtStr : String = text.substr(0u, sz - 1u);
+            dt : LocalDateTime = parseLocalDateTime(dtStr);
+            if (dt.second() == 60) {
+                LeapSecondTable::validate(dt);
+                days : long = dt.date().toEpochDay().daysSinceEpoch();
+                posixSec : long = days * 86400L + (23L * 3600L) + (59L * 60L) + 59L;
+                contSec : long = LeapSecondTable::posixToContinuous(posixSec) + 1L;
+                return Instant::ofEpochSecond(contSec, dt.nano());
+            }
+            days : long = dt.date().toEpochDay().daysSinceEpoch();
+            localSec : long = days * 86400L + (long) dt.hour() * 3600L +
+                              (long) dt.minute() * 60L + (long) dt.second();
+            contSec : long = LeapSecondTable::posixToContinuous(localSec);
+            return Instant::ofEpochSecond(contSec, dt.nano());
+        }
+
+        tIdx : int = text.find('T');
+        if (tIdx < 0) {
+            tIdx = text.find('t');
+        }
+        if (tIdx < 0) {
+            throw TemporalParseException();
+        }
+
+        offIdx : int = -1;
+        i : unsigned int = ((unsigned int) tIdx) + 1u;
+        while (i < sz) {
+            c : char = text.at(i);
+            if (c == '+' || c == '-') {
+                offIdx = (int) i;
+            }
+            ++i;
+        }
+
+        if (offIdx < 0) {
+            throw TemporalParseException();
+        }
+
+        uOffIdx : unsigned int = (unsigned int) offIdx;
+        dtStr : String = text.substr(0u, uOffIdx);
+        offStr : String = text.substr(uOffIdx, sz - uOffIdx);
+        dt : LocalDateTime = parseLocalDateTime(dtStr);
+        off : ZoneOffset = parseZoneOffset(offStr);
+
+        days : long = dt.date().toEpochDay().daysSinceEpoch();
+        localSec : long = days * 86400L + (long) dt.hour() * 3600L +
+                          (long) dt.minute() * 60L + (long) dt.second();
+        posixSec : long = localSec - (long) off.totalSeconds();
+        contSec : long = LeapSecondTable::posixToContinuous(posixSec);
+        return Instant::ofEpochSecond(contSec, dt.nano());
+    }
+
+    static parseZonedDateTime(text: const String&, resolver: const LocalDateTimeResolver&) : ZonedDateTime
+        throws(TemporalParseException, InvalidTemporalValueException, LocalTimeGapException, LocalTimeOverlapException, ZoneRulesUnavailableException, TemporalArithmeticException) {
+        bOpen : int = text.find('[');
+        bClose : int = text.find(']');
+        if (bOpen < 0 || bClose <= bOpen) {
+            throw TemporalParseException();
+        }
+        uOpen : unsigned int = (unsigned int) bOpen;
+        uClose : unsigned int = (unsigned int) bClose;
+        zoneName : String = text.substr(uOpen + 1u, uClose - uOpen - 1u);
+        zoneId : ZoneId = ZoneId::of(zoneName);
+        zone : TimeZone = TimeZone::of(zoneId);
+
+        prefix : String = text.substr(0u, uOpen);
+        if (prefix.empty()) {
+            throw TemporalParseException();
+        }
+
+        pSz : unsigned int = prefix.size();
+        dtStr : String;
+        if (prefix.at(pSz - 1u) == 'Z' || prefix.at(pSz - 1u) == 'z') {
+            dtStr = prefix.substr(0u, pSz - 1u);
+        } else {
+            tIdx : int = prefix.find('T');
+            if (tIdx < 0) {
+                tIdx = prefix.find('t');
+            }
+            if (tIdx < 0) {
+                throw TemporalParseException();
+            }
+            offIdx : int = -1;
+            idx : unsigned int = ((unsigned int) tIdx) + 1u;
+            while (idx < pSz) {
+                c : char = prefix.at(idx);
+                if (c == '+' || c == '-') {
+                    offIdx = (int) idx;
+                }
+                ++idx;
+            }
+            if (offIdx > 0) {
+                dtStr = prefix.substr(0u, (unsigned int) offIdx);
+            } else {
+                dtStr = prefix;
+            }
+        }
+
+        local : LocalDateTime = parseLocalDateTime(dtStr);
+        return ZonedDateTime::of(local, zone, resolver);
+    }
 }
 
 } // namespace time

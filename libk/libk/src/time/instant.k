@@ -58,11 +58,9 @@ public:
         return Instant(norm.seconds, norm.nanos);
     }
 
-    static fromPosixTimestamp(value: const PosixTimestamp&) : Instant
-        throws(TimeScaleDataUnavailableException) {
-        // In Phase 2, conversion between POSIX timestamp and continuous Instant
-        // is unavailable until the Phase 3 leap-second table is integrated.
-        throw TimeScaleDataUnavailableException(513);
+    static fromPosixTimestamp(value: const PosixTimestamp&) : Instant {
+        contSec : long = LeapSecondTable::posixToContinuous(value.seconds());
+        return Instant(contSec, value.nanoAdjustment());
     }
 
     // ── Field accessors ──────────────────────────────────────────────────────
@@ -73,6 +71,69 @@ public:
 
     const nanoAdjustment() : int {
         return _nanos;
+    }
+
+    // ── Projections & Conversions ────────────────────────────────────────────
+
+    /**
+     * Convert this Instant to a POSIX timestamp under the specified leap-second policy.
+     * Throws LeapSecondException(504) if policy is reject and this instant is a leap second.
+     */
+    const toPosixTimestamp(policy: const PosixLeapSecondPolicy&) : PosixTimestamp throws(LeapSecondException) {
+        posixSec : long = LeapSecondTable::continuousToPosix(_seconds, policy.mode());
+        return PosixTimestamp(posixSec, _nanos);
+    }
+
+    /**
+     * Convert this Instant to a POSIX timestamp using PosixLeapSecondPolicy::reject().
+     */
+    const toPosixTimestamp() : PosixTimestamp throws(LeapSecondException) {
+        return toPosixTimestamp(PosixLeapSecondPolicy::reject());
+    }
+
+    /**
+     * Convert this Instant to POSIX epoch seconds, folding inserted leap seconds.
+     * Never throws.
+     */
+    const toPosixSeconds() : long {
+        return LeapSecondTable::continuousToPosixFolded(_seconds);
+    }
+
+    /**
+     * Format this Instant as a UTC calendar LocalDateTime.
+     * Accurately reflects second 60 for inserted leap seconds.
+     */
+    const toUtcDateTime() : LocalDateTime {
+        y : long = 0L;
+        m : int = 0;
+        d : int = 0;
+        try {
+            if (LeapSecondTable::getLeapDate(_seconds, &y, &m, &d)) {
+                date : LocalDate = LocalDate::of(y, m, d);
+                time : LocalTime = LocalTime::of(23, 59, 60, _nanos);
+                return LocalDateTime::of(date, time);
+            }
+            posixSec : long = toPosixSeconds();
+            days : long = floorDiv(posixSec, 86400L);
+            sod : long = floorMod(posixSec, 86400L);
+            date : LocalDate = LocalDate::fromEpochDay(EpochDay(days));
+            h : int = (int) (sod / 3600L);
+            minute : int = (int) ((sod % 3600L) / 60L);
+            sec : int = (int) (sod % 60L);
+            time : LocalTime = LocalTime::of(h, minute, sec, _nanos);
+            return LocalDateTime::of(date, time);
+        } catch (e: TemporalArithmeticException&) {
+            return LocalDateTime();
+        } catch (e2: InvalidTemporalValueException&) {
+            return LocalDateTime();
+        }
+    }
+
+    /**
+     * Project this Instant into the given TimeZone to create a ZonedDateTime.
+     */
+    const atZone(zone: const TimeZone&) : ZonedDateTime {
+        return ZonedDateTime::fromInstant(this, zone);
     }
 
     // ── Timeline arithmetic ──────────────────────────────────────────────────

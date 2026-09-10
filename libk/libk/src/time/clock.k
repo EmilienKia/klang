@@ -149,9 +149,8 @@ public:
     }
 
     override now() : time::Instant throws(TimeScaleDataUnavailableException, TimeDataUnavailableException) {
-        // In Phase 2, SystemClock.now() MUST throw TimeScaleDataUnavailableException(513)
-        // because UTC leap-second history and POSIX mapping are not yet loaded.
-        throw TimeScaleDataUnavailableException(513);
+        posix : PosixTimestamp = PosixTimestamp::systemNow();
+        return Instant::fromPosixTimestamp(posix);
     }
 
     override resolution() : time::Duration throws(TimeDataUnavailableException) {

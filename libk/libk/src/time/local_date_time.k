@@ -260,6 +260,24 @@ public:
         throws(InvalidTemporalValueException, TemporalArithmeticException) {
         return minus(duration);
     }
+
+    // ── Zone Projections ─────────────────────────────────────────────────────
+
+    /**
+     * Create a ZonedDateTime in the specified TimeZone using StrictResolver.
+     */
+    const atZone(zone: const TimeZone&) : ZonedDateTime
+        throws(LocalTimeGapException, LocalTimeOverlapException, TemporalArithmeticException) {
+        return ZonedDateTime::of(this, zone);
+    }
+
+    /**
+     * Create a ZonedDateTime in the specified TimeZone using an explicit resolver.
+     */
+    const atZone(zone: const TimeZone&, resolver: const LocalDateTimeResolver&) : ZonedDateTime
+        throws(LocalTimeGapException, LocalTimeOverlapException, TemporalArithmeticException) {
+        return ZonedDateTime::of(this, zone, resolver);
+    }
 }
 
 } // namespace time

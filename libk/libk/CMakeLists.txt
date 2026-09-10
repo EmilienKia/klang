@@ -75,6 +75,10 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/zone_id.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/leap_seconds.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/tzdb.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/local_resolution.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/zone_rules.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/time_zone.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/zoned_date_time.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
     # ── Phase 2: futures ──────────────────────────────────────────────────
@@ -704,6 +708,8 @@ libk_add_test(libk-tests-time 120
     tests/time/test-time-iso.cpp
     tests/time/test-time-clock.cpp
     tests/time/test-time-tzdb.cpp
+    tests/time/test-time-zones.cpp
+    tests/time/test-time-leap-seconds.cpp
 )
 
 # ── libk performance / stress tests ──────────────────────────────────────────

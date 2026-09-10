@@ -206,4 +206,41 @@ Access to the system time-zone database (default `/usr/share/zoneinfo`) and immu
 - `transitionCount`, `transitionTime`, `transitionOffset`, `transitionAbbrev`, `transitionIsDst`
 - `offsetAt`, `abbrevAt`, `isDstAt`, `posixTz`
 
+### 5.5 `ZoneTransition`, `ZoneLocalResolution`, and Resolvers
+Local-time resolution model for handling DST gaps and overlaps:
+- `ZoneTransition`: transition instant, beforeOffset, afterOffset, `isGap()`, `isOverlap()`, `duration()`.
+- `ZoneLocalResolution`: abstract base with `UniqueResolution`, `GapResolution`, `OverlapResolution`.
+- `LocalDateTimeResolver`:
+  - `StrictResolver::instance()`: throws `LocalTimeGapException(521)` on gap, `LocalTimeOverlapException(522)` on overlap.
+  - `EarlierResolver::instance()`: throws on gap; on overlap selects the earlier instant / earlier offset.
+  - `LaterResolver::instance()`: throws on gap; on overlap selects the later instant / later offset.
+  - `PreferOffsetResolver(preferredOffset)`: on overlap matches preferred offset if possible.
+  - `ShiftForwardResolver::instance()`: on gap shifts forward by gap duration; throws on overlap.
+  - `ShiftBackwardResolver::instance()`: on gap shifts backward by gap duration; throws on overlap.
+
+### 5.6 `ZoneRules` and `TimeZone`
+- `ZoneRules`: interface with `version()`, `offsetAt(Instant)`, `validOffsets(LocalDateTime)`, `resolveLocal(LocalDateTime)`, `transition(LocalDateTime)`.
+  - Concrete implementations: `FixedZoneRules` and `TzdbZoneRules`.
+- `TimeZone`: immutable pairing of `ZoneId` and `ZoneRules`.
+  - `TimeZone::of(id) throws(ZoneRulesUnavailableException)`
+  - `TimeZone::of(id, version) throws(ZoneRulesUnavailableException)`
+  - `TimeZone::fixed(offset)`
+  - `TimeZone::system() throws(SystemTimeZoneUnavailableException, ZoneRulesUnavailableException)`
+
+### 5.7 `ZonedDateTime`
+Immutable pairing of an absolute `Instant` and a `TimeZone`.
+- **Factories:** `fromInstant(instant, zone)`, `of(local, zone)` (strict), `of(local, zone, resolver)`.
+- **Accessors:** `instant()`, `zone()`, `offset()`, `localDate()`, `localTime()`, `localDateTime()`.
+- **Arithmetic:**
+  - `plus(Duration)` / `minus(Duration)`: timeline arithmetic on `Instant`.
+  - `plus(Period, resolver)` / `minus(Period, resolver)`: civil calendar arithmetic on `LocalDateTime`, followed by zone resolution.
+- **Operations:** `withZone(newZone)`, `isBefore`, `isAfter`, `isSameInstant`, `operator==`, `operator!=`.
+
+### 5.8 `Iso` Additions in Phase 3
+- `Iso::formatInstant(instant: const Instant&) -> String` -> `YYYY-MM-DDTHH:MM:SS[.fraction]Z`
+- `Iso::formatZonedDateTime(zdt: const ZonedDateTime&) -> String` -> `YYYY-MM-DDTHH:MM:SS[.fraction]±HH:MM[ZoneId]`
+- `Iso::parseInstant(text: const String&) -> Instant`
+- `Iso::parseZonedDateTime(text: const String&, resolver: const LocalDateTimeResolver&) -> ZonedDateTime`
+
+
 

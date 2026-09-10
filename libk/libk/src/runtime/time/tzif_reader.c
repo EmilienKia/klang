@@ -376,3 +376,108 @@ const char* k_zone_rules_snapshot_posix_tz(const KZoneRulesSnapshot* snap) {
     if (!snap || !snap->posix_tz) return "";
     return snap->posix_tz;
 }
+
+KZoneLocalResolutionC k_zone_rules_snapshot_resolve_local(const KZoneRulesSnapshot* snap, int64_t local_sec) {
+    KZoneLocalResolutionC res = {0, 0, 0, 0};
+    if (!snap || snap->type_count == 0) return res;
+
+    int32_t initial_off = 0;
+    for (int32_t i = 0; i < snap->type_count; ++i) {
+        if (snap->types[i].is_dst == 0) {
+            initial_off = snap->types[i].utoff;
+            break;
+        }
+    }
+    if (initial_off == 0 && snap->type_count > 0) {
+        initial_off = snap->types[0].utoff;
+    }
+
+    if (snap->transition_count == 0) {
+        res.kind = 0;
+        res.before_offset = initial_off;
+        res.after_offset = initial_off;
+        res.trans_time = 0;
+        return res;
+    }
+
+    /* 1. Check for gap or overlap among transitions */
+    int32_t low = 0, high = snap->transition_count - 1;
+    int32_t candidate = 0;
+    while (low <= high) {
+        int32_t mid = low + (high - low) / 2;
+        if (snap->transitions[mid] <= local_sec) {
+            candidate = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    int32_t start_idx = (candidate > 1) ? candidate - 1 : 0;
+    int32_t end_idx = (candidate + 2 < snap->transition_count) ? candidate + 2 : snap->transition_count - 1;
+
+    for (int32_t i = start_idx; i <= end_idx; ++i) {
+        int64_t t = snap->transitions[i];
+        int32_t off_after = snap->types[snap->type_indices[i]].utoff;
+        int32_t off_before = (i > 0) ? snap->types[snap->type_indices[i - 1]].utoff : initial_off;
+
+        if (off_after > off_before) {
+            /* Spring forward GAP */
+            int64_t gap_start = t + off_before;
+            int64_t gap_end = t + off_after;
+            if (local_sec >= gap_start && local_sec < gap_end) {
+                res.kind = 1; /* GAP */
+                res.before_offset = off_before;
+                res.after_offset = off_after;
+                res.trans_time = t;
+                return res;
+            }
+        } else if (off_before > off_after) {
+            /* Autumn fallback OVERLAP */
+            int64_t ov_start = t + off_after;
+            int64_t ov_end = t + off_before;
+            if (local_sec >= ov_start && local_sec < ov_end) {
+                res.kind = 2; /* OVERLAP */
+                res.before_offset = off_before;
+                res.after_offset = off_after;
+                res.trans_time = t;
+                return res;
+            }
+        }
+    }
+
+    /* 2. Not in a gap or overlap -> UNIQUE resolution.
+     * Find the offset that satisfies offset_at(local_sec - O) == O */
+    int32_t unique_offs[32];
+    int32_t num_unique = 0;
+    for (int32_t i = 0; i < snap->type_count && num_unique < 32; ++i) {
+        int32_t o = snap->types[i].utoff;
+        int found = 0;
+        for (int32_t j = 0; j < num_unique; ++j) {
+            if (unique_offs[j] == o) { found = 1; break; }
+        }
+        if (!found) {
+            unique_offs[num_unique++] = o;
+        }
+    }
+
+    for (int32_t i = 0; i < num_unique; ++i) {
+        int32_t o = unique_offs[i];
+        int64_t inst = local_sec - o;
+        if (k_zone_rules_snapshot_offset_at(snap, inst) == o) {
+            res.kind = 0;
+            res.before_offset = o;
+            res.after_offset = o;
+            res.trans_time = 0;
+            return res;
+        }
+    }
+
+    int32_t def_off = k_zone_rules_snapshot_offset_at(snap, local_sec - initial_off);
+    res.kind = 0;
+    res.before_offset = def_off;
+    res.after_offset = def_off;
+    res.trans_time = 0;
+    return res;
+}
+

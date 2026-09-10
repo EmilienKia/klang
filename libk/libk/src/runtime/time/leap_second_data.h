@@ -68,6 +68,25 @@ int k_leap_second_count(void);
 int k_leap_second_is_leap_date(int64_t year, int32_t month, int32_t day);
 
 /**
+ * Convert POSIX seconds to continuous K timeline seconds.
+ */
+int64_t k_leap_second_posix_to_continuous(int64_t posix_sec);
+
+/**
+ * Convert continuous K timeline seconds to POSIX seconds under policy:
+ *   0 = reject (returns 0 and sets *out_error = 504 on leap second)
+ *   1 = fold to previous second (23:59:59)
+ *   2 = fold to following second (00:00:00)
+ */
+int64_t k_leap_second_continuous_to_posix(int64_t continuous_sec, int32_t policy, int32_t* out_error);
+
+/**
+ * If continuous_sec is an inserted leap second, writes year, month, day and returns 1.
+ * Otherwise returns 0.
+ */
+int32_t k_leap_second_get_leap_date_for_instant(int64_t continuous_sec, int64_t* out_year, int32_t* out_month, int32_t* out_day);
+
+/**
  * Reset leap seconds to the default pinned historical table.
  */
 void k_leap_second_reset_pinned(void);

@@ -1986,12 +1986,12 @@ snapshot lifetime remain under libk control.
 
 ### 6.8 Phase 3 acceptance checklist
 
-- [ ] Public zone values contain no native data path, handle, POSIX timestamp,
+- [x] Public zone values contain no native data path, handle, POSIX timestamp,
       or C runtime type.
-- [ ] An existing zone rules object cannot change after a system TZDB update.
-- [ ] Unknown zone/version, invalid leap label, gap, overlap, and unavailable
+- [x] An existing zone rules object cannot change after a system TZDB update.
+- [x] Unknown zone/version, invalid leap label, gap, overlap, and unavailable
       system zone all fail explicitly and distinctly.
-- [ ] A real `SystemClock` is available only with an explicit leap-data
+- [x] A real `SystemClock` is available only with an explicit leap-data
       provider and cannot be mistaken for a monotonic measurement source.
 
 ## 7. Phase 4 - chronologies, locale presentation, time scales, and sources
@@ -2152,10 +2152,10 @@ provider is ICU through its stable C API.
 | `Duration`, `Instant`, deterministic Gregorian civil arithmetic | 1 | [x] | `libk-tests-time` arithmetic and property cases |
 | Canonical ISO data-only text | 1 | [x] | parse/format test vectors in `test-time-iso.cpp` |
 | Separate wall-clock and monotonic domains | 2 | [x] | fake-clock and native-adapter cases in `test-time-clock.cpp` |
-| Explicit POSIX interoperability boundary | 2-3 | [ ] | conversion-policy vectors |
-| UTC leap seconds and current `SystemClock` to `Instant` | 3 | [ ] | pinned leap fixture cases |
-| Versioned named zones, gaps, overlaps, and local resolvers | 3 | [ ] | pinned TZif integration cases |
-| Reproducible zoned serialization | 3 | [ ] | versioned snapshot round trips |
+| Explicit POSIX interoperability boundary | 2-3 | [x] | conversion-policy vectors in `test-time-leap-seconds.cpp` |
+| UTC leap seconds and current `SystemClock` to `Instant` | 3 | [x] | pinned leap fixture cases in `test-time-leap-seconds.cpp` |
+| Versioned named zones, gaps, overlaps, and local resolvers | 3 | [x] | pinned TZif integration cases in `test-time-tzdb.cpp` and `test-time-zones.cpp` |
+| Reproducible zoned serialization | 3 | [x] | versioned snapshot round trips in `test-time-zones.cpp` |
 | Alternative chronologies and `EpochDay` conversion | 4 | [ ] | Gregorian/Julian/synthetic chronology cases |
 | Locale presentation and localized parsing | 4 | [ ] | pinned ICU locale cases |
 | UTC, TAI, GPS, CPU clocks, and optional observations | 4 | [ ] | scale/source test vectors |

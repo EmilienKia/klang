@@ -23,6 +23,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <ctype.h>
+#include <unistd.h>
 
 static __thread KPlatformClockReading g_last_reading;
 
@@ -134,6 +137,18 @@ int32_t __k_time_leap_second_is_leap_date(int64_t year, int32_t month, int32_t d
     return k_leap_second_is_leap_date(year, month, day);
 }
 
+int64_t __k_time_leap_second_posix_to_continuous(int64_t posix_sec) {
+    return k_leap_second_posix_to_continuous(posix_sec);
+}
+
+int64_t __k_time_leap_second_continuous_to_posix(int64_t continuous_sec, int32_t policy, int32_t* out_error) {
+    return k_leap_second_continuous_to_posix(continuous_sec, policy, out_error);
+}
+
+int32_t __k_time_leap_second_get_leap_date(int64_t continuous_sec, int64_t* out_year, int32_t* out_month, int32_t* out_day) {
+    return k_leap_second_get_leap_date_for_instant(continuous_sec, out_year, out_month, out_day);
+}
+
 /* ── TZDB & TZif FFI ───────────────────────────────────────────────────────── */
 
 void __k_tzdb_set_root(const char* root) {
@@ -191,4 +206,88 @@ KByteArray* __k_tzdb_snapshot_posix_tz(const KZoneRulesSnapshot* snap) {
     const char* p = k_zone_rules_snapshot_posix_tz(snap);
     return make_k_byte_array(p);
 }
+
+void __k_tzdb_snapshot_retain(KZoneRulesSnapshot* snap) {
+    k_zone_rules_snapshot_retain(snap);
+}
+
+static __thread KZoneLocalResolutionC g_last_local_res;
+
+void __k_tzdb_snapshot_resolve_local(const KZoneRulesSnapshot* snap, int64_t local_sec) {
+    g_last_local_res = k_zone_rules_snapshot_resolve_local(snap, local_sec);
+}
+
+int32_t __k_tzdb_snapshot_res_kind(void) {
+    return g_last_local_res.kind;
+}
+
+int32_t __k_tzdb_snapshot_res_before_offset(void) {
+    return g_last_local_res.before_offset;
+}
+
+int32_t __k_tzdb_snapshot_res_after_offset(void) {
+    return g_last_local_res.after_offset;
+}
+
+int64_t __k_tzdb_snapshot_res_trans_time(void) {
+    return g_last_local_res.trans_time;
+}
+
+static char g_system_zone_override[128] = "";
+
+void __k_tzdb_set_system_zone_override(const char* name) {
+    if (name) {
+        strncpy(g_system_zone_override, name, sizeof(g_system_zone_override) - 1);
+        g_system_zone_override[sizeof(g_system_zone_override) - 1] = '\0';
+    } else {
+        g_system_zone_override[0] = '\0';
+    }
+}
+
+KByteArray* __k_tzdb_detect_system_zone(void) {
+    if (g_system_zone_override[0] != '\0') {
+        if (strcmp(g_system_zone_override, "__UNAVAILABLE__") == 0) {
+            return NULL;
+        }
+        return make_k_byte_array(g_system_zone_override);
+    }
+
+    /* 1. Check TZ environment variable */
+    const char* tz = getenv("TZ");
+    if (tz && *tz) {
+        if (*tz == ':') tz++;
+        if (*tz) return make_k_byte_array(tz);
+    }
+
+    /* 2. Check /etc/timezone */
+    FILE* fp = fopen("/etc/timezone", "r");
+    if (fp) {
+        char buf[128];
+        if (fgets(buf, sizeof(buf), fp)) {
+            char* p = buf;
+            while (*p && isspace((unsigned char)*p)) p++;
+            char* end = p + strlen(p) - 1;
+            while (end >= p && isspace((unsigned char)*end)) *end-- = '\0';
+            fclose(fp);
+            if (*p) return make_k_byte_array(p);
+        } else {
+            fclose(fp);
+        }
+    }
+
+    /* 3. Check /etc/localtime symlink */
+    char linkbuf[256];
+    ssize_t len = readlink("/etc/localtime", linkbuf, sizeof(linkbuf) - 1);
+    if (len > 0) {
+        linkbuf[len] = '\0';
+        const char* zi = strstr(linkbuf, "zoneinfo/");
+        if (zi) {
+            zi += strlen("zoneinfo/");
+            if (*zi) return make_k_byte_array(zi);
+        }
+    }
+
+    return NULL;
+}
+
 

@@ -214,3 +214,63 @@ int64_t k_leap_second_tai_offset(int64_t epoch_second) {
     }
     return g_active_records[best].tai_offset;
 }
+
+int64_t k_leap_second_posix_to_continuous(int64_t posix_sec) {
+    init_pinned_if_needed();
+    int count = 0;
+    for (int i = 0; i < g_active_count; ++i) {
+        if (posix_sec >= g_active_records[i].posix_seconds) {
+            count++;
+        }
+    }
+    return posix_sec + (int64_t) count;
+}
+
+int64_t k_leap_second_continuous_to_posix(int64_t continuous_sec, int32_t policy, int32_t* out_error) {
+    init_pinned_if_needed();
+    if (out_error) *out_error = 0;
+
+    for (int i = 0; i < g_active_count; ++i) {
+        const KLeapSecondRecord* r = &g_active_records[i];
+        int64_t leap_cont_sec = r->posix_seconds - 1LL + (r->tai_offset - 10LL);
+        if (continuous_sec == leap_cont_sec) {
+            if (policy == 0) {
+                /* reject */
+                if (out_error) *out_error = 504;
+                return 0;
+            } else if (policy == 1) {
+                /* fold to previous second (23:59:59) */
+                return r->posix_seconds - 1LL;
+            } else if (policy == 2) {
+                /* fold to following second (00:00:00) */
+                return r->posix_seconds;
+            }
+        }
+    }
+
+    int count = 0;
+    for (int i = 0; i < g_active_count; ++i) {
+        const KLeapSecondRecord* r = &g_active_records[i];
+        int64_t leap_cont_sec = r->posix_seconds - 1LL + (r->tai_offset - 10LL);
+        if (continuous_sec > leap_cont_sec) {
+            count++;
+        }
+    }
+    return continuous_sec - (int64_t) count;
+}
+
+int32_t k_leap_second_get_leap_date_for_instant(int64_t continuous_sec, int64_t* out_year, int32_t* out_month, int32_t* out_day) {
+    init_pinned_if_needed();
+    for (int i = 0; i < g_active_count; ++i) {
+        const KLeapSecondRecord* r = &g_active_records[i];
+        int64_t leap_cont_sec = r->posix_seconds - 1LL + (r->tai_offset - 10LL);
+        if (continuous_sec == leap_cont_sec) {
+            if (out_year) *out_year = (int64_t) r->year;
+            if (out_month) *out_month = r->month;
+            if (out_day) *out_day = r->day;
+            return 1;
+        }
+    }
+    return 0;
+}
+
