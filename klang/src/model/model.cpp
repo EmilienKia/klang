@@ -488,7 +488,7 @@ void function::update_mangled_name() {
 }
 
 void function::create_this_parameter() {
-    if (is_member() && !_this_param) {
+    if (is_member() && !_is_static && !_this_param) {
         auto struct_type = get_owner()->get_struct_type();
         std::shared_ptr<type> this_type;
         if (_is_const_member) {

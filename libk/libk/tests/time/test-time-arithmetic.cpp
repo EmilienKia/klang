@@ -984,3 +984,690 @@ TEST_CASE("EpochDay: comparisons and compareTo", "[libk][time][epoch_day]") {
     REQUIRE(fn_ops != nullptr);
     CHECK(fn_ops() == true);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 8. Duration factories and normalization
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Duration: factories and normalization", "[libk][time][duration]") {
+    auto jit = jit_k(R"SRC(
+        module __test_duration_factories__;
+
+        test_zero() : bool {
+            d : k::time::Duration = k::time::Duration::zero();
+            return d.secondsPart() == 0L && d.nanoAdjustment() == 0 && d.isZero() && !d.isNegative();
+        }
+
+        test_of_nanos() : int {
+            d1 : k::time::Duration = k::time::Duration::ofNanos(500L);
+            if (d1.secondsPart() != 0L) return 10;
+            if (d1.nanoAdjustment() != 500) return 11;
+            d2 : k::time::Duration = k::time::Duration::ofNanos(1500000000L);
+            if (d2.secondsPart() != 1L) return 20;
+            if (d2.nanoAdjustment() != 500000000) return 21;
+            d3 : k::time::Duration = k::time::Duration::ofNanos(-500L);
+            if (d3.secondsPart() != -1L) return 30;
+            if (d3.nanoAdjustment() != 999999500) return 31;
+            if (!d3.isNegative()) return 32;
+            d4 : k::time::Duration = k::time::Duration::ofNanos(-1500000000L);
+            if (d4.secondsPart() != -2L) return 40;
+            if (d4.nanoAdjustment() != 500000000) return 41;
+            if (!d4.isNegative()) return 42;
+            return 0;
+        }
+
+        test_of_micros() : int {
+            try {
+                d1 : k::time::Duration = k::time::Duration::ofMicros(123456L);
+                if (d1.secondsPart() != 0L) return 10;
+                if (d1.nanoAdjustment() != 123456000) return 11;
+                d2 : k::time::Duration = k::time::Duration::ofMicros(1500000L);
+                if (d2.secondsPart() != 1L) return 20;
+                if (d2.nanoAdjustment() != 500000000) return 21;
+                d3 : k::time::Duration = k::time::Duration::ofMicros(-500L);
+                if (d3.secondsPart() != -1L) return 30;
+                if (d3.nanoAdjustment() != 999500000) return 31;
+                if (!d3.isNegative()) return 32;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 99;
+            }
+        }
+
+        test_of_millis() : int {
+            try {
+                d1 : k::time::Duration = k::time::Duration::ofMillis(500L);
+                if (d1.secondsPart() != 0L) return 10;
+                if (d1.nanoAdjustment() != 500000000) return 11;
+                d2 : k::time::Duration = k::time::Duration::ofMillis(1500L);
+                if (d2.secondsPart() != 1L) return 20;
+                if (d2.nanoAdjustment() != 500000000) return 21;
+                d3 : k::time::Duration = k::time::Duration::ofMillis(-500L);
+                if (d3.secondsPart() != -1L) return 30;
+                if (d3.nanoAdjustment() != 500000000) return 31;
+                if (!d3.isNegative()) return 32;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 99;
+            }
+        }
+
+        test_of_seconds() : int {
+            try {
+                d1 : k::time::Duration = k::time::Duration::ofSeconds(42L);
+                if (d1.secondsPart() != 42L) return 1;
+                if (d1.nanoAdjustment() != 0) return 2;
+                d2 : k::time::Duration = k::time::Duration::ofSeconds(-42L);
+                if (d2.secondsPart() != -42L) return 3;
+                if (d2.nanoAdjustment() != 0) return 4;
+                if (!d2.isNegative()) return 5;
+                d3 : k::time::Duration = k::time::Duration::ofSeconds(10L, 500000000);
+                if (d3.secondsPart() != 10L) return 6;
+                if (d3.nanoAdjustment() != 500000000) return 7;
+                d4 : k::time::Duration = k::time::Duration::ofSeconds(10L, 1500000000);
+                if (d4.secondsPart() != 11L) return 8;
+                if (d4.nanoAdjustment() != 500000000) return 9;
+                d5 : k::time::Duration = k::time::Duration::ofSeconds(10L, -500000000);
+                if (d5.secondsPart() != 9L) return 10;
+                if (d5.nanoAdjustment() != 500000000) return 11;
+                d6 : k::time::Duration = k::time::Duration::ofSeconds(-10L, -500000000);
+                if (d6.secondsPart() != -11L) return 12;
+                if (d6.nanoAdjustment() != 500000000) return 13;
+                if (!d6.isNegative()) return 14;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 99;
+            }
+        }
+
+        test_of_minutes_and_hours() : int {
+            try {
+                dm : k::time::Duration = k::time::Duration::ofMinutes(5L);
+                dh : k::time::Duration = k::time::Duration::ofHours(2L);
+                if (dm.secondsPart() != 300L) return 1;
+                if (dm.nanoAdjustment() != 0) return 2;
+                if (dh.secondsPart() != 7200L) return 3;
+                if (dh.nanoAdjustment() != 0) return 4;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 99;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<bool(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == true);
+    };
+
+    check_b("test_zero");
+    auto fn_nanos = jit->lookup_symbol<int(*)()>("test_of_nanos");
+    REQUIRE(fn_nanos != nullptr);
+    CHECK(fn_nanos() == 0);
+    auto fn_micros = jit->lookup_symbol<int(*)()>("test_of_micros");
+    REQUIRE(fn_micros != nullptr);
+    CHECK(fn_micros() == 0);
+    auto fn_millis = jit->lookup_symbol<int(*)()>("test_of_millis");
+    REQUIRE(fn_millis != nullptr);
+    CHECK(fn_millis() == 0);
+    auto fn_sec = jit->lookup_symbol<int(*)()>("test_of_seconds");
+    REQUIRE(fn_sec != nullptr);
+    CHECK(fn_sec() == 0);
+    auto fn_mh = jit->lookup_symbol<int(*)()>("test_of_minutes_and_hours");
+    REQUIRE(fn_mh != nullptr);
+    CHECK(fn_mh() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 9. Duration conversions and unit conversions
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Duration: unit conversions and overflow", "[libk][time][duration]") {
+    auto jit = jit_k(R"SRC(
+        module __test_duration_conversions__;
+
+        test_positive_conversions() : bool throws(k::time::TemporalArithmeticException) {
+            d : k::time::Duration = k::time::Duration::ofSeconds(2L, 500000000);
+            return d.secondsPart() == 2L &&
+                   d.nanoAdjustment() == 500000000 &&
+                   d.toSeconds() == 2L &&
+                   d.toMillis() == 2500L &&
+                   d.toMicros() == 2500000L &&
+                   d.toNanosExact() == 2500000000L;
+        }
+
+        test_negative_conversions() : bool throws(k::time::TemporalArithmeticException) {
+            d : k::time::Duration = k::time::Duration::ofMillis(-1500L);
+            return d.secondsPart() == -2L &&
+                   d.nanoAdjustment() == 500000000 &&
+                   d.toSeconds() == -2L &&
+                   d.toMillis() == -1500L &&
+                   d.toMicros() == -1500000L &&
+                   d.toNanosExact() == -1500000000L;
+        }
+
+        test_to_nanos_overflow() : int {
+            try {
+                d : k::time::Duration = k::time::Duration::ofSeconds(9223372036854775807L);
+                d.toNanosExact();
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+
+        test_to_micros_overflow() : int {
+            try {
+                d : k::time::Duration = k::time::Duration::ofSeconds(9223372036854775807L);
+                d.toMicros();
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+
+        test_to_millis_overflow() : int {
+            try {
+                d : k::time::Duration = k::time::Duration::ofSeconds(9223372036854775807L);
+                d.toMillis();
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<bool(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == true);
+    };
+
+    check_b("test_positive_conversions");
+    check_b("test_negative_conversions");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+
+    check_i("test_to_nanos_overflow", 1);
+    check_i("test_to_micros_overflow", 1);
+    check_i("test_to_millis_overflow", 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 10. Duration comparisons and compareTo
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Duration: comparisons and relational operators", "[libk][time][duration]") {
+    auto jit = jit_k(R"SRC(
+        module __test_duration_comparisons__;
+
+        test_compare_to() : bool {
+            d1 : k::time::Duration = k::time::Duration::ofSeconds(10L, 100);
+            d2 : k::time::Duration = k::time::Duration::ofSeconds(10L, 200);
+            d3 : k::time::Duration = k::time::Duration::ofSeconds(10L, 100);
+            d_neg : k::time::Duration = k::time::Duration::ofSeconds(-1L, 0);
+
+            return (d1.compareTo(d2) < 0) &&
+                   (d2.compareTo(d1) > 0) &&
+                   (d1.compareTo(d3) == 0) &&
+                   (d_neg.compareTo(d1) < 0) &&
+                   (d1.compareTo(d_neg) > 0);
+        }
+
+        test_operators() : bool {
+            a : k::time::Duration = k::time::Duration::ofSeconds(5L, 500);
+            b : k::time::Duration = k::time::Duration::ofSeconds(10L, 100);
+            c : k::time::Duration = k::time::Duration::ofSeconds(5L, 500);
+            neg : k::time::Duration = k::time::Duration::ofSeconds(-5L, 0);
+
+            ok : bool = true;
+            ok = ok && (a == c);
+            ok = ok && (a != b);
+            ok = ok && (a < b);
+            ok = ok && (a <= b);
+            ok = ok && (a <= c);
+            ok = ok && (b > a);
+            ok = ok && (b >= a);
+            ok = ok && (a >= c);
+            ok = ok && (neg < a);
+            ok = ok && (a > neg);
+            return ok;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<bool(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == true);
+    };
+
+    check_b("test_compare_to");
+    check_b("test_operators");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 11. Duration arithmetic (plus, minus, negate, multipliedBy, dividedBy)
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Duration: arithmetic plus and minus", "[libk][time][duration]") {
+    auto jit = jit_k(R"SRC(
+        module __test_duration_arithmetic_plus_minus__;
+
+        test_plus_no_carry() : bool throws(k::time::TemporalArithmeticException) {
+            a : k::time::Duration = k::time::Duration::ofSeconds(10L, 100);
+            b : k::time::Duration = k::time::Duration::ofSeconds(20L, 200);
+            r : k::time::Duration = a.plus(b);
+            op : k::time::Duration = a + b;
+            return r.secondsPart() == 30L && r.nanoAdjustment() == 300 && r == op;
+        }
+
+        test_plus_with_carry() : bool throws(k::time::TemporalArithmeticException) {
+            a : k::time::Duration = k::time::Duration::ofSeconds(10L, 600000000);
+            b : k::time::Duration = k::time::Duration::ofSeconds(20L, 700000000);
+            r : k::time::Duration = a.plus(b);
+            op : k::time::Duration = a + b;
+            return r.secondsPart() == 31L && r.nanoAdjustment() == 300000000 && r == op;
+        }
+
+        test_minus_no_borrow() : bool throws(k::time::TemporalArithmeticException) {
+            a : k::time::Duration = k::time::Duration::ofSeconds(30L, 300);
+            b : k::time::Duration = k::time::Duration::ofSeconds(10L, 100);
+            r : k::time::Duration = a.minus(b);
+            op : k::time::Duration = a - b;
+            return r.secondsPart() == 20L && r.nanoAdjustment() == 200 && r == op;
+        }
+
+        test_minus_with_borrow() : bool throws(k::time::TemporalArithmeticException) {
+            a : k::time::Duration = k::time::Duration::ofSeconds(30L, 200000000);
+            b : k::time::Duration = k::time::Duration::ofSeconds(10L, 500000000);
+            r : k::time::Duration = a.minus(b);
+            op : k::time::Duration = a - b;
+            return r.secondsPart() == 19L && r.nanoAdjustment() == 700000000 && r == op;
+        }
+
+        test_plus_overflow() : int {
+            try {
+                a : k::time::Duration = k::time::Duration::ofSeconds(9223372036854775807L);
+                b : k::time::Duration = k::time::Duration::ofSeconds(1L);
+                r : k::time::Duration = a + b;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+
+        test_plus_carry_overflow() : int {
+            try {
+                a : k::time::Duration = k::time::Duration::ofSeconds(9223372036854775807L, 500000000);
+                b : k::time::Duration = k::time::Duration::ofSeconds(0L, 600000000);
+                r : k::time::Duration = a + b;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+
+        test_minus_underflow() : int {
+            try {
+                a : k::time::Duration = k::time::Duration::ofSeconds(-9223372036854775807L - 1L);
+                b : k::time::Duration = k::time::Duration::ofSeconds(1L);
+                r : k::time::Duration = a - b;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<bool(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == true);
+    };
+
+    check_b("test_plus_no_carry");
+    check_b("test_plus_with_carry");
+    check_b("test_minus_no_borrow");
+    check_b("test_minus_with_borrow");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+
+    check_i("test_plus_overflow", 1);
+    check_i("test_plus_carry_overflow", 1);
+    check_i("test_minus_underflow", 1);
+}
+
+TEST_CASE("Duration: negation, multipliedBy, dividedBy", "[libk][time][duration]") {
+    auto jit = jit_k(R"SRC(
+        module __test_duration_scaling__;
+
+        test_negation() : bool throws(k::time::TemporalArithmeticException) {
+            z : k::time::Duration = -k::time::Duration::zero();
+            d1 : k::time::Duration = -k::time::Duration::ofSeconds(5L);
+            d2 : k::time::Duration = -d1;
+            d3 : k::time::Duration = -k::time::Duration::ofSeconds(5L, 200000000);
+            d4 : k::time::Duration = -d3;
+
+            return z == k::time::Duration::zero() &&
+                   d1.secondsPart() == -5L && d1.nanoAdjustment() == 0 &&
+                   d2.secondsPart() == 5L && d2.nanoAdjustment() == 0 &&
+                   d3.secondsPart() == -6L && d3.nanoAdjustment() == 800000000 &&
+                   d4.secondsPart() == 5L && d4.nanoAdjustment() == 200000000;
+        }
+
+        test_multiplied_by() : bool throws(k::time::TemporalArithmeticException) {
+            d : k::time::Duration = k::time::Duration::ofSeconds(2L, 500000000); // 2.5s
+            m0 : k::time::Duration = d.multipliedBy(0L);
+            m1 : k::time::Duration = d.multipliedBy(1L);
+            m_neg1 : k::time::Duration = d.multipliedBy(-1L);
+            m3 : k::time::Duration = d * 3L; // 7.5s
+            m_neg2 : k::time::Duration = d * -2L; // -5.0s
+
+            return m0 == k::time::Duration::zero() &&
+                   m1 == d &&
+                   m_neg1 == -d &&
+                   m3.secondsPart() == 7L && m3.nanoAdjustment() == 500000000 &&
+                   m_neg2.secondsPart() == -5L && m_neg2.nanoAdjustment() == 0;
+        }
+
+        test_divided_by() : bool throws(k::time::TemporalArithmeticException) {
+            d : k::time::Duration = k::time::Duration::ofSeconds(10L);
+            d1 : k::time::Duration = d.dividedBy(1L);
+            d_neg1 : k::time::Duration = d.dividedBy(-1L);
+            d2 : k::time::Duration = d / 2L;
+
+            half : k::time::Duration = k::time::Duration::ofSeconds(1L) / 2L;
+            neg_half1 : k::time::Duration = k::time::Duration::ofSeconds(1L) / -2L;
+            neg_half2 : k::time::Duration = k::time::Duration::ofSeconds(-1L) / 2L;
+            pos_half : k::time::Duration = k::time::Duration::ofSeconds(-1L) / -2L;
+
+            trunc_pos : k::time::Duration = k::time::Duration::ofNanos(5L) / 2L;
+            trunc_neg : k::time::Duration = k::time::Duration::ofNanos(-5L) / 2L;
+            trunc_zero1 : k::time::Duration = k::time::Duration::ofNanos(1L) / 2L;
+            trunc_zero2 : k::time::Duration = k::time::Duration::ofNanos(-1L) / 2L;
+
+            return d1 == d &&
+                   d_neg1 == -d &&
+                   d2.secondsPart() == 5L && d2.nanoAdjustment() == 0 &&
+                   half.secondsPart() == 0L && half.nanoAdjustment() == 500000000 &&
+                   neg_half1.secondsPart() == -1L && neg_half1.nanoAdjustment() == 500000000 &&
+                   neg_half2.secondsPart() == -1L && neg_half2.nanoAdjustment() == 500000000 &&
+                   pos_half.secondsPart() == 0L && pos_half.nanoAdjustment() == 500000000 &&
+                   trunc_pos.secondsPart() == 0L && trunc_pos.nanoAdjustment() == 2 &&
+                   trunc_neg.secondsPart() == -1L && trunc_neg.nanoAdjustment() == 999999998 &&
+                   trunc_zero1.isZero() &&
+                   trunc_zero2.isZero();
+        }
+
+        test_divide_by_zero() : int {
+            try {
+                d : k::time::Duration = k::time::Duration::ofSeconds(10L);
+                d / 0L;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+
+        test_multiply_overflow() : int {
+            try {
+                d : k::time::Duration = k::time::Duration::ofSeconds(9223372036854775807L);
+                d * 2L;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<bool(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == true);
+    };
+
+    check_b("test_negation");
+    check_b("test_multiplied_by");
+    check_b("test_divided_by");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+
+    check_i("test_divide_by_zero", 1);
+    check_i("test_multiply_overflow", 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 12. Instant factories and accessors
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Instant: factories and accessors", "[libk][time][instant]") {
+    auto jit = jit_k(R"SRC(
+        module __test_instant_factories__;
+
+        test_epoch() : bool {
+            i : k::time::Instant = k::time::Instant::epoch();
+            return i.epochSeconds() == 0L && i.nanoAdjustment() == 0;
+        }
+
+        test_of_epoch_second() : bool throws(k::time::TemporalArithmeticException) {
+            i1 : k::time::Instant = k::time::Instant::ofEpochSecond(100L);
+            i2 : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 500);
+            i3 : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 1500000000);
+            i4 : k::time::Instant = k::time::Instant::ofEpochSecond(100L, -500000000);
+            i5 : k::time::Instant = k::time::Instant::ofEpochSecond(-100L, -500000000);
+
+            return i1.epochSeconds() == 100L && i1.nanoAdjustment() == 0 &&
+                   i2.epochSeconds() == 100L && i2.nanoAdjustment() == 500 &&
+                   i3.epochSeconds() == 101L && i3.nanoAdjustment() == 500000000 &&
+                   i4.epochSeconds() == 99L && i4.nanoAdjustment() == 500000000 &&
+                   i5.epochSeconds() == -101L && i5.nanoAdjustment() == 500000000;
+        }
+
+        test_of_epoch_second_overflow() : int {
+            try {
+                k::time::Instant::ofEpochSecond(9223372036854775807L, 1000000000);
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<bool(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == true);
+    };
+
+    check_b("test_epoch");
+    check_b("test_of_epoch_second");
+
+    auto fn_of = jit->lookup_symbol<int(*)()>("test_of_epoch_second_overflow");
+    REQUIRE(fn_of != nullptr);
+    CHECK(fn_of() == 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 13. Instant comparisons and ordering
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Instant: comparisons and ordering", "[libk][time][instant]") {
+    auto jit = jit_k(R"SRC(
+        module __test_instant_comparisons__;
+
+        test_compare_to() : bool {
+            i1 : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 100);
+            i2 : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 200);
+            i3 : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 100);
+            i_neg : k::time::Instant = k::time::Instant::ofEpochSecond(-1L, 0);
+
+            return (i1.compareTo(i2) < 0) &&
+                   (i2.compareTo(i1) > 0) &&
+                   (i1.compareTo(i3) == 0) &&
+                   (i_neg.compareTo(i1) < 0) &&
+                   (i1.compareTo(i_neg) > 0);
+        }
+
+        test_operators() : bool {
+            a : k::time::Instant = k::time::Instant::ofEpochSecond(5L, 500);
+            b : k::time::Instant = k::time::Instant::ofEpochSecond(10L, 100);
+            c : k::time::Instant = k::time::Instant::ofEpochSecond(5L, 500);
+            before_epoch : k::time::Instant = k::time::Instant::ofEpochSecond(-5L, 0);
+
+            ok : bool = true;
+            ok = ok && (a == c);
+            ok = ok && (a != b);
+            ok = ok && (a < b);
+            ok = ok && (a <= b);
+            ok = ok && (a <= c);
+            ok = ok && (b > a);
+            ok = ok && (b >= a);
+            ok = ok && (a >= c);
+            ok = ok && (before_epoch < a);
+            ok = ok && (a > before_epoch);
+            return ok;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<bool(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == true);
+    };
+
+    check_b("test_compare_to");
+    check_b("test_operators");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 14. Instant timeline arithmetic and identities
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Instant: timeline arithmetic, until, and identities", "[libk][time][instant]") {
+    auto jit = jit_k(R"SRC(
+        module __test_instant_arithmetic__;
+
+        test_plus_minus_duration() : bool throws(k::time::TemporalArithmeticException) {
+            start : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 500000000);
+            d : k::time::Duration = k::time::Duration::ofSeconds(50L, 600000000);
+
+            // 100.5s + 50.6s = 151.1s
+            end : k::time::Instant = start.plus(d);
+            end_op : k::time::Instant = start + d;
+
+            back : k::time::Instant = end.minus(d);
+            back_op : k::time::Instant = end - d;
+
+            return end.epochSeconds() == 151L && end.nanoAdjustment() == 100000000 &&
+                   end == end_op &&
+                   back == start &&
+                   back_op == start;
+        }
+
+        test_minus_instant_and_until() : bool throws(k::time::TemporalArithmeticException) {
+            start : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 200);
+            end : k::time::Instant = k::time::Instant::ofEpochSecond(150L, 500);
+
+            elapsed : k::time::Duration = end.minus(start);
+            elapsed_op : k::time::Duration = end - start;
+            until_dur : k::time::Duration = start.until(end);
+
+            return elapsed.secondsPart() == 50L && elapsed.nanoAdjustment() == 300 &&
+                   elapsed == elapsed_op &&
+                   until_dur == elapsed;
+        }
+
+        test_identities() : bool throws(k::time::TemporalArithmeticException) {
+            instant : k::time::Instant = k::time::Instant::ofEpochSecond(123456789L, 987654321);
+            duration : k::time::Duration = k::time::Duration::ofSeconds(42L, 123456789);
+
+            // instant + duration - duration == instant
+            id1 : bool = ((instant + duration) - duration) == instant;
+
+            // end.minus(start) == duration
+            end : k::time::Instant = instant + duration;
+            id2 : bool = end.minus(instant) == duration;
+
+            // until == end - start
+            id3 : bool = instant.until(end) == (end - instant);
+
+            return id1 && id2 && id3;
+        }
+
+        test_instant_plus_overflow() : int {
+            try {
+                i : k::time::Instant = k::time::Instant::ofEpochSecond(9223372036854775807L);
+                d : k::time::Duration = k::time::Duration::ofSeconds(1L);
+                r : k::time::Instant = i + d;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+
+        test_instant_minus_overflow() : int {
+            try {
+                i : k::time::Instant = k::time::Instant::ofEpochSecond(-9223372036854775807L - 1L);
+                d : k::time::Duration = k::time::Duration::ofSeconds(1L);
+                r : k::time::Instant = i - d;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+
+        test_instant_until_overflow() : int {
+            try {
+                start : k::time::Instant = k::time::Instant::ofEpochSecond(-9223372036854775807L - 1L);
+                end : k::time::Instant = k::time::Instant::ofEpochSecond(9223372036854775807L);
+                d : k::time::Duration = start.until(end);
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<bool(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == true);
+    };
+
+    check_b("test_plus_minus_duration");
+    check_b("test_minus_instant_and_until");
+    check_b("test_identities");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+
+    check_i("test_instant_plus_overflow", 1);
+    check_i("test_instant_minus_overflow", 1);
+    check_i("test_instant_until_overflow", 1);
+}
+
+

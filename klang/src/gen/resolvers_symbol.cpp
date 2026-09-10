@@ -282,7 +282,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         // Look at aggregates (structures and classes)
         if (auto st_holder = dynamic_cast<const aggregate_holder*>(&elem)) {
             if (auto agg = st_holder->get_aggregate(name.front())) {
-                if (auto res = resolve_symbol(*agg, name.without_front()); res.index()!=0) {
+                if (auto res = resolve_qualified_from(*agg, name.without_front()); res.index()!=0) {
                     return res;
                 }
             }
@@ -303,7 +303,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         // Look at namespace
         if (auto nspc = dynamic_cast<const ns*>(&elem)) {
             if (auto child = nspc->get_child_namespace(name.front())) {
-                if (auto res = resolve_symbol(*child, name.without_front()); res.index()!=0) {
+                if (auto res = resolve_qualified_from(*child, name.without_front()); res.index()!=0) {
                     return res;
                 }
             }

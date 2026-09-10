@@ -661,13 +661,13 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
         bool is_direct_copy = false;
         bool is_lvalue_copy = false;
         // Check bare struct type (rvalue from function return)
-        if (arg_type_nc == st_type) {
+        if (type::are_equal(arg_type_nc, st_type)) {
             is_direct_copy = true;
         }
         // Check ref<struct> (lvalue variable)
         if (!is_direct_copy && type::is_reference(arg_type_nc)) {
             auto ref_sub = type::canonical(type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype()));
-            if (ref_sub == st_type) {
+            if (type::are_equal(ref_sub, st_type)) {
                 is_direct_copy = true;
                 is_lvalue_copy = true;
             }

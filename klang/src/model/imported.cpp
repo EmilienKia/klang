@@ -1201,7 +1201,9 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         if (auto doc = make_function_doc(km.doc)) {
             im->set_documentation(std::move(doc));
         }
-        im->create_this_parameter();
+        if (!im->is_static()) {
+            im->create_this_parameter();
+        }
         agg->_children.push_back(im);
         agg->_functions.push_back(im);
     }

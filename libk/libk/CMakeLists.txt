@@ -58,6 +58,8 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/errors.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/arithmetic.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/gregorian.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/duration.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/instant.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
     # ── Phase 2: futures ──────────────────────────────────────────────────

@@ -401,9 +401,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             ? this_type->get_subtype() : this_type;
         // Detect if the object is accessed through a const reference (ref<const S>)
         bool is_const_this = type::is_const(subtype);
-        auto bare_subtype = type::remove_const(subtype);
+        auto bare_subtype = type::canonical(type::remove_const(subtype));
         if (auto owner_subtype = std::dynamic_pointer_cast<owner_type>(bare_subtype)) {
-            bare_subtype = type::remove_const(owner_subtype->get_subtype());
+            bare_subtype = type::canonical(type::remove_const(owner_subtype->get_subtype()));
         }
         // A reference-typed struct field accessed as `obj.r.method()` reaches here
         // as ref<ref<T>>. Peel the inner reference so method lookup targets T.

@@ -384,7 +384,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             // Strip const from both sides for structural comparison
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc != tgt_sub_nc) {
+            if (!type::are_equal(src_sub_nc, tgt_sub_nc)) {
                 // Check static upcast: ptr<Derived>→ptr<Base>
                 auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
                 auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);

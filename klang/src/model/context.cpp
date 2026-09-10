@@ -102,6 +102,17 @@ void context::init_primitive_types() {
 };
 
 void context::add_struct(std::shared_ptr<struct_type> st_type) {
+    if (auto agg = st_type->get_struct()) {
+        std::string fq = agg->get_fq_name();
+        if (!fq.empty()) {
+            _struct_types[fq] = st_type;
+            if (fq.rfind("::", 0) == 0) fq = fq.substr(2);
+            _struct_types[fq] = st_type;
+            if (fq.rfind("k::", 0) == 0) {
+                _struct_types[fq.substr(3)] = st_type;
+            }
+        }
+    }
     _struct_types.insert({st_type->name(), st_type});
 }
 
@@ -1554,12 +1565,25 @@ llvm::StructType*
 context::intern_llvm_struct_from_def(const std::string& llvm_def,
                                      const std::string& type_name)
 {
-    if (llvm_def.empty() || type_name.empty()) return nullptr;
+    if (llvm_def.empty()) return nullptr;
+
+    std::string actual_name = type_name;
+    if (llvm_def.size() > 1 && llvm_def[0] == '%') {
+        auto eq = llvm_def.find(" =");
+        if (eq != std::string::npos) {
+            actual_name = llvm_def.substr(1, eq - 1);
+            if (actual_name.size() >= 2 && actual_name.front() == '"' && actual_name.back() == '"') {
+                actual_name = actual_name.substr(1, actual_name.size() - 2);
+            }
+        }
+    }
+
+    if (actual_name.empty()) return nullptr;
 
     // If already interned in this LLVMContext and NOT opaque, return directly.
     // If opaque (a forward-reference created when another type referenced this one
     // before it was fully defined), fall through to parse the body.
-    if (auto* existing = llvm::StructType::getTypeByName(*_context, type_name)) {
+    if (auto* existing = llvm::StructType::getTypeByName(*_context, actual_name)) {
         if (!existing->isOpaque()) return existing;
         // Fall through: need to set the body of this opaque type.
     }
@@ -1572,12 +1596,12 @@ context::intern_llvm_struct_from_def(const std::string& llvm_def,
     auto tmp = llvm::parseIR(buf->getMemBufferRef(), diag, *_context);
     if (!tmp) {
         // Parsing failed — create an opaque placeholder (or return existing opaque).
-        auto* existing = llvm::StructType::getTypeByName(*_context, type_name);
-        return existing ? existing : llvm::StructType::create(*_context, type_name);
+        auto* existing = llvm::StructType::getTypeByName(*_context, actual_name);
+        return existing ? existing : llvm::StructType::create(*_context, actual_name);
     }
 
     // The named StructType is now interned in *_context (shared with _module).
-    return llvm::StructType::getTypeByName(*_context, type_name);
+    return llvm::StructType::getTypeByName(*_context, actual_name);
 }
 
 // ---------------------------------------------------------------------------

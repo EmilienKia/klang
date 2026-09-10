@@ -383,7 +383,7 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
     // Try primitive types first via context (for simple names only)
     if (type_name.size() == 1) {
         auto prim = _context->from_string(type_name.front());
-        if (prim && type::is_resolved(prim)) {
+        if (prim && type::is_primitive(prim)) {
             return prim;
         }
     }
@@ -2022,7 +2022,7 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
         }
         // Resolve parameter types
         for (auto& param : fn.parameters()) {
-            if (param && param->get_type() && !type::is_resolved(param->get_type())) {
+            if (param && param->get_type() && (!type::is_resolved(param->get_type()) || type::contains_unresolved(param->get_type()))) {
                 auto resolved = resolve_type_chain(param->get_type(), &agg);
                 if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
                     param->set_type(resolved);

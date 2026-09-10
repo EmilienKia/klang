@@ -188,26 +188,62 @@ void signature_resolver::visit_parameter(parameter& param) {
             return;
         }
 
-        std::shared_ptr<type> res_type = _context->resolve_type(var_type);
+        // Peel wrappers
+        enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain, Array };
+        std::vector<WrapKind> wrappers;
+        auto inner = var_type;
+        while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
+            if      (type::is_reference(inner))  wrappers.push_back(WrapKind::Ref);
+            else if (type::is_pointer(inner))    wrappers.push_back(WrapKind::Ptr);
+            else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
+            else if (type::is_view(inner))     wrappers.push_back(WrapKind::View);
+            else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
+            else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
+            else if (type::is_drain(inner))      wrappers.push_back(WrapKind::Drain);
+            else if (type::is_array(inner))      wrappers.push_back(WrapKind::Array);
+            else break;
+            inner = inner->get_subtype();
+        }
+
+        std::shared_ptr<type> res_type;
+        if (auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
+            unres && !unres->has_template_args() && unres->type_id().size() == 1)
+        {
+            auto fn = param.ancestor<function>();
+            if (fn && fn->is_member() && fn->get_owner()) {
+                const auto& short_name = unres->type_id().front();
+                std::shared_ptr<struct_type> matched_st;
+                if (short_name == fn->get_owner()->get_short_name()) {
+                    matched_st = fn->get_owner()->get_struct_type();
+                } else if (auto sh = dynamic_cast<aggregate_holder*>(fn->get_owner()->parent<element>().get())) {
+                    if (auto sib = sh->get_aggregate(short_name)) {
+                        matched_st = sib->get_struct_type();
+                    }
+                }
+                if (matched_st) {
+                    res_type = matched_st;
+                    for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
+                        switch (*it) {
+                            case WrapKind::Ref:   res_type = res_type->get_reference(); break;
+                            case WrapKind::Ptr:   res_type = res_type->get_pointer();   break;
+                            case WrapKind::Link:  res_type = res_type->get_link();      break;
+                            case WrapKind::View:   res_type = res_type->get_view();    break;
+                            case WrapKind::Const: res_type = res_type->get_const();     break;
+                            case WrapKind::Owner: res_type = res_type->get_owner();     break;
+                            case WrapKind::Drain: res_type = res_type->get_drain();     break;
+                            case WrapKind::Array: res_type = res_type->get_array();     break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!res_type) {
+            res_type = _context->resolve_type(var_type);
+        }
         if (!type::is_resolved(res_type)) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
-            // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
-            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain, Array };
-            std::vector<WrapKind> wrappers;
-            auto inner = var_type;
-            while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
-                if      (type::is_reference(inner))  wrappers.push_back(WrapKind::Ref);
-                else if (type::is_pointer(inner))    wrappers.push_back(WrapKind::Ptr);
-                else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
-                else if (type::is_view(inner))     wrappers.push_back(WrapKind::View);
-                else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
-                else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
-                else if (type::is_drain(inner))      wrappers.push_back(WrapKind::Drain);
-                else if (type::is_array(inner))      wrappers.push_back(WrapKind::Array);
-                else break;
-                inner = inner->get_subtype();
-            }
             if (auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
                 unres && !unres->type_id().empty())
             {
@@ -671,6 +707,21 @@ void signature_resolver::visit_function(function& fn) {
         if (auto unres = std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())) {
             if (unres->type_id().to_string() == "void") {
                 fn.set_return_type(nullptr);
+            } else if (!unres->has_template_args() && fn.is_member() && fn.get_owner() && unres->type_id().size() == 1) {
+                const auto& short_name = unres->type_id().front();
+                if (short_name == fn.get_owner()->get_short_name()) {
+                    fn.set_return_type(fn.get_owner()->get_struct_type());
+                } else if (auto sh = dynamic_cast<aggregate_holder*>(fn.get_owner()->parent<element>().get())) {
+                    if (auto sib = sh->get_aggregate(short_name)) {
+                        fn.set_return_type(sib->get_struct_type());
+                    }
+                }
+                if (!fn.get_return_type() || !type::is_resolved(fn.get_return_type())) {
+                    auto resolved = _context->resolve_type(fn.get_return_type());
+                    if (resolved && type::is_resolved(resolved)) {
+                        fn.set_return_type(_context->collapse_callable_addresser(resolved));
+                    }
+                }
             } else {
                 auto resolved = _context->resolve_type(fn.get_return_type());
                 if (resolved && type::is_resolved(resolved)) {
@@ -747,6 +798,16 @@ void type_reference_resolver::visit_function(function& fn) {
             if (unres->type_id().to_string() == "void") {
                 fn.set_return_type(nullptr);
             } else {
+                if (!unres->has_template_args() && fn.is_member() && fn.get_owner() && unres->type_id().size() == 1) {
+                    const auto& short_name = unres->type_id().front();
+                    if (short_name == fn.get_owner()->get_short_name()) {
+                        fn.set_return_type(fn.get_owner()->get_struct_type());
+                    } else if (auto sh = dynamic_cast<aggregate_holder*>(fn.get_owner()->parent<element>().get())) {
+                        if (auto sib = sh->get_aggregate(short_name)) {
+                            fn.set_return_type(sib->get_struct_type());
+                        }
+                    }
+                }
                 auto resolved = _context->resolve_type(fn.get_return_type());
                 if (resolved && type::is_resolved(resolved)) {
                     fn.set_return_type(_context->collapse_callable_addresser(resolved));
