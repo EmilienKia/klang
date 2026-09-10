@@ -58,6 +58,13 @@ public:
         return Instant(norm.seconds, norm.nanos);
     }
 
+    static fromPosixTimestamp(value: const PosixTimestamp&) : Instant
+        throws(TimeScaleDataUnavailableException) {
+        // In Phase 2, conversion between POSIX timestamp and continuous Instant
+        // is unavailable until the Phase 3 leap-second table is integrated.
+        throw TimeScaleDataUnavailableException(513);
+    }
+
     // ── Field accessors ──────────────────────────────────────────────────────
 
     const epochSeconds() : long {

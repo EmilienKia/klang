@@ -841,6 +841,11 @@ void implementation_generator::visit_array_init_expression(array_init_expression
     llvm::Type* llvm_elem_type = _context->get_llvm_type(elem_type);
     size_t arr_size = arr_type->get_size();
 
+    // Clear outer _sret_destination so element expressions don't accidentally write
+    // into the enclosing array alloca.
+    llvm::Value* saved_sret_dest = _sret_destination;
+    _sret_destination = nullptr;
+
     // Fast-path: compile-time constant array store
     if (expr.is_constant()) {
         auto* const_arr = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), arr_type);
@@ -856,6 +861,7 @@ void implementation_generator::visit_array_init_expression(array_init_expression
                 }
             }
             _value = arr_alloca;
+            _sret_destination = saved_sret_dest;
             return;
         }
     }
@@ -961,6 +967,7 @@ void implementation_generator::visit_array_init_expression(array_init_expression
     }
 
     _value = arr_alloca;
+    _sret_destination = saved_sret_dest;
 }
 
 /**

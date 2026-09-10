@@ -67,6 +67,10 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/zone_offset.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/iso_format.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/iso_parse.k
+    # ── Phase 2: clock domains & native clock adapters ────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/posix_timestamp.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/clock.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/monotonic.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
     # ── Phase 2: futures ──────────────────────────────────────────────────
@@ -417,6 +421,35 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile platform clock runtime (Phase 2) ──────────────────────────────
+set(PLATFORM_CLOCK_POSIX_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/platform_clock_posix.c)
+set(PLATFORM_CLOCK_POSIX_OBJ ${LIBK_OUTPUT_DIR}/platform_clock_posix.o)
+
+add_custom_command(
+    OUTPUT  ${PLATFORM_CLOCK_POSIX_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time
+            -o ${PLATFORM_CLOCK_POSIX_OBJ} ${PLATFORM_CLOCK_POSIX_C}
+    DEPENDS ${PLATFORM_CLOCK_POSIX_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/platform_clock.h
+    COMMENT "Compiling K runtime platform clock (platform_clock_posix.c)"
+    VERBATIM
+)
+
+set(TIME_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/time_ffi.c)
+set(TIME_FFI_OBJ ${LIBK_OUTPUT_DIR}/time_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${TIME_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time
+            -o ${TIME_FFI_OBJ} ${TIME_FFI_C}
+    DEPENDS ${TIME_FFI_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/platform_clock.h
+    COMMENT "Compiling K runtime time FFI wrappers (time_ffi.c)"
+    VERBATIM
+)
+
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
                    ${TIME_OBJ} ${RUNTIME_TLS_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
@@ -424,7 +457,9 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}
                    ${NETWORK_FFI_OBJ}
                    ${APP_FFI_OBJ}
-                   ${UUID_FFI_OBJ})
+                   ${UUID_FFI_OBJ}
+                   ${PLATFORM_CLOCK_POSIX_OBJ}
+                   ${TIME_FFI_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -606,10 +641,11 @@ libk_add_test(libk-tests-uuid 120
     tests/test-uuid.cpp
 )
 
-# ── libk time API tests (Phase 1) ────────────────────────────────────────────
+# ── libk time API tests (Phase 1 & Phase 2) ──────────────────────────────────
 libk_add_test(libk-tests-time 120
     tests/time/test-time-arithmetic.cpp
     tests/time/test-time-iso.cpp
+    tests/time/test-time-clock.cpp
 )
 
 # ── libk performance / stress tests ──────────────────────────────────────────

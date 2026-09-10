@@ -1,4 +1,4 @@
-# Time API (Phase 1)
+# Time API (Phase 1 & Phase 2)
 **Module:** `k`  
 **Namespace:** `k::time`  
 **Sources:** `libk/libk/src/time/*.k`  
@@ -24,6 +24,18 @@ Phase 1 provides the deterministic core:
 - `LocalDateTime`: composition of a `LocalDate` and `LocalTime`.
 - `ZoneOffset`: fixed displacement from UTC between -18:00 and +18:00.
 - `Iso`: canonical ISO-8601 string formatting and parsing.
+
+Phase 2 adds clock domains and native clock adapters:
+- `Clock`: injectable absolute time source contract.
+- `FixedClock`: deterministic test clock returning a constant `Instant`.
+- `SequenceClock`: deterministic test clock advancing through an array of `Instant`s.
+- `SystemClock`: system wall-clock facade (`now()` throws 513 until Phase 3).
+- `MonotonicClockId`: distinct identity of a monotonic clock domain.
+- `MonotonicInstant`: point in time within a specific monotonic clock domain.
+- `MonotonicClock`: injectable monotonic time source contract.
+- `FixedMonotonicClock`: deterministic test monotonic clock.
+- `SystemMonotonicClock`: active (`activeTime()`) and elapsed (`elapsedTime()`) system monotonic clocks.
+- `PosixTimestamp`: normalized POSIX coordinate and system real-time reading (`systemNow()`).
 
 All Phase 1 operations are pure functions of their inputs and depend on no
 host clocks, system locale, or timezone database.
@@ -128,3 +140,30 @@ Stateless canonical ISO-8601 formatter and parser utility class.
   - `parseLocalDate(text)` -> `LocalDate`
   - `parseLocalTime(text)` -> `LocalTime`
   - `parseLocalDateTime(text)` -> `LocalDateTime`
+
+---
+
+## 4. Phase 2 Types: Clocks and Monotonic Domains
+
+### 4.1 `Clock`, `FixedClock`, `SequenceClock`, `SystemClock`
+Injectable absolute-time contracts and implementations.
+- `Clock`: interface with `now() : Instant throws(...)` and `resolution() : Duration throws(...)`.
+- `FixedClock`: deterministic test clock initialized with an `Instant`.
+- `SequenceClock`: deterministic test clock advancing through an array of `Instant`s; throws `TimeDataUnavailableException(515)` when exhausted.
+- `SystemClock`: singleton facade via `SystemClock::instance()`; in Phase 2 `now()` throws `TimeScaleDataUnavailableException(513)`.
+
+### 4.2 `MonotonicClockId`, `MonotonicInstant`, `MonotonicClock`
+Monotonic measurement types guaranteeing non-decreasing timelines within a domain.
+- `MonotonicClockId`: value-semantic clock domain identity; comparison `==`, `!=`.
+- `MonotonicInstant`: domain-scoped instant; relational operations and subtraction across different clock domains throw `InvalidTemporalValueException(501)`.
+- `MonotonicClock`: interface with `id()`, `now()`, `resolution()`, `includesSuspend()`.
+- `FixedMonotonicClock`: deterministic test monotonic clock with `advance(Duration)` and `set(MonotonicInstant)`.
+- `SystemMonotonicClock`: platform monotonic clocks via `SystemMonotonicClock::activeTime()` (excludes suspend) and `SystemMonotonicClock::elapsedTime()` (includes suspend).
+
+### 4.3 `PosixTimestamp`
+Normalized POSIX timestamp coordinate (`seconds` + `nanos`, `0 <= nanos < 1_000_000_000`).
+- **Factories:** `ofSeconds(s)`, `ofSeconds(s, ns)`, `systemNow()`.
+- **Accessors:** `seconds()`, `nanoAdjustment()`.
+- **Arithmetic:** `plus(Duration)`, `minus(Duration)`, `minus(PosixTimestamp) -> Duration`, `until(PosixTimestamp) -> Duration`.
+- **Conversion:** `toInstant()` and `Instant::fromPosixTimestamp()` throw `TimeScaleDataUnavailableException(513)` in Phase 2.
+

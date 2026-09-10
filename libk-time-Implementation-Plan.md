@@ -1820,12 +1820,12 @@ a leap second. Phase 2 must not claim otherwise.
 
 ### 5.5 Phase 2 acceptance checklist
 
-- [ ] The old monotonic `Instant.now()` contract has been migrated or
+- [x] The old monotonic `Instant.now()` contract has been migrated or
       quarantined as a documented compatibility API.
-- [ ] All native clock APIs are private and have one normalized FFI boundary.
-- [ ] `MonotonicClock` and a POSIX interoperability reading work without a
+- [x] All native clock APIs are private and have one normalized FFI boundary.
+- [x] `MonotonicClock` and a POSIX interoperability reading work without a
       TZDB, locale, or leap-second data file.
-- [ ] No public API equates POSIX seconds with K `Instant` seconds.
+- [x] No public API equates POSIX seconds with K `Instant` seconds.
 
 ## 6. Phase 3 - system TZDB, locations, leap seconds, and zone resolution
 
@@ -2151,7 +2151,7 @@ provider is ICU through its stable C API.
 | --- | --- | --- | --- |
 | `Duration`, `Instant`, deterministic Gregorian civil arithmetic | 1 | [x] | `libk-tests-time` arithmetic and property cases |
 | Canonical ISO data-only text | 1 | [x] | parse/format test vectors in `test-time-iso.cpp` |
-| Separate wall-clock and monotonic domains | 2 | [ ] | fake-clock and native-adapter cases |
+| Separate wall-clock and monotonic domains | 2 | [x] | fake-clock and native-adapter cases in `test-time-clock.cpp` |
 | Explicit POSIX interoperability boundary | 2-3 | [ ] | conversion-policy vectors |
 | UTC leap seconds and current `SystemClock` to `Instant` | 3 | [ ] | pinned leap fixture cases |
 | Versioned named zones, gaps, overlaps, and local resolvers | 3 | [ ] | pinned TZif integration cases |
