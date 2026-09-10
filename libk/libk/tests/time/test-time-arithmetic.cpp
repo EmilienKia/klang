@@ -1670,4 +1670,951 @@ TEST_CASE("Instant: timeline arithmetic, until, and identities", "[libk][time][i
     check_i("test_instant_until_overflow", 1);
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// 15. Period factories, components, arithmetic, negation, identities
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Period: factories, components, arithmetic, negation, identities", "[libk][time][period]") {
+    auto jit = jit_k(R"SRC(
+        module __test_period_basics__;
+
+        test_factories_and_components() : bool {
+            z : k::time::Period = k::time::Period::zero();
+            if (!z.isZero()) return false;
+            if (z.yearsPart() != 0L || z.monthsPart() != 0L || z.weeksPart() != 0L ||
+                z.daysPart() != 0L || z.hoursPart() != 0L || z.minutesPart() != 0L ||
+                z.secondsPart() != 0L) return false;
+
+            p : k::time::Period = k::time::Period::of(1L, 2L, 3L, 4L, 5L, 6L, 7L);
+            if (p.yearsPart() != 1L || p.monthsPart() != 2L || p.weeksPart() != 3L ||
+                p.daysPart() != 4L || p.hoursPart() != 5L || p.minutesPart() != 6L ||
+                p.secondsPart() != 7L) return false;
+            if (p.isZero()) return false;
+
+            y : k::time::Period = k::time::Period::years(10L);
+            if (y.yearsPart() != 10L || y.monthsPart() != 0L) return false;
+
+            m : k::time::Period = k::time::Period::months(11L);
+            if (m.monthsPart() != 11L || m.yearsPart() != 0L) return false;
+
+            w : k::time::Period = k::time::Period::weeks(12L);
+            if (w.weeksPart() != 12L || w.daysPart() != 0L) return false;
+
+            d : k::time::Period = k::time::Period::days(13L);
+            if (d.daysPart() != 13L || d.weeksPart() != 0L) return false;
+
+            h : k::time::Period = k::time::Period::hours(14L);
+            if (h.hoursPart() != 14L || h.minutesPart() != 0L) return false;
+
+            min : k::time::Period = k::time::Period::minutes(15L);
+            if (min.minutesPart() != 15L || min.secondsPart() != 0L) return false;
+
+            s : k::time::Period = k::time::Period::seconds(16L);
+            if (s.secondsPart() != 16L || s.hoursPart() != 0L) return false;
+
+            return true;
+        }
+
+        test_arithmetic_and_negation() : bool throws(k::time::TemporalArithmeticException) {
+            p1 : k::time::Period = k::time::Period::of(1L, 2L, 3L, 4L, 5L, 6L, 7L);
+            p2 : k::time::Period = k::time::Period::of(2L, 3L, 4L, 5L, 6L, 7L, 8L);
+
+            sum : k::time::Period = p1.plus(p2);
+            sum_op : k::time::Period = p1 + p2;
+            exp_sum : k::time::Period = k::time::Period::of(3L, 5L, 7L, 9L, 11L, 13L, 15L);
+            if (sum != exp_sum || sum_op != exp_sum) return false;
+
+            diff : k::time::Period = p1.minus(p2);
+            diff_op : k::time::Period = p1 - p2;
+            exp_diff : k::time::Period = k::time::Period::of(-1L, -1L, -1L, -1L, -1L, -1L, -1L);
+            if (diff != exp_diff || diff_op != exp_diff) return false;
+
+            neg : k::time::Period = p1.negated();
+            neg_op : k::time::Period = -p1;
+            exp_neg : k::time::Period = k::time::Period::of(-1L, -2L, -3L, -4L, -5L, -6L, -7L);
+            if (neg != exp_neg || neg_op != exp_neg) return false;
+
+            return true;
+        }
+
+        test_identities() : bool throws(k::time::TemporalArithmeticException) {
+            p : k::time::Period = k::time::Period::of(10L, 20L, 30L, 40L, 50L, 60L, 70L);
+            zero : k::time::Period = k::time::Period::zero();
+
+            id1 : bool = (p + zero) == p;
+            id2 : bool = (p - p) == zero;
+            id3 : bool = (p + (-p)) == zero;
+            id4 : bool = (-(-p)) == p;
+            id5 : bool = (p == p);
+            id6 : bool = (p != zero);
+
+            return id1 && id2 && id3 && id4 && id5 && id6;
+        }
+
+        test_plus_overflow() : int {
+            try {
+                p1 : k::time::Period = k::time::Period::years(9223372036854775807L);
+                p2 : k::time::Period = k::time::Period::years(1L);
+                r : k::time::Period = p1 + p2;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+
+        test_negate_overflow() : int {
+            try {
+                p : k::time::Period = k::time::Period::days(-9223372036854775807L - 1L);
+                r : k::time::Period = -p;
+                return 0;
+            } catch (e: k::time::TemporalArithmeticException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() != 0);
+    };
+
+    check_b("test_factories_and_components");
+    check_b("test_arithmetic_and_negation");
+    check_b("test_identities");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+
+    check_i("test_plus_overflow", 1);
+    check_i("test_negate_overflow", 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 16. LocalTime validation and factories
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalTime: validation, factories, and midnight", "[libk][time][local_time]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_time_validation__;
+
+        test_valid_factories() : bool throws(k::time::InvalidTemporalValueException) {
+            m : k::time::LocalTime = k::time::LocalTime::midnight();
+            if (m.hour() != 0 || m.minute() != 0 || m.second() != 0 || m.nano() != 0) return false;
+
+            t2 : k::time::LocalTime = k::time::LocalTime::of(14, 30);
+            if (t2.hour() != 14 || t2.minute() != 30 || t2.second() != 0 || t2.nano() != 0) return false;
+
+            t4 : k::time::LocalTime = k::time::LocalTime::of(23, 59, 58, 123456789);
+            if (t4.hour() != 23 || t4.minute() != 59 || t4.second() != 58 || t4.nano() != 123456789) return false;
+
+            return true;
+        }
+
+        test_reject_hour_negative() : int {
+            try {
+                k::time::LocalTime::of(-1, 0, 0, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_hour_24() : int {
+            try {
+                k::time::LocalTime::of(24, 0, 0, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_minute_negative() : int {
+            try {
+                k::time::LocalTime::of(0, -1, 0, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_minute_60() : int {
+            try {
+                k::time::LocalTime::of(0, 60, 0, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_second_negative() : int {
+            try {
+                k::time::LocalTime::of(0, 0, -1, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_second_61() : int {
+            try {
+                k::time::LocalTime::of(23, 59, 61, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_nano_negative() : int {
+            try {
+                k::time::LocalTime::of(0, 0, 0, -1);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_nano_billion() : int {
+            try {
+                k::time::LocalTime::of(0, 0, 0, 1000000000);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() != 0);
+    };
+    check_b("test_valid_factories");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+
+    check_i("test_reject_hour_negative", 1);
+    check_i("test_reject_hour_24", 1);
+    check_i("test_reject_minute_negative", 1);
+    check_i("test_reject_minute_60", 1);
+    check_i("test_reject_second_negative", 1);
+    check_i("test_reject_second_61", 1);
+    check_i("test_reject_nano_negative", 1);
+    check_i("test_reject_nano_billion", 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 17. LocalTime structural leap second
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalTime: structural leap second acceptance and rejection", "[libk][time][local_time]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_time_leap_second__;
+
+        test_accept_23_59_60() : bool throws(k::time::InvalidTemporalValueException) {
+            t : k::time::LocalTime = k::time::LocalTime::of(23, 59, 60, 500);
+            return t.hour() == 23 && t.minute() == 59 && t.second() == 60 &&
+                   t.nano() == 500 && t.isStructuralLeapSecond();
+        }
+
+        test_normal_is_not_leap() : bool throws(k::time::InvalidTemporalValueException) {
+            t : k::time::LocalTime = k::time::LocalTime::of(23, 59, 59, 0);
+            return !t.isStructuralLeapSecond();
+        }
+
+        test_reject_12_00_60() : int {
+            try {
+                k::time::LocalTime::of(12, 0, 60, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_23_58_60() : int {
+            try {
+                k::time::LocalTime::of(23, 58, 60, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_22_59_60() : int {
+            try {
+                k::time::LocalTime::of(22, 59, 60, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() != 0);
+    };
+    check_b("test_accept_23_59_60");
+    check_b("test_normal_is_not_leap");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+    check_i("test_reject_12_00_60", 1);
+    check_i("test_reject_23_58_60", 1);
+    check_i("test_reject_22_59_60", 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 18. LocalTime toNanoOfDay and duration arithmetic
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalTime: toNanoOfDay and duration arithmetic with 24h wrap", "[libk][time][local_time]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_time_arithmetic__;
+
+        test_to_nano_of_day() : bool throws(k::time::InvalidTemporalValueException) {
+            m : k::time::LocalTime = k::time::LocalTime::midnight();
+            if (m.toNanoOfDay() != 0L) return false;
+
+            t1 : k::time::LocalTime = k::time::LocalTime::of(1, 0, 0, 0);
+            if (t1.toNanoOfDay() != 3600000000000L) return false;
+
+            t2 : k::time::LocalTime = k::time::LocalTime::of(23, 59, 59, 999999999);
+            if (t2.toNanoOfDay() != 86399999999999L) return false;
+
+            ls : k::time::LocalTime = k::time::LocalTime::of(23, 59, 60, 0);
+            if (ls.toNanoOfDay() != 86400000000000L) return false;
+
+            return true;
+        }
+
+        test_duration_arithmetic() : bool throws(k::time::InvalidTemporalValueException,
+                                                 k::time::TemporalArithmeticException) {
+            t : k::time::LocalTime = k::time::LocalTime::of(12, 0, 0, 0);
+            d : k::time::Duration = k::time::Duration::ofHours(3L);
+
+            plus_res : k::time::LocalTime = t.plus(d);
+            plus_op : k::time::LocalTime = t + d;
+            exp_plus : k::time::LocalTime = k::time::LocalTime::of(15, 0, 0, 0);
+            if (plus_res != exp_plus || plus_op != exp_plus) return false;
+
+            minus_res : k::time::LocalTime = t.minus(d);
+            minus_op : k::time::LocalTime = t - d;
+            exp_minus : k::time::LocalTime = k::time::LocalTime::of(9, 0, 0, 0);
+            if (minus_res != exp_minus || minus_op != exp_minus) return false;
+
+            // 24h wrap forward: 23:00 + 2h = 01:00
+            t_late : k::time::LocalTime = k::time::LocalTime::of(23, 0, 0, 0);
+            wrap_fwd : k::time::LocalTime = t_late + k::time::Duration::ofHours(2L);
+            if (wrap_fwd != k::time::LocalTime::of(1, 0, 0, 0)) return false;
+
+            // 24h wrap backward: 01:00 - 2h = 23:00
+            t_early : k::time::LocalTime = k::time::LocalTime::of(1, 0, 0, 0);
+            wrap_back : k::time::LocalTime = t_early - k::time::Duration::ofHours(2L);
+            if (wrap_back != k::time::LocalTime::of(23, 0, 0, 0)) return false;
+
+            // Nanosecond wrap backward: 00:00:00 - 1ns = 23:59:59.999999999
+            wrap_nano : k::time::LocalTime = k::time::LocalTime::midnight() - k::time::Duration::ofNanos(1L);
+            if (wrap_nano != k::time::LocalTime::of(23, 59, 59, 999999999)) return false;
+
+            return true;
+        }
+
+        test_leap_second_plus_rejected() : int {
+            try {
+                ls : k::time::LocalTime = k::time::LocalTime::of(23, 59, 60, 0);
+                d : k::time::Duration = k::time::Duration::ofSeconds(1L);
+                r : k::time::LocalTime = ls + d;
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_leap_second_minus_rejected() : int {
+            try {
+                ls : k::time::LocalTime = k::time::LocalTime::of(23, 59, 60, 0);
+                d : k::time::Duration = k::time::Duration::ofSeconds(1L);
+                r : k::time::LocalTime = ls - d;
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() != 0);
+    };
+    check_b("test_to_nano_of_day");
+    check_b("test_duration_arithmetic");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+    check_i("test_leap_second_plus_rejected", 1);
+    check_i("test_leap_second_minus_rejected", 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 19. LocalTime comparisons and ordering
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalTime: comparisons and ordering", "[libk][time][local_time]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_time_comparisons__;
+
+        test_comparisons() : bool throws(k::time::InvalidTemporalValueException) {
+            t1 : k::time::LocalTime = k::time::LocalTime::of(10, 0, 0, 0);
+            t2 : k::time::LocalTime = k::time::LocalTime::of(10, 0, 0, 1);
+            t3 : k::time::LocalTime = k::time::LocalTime::of(10, 0, 1, 0);
+            t4 : k::time::LocalTime = k::time::LocalTime::of(10, 1, 0, 0);
+            t5 : k::time::LocalTime = k::time::LocalTime::of(11, 0, 0, 0);
+
+            if (!(t1 < t2 && t2 < t3 && t3 < t4 && t4 < t5)) return false;
+            if (!(t5 > t4 && t4 > t3 && t3 > t2 && t2 > t1)) return false;
+            if (!(t1 <= t2 && t1 <= t1)) return false;
+            if (!(t2 >= t1 && t1 >= t1)) return false;
+            if (!(t1 == t1 && t1 != t2)) return false;
+
+            if (t1.compareTo(t2) >= 0) return false;
+            if (t2.compareTo(t1) <= 0) return false;
+            if (t1.compareTo(t1) != 0) return false;
+
+            // Structural leap second ordering: 23:59:59 < 23:59:60
+            t_59 : k::time::LocalTime = k::time::LocalTime::of(23, 59, 59, 999999999);
+            t_60 : k::time::LocalTime = k::time::LocalTime::of(23, 59, 60, 0);
+            if (!(t_59 < t_60)) return false;
+            if (!(t_60 > t_59)) return false;
+
+            return true;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto fn = jit->lookup_symbol<int(*)()>("test_comparisons");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() != 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 20. LocalDate field validation and properties
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalDate: field validation, properties, and accessors", "[libk][time][local_date]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_date_validation__;
+
+        test_valid_dates() : bool throws(k::time::InvalidTemporalValueException) {
+            d : k::time::LocalDate = k::time::LocalDate::of(2026L, 9, 10);
+            if (d.year() != 2026L || d.month() != 9 || d.day() != 10) return false;
+            if (d.isLeapYear()) return false;
+            if (d.lengthOfMonth() != 30) return false;
+            if (d.dayOfYear() != 253) return false;
+
+            leap_d : k::time::LocalDate = k::time::LocalDate::of(2024L, 2, 29);
+            if (!leap_d.isLeapYear()) return false;
+            if (leap_d.lengthOfMonth() != 29) return false;
+            if (leap_d.dayOfYear() != 60) return false;
+
+            y0 : k::time::LocalDate = k::time::LocalDate::of(0L, 1, 1);
+            if (y0.year() != 0L || y0.month() != 1 || y0.day() != 1) return false;
+
+            return true;
+        }
+
+        test_reject_month_0() : int {
+            try {
+                k::time::LocalDate::of(2026L, 0, 1);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_month_13() : int {
+            try {
+                k::time::LocalDate::of(2026L, 13, 1);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_day_0() : int {
+            try {
+                k::time::LocalDate::of(2026L, 1, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_day_32() : int {
+            try {
+                k::time::LocalDate::of(2026L, 1, 32);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_april_31() : int {
+            try {
+                k::time::LocalDate::of(2026L, 4, 31);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_feb_29_common_year() : int {
+            try {
+                k::time::LocalDate::of(2023L, 2, 29);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_feb_29_century_common_year() : int {
+            try {
+                k::time::LocalDate::of(1900L, 2, 29);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_feb_30_leap_year() : int {
+            try {
+                k::time::LocalDate::of(2024L, 2, 30);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() != 0);
+    };
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+    check_b("test_valid_dates");
+    check_i("test_reject_month_0", 1);
+    check_i("test_reject_month_13", 1);
+    check_i("test_reject_day_0", 1);
+    check_i("test_reject_day_32", 1);
+    check_i("test_reject_april_31", 1);
+    check_i("test_reject_feb_29_common_year", 1);
+    check_i("test_reject_feb_29_century_common_year", 1);
+    check_i("test_reject_feb_30_leap_year", 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 21. LocalDate EpochDay conversions and BCE years
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalDate: EpochDay conversions, BCE years, round-trip", "[libk][time][local_date]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_date_epoch_day__;
+
+        test_conversions() : bool throws(k::time::InvalidTemporalValueException,
+                                         k::time::TemporalArithmeticException) {
+            d_epoch : k::time::LocalDate = k::time::LocalDate::of(1970L, 1, 1);
+            if (d_epoch.toEpochDay().daysSinceEpoch() != 0L) return false;
+
+            d_next : k::time::LocalDate = k::time::LocalDate::of(1970L, 1, 2);
+            if (d_next.toEpochDay().daysSinceEpoch() != 1L) return false;
+
+            d_prev : k::time::LocalDate = k::time::LocalDate::of(1969L, 12, 31);
+            if (d_prev.toEpochDay().daysSinceEpoch() != -1L) return false;
+
+            d_y2k : k::time::LocalDate = k::time::LocalDate::of(2000L, 1, 1);
+            if (d_y2k.toEpochDay().daysSinceEpoch() != 10957L) return false;
+
+            d_bce : k::time::LocalDate = k::time::LocalDate::of(0L, 1, 1);
+            if (d_bce.toEpochDay().daysSinceEpoch() != -719528L) return false;
+
+            d_bce_prev : k::time::LocalDate = k::time::LocalDate::of(-1L, 12, 31);
+            if (d_bce_prev.toEpochDay().daysSinceEpoch() != -719529L) return false;
+
+            // fromEpochDay
+            ed0 : k::time::EpochDay = k::time::EpochDay::ofDaysSinceEpoch(0L);
+            if (k::time::LocalDate::fromEpochDay(ed0) != d_epoch) return false;
+
+            ed_y2k : k::time::EpochDay = k::time::EpochDay::ofDaysSinceEpoch(10957L);
+            if (k::time::LocalDate::fromEpochDay(ed_y2k) != d_y2k) return false;
+
+            // Round trip
+            d_rt : k::time::LocalDate = k::time::LocalDate::of(2026L, 9, 10);
+            if (k::time::LocalDate::fromEpochDay(d_rt.toEpochDay()) != d_rt) return false;
+
+            return true;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto fn = jit->lookup_symbol<int(*)()>("test_conversions");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() != 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 22. LocalDate Period arithmetic and end-of-month clamping
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalDate: Period arithmetic and end-of-month clamping", "[libk][time][local_date]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_date_period__;
+
+        test_month_clamping() : bool throws(k::time::InvalidTemporalValueException,
+                                            k::time::TemporalArithmeticException) {
+            // 2026-01-31 + 1 month == 2026-02-28 (common year clamping)
+            d1 : k::time::LocalDate = k::time::LocalDate::of(2026L, 1, 31);
+            r1 : k::time::LocalDate = d1 + k::time::Period::months(1L);
+            if (r1 != k::time::LocalDate::of(2026L, 2, 28)) return false;
+
+            // 2024-01-31 + 1 month == 2024-02-29 (leap year clamping)
+            d2 : k::time::LocalDate = k::time::LocalDate::of(2024L, 1, 31);
+            r2 : k::time::LocalDate = d2 + k::time::Period::months(1L);
+            if (r2 != k::time::LocalDate::of(2024L, 2, 29)) return false;
+
+            // 2026-03-31 + 1 month == 2026-04-30
+            d3 : k::time::LocalDate = k::time::LocalDate::of(2026L, 3, 31);
+            r3 : k::time::LocalDate = d3 + k::time::Period::months(1L);
+            if (r3 != k::time::LocalDate::of(2026L, 4, 30)) return false;
+
+            // 2026-05-31 - 1 month == 2026-04-30
+            d4 : k::time::LocalDate = k::time::LocalDate::of(2026L, 5, 31);
+            r4 : k::time::LocalDate = d4 - k::time::Period::months(1L);
+            if (r4 != k::time::LocalDate::of(2026L, 4, 30)) return false;
+
+            // 2024-02-29 + 1 year == 2025-02-28
+            d5 : k::time::LocalDate = k::time::LocalDate::of(2024L, 2, 29);
+            r5 : k::time::LocalDate = d5 + k::time::Period::years(1L);
+            if (r5 != k::time::LocalDate::of(2025L, 2, 28)) return false;
+
+            // 2024-02-29 + 4 years == 2028-02-29
+            r6 : k::time::LocalDate = d5 + k::time::Period::years(4L);
+            if (r6 != k::time::LocalDate::of(2028L, 2, 29)) return false;
+
+            return true;
+        }
+
+        test_weeks_and_days() : bool throws(k::time::InvalidTemporalValueException,
+                                            k::time::TemporalArithmeticException) {
+            d : k::time::LocalDate = k::time::LocalDate::of(2026L, 1, 1);
+
+            // + 2 weeks == 2026-01-15
+            w : k::time::LocalDate = d + k::time::Period::weeks(2L);
+            if (w != k::time::LocalDate::of(2026L, 1, 15)) return false;
+
+            // + 10 days == 2026-01-11
+            days : k::time::LocalDate = d + k::time::Period::days(10L);
+            if (days != k::time::LocalDate::of(2026L, 1, 11)) return false;
+
+            // 2026-01-31 + 1 month + 5 days:
+            // Month applied first with clamping -> 2026-02-28, then + 5 days -> 2026-03-05
+            p_combo : k::time::Period = k::time::Period::of(0L, 1L, 0L, 5L, 0L, 0L, 0L);
+            d_combo : k::time::LocalDate = k::time::LocalDate::of(2026L, 1, 31);
+            r_combo : k::time::LocalDate = d_combo + p_combo;
+            if (r_combo != k::time::LocalDate::of(2026L, 3, 5)) return false;
+
+            // Negative period: 2026-03-01 - 1 day == 2026-02-28
+            d_march : k::time::LocalDate = k::time::LocalDate::of(2026L, 3, 1);
+            if ((d_march - k::time::Period::days(1L)) != k::time::LocalDate::of(2026L, 2, 28)) return false;
+
+            // Negative period in leap year: 2024-03-01 - 1 day == 2024-02-29
+            d_leap_march : k::time::LocalDate = k::time::LocalDate::of(2024L, 3, 1);
+            if ((d_leap_march - k::time::Period::days(1L)) != k::time::LocalDate::of(2024L, 2, 29)) return false;
+
+            return true;
+        }
+
+        test_at_time() : bool throws(k::time::InvalidTemporalValueException) {
+            d : k::time::LocalDate = k::time::LocalDate::of(2026L, 9, 10);
+            t : k::time::LocalTime = k::time::LocalTime::of(14, 30);
+            dt : k::time::LocalDateTime = d.atTime(t);
+
+            return dt.year() == 2026L && dt.month() == 9 && dt.day() == 10 &&
+                   dt.hour() == 14 && dt.minute() == 30 && dt.second() == 0 &&
+                   dt.nano() == 0;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() != 0);
+    };
+
+    check_b("test_month_clamping");
+    check_b("test_weeks_and_days");
+    check_b("test_at_time");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 23. LocalDate comparisons and ordering
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalDate: comparisons and ordering", "[libk][time][local_date]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_date_comparisons__;
+
+        test_comparisons() : bool throws(k::time::InvalidTemporalValueException) {
+            d1 : k::time::LocalDate = k::time::LocalDate::of(2025L, 12, 31);
+            d2 : k::time::LocalDate = k::time::LocalDate::of(2026L, 1, 15);
+            d3 : k::time::LocalDate = k::time::LocalDate::of(2026L, 2, 10);
+            d4 : k::time::LocalDate = k::time::LocalDate::of(2026L, 2, 20);
+
+            if (!(d1 < d2 && d2 < d3 && d3 < d4)) return false;
+            if (!(d4 > d3 && d3 > d2 && d2 > d1)) return false;
+            if (!(d1 <= d2 && d1 <= d1)) return false;
+            if (!(d2 >= d1 && d1 >= d1)) return false;
+            if (!(d1 == d1 && d1 != d2)) return false;
+
+            if (d1.compareTo(d2) >= 0) return false;
+            if (d2.compareTo(d1) <= 0) return false;
+            if (d1.compareTo(d1) != 0) return false;
+
+            return true;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto fn = jit->lookup_symbol<int(*)()>("test_comparisons");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() != 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 24. LocalDateTime composition and field accessors
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalDateTime: composition and field accessors", "[libk][time][local_date_time]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_date_time_composition__;
+
+        test_composition() : bool throws(k::time::InvalidTemporalValueException) {
+            d : k::time::LocalDate = k::time::LocalDate::of(2026L, 9, 10);
+            t : k::time::LocalTime = k::time::LocalTime::of(15, 45, 30, 500);
+
+            dt1 : k::time::LocalDateTime = k::time::LocalDateTime::of(d, t);
+            if (dt1.date() != d || dt1.time() != t) return false;
+            if (dt1.year() != 2026L || dt1.month() != 9 || dt1.day() != 10) return false;
+            if (dt1.hour() != 15 || dt1.minute() != 45 || dt1.second() != 30 || dt1.nano() != 500) return false;
+
+            dt2 : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 9, 10, 15, 45, 30, 500);
+            if (dt1 != dt2) return false;
+
+            return true;
+        }
+
+        test_reject_invalid_date_component() : int {
+            try {
+                k::time::LocalDateTime::of(2026L, 2, 29, 12, 0, 0, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_reject_invalid_time_component() : int {
+            try {
+                k::time::LocalDateTime::of(2026L, 9, 10, 25, 0, 0, 0);
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() != 0);
+    };
+    check_b("test_composition");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+    check_i("test_reject_invalid_date_component", 1);
+    check_i("test_reject_invalid_time_component", 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 25. LocalDateTime Period arithmetic with time carry
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalDateTime: Period arithmetic with time carry", "[libk][time][local_date_time]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_date_time_period__;
+
+        test_period_time_carry() : bool throws(k::time::InvalidTemporalValueException,
+                                               k::time::TemporalArithmeticException) {
+            // 2026-01-31T23:00:00 + 2 hours -> 2026-02-01T01:00:00 (crosses into new day and month)
+            dt : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 1, 31, 23, 0, 0, 0);
+            r : k::time::LocalDateTime = dt + k::time::Period::hours(2L);
+            exp : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 2, 1, 1, 0, 0, 0);
+            if (r != exp) return false;
+
+            // 2026-01-31T23:00:00 + (1 month + 2 hours):
+            // 2026-01-31 + 1 month = 2026-02-28; then 23:00 + 2h = next day 01:00; 2026-02-28 + 1d = 2026-03-01!
+            p_combo : k::time::Period = k::time::Period::of(0L, 1L, 0L, 0L, 2L, 0L, 0L);
+            r_combo : k::time::LocalDateTime = dt + p_combo;
+            exp_combo : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 3, 1, 1, 0, 0, 0);
+            if (r_combo != exp_combo) return false;
+
+            // Borrow: 2026-02-01T01:00:00 - 2 hours -> 2026-01-31T23:00:00
+            back : k::time::LocalDateTime = exp - k::time::Period::hours(2L);
+            if (back != dt) return false;
+
+            return true;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto fn = jit->lookup_symbol<int(*)()>("test_period_time_carry");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() != 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 26. LocalDateTime Duration arithmetic across days
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalDateTime: Duration arithmetic across days", "[libk][time][local_date_time]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_date_time_duration__;
+
+        test_duration_across_days() : bool throws(k::time::InvalidTemporalValueException,
+                                                  k::time::TemporalArithmeticException) {
+            // 2026-01-01T12:00:00 + 36 hours -> 2026-01-03T00:00:00
+            dt : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 1, 1, 12, 0, 0, 0);
+            d : k::time::Duration = k::time::Duration::ofHours(36L);
+            r : k::time::LocalDateTime = dt + d;
+            exp : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 1, 3, 0, 0, 0, 0);
+            if (r != exp) return false;
+
+            // Subtract back
+            back : k::time::LocalDateTime = r - d;
+            if (back != dt) return false;
+
+            // Subtract 1 ns from midnight: 2026-01-01T00:00:00 - 1ns = 2025-12-31T23:59:59.999999999
+            dt_mid : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 1, 1, 0, 0, 0, 0);
+            r_nano : k::time::LocalDateTime = dt_mid - k::time::Duration::ofNanos(1L);
+            exp_nano : k::time::LocalDateTime = k::time::LocalDateTime::of(2025L, 12, 31, 23, 59, 59, 999999999);
+            if (r_nano != exp_nano) return false;
+
+            return true;
+        }
+
+        test_leap_second_plus_rejected() : int {
+            try {
+                dt : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 6, 30, 23, 59, 60, 0);
+                d : k::time::Duration = k::time::Duration::ofSeconds(1L);
+                r : k::time::LocalDateTime = dt + d;
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+
+        test_leap_second_minus_rejected() : int {
+            try {
+                dt : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 6, 30, 23, 59, 60, 0);
+                d : k::time::Duration = k::time::Duration::ofSeconds(1L);
+                r : k::time::LocalDateTime = dt - d;
+                return 0;
+            } catch (e: k::time::InvalidTemporalValueException&) {
+                return 1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto check_b = [&](const char* sym) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() != 0);
+    };
+    check_b("test_duration_across_days");
+
+    auto check_i = [&](const char* sym, int expected) {
+        auto fn = jit->lookup_symbol<int(*)()>(sym);
+        REQUIRE(fn != nullptr);
+        CHECK(fn() == expected);
+    };
+    check_i("test_leap_second_plus_rejected", 1);
+    check_i("test_leap_second_minus_rejected", 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 27. LocalDateTime comparisons and ordering
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LocalDateTime: comparisons and ordering", "[libk][time][local_date_time]") {
+    auto jit = jit_k(R"SRC(
+        module __test_local_date_time_comparisons__;
+
+        test_comparisons() : bool throws(k::time::InvalidTemporalValueException) {
+            dt1 : k::time::LocalDateTime = k::time::LocalDateTime::of(2025L, 12, 31, 23, 59, 59, 0);
+            dt2 : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 1, 1, 0, 0, 0, 0);
+            dt3 : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 1, 1, 10, 0, 0, 0);
+            dt4 : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 1, 1, 10, 0, 0, 1);
+            dt5 : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 1, 2, 0, 0, 0, 0);
+
+            if (!(dt1 < dt2 && dt2 < dt3 && dt3 < dt4 && dt4 < dt5)) return false;
+            if (!(dt5 > dt4 && dt4 > dt3 && dt3 > dt2 && dt2 > dt1)) return false;
+            if (!(dt1 <= dt2 && dt1 <= dt1)) return false;
+            if (!(dt2 >= dt1 && dt1 >= dt1)) return false;
+            if (!(dt1 == dt1 && dt1 != dt2)) return false;
+
+            if (dt1.compareTo(dt2) >= 0) return false;
+            if (dt2.compareTo(dt1) <= 0) return false;
+            if (dt1.compareTo(dt1) != 0) return false;
+
+            return true;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+
+    auto fn = jit->lookup_symbol<int(*)()>("test_comparisons");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() != 0);
+}
+
+
 
