@@ -76,6 +76,6 @@ colon-separated `KLANG_LIB_PATH` environment variable to make both artifacts
 discoverable.
 
 For a CMake project, see [Integrating K compilation into CMake
-projects](../../howtos/cmake-integration-k-projects.md).
+projects](../howtos/cmake-integration-k-projects.md).
 
 **Next:** [Generics and advanced techniques](08-generics-and-advanced-techniques.md)

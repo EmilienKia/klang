@@ -32,6 +32,6 @@ library names can be used without writing `import k;`.
 ## Further reading
 
 These tutorials explain concepts by example. For complete rules and API
-details, consult the [language reference](../../spec/language/index.md), the
-[standard library reference](../../spec/stdlib/index.md), and the
-[klangc manual](../../man/klangc.md).
+details, consult the [language reference](../spec/language/index.md), the
+[standard library reference](../spec/stdlib/index.md), and the
+[klangc manual](../man/klangc.md).

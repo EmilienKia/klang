@@ -70,8 +70,9 @@ uses `io_uring`; otherwise it uses the POSIX fallback.
 
 ## Documentation
 
-- [Learn K](doc/tutorials/README.md) — progressive tutorials from a first
+- [Learn K](doc/tutorial/README.md) — progressive tutorials from a first
   program through modules and templates
+- [Subsystem guides](doc/guides/) — in-depth technical guides (Date and Time, ...)
 - [Language reference](doc/spec/language/index.md) — complete language rules
   and grammar
 - [Standard library reference](doc/spec/stdlib/index.md) — public `libk` APIs
