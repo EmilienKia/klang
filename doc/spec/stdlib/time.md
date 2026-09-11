@@ -277,6 +277,52 @@ Immutable pairing of an absolute `Instant` and a `TimeZone`.
 - `TemporalParser`: parse temporal values from text with explicit validation and exception mapping.
   - Factories: `TemporalParsers::iso()`, `TemporalParsers::ofPattern(pattern)`.
 
+---
+
+## 7. Phase 4 Types: Time Scales, Time Sources, Observations, and CPU Clocks (Package D9)
+
+### 7.1 `TimeScaleId` and `TimeScaleValue`
+- `TimeScaleId`: immutable identifier for time scale conventions (`"UTC"`, `"TAI"`, `"GPS"`, `"POSIX"`).
+  - `TimeScaleId::of(value) throws(InvalidTemporalValueException)`
+  - Standard helpers: `utc()`, `tai()`, `gps()`, `posix()`.
+  - Equality: `operator==`, `operator!=`.
+- `TimeScaleValue`: normalized coordinate value representing whole seconds and nanosecond adjustment (`0 <= nanos < 1_000_000_000`).
+  - `TimeScaleValue(wholeSeconds, nanos) throws(TemporalArithmeticException)`
+  - `TimeScaleValue::of(wholeSeconds, nanos)`
+  - `TimeScaleValue::ofSeconds(wholeSeconds)`
+  - Accessors: `wholeSeconds()`, `nanoAdjustment()`.
+  - Equality: `operator==`, `operator!=`.
+
+### 7.2 `TimeScale`, `UtcTimeScale`, `TaiTimeScale`, `GpsTimeScale`, and `TimeScales`
+- `TimeScale`: interface for assigning scale coordinates to instants.
+  - `id() -> TimeScaleId`
+  - `epoch() -> Instant`
+  - `valueFromInstant(instant) -> TimeScaleValue throws(TimeScaleDataUnavailableException)`
+  - `instantFromValue(value) -> Instant throws(TimeScaleDataUnavailableException, InvalidTemporalValueException)`
+- `UtcTimeScale`: Coordinated Universal Time with leap seconds (epoch 1970-01-01T00:00:00Z).
+- `TaiTimeScale`: International Atomic Time continuous scale (`TAI = instant + 10s`).
+- `GpsTimeScale`: GPS time scale (epoch 1980-01-06T00:00:00 UTC, constant `TAI = GPS + 19s`).
+- `TimeScales`: utility facade providing `TimeScales::utc()`, `TimeScales::tai()`, `TimeScales::gps()`.
+- `Instant::toTimeScale(scale) -> TimeScaleValue`: projection helper.
+
+### 7.3 `TimeSourceId`, `TimeObservation`, and `TimeSource`
+- `TimeSourceId`: immutable identifier for measurement sources (`"SystemClock"`, `"NTP"`, `"PTP"`, `"GNSS"`, `"RTC"`).
+  - `TimeSourceId::of(value) throws(InvalidTemporalValueException)`
+- `TimeObservation`: immutable record of an observed instant, source identity, declared scale, resolution, and optional uncertainty.
+  - `instant() -> Instant`, `sourceId() -> TimeSourceId`, `scale() -> TimeScale&`, `resolution() -> Duration`
+  - `hasUncertainty() -> bool`, `uncertainty() -> Optional<Duration>`
+  - Equality: `operator==`, `operator!=`.
+- `TimeSource`: injectable contract for observation providers.
+  - `id() -> TimeSourceId`, `scale() -> TimeScale&`, `observation() -> TimeObservation throws(...)`.
+
+### 7.4 `ProcessCpuClock` and `ThreadCpuClock`
+- `ProcessCpuClock` and `ThreadCpuClock`: contracts for process and thread CPU execution time.
+  - `now() -> Duration throws(TimeDataUnavailableException)`
+  - `resolution() -> Duration throws(TimeDataUnavailableException)`
+  - Values represent consumed CPU execution time as a `Duration` and cannot be implicitly converted to `Instant`.
+- Implementations: `SystemProcessCpuClock::instance()` and `SystemThreadCpuClock::instance()`.
+
+
 
 
 

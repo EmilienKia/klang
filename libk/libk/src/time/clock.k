@@ -24,6 +24,8 @@ namespace time {
 @ffi::Extern("C") private __k_time_clock_read_realtime() : int;
 @ffi::Extern("C") private __k_time_clock_read_monotonic_active() : int;
 @ffi::Extern("C") private __k_time_clock_read_monotonic_elapsed() : int;
+@ffi::Extern("C") private __k_time_clock_read_process_cpu() : int;
+@ffi::Extern("C") private __k_time_clock_read_thread_cpu() : int;
 @ffi::Extern("C") private __k_time_clock_read_resolution(clock_type: int) : int;
 @ffi::Extern("C") private __k_time_clock_get_reading_sec() : long;
 @ffi::Extern("C") private __k_time_clock_get_reading_nano() : int;
@@ -155,6 +157,97 @@ public:
 
     override resolution() : time::Duration throws(TimeDataUnavailableException) {
         status : int = __k_time_clock_read_resolution(0);
+        if (status != 0) {
+            code : int = __k_time_clock_map_status(status);
+            throw TimeDataUnavailableException(code);
+        }
+        sec : long = __k_time_clock_get_reading_sec();
+        nano : int = __k_time_clock_get_reading_nano();
+        return time::Duration(sec, nano);
+    }
+}
+
+/**
+ * Injectable contract for process CPU execution time clock.
+ *
+ * Values represent consumed CPU execution time, not elapsed physical time.
+ */
+public interface ProcessCpuClock {
+    now() : time::Duration throws(TimeDataUnavailableException);
+    resolution() : time::Duration throws(TimeDataUnavailableException);
+}
+
+/**
+ * Injectable contract for thread CPU execution time clock.
+ *
+ * Values represent consumed CPU execution time by the calling thread.
+ */
+public interface ThreadCpuClock {
+    now() : time::Duration throws(TimeDataUnavailableException);
+    resolution() : time::Duration throws(TimeDataUnavailableException);
+}
+
+private _systemProcessCpuClockInstance : SystemProcessCpuClock;
+private _systemThreadCpuClockInstance : SystemThreadCpuClock;
+
+/**
+ * System process CPU clock backed by native platform clocks.
+ */
+public final class SystemProcessCpuClock : public ProcessCpuClock {
+public:
+    SystemProcessCpuClock() {}
+
+    static instance() : SystemProcessCpuClock& {
+        return _systemProcessCpuClockInstance;
+    }
+
+    override now() : time::Duration throws(TimeDataUnavailableException) {
+        status : int = __k_time_clock_read_process_cpu();
+        if (status != 0) {
+            code : int = __k_time_clock_map_status(status);
+            throw TimeDataUnavailableException(code);
+        }
+        sec : long = __k_time_clock_get_reading_sec();
+        nano : int = __k_time_clock_get_reading_nano();
+        return time::Duration(sec, nano);
+    }
+
+    override resolution() : time::Duration throws(TimeDataUnavailableException) {
+        status : int = __k_time_clock_read_resolution(3);
+        if (status != 0) {
+            code : int = __k_time_clock_map_status(status);
+            throw TimeDataUnavailableException(code);
+        }
+        sec : long = __k_time_clock_get_reading_sec();
+        nano : int = __k_time_clock_get_reading_nano();
+        return time::Duration(sec, nano);
+    }
+}
+
+/**
+ * System thread CPU clock backed by native platform clocks.
+ */
+public final class SystemThreadCpuClock : public ThreadCpuClock {
+public:
+    SystemThreadCpuClock() {}
+
+    static instance() : SystemThreadCpuClock& {
+        return _systemThreadCpuClockInstance;
+    }
+
+    override now() : time::Duration throws(TimeDataUnavailableException) {
+        status : int = __k_time_clock_read_thread_cpu();
+        if (status != 0) {
+            code : int = __k_time_clock_map_status(status);
+            throw TimeDataUnavailableException(code);
+        }
+        sec : long = __k_time_clock_get_reading_sec();
+        nano : int = __k_time_clock_get_reading_nano();
+        return time::Duration(sec, nano);
+    }
+
+    override resolution() : time::Duration throws(TimeDataUnavailableException) {
+        status : int = __k_time_clock_read_resolution(4);
         if (status != 0) {
             code : int = __k_time_clock_map_status(status);
             throw TimeDataUnavailableException(code);

@@ -1046,7 +1046,7 @@ type_reference_resolver::adapt_from_reference(
     }
     // ─────────────────────────────────────────────────────────────────────
 
-    if (ref_subtype == type_nc) {
+    if (ref_subtype == type_nc || type::are_equal(ref_subtype, type_nc)) {
         // ref<T> -> T : simple load
         return adapt_reference_load_value(expr);
     }

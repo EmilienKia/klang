@@ -85,6 +85,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/locale.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/temporal_formatter.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/temporal_parser.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/time_scale.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
     # ── Phase 2: futures ──────────────────────────────────────────────────
@@ -739,7 +740,7 @@ libk_add_test(libk-tests-uuid 120
     tests/test-uuid.cpp
 )
 
-# ── libk time API tests (Phase 1, Phase 2 & Phase 3) ─────────────────────────
+# ── libk time API tests (Phase 1, Phase 2, Phase 3 & Phase 4) ─────────────────
 libk_add_test(libk-tests-time 120
     tests/time/test-time-arithmetic.cpp
     tests/time/test-time-iso.cpp
@@ -749,6 +750,7 @@ libk_add_test(libk-tests-time 120
     tests/time/test-time-leap-seconds.cpp
     tests/time/test-time-chronology.cpp
     tests/time/test-time-locale.cpp
+    tests/time/test-time-scales.cpp
 )
 
 # ── libk performance / stress tests ──────────────────────────────────────────

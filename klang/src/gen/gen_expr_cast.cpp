@@ -494,6 +494,12 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             "type resolution must complete before code generation");
     }
 
+    if (type::are_equal(source_type, target_type)) {
+        _value = nullptr;
+        expr.sub_expr()->accept(*this);
+        return;
+    }
+
     // ── Callable → callable ──────────────────────────────────────────────────
     // Every callable shares a single representation (the fat { ptr, ptr } value,
     // or a bare function pointer for an unbound member reference), so a cast

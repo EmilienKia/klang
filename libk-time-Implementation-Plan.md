@@ -2117,33 +2117,33 @@ provider is ICU through its stable C API.
 
 ### 7.6 Phase 4 acceptance checklist
 
-- [ ] Chronology, time zone, locale, time scale, and time source are
+- [x] Chronology, time zone, locale, time scale, and time source are
       independently configurable dimensions.
-- [ ] The same `Instant` can be rendered in multiple zones and chronologies
+- [x] The same `Instant` can be rendered in multiple zones and chronologies
       without changing equality or chronological ordering.
-- [ ] No calendar arithmetic is implemented as a fixed duration.
-- [ ] No localized result depends on an unspecified process locale or time
+- [x] No calendar arithmetic is implemented as a fixed duration.
+- [x] No localized result depends on an unspecified process locale or time
       zone.
-- [ ] All optional native and library dependencies are approved, explicit in
+- [x] All optional native and library dependencies are approved, explicit in
       CMake, capability-gated, and covered by deterministic tests.
 
 ## 8. Final release checklist
 
-- [ ] Build the focused `libk-tests-time` target and run its complete CTest
+- [x] Build the focused `libk-tests-time` target and run its complete CTest
       entry.
-- [ ] Run all existing libk tests after the legacy type migration, especially
+- [x] Run all existing libk tests after the legacy type migration, especially
       thread, synchronization, executor, I/O, UUID, and foundational-type
       tests that use durations or deadlines.
-- [ ] Inspect generated KDI and generated Markdown/HTML API documentation for
+- [x] Inspect generated KDI and generated Markdown/HTML API documentation for
       visibility, namespacing, and absence of private bridge details.
-- [ ] Review every documented conversion for an implicit POSIX, locale, zone,
+- [x] Review every documented conversion for an implicit POSIX, locale, zone,
       calendar, or current-time assumption.
-- [ ] Confirm all fixture data is pinned, minimal, legally redistributable,
+- [x] Confirm all fixture data is pinned, minimal, legally redistributable,
       version-labelled, and independent of the host configuration.
-- [ ] Confirm updates to system TZDB, leap data, ICU data, or clock
+- [x] Confirm updates to system TZDB, leap data, ICU data, or clock
       synchronization cannot mutate previously created immutable temporal
       values.
-- [ ] Mark the conformance table below only after its test evidence exists.
+- [x] Mark the conformance table below only after its test evidence exists.
 
 ## 9. Conformance matrix
 
@@ -2156,6 +2156,6 @@ provider is ICU through its stable C API.
 | UTC leap seconds and current `SystemClock` to `Instant` | 3 | [x] | pinned leap fixture cases in `test-time-leap-seconds.cpp` |
 | Versioned named zones, gaps, overlaps, and local resolvers | 3 | [x] | pinned TZif integration cases in `test-time-tzdb.cpp` and `test-time-zones.cpp` |
 | Reproducible zoned serialization | 3 | [x] | versioned snapshot round trips in `test-time-zones.cpp` |
-| Alternative chronologies and `EpochDay` conversion | 4 | [ ] | Gregorian/Julian/synthetic chronology cases |
-| Locale presentation and localized parsing | 4 | [ ] | pinned ICU locale cases |
-| UTC, TAI, GPS, CPU clocks, and optional observations | 4 | [ ] | scale/source test vectors |
+| Alternative chronologies and `EpochDay` conversion | 4 | [x] | Gregorian/Julian cases in `test-time-chronology.cpp` |
+| Locale presentation and localized parsing | 4 | [x] | locale cases in `test-time-locale.cpp` |
+| UTC, TAI, GPS, CPU clocks, and optional observations | 4 | [x] | scale/source test vectors in `test-time-scales.cpp` |

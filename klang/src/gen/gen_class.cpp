@@ -254,7 +254,13 @@ bool have_same_virtual_signature(const function& a, const function& b) {
                 auto s = std::dynamic_pointer_cast<struct_type>(b);
                 if (!u || !s) return false;
                 auto st = s->get_struct();
-                if (!st || !st->has_tpl_args()) return false;
+                if (!st) return false;
+
+                if (!st->has_tpl_args()) {
+                    auto u_str = u->type_id().without_root_prefix().to_string();
+                    auto s_str = st->get_name().without_root_prefix().to_string();
+                    return u_str == s_str;
+                }
 
                 std::string unresolved_name = u->type_id().to_string();
                 if (auto pos = unresolved_name.rfind("::"); pos != std::string::npos) {

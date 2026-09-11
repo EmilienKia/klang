@@ -136,6 +136,13 @@ public:
         return ZonedDateTime::fromInstant(this, zone);
     }
 
+    /**
+     * Project this Instant to a TimeScaleValue under the given TimeScale.
+     */
+    const toTimeScale(scale: TimeScale&) : TimeScaleValue throws(TimeScaleDataUnavailableException) {
+        return scale.valueFromInstant(this);
+    }
+
     // ── Timeline arithmetic ──────────────────────────────────────────────────
 
     const plus(duration: const Duration&) : Instant throws(TemporalArithmeticException) {
