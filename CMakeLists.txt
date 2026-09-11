@@ -36,6 +36,16 @@ else()
     message(STATUS "liburing not found — libk async I/O uses the POSIX fallback backend")
 endif()
 
+# ── ICU (Unicode & internationalisation backend for libk time/locale) ────────
+pkg_check_modules(ICU icu-uc icu-i18n)
+if(ICU_FOUND)
+    set(KLANG_HAVE_ICU ON)
+    message(STATUS "Found ICU ${ICU_VERSION} — libk time enabled with ICU bridge")
+else()
+    set(KLANG_HAVE_ICU OFF)
+    message(STATUS "ICU not found — libk time ICU bridge disabled")
+endif()
+
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")

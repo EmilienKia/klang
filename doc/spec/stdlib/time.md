@@ -242,5 +242,41 @@ Immutable pairing of an absolute `Instant` and a `TimeZone`.
 - `Iso::parseInstant(text: const String&) -> Instant`
 - `Iso::parseZonedDateTime(text: const String&, resolver: const LocalDateTimeResolver&) -> ZonedDateTime`
 
+---
+
+## 6. Phase 4 Types: Alternative Chronologies and Localized Presentation
+
+### 6.1 `ChronologyId`, `Era`, `CalendarMonth`, `CalendarFields`
+- `ChronologyId`: immutable identifier (`"Gregorian"`, `"Julian"`, `"Japanese"`, `"Buddhist"`, `"Hebrew"`, `"Islamic"`).
+- `Era`: chronology-specific era designator (`id()`, `displayName(locale)`).
+- `CalendarMonth`: month number and optional leap-month flag.
+- `CalendarFields`: container for era, yearOfEra, month, and day.
+
+### 6.2 `Chronology`, `GregorianChronology`, `JulianChronology`
+- `Chronology`: rule system defining validity, month/year lengths, civil arithmetic, and `EpochDay` mapping.
+  - `GregorianChronology::instance()`: proleptic Gregorian implementation matching Phase 1 math.
+  - `JulianChronology::instance()`: proleptic Julian implementation.
+- `CalendarDate`: immutable chronology-specific civil date.
+  - `chronology()`, `fields()`, `toEpochDay()`, `toLocalDate()`.
+  - `plus(Period)`, `minus(Period)`, `toChronology(target)`.
+  - `operator==`, `operator!=`, `operator+`, `operator-`.
+- `CalendarDateTime`: pairing of `CalendarDate` and `LocalTime`.
+  - `atZone(zone, resolver) -> ZonedDateTime`.
+  - `toInstant(zone, resolver) -> Instant`.
+
+### 6.3 `WeekRules` and `Locale`
+- `WeekRules`: first day of week and minimal days in first week (`WeekRules::iso()`, `WeekRules::of()`).
+- `Locale`: immutable presentation-only configuration with BCP 47 language tag, optional chronology, and week rules.
+  - `Locale::of(tag)`, `Locale::system()`.
+  - `withChronology(chronology)`, `withWeekRules(rules)`.
+
+### 6.4 `TemporalFormatter` and `TemporalParser`
+- `TemporalFormatter`: format `Instant`, `LocalDate`, `LocalDateTime`, `ZonedDateTime`, and `CalendarDateTime`.
+  - Builders: `withLocale(locale)`, `withChronology(chronology)`, `withZone(zone)`.
+  - Factories: `TemporalFormatters::iso()`, `TemporalFormatters::ofPattern(pattern)`.
+- `TemporalParser`: parse temporal values from text with explicit validation and exception mapping.
+  - Factories: `TemporalParsers::iso()`, `TemporalParsers::ofPattern(pattern)`.
+
+
 
 

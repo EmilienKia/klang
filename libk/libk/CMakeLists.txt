@@ -79,6 +79,12 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/zone_rules.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/time_zone.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/time/zoned_date_time.k
+    # ── Phase 4: chronologies, locale & formatting ────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/chronology.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/calendar_date.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/locale.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/temporal_formatter.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/time/temporal_parser.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.k
     # ── Phase 2: futures ──────────────────────────────────────────────────
@@ -507,6 +513,36 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile ICU bridge runtime (Phase 4) ──────────────────────────────────
+if(KLANG_HAVE_ICU)
+    set(ICU_C_FLAGS -DK_TIME_HAVE_ICU=1)
+    foreach(_dir ${ICU_INCLUDE_DIRS})
+        list(APPEND ICU_C_FLAGS -I${_dir})
+    endforeach()
+    foreach(_dir ${ICU_LIBRARY_DIRS})
+        list(APPEND LIBK_EXTRA_LINK_ARGS -L ${_dir})
+    endforeach()
+    foreach(_lib ${ICU_LIBRARIES})
+        list(APPEND LIBK_EXTRA_LINK_ARGS -l ${_lib})
+    endforeach()
+else()
+    set(ICU_C_FLAGS -DK_TIME_HAVE_ICU=0)
+endif()
+
+set(ICU_BRIDGE_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/icu_bridge.c)
+set(ICU_BRIDGE_OBJ ${LIBK_OUTPUT_DIR}/icu_bridge.o)
+
+add_custom_command(
+    OUTPUT  ${ICU_BRIDGE_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${ICU_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time
+            -o ${ICU_BRIDGE_OBJ} ${ICU_BRIDGE_C}
+    DEPENDS ${ICU_BRIDGE_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/time/icu_bridge.h
+    COMMENT "Compiling K runtime ICU bridge (icu_bridge.c)"
+    VERBATIM
+)
+
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
                    ${TIME_OBJ} ${RUNTIME_TLS_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
@@ -519,7 +555,8 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${LEAP_SECOND_DATA_OBJ}
                    ${TZIF_READER_OBJ}
                    ${TZDB_SYSTEM_OBJ}
-                   ${TIME_FFI_OBJ})
+                   ${TIME_FFI_OBJ}
+                   ${ICU_BRIDGE_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -710,6 +747,8 @@ libk_add_test(libk-tests-time 120
     tests/time/test-time-tzdb.cpp
     tests/time/test-time-zones.cpp
     tests/time/test-time-leap-seconds.cpp
+    tests/time/test-time-chronology.cpp
+    tests/time/test-time-locale.cpp
 )
 
 # ── libk performance / stress tests ──────────────────────────────────────────

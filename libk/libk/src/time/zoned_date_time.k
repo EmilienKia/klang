@@ -141,6 +141,21 @@ public:
         return fromInstant(_instant, newZone);
     }
 
+    /**
+     * Project this ZonedDateTime to a CalendarDateTime in the specified Chronology.
+     */
+    const toCalendarDateTime(chronology: const Chronology&) : CalendarDateTime
+        throws(InvalidTemporalValueException) {
+        try {
+            ed : EpochDay = localDate().toEpochDay();
+            targetChronology : Chronology& = (Chronology&) chronology;
+            calDate : CalendarDate = targetChronology.fromEpochDay(ed);
+            return CalendarDateTime::of(calDate, localTime());
+        } catch (e: TemporalArithmeticException&) {
+            throw InvalidTemporalValueException(501);
+        }
+    }
+
     // ── Timeline Arithmetic (Duration) ───────────────────────────────────────
 
     /**
