@@ -81,7 +81,7 @@ use `getOr(defaultValue)` instead.
 
 The standard library also supplies maps, sets, mathematical utilities,
 threading, futures, I/O streams, and runtime type information. The
-[standard library reference](../spec/stdlib/index.md) lists the available
+[standard library reference](../../spec/stdlib/index.md) lists the available
 modules and their APIs.
 
 **Next:** [Resources and errors](06-resources-and-errors.md)

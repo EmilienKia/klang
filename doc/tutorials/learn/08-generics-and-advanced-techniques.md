@@ -112,6 +112,6 @@ function references or lambdas for a small, behavior-oriented dependency.
 ## Continue learning
 
 You now have the building blocks for native K programs. Use the
-[language reference](../spec/language/index.md) for complete syntax,
-the [standard library reference](../spec/stdlib/index.md) for APIs, and
-[`klangc(1)`](../man/klangc.md) for compiler and linker options.
+[language reference](../../spec/language/index.md) for complete syntax,
+the [standard library reference](../../spec/stdlib/index.md) for APIs, and
+[`klangc(1)`](../../man/klangc.md) for compiler and linker options.

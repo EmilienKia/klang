@@ -1,37 +1,43 @@
-# Learn K
+# K Tutorials and Topic Guides
 
-This tutorial series introduces K through small, independent programs. Read
-the chapters in order the first time; later chapters build on the vocabulary
-and conventions established earlier.
+This directory contains learning material and practical guides for the K
+programming language and standard library.
 
-K is a statically typed, native-compiled language with C/C++-inspired syntax,
-value-oriented aggregates, explicit resource management, and a standard
-library that is automatically available to every non-`k` module.
+---
 
-| Chapter | Topic | You will learn |
-|---------|-------|----------------|
-| [1. Getting started](01-getting-started.md) | The toolchain and first program | How to build Klang, compile a source file, and define `main` |
-| [2. Values and control flow](02-values-and-control-flow.md) | Types, variables, and decisions | Primitive values, arrays, conditions, and loops |
-| [3. Functions and arrays](03-functions-and-arrays.md) | Reusable code | Parameters, return values, references, defaults, and array arguments |
-| [4. Structs and object-oriented programming](04-structs-and-oop.md) | Domain types | Structs, constructors, classes, interfaces, and inheritance |
-| [5. Standard library essentials](05-standard-library-essentials.md) | Everyday data and I/O | Strings, output, optionals, and collections |
-| [6. Resources and errors](06-resources-and-errors.md) | Safe lifetime management | Owners, pointers, `new`/`delete`, exceptions, and cleanup |
-| [7. Modules and libraries](07-modules-and-libraries.md) | Multi-module programs | Public APIs, KDI metadata, imports, and linking |
-| [8. Generics and advanced techniques](08-generics-and-advanced-techniques.md) | Compile-time abstraction | Templates, deduction, callbacks, and value parameters |
+## 1. Step-by-Step Tutorials (`learn/`)
 
-## Before you begin
+The [Learn K](learn/README.md) tutorial series introduces K from scratch
+through small, independent programs:
 
-The examples assume a working `klangc` compiler and the K standard library.
-Build them with the command shown in chapter 1, or install Klang so that
-`klangc`, `libk`, and its KDI descriptors are discoverable.
+| Chapter | Topic | Link |
+|---------|-------|------|
+| 1 | The toolchain and first program | [01-getting-started.md](learn/01-getting-started.md) |
+| 2 | Types, variables, and decisions | [02-values-and-control-flow.md](learn/02-values-and-control-flow.md) |
+| 3 | Reusable code and functions | [03-functions-and-arrays.md](learn/03-functions-and-arrays.md) |
+| 4 | Domain types, structs, and OOP | [04-structs-and-oop.md](learn/04-structs-and-oop.md) |
+| 5 | Everyday data, strings, collections, and I/O | [05-standard-library-essentials.md](learn/05-standard-library-essentials.md) |
+| 6 | Memory management, owners, and exceptions | [06-resources-and-errors.md](learn/06-resources-and-errors.md) |
+| 7 | Multi-module programs, KDI, and libraries | [07-modules-and-libraries.md](learn/07-modules-and-libraries.md) |
+| 8 | Generics, templates, and deduction | [08-generics-and-advanced-techniques.md](learn/08-generics-and-advanced-techniques.md) |
 
-Each complete program starts with a `module` declaration and returns an exit
-status from `main`. The base module `k` is imported automatically, so standard
-library names can be used without writing `import k;`.
+---
+
+## 2. In-Depth Subsystem Guides (`topics/`)
+
+Detailed architectural overviews, class classifications, interaction models,
+and practical examples for major standard library subsystems:
+
+| Topic | Description | Guide |
+|-------|-------------|-------|
+| **Date and Time** (`k::time`) | Complete guide to K's temporal architecture: timeline coordinates, civil dates, durations vs periods, monotonic clocks, time zones, DST resolutions, alternative chronologies, scales, and formatting. | [topics/time.md](topics/time.md) |
+
+---
 
 ## Further reading
 
-These tutorials explain concepts by example. For complete rules and API
-details, consult the [language reference](../spec/language/index.md), the
-[standard library reference](../spec/stdlib/index.md), and the
-[klangc manual](../man/klangc.md).
+For formal specifications and reference manuals:
+- [Language Specification](../spec/language/index.md)
+- [Standard Library Reference](../spec/stdlib/index.md)
+- [Compiler Manual](../man/klangc.md)
+
