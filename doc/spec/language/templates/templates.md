@@ -488,7 +488,7 @@ instantiations.
 ### 8.5 Constructors and Destructors
 
 Constructors and destructors of template aggregates are instantiated with the aggregate.
-They cannot have independent template parameter lists in Phase 1.
+They cannot have independent template parameter lists.
 
 ### 8.6 KDI Export
 
@@ -532,7 +532,12 @@ A `using` alias may refer to a specific template instantiation:
 using IntPair = Pair<int>;
 ```
 
-Template aliases (parameterized `using`) are not supported in Phase 1.
+Template aliases (parameterized `using`) are also supported:
+
+```k
+template<typename T>
+using List = Vector<T>;
+```
 
 ---
 

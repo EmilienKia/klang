@@ -134,7 +134,7 @@ declare a narrower `throws` clause or none at all.
 
 An exception that escapes `run()` **terminates that thread only**; it never
 propagates into the thread that started it and never reaches the runtime's C
-frames. Phase 2 (`Future`/`Promise`) introduces the machinery to observe such a
+frames. The `Future`/`Promise` abstraction introduces the machinery to observe such a
 failure from another thread through `ExecutionException`.
 
 The `Runnable` instance must stay alive for the whole execution of the thread.

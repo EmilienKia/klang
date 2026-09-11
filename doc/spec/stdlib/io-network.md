@@ -1,4 +1,4 @@
-# Asynchronous Network I/O (`k::io`) — Phase 5
+# Asynchronous Network I/O (`k::io`)
 
 This module adds interruptible TCP networking primitives on top of the same
 thread interruption model used by `FileChannel`.
@@ -26,7 +26,7 @@ Operations that block (`connect`, `accept`, `read`, `write`) support:
 
 ## Current scope
 
-Phase 5 currently targets IPv4 and supports numeric addresses and
+The networking layer currently targets IPv4 and supports numeric addresses and
 `localhost`, with:
 
 - TCP (`Socket*`, `ServerSocket`) on interruptible/timeout-aware waits.
@@ -38,7 +38,7 @@ values (or equivalent socket-path strings in native code), with:
 - stream sockets via `SocketChannel` / `Socket` and `ServerSocket`
 - datagram sockets via `DatagramSocket`
 
-## Phase 6 foundation
+## Event loop foundation
 
 A minimal `EventLoop` is available (`k::io::EventLoop`) with:
 

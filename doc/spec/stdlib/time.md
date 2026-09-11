@@ -1,4 +1,4 @@
-# Time API (Phase 1, Phase 2 & Phase 3 — Zone Data Core)
+# Time API
 **Module:** `k`  
 **Namespace:** `k::time`  
 **Sources:** `libk/libk/src/time/*.k`  
@@ -12,7 +12,7 @@
 The `k::time` namespace provides a platform-independent, value-semantic, and
 immutable temporal model for the K language.
 
-Phase 1 provides the deterministic core:
+The API provides a deterministic core and rich domain support:
 - Checked temporal exception hierarchy.
 - Checked arithmetic kernel and normalization.
 - `Duration`: chronological elapsed amount (seconds + nanoseconds).
@@ -24,21 +24,33 @@ Phase 1 provides the deterministic core:
 - `LocalDateTime`: composition of a `LocalDate` and `LocalTime`.
 - `ZoneOffset`: fixed displacement from UTC between -18:00 and +18:00.
 - `Iso`: canonical ISO-8601 string formatting and parsing.
+- Clock domains and native clock adapters:
+  - `Clock`: injectable absolute time source contract.
+  - `FixedClock`: deterministic test clock returning a constant `Instant`.
+  - `SequenceClock`: deterministic test clock advancing through an array of `Instant`s.
+  - `SystemClock`: system wall-clock facade (`now()` returns current `Instant`).
+  - `MonotonicClockId`: distinct identity of a monotonic clock domain.
+  - `MonotonicInstant`: point in time within a specific monotonic clock domain.
+  - `MonotonicClock`: injectable monotonic time source contract.
+  - `FixedMonotonicClock`: deterministic test monotonic clock.
+  - `SystemMonotonicClock`: active (`activeTime()`) and elapsed (`elapsedTime()`) system monotonic clocks.
+  - `PosixTimestamp`: normalized POSIX coordinate and system real-time reading (`systemNow()`).
+- Time zones and local time resolution:
+  - `ZoneId`: IANA-style time zone identifier.
+  - `ZoneRules`: rule snapshot for time transitions.
+  - `TimeZone`: pairing of identifier and rules with system zone detection.
+  - `ZonedDateTime`: pairing of timeline instant and time zone with DST resolver support.
+- Alternative calendar systems:
+  - `Chronology`: rule system for calendars (`GregorianChronology`, `JulianChronology`, etc.).
+  - `CalendarDate` / `CalendarDateTime`: calendar-specific dates and times.
+- Presentation and formatting:
+  - `Locale`, `WeekRules`, `TemporalFormatter`, `TemporalParser`.
+- Time scales and observations:
+  - `TimeScale` (`UTC`, `TAI`, `GPS`), `TimeObservation`, `TimeSource`.
+  - `ProcessCpuClock`, `ThreadCpuClock`.
 
-Phase 2 adds clock domains and native clock adapters:
-- `Clock`: injectable absolute time source contract.
-- `FixedClock`: deterministic test clock returning a constant `Instant`.
-- `SequenceClock`: deterministic test clock advancing through an array of `Instant`s.
-- `SystemClock`: system wall-clock facade (`now()` throws 513 until Phase 3).
-- `MonotonicClockId`: distinct identity of a monotonic clock domain.
-- `MonotonicInstant`: point in time within a specific monotonic clock domain.
-- `MonotonicClock`: injectable monotonic time source contract.
-- `FixedMonotonicClock`: deterministic test monotonic clock.
-- `SystemMonotonicClock`: active (`activeTime()`) and elapsed (`elapsedTime()`) system monotonic clocks.
-- `PosixTimestamp`: normalized POSIX coordinate and system real-time reading (`systemNow()`).
-
-All Phase 1 operations are pure functions of their inputs and depend on no
-host clocks, system locale, or timezone database.
+All core arithmetic and civil calendar operations are pure functions of their
+inputs and depend on no host clocks, system locale, or timezone database.
 
 ---
 
@@ -143,14 +155,14 @@ Stateless canonical ISO-8601 formatter and parser utility class.
 
 ---
 
-## 4. Phase 2 Types: Clocks and Monotonic Domains
+## 4. Clocks and Monotonic Domains
 
 ### 4.1 `Clock`, `FixedClock`, `SequenceClock`, `SystemClock`
 Injectable absolute-time contracts and implementations.
 - `Clock`: interface with `now() : Instant throws(...)` and `resolution() : Duration throws(...)`.
 - `FixedClock`: deterministic test clock initialized with an `Instant`.
 - `SequenceClock`: deterministic test clock advancing through an array of `Instant`s; throws `TimeDataUnavailableException(515)` when exhausted.
-- `SystemClock`: singleton facade via `SystemClock::instance()`; in Phase 2 `now()` throws `TimeScaleDataUnavailableException(513)`.
+- `SystemClock`: singleton facade via `SystemClock::instance()`; `now()` returns the current `Instant`.
 
 ### 4.2 `MonotonicClockId`, `MonotonicInstant`, `MonotonicClock`
 Monotonic measurement types guaranteeing non-decreasing timelines within a domain.
@@ -165,11 +177,11 @@ Normalized POSIX timestamp coordinate (`seconds` + `nanos`, `0 <= nanos < 1_000_
 - **Factories:** `ofSeconds(s)`, `ofSeconds(s, ns)`, `systemNow()`.
 - **Accessors:** `seconds()`, `nanoAdjustment()`.
 - **Arithmetic:** `plus(Duration)`, `minus(Duration)`, `minus(PosixTimestamp) -> Duration`, `until(PosixTimestamp) -> Duration`.
-- **Conversion:** `toInstant()` and `Instant::fromPosixTimestamp()` throw `TimeScaleDataUnavailableException(513)` in Phase 2.
+- **Conversion:** `toInstant()` and `Instant::fromPosixTimestamp()`.
 
 ---
 
-## 5. Phase 3 Types: Zone Data Core (Package D6)
+## 5. Time Zones, Resolution, and ZonedDateTime
 
 ### 5.1 `ZoneId`
 Immutable validated IANA-style time-zone identity (e.g. `Europe/Paris`, `America/New_York`, `UTC`, `Etc/GMT+1`).
@@ -236,7 +248,7 @@ Immutable pairing of an absolute `Instant` and a `TimeZone`.
   - `plus(Period, resolver)` / `minus(Period, resolver)`: civil calendar arithmetic on `LocalDateTime`, followed by zone resolution.
 - **Operations:** `withZone(newZone)`, `isBefore`, `isAfter`, `isSameInstant`, `operator==`, `operator!=`.
 
-### 5.8 `Iso` Additions in Phase 3
+### 5.8 Zoned and Instant ISO Representation
 - `Iso::formatInstant(instant: const Instant&) -> String` -> `YYYY-MM-DDTHH:MM:SS[.fraction]Z`
 - `Iso::formatZonedDateTime(zdt: const ZonedDateTime&) -> String` -> `YYYY-MM-DDTHH:MM:SS[.fraction]±HH:MM[ZoneId]`
 - `Iso::parseInstant(text: const String&) -> Instant`
@@ -244,7 +256,7 @@ Immutable pairing of an absolute `Instant` and a `TimeZone`.
 
 ---
 
-## 6. Phase 4 Types: Alternative Chronologies and Localized Presentation
+## 6. Alternative Chronologies and Localized Presentation
 
 ### 6.1 `ChronologyId`, `Era`, `CalendarMonth`, `CalendarFields`
 - `ChronologyId`: immutable identifier (`"Gregorian"`, `"Julian"`, `"Japanese"`, `"Buddhist"`, `"Hebrew"`, `"Islamic"`).
@@ -254,7 +266,7 @@ Immutable pairing of an absolute `Instant` and a `TimeZone`.
 
 ### 6.2 `Chronology`, `GregorianChronology`, `JulianChronology`
 - `Chronology`: rule system defining validity, month/year lengths, civil arithmetic, and `EpochDay` mapping.
-  - `GregorianChronology::instance()`: proleptic Gregorian implementation matching Phase 1 math.
+  - `GregorianChronology::instance()`: proleptic Gregorian implementation matching standard Gregorian math.
   - `JulianChronology::instance()`: proleptic Julian implementation.
 - `CalendarDate`: immutable chronology-specific civil date.
   - `chronology()`, `fields()`, `toEpochDay()`, `toLocalDate()`.
@@ -279,7 +291,7 @@ Immutable pairing of an absolute `Instant` and a `TimeZone`.
 
 ---
 
-## 7. Phase 4 Types: Time Scales, Time Sources, Observations, and CPU Clocks (Package D9)
+## 7. Time Scales, Time Sources, Observations, and CPU Clocks
 
 ### 7.1 `TimeScaleId` and `TimeScaleValue`
 - `TimeScaleId`: immutable identifier for time scale conventions (`"UTC"`, `"TAI"`, `"GPS"`, `"POSIX"`).

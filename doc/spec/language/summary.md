@@ -1602,7 +1602,7 @@ Template instantiations are mangled with `I…E` markers after the entity name:
 - **Visibility**: specifiers on the template definition apply to all instantiations.
 - **Constructors/Destructors**: instantiated with the aggregate; no independent template params.
 - **Operator overloading**: template functions may be operator overloads.
-- **`using` directives**: `using IntPair = Pair<int>;` works. Parameterized `using` aliases are Phase 2.
+- **`using` directives**: `using IntPair = Pair<int>;` works. Parameterized `using` aliases (`template<typename T> using ...`) are also supported.
 
 ### 25.8 Parsing Ambiguity
 
@@ -1611,17 +1611,14 @@ resolves this by checking whether the preceding identifier names a template decl
 a template argument list, nested `<`/`>` are balanced. `>>` is split into two `>` when inside
 nested template arguments (e.g., `Pair<Pair<int>>`).
 
-### 25.9 Phase 1 Limitations
+### 25.9 Current Limitations
 
-Phase 1 does **not** support:
+The template system currently does **not** support:
 - Partial or full specialization.
 - Template template parameters.
-- Variadic template parameters (parameter packs).
-- Template argument deduction from function arguments.
 - Concepts or type traits beyond base-type constraints.
 - Templates on constructors, destructors, operators, or enums independently.
 - `extern template` declarations.
-- Template aliases (`template<typename T> using Vec = Array<T, 16>`).
 - In expression scope calls, template arguments are currently supported on the
   leading qualifier only (`Type<T>::member(...)`). Mid-chain forms such as
   `ns::Type<T>::member(...)` are not yet supported.
@@ -2007,7 +2004,7 @@ When an exception propagates through a stack frame:
 
 - No `finally` interaction with `return`/`break`/`continue` inside try/catch bodies
   (the finally block may be skipped if a return statement exits the function from
-  within the try or catch body — Phase 2 improvement).
+  within the try or catch body).
 - No exception specification on constructors/destructors.
 
 ---
