@@ -60,9 +60,35 @@ Namespaces can be nested.
 
 ```
 NamespaceDecl:
-    'namespace' [ Identifier ] '{' { Declaration } '}'
+    'namespace' [ NamespaceIdentifier ] '{' { Declaration } '}'
+
+NamespaceIdentifier:
+    Identifier { '::' Identifier }
 ```
 
+Nested namespaces can be declared either by nesting blocks or with the compact `::` syntax:
+
+```k
+namespace geometry::shapes {
+    struct Circle {
+        radius : double;
+    }
+}
+```
+
+This is semantically equivalent to:
+
+```k
+namespace geometry {
+    namespace shapes {
+        struct Circle {
+            radius : double;
+        }
+    }
+}
+```
+
+A namespace declaration cannot start with a root prefix (`namespace ::foo` is forbidden).
 Namespaces may be unnamed (anonymous) — declarations in an unnamed namespace are visible only within the current file.
 
 **Example:**

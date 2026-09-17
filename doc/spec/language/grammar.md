@@ -154,7 +154,9 @@ Grammar notation used here:
 <a id="visibilitydecl"></a>**VisibilityDecl:**
     `(` `'public'` | `'protected'` | `'private'` `)` `':'`
 <a id="namespacedecl"></a>**NamespaceDecl:**
-    `'namespace'` `[` [Identifier](#identifier) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
+    `'namespace'` `[` [NamespaceIdentifier](#namespaceidentifier) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
+<a id="namespaceidentifier"></a>**NamespaceIdentifier:**
+    [Identifier](#identifier) `{{ '::' ` [Identifier](#identifier) `}}`
 <a id="usingdecl"></a>**UsingDecl:**
     `'using'` `[` [UsingFilter](#usingfilter) `]` `[` [Identifier](#identifier) `'='` `]` [QualifiedIdentifier](#qualifiedidentifier) `';'`
 

@@ -207,7 +207,11 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_namespace_decl(ast::namespace_decl& decl) override {
-            prefix() << "namespace " << decl.name.value().content << std::endl;
+            prefix() << "namespace ";
+            if (decl.name) {
+                visit_qualified_identifier(*decl.name);
+            }
+            _stm << std::endl;
             auto pf = prefix_inc();
             for(auto d : decl.declarations) {
                 d->visit(*this);

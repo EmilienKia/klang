@@ -854,12 +854,12 @@ lex::opt_any_lexeme namespace_decl::get_last_lexeme() const {
     if (close_brace) return lex::opt_any_lexeme{*close_brace};
     if (!close_par.content.empty()) return lex::opt_any_lexeme{close_par};
     if (!declarations.empty() && declarations.back()) return declarations.back()->get_last_lexeme();
-    if (name) return lex::opt_any_lexeme{*name};
+    if (name) return name->get_last_lexeme();
     return lex::opt_any_lexeme{ns};
 }
 
 lex::opt_any_lexeme namespace_decl::get_interest_lexeme() const {
-    return name ? lex::opt_any_lexeme{*name} : lex::opt_any_lexeme{ns};
+    return name ? name->get_interest_lexeme() : lex::opt_any_lexeme{ns};
 }
 
 //

@@ -153,17 +153,44 @@ namespace k::model {
 
     void model_builder::visit_namespace_decl(parse::ast::namespace_decl &ns) {
         auto parent_ns = current_context_content<model::ns>();
-        std::shared_ptr<k::model::ns> namesp = parent_ns->get_child_namespace(std::string{ns.name->content});
-
-        trace("[model_builder::visit_namespace_decl] namespace '{}'", {std::string{ns.name->content}});
-        namesp->set_ast_namespace_decl(ns.shared_as<parse::ast::namespace_decl>());
-
-        if (has_doc(ns.doc) && !namesp->get_documentation()) {
-            namesp->set_documentation(doc::build_typed_doc<doc::namespace_doc>(namesp, *ns.doc));
+        if (!parent_ns) {
+            parent_ns = _unit.get_root_namespace();
         }
 
-        // Push namespace context
-        stack<ns_context> push(_contexts, namesp);
+        std::vector<std::shared_ptr<k::model::ns>> ns_chain;
+        if (ns.name && !ns.name->names.empty()) {
+            auto curr = parent_ns;
+            for (const auto& ident : ns.name->names) {
+                curr = curr->get_child_namespace(std::string{ident.content});
+                ns_chain.push_back(curr);
+            }
+        } else {
+            ns_chain.push_back(parent_ns);
+        }
+
+        auto innermost_ns = ns_chain.back();
+        std::string ns_display_name = ns.name ? ns.name->to_name().to_string() : innermost_ns->get_short_name();
+        trace("[model_builder::visit_namespace_decl] namespace '{}'", {ns_display_name});
+        innermost_ns->set_ast_namespace_decl(ns.shared_as<parse::ast::namespace_decl>());
+
+        if (has_doc(ns.doc) && !innermost_ns->get_documentation()) {
+            innermost_ns->set_documentation(doc::build_typed_doc<doc::namespace_doc>(innermost_ns, *ns.doc));
+        }
+
+        // Push all namespace contexts in the chain onto the context stack
+        for (const auto& n : ns_chain) {
+            _contexts.push_back(std::make_shared<ns_context>(n));
+        }
+
+        struct contexts_guard {
+            std::vector<std::shared_ptr<context>>& contexts;
+            size_t count;
+            ~contexts_guard() {
+                for (size_t i = 0; i < count && !contexts.empty(); ++i) {
+                    contexts.pop_back();
+                }
+            }
+        } guard{_contexts, ns_chain.size()};
 
         // Visit child declarations (set _current_ast_decl for diamond-inheritance workaround)
         for (auto& decl : ns.declarations) {

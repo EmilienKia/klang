@@ -1428,6 +1428,134 @@ TEST_CASE("Overload collision: same arity range even with different types", "[ge
     )SRC"), k::model::gen::resolution_error);
 }
 
+// =============================================================================
+// Nested namespace definitions : namespace xx::yy { ... }
+// =============================================================================
+
+TEST_CASE("Nested namespace declaration: call function in xx::yy", "[gen][resolution][nested_namespace]") {
+    auto jit = gen_jit(R"SRC(
+        module __nested_ns_basic__;
+
+        namespace math::linear {
+            dot(a: int, b: int) : int {
+                return a * b;
+            }
+        }
+
+        test() : int {
+            return math::linear::dot(6, 7);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Nested namespace declaration: deeply nested a::b::c", "[gen][resolution][nested_namespace]") {
+    auto jit = gen_jit(R"SRC(
+        module __nested_ns_deep__;
+
+        namespace a::b::c {
+            value() : int {
+                return 123;
+            }
+        }
+
+        test() : int {
+            return a::b::c::value();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 123);
+}
+
+TEST_CASE("Nested namespace declaration: reopening namespaces", "[gen][resolution][nested_namespace]") {
+    auto jit = gen_jit(R"SRC(
+        module __nested_ns_reopen__;
+
+        namespace geom {
+            base_val() : int { return 10; }
+        }
+
+        namespace geom::shapes {
+            circle_area() : int { return 20; }
+        }
+
+        namespace geom {
+            extra_val() : int { return 30; }
+        }
+
+        test() : int {
+            return geom::base_val() + geom::shapes::circle_area() + geom::extra_val();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 60);
+}
+
+TEST_CASE("Nested namespace declaration: struct definition and usage", "[gen][resolution][nested_namespace]") {
+    auto jit = gen_jit(R"SRC(
+        module __nested_ns_struct__;
+
+        namespace ui::theme {
+            struct Color {
+                r : int;
+                g : int;
+                b : int;
+            }
+
+            make_color(r: int, g: int, b: int) : Color {
+                c : Color;
+                c.r = r;
+                c.g = g;
+                c.b = b;
+                return c;
+            }
+        }
+
+        test() : int {
+            c : ui::theme::Color = ui::theme::make_color(10, 20, 30);
+            return c.r + c.g + c.b;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 60);
+}
+
+TEST_CASE("Nested namespace declaration: nested inside another namespace", "[gen][resolution][nested_namespace]") {
+    auto jit = gen_jit(R"SRC(
+        module __nested_ns_in_ns__;
+
+        namespace root_pkg {
+            namespace sub_a::sub_b {
+                get_magic() : int {
+                    return 999;
+                }
+            }
+        }
+
+        test() : int {
+            return root_pkg::sub_a::sub_b::get_magic();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 999);
+}
+
 // -----------------------------------------------------------------------------
 // OK: f(int=0) vs f(double=0.0) — both [0,1] → collision
 // -----------------------------------------------------------------------------

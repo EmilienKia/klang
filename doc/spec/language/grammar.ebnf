@@ -410,7 +410,11 @@ VisibilityDecl
     ;
 
 NamespaceDecl
-    = 'namespace' , [ Identifier ] , '{' , { Declaration } , '}'
+    = 'namespace' , [ NamespaceIdentifier ] , '{' , { Declaration } , '}'
+    ;
+
+NamespaceIdentifier
+    = Identifier , { '::' , Identifier }
     ;
 
 UsingDecl

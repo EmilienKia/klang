@@ -1536,4 +1536,61 @@ TEST_CASE("Parse callable throws clause without close paren throws ERR_THROWS_EX
     }
 }
 
+TEST_CASE("Parse nested namespace declaration", "[parser][namespace]") {
+    test_logger log;
+    k::source src{R"(
+        module test_nested_ns;
+        namespace a::b::c {
+            struct S {}
+        }
+    )"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit);
+    REQUIRE(unit->declarations.size() == 1);
+    auto ns_decl = std::dynamic_pointer_cast<ast::namespace_decl>(unit->declarations[0]);
+    REQUIRE(ns_decl);
+    REQUIRE(ns_decl->name);
+    REQUIRE(ns_decl->name->names.size() == 3);
+    CHECK(ns_decl->name->names[0].content == "a");
+    CHECK(ns_decl->name->names[1].content == "b");
+    CHECK(ns_decl->name->names[2].content == "c");
+    REQUIRE(ns_decl->declarations.size() == 1);
+}
+
+TEST_CASE("Parse nested namespace starting with :: throws ERR_QNAME_AFTER_ROOT_SEP", "[parser][namespace][error]") {
+    test_logger log;
+    k::source src{R"(
+        namespace ::a::b {
+            struct S {}
+        }
+    )"};
+    k::parse::parser parser(log, src);
+    try {
+        (void)parser.parse_unit();
+        FAIL("Expected parsing_error");
+    } catch (const k::parse::parsing_error& err) {
+        REQUIRE(err.get_diagnostic().code
+                == static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_ROOT_SEP));
+    }
+}
+
+TEST_CASE("Parse nested namespace with trailing :: throws ERR_QNAME_AFTER_INTERMEDIATE_SEP", "[parser][namespace][error]") {
+    test_logger log;
+    k::source src{R"(
+        namespace a:: {
+            struct S {}
+        }
+    )"};
+    k::parse::parser parser(log, src);
+    try {
+        (void)parser.parse_unit();
+        FAIL("Expected parsing_error");
+    } catch (const k::parse::parsing_error& err) {
+        REQUIRE(err.get_diagnostic().code
+                == static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_INTERMEDIATE_SEP));
+    }
+}
+
 

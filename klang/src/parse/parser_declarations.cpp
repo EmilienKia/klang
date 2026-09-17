@@ -464,14 +464,30 @@ std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
         return {};
     }
 
-    // Eventually expect an import identifier
-    lex::opt_ref_any_lexeme lname = _lexer.get();
-    std::optional<lex::identifier> name;
-    if(lname && lex::is<lex::identifier>(lname)) {
-        name = lex::as<lex::identifier>(lname);
+    // Optional namespace name: identifier(s) separated by '::'
+    std::shared_ptr<ast::qualified_identifier> name;
+    lex::opt_ref_any_lexeme lfirst = _lexer.get();
+    if(lfirst == lex::punctuator::DOUBLE_COLON) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_ROOT_SEP), _lexer.pick_previous(), "Namespace declaration cannot start with '::'");
+    } else if(lfirst && lex::is<lex::identifier>(lfirst)) {
+        std::vector<lex::identifier> names;
+        names.push_back(lex::as<lex::identifier>(lfirst));
+        while(true) {
+            lex::opt_ref_any_lexeme ldoublecolon = _lexer.get();
+            if(ldoublecolon == lex::punctuator::DOUBLE_COLON) {
+                if(auto lnext = _lexer.get(); lex::is<lex::identifier>(lnext)) {
+                    names.push_back(lex::as<lex::identifier>(lnext));
+                } else {
+                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_INTERMEDIATE_SEP), _lexer.pick_current(), "Expected identifier after '::' in namespace name");
+                }
+            } else {
+                _lexer.unget();
+                break;
+            }
+        }
+        name = std::make_shared<ast::qualified_identifier>(std::nullopt, std::move(names));
     } else {
         _lexer.unget();
-        lname.reset();
     }
 
     // Expect an open brace

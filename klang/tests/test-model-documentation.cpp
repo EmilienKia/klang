@@ -141,3 +141,33 @@ TEST_CASE("Model docs: backward doc-comment attaches to variable doc", "[model][
     REQUIRE(x_doc != nullptr);
     CHECK(x_doc->brief == "backward variable doc");
 }
+
+TEST_CASE("Model docs: documentation on nested namespace attaches to innermost namespace", "[model][documentation][namespace]") {
+    auto comp = compile_model(R"SRC(
+        module model_documentation_04;
+
+        /// Nested namespace brief
+        namespace Outer::Inner {
+            struct S {
+                val : int;
+            }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root = unit->get_root_namespace();
+    REQUIRE(root != nullptr);
+
+    auto outer = root->get_child_namespace("Outer");
+    REQUIRE(outer != nullptr);
+    auto inner = outer->get_child_namespace("Inner");
+    REQUIRE(inner != nullptr);
+
+    auto inner_doc = inner->get_documentation_as<doc::namespace_doc>();
+    REQUIRE(inner_doc != nullptr);
+    CHECK(inner_doc->brief == "Nested namespace brief");
+
+    auto s = inner->get_aggregate("S");
+    REQUIRE(s != nullptr);
+}

@@ -1529,18 +1529,18 @@ namespace k::parse {
 
         /**
          * Namespace declaration: represents a namespace in the source code.
-         * Syntax: 'namespace' [Identifier] '{' { Declaration } '}'
+         * Syntax: 'namespace' [NamespaceIdentifier] '{' { Declaration } '}'
          * Semantics: defines a named or anonymous namespace, containing declarations that are scoped within it.
          */
         struct namespace_decl :  declaration {
             lex::keyword ns;
             lex::punctuator open_par, close_par;
             std::optional<lex::punctuator> open_brace, close_brace;
-            std::optional <lex::identifier> name;
+            std::shared_ptr<ast::qualified_identifier> name;
             std::vector <decl_ptr> declarations;
 
             namespace_decl(const lex::keyword& ns,
-                           const std::optional <lex::identifier> &name,
+                           const std::shared_ptr<ast::qualified_identifier> &name,
                            const std::vector <decl_ptr> &declarations) :
                     ns(ns),
                     open_par(lex::punctuator{std::string_view("{"), lex::punctuator::BRACE_OPEN}),
@@ -1551,16 +1551,16 @@ namespace k::parse {
             namespace_decl(const lex::keyword& ns,
                            const lex::punctuator& open_par,
                            const lex::punctuator& close_par,
-                           const std::optional <lex::identifier> &name,
+                           const std::shared_ptr<ast::qualified_identifier> &name,
                            const std::vector <decl_ptr> &declarations) :
                     ns(ns), open_par(open_par), close_par(close_par), open_brace(open_par), close_brace(close_par), name(name), declarations(declarations) {}
 
             namespace_decl(lex::keyword&& ns,
                            lex::punctuator&& open_par,
                            lex::punctuator&& close_par,
-                           std::optional <lex::identifier> &&name,
+                           std::shared_ptr<ast::qualified_identifier> &&name,
                            std::vector <decl_ptr> &&declarations) :
-                    ns(ns), open_par(open_par), close_par(close_par), open_brace(open_par), close_brace(close_par), name(name), declarations(declarations) {}
+                    ns(ns), open_par(open_par), close_par(close_par), open_brace(open_par), close_brace(close_par), name(std::move(name)), declarations(std::move(declarations)) {}
 
             void set_open_brace(const lex::punctuator& ob) { open_brace = ob; open_par = ob; }
             void set_close_brace(const lex::punctuator& cb) { close_brace = cb; close_par = cb; }

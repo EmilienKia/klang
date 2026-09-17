@@ -267,8 +267,14 @@ Each segment of a qualified name may optionally include a template argument list
 
 ```
 NamespaceDecl:
-    'namespace' [ Identifier ] '{' { Declaration } '}'
+    'namespace' [ NamespaceIdentifier ] '{' { Declaration } '}'
+
+NamespaceIdentifier:
+    Identifier { '::' Identifier }
 ```
+
+Nested namespaces can be declared compactly using `namespace A::B { ... }`, which is semantically equivalent to `namespace A { namespace B { ... } }`.
+A leading `::` is forbidden in namespace declarations.
 
 Anonymous namespaces (without identifier): visibility limited to the current file.
 

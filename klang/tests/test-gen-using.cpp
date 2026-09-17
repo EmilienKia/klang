@@ -1059,3 +1059,50 @@ TEST_CASE("Using alias — original qualified name still works alongside alias",
     REQUIRE(test != nullptr);
     REQUIRE(test() == 42);
 }
+
+// ── using with nested namespace declaration ──────────────────────────────────
+TEST_CASE("Using namespace — target defined via nested namespace declaration", "[gen][using][nested_namespace]") {
+    auto jit = gen_jit(R"SRC(
+        module __using_nested_ns__;
+
+        namespace math::matrix {
+            det2x2(a: int, b: int, c: int, d: int) : int {
+                return a * d - b * c;
+            }
+        }
+
+        using namespace math::matrix;
+
+        test() : int {
+            return det2x2(5, 2, 3, 4);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 14);
+}
+
+TEST_CASE("Using alias — alias for namespace defined via nested namespace declaration", "[gen][using][alias][nested_namespace]") {
+    auto jit = gen_jit(R"SRC(
+        module __using_alias_nested_ns__;
+
+        namespace compute::algebra {
+            cube(x: int) : int {
+                return x * x * x;
+            }
+        }
+
+        using namespace ca = compute::algebra;
+
+        test() : int {
+            return ca::cube(3);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 27);
+}

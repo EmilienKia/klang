@@ -212,6 +212,30 @@ TEST_CASE("find_imported_function — qualified module, function found", "[impor
     REQUIRE( fn->name == "square" );
 }
 
+TEST_CASE("find_imported_function — function in nested namespace declaration", "[import][step6a][nested_namespace]") {
+    TmpKdi lib(R"K(
+        module nested_mod;
+
+        namespace math::core {
+            multiply(a: int, b: int) : int { return a * b; }
+        }
+    )K");
+
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("nested_mod", lib.kdi_path);
+    comp->set_file_resolver(resolver);
+    comp->parse_source("consumer.k", R"K(
+        module consumer_nested_mod;
+        import nested_mod;
+    )K");
+
+    k::name fn_name{false, {"nested_mod", "math", "core", "multiply"}};
+    auto* fn = comp->get_unit()->find_imported_function(fn_name);
+    REQUIRE( fn != nullptr );
+    REQUIRE( fn->name == "multiply" );
+}
+
 TEST_CASE("find_imported_function — unknown name returns nullptr", "[import][step6a]") {
     TmpKdi lib(R"K(
         module mylib2;
