@@ -8,6 +8,8 @@
 
 ## 1. Overview
 
+> For a user-oriented tutorial, decision matrix, and common recipes, see the [File System Guide](../../guides/file-system.md).
+
 The `k::io::file` namespace provides modern, structured filesystem abstractions
 structured into three cohesive tiers:
 
