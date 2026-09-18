@@ -4206,6 +4206,20 @@ type_reference_resolver::get_best_matching_function(
     }
 
     auto* b = best[0];
+    for (auto& arg : b->adapted_args) {
+        if (auto unary = std::dynamic_pointer_cast<unary_expression>(arg)) {
+            if (unary->sub_expr()) {
+                unary->sub_expr()->set_parent_expression(unary);
+            }
+        }
+    }
+    if (b->this_for_unified) {
+        if (auto unary = std::dynamic_pointer_cast<unary_expression>(b->this_for_unified)) {
+            if (unary->sub_expr()) {
+                unary->sub_expr()->set_parent_expression(unary);
+            }
+        }
+    }
     debug("[type_reference_resolver::get_best_matching_function] selected '{}' (score={}, unified={})",
           {b->func->get_fq_name(), std::to_string(b->score), b->is_unified ? "yes" : "no"});
     return {b->func, b->adapted_args, b->is_unified, b->this_for_unified};

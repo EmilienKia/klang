@@ -602,7 +602,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
             if (!func) {
                 auto candidate = symbol.ancestor<function>();
                 auto candidate_owner = candidate ? candidate->parent<aggregate>() : nullptr;
-                if (candidate_owner && member_owner && candidate_owner == member_owner) {
+                if (candidate_owner && member_owner && (candidate_owner == member_owner || candidate_owner->is_derived_from(member_owner))) {
                     func = candidate;
                 }
             }

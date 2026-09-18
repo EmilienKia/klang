@@ -1360,8 +1360,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // If the first argument is a reference to a struct, treat it as the potential 'this'
         // for member functions (Mode A) while also allowing Mode B matching for static functions.
         // We do NOT restrict to all_are_member because the candidates may be a mix of member
-        // and static overloads.
-        if (is_qualified_call && !all_candidates.empty() && !args.empty()) {
+        // and static overloads, but there must be at least one non-static member candidate.
+        bool has_non_static_member = std::any_of(all_candidates.begin(), all_candidates.end(),
+            [](const std::shared_ptr<function>& f) { return f && f->is_member() && !f->is_static(); });
+        if (is_qualified_call && has_non_static_member && !all_candidates.empty() && !args.empty()) {
             auto first_arg_type = args[0]->get_type();
             if (type::is_reference(first_arg_type)) {
                 auto bare_sub = type::remove_const(first_arg_type->get_subtype());
