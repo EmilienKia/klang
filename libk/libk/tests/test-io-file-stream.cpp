@@ -71,7 +71,7 @@ TEST_CASE("AsyncFileInputStream: reads bytes and reports end of stream",
     auto jit = jit_k(R"SRC(
         module __afs_read__;
         test() : int {
-            p : k::io::Path("/tmp/klang_afs_read.bin");
+            p : k::io::file::Path("/tmp/klang_afs_read.bin");
             res : int = 0;
             s : k::io::AsyncFileInputStream! = new k::io::AsyncFileInputStream(p);
             if (s->isOpen()) { ++res; }
@@ -107,7 +107,7 @@ TEST_CASE("AsyncFileInputStream: skip and available track the position",
     auto jit = jit_k(R"SRC(
         module __afs_skip__;
         test() : int {
-            p : k::io::Path("/tmp/klang_afs_skip.bin");
+            p : k::io::file::Path("/tmp/klang_afs_skip.bin");
             res : int = 0;
             s : k::io::AsyncFileInputStream! = new k::io::AsyncFileInputStream(p);
 
@@ -142,7 +142,7 @@ TEST_CASE("AsyncFileOutputStream: writes, flushes and truncates",
     auto jit = jit_k(R"SRC(
         module __afs_write__;
         test() : int {
-            p : k::io::Path("/tmp/klang_afs_write.bin");
+            p : k::io::file::Path("/tmp/klang_afs_write.bin");
             res : int = 0;
             s : k::io::AsyncFileOutputStream! = new k::io::AsyncFileOutputStream(p);
             if (s->isOpen()) { ++res; }
@@ -178,7 +178,7 @@ TEST_CASE("AsyncFileOutputStream: append mode keeps existing content",
     auto jit = jit_k(R"SRC(
         module __afs_append__;
         test() : int {
-            p : k::io::Path("/tmp/klang_afs_append.bin");
+            p : k::io::file::Path("/tmp/klang_afs_append.bin");
             s : k::io::AsyncFileOutputStream! = new k::io::AsyncFileOutputStream(p, true);
             body : byte[4];
             body[0] = (byte) 116;
@@ -207,7 +207,7 @@ TEST_CASE("AsyncFileOutputStream: writing after close raises ClosedChannelExcept
     auto jit = jit_k(R"SRC(
         module __afs_closed__;
         test() : int {
-            p : k::io::Path("/tmp/klang_afs_closed.bin");
+            p : k::io::file::Path("/tmp/klang_afs_closed.bin");
             res : int = 0;
             s : k::io::AsyncFileOutputStream! = new k::io::AsyncFileOutputStream(p);
             s->close();
@@ -248,7 +248,7 @@ TEST_CASE("FileChannel: an already-interrupted thread reports the interruption",
         public:
             Worker() : _res(0) {}
             override run() : void {
-                p : k::io::Path("/tmp/klang_afs_interrupt.bin");
+                p : k::io::file::Path("/tmp/klang_afs_interrupt.bin");
                 c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
                 b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(65536u);
                 // Arm the interrupted flag before entering the blocking call:
@@ -314,7 +314,7 @@ TEST_CASE("FileChannel: closing from another thread is observed by users",
         }
 
         test() : int {
-            p : k::io::Path("/tmp/klang_afs_closer.bin");
+            p : k::io::file::Path("/tmp/klang_afs_closer.bin");
             c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
             res : int = 0;
 

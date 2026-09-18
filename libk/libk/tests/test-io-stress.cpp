@@ -55,13 +55,13 @@ TEST_CASE("FileChannel stress: concurrent positional reads are stable", "[libk][
         module __io_stress__;
 
         class Reader : public Runnable {
-            _path  : k::io::Path*;
+            _path  : k::io::file::Path*;
             _base  : long;
             _done  : int;
         public:
-            Reader(path: k::io::Path*, base: long) : _path(path), _base(base), _done(0) {}
+            Reader(path: k::io::file::Path*, base: long) : _path(path), _base(base), _done(0) {}
             override run() : void {
-                file : k::io::FileChannel! = k::io::FileChannel::open(_path);
+                file : k::io::FileChannel! = k::io::FileChannel::open(*_path);
                 buf : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(128u);
                 ok : int = 0;
                 i : int = 0;
@@ -81,7 +81,7 @@ TEST_CASE("FileChannel stress: concurrent positional reads are stable", "[libk][
         }
 
         test() : int {
-            path : k::io::Path! = new k::io::Path(
+            path : k::io::file::Path! = new k::io::file::Path(
         )SRC";
     src += "\"" + path + "\"";
     src += R"SRC(

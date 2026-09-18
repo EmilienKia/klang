@@ -868,6 +868,21 @@ public:
         return _decodeSlice(_ranges.pathStart, _ranges.pathLen, false);
     }
 
+    /**
+     * Convert this URI into a file system Path.
+     * The URI must have scheme "file:".
+     *
+     * @return Converted Path or null if scheme != "file".
+     */
+    const toPath() : file::Path! {
+        sch : String = scheme();
+        if (sch != String("file")) {
+            return null;
+        }
+        rawP : String = path();
+        return new file::Path(rawP);
+    }
+
     /** Return the raw query component. */
     const rawQuery() : String {
         return _sliceToString(_ranges.queryStart, _ranges.queryLen);

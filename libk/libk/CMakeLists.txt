@@ -99,7 +99,11 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/io_exceptions.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/byte_buffer.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/channel.k
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/path.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/entries.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/file_system.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/path.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/local_fs.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/directory_fs.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file_channel.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file_stream.k
     # ── Phase 5: asynchronous network I/O ─────────────────────────────────

@@ -116,13 +116,13 @@ TEST_CASE("File getPath returns constructor path", "[libk][io][file]") {
         module __file_getpath__;
 
         test() : int {
-            f : k::io::File("/tmp/hello.txt");
-            p : const char[]? = f.getPath();
-            if (p == null) return 10;
-            if (p[0] != '/') return 1;
-            if (p[1] != 't') return 2;
-            if (p[4] != '/') return 3;
-            if (p[5] != 'h') return 4;
+            p : k::io::file::Path("/tmp/hello.txt");
+            s : const char[]? = p.toString();
+            if (s == null) return 10;
+            if (s[0] != '/') return 1;
+            if (s[1] != 't') return 2;
+            if (s[4] != '/') return 3;
+            if (s[5] != 'h') return 4;
             return 0;
         }
     )SRC");
@@ -142,7 +142,8 @@ TEST_CASE("File exists returns false for nonexistent path", "[libk][io][file]") 
         module __file_exists_false__;
 
         test() : int {
-            f : k::io::File("/tmp/klang_test_nonexistent_424242");
+            p : k::io::file::Path("/tmp/klang_test_nonexistent_424242");
+            f : k::io::file::File(p, k::io::file::FileSystem::local());
             if (f.exists()) return 1;
             return 0;
         }
@@ -163,9 +164,9 @@ TEST_CASE("File isDirectory returns true for /tmp", "[libk][io][file]") {
         module __file_isdir__;
 
         test() : int {
-            f : k::io::File("/tmp");
-            if (!f.isDirectory()) return 1;
-            if (f.isFile()) return 2;
+            p : k::io::file::Path("/tmp");
+            if (!p.isDirectory()) return 1;
+            if (p.isFile()) return 2;
             return 0;
         }
     )SRC");
@@ -187,18 +188,22 @@ TEST_CASE("File createNewFile, exists, isFile, remove", "[libk][io][file]") {
         module __file_create_remove__;
 
         test() : int {
-            f : k::io::File("/tmp/klang_test_create_file");
+            p : k::io::file::Path("/tmp/klang_test_create_file");
+            f : k::io::file::File(p, k::io::file::FileSystem::local());
 
             // Should not exist yet
             if (f.exists()) return 1;
 
-            // Create
-            if (!f.createNewFile()) return 2;
+            // Create via openOutput
+            fos : k::io::FileOutputStream! = f.openOutput();
+            fos->write(42);
+            fos->close();
+            delete fos;
 
             // Now exists and is a file
             if (!f.exists()) return 3;
-            if (!f.isFile()) return 4;
-            if (f.isDirectory()) return 5;
+            if (!p.isFile()) return 4;
+            if (p.isDirectory()) return 5;
 
             // Remove
             if (!f.remove()) return 6;
@@ -235,8 +240,8 @@ TEST_CASE("FileOutputStream write single bytes", "[libk][io][file]") {
             fos.close();
 
             // Check file length
-            f : k::io::File("/tmp/klang_test_fos_single");
-            if (f.length() != 3) return 2;
+            p : k::io::file::Path("/tmp/klang_test_fos_single");
+            if (p.size() != 3) return 2;
 
             return 0;
         }
@@ -345,8 +350,8 @@ TEST_CASE("FileOutputStream append mode", "[libk][io][file]") {
             fos2.close();
 
             // Total length should be 3
-            f : k::io::File("/tmp/klang_test_fos_append");
-            if (f.length() != 3) return 1;
+            p : k::io::file::Path("/tmp/klang_test_fos_append");
+            if (p.size() != 3) return 1;
 
             // Read back all 3 bytes
             fis : k::io::FileInputStream("/tmp/klang_test_fos_append");
@@ -433,8 +438,8 @@ TEST_CASE("FileOutputStream write buffer then read back", "[libk][io][file]") {
             fos.close();
 
             // Verify length
-            f : k::io::File("/tmp/klang_test_fos_bulk");
-            if (f.length() != 4) return 1;
+            p : k::io::file::Path("/tmp/klang_test_fos_bulk");
+            if (p.size() != 4) return 1;
 
             // Read back
             fis : k::io::FileInputStream("/tmp/klang_test_fos_bulk");
@@ -476,8 +481,8 @@ TEST_CASE("File length returns correct size after write", "[libk][io][file]") {
             }
             fos.close();
 
-            f : k::io::File("/tmp/klang_test_file_length");
-            if (f.length() != 100) return 1;
+            p : k::io::file::Path("/tmp/klang_test_file_length");
+            if (p.size() != 100) return 1;
             return 0;
         }
     )SRC");
@@ -570,9 +575,9 @@ TEST_CASE("File getName extracts filename", "[libk][io][file]") {
         module __file_getname__;
 
         test() : int {
-            f : k::io::File("/tmp/hello.txt");
-            name : char[]* = f.getName();
-            // "hello.txt" is 9 chars
+            p : k::io::file::Path("/tmp/hello.txt");
+            name : String = p.fileName();
+            if (name.size() != 9u) return 1;
             if (name[0] != 'h') return 2;
             if (name[4] != 'o') return 3;
             if (name[5] != '.') return 4;
@@ -596,8 +601,9 @@ TEST_CASE("File getName with no separator returns full name", "[libk][io][file]"
         module __file_getname_nosep__;
 
         test() : int {
-            f : k::io::File("myfile.k");
-            name : char[]* = f.getName();
+            p : k::io::file::Path("myfile.k");
+            name : String = p.fileName();
+            if (name.size() != 8u) return 1;
             if (name[0] != 'm') return 2;
             if (name[7] != 'k') return 3;
             return 0;

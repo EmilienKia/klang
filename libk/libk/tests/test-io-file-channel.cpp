@@ -72,7 +72,7 @@ TEST_CASE("FileChannel: opening a missing file raises FileNotFoundException",
     auto jit = jit_k(R"SRC(
         module __fc_missing__;
         test() : int {
-            p : k::io::Path("/tmp/klang_fc_absent.bin");
+            p : k::io::file::Path("/tmp/klang_fc_absent.bin");
             try {
                 c : k::io::FileChannel! = k::io::FileChannel::open(p);
                 delete c;
@@ -96,7 +96,7 @@ TEST_CASE("FileChannel: create, write and read back", "[libk][io][file-channel]"
     auto jit = jit_k(R"SRC(
         module __fc_roundtrip__;
         test() : int {
-            p : k::io::Path("/tmp/klang_fc_roundtrip.bin");
+            p : k::io::file::Path("/tmp/klang_fc_roundtrip.bin");
             res : int = 0;
 
             opts : int = k::io::OPEN_WRITE | k::io::OPEN_CREATE | k::io::OPEN_TRUNCATE;
@@ -146,7 +146,7 @@ TEST_CASE("FileChannel: positional access leaves the position untouched",
     auto jit = jit_k(R"SRC(
         module __fc_positional__;
         test() : int {
-            p : k::io::Path("/tmp/klang_fc_positional.bin");
+            p : k::io::file::Path("/tmp/klang_fc_positional.bin");
             res : int = 0;
             c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
 
@@ -184,7 +184,7 @@ TEST_CASE("FileChannel: readFully raises EndOfStreamException past the end",
     auto jit = jit_k(R"SRC(
         module __fc_readfully__;
         test() : int {
-            p : k::io::Path("/tmp/klang_fc_readfully.bin");
+            p : k::io::file::Path("/tmp/klang_fc_readfully.bin");
             res : int = 0;
             c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
 
@@ -223,7 +223,7 @@ TEST_CASE("FileChannel: writeFully transfers every remaining byte",
     auto jit = jit_k(R"SRC(
         module __fc_writefully__;
         test() : int {
-            p : k::io::Path("/tmp/klang_fc_writefully.bin");
+            p : k::io::file::Path("/tmp/klang_fc_writefully.bin");
             res : int = 0;
             opts : int = k::io::OPEN_WRITE | k::io::OPEN_CREATE | k::io::OPEN_TRUNCATE;
             c : k::io::FileChannel! = k::io::FileChannel::open(p, opts);
@@ -264,7 +264,7 @@ TEST_CASE("FileChannel: a closed channel raises ClosedChannelException",
     auto jit = jit_k(R"SRC(
         module __fc_closed__;
         test() : int {
-            p : k::io::Path("/tmp/klang_fc_closed.bin");
+            p : k::io::file::Path("/tmp/klang_fc_closed.bin");
             res : int = 0;
             c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
             if (c->isOpen()) { ++res; }
@@ -305,7 +305,7 @@ TEST_CASE("FileChannel: append mode writes at the end", "[libk][io][file-channel
     auto jit = jit_k(R"SRC(
         module __fc_append__;
         test() : int {
-            p : k::io::Path("/tmp/klang_fc_append.bin");
+            p : k::io::file::Path("/tmp/klang_fc_append.bin");
             opts : int = k::io::OPEN_WRITE | k::io::OPEN_APPEND;
             c : k::io::FileChannel! = k::io::FileChannel::open(p, opts);
             b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(4u);
@@ -337,7 +337,7 @@ TEST_CASE("FileChannel: exclusive create fails on an existing file",
     auto jit = jit_k(R"SRC(
         module __fc_excl__;
         test() : int {
-            p : k::io::Path("/tmp/klang_fc_excl.bin");
+            p : k::io::file::Path("/tmp/klang_fc_excl.bin");
             opts : int = k::io::OPEN_WRITE | k::io::OPEN_CREATE | k::io::OPEN_EXCLUSIVE;
             try {
                 c : k::io::FileChannel! = k::io::FileChannel::open(p, opts);
@@ -387,7 +387,7 @@ TEST_CASE("FileChannel: concurrent positional reads from several threads",
         }
 
         test() : int {
-            p : k::io::Path("/tmp/klang_fc_concurrent.bin");
+            p : k::io::file::Path("/tmp/klang_fc_concurrent.bin");
             c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
 
             r0 : Reader! = new Reader(c, 0L);

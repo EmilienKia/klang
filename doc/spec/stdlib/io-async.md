@@ -104,26 +104,10 @@ Relative accesses past the limit raise `IndexOutOfBoundsException`.
 
 ## 3. `Path`
 
-`Path` is an immutable, null-terminated copy of a filesystem location. It does
-no I/O beyond the inspection helpers below.
-
-| Method | Description |
-|--------|-------------|
-| `Path()` / `Path(path: const char[])` | Construct empty, or from path text. |
-| `static of(path: const char[]) : Path!` | Heap-allocated path. |
-| `length() : int` | Number of characters, excluding the terminator. |
-| `toString() : const char[]?` | View on the stored text. |
-| `nativePath() : const char*` | Null-terminated pointer for platform calls. |
-| `fileName() : char[]!` | Last component. |
-| `parent() : Path!` | Parent directory, or `null` when there is none. |
-| `resolve(other) : Path!` | Append a component; an absolute `other` replaces the receiver. |
-| `isAbsolute() : bool` | Whether the path starts at the filesystem root. |
-| `exists()`, `isFile()`, `isDirectory()` | Inspection. |
-| `size() : long` | File size in bytes, `-1` when unavailable. |
-| `remove() : bool`, `mkdir() : bool` | Removal and directory creation. |
-
-> **Note:** K `char` is a 32-bit code point. Path text handed to the platform is
-> transcoded to UTF-8 by the runtime bridge; K code never sees the encoding.
+Filesystem paths live in the dedicated sub-namespace [`k::io::file`](io-file.md)
+as `k::io::file::Path`. `Path` is an immutable, multi-segment representation of a
+filesystem location. See [`io-file.md`](io-file.md) for complete details on the
+three-tier filesystem architecture, fluent operations, URI mappings, and providers.
 
 ---
 
@@ -140,8 +124,10 @@ class FileChannel : ReadableChannel, WritableChannel
 
 | Signature | Description |
 |-----------|-------------|
-| `static open(path: const Path&, options: int) : FileChannel!` | Open with explicit options. |
-| `static open(path: const Path&) : FileChannel!` | Open for reading. |
+| `static open(path: const file::Path&, options: int) : FileChannel!` | Open with explicit options. |
+| `static open(path: const file::Path&) : FileChannel!` | Open for reading. |
+| `static open(path: const char*, options: int) : FileChannel!` | Open with path string and options. |
+| `static open(path: const char*) : FileChannel!` | Open path string for reading. |
 
 Options are a bitwise combination of:
 

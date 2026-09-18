@@ -59,7 +59,7 @@ public:
         throw IOException(0);
     }
 
-    static connect(path: const Path&, timeoutNanos: long) : SocketChannel! {
+    static connect(path: const file::Path&, timeoutNanos: long) : SocketChannel! {
         fd: long = __k_net_unix_connect(path.nativePath(), timeoutNanos);
         if (fd >= 0L) {
             return new SocketChannel((int) fd);
@@ -81,7 +81,7 @@ public:
         return connect(addr, IO_NO_TIMEOUT);
     }
 
-    static connect(path: const Path&) : SocketChannel! {
+    static connect(path: const file::Path&) : SocketChannel! {
         return connect(path, IO_NO_TIMEOUT);
     }
 
@@ -201,7 +201,7 @@ public:
         throw IOException(0);
     }
 
-    static connect(path: const Path&, timeoutNanos: long) : Socket! {
+    static connect(path: const file::Path&, timeoutNanos: long) : Socket! {
         fd: long = __k_net_unix_connect(path.nativePath(), timeoutNanos);
         if (fd >= 0L) {
             return new Socket((int) fd);
@@ -223,7 +223,7 @@ public:
         return connect(addr, IO_NO_TIMEOUT);
     }
 
-    static connect(path: const Path&) : Socket! {
+    static connect(path: const file::Path&) : Socket! {
         return connect(path, IO_NO_TIMEOUT);
     }
 
@@ -251,7 +251,7 @@ public:
         throw IOException((int) (IO_ERROR_BASE - (long) fd));
     }
 
-    static bind(path: const Path&, backlog: int) : ServerSocket! {
+    static bind(path: const file::Path&, backlog: int) : ServerSocket! {
         fd : int = __k_net_unix_bind_listen(path.nativePath(), backlog, 1);
         if (fd >= 0) {
             return new ServerSocket(fd);
@@ -271,7 +271,7 @@ public:
         return bind(addr, 64);
     }
 
-    static bind(path: const Path&) : ServerSocket! {
+    static bind(path: const file::Path&) : ServerSocket! {
         return bind(path, 64);
     }
 
@@ -343,7 +343,7 @@ public:
         throw IOException((int) (IO_ERROR_BASE - (long) fd));
     }
 
-    static bind(path: const Path&) : DatagramSocket! {
+    static bind(path: const file::Path&) : DatagramSocket! {
         fd : int = __k_net_unix_dgram_bind(path.nativePath(), 1);
         if (fd >= 0) {
             return new DatagramSocket(fd);
@@ -374,7 +374,7 @@ public:
         SocketChannel::checkResult(rc, 0L);
     }
 
-    connect(remote: const Path&, timeoutNanos: long) : void {
+    connect(remote: const file::Path&, timeoutNanos: long) : void {
         if (_fd < 0) {
             throw ClosedChannelException();
         }
@@ -394,7 +394,7 @@ public:
         connect(remote, IO_NO_TIMEOUT);
     }
 
-    connect(remote: const Path&) : void {
+    connect(remote: const file::Path&) : void {
         connect(remote, IO_NO_TIMEOUT);
     }
 
@@ -457,7 +457,7 @@ public:
         return n;
     }
 
-    sendTo(src: ByteBuffer+, remote: const Path&, timeoutNanos: long) : int {
+    sendTo(src: ByteBuffer+, remote: const file::Path&, timeoutNanos: long) : int {
         if (_fd < 0) {
             throw ClosedChannelException();
         }
@@ -495,7 +495,7 @@ public:
         return sendTo(src, remote, IO_NO_TIMEOUT);
     }
 
-    sendTo(src: ByteBuffer+, remote: const Path&) : int {
+    sendTo(src: ByteBuffer+, remote: const file::Path&) : int {
         return sendTo(src, remote, IO_NO_TIMEOUT);
     }
 

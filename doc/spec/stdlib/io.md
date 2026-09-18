@@ -15,8 +15,10 @@ file, buffered, data and print streams are specialised for `byte`.  All types
 are part of the base standard library module `k` and are auto-imported — no
 explicit `import` statement is needed.
 
+For filesystem representation, traversal, manipulation and typed entries, see
+[Filesystem Infrastructure (`k::io::file`)](io-file.md).
 For interruptible, cancellable file I/O built on io_uring, see
-[Asynchronous I/O](io-async.md), which adds `ByteBuffer`, `Path`, `FileChannel`
+[Asynchronous I/O](io-async.md), which adds `ByteBuffer`, `FileChannel`
 and the `AsyncFileInputStream` / `AsyncFileOutputStream` adapters.
 For interruptible TCP and Unix-domain networking (`NetworkAddress`,
 `SocketChannel`, `ServerSocket`, `DatagramSocket`), see

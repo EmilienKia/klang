@@ -102,13 +102,13 @@ public:
     FileChannel(handle: NativeAsyncHandle*) : _native(handle), _position(0L) {}
 
     /**
-     * Open a file channel.
+     * Open a file channel from a Path.
      *
      * @param path Location to open.
      * @param options Bitwise combination of the OPEN_* constants.
      * @return A newly allocated open channel.
      */
-    static open(path: const Path&, options: int) : FileChannel! {
+    static open(path: const file::Path&, options: int) : FileChannel! {
         h : NativeAsyncHandle* = __k_async_open(path.nativePath(), options, 438);
         if (h == null) {
             err : int = __k_async_last_errno();
@@ -122,12 +122,41 @@ public:
     }
 
     /**
-     * Open a file channel for reading.
+     * Open a file channel from a character pointer.
+     *
+     * @param path Location to open.
+     * @param options Bitwise combination of the OPEN_* constants.
+     * @return A newly allocated open channel.
+     */
+    static open(path: const char*, options: int) : FileChannel! {
+        h : NativeAsyncHandle* = __k_async_open(path, options, 438);
+        if (h == null) {
+            err : int = __k_async_last_errno();
+            if (err == 2 || err == 20) {
+                throw FileNotFoundException(err);
+            }
+            throw IOException(err);
+        }
+        return new FileChannel(h);
+    }
+
+    /**
+     * Open a file channel for reading from a Path.
      *
      * @param path Location to open.
      * @return A newly allocated open channel.
      */
-    static open(path: const Path&) : FileChannel! {
+    static open(path: const file::Path&) : FileChannel! {
+        return FileChannel::open(path, OPEN_READ);
+    }
+
+    /**
+     * Open a file channel for reading from a character pointer.
+     *
+     * @param path Location to open.
+     * @return A newly allocated open channel.
+     */
+    static open(path: const char*) : FileChannel! {
         return FileChannel::open(path, OPEN_READ);
     }
 

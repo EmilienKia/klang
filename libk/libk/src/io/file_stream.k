@@ -39,7 +39,7 @@ public:
      *
      * @param path Location to read from.
      */
-    AsyncFileInputStream(path: const Path&) : _chan(null) {
+    AsyncFileInputStream(path: const file::Path&) : _chan(null) {
         _chan = FileChannel::open(path, OPEN_READ);
     }
 
@@ -197,7 +197,7 @@ public:
      *
      * @param path Location to write to.
      */
-    AsyncFileOutputStream(path: const Path&) : _chan(null) {
+    AsyncFileOutputStream(path: const file::Path&) : _chan(null) {
         _chan = FileChannel::open(path, OPEN_WRITE | OPEN_CREATE | OPEN_TRUNCATE);
     }
 
@@ -207,7 +207,7 @@ public:
      * @param path Location to write to.
      * @param append When `true`, keep the existing content and write past it.
      */
-    AsyncFileOutputStream(path: const Path&, append: bool) : _chan(null) {
+    AsyncFileOutputStream(path: const file::Path&, append: bool) : _chan(null) {
         opts : int = OPEN_WRITE | OPEN_CREATE;
         if (append) {
             opts |= OPEN_APPEND;

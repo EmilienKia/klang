@@ -87,104 +87,6 @@ public:
 
 
 /**
- * Represent a filesystem path and related file operations.
- */
-public class File {
-    _path : char[]!;
-    _len  : int;
-
-public:
-    /**
-     * Construct a File from a path string.
-     * The path must be null-terminated (include \0 at the end of the literal).
-     *
-     * @param path Null-terminated path string.
-     */
-    File(path: const char[]) : _path(null), _len(0) {
-        _len = path.size;
-        _path = new char[_len + 1];
-        i : int = 0;
-        while (i < _len) {
-            _path[i] = path[i];
-            ++i;
-        }
-        _path[_len] = (char) 0;
-    }
-
-    /**
-     * Return the path string.
-     *
-     * @return Path characters.
-     */
-    const getPath() : const char[]? {
-        return _path;
-    }
-
-    /**
-     * Return the path length.
-     *
-     * @return Number of characters in the stored path.
-     */
-    const getPathLength() : int {
-        return _len;
-    }
-
-    /**
-     * Return the name component of the path (after the last '/').
-     * If there is no separator, returns a copy of the entire path.
-     */
-    getName() : char[]! {
-        sep : int = __k_io_file_last_separator(&_path[0]);
-        start : int = sep + 1;
-        nameLen : int = _len - start;
-        result : char[]! = new char[nameLen];
-        i : int = 0;
-        while (i < nameLen) {
-            result[i] = _path[start + i];
-            ++i;
-        }
-        return result;
-    }
-
-    /** Return true if the file or directory exists. */
-    const exists() : bool {
-        return __k_io_file_exists(&_path[0]) != 0;
-    }
-
-    /** Return true if the path refers to a regular file. */
-    const isFile() : bool {
-        return __k_io_file_is_file(&_path[0]) != 0;
-    }
-
-    /** Return true if the path refers to a directory. */
-    const isDirectory() : bool {
-        return __k_io_file_is_directory(&_path[0]) != 0;
-    }
-
-    /** Return the file size in bytes, or -1 if the file does not exist. */
-    const length() : long {
-        return __k_io_file_length(&_path[0]);
-    }
-
-    /**
-     * Remove the file or directory.
-     * Returns true on success, false on failure.
-     */
-    remove() : bool {
-        return __k_io_file_delete(&_path[0]) == 0;
-    }
-
-    /**
-     * Atomically create a new, empty file if it does not yet exist.
-     * Returns true if the file was created, false if it already exists.
-     */
-    createNewFile() : bool {
-        return __k_io_file_create_new(&_path[0]) == 0;
-    }
-}
-
-
-/**
  * Read bytes from a file-backed input stream.
  */
 public class FileInputStream : public InputStream<byte> {
@@ -192,14 +94,21 @@ public class FileInputStream : public InputStream<byte> {
 
 public:
     /**
-     * Open a file for reading.
+     * Open a file for reading from a character array path.
      *
      * @param path Null-terminated file path.
      */
     FileInputStream(path: const char[]) : _fp(null) {
-        f : File(path);
-        p : const char[]? = f.getPath();
-        _fp = __k_io_file_fopen(&p[0], &"rb\0"[0]);
+        _fp = __k_io_file_fopen(&path[0], &"rb\0"[0]);
+    }
+
+    /**
+     * Open a file for reading from a Path.
+     *
+     * @param path File system path.
+     */
+    FileInputStream(path: const file::Path&) : _fp(null) {
+        _fp = __k_io_file_fopen(path.nativePath(), &"rb\0"[0]);
     }
 
     /**
@@ -208,6 +117,7 @@ public:
      * handle remains valid for the lifetime of this stream.
      * Primarily used internally (e.g. for wrapping libc stdin).
      */
+    FileInputStream(fp: CFile*) : _fp(fp) {}
     FileInputStream(fp: CFile*) : _fp(fp) {}
 
     /**
@@ -303,29 +213,48 @@ public class FileOutputStream : public OutputStream<byte> {
 
 public:
     /**
-     * Open a file for writing (truncate mode).
+     * Open a file for writing (truncate mode) from a character array path.
      *
      * @param path Null-terminated file path.
      */
     FileOutputStream(path: const char[]) : _fp(null) {
-        f : File(path);
-        p : const char[]? = f.getPath();
-        _fp = __k_io_file_fopen(&p[0], &"wb\0"[0]);
+        _fp = __k_io_file_fopen(&path[0], &"wb\0"[0]);
     }
 
     /**
-     * Open a file for writing with optional append mode.
+     * Open a file for writing with optional append mode from a character array path.
      *
      * @param path Null-terminated file path.
      * @param append `true` to append, `false` to truncate.
      */
     FileOutputStream(path: const char[], append: bool) : _fp(null) {
-        f : File(path);
-        p : const char[]? = f.getPath();
         if (append) {
-            _fp = __k_io_file_fopen(&p[0], &"ab\0"[0]);
+            _fp = __k_io_file_fopen(&path[0], &"ab\0"[0]);
         } else {
-            _fp = __k_io_file_fopen(&p[0], &"wb\0"[0]);
+            _fp = __k_io_file_fopen(&path[0], &"wb\0"[0]);
+        }
+    }
+
+    /**
+     * Open a file for writing (truncate mode) from a Path.
+     *
+     * @param path File system path.
+     */
+    FileOutputStream(path: const file::Path&) : _fp(null) {
+        _fp = __k_io_file_fopen(path.nativePath(), &"wb\0"[0]);
+    }
+
+    /**
+     * Open a file for writing with optional append mode from a Path.
+     *
+     * @param path File system path.
+     * @param append `true` to append, `false` to truncate.
+     */
+    FileOutputStream(path: const file::Path&, append: bool) : _fp(null) {
+        if (append) {
+            _fp = __k_io_file_fopen(path.nativePath(), &"ab\0"[0]);
+        } else {
+            _fp = __k_io_file_fopen(path.nativePath(), &"wb\0"[0]);
         }
     }
 
