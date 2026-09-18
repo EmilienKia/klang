@@ -391,6 +391,14 @@ public:
     const kdi::kdi_enum*
     find_imported_enum(const k::name& name);
 
+    /**
+     * Find a union type in any loaded import.
+     * @param name  Qualified name of the union (without root prefix).
+     * @return Pointer into the kdi_file's kdi_union entry, or nullptr.
+     */
+    const kdi::kdi_union*
+    find_imported_union(const k::name& name);
+
     // ── Imported model-node factory methods ─────────────────────────────────
     //
     // Each method returns (or retrieves from cache) a fully-built model node

@@ -127,7 +127,10 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
                     auto sub = ref->get_referenced_type();
                     if (type::is_const(sub)) sub = type::remove_const(sub);
                     if (auto sub_st = std::dynamic_pointer_cast<struct_type>(sub)) {
-                        if (sub_st->get_struct() && sub_st->get_struct().get() == st.get()) {
+                        if ((sub_st->get_struct() && sub_st->get_struct() == st) ||
+                            sub_st == st->get_struct_type() ||
+                            sub_st->name() == st->get_short_name() ||
+                            sub_st->name() == st->get_fq_name()) {
                             ctor.set_copy_constructor(true);
                         }
                     }

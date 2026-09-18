@@ -147,7 +147,11 @@ public:
     std::shared_ptr<type> from_literal(const k::lex::any_literal &literal);
 
     void add_struct(std::shared_ptr<struct_type> st_type);
+    void add_struct(const std::string& name, std::shared_ptr<struct_type> st_type);
     void add_enum(const std::string& name, std::shared_ptr<enum_type> et);
+    void register_function(std::shared_ptr<function> fn, llvm::Function* llvm_fn) {
+        _functions[std::move(fn)] = llvm_fn;
+    }
 
     /**
      * Create an opaque (body-less) LLVM StructType and assign it to @p st_type.

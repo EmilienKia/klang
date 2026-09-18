@@ -1210,9 +1210,9 @@ void declaration_generator::visit_union(union_type_def& un) {
     // Compute max size of ALL alternatives in the full inheritance chain
     uint64_t max_size = 0;
     for (const auto* alt_ptr : un.all_alternatives_ptrs()) {
-        if (alt_ptr->resolved_type && type::is_resolved(alt_ptr->resolved_type)) {
+        if (alt_ptr && alt_ptr->resolved_type && type::is_resolved(alt_ptr->resolved_type)) {
             auto* llvm_type = alt_ptr->resolved_type->get_llvm_type();
-            if (llvm_type) {
+            if (llvm_type && llvm_type->isSized()) {
                 uint64_t alt_size = data_layout.getTypeAllocSize(llvm_type);
                 if (alt_size > max_size) max_size = alt_size;
             }
@@ -1222,8 +1222,8 @@ void declaration_generator::visit_union(union_type_def& un) {
     // Minimum storage of 1 byte
     if (max_size == 0) max_size = 1;
 
-    // Set body: { i32 discriminant, [max_size x i8] storage }
-    auto* disc_type = llvm::Type::getInt32Ty(llvm_ctx);
+    // Set body: { i64 discriminant, [max_size x i8] storage }
+    auto* disc_type = llvm::Type::getInt64Ty(llvm_ctx);
     auto* storage_type = llvm::ArrayType::get(llvm::Type::getInt8Ty(llvm_ctx), max_size);
     llvm_st->setBody({disc_type, storage_type}, /*isPacked=*/false);
 

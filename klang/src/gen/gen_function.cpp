@@ -717,6 +717,13 @@ void signature_resolver::visit_function(function& fn) {
                     }
                 }
                 if (!fn.get_return_type() || !type::is_resolved(fn.get_return_type())) {
+                    if (auto uh = dynamic_cast<union_holder*>(fn.get_owner()->parent<element>().get())) {
+                        if (auto un_sib = uh->get_union(short_name)) {
+                            fn.set_return_type(un_sib->get_struct_type());
+                        }
+                    }
+                }
+                if (!fn.get_return_type() || !type::is_resolved(fn.get_return_type())) {
                     auto resolved = _context->resolve_type(fn.get_return_type());
                     if (resolved && type::is_resolved(resolved)) {
                         fn.set_return_type(_context->collapse_callable_addresser(resolved));

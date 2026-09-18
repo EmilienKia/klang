@@ -140,13 +140,21 @@ convert_aggregate_ref(const kdi::kdi_aggregate_ref& ref, unit& owner,
     // namespace and look for a union with the leaf name.
     {
         auto target_ns = owner.get_root_namespace();
-        for (size_t i = 0; i + 1 < kname.size(); ++i) {
+        for (size_t i = 0; i + 1 < kname.size() && target_ns; ++i) {
             target_ns = target_ns->get_child_namespace(kname[i]);
         }
-        if (auto udef = target_ns->get_union(kname.back())) {
-            if (auto st = udef->get_struct_type()) {
-                return st;
+        if (target_ns) {
+            if (auto udef = target_ns->get_union(kname.back())) {
+                if (auto st = udef->get_struct_type()) {
+                    return st;
+                }
             }
+        }
+    }
+
+    if (auto res = ctx->from_string(kname.to_string())) {
+        if (auto st = std::dynamic_pointer_cast<struct_type>(res)) {
+            return st;
         }
     }
 

@@ -290,6 +290,7 @@ struct kdi_search_result {
     const kdi::kdi_variable*  var   = nullptr;
     const kdi::kdi_aggregate* agg   = nullptr;
     const kdi::kdi_enum*      en    = nullptr;
+    const kdi::kdi_union*     un    = nullptr;
 };
 
 kdi_search_result
@@ -353,13 +354,15 @@ search_in_kdi(const kdi::kdi_file& kdi, const k::name& name)
 
         const std::string& sym = parts.back();
         for (const auto& f : ns_ptr->functions)
-            if (f.name == sym) return { &f, nullptr, nullptr, nullptr };
+            if (f.name == sym) return { &f, nullptr, nullptr, nullptr, nullptr };
         for (const auto& v : ns_ptr->variables)
-            if (v.name == sym) return { nullptr, &v, nullptr, nullptr };
+            if (v.name == sym) return { nullptr, &v, nullptr, nullptr, nullptr };
         for (const auto& a : ns_ptr->aggregates)
-            if (a.name == sym) return { nullptr, nullptr, &a, nullptr };
+            if (a.name == sym) return { nullptr, nullptr, &a, nullptr, nullptr };
         for (const auto& e : ns_ptr->enums)
-            if (e.name == sym) return { nullptr, nullptr, nullptr, &e };
+            if (e.name == sym) return { nullptr, nullptr, nullptr, &e, nullptr };
+        for (const auto& u : ns_ptr->unions)
+            if (u.name == sym) return { nullptr, nullptr, nullptr, nullptr, &u };
         return {};
     };
 
@@ -556,6 +559,23 @@ const kdi::kdi_enum* unit::find_imported_enum(const k::name& name) {
         if (!tdep) continue;
         auto res = search_in_kdi(*tdep, name);
         if (res.en) return res.en;
+    }
+    return nullptr;
+}
+
+const kdi::kdi_union* unit::find_imported_union(const k::name& name) {
+    for (auto& imp : _imported_modules) {
+        if (!imp.kdi) continue;
+        auto res = search_in_kdi(*imp.kdi, name);
+        if (res.un) {
+            imp.used = true;
+            return res.un;
+        }
+    }
+    for (const auto& tdep : _transitive_kdis) {
+        if (!tdep) continue;
+        auto res = search_in_kdi(*tdep, name);
+        if (res.un) return res.un;
     }
     return nullptr;
 }
@@ -1157,11 +1177,17 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         ic->assign_name(fq_to_abs_kname(kdi_agg->fq_name.empty() ? kdi_agg->name : kdi_agg->fq_name));
         attach_params(*ic, kc.params, *this, ctx);
         ic->set_visibility(kc.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
+        ic->set_copy_constructor(kc.is_copy_constructor);
         if (auto doc = make_function_doc(kc.doc)) {
             ic->set_documentation(std::move(doc));
         }
         ic->create_this_parameter();
         agg->_constructors.push_back(ic);
+        if (!kc.llvm_def.empty()) {
+            if (auto* llvm_fn = ctx->declare_llvm_function_from_def(kc.llvm_def, kc.mangled_name)) {
+                ctx->register_function(ic, llvm_fn);
+            }
+        }
     }
 
     // Destructor
@@ -1177,6 +1203,11 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         }
         id->create_this_parameter();
         agg->_destructor = id;
+        if (!kd.llvm_def.empty()) {
+            if (auto* llvm_fn = ctx->declare_llvm_function_from_def(kd.llvm_def, kd.mangled_name)) {
+                ctx->register_function(id, llvm_fn);
+            }
+        }
     }
 
     // Methods — set virtual/abstract/slot flags from KDI so that

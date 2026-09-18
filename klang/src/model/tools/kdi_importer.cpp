@@ -520,6 +520,7 @@ static void collect_llvm_defs_from_namespace(
         }
     };
 
+    for (const auto& un : ns.unions) emit(un.llvm_def);
     for (const auto& agg : ns.aggregates) {
         // 1. Nested unions first (dependencies before the aggregate that references them).
         for (const auto& nested_un : agg.nested_unions) emit(nested_un.llvm_def);
@@ -621,6 +622,11 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
         }
     }
 
+    // Pass 0 — unions in this namespace (materialised first so aggregate methods returning unions find them)
+    for (const auto& un : ns.unions) {
+        materialise_union(un, ctx);
+    }
+
     // Pass 1 — aggregates (depth-first so base classes are materialised before
     // derived classes that reference them in their llvm_def).
     for (const auto& agg : ns.aggregates) {
@@ -637,11 +643,6 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
     // is already available.
     for (const auto& al : ns.aliases) {
         materialise_alias(al, ctx);
-    }
-
-    // Pass 2b — unions in this namespace
-    for (const auto& un : ns.unions) {
-        materialise_union(un, ctx);
     }
 
     // Pass 3 — free functions in this namespace
@@ -947,9 +948,10 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
 
     // Navigate to parent namespace (all parts except the last)
     auto target_ns = _unit.get_root_namespace();
-    for (size_t i = 0; i + 1 < parts.size(); ++i) {
+    for (size_t i = 0; i + 1 < parts.size() && target_ns; ++i) {
         target_ns = target_ns->get_child_namespace(parts[i]);
     }
+    if (!target_ns) return;
 
     // Check if union already exists
     const std::string& union_name = parts.back();
@@ -967,15 +969,33 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
     udef->set_visibility(un.visibility == kdi::kdi_visibility::public_ ? PUBLIC :
                          un.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PRIVATE);
 
-    // Create an opaque LLVM struct type immediately so that imported function
-    // parameters referencing this union resolve to the same struct_type instance.
+    // Create and size the LLVM struct type immediately for the imported union.
     {
         auto& llvm_ctx = ctx->llvm_context();
         auto* union_llvm_type = llvm::StructType::create(llvm_ctx, un.mangled_name + "_union");
+
+        size_t storage_size = 1;
+        if (!un.llvm_def.empty()) {
+            auto lbracket = un.llvm_def.find('[');
+            auto x_pos = un.llvm_def.find(" x i8]", lbracket);
+            if (lbracket != std::string::npos && x_pos != std::string::npos && x_pos > lbracket) {
+                std::string num_str = un.llvm_def.substr(lbracket + 1, x_pos - (lbracket + 1));
+                try {
+                    storage_size = std::stoull(num_str);
+                } catch (...) {}
+            }
+        }
+        auto* disc_type = llvm::Type::getInt64Ty(llvm_ctx);
+        auto* storage_type = llvm::ArrayType::get(llvm::Type::getInt8Ty(llvm_ctx), storage_size);
+        union_llvm_type->setBody({disc_type, storage_type}, false);
+
         auto st_type = std::make_shared<struct_type>(normalised, std::weak_ptr<aggregate>{});
         ctx->attach_llvm_struct_type(st_type, union_llvm_type);
         udef->set_struct_type(st_type);
         ctx->add_struct(st_type);
+        if (normalised != union_name) {
+            ctx->add_struct(union_name, st_type);
+        }
     }
 
     // Add alternatives and resolve their types immediately using kdi_type_to_model_type.

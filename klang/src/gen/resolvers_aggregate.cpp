@@ -2131,6 +2131,9 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
         _context->attach_llvm_struct_type(st_type, union_llvm_type);
         un.set_struct_type(st_type);
         _context->add_struct(st_type);
+        if (st_name != un.get_short_name()) {
+            _context->add_struct(un.get_short_name(), st_type);
+        }
     }
 
     trace("[aggregate_type_resolver::visit_union] resolved union '{}' (opaque LLVM type created)",

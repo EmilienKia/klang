@@ -116,6 +116,13 @@ void context::add_struct(std::shared_ptr<struct_type> st_type) {
     _struct_types.insert({st_type->name(), st_type});
 }
 
+void context::add_struct(const std::string& name, std::shared_ptr<struct_type> st_type) {
+    if(!st_type) {
+        return;
+    }
+    _struct_types.insert({name, st_type});
+}
+
 void context::add_enum(const std::string& name, std::shared_ptr<enum_type> et) {
     _enum_types.insert({name, et});
 }
@@ -1590,7 +1597,7 @@ context::intern_llvm_struct_from_def(const std::string& llvm_def,
 
     // Parse the snippet via a minimal IR module sharing *_context so that
     // all named struct types are interned into the same context.
-    std::string ir = "; KDI import\n" + llvm_def + "\n";
+    std::string ir = "; KDI import\n%__k.callable = type { ptr, ptr }\n" + llvm_def + "\n";
     llvm::SMDiagnostic diag;
     auto buf = llvm::MemoryBuffer::getMemBuffer(ir, "<kdi-struct-def>");
     auto tmp = llvm::parseIR(buf->getMemBufferRef(), diag, *_context);
@@ -1620,7 +1627,7 @@ context::intern_llvm_struct_from_def(const std::string& llvm_def,
 void context::intern_all_llvm_struct_defs(const std::string& combined_ir) {
     if (combined_ir.empty()) return;
 
-    std::string ir = "; KDI combined import\n" + combined_ir + "\n";
+    std::string ir = "; KDI combined import\n%__k.callable = type { ptr, ptr }\n" + combined_ir + "\n";
     llvm::SMDiagnostic diag;
     auto buf = llvm::MemoryBuffer::getMemBuffer(ir, "<kdi-combined-defs>");
     // parseIR uses *_context, so all named StructTypes are interned into it.

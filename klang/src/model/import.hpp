@@ -32,6 +32,7 @@ namespace kdi {
     struct kdi_variable;
     struct kdi_aggregate;
     struct kdi_enum;
+    struct kdi_union;
     struct kdi_constructor;
     struct kdi_destructor;
     struct kdi_method;
