@@ -536,6 +536,29 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 auto* zero_val = llvm::ConstantAggregateZero::get(llvm_struct_ty);
                 _builder->CreateStore(zero_val, object_ref);
             } else {
+                bool is_union_copy = false;
+                auto arg_type = expr.argument(0)->get_type();
+                auto arg_type_nc = type::canonical(type::remove_const(arg_type));
+                if (type::is_reference(arg_type_nc)) {
+                    arg_type_nc = type::canonical(type::remove_const(
+                        std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype()));
+                }
+                if (type::are_equal(arg_type_nc, st_type)) {
+                    is_union_copy = true;
+                }
+
+                if (is_union_copy) {
+                    // Direct union copy / move: copy { discriminant, storage } from source union
+                    _value = nullptr;
+                    expr.argument(0)->accept(*this);
+                    llvm::Value* src_val = _value;
+                    if (src_val && src_val != object_ref) {
+                        emit_value_copy_or_move(object_ref, src_val, st_type, /*destroy_dest_first=*/false, expr.first_lexeme(), "copy");
+                    }
+                    _value = object_ref;
+                    return;
+                }
+
                 // Typed construction: find matching alternative by type and store the value
                 // First, zero-init the storage
                 auto* zero_val = llvm::ConstantAggregateZero::get(llvm_struct_ty);

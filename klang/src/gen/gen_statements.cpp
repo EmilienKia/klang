@@ -3982,6 +3982,16 @@ void implementation_generator::emit_union_cleanup(llvm::AllocaInst* alloca, unio
         _builder->SetInsertPoint(case_bb);
         // GEP to storage, bitcast to alternative struct pointer, call destructor
         auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, alloca, 1, "union_dtor_storage");
+        if (dtor->is_virtual()) {
+            auto* vptr_val = _builder->CreateLoad(llvm::PointerType::get(**_context, 0), storage_ptr, "union_dtor_vptr");
+            auto* is_null = _builder->CreateICmpEQ(
+                vptr_val,
+                llvm::ConstantPointerNull::get(llvm::PointerType::get(**_context, 0)),
+                "union_dtor_vptr_null");
+            auto* dtor_call_bb = llvm::BasicBlock::Create(**_context, "union_dtor_call", cur_fn);
+            _builder->CreateCondBr(is_null, merge_bb, dtor_call_bb);
+            _builder->SetInsertPoint(dtor_call_bb);
+        }
         auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
         _builder->CreateCall(dtor_it->second, {storage_ptr});
         _builder->CreateBr(merge_bb);
@@ -4040,6 +4050,16 @@ void implementation_generator::emit_union_cleanup_on_reassign(llvm::Value* union
 
         _builder->SetInsertPoint(case_bb);
         auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 1, "union_reassign_storage");
+        if (dtor->is_virtual()) {
+            auto* vptr_val = _builder->CreateLoad(llvm::PointerType::get(**_context, 0), storage_ptr, "reassign_vptr");
+            auto* is_null = _builder->CreateICmpEQ(
+                vptr_val,
+                llvm::ConstantPointerNull::get(llvm::PointerType::get(**_context, 0)),
+                "reassign_vptr_null");
+            auto* dtor_call_bb = llvm::BasicBlock::Create(**_context, "reassign_dtor_call", cur_fn);
+            _builder->CreateCondBr(is_null, merge_bb, dtor_call_bb);
+            _builder->SetInsertPoint(dtor_call_bb);
+        }
         auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
         _builder->CreateCall(dtor_it->second, {storage_ptr});
         _builder->CreateBr(merge_bb);

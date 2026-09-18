@@ -602,6 +602,14 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
         ctx.var.set_var_constructor(nullptr);
         if (ctx.init_expr) {
             ctx.init_expr->set_constructor(nullptr);
+            for (size_t i = 0; i < ctx.init_expr->size(); ++i) {
+                _replacement_expr = nullptr;
+                ctx.init_expr->argument(i)->accept(*this);
+                if (_replacement_expr) {
+                    ctx.init_expr->assign_argument(i, _replacement_expr);
+                    _replacement_expr = nullptr;
+                }
+            }
         }
         return;
     }

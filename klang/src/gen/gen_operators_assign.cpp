@@ -786,10 +786,10 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
  *   5. For primitives/pointers: emit store instruction.
  */
 void implementation_generator::visit_simple_assignation_expression(simple_assignation_expression& expr) {
-    if (generate_binary_operator_overload(expr)) return;
-
-    // ── Skip the union discriminant check when evaluating the LHS of an assignment
-    //    to a union alternative (we are about to switch the active alternative). ──
+    // ── Check if LHS is a union alternative assignment ───────────────────────
+    std::shared_ptr<member_of_object_expression> union_moe;
+    std::shared_ptr<union_type_def> union_def_for_assign;
+    const union_alternative* union_alt_for_assign = nullptr;
     {
         auto lhs_e = std::shared_ptr<expression>(expr.left());
         while (auto lve = std::dynamic_pointer_cast<load_value_expression>(lhs_e)) {
@@ -800,10 +800,38 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             if (type::is_reference(sub_type))
                 sub_type = std::dynamic_pointer_cast<reference_type>(sub_type)->get_subtype();
             if (auto st = std::dynamic_pointer_cast<struct_type>(sub_type)) {
-                if (!st->get_struct())
+                if (!st->get_struct()) {
                     _skip_union_disc_check = true;
+                    auto root_ns = _unit.get_root_namespace();
+                    if (root_ns) {
+                        union_def_for_assign = find_union_by_struct_type(root_ns, st);
+                    }
+                    if (union_def_for_assign) {
+                        union_moe = moe;
+                        const k::name& sym_name = moe->symbol().get_name();
+                        std::string alt_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
+                        union_alt_for_assign = union_def_for_assign->get_alternative_by_name(alt_name);
+                    }
+                }
             }
         }
+    }
+
+    if (generate_binary_operator_overload(expr)) {
+        _skip_union_disc_check = false;
+        if (union_moe && union_def_for_assign && union_alt_for_assign) {
+            _value = nullptr;
+            union_moe->sub_expr()->accept(*this);
+            llvm::Value* union_base = _value;
+            if (union_base) {
+                auto* union_llvm_type = union_def_for_assign->get_struct_type()->get_llvm_type();
+                auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_disc_upd");
+                _builder->CreateStore(
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), union_alt_for_assign->index),
+                    disc_ptr);
+            }
+        }
+        return;
     }
 
     // Step 1: Evaluate left and right operands
