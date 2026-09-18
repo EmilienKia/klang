@@ -99,7 +99,7 @@ public abstract class FileSystemProvider : public Object {
     abstract readSymbolicLink(path: const Path&) : Path!;
     abstract createSymbolicLink(link: const Path&, target: const Path&) : bool;
     abstract readDirectory(path: const Path&) : Vector<Path>!;
-    abstract openNativeFile(path: const Path&, mode: const char*) : ::k::io::CFile*;
+    abstract openNativeFile(path: const Path&, mode: const char*) : ::k::io::file::CFile*;
 }
 ```
 
@@ -173,3 +173,31 @@ Supports direct polymorphic member calls via `->` (e.g. `entry->exists()`, `entr
 - `Path::fromUri(uri: const Uri&) : Path!` converts a `file:` URI into a local `Path`.
 - `Path.toUri() : Uri!` encodes a `Path` into a RFC 3986 `file:` URI.
 - `Uri.toPath() : file::Path!` converts a `file:` URI directly into a `Path`.
+
+---
+
+## 6. File Streams and Channels
+
+All file streaming and channel facilities reside in `k::io::file`:
+
+### 6.1 Synchronous File Streams
+
+- **`CFile`**: Opaque wrapper type representing a native C `FILE*` handle.
+- **`FileDescriptor`**: Wrapper for a platform integer file descriptor (`getFd() : int`, `valid() : bool`).
+- **`FileInputStream`**: Synchronous file-backed input stream (`InputStream<byte>`).
+  - `FileInputStream(path: const Path&)`
+  - `FileInputStream(path: const char[])`
+  - `FileInputStream(fp: CFile*)`
+- **`FileOutputStream`**: Synchronous file-backed output stream (`OutputStream<byte>`).
+  - `FileOutputStream(path: const Path&, append: bool = false)`
+  - `FileOutputStream(path: const char[], append: bool = false)`
+  - `FileOutputStream(fp: CFile*)`
+
+### 6.2 Asynchronous File Channels and Streams
+
+- **`FileChannel`**: Seekable, interruptible channel over a regular file backed by the asynchronous substrate.
+  - Open constants: `OPEN_READ`, `OPEN_WRITE`, `OPEN_APPEND`, `OPEN_CREATE`, `OPEN_TRUNCATE`, `OPEN_EXCLUSIVE`.
+  - Factories: `FileChannel::open(path: const Path&, options: int)`, `FileChannel::open(path: const Path&)`.
+  - Transfers: `read(dst)`, `read(dst, pos, timeout)`, `write(src)`, `write(src, pos, timeout)`, `readFully(dst, pos)`, `writeFully(src, pos)`, `position()`, `size()`, `truncate()`, `force()`.
+- **`AsyncFileInputStream`**: Interruptible `InputStream<byte>` backed by a `FileChannel`.
+- **`AsyncFileOutputStream`**: Interruptible `OutputStream<byte>` backed by a `FileChannel`.

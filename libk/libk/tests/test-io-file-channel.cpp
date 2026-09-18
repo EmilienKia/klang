@@ -74,7 +74,7 @@ TEST_CASE("FileChannel: opening a missing file raises FileNotFoundException",
         test() : int {
             p : k::io::file::Path("/tmp/klang_fc_absent.bin");
             try {
-                c : k::io::FileChannel! = k::io::FileChannel::open(p);
+                c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p);
                 delete c;
                 return 0;
             } catch (e: k::io::FileNotFoundException&) {
@@ -99,8 +99,8 @@ TEST_CASE("FileChannel: create, write and read back", "[libk][io][file-channel]"
             p : k::io::file::Path("/tmp/klang_fc_roundtrip.bin");
             res : int = 0;
 
-            opts : int = k::io::OPEN_WRITE | k::io::OPEN_CREATE | k::io::OPEN_TRUNCATE;
-            out : k::io::FileChannel! = k::io::FileChannel::open(p, opts);
+            opts : int = k::io::file::OPEN_WRITE | k::io::file::OPEN_CREATE | k::io::file::OPEN_TRUNCATE;
+            out : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, opts);
             src : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(5u);
             src->put((byte) 75);
             src->put((byte) 76);
@@ -117,7 +117,7 @@ TEST_CASE("FileChannel: create, write and read back", "[libk][io][file-channel]"
             delete out;
             delete src;
 
-            in : k::io::FileChannel! = k::io::FileChannel::open(p);
+            in : k::io::file::FileChannel! = k::io::file::FileChannel::open(p);
             dst : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(16u);
             n : int = in->read(dst);
             if (n == 5) { res += 16; }
@@ -148,7 +148,7 @@ TEST_CASE("FileChannel: positional access leaves the position untouched",
         test() : int {
             p : k::io::file::Path("/tmp/klang_fc_positional.bin");
             res : int = 0;
-            c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
+            c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, k::io::file::OPEN_READ);
 
             b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(3u);
             if (c->read(b, 4L) == 3) { ++res; }
@@ -186,7 +186,7 @@ TEST_CASE("FileChannel: readFully raises EndOfStreamException past the end",
         test() : int {
             p : k::io::file::Path("/tmp/klang_fc_readfully.bin");
             res : int = 0;
-            c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
+            c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, k::io::file::OPEN_READ);
 
             small : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(4u);
             c->readFully(small, 0L);
@@ -225,8 +225,8 @@ TEST_CASE("FileChannel: writeFully transfers every remaining byte",
         test() : int {
             p : k::io::file::Path("/tmp/klang_fc_writefully.bin");
             res : int = 0;
-            opts : int = k::io::OPEN_WRITE | k::io::OPEN_CREATE | k::io::OPEN_TRUNCATE;
-            c : k::io::FileChannel! = k::io::FileChannel::open(p, opts);
+            opts : int = k::io::file::OPEN_WRITE | k::io::file::OPEN_CREATE | k::io::file::OPEN_TRUNCATE;
+            c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, opts);
 
             b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(64u);
             i : unsigned int = 0u;
@@ -266,7 +266,7 @@ TEST_CASE("FileChannel: a closed channel raises ClosedChannelException",
         test() : int {
             p : k::io::file::Path("/tmp/klang_fc_closed.bin");
             res : int = 0;
-            c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
+            c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, k::io::file::OPEN_READ);
             if (c->isOpen()) { ++res; }
             if (c->nativeDescriptor() >= 0) { res += 2; }
             c->close();
@@ -306,8 +306,8 @@ TEST_CASE("FileChannel: append mode writes at the end", "[libk][io][file-channel
         module __fc_append__;
         test() : int {
             p : k::io::file::Path("/tmp/klang_fc_append.bin");
-            opts : int = k::io::OPEN_WRITE | k::io::OPEN_APPEND;
-            c : k::io::FileChannel! = k::io::FileChannel::open(p, opts);
+            opts : int = k::io::file::OPEN_WRITE | k::io::file::OPEN_APPEND;
+            c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, opts);
             b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(4u);
             b->put((byte) 116);
             b->put((byte) 97);
@@ -338,9 +338,9 @@ TEST_CASE("FileChannel: exclusive create fails on an existing file",
         module __fc_excl__;
         test() : int {
             p : k::io::file::Path("/tmp/klang_fc_excl.bin");
-            opts : int = k::io::OPEN_WRITE | k::io::OPEN_CREATE | k::io::OPEN_EXCLUSIVE;
+            opts : int = k::io::file::OPEN_WRITE | k::io::file::OPEN_CREATE | k::io::file::OPEN_EXCLUSIVE;
             try {
-                c : k::io::FileChannel! = k::io::FileChannel::open(p, opts);
+                c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, opts);
                 delete c;
                 return 0;
             } catch (e: k::io::IOException&) {
@@ -364,11 +364,11 @@ TEST_CASE("FileChannel: concurrent positional reads from several threads",
         module __fc_concurrent__;
 
         class Reader : public k::Runnable {
-            _chan : k::io::FileChannel*;
+            _chan : k::io::file::FileChannel*;
             _from : long;
             _ok   : int;
         public:
-            Reader(chan: k::io::FileChannel*, from: long)
+            Reader(chan: k::io::file::FileChannel*, from: long)
                 : _chan(chan), _from(from), _ok(0) {}
             override run() : void {
                 b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(512u);
@@ -388,7 +388,7 @@ TEST_CASE("FileChannel: concurrent positional reads from several threads",
 
         test() : int {
             p : k::io::file::Path("/tmp/klang_fc_concurrent.bin");
-            c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
+            c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, k::io::file::OPEN_READ);
 
             r0 : Reader! = new Reader(c, 0L);
             r1 : Reader! = new Reader(c, 1024L);

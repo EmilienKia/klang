@@ -50,7 +50,6 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/data_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/text_printer.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/print_stream.k
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stdio.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/math/math.k
     # ── Phase 1: time, threading ──────────────────────────────────────────
@@ -102,10 +101,11 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/entries.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/file_system.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/path.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/file.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/file_channel.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/async_file_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/local_fs.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/directory_fs.k
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file_channel.k
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file_stream.k
     # ── Phase 5: asynchronous network I/O ─────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/network_address.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/socket.k
@@ -197,7 +197,7 @@ add_custom_command(
 )
 
 # ── Compile the file I/O C runtime helpers ────────────────────────────────
-set(FILE_IO_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file.c)
+set(FILE_IO_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/file.c)
 set(FILE_IO_OBJ ${LIBK_OUTPUT_DIR}/file_io.o)
 
 add_custom_command(

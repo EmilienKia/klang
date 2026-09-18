@@ -18,7 +18,7 @@
 
 module k;
 
-namespace io {
+namespace io::file {
 
 /**
  * Opaque wrapper type representing a native asynchronous I/O handle.
@@ -40,20 +40,6 @@ public const OPEN_CREATE : int = 8;
 public const OPEN_TRUNCATE : int = 16;
 /** Fail when the file already exists; only meaningful with OPEN_CREATE. */
 public const OPEN_EXCLUSIVE : int = 32;
-
-// ── Encoded operation outcomes (returned by the substrate) ───────────────
-
-/** The calling thread was interrupted while waiting. */
-public const IO_INTERRUPTED : long = -1L;
-/** The deadline elapsed before the operation completed. */
-public const IO_TIMEOUT : long = -2L;
-/** The channel was closed, possibly by another thread. */
-public const IO_CLOSED : long = -3L;
-/** Any value at or below this one encodes `-(1000 + errno)`. */
-public const IO_ERROR_BASE : long = -1000L;
-
-/** Wait without any deadline. */
-public const IO_NO_TIMEOUT : long = -1L;
 
 /**
  * FileChannel — a seekable, interruptible byte channel over a regular file.
@@ -108,7 +94,7 @@ public:
      * @param options Bitwise combination of the OPEN_* constants.
      * @return A newly allocated open channel.
      */
-    static open(path: const file::Path&, options: int) : FileChannel! {
+    static open(path: const Path&, options: int) : FileChannel! {
         h : NativeAsyncHandle* = __k_async_open(path.nativePath(), options, 438);
         if (h == null) {
             err : int = __k_async_last_errno();
@@ -146,7 +132,7 @@ public:
      * @param path Location to open.
      * @return A newly allocated open channel.
      */
-    static open(path: const file::Path&) : FileChannel! {
+    static open(path: const Path&) : FileChannel! {
         return FileChannel::open(path, OPEN_READ);
     }
 
@@ -455,4 +441,4 @@ public:
     }
 }
 
-} // namespace io
+} // namespace io::file

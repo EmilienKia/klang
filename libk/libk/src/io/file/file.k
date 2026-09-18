@@ -18,7 +18,7 @@
 
 module k;
 
-namespace io {
+namespace io::file {
 
 /**
  * Opaque wrapper type representing a native C `FILE*` handle.
@@ -44,9 +44,9 @@ public struct CFile {
 @ffi::Extern("C") private __k_io_file_last_separator(path: const char*) : int;
 
 // ── FFI declarations for standard stream handles ────────────────────────
-@ffi::Extern("C") private __k_io_file_get_stdin() : CFile*;
-@ffi::Extern("C") private __k_io_file_get_stdout() : CFile*;
-@ffi::Extern("C") private __k_io_file_get_stderr() : CFile*;
+@ffi::Extern("C") protected __k_io_file_get_stdin() : CFile*;
+@ffi::Extern("C") protected __k_io_file_get_stdout() : CFile*;
+@ffi::Extern("C") protected __k_io_file_get_stderr() : CFile*;
 
 
 /**
@@ -107,7 +107,7 @@ public:
      *
      * @param path File system path.
      */
-    FileInputStream(path: const file::Path&) : _fp(null) {
+    FileInputStream(path: const Path&) : _fp(null) {
         _fp = __k_io_file_fopen(path.nativePath(), &"rb\0"[0]);
     }
 
@@ -117,7 +117,6 @@ public:
      * handle remains valid for the lifetime of this stream.
      * Primarily used internally (e.g. for wrapping libc stdin).
      */
-    FileInputStream(fp: CFile*) : _fp(fp) {}
     FileInputStream(fp: CFile*) : _fp(fp) {}
 
     /**
@@ -240,7 +239,7 @@ public:
      *
      * @param path File system path.
      */
-    FileOutputStream(path: const file::Path&) : _fp(null) {
+    FileOutputStream(path: const Path&) : _fp(null) {
         _fp = __k_io_file_fopen(path.nativePath(), &"wb\0"[0]);
     }
 
@@ -250,7 +249,7 @@ public:
      * @param path File system path.
      * @param append `true` to append, `false` to truncate.
      */
-    FileOutputStream(path: const file::Path&, append: bool) : _fp(null) {
+    FileOutputStream(path: const Path&, append: bool) : _fp(null) {
         if (append) {
             _fp = __k_io_file_fopen(path.nativePath(), &"ab\0"[0]);
         } else {
@@ -324,4 +323,4 @@ public:
     }
 }
 
-} // namespace io
+} // namespace io::file

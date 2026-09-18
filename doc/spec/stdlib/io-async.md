@@ -24,10 +24,10 @@ The layer is organised in three levels:
 | Level | Types | Role |
 |-------|-------|------|
 | Buffer | `ByteBuffer` | Byte container with position/limit/capacity cursors. |
-| Channel | `Channel`, `ReadableChannel`, `WritableChannel`, `FileChannel` | Positional, interruptible transfers. |
-| Stream | `AsyncFileInputStream`, `AsyncFileOutputStream` | `InputStream<byte>` / `OutputStream<byte>` adapters over a channel. |
+| Channel | `Channel`, `ReadableChannel`, `WritableChannel` (in `k::io`), `FileChannel` (in `k::io::file`) | Positional, interruptible transfers. |
+| Stream | `AsyncFileInputStream`, `AsyncFileOutputStream` (in `k::io::file`) | `InputStream<byte>` / `OutputStream<byte>` adapters over a channel. |
 
-`Path` sits beside them as a pure value type describing a filesystem location.
+`Path` and file-specific facilities live in [`k::io::file`](io-file.md).
 
 ### Platform backend
 
@@ -225,9 +225,9 @@ threading, synchronisation and I/O layers.
 ```k
 module sample;
 
-copyFile(from: const Path&, to: const Path&) : void {
-    src : k::io::AsyncFileInputStream! = new k::io::AsyncFileInputStream(from);
-    dst : k::io::AsyncFileOutputStream! = new k::io::AsyncFileOutputStream(to);
+copyFile(from: const k::io::file::Path&, to: const k::io::file::Path&) : void {
+    src : k::io::file::AsyncFileInputStream! = new k::io::file::AsyncFileInputStream(from);
+    dst : k::io::file::AsyncFileOutputStream! = new k::io::file::AsyncFileOutputStream(to);
     chunk : byte[4096];
     while (true) {
         n : k::Expected<unsigned int, k::io::StreamOutOfData> = src->read(chunk);

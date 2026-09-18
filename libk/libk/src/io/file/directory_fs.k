@@ -242,10 +242,10 @@ public:
         return res;
     }
 
-    override openNativeFile(path: const Path&, mode: const char*) : ::k::io::CFile* {
+    override openNativeFile(path: const Path&, mode: const char*) : CFile* {
         realP : Path! = _toRealPath(path);
         if (realP == null) return null;
-        fp : ::k::io::CFile* = FileSystem::local().provider().openNativeFile(*realP, mode);
+        fp : CFile* = FileSystem::local().provider().openNativeFile(*realP, mode);
         delete realP;
         return fp;
     }

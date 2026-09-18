@@ -132,6 +132,14 @@ public:
     openOutput() : FileOutputStream! {
         return openOutput(false);
     }
+
+    openChannel(options: int) : FileChannel! {
+        return FileChannel::open(_path, options);
+    }
+
+    openChannel() : FileChannel! {
+        return FileChannel::open(_path);
+    }
 }
 
 /**

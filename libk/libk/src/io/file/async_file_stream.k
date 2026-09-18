@@ -18,12 +18,12 @@
 
 module k;
 
-namespace io {
+namespace io::file {
 
 /**
- * AsyncFileInputStream — a byte input stream backed by ::k::io::FileChannel.
+ * AsyncFileInputStream — a byte input stream backed by ::k::io::file::FileChannel.
  *
- * Unlike ::k::io::FileInputStream, which sits on top of the C standard
+ * Unlike ::k::io::file::FileInputStream, which sits on top of the C standard
  * library, this stream uses the asynchronous substrate: a blocked read can be
  * cancelled by ::k::Thread::interrupt(), and closing the stream from another
  * thread aborts the pending operation.
@@ -39,7 +39,7 @@ public:
      *
      * @param path Location to read from.
      */
-    AsyncFileInputStream(path: const file::Path&) : _chan(null) {
+    AsyncFileInputStream(path: const Path&) : _chan(null) {
         _chan = FileChannel::open(path, OPEN_READ);
     }
 
@@ -182,7 +182,7 @@ public:
 
 /**
  * AsyncFileOutputStream — a byte output stream backed by
- * ::k::io::FileChannel.
+ * ::k::io::file::FileChannel.
  *
  * Writes are issued through the asynchronous substrate, so a blocked write
  * can be cancelled by ::k::Thread::interrupt(). The stream owns its channel
@@ -197,7 +197,7 @@ public:
      *
      * @param path Location to write to.
      */
-    AsyncFileOutputStream(path: const file::Path&) : _chan(null) {
+    AsyncFileOutputStream(path: const Path&) : _chan(null) {
         _chan = FileChannel::open(path, OPEN_WRITE | OPEN_CREATE | OPEN_TRUNCATE);
     }
 
@@ -207,7 +207,7 @@ public:
      * @param path Location to write to.
      * @param append When `true`, keep the existing content and write past it.
      */
-    AsyncFileOutputStream(path: const file::Path&, append: bool) : _chan(null) {
+    AsyncFileOutputStream(path: const Path&, append: bool) : _chan(null) {
         opts : int = OPEN_WRITE | OPEN_CREATE;
         if (append) {
             opts |= OPEN_APPEND;
@@ -327,4 +327,4 @@ public:
     }
 }
 
-} // namespace io
+} // namespace io::file

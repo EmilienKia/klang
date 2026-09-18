@@ -73,7 +73,7 @@ TEST_CASE("AsyncFileInputStream: reads bytes and reports end of stream",
         test() : int {
             p : k::io::file::Path("/tmp/klang_afs_read.bin");
             res : int = 0;
-            s : k::io::AsyncFileInputStream! = new k::io::AsyncFileInputStream(p);
+            s : k::io::file::AsyncFileInputStream! = new k::io::file::AsyncFileInputStream(p);
             if (s->isOpen()) { ++res; }
 
             first : k::Optional<byte> = s->read();
@@ -109,7 +109,7 @@ TEST_CASE("AsyncFileInputStream: skip and available track the position",
         test() : int {
             p : k::io::file::Path("/tmp/klang_afs_skip.bin");
             res : int = 0;
-            s : k::io::AsyncFileInputStream! = new k::io::AsyncFileInputStream(p);
+            s : k::io::file::AsyncFileInputStream! = new k::io::file::AsyncFileInputStream(p);
 
             a0 : k::Expected<unsigned int, k::io::StreamOutOfData> = s->available();
             if (a0.hasResult() && a0.getResult() == 10u) { ++res; }
@@ -144,7 +144,7 @@ TEST_CASE("AsyncFileOutputStream: writes, flushes and truncates",
         test() : int {
             p : k::io::file::Path("/tmp/klang_afs_write.bin");
             res : int = 0;
-            s : k::io::AsyncFileOutputStream! = new k::io::AsyncFileOutputStream(p);
+            s : k::io::file::AsyncFileOutputStream! = new k::io::file::AsyncFileOutputStream(p);
             if (s->isOpen()) { ++res; }
 
             s->write((byte) 75);
@@ -179,7 +179,7 @@ TEST_CASE("AsyncFileOutputStream: append mode keeps existing content",
         module __afs_append__;
         test() : int {
             p : k::io::file::Path("/tmp/klang_afs_append.bin");
-            s : k::io::AsyncFileOutputStream! = new k::io::AsyncFileOutputStream(p, true);
+            s : k::io::file::AsyncFileOutputStream! = new k::io::file::AsyncFileOutputStream(p, true);
             body : byte[4];
             body[0] = (byte) 116;
             body[1] = (byte) 97;
@@ -209,7 +209,7 @@ TEST_CASE("AsyncFileOutputStream: writing after close raises ClosedChannelExcept
         test() : int {
             p : k::io::file::Path("/tmp/klang_afs_closed.bin");
             res : int = 0;
-            s : k::io::AsyncFileOutputStream! = new k::io::AsyncFileOutputStream(p);
+            s : k::io::file::AsyncFileOutputStream! = new k::io::file::AsyncFileOutputStream(p);
             s->close();
             try {
                 s->write((byte) 1);
@@ -249,7 +249,7 @@ TEST_CASE("FileChannel: an already-interrupted thread reports the interruption",
             Worker() : _res(0) {}
             override run() : void {
                 p : k::io::file::Path("/tmp/klang_afs_interrupt.bin");
-                c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
+                c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, k::io::file::OPEN_READ);
                 b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(65536u);
                 // Arm the interrupted flag before entering the blocking call:
                 // the substrate must either complete the transfer or report
@@ -304,9 +304,9 @@ TEST_CASE("FileChannel: closing from another thread is observed by users",
         module __afs_closer__;
 
         class Closer : public k::Runnable {
-            _chan : k::io::FileChannel*;
+            _chan : k::io::file::FileChannel*;
         public:
-            Closer(chan: k::io::FileChannel*) : _chan(chan) {}
+            Closer(chan: k::io::file::FileChannel*) : _chan(chan) {}
             override run() : void {
                 k::Thread::sleep(k::Duration::ofMillis(30L));
                 _chan->close();
@@ -315,7 +315,7 @@ TEST_CASE("FileChannel: closing from another thread is observed by users",
 
         test() : int {
             p : k::io::file::Path("/tmp/klang_afs_closer.bin");
-            c : k::io::FileChannel! = k::io::FileChannel::open(p, k::io::OPEN_READ);
+            c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, k::io::file::OPEN_READ);
             res : int = 0;
 
             cl : Closer! = new Closer(c);

@@ -51,7 +51,7 @@ public:
     abstract readDirectory(path: const Path&) : Vector<Path>!;
 
     // Native I/O handle
-    abstract openNativeFile(path: const Path&, mode: const char*) : ::k::io::CFile*;
+    abstract openNativeFile(path: const Path&, mode: const char*) : CFile*;
 }
 
 /**

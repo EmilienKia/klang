@@ -20,6 +20,20 @@ module k;
 
 namespace io {
 
+// ── Encoded operation outcomes (returned by the substrate) ───────────────
+
+/** The calling thread was interrupted while waiting. */
+public const IO_INTERRUPTED : long = -1L;
+/** The deadline elapsed before the operation completed. */
+public const IO_TIMEOUT : long = -2L;
+/** The channel was closed, possibly by another thread. */
+public const IO_CLOSED : long = -3L;
+/** Any value at or below this one encodes `-(1000 + errno)`. */
+public const IO_ERROR_BASE : long = -1000L;
+
+/** Wait without any deadline. */
+public const IO_NO_TIMEOUT : long = -1L;
+
 /**
  * Channel — a connection to an entity capable of I/O.
  *

@@ -31,9 +31,9 @@ module k;
 namespace io {
 
 // ── Private backing objects: file streams wrapping libc FILE* ────────────
-private _stdinStream  : FileInputStream(__k_io_file_get_stdin());
-private _stdoutStream : FileOutputStream(__k_io_file_get_stdout());
-private _stderrStream : FileOutputStream(__k_io_file_get_stderr());
+private _stdinStream  : file::FileInputStream(file::__k_io_file_get_stdin());
+private _stdoutStream : file::FileOutputStream(file::__k_io_file_get_stdout());
+private _stderrStream : file::FileOutputStream(file::__k_io_file_get_stderr());
 
 // ── Private backing objects: UTF-8 readers/writers and text printers ────
 private _stdinUtf8Reader     : Utf8Reader(&_stdinStream);

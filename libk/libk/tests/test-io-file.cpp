@@ -72,7 +72,7 @@ TEST_CASE("FileDescriptor default ctor — invalid", "[libk][io][file]") {
         module __fd_default__;
 
         test() : int {
-            fd : k::io::FileDescriptor;
+            fd : k::io::file::FileDescriptor;
             if (fd.valid()) return 1;
             if (fd.getFd() != -1) return 2;
             return 0;
@@ -94,7 +94,7 @@ TEST_CASE("FileDescriptor ctor with fd — valid", "[libk][io][file]") {
         module __fd_valid__;
 
         test() : int {
-            fd : k::io::FileDescriptor(42);
+            fd : k::io::file::FileDescriptor(42);
             if (!fd.valid()) return 1;
             if (fd.getFd() != 42) return 2;
             return 0;
@@ -195,7 +195,7 @@ TEST_CASE("File createNewFile, exists, isFile, remove", "[libk][io][file]") {
             if (f.exists()) return 1;
 
             // Create via openOutput
-            fos : k::io::FileOutputStream! = f.openOutput();
+            fos : k::io::file::FileOutputStream! = f.openOutput();
             fos->write(42);
             fos->close();
             delete fos;
@@ -232,7 +232,7 @@ TEST_CASE("FileOutputStream write single bytes", "[libk][io][file]") {
         module __fos_single__;
 
         test() : int {
-            fos : k::io::FileOutputStream("/tmp/klang_test_fos_single");
+            fos : k::io::file::FileOutputStream("/tmp/klang_test_fos_single");
             if (!fos.isOpen()) return 1;
             fos.write(65);
             fos.write(66);
@@ -265,14 +265,14 @@ TEST_CASE("FileInputStream read single bytes written by FileOutputStream", "[lib
 
         test() : int {
             // Write
-            fos : k::io::FileOutputStream("/tmp/klang_test_fis_single");
+            fos : k::io::file::FileOutputStream("/tmp/klang_test_fis_single");
             fos.write(10);
             fos.write(20);
             fos.write(30);
             fos.close();
 
             // Read back
-            fis : k::io::FileInputStream("/tmp/klang_test_fis_single");
+            fis : k::io::file::FileInputStream("/tmp/klang_test_fis_single");
             if (!fis.isOpen()) return 1;
 
             v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
@@ -305,12 +305,12 @@ TEST_CASE("FileInputStream read returns -1 at EOF", "[libk][io][file]") {
 
         test() : int {
             // Write 1 byte
-            fos : k::io::FileOutputStream("/tmp/klang_test_fis_eof");
+            fos : k::io::file::FileOutputStream("/tmp/klang_test_fis_eof");
             fos.write(42);
             fos.close();
 
             // Read 1 byte, then expect -1
-            fis : k::io::FileInputStream("/tmp/klang_test_fis_eof");
+            fis : k::io::file::FileInputStream("/tmp/klang_test_fis_eof");
             v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             atEof : bool = fis.read().hasValue();
             fis.close();
@@ -339,13 +339,13 @@ TEST_CASE("FileOutputStream append mode", "[libk][io][file]") {
 
         test() : int {
             // Write 2 bytes
-            fos1 : k::io::FileOutputStream("/tmp/klang_test_fos_append");
+            fos1 : k::io::file::FileOutputStream("/tmp/klang_test_fos_append");
             fos1.write(1);
             fos1.write(2);
             fos1.close();
 
             // Append 1 byte
-            fos2 : k::io::FileOutputStream("/tmp/klang_test_fos_append", true);
+            fos2 : k::io::file::FileOutputStream("/tmp/klang_test_fos_append", true);
             fos2.write(3);
             fos2.close();
 
@@ -354,7 +354,7 @@ TEST_CASE("FileOutputStream append mode", "[libk][io][file]") {
             if (p.size() != 3) return 1;
 
             // Read back all 3 bytes
-            fis : k::io::FileInputStream("/tmp/klang_test_fos_append");
+            fis : k::io::file::FileInputStream("/tmp/klang_test_fos_append");
             v0 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             v1 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
             v2 : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
@@ -385,7 +385,7 @@ TEST_CASE("FileInputStream read into buffer", "[libk][io][file]") {
 
         test() : int {
             // Write 5 bytes
-            fos : k::io::FileOutputStream("/tmp/klang_test_fis_bulk");
+            fos : k::io::file::FileOutputStream("/tmp/klang_test_fis_bulk");
             fos.write(10);
             fos.write(20);
             fos.write(30);
@@ -394,7 +394,7 @@ TEST_CASE("FileInputStream read into buffer", "[libk][io][file]") {
             fos.close();
 
             // Read into buffer
-            fis : k::io::FileInputStream("/tmp/klang_test_fis_bulk");
+            fis : k::io::file::FileInputStream("/tmp/klang_test_fis_bulk");
             buf : byte[5];
             n : int = (int) fis.read(buf).getResultOr((unsigned int) 0);
             fis.close();
@@ -433,7 +433,7 @@ TEST_CASE("FileOutputStream write buffer then read back", "[libk][io][file]") {
             wbuf[2] = (byte) 0xCC;
             wbuf[3] = (byte) 0xDD;
 
-            fos : k::io::FileOutputStream("/tmp/klang_test_fos_bulk");
+            fos : k::io::file::FileOutputStream("/tmp/klang_test_fos_bulk");
             fos.write(wbuf);
             fos.close();
 
@@ -442,7 +442,7 @@ TEST_CASE("FileOutputStream write buffer then read back", "[libk][io][file]") {
             if (p.size() != 4) return 1;
 
             // Read back
-            fis : k::io::FileInputStream("/tmp/klang_test_fos_bulk");
+            fis : k::io::file::FileInputStream("/tmp/klang_test_fos_bulk");
             rbuf : byte[4];
             n : int = (int) fis.read(rbuf).getResultOr((unsigned int) 0);
             fis.close();
@@ -473,7 +473,7 @@ TEST_CASE("File length returns correct size after write", "[libk][io][file]") {
         module __file_length__;
 
         test() : int {
-            fos : k::io::FileOutputStream("/tmp/klang_test_file_length");
+            fos : k::io::file::FileOutputStream("/tmp/klang_test_file_length");
             i : int = 0;
             while (i < 100) {
                 fos.write(i);
@@ -505,7 +505,7 @@ TEST_CASE("FileOutputStream to FileInputStream round-trip", "[libk][io][file]") 
 
         test() : int {
             // Write 256 byte values (0..255)
-            fos : k::io::FileOutputStream("/tmp/klang_test_roundtrip");
+            fos : k::io::file::FileOutputStream("/tmp/klang_test_roundtrip");
             i : int = 0;
             while (i < 256) {
                 fos.write(i);
@@ -514,7 +514,7 @@ TEST_CASE("FileOutputStream to FileInputStream round-trip", "[libk][io][file]") 
             fos.close();
 
             // Read them back and verify
-            fis : k::io::FileInputStream("/tmp/klang_test_roundtrip");
+            fis : k::io::file::FileInputStream("/tmp/klang_test_roundtrip");
             j : int = 0;
             while (j < 256) {
                 v : int = (int)(unsigned byte) fis.read().getOr((byte) 0);
@@ -546,12 +546,12 @@ TEST_CASE("FileInputStream getFD returns valid descriptor", "[libk][io][file]") 
 
         test() : int {
             // Create a file first
-            fos : k::io::FileOutputStream("/tmp/klang_test_fis_fd");
+            fos : k::io::file::FileOutputStream("/tmp/klang_test_fis_fd");
             fos.write(1);
             fos.close();
 
-            fis : k::io::FileInputStream("/tmp/klang_test_fis_fd");
-            fd : k::io::FileDescriptor = fis.getFD();
+            fis : k::io::file::FileInputStream("/tmp/klang_test_fis_fd");
+            fd : k::io::file::FileDescriptor = fis.getFD();
             fis.close();
 
             if (!fd.valid()) return 1;

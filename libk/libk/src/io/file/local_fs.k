@@ -161,7 +161,7 @@ public:
         return res;
     }
 
-    override openNativeFile(path: const Path&, mode: const char*) : ::k::io::CFile* {
+    override openNativeFile(path: const Path&, mode: const char*) : CFile* {
         raw : const char* = path.nativePath();
         return __k_io_file_fopen(raw, mode);
     }

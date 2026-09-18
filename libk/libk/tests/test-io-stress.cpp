@@ -61,7 +61,7 @@ TEST_CASE("FileChannel stress: concurrent positional reads are stable", "[libk][
         public:
             Reader(path: k::io::file::Path*, base: long) : _path(path), _base(base), _done(0) {}
             override run() : void {
-                file : k::io::FileChannel! = k::io::FileChannel::open(*_path);
+                file : k::io::file::FileChannel! = k::io::file::FileChannel::open(*_path);
                 buf : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(128u);
                 ok : int = 0;
                 i : int = 0;
