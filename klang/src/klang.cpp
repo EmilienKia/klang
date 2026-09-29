@@ -118,6 +118,8 @@ int main(int argc, const char** argv) {
     std::vector<std::string> kdi_files;     // -i <file.kdi>
     std::vector<std::string> lib_dirs;      // -L <dir>
     std::vector<std::string> lib_files;     // -l <name-or-path>
+    std::vector<std::string> plugin_paths;  // --plugin <path>
+    std::vector<std::string> disabled_plugins; // --disable-plugin <name>
     std::string lib_path_env;               // --lib-path-env
     std::string forced_module_name;         // --module-name
     std::string log_level_str;              // --log-level
@@ -208,6 +210,14 @@ int main(int argc, const char** argv) {
                 "May be repeated. Also cumulative with the "
                 "KLANG_IGNORE_DIAGNOSTICS environment variable (comma/colon "
                 "separated list).")
+            ("plugin,P",
+                po::value<std::vector<std::string>>(&plugin_paths)->composing(),
+                "Load a compiler plugin shared library (.so). May be repeated.")
+            ("no-default-plugins",
+                "Disable all default built-in compiler plugins (e.g. structural code generation).")
+            ("disable-plugin",
+                po::value<std::vector<std::string>>(&disabled_plugins)->composing(),
+                "Disable a specific plugin by name (e.g. --disable-plugin=structural). May be repeated.")
             ;
 
     po::options_description cli_target_options("Target options");
@@ -474,6 +484,22 @@ int main(int argc, const char** argv) {
         }
         if (!lib_files.empty()) {
             compiler->set_extra_libraries(lib_files);
+        }
+
+        // ── Compiler plugin configuration ──────────────────────────────────
+        if (vm.count("no-default-plugins") > 0) {
+            compiler->set_enable_default_plugins(false);
+        }
+        for (const auto& dp : disabled_plugins) {
+            compiler->disable_plugin(dp);
+        }
+
+        // ── Load compiler plugins ───────────────────────────────────────────
+        for (const auto& ppath : plugin_paths) {
+            if (!compiler->load_plugin(ppath)) {
+                std::cerr << "Error: failed to load compiler plugin '" << ppath << "'" << std::endl;
+                return 1;
+            }
         }
 
         // Pre-resolve IR file names from the expected output path so that

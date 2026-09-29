@@ -23,6 +23,7 @@
 #include <set>
 #include <ostream>
 #include <optional>
+#include <filesystem>
 
 #include "common/logger.hpp"
 #include "common/file_resolver.hpp"
@@ -33,6 +34,11 @@ class TargetMachine;
 }
 
 namespace k {
+namespace plugin {
+class plugin_manager;
+class model_pass;
+}
+
 namespace model {
 class element;
 
@@ -135,7 +141,28 @@ protected:
     std::vector<std::string> _extra_library_dirs;
     std::vector<std::string> _extra_libraries;
 
+    /** Plugin manager handling dynamic and static compiler plugins. */
+    std::unique_ptr<plugin::plugin_manager> _plugin_manager;
+
     void process_generation(bool optimize = true, bool dump = true);
+
+    /**
+     * Run the declaration resolution pass chain on the semantic model:
+     * symbol resolution -> generic validation -> aggregate type resolution ->
+     * model materialization.
+     */
+    void run_declaration_resolution_passes(bool dump = false);
+
+    /**
+     * Run type reference resolution (expression and body checking) -> layout rebuilding.
+     */
+    void run_type_reference_resolution_passes(bool dump = false);
+
+    /**
+     * Run a full resolution pass chain on the semantic model:
+     * declaration passes -> type reference resolution -> layout rebuilding.
+     */
+    void run_resolution_passes(bool dump = false);
 
     /**
      * Verify that every model element about to be emitted has a usable mangled name.
@@ -155,6 +182,8 @@ protected:
     compiler(llvm::TargetMachine* target = nullptr);
 
 public:
+    virtual ~compiler();
+
     static void initialize();
 
     static std::shared_ptr<compiler> create(llvm::TargetMachine* target_machine = nullptr);
@@ -171,6 +200,36 @@ public:
     std::shared_ptr<model::context> get_context_for_test() const {
         return _context;
     }
+
+    /**
+     * Load a shared library (.so) compiler plugin dynamically.
+     * @param path Path to the .so library.
+     * @return true on success, false on error.
+     */
+    bool load_plugin(const std::filesystem::path& path);
+
+    /**
+     * Programmatically register a model visitor pass.
+     * @param pass The pass to execute after the initial model resolution.
+     */
+    void register_model_pass(std::unique_ptr<plugin::model_pass> pass);
+
+    /**
+     * Enable or disable plugins configured as default (e.g. structural generation).
+     */
+    void set_enable_default_plugins(bool enable);
+    bool are_default_plugins_enabled() const;
+
+    /**
+     * Disable a specific plugin by name.
+     */
+    void disable_plugin(const std::string& name);
+
+    /**
+     * Access the plugin manager.
+     */
+    plugin::plugin_manager* get_plugin_manager() { return _plugin_manager.get(); }
+    const plugin::plugin_manager* get_plugin_manager() const { return _plugin_manager.get(); }
 
     /**
      * Try to find elements recursively by their name.

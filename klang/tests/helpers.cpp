@@ -43,7 +43,7 @@
  * Uses the KLANG_STDLIB_LIB_DIR macro set by CMake; does nothing if the
  * library has already been loaded.  Returns true on success.
  */
-static bool ensure_libk_loaded() {
+bool ensure_libk_loaded() {
     static void* libk_handle = nullptr;
     if (libk_handle)
         return true;

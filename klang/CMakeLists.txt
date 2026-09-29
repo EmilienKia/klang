@@ -98,19 +98,55 @@ add_library(klang
         src/model/constant_value.cpp
         src/model/constant_evaluator.hpp
         src/model/constant_evaluator.cpp
+        src/plugin/plugin.hpp
+        src/plugin/plugin_manager.hpp
+        src/plugin/plugin_manager.cpp
+        src/plugin/structural/structural_pass.hpp
+        src/plugin/structural/structural_pass.cpp
+        src/plugin/structural/structural_plugin.hpp
+        src/plugin/structural/structural_plugin.cpp
 )
 
 target_include_directories(klang PRIVATE
     ${CMAKE_SOURCE_DIR}/libkdi/src
 )
-target_link_libraries(klang ${LLVM_LIBRARIES} ${Boost_LIBRARIES} kdi)
+target_link_libraries(klang ${LLVM_LIBRARIES} ${Boost_LIBRARIES} kdi dl)
 
 add_executable(klangc
         src/klang.cpp
 )
 
 target_include_directories(klangc PUBLIC ${PROJECT_BINARY_DIR})
-target_link_libraries(klangc klang ${LLVM_LIBRARIES} fmt::fmt ${Boost_LIBRARIES})
+target_link_libraries(klangc klang ${LLVM_LIBRARIES} fmt::fmt ${Boost_LIBRARIES} dl)
+set_target_properties(klangc PROPERTIES ENABLE_EXPORTS ON)
+
+#
+# Compiler plugins
+#
+
+add_library(klang-plugin-structural SHARED
+        src/plugin/structural/structural_pass.hpp
+        src/plugin/structural/structural_pass.cpp
+        src/plugin/structural/structural_plugin.hpp
+        src/plugin/structural/structural_plugin.cpp
+)
+target_include_directories(klang-plugin-structural PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/libkdi/src
+)
+
+add_library(klang-plugin-naming SHARED
+        src/plugin/naming/casing_utils.hpp
+        src/plugin/naming/casing_utils.cpp
+        src/plugin/naming/naming_pass.hpp
+        src/plugin/naming/naming_pass.cpp
+        src/plugin/naming/naming_plugin.hpp
+        src/plugin/naming/naming_plugin.cpp
+)
+target_include_directories(klang-plugin-naming PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/libkdi/src
+)
 
 #
 # Tests
@@ -313,7 +349,7 @@ klang_gen_test(klang-tests-gen-types-enums-unions 120
         tests/test-gen-union-polymorphic.cpp
         tests/test-gen-union-cast.cpp
 )
-klang_gen_test(klang-tests-gen-types-const-meta 120
+klang_gen_test(klang-tests-gen-types-const-meta 240
         tests/test-gen-const.cpp
         tests/test-gen-null-semantics.cpp
         tests/test-gen-annotation-meta.cpp
@@ -456,6 +492,16 @@ klang_gen_test(klang-tests-import-interop 120
         tests/test-import-interop.cpp
         tests/test-prod-lib.cpp
 )
+
+# ---------------------------------------------------------------------------
+# Group 11 — Plugins: plugin system infrastructure, Structural, and Naming
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-plugins 120
+        tests/test-plugin-structural.cpp
+        tests/test-plugin-naming.cpp
+)
+target_link_libraries(klang-tests-plugins klang-plugin-structural klang-plugin-naming)
+add_dependencies(klang-tests-plugins klang-plugin-structural klang-plugin-naming)
 
 #
 # klangc executable integration tests

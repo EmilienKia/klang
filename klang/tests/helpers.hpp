@@ -46,6 +46,11 @@
 #include <llvm/Target/TargetMachine.h>
 
 /**
+ * Ensure libk.so is loaded into the host process so JIT can resolve runtime symbols.
+ */
+bool ensure_libk_loaded();
+
+/**
  * Create a TargetMachine configured for position-independent code (PIC),
  * suitable for shared-library compilation.
  */

@@ -217,6 +217,29 @@ Example:
 klangc --ignore-diagnostic 0x0947 --ignore-diagnostic 0x061B mylib.k
 ```
 
+**`-P` _path_**, **`--plugin=`_path_** (repeatable)  
+Load a compiler plugin shared library (`.so`) at compiler startup. The plugin
+can register model visitor passes to introspect and transform the semantic
+model after the initial resolution pass. A complete resolution pass is run
+after each plugin pass. May be repeated to load multiple plugins in order.
+
+**`--no-default-plugins`**  
+Disable all built-in default compiler plugins. By default, standard plugins such
+as structural code generation (which synthesizes `@Getter` and `@Setter` accessors,
+inspired by Lombok) are active. This option disables all default plugins.
+
+**`--disable-plugin=`_name_** (repeatable)  
+Disable a specific compiler plugin by its identifier name (for example,
+`--disable-plugin=structural`). May be repeated to disable multiple plugins.
+
+Example:
+
+```sh
+klangc --plugin libklang-plugin-naming.so myprog.k
+klangc --no-default-plugins myprog.k
+klangc --disable-plugin=structural myprog.k
+```
+
 ---
 
 ### Debug Information Options

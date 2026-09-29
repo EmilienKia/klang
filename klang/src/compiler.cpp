@@ -59,6 +59,7 @@
 #include "model/tools/kdi_exporter.hpp"
 #include "model/tools/kdi_importer.hpp"
 #include "common/path_lookup_file_resolver.hpp"
+#include "plugin/plugin_manager.hpp"
 
 #include <kdi.hpp>
 #include "errors.hpp"
@@ -78,8 +79,40 @@ void compiler::initialize() {
 compiler::compiler(llvm::TargetMachine* target):
     _context(k::model::context::create()),
     _model_unit(k::model::unit::create(_context)),
-    _target(target)
+    _target(target),
+    _plugin_manager(std::make_unique<plugin::plugin_manager>())
 {
+}
+
+compiler::~compiler() = default;
+
+void compiler::set_enable_default_plugins(bool enable) {
+    if (_plugin_manager) {
+        _plugin_manager->set_enable_default_plugins(enable);
+    }
+}
+
+bool compiler::are_default_plugins_enabled() const {
+    return _plugin_manager ? _plugin_manager->are_default_plugins_enabled() : true;
+}
+
+void compiler::disable_plugin(const std::string& name) {
+    if (_plugin_manager) {
+        _plugin_manager->disable_plugin(name);
+    }
+}
+
+bool compiler::load_plugin(const std::filesystem::path& path) {
+    if (_plugin_manager) {
+        return _plugin_manager->load_dynamic_plugin(path, *this);
+    }
+    return false;
+}
+
+void compiler::register_model_pass(std::unique_ptr<plugin::model_pass> pass) {
+    if (_plugin_manager) {
+        _plugin_manager->register_model_pass(std::move(pass));
+    }
 }
 
 std::shared_ptr<compiler> compiler::create(llvm::TargetMachine* target_machine) {
@@ -209,9 +242,66 @@ void compiler::parse_source(const std::string_view& path, const std::string_view
     parse_sources(std::move(sources), optimize, dump);
 }
 
+void compiler::run_declaration_resolution_passes(bool dump) {
+    k::model::gen::symbol_resolver var_resolver(*this, _context, *_model_unit);
+    trace("[compiler::run_declaration_resolution_passes] symbol resolution");
+    if(dump) {
+        std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
+    }
+    var_resolver.resolve();
+
+    if(dump) {
+        k::model::dump::unit_dump unit_dump(std::cout);
+        unit_dump.dump(*_model_unit);
+    }
+
+    _context->resolve_types();
+
+    trace("[compiler::run_declaration_resolution_passes] generic constraint validation");
+    k::model::gen::generic_constraint_validator generic_validator(*this, _context, *_model_unit);
+    generic_validator.validate();
+
+    trace("[compiler::run_declaration_resolution_passes] aggregate type resolution");
+    k::model::gen::aggregate_type_resolver agg_type_resolver(*this, _context, *_model_unit);
+    agg_type_resolver.resolve();
+
+    // Re-resolve types for any template instantiations that were created
+    // during aggregate type resolution (their LLVM struct types need to be built).
+    _context->resolve_types();
+
+    trace("[compiler::run_declaration_resolution_passes] model materialization");
+    k::model::gen::model_materializer materializer(*this, _context, *_model_unit);
+    materializer.materialize();
+}
+
+void compiler::run_type_reference_resolution_passes(bool dump) {
+    trace("[compiler::run_type_reference_resolution_passes] type reference resolution");
+    k::model::gen::type_reference_resolver type_ref_resolver(*this, _context, *_model_unit);
+    type_ref_resolver.resolve();
+
+    // Rebuild any template-instantiation layouts whose LLVM body was frozen
+    // before late-discovered virtual-base subobject fields were injected.
+    _context->rebuild_instantiation_layouts();
+
+    if(dump) {
+        k::model::dump::unit_dump unit_dump(std::cout);
+        std::cout << "#" << std::endl << "# Type resolution" << std::endl << "#" << std::endl;
+        unit_dump.dump(*_model_unit);
+    }
+}
+
+void compiler::run_resolution_passes(bool dump) {
+    run_declaration_resolution_passes(dump);
+    run_type_reference_resolution_passes(dump);
+}
+
 void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> sources,
                               bool optimize, bool dump,
                               const std::string& forced_module_name) {
+    if (_plugin_manager) {
+        _plugin_manager->init_static_plugins(*this);
+    }
+
     // ── Phase 0 — Load all sources into _sources with a single reserve ─────
     trace("[compiler::parse_sources] Phase 0 — loading {} source file(s)", {std::to_string(sources.size())});
     assert(!_sources_locked && "Cannot add sources after lexing/parsing has started");
@@ -382,48 +472,29 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
             unit_dump.dump(*_model_unit);
         }
 
-        k::model::gen::symbol_resolver var_resolver(*this, _context, *_model_unit);
-        trace("[compiler::parse_sources] symbol resolution");
-        if(dump) {
-            std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
-        }
-        var_resolver.resolve();
+        // ── Phase 4 — Initial resolution pass ────────────────────────────
+        if (_plugin_manager && _plugin_manager->has_model_passes()) {
+            trace("[compiler::parse_sources] Phase 4 — initial declaration resolution pass for plugins");
+            run_declaration_resolution_passes(dump);
 
-        if(dump) {
-            k::model::dump::unit_dump unit_dump(std::cout);
-            unit_dump.dump(*_model_unit);
-        }
-
-        _context->resolve_types();
-
-        trace("[compiler::parse_sources] generic constraint validation");
-        k::model::gen::generic_constraint_validator generic_validator(*this, _context, *_model_unit);
-        generic_validator.validate();
-
-        trace("[compiler::parse_sources] aggregate type resolution");
-        k::model::gen::aggregate_type_resolver agg_type_resolver(*this, _context, *_model_unit);
-        agg_type_resolver.resolve();
-
-        // Re-resolve types for any template instantiations that were created
-        // during aggregate type resolution (their LLVM struct types need to be built).
-        _context->resolve_types();
-
-        trace("[compiler::parse_sources] model materialization");
-        k::model::gen::model_materializer materializer(*this, _context, *_model_unit);
-        materializer.materialize();
-
-        trace("[compiler::parse_sources] type reference resolution");
-        k::model::gen::type_reference_resolver type_ref_resolver(*this, _context, *_model_unit);
-        type_ref_resolver.resolve();
-
-        // Rebuild any template-instantiation layouts whose LLVM body was frozen
-        // before late-discovered virtual-base subobject fields were injected.
-        _context->rebuild_instantiation_layouts();
-
-        if(dump) {
-            k::model::dump::unit_dump unit_dump(std::cout);
-            std::cout << "#" << std::endl << "# Type resolution" << std::endl << "#" << std::endl;
-            unit_dump.dump(*_model_unit);
+            // ── Phase 5 — Model visitor plugin passes ─────────────────────
+            trace("[compiler::parse_sources] Phase 5 — executing model plugin passes");
+            bool any_modified = false;
+            for (const auto& pass : _plugin_manager->get_model_passes()) {
+                debug("[compiler::parse_sources] running plugin pass '{}'", {std::string{pass->name()}});
+                bool modified = pass->run(*this, *_model_unit, *_context);
+                if (modified) {
+                    any_modified = true;
+                    trace("[compiler::parse_sources] re-running full resolution after pass '{}'", {std::string{pass->name()}});
+                    run_resolution_passes(dump);
+                }
+            }
+            if (!any_modified) {
+                run_type_reference_resolution_passes(dump);
+            }
+        } else {
+            trace("[compiler::parse_sources] Phase 4 — complete resolution pass");
+            run_resolution_passes(dump);
         }
 
         // ── Phase C — unused-import check ─────────────────────────────────
