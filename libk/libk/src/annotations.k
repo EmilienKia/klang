@@ -80,11 +80,13 @@ annotation Target {
      */
     enum ElementType {
         CLASS;
+        STRUCT;
         INTERFACE;
         ANNOTATION;
         FUNCTION;
         CONSTRUCTOR;
         PARAMETER;
+        FIELD;
     }
 
     /**
@@ -111,3 +113,78 @@ annotation Intrinsic {
 }
 
 } // namespace annotations
+
+namespace lang {
+
+/**
+ * Access level for generated accessors.
+ */
+enum AccessLevel {
+    DEFAULT;
+    NO_ACCESS;
+    PUBLIC;
+    PROTECTED;
+}
+
+/**
+ * Request automatic generation of a default no-argument constructor.
+ * Calls the default constructor of base classes if present.
+ */
+@annotations::Retention(annotations::Retention::Policy::SOURCE)
+@annotations::Target({annotations::Target::ElementType::CLASS, annotations::Target::ElementType::STRUCT})
+annotation NoArgConstructor {
+    access : AccessLevel = AccessLevel::DEFAULT;
+}
+
+/**
+ * Request automatic generation of a copy constructor (const ref).
+ */
+@annotations::Retention(annotations::Retention::Policy::SOURCE)
+@annotations::Target({annotations::Target::ElementType::CLASS, annotations::Target::ElementType::STRUCT})
+annotation CopyConstructor {
+    access : AccessLevel = AccessLevel::DEFAULT;
+}
+
+/**
+ * Request automatic generation of a constructor accepting all non-static member variables.
+ * Calls the default constructor of base classes if present.
+ */
+@annotations::Retention(annotations::Retention::Policy::SOURCE)
+@annotations::Target({annotations::Target::ElementType::CLASS, annotations::Target::ElementType::STRUCT})
+annotation AllArgsConstructor {
+    access : AccessLevel = AccessLevel::DEFAULT;
+}
+
+/**
+ * Request automatic generation of a copy assignment operator (const ref).
+ */
+@annotations::Retention(annotations::Retention::Policy::SOURCE)
+@annotations::Target({annotations::Target::ElementType::CLASS, annotations::Target::ElementType::STRUCT})
+annotation CopyAssigner {
+    access : AccessLevel = AccessLevel::DEFAULT;
+}
+
+/**
+ * Request automatic generation of const and mutable getters for a variable.
+ * @param constAccess Visibility of the const getter (default: AccessLevel::DEFAULT -> public)
+ * @param mutAccess   Visibility of the mutable getter (default: AccessLevel::DEFAULT -> protected)
+ */
+@annotations::Retention(annotations::Retention::Policy::SOURCE)
+@annotations::Target({annotations::Target::ElementType::FIELD})
+annotation Getter {
+    constAccess : AccessLevel = AccessLevel::DEFAULT;
+    mutAccess   : AccessLevel = AccessLevel::DEFAULT;
+}
+
+/**
+ * Request automatic generation of a setter for a variable.
+ * @param access Visibility of the setter (default: AccessLevel::DEFAULT -> protected)
+ */
+@annotations::Retention(annotations::Retention::Policy::SOURCE)
+@annotations::Target({annotations::Target::ElementType::FIELD})
+annotation Setter {
+    access : AccessLevel = AccessLevel::DEFAULT;
+}
+
+} // namespace lang
+

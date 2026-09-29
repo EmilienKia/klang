@@ -235,10 +235,10 @@ TEST_CASE("Model: annotation type can itself be annotated", "[model][annotation]
 
 
 // ════════════════════════════════════════════════════════════════════════════
-//  Error: annotations on structs
+//  Annotations on structs
 // ════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Model: annotation on struct is an error", "[model][annotation]") {
+TEST_CASE("Model: annotation on struct is allowed", "[model][annotation]") {
     auto comp = compile_model(R"SRC(
         module model_annotation_11;
         annotation Deprecated {}
@@ -247,8 +247,8 @@ TEST_CASE("Model: annotation on struct is an error", "[model][annotation]") {
             x : int;
         }
     )SRC");
-    // compile_model returns nullptr on error
-    CHECK(comp == nullptr);
+    // Structs can carry annotations (e.g. structural generation annotations).
+    CHECK(comp != nullptr);
 }
 
 

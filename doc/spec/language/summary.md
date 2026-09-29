@@ -1296,7 +1296,7 @@ Rules:
 
 Three forms: default (`@Ann`), positional (`@Ann(args…)`), designated (`@Ann{.f=v, …}`).
 
-Supported targets: `class`, `interface`, `annotation`, functions (with RTTI), constructors/destructors (SOURCE only), parameters. **NOT** `struct` (no vtable).
+Supported targets: `class`, `interface`, `annotation`, `struct`, functions, constructors/destructors, parameters, and variable fields (`FIELD`).
 
 ### 20.4 Construction Rules
 
@@ -1315,7 +1315,7 @@ Defined in `k::annotations` (module `k`).
 | `@Inherited` | The annotation propagates to subclasses (not to interface implementations). Explicit override possible. |
 | `@Target({ElementType::…})` | Restricts the target element types. Absent = everything allowed. |
 
-`Target.ElementType`: `CLASS`, `INTERFACE`, `ANNOTATION`, `FUNCTION`, `CONSTRUCTOR`.
+`Target.ElementType`: `CLASS`, `STRUCT`, `INTERFACE`, `ANNOTATION`, `FUNCTION`, `CONSTRUCTOR`, `PARAMETER`, `FIELD`.
 
 ### 20.6 Runtime Reading
 
@@ -1324,6 +1324,55 @@ Via `getClass().getAnnotations()` → `const Annotation?[]?`. Each annotation ha
 ### 20.7 Export
 
 Annotation types are exported via `.kdi`. Instances attached to classes/interfaces are serialized in RTTI metadata.
+
+### 20.8 Structural Generation Annotations (`k::lang`)
+
+Defined in namespace `k::lang` (module `k`), processed during compilation by the built-in structural generation plugin:
+
+```k
+namespace lang {
+    enum AccessLevel {
+        DEFAULT;     // public for const getters and constructors, protected for mutable getters and setters
+        NO_ACCESS;   // suppresses generation of the accessor/constructor
+        PUBLIC;      // public visibility
+        PROTECTED;   // protected visibility
+    }
+
+    annotation NoArgConstructor {
+        access : AccessLevel = AccessLevel::DEFAULT;
+    }
+
+    annotation CopyConstructor {
+        access : AccessLevel = AccessLevel::DEFAULT;
+    }
+
+    annotation AllArgsConstructor {
+        access : AccessLevel = AccessLevel::DEFAULT;
+    }
+
+    annotation CopyAssigner {
+        access : AccessLevel = AccessLevel::DEFAULT;
+    }
+
+    annotation Getter {
+        constAccess : AccessLevel = AccessLevel::DEFAULT;
+        mutAccess   : AccessLevel = AccessLevel::DEFAULT;
+    }
+
+    annotation Setter {
+        access : AccessLevel = AccessLevel::DEFAULT;
+    }
+}
+```
+
+- `@NoArgConstructor`: generates a default 0-argument constructor on structs and classes. Calls the default constructor of base classes if present.
+- `@CopyConstructor`: generates a copy constructor taking `const Aggregate&`.
+- `@AllArgsConstructor`: generates a constructor taking all non-static member fields in declaration order. Calls the default constructor of base classes if present.
+- `@CopyAssigner`: generates a copy assignment operator (`operator=`) taking `const Aggregate&` and returning `this` reference.
+- `@Getter`: generates a const getter returning `const T&` (default `PUBLIC`), and a mutable getter returning `T&` (default `PROTECTED`).
+- `@Setter`: generates a setter assigning the member and returning `this` (default `PROTECTED`).
+- Passing `AccessLevel::NO_ACCESS` suppresses generation of the corresponding construct.
+- Pre-existing constructors, methods, and operators with matching signatures are never duplicated.
 
 ---
 

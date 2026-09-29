@@ -705,7 +705,7 @@ ParameterSpec
 (* ---------- Variables ---------------------------------------------------- *)
 
 VariableDecl
-    = { Specifier } , Identifier , ':' , TypeSpec , [ Initialiser ] , ';'
+    = { AnnotationDef } , { Specifier } , Identifier , ':' , TypeSpec , [ Initialiser ] , ';'
     ;
 
 Initialiser
