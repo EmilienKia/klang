@@ -1320,6 +1320,30 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 if (all_candidates.empty()) {
                     append_unique_candidate(resolved_fn);
                 }
+            } else if (callee->is_variable_def() && callee->get_variable_def()) {
+                // The symbol resolver bound the name to a variable with the same name,
+                // but this is a function call context. Look in the owner element for function overloads.
+                if (auto var_elem = std::dynamic_pointer_cast<element>(callee->get_variable_def())) {
+                    if (auto owner = var_elem->parent<element>()) {
+                        if (auto fh = dynamic_cast<function_holder*>(owner.get())) {
+                            for (auto& fn : fh->functions()) {
+                                if (fn && fn->get_short_name() == func_name) {
+                                    append_unique_candidate(fn);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (callee->get_name().size() >= 2) {
+                auto qualifier = callee->get_name().without_back();
+                auto agg = scope_lookup::lookup_structure_or_import(_unit, _context, callee, qualifier.to_string());
+                if (agg) {
+                    for (auto& fn : agg->functions()) {
+                        if (fn && fn->get_short_name() == func_name) {
+                            append_unique_candidate(fn);
+                        }
+                    }
+                }
             }
         } else if (!is_qualified_call) {
             all_candidates = scope_lookup::lookup_functions(callee, func_name);
