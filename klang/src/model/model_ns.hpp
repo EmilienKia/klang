@@ -116,6 +116,8 @@ public:
      */
     std::shared_ptr<const ns> get_child_namespace(const std::string& child_name)const;
 
+    bool rename_child_namespace(const std::string& old_name, const std::string& new_name);
+
     //
     // Children functions
     //

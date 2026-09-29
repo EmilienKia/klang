@@ -44,6 +44,7 @@
 
 #include "model.hpp"
 #include "constant_value.hpp"
+#include "symbol_reference.hpp"
 
 namespace k::parse::ast {
 struct expression;
@@ -258,7 +259,7 @@ public:
     }
 };
 
-class symbol_expression : public expression {
+class symbol_expression : public expression, public symbol_reference {
 public:
     /** Resolved target for enum entries: holds the enumeration and the entry index. */
     struct enum_entry_target {
@@ -326,6 +327,10 @@ public:
     const name &get_name() const {
         return _name;
     }
+
+    // symbol_reference interface
+    std::shared_ptr<named_element> get_target_declaration() const override;
+    void update_referenced_name(const std::string& new_short_name) override;
 
     bool is_variable_def() const {
         return std::holds_alternative<std::shared_ptr<variable_definition>>(_target);

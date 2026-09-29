@@ -103,7 +103,190 @@ void named_element::update_names() {
         _fq_name.clear();
         _mangled_name.clear();
     }
+}
 
+void named_element::add_reference(const std::shared_ptr<symbol_reference>& ref) {
+    if (!ref) return;
+    prune_dead_references();
+    for (const auto& w : _references) {
+        if (w.lock() == ref) return;
+    }
+    _references.push_back(ref);
+}
+
+void named_element::prune_dead_references() {
+    _references.erase(
+        std::remove_if(_references.begin(), _references.end(),
+            [](const std::weak_ptr<symbol_reference>& w) { return w.expired(); }),
+        _references.end());
+}
+
+static bool is_k_keyword(const std::string& str) {
+    static const std::unordered_set<std::string> keywords = {
+        "module", "import", "namespace", "public", "protected", "private",
+        "static", "const", "abstract", "final", "return", "this",
+        "if", "else", "while", "for", "break", "continue",
+        "struct", "class", "interface", "default", "delete", "new", "enum", "operator",
+        "bool", "byte", "char", "short", "int", "long", "float", "double", "unsigned",
+        "using", "friend", "annotation", "override", "template", "typename", "generic",
+        "union", "throw", "try", "catch", "throws", "finally", "alias", "typedef", "threadlocal"
+    };
+    return keywords.contains(str);
+}
+
+static bool is_valid_k_identifier(const std::string& str) {
+    if (str.empty()) return false;
+    if (!std::isalpha(static_cast<unsigned char>(str[0])) && str[0] != '_') return false;
+    for (char c : str) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') return false;
+    }
+    return true;
+}
+
+bool named_element::can_change_name(const std::string& new_name, std::string* reason_out) const {
+    if (new_name == _short_name) return true;
+
+    if (new_name.empty()) {
+        if (reason_out) *reason_out = "Identifier cannot be empty";
+        return false;
+    }
+
+    if (!is_valid_k_identifier(new_name)) {
+        if (reason_out) *reason_out = "'" + new_name + "' is not a valid identifier";
+        return false;
+    }
+
+    if (is_k_keyword(new_name)) {
+        if (reason_out) *reason_out = "'" + new_name + "' is a reserved keyword";
+        return false;
+    }
+
+    auto elem = dynamic_cast<const element*>(this);
+    if (!elem) return true;
+
+    // 1. Variable collision check
+    if (dynamic_cast<const variable_definition*>(this)) {
+        if (auto vh = elem->parent<variable_holder>()) {
+            if (vh->get_variable(new_name)) {
+                if (reason_out) *reason_out = "Variable '" + new_name + "' already exists in this scope";
+                return false;
+            }
+        }
+    }
+
+    // 2. Aggregate collision check
+    if (dynamic_cast<const aggregate*>(this)) {
+        if (auto ah = elem->parent<aggregate_holder>()) {
+            if (ah->get_aggregate(new_name)) {
+                if (reason_out) *reason_out = "Aggregate '" + new_name + "' already exists in this scope";
+                return false;
+            }
+        }
+    }
+
+    // 3. Namespace collision check
+    if (dynamic_cast<const ns*>(this)) {
+        if (auto parent_ns = elem->parent<ns>()) {
+            if (parent_ns->get_child_namespace(new_name)) {
+                if (reason_out) *reason_out = "Namespace '" + new_name + "' already exists in this scope";
+                return false;
+            }
+        }
+    }
+
+    // 4. Function collision check
+    if (auto fn = dynamic_cast<const function*>(this)) {
+        if (auto fh = elem->parent<function_holder>()) {
+            for (const auto& existing_fn : fh->get_functions(new_name)) {
+                if (existing_fn && existing_fn.get() != fn) {
+                    if (existing_fn->is_const_member() == fn->is_const_member()
+                        && existing_fn->parameters().size() == fn->parameters().size()) {
+                        bool types_match = true;
+                        for (size_t i = 0; i < fn->parameters().size(); ++i) {
+                            if (fn->parameters()[i]->get_type() != existing_fn->parameters()[i]->get_type()) {
+                                types_match = false;
+                                break;
+                            }
+                        }
+                        if (types_match) {
+                            if (reason_out) *reason_out = "Function with matching signature named '" + new_name + "' already exists in this scope";
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+bool named_element::change_name(const std::string& new_name) {
+    if (new_name == _short_name) return true;
+    std::string reason;
+    if (!can_change_name(new_name, &reason)) {
+        return false;
+    }
+
+    std::string old_short_name = _short_name;
+
+    // 1. Re-key in parent container
+    if (auto elem = dynamic_cast<element*>(this)) {
+        if (auto vh = elem->parent<variable_holder>()) {
+            vh->rename_variable(old_short_name, new_name);
+        }
+        if (auto ah = elem->parent<aggregate_holder>()) {
+            ah->rename_aggregate(old_short_name, new_name);
+        }
+        if (auto parent_ns = elem->parent<ns>()) {
+            if (dynamic_cast<ns*>(this)) {
+                parent_ns->rename_child_namespace(old_short_name, new_name);
+            }
+        }
+        // If this is a member variable of an aggregate, rename field in struct_type
+        if (dynamic_cast<member_variable_definition*>(this)) {
+            if (auto owner_agg = elem->parent<aggregate>()) {
+                if (auto st_type = owner_agg->get_struct_type()) {
+                    st_type->rename_field(old_short_name, new_name);
+                }
+            }
+        }
+        // If this is an aggregate, update struct_type and context
+        if (auto agg = dynamic_cast<aggregate*>(this)) {
+            if (auto ctx = agg->get_context()) {
+                ctx->rename_struct_type(old_short_name, new_name);
+                ctx->rename_unresolved_type(old_short_name, new_name);
+            }
+            if (auto st_type = agg->get_struct_type()) {
+                st_type->set_name(new_name);
+            }
+            // Automatically rename constructors and destructors
+            for (auto& fn : agg->functions()) {
+                if (fn->get_short_name() == old_short_name) {
+                    fn->change_name(new_name);
+                } else if (fn->get_short_name() == "~" + old_short_name) {
+                    fn->change_name("~" + new_name);
+                }
+            }
+        }
+    }
+
+    // 2. Update identity
+    if (_name.size() > 1) {
+        assign_name(_name.without_back().with_back(new_name));
+    } else {
+        assign_name(name(_name.has_root_prefix(), {new_name}));
+    }
+
+    // 3. Propagate to all registered symbol references
+    prune_dead_references();
+    for (auto& ref_weak : _references) {
+        if (auto ref = ref_weak.lock()) {
+            ref->update_referenced_name(new_name);
+        }
+    }
+
+    return true;
 }
 
 
@@ -129,6 +312,16 @@ std::shared_ptr<variable_definition> variable_holder::get_variable(const std::st
     } else {
         return {};
     }
+}
+
+bool variable_holder::rename_variable(const std::string& old_name, const std::string& new_name) {
+    auto it = _vars.find(old_name);
+    if (it == _vars.end()) return false;
+    if (_vars.contains(new_name)) return false;
+    auto var = it->second;
+    _vars.erase(it);
+    _vars[new_name] = var;
+    return true;
 }
 
 
@@ -241,6 +434,16 @@ std::shared_ptr<structure> aggregate_holder::get_structure(const std::string &na
     } else {
         return {};
     }
+}
+
+bool aggregate_holder::rename_aggregate(const std::string& old_name, const std::string& new_name) {
+    auto it = _structs.find(old_name);
+    if (it == _structs.end()) return false;
+    if (_structs.contains(new_name)) return false;
+    auto agg = it->second;
+    _structs.erase(it);
+    _structs[new_name] = agg;
+    return true;
 }
 
 
@@ -1334,6 +1537,16 @@ std::shared_ptr<const ns> ns::get_child_namespace(const std::string &child_name)
     } else {
         return {};
     }
+}
+
+bool ns::rename_child_namespace(const std::string &old_name, const std::string &new_name) {
+    auto it = _ns.find(old_name);
+    if (it == _ns.end()) return false;
+    if (_ns.contains(new_name)) return false;
+    auto child = it->second;
+    _ns.erase(it);
+    _ns[new_name] = child;
+    return true;
 }
 
 std::shared_ptr<variable_definition> ns::do_create_variable(const std::string &name, bool is_static, bool is_thread_local) {

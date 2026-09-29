@@ -975,6 +975,16 @@ std::optional<struct_type::field> struct_type::get_member(const std::string& nam
     return std::nullopt;
 }
 
+bool struct_type::rename_field(const std::string& old_name, const std::string& new_name) {
+    for(auto& field : _fields) {
+        if(field.name == old_name) {
+            field.name = new_name;
+            return true;
+        }
+    }
+    return false;
+}
+
 llvm::Constant* struct_type::generate_default_value_initializer() const {
     return _default_init_constant!=nullptr ? _default_init_constant : llvm::ConstantAggregateZero::get(get_llvm_type());
 }

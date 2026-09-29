@@ -123,6 +123,30 @@ void context::add_struct(const std::string& name, std::shared_ptr<struct_type> s
     _struct_types.insert({name, st_type});
 }
 
+bool context::rename_struct_type(const std::string& old_name, const std::string& new_name) {
+    auto it = _struct_types.find(old_name);
+    if (it == _struct_types.end()) return false;
+    auto st = it->second;
+    _struct_types.erase(it);
+    st->set_name(new_name);
+    _struct_types[new_name] = st;
+    return true;
+}
+
+void context::rename_unresolved_type(const std::string& old_name, const std::string& new_name) {
+    for (auto& unres : _unresolved) {
+        if (unres && !unres->type_id().empty()) {
+            if (unres->type_id().back() == old_name) {
+                if (unres->type_id().size() > 1) {
+                    unres->set_type_id(unres->type_id().without_back().with_back(new_name));
+                } else {
+                    unres->set_type_id(name(unres->type_id().has_root_prefix(), {new_name}));
+                }
+            }
+        }
+    }
+}
+
 void context::add_enum(const std::string& name, std::shared_ptr<enum_type> et) {
     _enum_types.insert({name, et});
 }

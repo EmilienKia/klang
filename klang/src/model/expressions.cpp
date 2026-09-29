@@ -354,20 +354,53 @@ std::shared_ptr<symbol_expression> symbol_expression::from_identifier(const name
     return std::shared_ptr<symbol_expression>(new symbol_expression(name));
 }
 
+std::shared_ptr<named_element> symbol_expression::get_target_declaration() const {
+    if (is_variable_def()) {
+        return std::dynamic_pointer_cast<named_element>(get_variable_def());
+    } else if (is_function()) {
+        return std::dynamic_pointer_cast<named_element>(get_function());
+    } else if (is_enum_entry()) {
+        return std::dynamic_pointer_cast<named_element>(get_enum_entry().enum_def);
+    }
+    return nullptr;
+}
+
+void symbol_expression::update_referenced_name(const std::string& new_short_name) {
+    if (_name.size() > 1) {
+        _name = _name.without_back().with_back(new_short_name);
+    } else {
+        _name = name(_name.has_root_prefix(), {new_short_name});
+    }
+}
+
 std::shared_ptr<symbol_expression> symbol_expression::from_variable(const std::shared_ptr<variable_definition>& var) {
-    return std::shared_ptr<symbol_expression>(new symbol_expression(var));
+    auto res = std::shared_ptr<symbol_expression>(new symbol_expression(var));
+    if (var) {
+        var->add_reference(res);
+    }
+    return res;
 }
 
 std::shared_ptr<symbol_expression> symbol_expression::from_function(const std::shared_ptr<function>& func) {
-    return std::shared_ptr<symbol_expression>(new symbol_expression(func));
+    auto res = std::shared_ptr<symbol_expression>(new symbol_expression(func));
+    if (func) {
+        func->add_reference(res);
+    }
+    return res;
 }
 
 void symbol_expression::set_target(std::shared_ptr<variable_definition> var) {
     _target = var;
+    if (var) {
+        var->add_reference(shared_as<symbol_reference>());
+    }
 }
 
 void symbol_expression::set_target(std::shared_ptr<function> func) {
     _target = func;
+    if (func) {
+        func->add_reference(shared_as<symbol_reference>());
+    }
 }
 
 //

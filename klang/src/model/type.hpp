@@ -288,6 +288,7 @@ protected:
 
 public:
     const name& type_id() const {return _type_id;}
+    void set_type_id(const name& n) { _type_id = n; }
 
     std::string to_string() const override;
 
@@ -828,6 +829,7 @@ public:
     struct_type(const std::string& name, std::weak_ptr<k::model::aggregate> st);
 
     std::string name() const {return _name;}
+    void set_name(const std::string& name) { _name = name; }
 
     bool is_resolved() const override;
 
@@ -851,6 +853,7 @@ public:
 
     bool has_member(const std::string& name) const;
     std::optional<field> get_member(const std::string& name) const;
+    bool rename_field(const std::string& old_name, const std::string& new_name);
 
     llvm::Constant* generate_default_value_initializer() const override;
 

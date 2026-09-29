@@ -148,6 +148,8 @@ public:
 
     void add_struct(std::shared_ptr<struct_type> st_type);
     void add_struct(const std::string& name, std::shared_ptr<struct_type> st_type);
+    bool rename_struct_type(const std::string& old_name, const std::string& new_name);
+    void rename_unresolved_type(const std::string& old_name, const std::string& new_name);
     void add_enum(const std::string& name, std::shared_ptr<enum_type> et);
     void register_function(std::shared_ptr<function> fn, llvm::Function* llvm_fn) {
         _functions[std::move(fn)] = llvm_fn;

@@ -19,6 +19,7 @@
 #define KLANG_MODEL_ELEMENT_HPP
 #include "model_fwd.hpp"
 #include "constant_value.hpp"
+#include "symbol_reference.hpp"
 namespace k::model {
 /**
  * Base class for all language construction.
@@ -203,12 +204,104 @@ public:
     const std::string& get_mangled_name() const {
         return _mangled_name;
     }
+
+    // ── Reference / Use-Def tracking ────────────────────────────────────────
+
+    void add_reference(const std::shared_ptr<symbol_reference>& ref);
+    void prune_dead_references();
+    const std::vector<std::weak_ptr<symbol_reference>>& get_references() const {
+        return _references;
+    }
+
+    // ── Refactoring / Renaming ──────────────────────────────────────────────
+
+    /**
+     * Check if this declaration can be renamed to new_name without collision in its parent scope.
+     * @param new_name The target short name.
+     * @param reason_out If non-null and renaming is rejected, receives the failure explanation.
+     * @return true if renaming is safe and collision-free.
+     */
+    virtual bool can_change_name(const std::string& new_name, std::string* reason_out = nullptr) const;
+
+    /**
+     * Rename this declaration, re-keying it in parent holders and propagating the change
+     * to all registered references.
+     * @param new_name The new short name.
+     * @return true on success, false if collision or failure.
+     */
+    virtual bool change_name(const std::string& new_name);
+
+protected:
+    std::vector<std::weak_ptr<symbol_reference>> _references;
 };
+
+/**
+ * Describes a single annotation instance attached to a model element.
+ *
+ * At model-building time the annotation type is unresolved: only the raw
+ * qualified name (from the AST) is stored. Resolution to a concrete
+ * annotation_type will happen in a later compiler phase.
+ */
+struct annotation_instance {
+    /// Raw qualified name of the annotation type (e.g. "my::Deprecated").
+    std::string raw_name;
+
+    /// The AST annotation_def node for later resolution and initializer access.
+    std::shared_ptr<k::parse::ast::annotation_def> ast_node;
+
+    /// Resolved annotation type (set during symbol resolution phase).
+    /// Points to any aggregate with is_annotation() == true (can be
+    /// annotation_type for local definitions or imported_annotation_type
+    /// for types imported from KDI).
+    std::shared_ptr<aggregate> resolved_type;
+
+    /**
+     * Resolved compile-time constant values for each member field.
+     * Populated during the annotation materialisation phase.
+     * Each entry is an LLVM Constant* keyed by the member variable index
+     * (following the LLVM struct field order of the annotation type).
+     * Empty until materialisation runs.
+     */
+    std::vector<llvm::Constant*> resolved_field_constants;
+
+    annotation_instance() = default;
+    annotation_instance(std::string raw_name,
+                        std::shared_ptr<k::parse::ast::annotation_def> ast_node)
+        : raw_name(std::move(raw_name)), ast_node(std::move(ast_node)) {}
+};
+
+
+/**
+ * Interface for model elements that can carry annotation instances.
+ */
+class annotation_holder
+{
+public:
+    void add_annotation(annotation_instance ann) {
+        _annotations.push_back(std::move(ann));
+    }
+
+    bool has_annotations() const {
+        return !_annotations.empty();
+    }
+
+    const std::vector<annotation_instance>& get_annotations() const {
+        return _annotations;
+    }
+
+    std::vector<annotation_instance>& get_annotations_mutable() {
+        return _annotations;
+    }
+
+protected:
+    std::vector<annotation_instance> _annotations;
+};
+
 
 /**
  * Interface for variables
  */
-class variable_definition : public named_element
+class variable_definition : public named_element, public annotation_holder
 {
 protected:
     /** Type of the variable */
@@ -271,6 +364,7 @@ class variable_holder
 public:
     virtual std::shared_ptr<variable_definition> append_variable(const std::string& name, bool is_static = false, bool is_thread_local = false);
     virtual std::shared_ptr<variable_definition> get_variable(const std::string& name) const;
+    virtual bool rename_variable(const std::string& old_name, const std::string& new_name);
 
     typedef std::map<std::string, std::shared_ptr<variable_definition>> variable_map_t;
         
@@ -340,6 +434,7 @@ public:
     virtual std::shared_ptr<aggregate> get_aggregate(const std::string& name) const;
     /** Legacy: get by name as structure pointer (returns nullptr if not an aggregate or not found). */
     virtual std::shared_ptr<structure> get_structure(const std::string& name) const;
+    virtual bool rename_aggregate(const std::string& old_name, const std::string& new_name);
 
 protected:
     /** Map of all defined aggregates (structures and classes). */
@@ -513,72 +608,6 @@ public:
 
 protected:
     std::vector<friend_directive> _friend_directives;
-};
-
-
-/**
- * Describes a single annotation instance attached to a model element.
- *
- * At model-building time the annotation type is unresolved: only the raw
- * qualified name (from the AST) is stored. Resolution to a concrete
- * annotation_type will happen in a later compiler phase.
- */
-struct annotation_instance {
-    /// Raw qualified name of the annotation type (e.g. "my::Deprecated").
-    std::string raw_name;
-
-    /// The AST annotation_def node for later resolution and initializer access.
-    std::shared_ptr<k::parse::ast::annotation_def> ast_node;
-
-    /// Resolved annotation type (set during symbol resolution phase).
-    /// Points to any aggregate with is_annotation() == true (can be
-    /// annotation_type for local definitions or imported_annotation_type
-    /// for types imported from KDI).
-    std::shared_ptr<aggregate> resolved_type;
-
-    /**
-     * Resolved compile-time constant values for each member field.
-     * Populated during the annotation materialisation phase.
-     * Each entry is an LLVM Constant* keyed by the member variable index
-     * (following the LLVM struct field order of the annotation type).
-     * Empty until materialisation runs.
-     */
-    std::vector<llvm::Constant*> resolved_field_constants;
-
-    annotation_instance() = default;
-    annotation_instance(std::string raw_name,
-                        std::shared_ptr<k::parse::ast::annotation_def> ast_node)
-        : raw_name(std::move(raw_name)), ast_node(std::move(ast_node)) {}
-};
-
-
-/**
- * Interface for model elements that can carry annotation instances.
- *
- * Mixed into aggregate — annotations are initially only on aggregate
- * declarations. Other element types can gain this mixin later.
- */
-class annotation_holder
-{
-public:
-    void add_annotation(annotation_instance ann) {
-        _annotations.push_back(std::move(ann));
-    }
-
-    bool has_annotations() const {
-        return !_annotations.empty();
-    }
-
-    const std::vector<annotation_instance>& get_annotations() const {
-        return _annotations;
-    }
-
-    std::vector<annotation_instance>& get_annotations_mutable() {
-        return _annotations;
-    }
-
-protected:
-    std::vector<annotation_instance> _annotations;
 };
 
 
