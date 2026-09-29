@@ -23,22 +23,14 @@ namespace time {
 /**
  * WeekRules — definitions of week-based calendar rules (first day of week and minimal days in first week).
  */
+@lang::NoArgConstructor
+@lang::AllArgsConstructor
 public final struct WeekRules {
 private:
-    _firstDayOfWeek         : int;
-    _minimalDaysInFirstWeek : int;
+    _firstDayOfWeek         : int = 1;
+    _minimalDaysInFirstWeek : int = 4;
 
 public:
-    WeekRules() {
-        _firstDayOfWeek = 1;
-        _minimalDaysInFirstWeek = 4;
-    }
-
-    WeekRules(firstDayOfWeek: int, minimalDaysInFirstWeek: int) {
-        _firstDayOfWeek = firstDayOfWeek;
-        _minimalDaysInFirstWeek = minimalDaysInFirstWeek;
-    }
-
     static iso() : WeekRules {
         return WeekRules(1, 4);
     }

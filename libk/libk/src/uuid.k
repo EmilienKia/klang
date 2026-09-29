@@ -32,10 +32,13 @@ module k;
  * Nil UUID, Max UUID, standard and custom namespaces, version-specific
  * builders, and version-specific helper accessors.
  */
+@lang::NoArgConstructor
+@lang::AllArgsConstructor
+@lang::CopyConstructor
 public final class Uuid {
 private:
-    _mostSigBits : unsigned long;
-    _leastSigBits : unsigned long;
+    _mostSigBits : unsigned long = 0uL;
+    _leastSigBits : unsigned long = 0uL;
 
     static encodeNibble(nibble: unsigned int) : byte {
         n : unsigned int = nibble & 0x0Fu;
@@ -110,13 +113,6 @@ public:
 
     // ── Constructors ─────────────────────────────────────────────────────────
 
-    /** Default constructor — creates a Nil UUID (00000000-0000-0000-0000-000000000000). */
-    Uuid() : _mostSigBits(0uL), _leastSigBits(0uL) {}
-
-    /** Construct a UUID from two 64-bit unsigned integers. */
-    Uuid(mostSigBits: unsigned long, leastSigBits: unsigned long)
-        : _mostSigBits(mostSigBits), _leastSigBits(leastSigBits) {}
-
     /** Construct a UUID from a 16-byte array in big-endian network byte order. */
     Uuid(bytes: const byte[]) : _mostSigBits(0uL), _leastSigBits(0uL) {
         if (bytes.size >= 16u) {
@@ -124,10 +120,6 @@ public:
             _leastSigBits = readU64BE(bytes, 8u);
         }
     }
-
-    /** Copy constructor. */
-    Uuid(other: const Uuid&)
-        : _mostSigBits(other._mostSigBits), _leastSigBits(other._leastSigBits) {}
 
     // ── Static Builders ──────────────────────────────────────────────────────
 

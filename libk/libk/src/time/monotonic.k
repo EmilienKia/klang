@@ -25,19 +25,13 @@ namespace time {
  *
  * MonotonicInstants from different clock domains are non-comparable.
  */
+@lang::NoArgConstructor
+@lang::AllArgsConstructor
 public final struct MonotonicClockId {
 private:
-    _id : int;
+    _id : int = 0;
 
 public:
-    MonotonicClockId() {
-        _id = 0;
-    }
-
-    MonotonicClockId(id: int) {
-        _id = id;
-    }
-
     const id() : int {
         return _id;
     }
@@ -58,25 +52,15 @@ public:
  * throw InvalidTemporalValueException.
  * Invariant: 0 <= nanoAdjustment < 1_000_000_000.
  */
+@lang::NoArgConstructor
+@lang::AllArgsConstructor
 public final struct MonotonicInstant {
 private:
     _clockId : MonotonicClockId;
-    _seconds : long;
-    _nanos   : int;
+    _seconds : long = 0L;
+    _nanos   : int = 0;
 
 public:
-    MonotonicInstant() {
-        _clockId = MonotonicClockId(0);
-        _seconds = 0L;
-        _nanos = 0;
-    }
-
-    MonotonicInstant(clockId: const MonotonicClockId&, seconds: long, nanos: int) {
-        _clockId = clockId;
-        _seconds = seconds;
-        _nanos = nanos;
-    }
-
     static of(clockId: const MonotonicClockId&, seconds: long, nanos: int) : MonotonicInstant
         throws(TemporalArithmeticException) {
         norm : NormalizedSecondNanos = NormalizedSecondNanos(seconds, nanos);

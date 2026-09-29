@@ -23,23 +23,13 @@ namespace time {
 /**
  * Helper struct representing a civil date decomposed into year, month, and day.
  */
+@lang::NoArgConstructor
+@lang::AllArgsConstructor
 public struct YearMonthDay {
 public:
-    year  : long;
-    month : int;
-    day   : int;
-
-    YearMonthDay() {
-        year = 0L;
-        month = 0;
-        day = 0;
-    }
-
-    YearMonthDay(y: long, m: int, d: int) {
-        year = y;
-        month = m;
-        day = d;
-    }
+    year  : long = 0L;
+    month : int = 0;
+    day   : int = 0;
 
     const getYear() : long {
         return year;
@@ -166,19 +156,13 @@ public:
  * EpochDay — a chronology-neutral integral count of civil days relative to
  * the 1970-01-01 epoch.
  */
+@lang::NoArgConstructor
+@lang::AllArgsConstructor
 public final struct EpochDay {
 private:
-    _days : long;
+    _days : long = 0L;
 
 public:
-    EpochDay() {
-        _days = 0L;
-    }
-
-    EpochDay(days: long) {
-        _days = days;
-    }
-
     static ofDaysSinceEpoch(days: long) : EpochDay {
         return EpochDay(days);
     }

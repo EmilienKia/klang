@@ -27,22 +27,14 @@ namespace time {
  * according to POSIX conventions.
  * Invariant: 0 <= nanoAdjustment < 1_000_000_000.
  */
+@lang::NoArgConstructor
+@lang::AllArgsConstructor
 public final struct PosixTimestamp {
 private:
-    _seconds : long;
-    _nanos   : int;
+    _seconds : long = 0L;
+    _nanos   : int = 0;
 
 public:
-    PosixTimestamp() {
-        _seconds = 0L;
-        _nanos = 0;
-    }
-
-    PosixTimestamp(seconds: long, nanos: int) {
-        _seconds = seconds;
-        _nanos = nanos;
-    }
-
     // ── Factories ────────────────────────────────────────────────────────────
 
     static ofSeconds(seconds: long) : PosixTimestamp {

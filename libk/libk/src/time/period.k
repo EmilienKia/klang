@@ -27,38 +27,19 @@ namespace time {
  * Preserves individual civil fields rather than normalizing months into years
  * or any field into Duration.
  */
+@lang::NoArgConstructor
+@lang::AllArgsConstructor
 public final struct Period {
 private:
-    _years   : long;
-    _months  : long;
-    _weeks   : long;
-    _days    : long;
-    _hours   : long;
-    _minutes : long;
-    _seconds : long;
+    _years   : long = 0L;
+    _months  : long = 0L;
+    _weeks   : long = 0L;
+    _days    : long = 0L;
+    _hours   : long = 0L;
+    _minutes : long = 0L;
+    _seconds : long = 0L;
 
 public:
-    Period() {
-        _years = 0L;
-        _months = 0L;
-        _weeks = 0L;
-        _days = 0L;
-        _hours = 0L;
-        _minutes = 0L;
-        _seconds = 0L;
-    }
-
-    Period(years: long, months: long, weeks: long, days: long,
-           hours: long, minutes: long, seconds: long) {
-        _years = years;
-        _months = months;
-        _weeks = weeks;
-        _days = days;
-        _hours = hours;
-        _minutes = minutes;
-        _seconds = seconds;
-    }
-
     // ── Factories ────────────────────────────────────────────────────────────
 
     static zero() : Period {
