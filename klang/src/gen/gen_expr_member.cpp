@@ -288,10 +288,20 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         // ensures a single shared copy.
         std::unordered_set<const aggregate*> visited_virtual_bases;
 
+        bool is_callee = is_invocation_callee(expr);
         std::function<std::vector<MemberHit>(const std::shared_ptr<struct_type>&, const std::string&, visibility, bool, bool)> search_member;
         search_member = [&](const std::shared_ptr<struct_type>& stype, const std::string& mname,
                              visibility inherit_vis, bool /*top_level*/, bool via_virt) -> std::vector<MemberHit> {
             std::vector<MemberHit> hits;
+            // If this expression is the callee of a function invocation, prefer methods over fields
+            if (is_callee) {
+                if (auto st = stype->get_struct()) {
+                    if (st->get_function(mname)) {
+                        hits.push_back({stype, std::nullopt, true, via_virt});
+                        return hits;
+                    }
+                }
+            }
             // Check direct field
             if (auto field = stype->get_member(mname)) {
                 hits.push_back({stype, field, false, via_virt});
@@ -377,19 +387,22 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         auto& hit = hits[0];
 
         // Check visibility of the accessed member
-        if (auto st_model = hit.in_struct_type->get_struct()) {
-            auto mv = st_model->get_variable(simple_name);
-            if (auto member_var = std::dynamic_pointer_cast<member_variable_definition>(mv)) {
-                auto vis = member_var->get_visibility();
-                if (vis != PUBLIC) {
-                    if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
-                        if (!scope_lookup::is_friend_of(*st_model, _function_stack, _unit)) {
-                            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_VISIBILITY_MISMATCH), expr.first_lexeme(),
-                                "{} member variable '{}' of struct '{}' is not accessible here; "
-                                "it can only be accessed from member functions of '{}' or its friends{}",
-                                {vis == PROTECTED ? "protected" : "private",
-                                 member_var->get_short_name(), st_model->get_short_name(), st_model->get_short_name(),
-                                 vis == PROTECTED ? " or its subclasses" : ""});
+        if (!hit.is_function) {
+            if (auto st_model = hit.in_struct_type->get_struct()) {
+                auto mv = st_model->get_variable(simple_name);
+                if (auto member_var = std::dynamic_pointer_cast<member_variable_definition>(mv)) {
+                    expr.symbol().set_target(member_var);
+                    auto vis = member_var->get_visibility();
+                    if (vis != PUBLIC) {
+                        if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
+                            if (!scope_lookup::is_friend_of(*st_model, _function_stack, _unit)) {
+                                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_VISIBILITY_MISMATCH), expr.first_lexeme(),
+                                    "{} member variable '{}' of struct '{}' is not accessible here; "
+                                    "it can only be accessed from member functions of '{}' or its friends{}",
+                                    {vis == PROTECTED ? "protected" : "private",
+                                     member_var->get_short_name(), st_model->get_short_name(), st_model->get_short_name(),
+                                     vis == PROTECTED ? " or its subclasses" : ""});
+                            }
                         }
                     }
                 }
