@@ -2103,6 +2103,7 @@ namespace k::parse {
          * Semantics: declares a variable with the specified name, type, and optional initializer.
          */
         struct variable_decl : declaration, statement {
+            annotation_def_list annotations;
             std::vector <lex::keyword> specifiers;
             lex::identifier name;
             std::shared_ptr<ast::type_specifier> type;

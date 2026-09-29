@@ -388,6 +388,13 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_variable_decl(ast::variable_decl& var) override {
+            for (auto& ann : var.annotations) {
+                if (ann) {
+                    prefix();
+                    ann->visit(*this);
+                    _stm << std::endl;
+                }
+            }
             prefix() << "variable ";
             visit_specifiers(var.specifiers);
             _stm << var.name.content << " : ";

@@ -1079,6 +1079,7 @@ lex::opt_any_lexeme brace_init_list::get_interest_lexeme() const {
 //
 
 lex::opt_any_lexeme variable_decl::get_first_lexeme() const {
+    if (!annotations.empty() && annotations.front()) return annotations.front()->get_first_lexeme();
     return !specifiers.empty() ? lex::opt_any_lexeme{specifiers.front()} : lex::opt_any_lexeme{name};
 }
 

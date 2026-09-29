@@ -810,6 +810,7 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
 {
     lex::lex_holder holder(_lexer);
 
+    ast::annotation_def_list annotations = parse_annotation_defs();
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
     // Expect a name:
@@ -881,6 +882,7 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_ENTRY_MISSING_SEMICOLON), close_bracket, "Uniform array init expects a closing bracket ']' after size expression");
             }
             auto var = std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type);
+            var->annotations = std::move(annotations);
             var->is_uniform_array_init = true;
             var->uniform_ctor_args = std::move(paren_args);
             var->uniform_array_size = size_expr;
@@ -921,6 +923,7 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
     }
 
     auto var_res = std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr, is_constructor, is_brace_init);
+    var_res->annotations = std::move(annotations);
     var_res->set_colon(lex::as<lex::operator_>(lcolon));
     if (eq_tok) var_res->set_equal_op(*eq_tok);
     if (open_paren_tok) var_res->set_open_paren(*open_paren_tok);

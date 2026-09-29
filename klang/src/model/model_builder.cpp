@@ -608,12 +608,6 @@ namespace k::model {
         }
 
         // Populate annotation instances from the AST annotation list
-        // Annotations are currently only supported on classes, interfaces, and annotation types.
-        if (!st.annotations.empty() && !is_class && !is_interface && !is_annotation) {
-            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_BAD_DECL_SCOPE), st.kw_aggregate_type,
-                "Annotations are only supported on classes and interfaces; '{}' is not a class or interface",
-                {std::string{st.name.content}});
-        }
         for (auto& ast_ann : st.annotations) {
             if (ast_ann && ast_ann->name) {
                 // Build the raw qualified name string (e.g. "my::Deprecated")
@@ -1017,6 +1011,18 @@ namespace k::model {
         var->set_type(var_type);
         var->set_const(is_const);
         var->set_thread_local(is_thread_local);
+
+        // Populate annotation instances from the AST annotation list
+        for (auto& ast_ann : decl.annotations) {
+            if (ast_ann && ast_ann->name) {
+                std::string raw_name;
+                for (size_t i = 0; i < ast_ann->name->names.size(); ++i) {
+                    if (i > 0) raw_name += "::";
+                    raw_name += std::string{ast_ann->name->names[i].content};
+                }
+                var->add_annotation(model::annotation_instance{std::move(raw_name), ast_ann});
+            }
+        }
 
         // Resolve visibility for namespace/struct-level variables (global or member)
         // Local variables (inside functions/blocks) do not have visibility.

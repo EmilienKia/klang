@@ -1512,6 +1512,13 @@ void implementation_generator::visit_namespace(ns &ns) {
 //
 void symbol_resolver::visit_member_variable_definition(member_variable_definition& var) {
     visit_named_element(var);
+
+    if (!var.get_annotations().empty()) {
+        lex::opt_any_lexeme var_lexeme;
+        if (auto ast_vd = var.get_ast_variable_decl()) var_lexeme = lex::any_lexeme{ast_vd->name};
+        resolve_and_validate_annotations(var, var, var.get_short_name(), var_lexeme, "FIELD");
+    }
+
     // No symbol resolution today, because only primitive types are supported today.
     // TODO Add complex member resolution.
     // TODO visit the initialization expression if any
@@ -1542,6 +1549,12 @@ void implementation_generator::visit_member_variable_definition(member_variable_
 void symbol_resolver::visit_global_variable_definition(global_variable_definition& var)
 {
     visit_named_element(var);
+
+    if (!var.get_annotations().empty()) {
+        lex::opt_any_lexeme var_lexeme;
+        if (auto ast_vd = var.get_ast_variable_decl()) var_lexeme = lex::any_lexeme{ast_vd->name};
+        resolve_and_validate_annotations(var, var, var.get_short_name(), var_lexeme, "FIELD");
+    }
 
     if (auto expr = var.get_init_expr()) {
         expr->accept(*this);
