@@ -152,7 +152,8 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
 
     auto blck = ctor.get_block();
     // Note: 'st' already declared above for inner-struct check
-    if (blck && st) {
+    if (blck && st && !ctor.inits_injected()) {
+        ctor.set_inits_injected(true);
         // Track actual number of base ctor stmts injected in Step 1
         // (used by Step 1b and Step 2 to find the correct insert position)
         size_t insert_idx1 = 0;

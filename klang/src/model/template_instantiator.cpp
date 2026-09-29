@@ -1328,6 +1328,11 @@ void template_instantiator::clone_member_variable(
         elem->_ast_node = src.get_ast_node();
         elem->_documentation = src.get_documentation();
     }
+
+    // Copy annotations
+    for (auto& ann : src.get_annotations()) {
+        new_var->add_annotation(ann);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2632,6 +2637,8 @@ void template_instantiator::inject_base_subobject_fields(std::shared_ptr<aggrega
     };
 
     auto& bases_mutable = concrete->get_bases_mutable();
+    // Base sub-objects are injected here; symbol_resolver must not inject them again.
+    concrete->set_bases_resolved(true);
     for (auto it = bases_mutable.rbegin(); it != bases_mutable.rend(); ++it) {
         auto& bs = *it;
         if (!bs.base || !bs.base->get_struct_type()) continue;

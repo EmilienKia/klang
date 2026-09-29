@@ -1406,6 +1406,8 @@ void symbol_resolver::visit_klass(klass& klass) {
     }
     visit_aggregate(klass);
 
+    if (klass.has_vtable()) return;
+
     lex::opt_any_lexeme klass_lexeme;
     if (auto ast_ad = klass.get_ast_aggregate_decl()) klass_lexeme = lex::any_lexeme{ast_ad->name};
 

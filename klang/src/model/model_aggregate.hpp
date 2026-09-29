@@ -95,6 +95,7 @@ struct base_spec {
  */
 class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder, public alias_holder, public friend_holder, public annotation_holder {
 protected:
+    bool _bases_resolved = false;
     friend class ns;
     friend class model_builder;
     friend class gen::implementation_generator;
@@ -309,6 +310,11 @@ public:
     virtual std::shared_ptr<vtable_layout> get_vtable() const { return nullptr; }
 
     virtual bool has_vtable() const { return false; }
+
+    // True once base classes were resolved and base sub-objects injected
+    // (guards re-resolution after a plugin pass).
+    bool bases_resolved() const { return _bases_resolved; }
+    void set_bases_resolved(bool v) { _bases_resolved = v; }
 
 
     /** True if this is a non-static inner aggregate (has an implicit parent reference). */

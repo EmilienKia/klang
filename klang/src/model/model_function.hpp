@@ -20,7 +20,7 @@
 #include "model_aggregate.hpp"
 namespace k::model {
 
-class parameter : public element, public variable_definition, public annotation_holder {
+class parameter : public element, public variable_definition {
 protected:
 
     friend class function;
@@ -277,9 +277,9 @@ protected:
 
     void update_mangled_name() override;
 
+public:
     void create_this_parameter();
 
-public:
     void accept(model_visitor& visitor) override;
 
     void set_return_type(std::shared_ptr<type> return_type);
@@ -555,6 +555,7 @@ public:
 protected:
     std::vector<member_init_spec> _member_inits;
     bool _is_copy_constructor = false;
+    bool _inits_injected = false;
     // Guards template_instantiator::inject_constructor_member_inits() against
     // being invoked more than once for the same (freshly-instantiated)
     // constructor. Template instantiation can be triggered from multiple,
@@ -587,6 +588,9 @@ public:
 
     bool is_copy_constructor() const { return _is_copy_constructor; }
     void set_copy_constructor(bool v) { _is_copy_constructor = v; }
+    // True once base/member init statements were injected into the body (re-resolution guard).
+    bool inits_injected() const { return _inits_injected; }
+    void set_inits_injected(bool v) { _inits_injected = v; }
 
     /** True once template_instantiator::inject_constructor_member_inits() has run for this constructor. */
     bool are_base_inits_injected() const { return _base_inits_injected; }

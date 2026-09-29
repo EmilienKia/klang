@@ -75,17 +75,8 @@ void symbol_resolver::resolve_and_validate_annotations(
         // namespace traversal: walk up to a namespace parent and descend
         // through child namespaces to find the annotation type.
         if (!ann_agg && ann_inst.raw_name.find("::") != std::string::npos) {
-            std::vector<std::string> parts;
-            std::size_t start = 0;
-            while (true) {
-                auto pos = ann_inst.raw_name.find("::", start);
-                if (pos == std::string::npos) {
-                    parts.push_back(ann_inst.raw_name.substr(start));
-                    break;
-                }
-                parts.push_back(ann_inst.raw_name.substr(start, pos - start));
-                start = pos + 2;
-            }
+            auto qname = k::name::from(ann_inst.raw_name);
+            const auto& parts = qname.parts();
             // Walk up the scope chain looking for a namespace that has the first part
             for (auto current = scope.shared_as<element>(); current && !ann_agg;
                  current = current->parent<element>()) {
@@ -112,18 +103,7 @@ void symbol_resolver::resolve_and_validate_annotations(
 
         if (!ann_agg) {
             // Try imported modules
-            std::vector<std::string> parts;
-            std::size_t start = 0;
-            while (true) {
-                auto pos = ann_inst.raw_name.find("::", start);
-                if (pos == std::string::npos) {
-                    parts.push_back(ann_inst.raw_name.substr(start));
-                    break;
-                }
-                parts.push_back(ann_inst.raw_name.substr(start, pos - start));
-                start = pos + 2;
-            }
-            k::name qname{false, parts};
+            auto qname = k::name::from(ann_inst.raw_name);
             if (auto imp_agg = _unit.get_or_create_imported_aggregate(qname, _context)) {
                 ann_agg = std::dynamic_pointer_cast<aggregate>(imp_agg);
             }
@@ -290,7 +270,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
     }
 
     // ── Inheritance: resolve base class names ──────────────────────────────────
-    if (st.has_bases()) {
+    if (st.has_bases() && !st.bases_resolved()) {
         // Build a set of all ancestors to detect cycles
         std::function<bool(const aggregate*, std::unordered_set<const aggregate*>&)> detect_cycle;
         detect_cycle = [&](const aggregate* cur, std::unordered_set<const aggregate*>& visited) -> bool {
@@ -305,6 +285,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
         };
 
         for (auto& bs : st.get_bases_mutable()) {
+
             // Resolve the base name from the current structure scope upward.
             // bs.raw_name may be a simple name ("Base") or a qualified name
             // ("ns::Base") if the base comes from an imported module.
@@ -549,6 +530,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                 }
             } else {
                 std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
+                if (st._vars.count(subobj_name)) continue;
                 auto subobj_field = member_variable_definition::make_shared(st.shared_as<aggregate>(), subobj_name);
                 subobj_field->set_type(bs.base->get_struct_type());
                 st._vars.insert({subobj_name, subobj_field});
@@ -609,10 +591,11 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                 }
             }
         }
+        st.set_bases_resolved(true);
     }
 
     // For non-static inner aggregates, inject a synthetic __parent__ member variable.
-    if (st.is_inner()) {
+    if (st.is_inner() && !st._vars.count("__parent__")) {
         auto outer_st = st.get_enclosing_structure();
         auto outer_ref_type = outer_st->get_struct_type()->get_reference();
         auto parent_field = member_variable_definition::make_shared(st.shared_as<aggregate>(), "__parent__");
