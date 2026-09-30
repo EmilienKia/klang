@@ -69,45 +69,79 @@
 
 #### Current bugs and gaps to fix
 
-- Known generic call-site limitations (found by Phase 12, tracked for future fix).
-  Detailed analysis of the first two items (with examples and resolution options):
-  see `GENERICS-KNOWN-BUGS.md`. Note: the owner-argument constructor call already compiles;
-  the actual defect is that the erased `T!` is released with `free` without running the
-  destructor.
-    - [ ] **Generic constructor call with owner `T!` argument.** Symptom: instantiating a
-      generic class whose constructor takes `T!` (owner) with a concrete `ConcreteType!`
-      argument at the call site fails to compile. Root cause: the "uniform synthesis" model
-      erases every generic type parameter `T` to `byte*` in the synthesized body, so a
-      constructor parameter declared `v : T!` becomes `v : byte*!` in the emitted IR. The
-      call-site overload resolver then tries to implicitly convert the caller's
-      `ConcreteType!` (owner of a concrete aggregate) to `byte*!` (owner of an opaque byte
-      pointer) and there is currently no adaptation path for owner-to-opaque-owner
-      conversion (unlike plain pointers, where `ConcreteType* → byte*` already has an
-      adaptation rule). Fix direction: extend `adapt_from_owner` / `gen_adapt_type.cpp`
-      with an owner-erasure conversion symmetric to the existing pointer-erasure one, and
-      make sure the destructor/move semantics of the erased `byte*!` correctly delegate to
-      the concrete type's real destructor (needed because owners run cleanup code, unlike
-      raw pointers). Repro: `test-gen-generic.cpp`, "Known-limitation: generic constructor
-      with owner arg at call site" (`[.][generic][known-limitation]`).
-    - [ ] **Member access on `T*` inside a generic body.** Symptom: inside a generic
-      class/function body, writing `v.field` where `v : T*` fails to compile — this is a
-      deliberate by-design restriction, not a regression. Root cause: the "uniform
-      synthesis" model compiles the generic body exactly once, with every type parameter
-      erased to `byte*` (an opaque pointer with no known fields), so the generated IR has no
-      layout information to resolve `.field` against. Concrete field access can only happen
-      where the concrete type is known, i.e. at the call site, outside the generic body.
-      This is an architectural trade-off (single compiled body reused for every
-      instantiation, vs. per-instantiation monomorphization like C++ templates) rather than
-      a bug — proper support would require either (a) monomorphizing generic bodies per
-      concrete type argument (large change: multiplies codegen work and drops the "compile
-      generic body once" invariant relied upon elsewhere), or (b) a constrained-generics /
-      concept system that lets the body describe the subset of `T`'s layout it needs (e.g.
-      "T has field `x : int`") and synthesizes per-field accessor thunks — effectively a
-      lightweight vtable-of-accessors passed alongside the erased pointer. Both are
-      substantial, cross-cutting designs; recommend scoping as a dedicated future phase
-      (concepts / type traits, already listed above) rather than a point fix. Repro:
-      `test-gen-generic.cpp`, "Known-limitation: member access on generic T* in generic
-      body" (`[.][generic][known-limitation]`).
+- Generics (type-erased, single synthesis). Feature overview:
+  `doc/spec/language/templates/generic.md`. Model recap: a generic is a template with
+  restrictions; its body is synthesised once with every type parameter erased to an opaque
+  pointer (today `byte*`), only non-owning addressers (`& * ? +`) may be applied to a
+  parameter, and users of the generic keep the concrete types and perform the checks/casts.
+    - [x] **Owners and drains as generic parameters/arguments**: not supported, by design
+      (`T!`, `T#`, `Box<Dog!>` are rejected with `0x1102` / `0x1106` / `0x1107`). Possible
+      future support through an owned destruction callable passed to the generic (under study).
+      History: the call `Holder<Dog>(d)` with `d : Dog!` and `Holder(v : T!)` already
+      compiled (owner erasure adaptation rules exist in `gen_adapt_type.cpp` and
+      `resolvers_type_ref.cpp`); the real defect was that the erased `byte*!` was released with
+      a bare `free` (`emit_owner_object_destroy` in `gen_helpers.hpp` only handles struct,
+      array and primitive pointees), so the destructor of the owned object never ran.
+      Rejected options: a virtual-destructor branch for opaque owners (needs a marker type to
+      tell it from a user `byte*!`, and `k::Object`), erasing `class T` to `::k::Object*`, or
+      a per-instantiation drop glue (changes layout/ABI).
+    - [x] **Member access through an erased parameter** (`v->field`, `v.method()` with
+      `v : T*`) is a compile error by design (`0x1108`), in generic aggregates, functions and
+      methods. Rejected options: erasing `T` to its `: Base` bound (Java-like), monomorphizing
+      generic aggregates (breaks the single-synthesis/KDI signature-only model), structural
+      constraints with accessor thunks (needs concepts). The early check in
+      `generic_constraint_validator` (`resolvers_generic.cpp`) is based on declared types; the
+      remaining cases (e.g. the result of a call, `ident(v)->n`) are rejected by the resolver
+      in `gen_expr_member.cpp` with the same diagnostic.
+    - [x] **Single synthesis for generic functions and methods** (free functions and methods of
+      non-generic classes). Done: `template_instantiator::synthesize_generic_function` builds the
+      single erased body (cached under `"<generic_synthesis>"`, named `f<generic>`, weak linkage);
+      each use site with concrete arguments gets a body-less *facade* (`signature_only` clone,
+      `function::set_erased_target`) that carries the concrete signature for overload resolution
+      and type checking, wired by `type_reference_resolver::link_generic_facade` at the four
+      instantiation sites of `gen_expr_invocation.cpp`. Invocation codegen redirects a facade to
+      its target (same LLVM signature); the facade is skipped by the declaration and
+      implementation generators, the KDI exporter and `compiler::verify_mangled_names`. A generic
+      body calling a generic with an erased argument works through deduction; the kind/bound
+      validation skips erased arguments. Also fixed: deducing `T*` from a pointer *variable*
+      (`ident(p)` with `p : Dog*`) used to deduce `T = Dog*` (implicit reference not stripped in
+      `deduce_from_types`). Tests: `test-gen-generic.cpp`, `[generic][synthesis]`.
+      Still open: an explicit `f<T>(...)` naming a parameter of the enclosing generic is rejected
+      as a bare `T` (`0x1101`, validator); a generic method declared inside a generic class still
+      instantiates its own parameters like a template.
+    - [x] Erased-parameter marker type: `erased_param_type` (a `pointer_type` subclass built by
+      `type::get_erased_param()`, tested with `type::is_erased_param`) replaces `pointer<byte>`;
+      the 5 copies of `is_generic_opaque_ptr` now use it. It mangles and compares exactly like
+      `byte*`, so symbols are unchanged. Dedicated resolver diagnostic for member access on an
+      erased type (`gen_expr_member.cpp`, `0x1108`) done.
+    - [ ] **Cross-module use of generic *aggregates* is unreliable** (klangc even segfaults in LLVM
+      passes). Diagnosis with a library exporting `generic<class T> class Holder { private val :
+      T*; ... }` and a consumer using `Holder<Seed>`: the consumer builds its own instance from
+      the signature-only template definition (`instantiate_aggregate`, real types), and the KDI
+      `aggregate_signature.layout` is empty, so the instance has no `val` member (size mismatch
+      with the library object); the library only emits the erased synthesis when it instantiates
+      it itself, so the symbols may be missing; body-less instantiation members get
+      `linkonce_odr` on their declarations (invalid IR: `Global is external, but doesn't have
+      external or weak linkage`). Note: keeping declarations external by testing "no body" in
+      `declaration_generator::visit_function` is NOT enough, because implicit destructors and
+      constructors of template instances also have no body block (it broke the static-link
+      diamond COMDAT tests in `klangc-tests`); imported signature-only members must be identified
+      explicitly.
+      Fix direction: (1) synthesise every generic aggregate at definition time in the defining
+      module (`instantiate_template_aggregate` with erased arguments, from the type-reference
+      pass over the generic definition) so its symbols always exist; (2) export the layout of the
+      erased synthesis in the signature (or export the erased class as a regular aggregate) and
+      make the consumer's `Holder<Seed>` use it instead of a re-instantiation, keeping the
+      `generic_usages` descriptor for type checking; (3) KDI must be able to represent the erased
+      parameter (a `kdi_template_param_ref` or a dedicated erased type), otherwise imported
+      `byte*` members are no longer recognised as erased by the adaptation rules (they test
+      `type::is_erased_param`); (4) KDI spec update under `doc/spec/kdi/`. Also export generic
+      methods of non-generic classes (missing from the KDI, like every member template of a
+      non-template aggregate). For generic *functions* the source-based export already works
+      (the consumer re-synthesises the erased body).
+    - [ ] Owned members of an aggregate are not destroyed automatically when the aggregate is
+      destroyed (observed on a non-generic class holding `Dog!`; not generic-specific). Check
+      whether this is intended.
     - [x] **Explicit generic type args in a member method call on a non-generic host
       class** (`obj.method<zoo::Dog>(arg)`). Fixed: the member-call path only used
       `context::resolve_type`, so namespace-qualified types, aliases and enclosing template

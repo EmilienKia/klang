@@ -66,6 +66,7 @@ class structure;
 class null_type;
 class reference_type;
 class pointer_type;
+class erased_param_type;
 class link_type;
 class view_type;
 class owner_type;
@@ -89,6 +90,7 @@ protected:
 
     std::shared_ptr<reference_type> reference;
     std::shared_ptr<pointer_type> pointer;
+    std::shared_ptr<erased_param_type> erased_param;
     std::shared_ptr<link_type> link;
     std::shared_ptr<view_type> view;
     std::shared_ptr<owner_type> owner;
@@ -141,6 +143,8 @@ public:
     inline static bool is_view(const std::shared_ptr<type>& type);
     inline static bool is_owner(const std::shared_ptr<type>& type);
     inline static bool is_drain(const std::shared_ptr<type>& type);
+    /** True if the type (ignoring const) is the erased stand-in of a generic type parameter. */
+    inline static bool is_erased_param(const std::shared_ptr<type>& type);
     /** True if the type is a const-qualified type. */
     inline static bool is_const(const std::shared_ptr<type>& type);
     /** Remove const qualifier if present, return the inner type. If not const, return as-is. */
@@ -193,6 +197,11 @@ public:
     std::shared_ptr<view_type> get_view();
     std::shared_ptr<owner_type> get_owner();
     std::shared_ptr<drain_type> get_drain();
+    /**
+     * The erased generic-parameter stand-in built over this type (expected to be the
+     * primitive `byte`); cached like the addresser wrappers so that it stays alive.
+     */
+    std::shared_ptr<erased_param_type> get_erased_param();
     std::shared_ptr<const_type> get_const();
     std::shared_ptr<array_type> get_array();
     std::shared_ptr<sized_array_type> get_array(unsigned long size);
@@ -527,6 +536,26 @@ public:
 
 inline bool type::is_pointer(const std::shared_ptr<type>& type) {
     return std::dynamic_pointer_cast<pointer_type>(type) != nullptr;
+}
+
+/**
+ * Pointer type standing for an erased generic type parameter.
+ *
+ * Generic bodies are synthesised once with every type parameter replaced by this
+ * opaque pointer (a `byte*` at the LLVM level). It behaves exactly like
+ * pointer<byte> for layout, equality and mangling, but a distinct class lets the
+ * compiler tell an erased parameter from a `byte*` written by the user.
+ * Instances are created only by type::get_erased_param().
+ */
+class erased_param_type : public pointer_type {
+protected:
+    friend class type;
+
+    erased_param_type(const std::shared_ptr<type>& byte_type) : pointer_type(byte_type) {}
+};
+
+inline bool type::is_erased_param(const std::shared_ptr<type>& t) {
+    return std::dynamic_pointer_cast<erased_param_type>(remove_const(t)) != nullptr;
 }
 
 

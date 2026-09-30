@@ -29,7 +29,8 @@ arguments.
 
 K templates follow a **monomorphization** model: each unique set of template arguments
 produces a distinct, fully-independent concrete entity (function or aggregate). There is
-no type erasure or runtime dispatch on template parameters.
+no type erasure or runtime dispatch on template parameters. A restricted, type-erased
+variant compiled once is described in [generic.md](generic.md) (work in progress).
 
 ### 1.1 Currently Implemented
 

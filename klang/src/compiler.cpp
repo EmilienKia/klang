@@ -727,8 +727,9 @@ void compiler::verify_mangled_names() {
 
             if (auto fn = std::dynamic_pointer_cast<k::model::function>(elem)) {
                 // Template definitions are blueprints; deleted functions are never emitted
-                // and legitimately carry no mangled name.
-                if (!fn->is_template() && !fn->is_deleted()) check(*fn, "function");
+                // and legitimately carry no mangled name. Generic-function facades are
+                // never emitted (they forward to the erased synthesis).
+                if (!fn->is_template() && !fn->is_deleted() && !fn->get_erased_target()) check(*fn, "function");
                 return;
             }
             if (auto un = std::dynamic_pointer_cast<k::model::union_type_def>(elem)) {

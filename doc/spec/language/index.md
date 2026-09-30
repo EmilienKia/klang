@@ -96,6 +96,7 @@ Examples are included where they clarify the normative text.
 | Page | Description |
 |------|-------------|
 | [Templates](templates/templates.md) | Template declarations, type and value parameters, kind constraints, base-type constraints, default parameters, explicit instantiation, monomorphization, name mangling |
+| [Generics](templates/generic.md) | Generic declarations (WIP overview): single synthesis with type erasure, differences from templates, restrictions (no owner/drain, no member access through parameters), current limitations |
 
 ### Dynamic Memory
 

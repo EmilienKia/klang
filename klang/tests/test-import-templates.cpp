@@ -374,7 +374,7 @@ TEST_CASE("import generic — signature-only template_def is materialised into m
     REQUIRE(box_tpl->get_function("relay") != nullptr);
 }
 
-TEST_CASE("import generic<class> — owner placeholder is preserved in signature metadata",
+TEST_CASE("import generic<class> — pointer placeholder is preserved in signature metadata",
           "[import][template][generic][model]") {
     TmpKdi lib(R"K(
         module tplgenericownermeta;
@@ -384,7 +384,7 @@ TEST_CASE("import generic<class> — owner placeholder is preserved in signature
 
         generic<class T>
         class Box {
-            relay(v : T!) : T! { return v; }
+            relay(v : T*) : T* { return v; }
         }
 
         dummy() : int { return 0; }
@@ -402,14 +402,14 @@ TEST_CASE("import generic<class> — owner placeholder is preserved in signature
             REQUIRE(td.aggregate_signature->methods.size() == 1);
 
             const auto& method = td.aggregate_signature->methods[0];
-            REQUIRE(std::holds_alternative<kdi::kdi_owner_type>(method.return_type.value));
-            auto& ret_inner = *std::get<kdi::kdi_owner_type>(method.return_type.value).inner;
+            REQUIRE(std::holds_alternative<kdi::kdi_ptr_type>(method.return_type.value));
+            auto& ret_inner = *std::get<kdi::kdi_ptr_type>(method.return_type.value).inner;
             REQUIRE(std::holds_alternative<kdi::kdi_template_param_ref>(ret_inner.value));
             REQUIRE(std::get<kdi::kdi_template_param_ref>(ret_inner.value).name == "T");
 
             REQUIRE(method.params.size() == 1);
-            REQUIRE(std::holds_alternative<kdi::kdi_owner_type>(method.params[0].type.value));
-            auto& param_inner = *std::get<kdi::kdi_owner_type>(method.params[0].type.value).inner;
+            REQUIRE(std::holds_alternative<kdi::kdi_ptr_type>(method.params[0].type.value));
+            auto& param_inner = *std::get<kdi::kdi_ptr_type>(method.params[0].type.value).inner;
             REQUIRE(std::holds_alternative<kdi::kdi_template_param_ref>(param_inner.value));
             REQUIRE(std::get<kdi::kdi_template_param_ref>(param_inner.value).name == "T");
             found_def = true;
@@ -458,8 +458,8 @@ TEST_CASE("import generic<class> — nested aggregate template_def keeps generic
     REQUIRE(found_def);
 }
 
-TEST_CASE("cross-module generic function — owner parameter works after KDI import",
-          "[import][e2e][template][owner]") {
+TEST_CASE("cross-module generic function — pointer parameter works after KDI import",
+          "[import][e2e][template][generic]") {
     auto result = build_exec_with_lib(
         R"K(
             module generic_owner_lib;
@@ -468,7 +468,7 @@ TEST_CASE("cross-module generic function — owner parameter works after KDI imp
             }
 
             generic<class T>
-            is_not_null(v : T!) : int {
+            is_not_null(v : T*) : int {
                 if (v == null) {
                     return 0;
                 }
@@ -480,8 +480,8 @@ TEST_CASE("cross-module generic function — owner parameter works after KDI imp
             import generic_owner_lib;
 
             main() : int {
-                d : generic_owner_lib::Dog! = new generic_owner_lib::Dog();
-                return generic_owner_lib::is_not_null<generic_owner_lib::Dog>(d);
+                d : generic_owner_lib::Dog;
+                return generic_owner_lib::is_not_null<generic_owner_lib::Dog>(&d);
             }
         )K");
 

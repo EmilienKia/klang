@@ -280,6 +280,15 @@ protected:
         const std::shared_ptr<type>& arg_type,
         const element& context_elem);
 
+    /**
+     * Turn @p facade (a per-argument-set, body-less instance of the generic function
+     * @p tpl_func carrying the concrete call-site signature) into a forwarder to the
+     * single type-erased synthesis of @p tpl_func, building and resolving that
+     * synthesis on first use.
+     */
+    void link_generic_facade(const std::shared_ptr<function>& tpl_func,
+                             const std::shared_ptr<function>& facade);
+
     /** Map a bare template parameter name to the concrete argument of the enclosing instantiation. */
     std::shared_ptr<type> resolve_type_from_instantiation_context(
         const std::shared_ptr<unresolved_type>& unresolved);

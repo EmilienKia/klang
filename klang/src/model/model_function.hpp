@@ -251,6 +251,14 @@ protected:
      */
     bool _is_instantiation = false;
 
+    /**
+     * For a per-argument-set *facade* of a generic function or method: the single
+     * type-erased synthesis that actually implements it. A facade carries the
+     * concrete (call-site) signature, has no body and is never emitted; calls to
+     * it are emitted as calls to the erased synthesis.
+     */
+    std::shared_ptr<function> _erased_target;
+
      /**
       * Type substitution map used when this function was instantiated from a template
       * (e.g. {"R"→int, "E"→int} for expected__int_int).  Set by
@@ -533,6 +541,12 @@ public:
 
     /** Mark this function as belonging to a synthesised template instantiation. */
     void mark_instantiation() { _is_instantiation = true; }
+
+    /** The type-erased synthesis this generic-function facade forwards to (nullptr if none). */
+    const std::shared_ptr<function>& get_erased_target() const { return _erased_target; }
+
+    /** Turn this function into a facade forwarding to the erased synthesis @p target. */
+    void set_erased_target(std::shared_ptr<function> target) { _erased_target = std::move(target); }
 
 };
 

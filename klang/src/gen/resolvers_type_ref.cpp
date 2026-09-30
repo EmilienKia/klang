@@ -1866,7 +1866,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
         std::string tpl_short_name = tpl_agg ? tpl_agg->get_short_name() : tpl_union->get_short_name();
         size_t err_idx;
         std::string err_reason;
-        if (!validate_template_arg_constraints(ti->params, model_args, err_idx, err_reason)) {
+        if (!validate_template_arg_constraints(*ti, model_args, err_idx, err_reason)) {
             auto [code, msg] = format_constraint_error(
                 tpl_short_name, ti->params, model_args, err_idx, err_reason);
             throw_error(code, lex::opt_any_lexeme{}, msg);
@@ -2508,11 +2508,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             // Generic erasure: ptr<Concrete> ↔ ptr<byte*> or ptr<byte*> ↔ ptr<Concrete>
             {
                 auto is_generic_opaque_sub = [](const std::shared_ptr<k::model::type>& sub) -> bool {
-                    auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(sub));
-                    if (!ptr) return false;
-                    auto inner = type::remove_const(ptr->get_subtype());
-                    auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
-                    return prim && prim->get_type() == primitive_type::BYTE;
+                    return type::is_erased_param(sub);
                 };
                 if ((src_st_type && is_generic_opaque_sub(tgt_sub_nc)) ||
                     (tgt_st_type && is_generic_opaque_sub(src_sub_nc)) ||
@@ -2622,11 +2618,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             // Generic erasure: owner<Concrete> ↔ owner<byte*>
             {
                 auto is_generic_opaque_sub = [](const std::shared_ptr<k::model::type>& sub) -> bool {
-                    auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(sub));
-                    if (!ptr) return false;
-                    auto inner = type::remove_const(ptr->get_subtype());
-                    auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
-                    return prim && prim->get_type() == primitive_type::BYTE;
+                    return type::is_erased_param(sub);
                 };
                 if ((std::dynamic_pointer_cast<struct_type>(src_sub_nc) && is_generic_opaque_sub(tgt_sub_nc)) ||
                     (is_generic_opaque_sub(src_sub_nc) && std::dynamic_pointer_cast<struct_type>(tgt_sub_nc))) {
@@ -2764,11 +2756,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 // Generic erasure: ref<owner<Concrete>> → owner<byte*>
                 {
                     auto is_generic_opaque_sub = [](const std::shared_ptr<k::model::type>& sub) -> bool {
-                        auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(sub));
-                        if (!ptr) return false;
-                        auto inner = type::remove_const(ptr->get_subtype());
-                        auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
-                        return prim && prim->get_type() == primitive_type::BYTE;
+                        return type::is_erased_param(sub);
                     };
                     if (std::dynamic_pointer_cast<struct_type>(own_sub_nc) && is_generic_opaque_sub(tgt_sub_nc))
                         return CAST_WIDENING;
@@ -3225,11 +3213,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // (opaque pointers), this is a no-op bitcast.
     {
         auto is_generic_opaque = [](const std::shared_ptr<k::model::type>& sub) -> bool {
-            auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(sub));
-            if (!ptr) return false;
-            auto inner = type::remove_const(ptr->get_subtype());
-            auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
-            return prim && prim->get_type() == primitive_type::BYTE;
+            return type::is_erased_param(sub);
         };
 
         auto check_generic_erasure = [&](const std::shared_ptr<k::model::type>& src,

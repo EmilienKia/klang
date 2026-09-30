@@ -127,6 +127,14 @@ std::shared_ptr<pointer_type> type::get_pointer()
     return pointer;
 }
 
+std::shared_ptr<erased_param_type> type::get_erased_param()
+{
+    if(!erased_param) {
+        erased_param = std::shared_ptr<erased_param_type>(new erased_param_type(shared_from_this()));
+    }
+    return erased_param;
+}
+
 std::shared_ptr<link_type> type::get_link()
 {
     if(!link) {

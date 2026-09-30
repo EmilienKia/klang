@@ -708,7 +708,7 @@ static type_substitution_map build_generic_substitution_map(
     if (!byte_type) return result;
 
     // Generic synthesis uses a uniform opaque pointer model type (i8*).
-    auto opaque_ptr_type = byte_type->get_pointer();
+    std::shared_ptr<type> opaque_ptr_type = byte_type->get_erased_param();
     for (const auto& param : ti.params) {
         if (param.is_type_param() && !param.name.empty()) {
             result[param.name] = opaque_ptr_type;
@@ -1491,7 +1491,8 @@ void template_instantiator::populate_function_from_template(
     const function& src,
     const type_substitution_map& subst,
     const value_substitution_map& val_subst,
-    const pack_substitution_map& pack_subst)
+    const pack_substitution_map& pack_subst,
+    bool signature_only)
 {
     // Set return type
     dst->set_has_explicit_return_type(src.has_explicit_return_type());
@@ -1551,7 +1552,7 @@ void template_instantiator::populate_function_from_template(
 
     // Clone body only when the source function actually has one.
     // Using get_block() would synthesize empty blocks for signature-only imports.
-    auto src_block = src._block;
+    auto src_block = signature_only ? nullptr : src._block;
     if (src_block) {
         auto dst_block = dst->get_block();
         if (dst_block) {
@@ -2193,7 +2194,8 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     std::shared_ptr<ns> parent_ns,
     k::model::unit& unit,
     std::shared_ptr<context> ctx,
-    k::log::logger& logger)
+    k::log::logger& logger,
+    bool signature_only)
 {
     auto* ti = tpl_def.get_tpl_info();
     if (!ti) return nullptr;
@@ -2228,7 +2230,7 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     concrete->set_compiler_generated(tpl_def.is_compiler_generated());
 
     // 2. Populate from template (params, return type, body)
-    populate_function_from_template(concrete, tpl_def, subst, val_subst, pack_subst);
+    populate_function_from_template(concrete, tpl_def, subst, val_subst, pack_subst, signature_only);
 
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);
@@ -2243,6 +2245,63 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     // 3. Register in the instantiation cache
     ti->instantiations[key] = concrete;
 
+    return concrete;
+}
+
+std::shared_ptr<function> template_instantiator::synthesize_generic_function(
+    function& tpl_def,
+    std::shared_ptr<ns> parent_ns,
+    std::shared_ptr<aggregate> parent_agg,
+    std::shared_ptr<context> ctx,
+    bool& created)
+{
+    created = false;
+    auto* ti = tpl_def.get_tpl_info();
+    if (!ti || !ti->is_generic) return nullptr;
+
+    auto cached = ti->instantiations.find(generic_synthesis_key);
+    if (cached != ti->instantiations.end()) {
+        if (auto* fn_ptr = std::get_if<std::shared_ptr<function>>(&cached->second)) {
+            return *fn_ptr;
+        }
+    }
+
+    auto subst = build_generic_substitution_map(*ti, ctx);
+    if (subst.empty() && !ti->params.empty()) return nullptr;
+
+    // Every type parameter maps to the erased stand-in; value parameters do not exist in generics.
+    std::vector<template_argument> erased_args;
+    for (const auto& param : ti->params) {
+        if (!param.is_type_param()) return nullptr;
+        erased_args.push_back(template_argument::make_type(subst.at(param.name)));
+    }
+
+    const std::string base_name = tpl_def.get_short_name();
+    const std::string syn_name = base_name + "<generic>";
+    std::shared_ptr<function> concrete = parent_agg
+        ? parent_agg->define_function(syn_name, tpl_def.is_static())
+        : parent_ns->define_function(syn_name, tpl_def.is_static());
+    if (!concrete) return nullptr;
+
+    concrete->set_visibility(tpl_def.get_visibility());
+    concrete->set_const_member(tpl_def.is_const_member());
+    concrete->set_operator(tpl_def.is_operator());
+    concrete->set_aliasing(tpl_def.get_aliasing());
+    concrete->set_compiler_generated(tpl_def.is_compiler_generated());
+    if (parent_agg) {
+        concrete->set_virtual(false);
+        concrete->set_vtable_slot(-1);
+    }
+
+    populate_function_from_template(concrete, tpl_def, subst, value_substitution_map{}, pack_substitution_map{});
+    concrete->set_tpl_instantiation_info(base_name, erased_args);
+    concrete->mark_instantiation();
+    concrete->set_tpl_instantiation_subst(subst);
+
+    // Registered before the caller resolves the body so that a recursive call
+    // (or a generic calling itself with an erased argument) finds it.
+    ti->instantiations[generic_synthesis_key] = concrete;
+    created = true;
     return concrete;
 }
 

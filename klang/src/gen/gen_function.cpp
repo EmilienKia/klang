@@ -953,6 +953,10 @@ void declaration_generator::visit_function(function &function) {
     if (auto owner = function.get_owner(); owner && owner->is_template()) {
         return;
     }
+    // Generic-function facades are never emitted: calls go to the erased synthesis.
+    if (function.get_erased_target()) {
+        return;
+    }
     trace("[declaration_generator::visit_function] '{}'", {function.get_short_name()});
     // Deleted constructors must never be called; do not emit any LLVM declaration for them.
     if (function.is_deleted()) {
@@ -1235,6 +1239,9 @@ void implementation_generator::visit_function(function &function) {
     }
     // Methods that still belong to a template definition are not concrete call targets.
     if (auto owner = function.get_owner(); owner && owner->is_template()) {
+        return;
+    }
+    if (function.get_erased_target()) {
         return;
     }
     trace("[implementation_generator::visit_function] '{}'", {function.get_short_name()});

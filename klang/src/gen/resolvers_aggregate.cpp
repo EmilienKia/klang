@@ -768,7 +768,7 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         std::string tpl_short_name = tpl_agg ? tpl_agg->get_short_name() : tpl_union->get_short_name();
         size_t err_idx;
         std::string err_reason;
-        if (!validate_template_arg_constraints(ti->params, model_args, err_idx, err_reason)) {
+        if (!validate_template_arg_constraints(*ti, model_args, err_idx, err_reason)) {
             auto [code, msg] = format_constraint_error(
                 tpl_short_name, ti->params, model_args, err_idx, err_reason);
             throw_error(code, lex::opt_any_lexeme{}, msg);

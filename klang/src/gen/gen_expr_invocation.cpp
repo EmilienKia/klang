@@ -202,6 +202,35 @@ std::shared_ptr<type> type_reference_resolver::instantiate_wrapped_return_type(
 }
 
 
+void type_reference_resolver::link_generic_facade(
+    const std::shared_ptr<function>& tpl_func,
+    const std::shared_ptr<function>& facade)
+{
+    if (!tpl_func || !facade) return;
+
+    std::shared_ptr<aggregate> host = tpl_func->is_member() ? facade->get_owner() : nullptr;
+    auto parent_ns = _unit.get_root_namespace();
+    if (auto parent_elem = tpl_func->parent<element>()) {
+        if (auto owner_ns = std::dynamic_pointer_cast<ns>(parent_elem)) parent_ns = owner_ns;
+    }
+
+    bool created = false;
+    auto synthesis = template_instantiator::synthesize_generic_function(
+        *tpl_func, parent_ns, host, _context, created);
+    if (!synthesis) return;
+
+    if (created) {
+        symbol_resolver sr(*this, _context, _unit);
+        synthesis->accept(sr);
+        aggregate_type_resolver atr(*this, _context, _unit);
+        synthesis->accept(atr);
+        signature_resolver sigr(*this, _context, _unit);
+        synthesis->accept(sigr);
+        synthesis->accept(*this);
+    }
+    facade->set_erased_target(synthesis);
+}
+
 std::shared_ptr<type> type_reference_resolver::resolve_type_from_instantiation_context(
     const std::shared_ptr<unresolved_type>& unresolved)
 {
@@ -898,7 +927,12 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
                 size_t err_idx;
                 std::string err_reason;
-                if (!validate_template_arg_constraints(ti->params, final_args, err_idx, err_reason)) {
+                if (!validate_template_arg_constraints(*ti, final_args, err_idx, err_reason)) {
+                    if (err_reason.rfind("generic_", 0) == 0) {
+                        auto [code, msg] = format_constraint_error(
+                            tpl_func->get_short_name(), ti->params, final_args, err_idx, err_reason);
+                        throw_error(code, expr.first_lexeme(), msg);
+                    }
                     rejected_tpl_candidates.emplace_back(tpl_func, "template constraint not satisfied: " + err_reason);
                     continue;
                 }
@@ -953,7 +987,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             concrete->set_aliasing(tpl_func->get_aliasing());
                             concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                             template_instantiator::populate_function_from_template_public(
-                                concrete, *tpl_func, subst, val_subst, pack_subst);
+                                concrete, *tpl_func, subst, val_subst, pack_subst, tpl_func->is_generic());
                             concrete->set_tpl_instantiation_info(base_name, final_args);
                             concrete->mark_instantiation();
                             ti->instantiations[key] = concrete;
@@ -969,7 +1003,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     }
                     newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
                     concrete = template_instantiator::instantiate_function(
-                        *tpl_func, final_args, parent_ns, _unit, _context, *this);
+                        *tpl_func, final_args, parent_ns, _unit, _context, *this, tpl_func->is_generic());
                 }
 
                 if (concrete) {
@@ -981,6 +1015,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         signature_resolver sigr(*this, _context, _unit);
                         concrete->accept(sigr);
                         concrete->accept(*this);
+                        if (tpl_func->is_generic()) {
+                            link_generic_facade(tpl_func, concrete);
+                        }
                     }
                     append_unique_candidate(concrete);
                 }
@@ -1086,7 +1123,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 concrete->set_aliasing(tpl_func->get_aliasing());
                                 concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                                 template_instantiator::populate_function_from_template_public(
-                                    concrete, *tpl_func, subst, val_subst, pack_subst);
+                                    concrete, *tpl_func, subst, val_subst, pack_subst, tpl_func->is_generic());
                                 concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args);
                                 concrete->mark_instantiation();
                                 ti->instantiations[key] = concrete;
@@ -1102,7 +1139,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                         newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
                         concrete = template_instantiator::instantiate_function(
-                            *tpl_func, deduction.deduced_args, parent_ns, _unit, _context, *this);
+                            *tpl_func, deduction.deduced_args, parent_ns, _unit, _context, *this, tpl_func->is_generic());
                     }
 
                     if (concrete) {
@@ -1114,6 +1151,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             signature_resolver sigr(*this, _context, _unit);
                             concrete->accept(sigr);
                             concrete->accept(*this);
+                            if (tpl_func->is_generic()) {
+                                link_generic_facade(tpl_func, concrete);
+                            }
                         }
                         append_unique_candidate(concrete);
                     }
@@ -1699,9 +1739,12 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     if (args_ok) {
                         size_t err_idx;
                         std::string err_reason;
-                        if (!validate_template_arg_constraints(ti->params, model_args, err_idx, err_reason)) {
+                        if (!validate_template_arg_constraints(*ti, model_args, err_idx, err_reason)) {
                             auto [code, msg] = format_constraint_error(
                                 tpl_func->get_short_name(), ti->params, model_args, err_idx, err_reason);
+                            if (err_reason.rfind("generic_", 0) == 0) {
+                                throw_error(code, expr.first_lexeme(), msg);
+                            }
                             logger_relay::error(code, lex::opt_any_lexeme{}, msg);
                             args_ok = false;
                         }
@@ -1731,7 +1774,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                     concrete->set_aliasing(tpl_func->get_aliasing());
                                     concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                                     template_instantiator::populate_function_from_template_public(
-                                        concrete, *tpl_func, subst, val_subst, pack_subst);
+                                        concrete, *tpl_func, subst, val_subst, pack_subst, tpl_func->is_generic());
                                     concrete->set_tpl_instantiation_info(base_name, model_args);
                                     concrete->mark_instantiation();
                                     ti->instantiations[key] = concrete;
@@ -1747,7 +1790,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             }
                             newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
                             concrete = template_instantiator::instantiate_function(
-                                *tpl_func, model_args, parent_ns, _unit, _context, *this);
+                                *tpl_func, model_args, parent_ns, _unit, _context, *this, tpl_func->is_generic());
                         }
                         if (concrete) {
                             if (newly_instantiated) {
@@ -1765,6 +1808,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                     concrete->accept(sigr);
                                 }
                                 concrete->accept(*this);
+                                if (tpl_func->is_generic()) {
+                                    link_generic_facade(tpl_func, concrete);
+                                }
                             }
 
                             // Replace all_candidates with just the concrete instance
@@ -1842,7 +1888,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 concrete->set_aliasing(tpl_func->get_aliasing());
                                 concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                                 template_instantiator::populate_function_from_template_public(
-                                    concrete, *tpl_func, subst, val_subst, pack_subst);
+                                    concrete, *tpl_func, subst, val_subst, pack_subst, tpl_func->is_generic());
                                 concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args);
                                 concrete->mark_instantiation();
                                 ti->instantiations[key] = concrete;
@@ -1858,7 +1904,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                         newly_instantiated = (ti->instantiations.find(key) == ti->instantiations.end());
                         concrete = template_instantiator::instantiate_function(
-                            *tpl_func, deduction.deduced_args, parent_ns, _unit, _context, *this);
+                            *tpl_func, deduction.deduced_args, parent_ns, _unit, _context, *this, tpl_func->is_generic());
                     }
 
                     if (concrete) {
@@ -1877,6 +1923,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 concrete->accept(sigr);
                             }
                             concrete->accept(*this);
+                            if (tpl_func->is_generic()) {
+                                link_generic_facade(tpl_func, concrete);
+                            }
                         }
 
                         if (std::find(all_candidates.begin(), all_candidates.end(), concrete) == all_candidates.end()) {
@@ -2547,8 +2596,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
     }
 
-    // Find the function definition
+    // Find the function definition. A generic-function facade forwards to the
+    // single type-erased synthesis (same LLVM signature: only pointers differ in type).
     auto function = callee->get_function();
+    while (function && function->get_erased_target()) function = function->get_erased_target();
     auto it = _context->_functions.find(function);
     if(it==_context->_functions.end()) {
         // Late materialization path for functions that appear after the main

@@ -339,6 +339,18 @@ bool validate_template_arg_constraints(
     std::string& error_kind);
 
 /**
+ * Same as above, with the additional restrictions of generic (type-erased)
+ * declarations: when @p ti describes a generic, owner ('!') and drain ('#')
+ * types are rejected as type arguments (error kinds "generic_owner_arg" and
+ * "generic_drain_arg").
+ */
+bool validate_template_arg_constraints(
+    const tpl_info& ti,
+    const std::vector<template_argument>& args,
+    size_t& error_index,
+    std::string& error_kind);
+
+/**
  * Build a pair { diagnostic_code, formatted_message } for a template
  * constraint violation identified by validate_template_arg_constraints.
  *
@@ -346,7 +358,8 @@ bool validate_template_arg_constraints(
  * @param params         Template parameter descriptors.
  * @param args           Concrete template arguments.
  * @param error_index    The 0-based index of the violating argument.
- * @param error_kind     The kind of violation ("kind", "not_aggregate", "constraint").
+ * @param error_kind     The kind of violation ("kind", "not_aggregate", "constraint",
+ *                       "generic_owner_arg", "generic_drain_arg").
  * @return { error_code (from template_diag), formatted message string }
  */
 std::pair<unsigned int, std::string> format_constraint_error(

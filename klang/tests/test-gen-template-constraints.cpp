@@ -813,10 +813,10 @@ TEST_CASE("[Z] M10: generic function rejects bare local variable type",
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [AA] Generic validation: owner local variable requires class/interface
+//  [AA] Generic validation: owner local variable is not supported
 // ════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("[AA] M10: generic function rejects owner local for typename param",
+TEST_CASE("[AA] M10: generic function rejects owner local of a type parameter",
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
@@ -830,7 +830,7 @@ TEST_CASE("[AA] M10: generic function rejects owner local for typename param",
         FAIL("Expected resolution_error to be thrown");
     } catch (const k::model::gen::resolution_error& e) {
         CHECK(e.get_diagnostic().code ==
-              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_REQUIRES_CLASS));
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED));
         CHECK(e.get_diagnostic().message.find("local variable 'owned'") != std::string::npos);
     }
 }
@@ -889,7 +889,7 @@ TEST_CASE("[AC] M10: generic function rejects cast target with bare type paramet
 //  [AD] Generic validation: owner cast target requires class/interface
 // ════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("[AD] M10: generic function rejects owner cast target for typename",
+TEST_CASE("[AD] M10: generic function rejects owner cast target of a type parameter",
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
@@ -903,7 +903,7 @@ TEST_CASE("[AD] M10: generic function rejects owner cast target for typename",
         FAIL("Expected resolution_error to be thrown");
     } catch (const k::model::gen::resolution_error& e) {
         CHECK(e.get_diagnostic().code ==
-              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_REQUIRES_CLASS));
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED));
         CHECK(e.get_diagnostic().message.find("cast target type") != std::string::npos);
     }
 }
@@ -958,7 +958,7 @@ TEST_CASE("[AF] M10: generic function rejects const-wrapped bare local type",
 //  [AG] Generic validation: const wrapper must not hide owner constraint
 // ════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("[AG] M10: generic function rejects const owner local for typename param",
+TEST_CASE("[AG] M10: generic function rejects const owner local of a type parameter",
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
@@ -972,7 +972,7 @@ TEST_CASE("[AG] M10: generic function rejects const owner local for typename par
         FAIL("Expected resolution_error to be thrown");
     } catch (const k::model::gen::resolution_error& e) {
         CHECK(e.get_diagnostic().code ==
-              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_REQUIRES_CLASS));
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED));
         CHECK(e.get_diagnostic().message.find("local variable 'owned'") != std::string::npos);
     }
 }
@@ -1003,10 +1003,10 @@ TEST_CASE("[AH] M10: generic function rejects explicit template arg with bare ty
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [AI] Generic validation: explicit owner arg requires class/interface
+//  [AI] Generic validation: explicit owner arg of a type parameter is rejected
 // ════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("[AI] M10: generic function rejects explicit owner template arg for typename",
+TEST_CASE("[AI] M10: generic function rejects explicit owner template arg of a type parameter",
           "[milestone10][template][constraints][generic][integration]") {
     try {
         gen_jit_throws(R"SRC(
@@ -1022,41 +1022,39 @@ TEST_CASE("[AI] M10: generic function rejects explicit owner template arg for ty
         FAIL("Expected resolution_error to be thrown");
     } catch (const k::model::gen::resolution_error& e) {
         CHECK(e.get_diagnostic().code ==
-              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_REQUIRES_CLASS));
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED));
         CHECK(e.get_diagnostic().message.find("explicit template argument #1") != std::string::npos);
     }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [AJ] Generic validation: explicit owner arg is accepted for class param
+//  [AJ] Generic validation: explicit owner arg is rejected even for class param
 // ════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("[AJ] M10: generic function accepts explicit owner template arg for class",
-          "[milestone10][template][constraints][generic][jit]") {
-    auto jit = gen_jit(R"SRC(
-        module gen_template_constraints_33;
-        class Boxed {
-            public value : int;
-            Boxed() : value(7) {}
-        }
+TEST_CASE("[AJ] M10: generic function rejects explicit owner template arg for class",
+          "[milestone10][template][constraints][generic][error]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module gen_template_constraints_33;
+            class Boxed {
+                public value : int;
+                Boxed() : value(7) {}
+            }
 
-        template<typename X>
-        consume() : int { return 1; }
+            template<typename X>
+            consume() : int { return 1; }
 
-        generic<class T>
-        fun ok(value: T&) : int {
-            return consume<T!>();
-        }
-
-        run() : int {
-            b : Boxed;
-            return ok<Boxed>(b);
-        }
-    )SRC");
-    REQUIRE(jit != nullptr);
-    auto run_fn = jit->lookup_symbol<int(*)()>("_KFN27gen_template_constraints_333runEv");
-    REQUIRE(run_fn != nullptr);
-    CHECK(run_fn() == 1);
+            generic<class T>
+            fun bad(value: T&) : int {
+                return consume<T!>();
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED));
+        CHECK(e.get_diagnostic().message.find("explicit template argument #1") != std::string::npos);
+    }
 }
 
 

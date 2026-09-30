@@ -35,20 +35,16 @@ namespace k::model::gen {
 namespace {
 
 /**
- * Detect the generic opaque pointer type: pointer<byte>.
- * This is what type parameter T maps to in synthesized generic code.
+ * Detect the erased generic type parameter (the opaque pointer type parameter T
+ * maps to in synthesized generic code).
  */
 bool is_generic_opaque_ptr(const std::shared_ptr<type>& t) {
-    auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(t));
-    if (!ptr) return false;
-    auto inner = type::remove_const(ptr->get_subtype());
-    auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
-    return prim && prim->get_type() == primitive_type::BYTE;
+    return type::is_erased_param(t);
 }
 
 /**
  * Check if a type conversion represents generic erasure:
- * ConcreteClass ↔ pointer<byte> (the opaque representation of T).
+ * ConcreteClass ↔ erased parameter (the opaque representation of T).
  * Used when comparing sub-types inside addressers (owner, ptr, link, view).
  */
 bool is_generic_erasure_pair(const std::shared_ptr<type>& a, const std::shared_ptr<type>& b) {

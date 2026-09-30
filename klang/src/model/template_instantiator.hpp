@@ -131,6 +131,7 @@ public:
      * @param unit        The compilation unit.
      * @param ctx         The model context.
      * @param logger      Logger for diagnostics.
+     * @param signature_only  Clone only the signature (no body): used for the facade of a generic function.
      * @return The concrete (non-template) function, or nullptr on failure.
      */
     static std::shared_ptr<function> instantiate_function(
@@ -139,7 +140,8 @@ public:
         std::shared_ptr<ns> parent_ns,
         k::model::unit& unit,
         std::shared_ptr<context> ctx,
-        k::log::logger& logger);
+        k::log::logger& logger,
+        bool signature_only = false);
 
     /**
      * Instantiate a template union with concrete arguments.
@@ -247,9 +249,28 @@ public:
         const function& src,
         const type_substitution_map& subst,
         const value_substitution_map& val_subst,
-        const pack_substitution_map& pack_subst = {}) {
-        populate_function_from_template(dst, src, subst, val_subst, pack_subst);
+        const pack_substitution_map& pack_subst = {},
+        bool signature_only = false) {
+        populate_function_from_template(dst, src, subst, val_subst, pack_subst, signature_only);
     }
+
+    /**
+     * Build the single type-erased synthesis of a generic function or method
+     * (twin of synthesize_generic_aggregate): every type parameter is replaced by
+     * the erased stand-in, the body is cloned once and the result is cached under
+     * the generic-synthesis key of @p tpl_def's tpl_info.
+     *
+     * @param parent_agg  Host aggregate for a member function, nullptr for a free
+     *                    function (then @p parent_ns is the host namespace).
+     * @param created     Set to true when a new function was built (the caller must
+     *                    then run it through the resolver pipeline).
+     */
+    static std::shared_ptr<function> synthesize_generic_function(
+        function& tpl_def,
+        std::shared_ptr<ns> parent_ns,
+        std::shared_ptr<aggregate> parent_agg,
+        std::shared_ptr<context> ctx,
+        bool& created);
 
 private:
     /**
@@ -352,7 +373,8 @@ private:
         const function& src,
         const type_substitution_map& subst,
         const value_substitution_map& val_subst,
-        const pack_substitution_map& pack_subst = {});
+        const pack_substitution_map& pack_subst = {},
+        bool signature_only = false);
 
     /**
      * Clone the contents of a block (statements) from source to destination,

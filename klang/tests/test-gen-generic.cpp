@@ -24,9 +24,10 @@
  *   [PARSE] Parsing: generic<class T> class/struct/function declarations.
  *   [PARSE] Parsing: generic<int N> rejected (value params not allowed).
  *   [MODEL] Model: is_generic()/is_template() flags are set correctly.
- *   [VAL]   Validator: direct bare-T usage → ERR_GENERIC_DIRECT_TYPE_USAGE (0x01B0).
- *   [VAL]   Validator: owner of typename param → ERR_GENERIC_OWNER_REQUIRES_CLASS (0x01B1).
- *   [VAL]   Validator: owner of class param is valid.
+ *   [VAL]   Validator: direct bare-T usage → ERR_GENERIC_DIRECT_TYPE_USAGE (0x1101).
+ *   [VAL]   Validator: owner/drain of a type parameter → ERR_GENERIC_OWNER/DRAIN_NOT_SUPPORTED.
+ *   [VAL]   Validator: owner/drain type arguments are rejected.
+ *   [VAL]   Validator: member access through an erased type parameter is rejected.
  *   [VAL]   Validator: multi-param, multi-addresser combinations.
  *   [SYN]   Synthesis: Box<Dog> and Box<Cat> share a single LLVM symbol.
  *   [GEN]   Codegen: generic class with pointer member, getter, setter.
@@ -70,10 +71,10 @@ TEST_CASE("Lex: 'generic' is a recognised keyword", "[lex][generic]") {
 //  PARSE
 // ============================================================================
 
-TEST_CASE("Parse: generic<class T> class with owner member", "[parser][generic]") {
+TEST_CASE("Parse: generic<class T> class with pointer member", "[parser][generic]") {
     test_logger log;
     k::source src{R"K(generic<class T> class Box {
-        public val : T!;
+        public val : T*;
     })K"};
     k::parse::parser parser(log, src);
     auto unit = parser.parse_unit();
@@ -143,7 +144,7 @@ TEST_CASE("Model: generic class has is_generic and is_template true", "[model][g
         module gen_generic_01;
 
         generic<class T> class Box {
-            public val : T!;
+            public val : T*;
         }
     )K");
     REQUIRE(comp);
@@ -210,58 +211,280 @@ TEST_CASE("Validator: bare T usage in local variable → ERR_GENERIC_DIRECT_TYPE
     );
 }
 
-TEST_CASE("Validator: owner of typename T → ERR_GENERIC_OWNER_REQUIRES_CLASS", "[validator][generic][error]") {
-    REQUIRE_THROWS_AS(
-        gen_jit_throws(R"K(
-            module gen_generic_05;
+namespace {
 
-            generic<typename T> class Holder {
-                val : T!;
-            }
-        )K"),
-        k::model::gen::resolution_error
-    );
+// Compile a generic snippet expecting a resolution_error with the given diagnostic code.
+void require_generic_error(std::string_view src, k::diag::generic_diag expected) {
+    try {
+        gen_jit_throws(src);
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code == static_cast<unsigned int>(expected));
+    }
 }
 
-TEST_CASE("Validator: owner of struct T → ERR_GENERIC_OWNER_REQUIRES_CLASS", "[validator][generic][error]") {
-    REQUIRE_THROWS_AS(
-        gen_jit_throws(R"K(
-            module gen_generic_06;
+} // namespace
 
-            generic<struct T> class Holder {
-                val : T!;
-            }
-        )K"),
-        k::model::gen::resolution_error
-    );
-}
-
-TEST_CASE("Validator: owner of class T is valid — compilation succeeds", "[validator][generic]") {
-    // Must NOT throw at model/compile level: class constraint satisfies the owner requirement.
-    // NOTE: JIT execution fails because the generic constructor call `Holder<Animal>(a)` requires
-    // an implicit `Animal! → byte*!` conversion that is not yet implemented. The synthesized
-    // constructor takes `byte*!` but the call site provides `Animal!`.
-    // See TODO.md: "Generic constructor call with owner argument at call site".
-    auto comp = compile_model(R"K(
-        module gen_generic_07;
-
-        class Animal {
-            public:
-            id(v: int) : int { return v; }
-        }
+TEST_CASE("Validator: owner of a class type parameter member is rejected", "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_05;
 
         generic<class T> class Holder {
-            private val : T!;
+            val : T!;
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED);
+}
+
+TEST_CASE("Validator: owner of typename/struct type parameter is rejected", "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_06a;
+
+        generic<typename T> class Holder {
+            val : T!;
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED);
+
+    require_generic_error(R"K(
+        module gen_generic_06b;
+
+        generic<struct T> class Holder {
+            val : T!;
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED);
+}
+
+TEST_CASE("Validator: owner constructor parameter of a class type parameter is rejected",
+          "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_07;
+
+        generic<class T> class Holder {
+            private val : T*;
             public:
-            Holder(v : T!) { val = v; }
-            get() : T* { return val; }
+            Holder(v : T!) { val = null; }
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED);
+}
+
+TEST_CASE("Validator: owner return type of a generic function is rejected", "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_07b;
+
+        generic<class T> make() : T! { return null; }
+    )K", k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED);
+}
+
+TEST_CASE("Validator: drain of a type parameter is rejected", "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_07c;
+
+        generic<class T> class Sink {
+            public:
+            take(v : T#) { }
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_DRAIN_NOT_SUPPORTED);
+
+    require_generic_error(R"K(
+        module gen_generic_07d;
+
+        generic<typename T> consume(v : T#) : int { return 0; }
+    )K", k::diag::generic_diag::ERR_GENERIC_DRAIN_NOT_SUPPORTED);
+}
+
+TEST_CASE("Validator: generic method of a non-generic class is validated",
+          "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_07e;
+
+        class Host {
+            public:
+            generic<class T> bad(v : T!) : int { return 0; }
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_OWNER_NOT_SUPPORTED);
+
+    require_generic_error(R"K(
+        module gen_generic_07f;
+
+        class Host {
+            public:
+            generic<class T> bad(v : T*) : int { local : T; return 0; }
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_DIRECT_TYPE_USAGE);
+}
+
+TEST_CASE("Validator: owner type argument of a generic class is rejected", "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_07g;
+
+        class Dog { public: }
+        generic<typename T> class Holder {
+            private val : T*;
+            public:
+            Holder() { val = null; }
+        }
+
+        test() : int {
+            h : Holder<Dog!>;
+            return 0;
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_ARG_OWNER_DRAIN_NOT_ALLOWED);
+}
+
+TEST_CASE("Validator: drain type argument of a generic class is rejected", "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_07h;
+
+        class Dog { public: }
+        generic<typename T> class Holder {
+            private val : T*;
+            public:
+            Holder() { val = null; }
+        }
+
+        test() : int {
+            h : Holder<Dog#>;
+            return 0;
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_ARG_OWNER_DRAIN_NOT_ALLOWED);
+}
+
+TEST_CASE("Validator: owner type argument of a generic function/method is rejected",
+          "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_07i;
+
+        class Dog { public: }
+        generic<typename T> pass(v : T*) : T* { return v; }
+
+        test() : int {
+            d : Dog;
+            r : Dog* = pass<Dog!>(&d);
+            return 0;
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_ARG_OWNER_DRAIN_NOT_ALLOWED);
+
+    require_generic_error(R"K(
+        module gen_generic_07j;
+
+        class Dog { public: }
+        class Host {
+            public:
+            generic<typename T> pass(v : T*) : T* { return v; }
+        }
+
+        test() : int {
+            d : Dog;
+            h : Host;
+            r : Dog* = h.pass<Dog#>(&d);
+            return 0;
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_ARG_OWNER_DRAIN_NOT_ALLOWED);
+}
+
+TEST_CASE("Validator: pointer/reference/link/view type arguments remain accepted", "[validator][generic]") {
+    auto comp = compile_model(R"K(
+        module gen_generic_07k;
+
+        class Dog { public: }
+        generic<class T> class Holder {
+            private val : T*;
+            public:
+            Holder() { val = null; }
+            isNull() : bool { return val == null; }
+        }
+
+        test() : int {
+            h : Holder<Dog>;
+            return h.isNull() ? 1 : 0;
         }
     )K");
-    // The generic class definition itself must compile without errors.
     REQUIRE(comp);
-    auto kls = find_klass(comp, "Holder");
-    REQUIRE(kls);
-    CHECK(kls->is_generic());
+}
+
+// ----------------------------------------------------------------------------
+//  Member access through an erased type parameter is forbidden by design.
+// ----------------------------------------------------------------------------
+
+TEST_CASE("Validator: field access through T* in a generic class is rejected", "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_08a;
+
+        class Dog { public id : int = 3; }
+        generic<class T> class Box {
+            private val : T*;
+            public:
+            Box() { val = null; }
+            read() : int { return val->id; }
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM);
+}
+
+TEST_CASE("Validator: access through this-qualified T* member is rejected", "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_08b;
+
+        class Dog { public id : int = 3; }
+        generic<class T> class Box {
+            private val : T*;
+            public:
+            Box() { val = null; }
+            read() : int { return this.val->id; }
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM);
+}
+
+TEST_CASE("Validator: method call through T& parameter of a generic class is rejected",
+          "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_08c;
+
+        class Dog { public: id() : int { return 3; } }
+        generic<class T> class Box {
+            public:
+            read(v : T&) : int { return v.id(); }
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM);
+}
+
+TEST_CASE("Validator: member access on erased local is rejected in generic function and method",
+          "[validator][generic][error]") {
+    require_generic_error(R"K(
+        module gen_generic_08d;
+
+        class Dog { public id : int = 3; }
+        generic<class T> get(v : T*) : int {
+            p : T* = v;
+            return p->id;
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM);
+
+    require_generic_error(R"K(
+        module gen_generic_08e;
+
+        class Dog { public id : int = 3; }
+        class Host {
+            public:
+            generic<class T> read(v : T*) : int { return v->id; }
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM);
+}
+
+TEST_CASE("Validator: member access on a non-erased value inside a generic body is accepted",
+          "[validator][generic]") {
+    // 'this->count' and a local struct value are concrete: only T-typed expressions are erased.
+    auto comp = compile_model(R"K(
+        module gen_generic_08f;
+
+        struct Counter { public n : int = 0; }
+        generic<class T> class Box {
+            private val : T*;
+            private count : int;
+            public:
+            Box() { val = null; count = 0; }
+            bump() : int { c : Counter; c.n = this.count; return c.n + count; }
+        }
+    )K");
+    REQUIRE(comp);
 }
 
 TEST_CASE("Validator: value param in generic declaration rejected at parse time", "[validator][generic][error]") {
@@ -282,12 +505,6 @@ TEST_CASE("Synthesis: generic class with two instantiation sites compiles succes
           "[synthesis][generic]") {
     // Both instantiations (Box<Animal1> and Box<Animal2>) must map to a single
     // synthesized aggregate — compilation must succeed without errors.
-    //
-    // NOTE: symbol-level inspection via nm is skipped because functions that
-    // instantiate the generic class at their call sites require an implicit
-    // `T! → byte*!` conversion that is not yet supported. The synthesized code
-    // itself is generated correctly; the limitation is at the call-site constructor
-    // argument binding. See TODO.md: "Generic constructor call with owner argument".
     auto comp = compile_model(R"K(
         module gen_generic_08;
 
@@ -303,9 +520,9 @@ TEST_CASE("Synthesis: generic class with two instantiation sites compiles succes
 
         // Generic Box — synthesised once for all concrete type arguments.
         generic<class T> class Box {
-            private item : T!;
+            private item : T*;
             public:
-            Box(v : T!) { item = v; }
+            Box(v : T*) { item = v; }
             get() : T* { return item; }
         }
     )K");
@@ -487,28 +704,154 @@ TEST_CASE("Generic class with null-check method executes correctly", "[gen][gene
 }
 
 // ============================================================================
-//  KNOWN LIMITATIONS (documented, currently skipped)
+//  SINGLE SYNTHESIS — generic functions and methods
 // ============================================================================
 
-TEST_CASE("Known-limitation: generic constructor with owner arg at call site",
-          "[.][generic][known-limitation]") {
-    // LIMITATION: When a generic class has a constructor taking `T!` (owner),
-    // instantiating it at the call site with a concrete `ConcreteType!` fails because
-    // the synthesized constructor rewrites T→byte* and the call site cannot implicitly
-    // convert `ConcreteType!` → `byte*!`.
-    // Tracked in TODO.md.
-    SKIP("Generic constructor with owner argument at call site is not yet supported.");
+TEST_CASE("Single synthesis: generic function is compiled once for all type arguments",
+          "[gen][generic][synthesis]") {
+    auto jit = gen_jit(R"K(
+        module gen_generic_syn_1;
+
+        class Dog { public n : int = 5; }
+        class Cat { public a : int = 0; public n : int = 9; }
+
+        generic<class T> pick(v : T*, w : T*) : T* { return w; }
+
+        test_syn() : int {
+            d : Dog;
+            c : Cat;
+            pd : Dog* = pick<Dog>(&d, &d);
+            pc : Cat* = pick<Cat>(&c, &c);
+            if (pd->n != 5) return 1;
+            if (pc->n != 9) return 2;
+            return 0;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_syn");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+    // One erased symbol: both Dog and Cat calls target it (parameters are erased pointers).
+    CHECK(jit->lookup_symbol<void*>("_KFN17gen_generic_syn_14pickEPPaPPa") != nullptr);
 }
 
-TEST_CASE("Known-limitation: member access on generic T* in generic body",
-          "[.][generic][known-limitation]") {
-    // LIMITATION: Inside a generic body, `T*` is mapped to `byte*` (opaque pointer).
-    // Accessing members through `T*` (e.g., `v.field`) is therefore not possible in
-    // the synthesized code. Member access on generic type parameters must take place
-    // at the call site (outside the generic body).
-    // Tracked in TODO.md.
-    SKIP("Member access on opaque T* in generic body is not supported by design "
-         "in the uniform-synthesis model.");
+TEST_CASE("Single synthesis: generic method of a non-generic class, explicit and deduced arguments",
+          "[gen][generic][synthesis]") {
+    auto jit = gen_jit(R"K(
+        module gen_generic_syn_2;
+
+        class Dog { public n : int = 5; }
+        class Cat { public n : int = 9; }
+
+        class Host {
+            public:
+            generic<class T> pass(v : T*) : T* { return v; }
+        }
+
+        test_syn() : int {
+            d : Dog;
+            c : Cat;
+            h : Host;
+            qd : Dog* = h.pass<Dog>(&d);
+            qc : Cat* = h.pass(&c);
+            if (qd->n != 5) return 1;
+            if (qc->n != 9) return 2;
+            return 0;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_syn");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+    CHECK(jit->lookup_symbol<void*>("_KFMN17gen_generic_syn_24Host4passEPPa") != nullptr);
+}
+
+TEST_CASE("Single synthesis: generic calling itself and another generic (deduced erased argument)",
+          "[gen][generic][synthesis]") {
+    auto jit = gen_jit(R"K(
+        module gen_generic_syn_3;
+
+        class Dog { public n : int = 7; }
+
+        generic<class T> ident(v : T*) : T* { return v; }
+        generic<class T> twice(v : T*) : T* { return ident(ident(v)); }
+        generic<class T> count(v : T*, n : int) : T* {
+            if (n <= 0) return v;
+            return count(v, n - 1);
+        }
+
+        test_syn() : int {
+            d : Dog;
+            a : Dog* = twice<Dog>(&d);
+            b : Dog* = count<Dog>(&d, 3);
+            if (a->n != 7) return 1;
+            if (b->n != 7) return 2;
+            return 0;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_syn");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Single synthesis: type argument is deduced from a pointer variable",
+          "[gen][generic][synthesis]") {
+    // 'p : Dog*' is an lvalue: T must be deduced as Dog, not as Dog*.
+    auto jit = gen_jit(R"K(
+        module gen_generic_syn_3b;
+
+        class Dog { public n : int = 7; }
+
+        generic<class T> ident(v : T*) : T* { return v; }
+
+        test_syn() : int {
+            d : Dog;
+            p : Dog* = &d;
+            r : Dog* = ident(p);
+            return r->n;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_syn");
+    REQUIRE(fn);
+    CHECK(fn() == 7);
+}
+
+TEST_CASE("Single synthesis: mismatched argument type is diagnosed with the concrete signature",
+          "[gen][generic][synthesis][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"K(
+        module gen_generic_syn_4;
+
+        class Dog { public n : int = 5; }
+        class Cat { public n : int = 9; }
+
+        generic<class T> ident(v : T*) : T* { return v; }
+
+        test_syn() : int {
+            c : Cat;
+            p : Dog* = ident<Dog>(&c);
+            return 0;
+        }
+    )K"));
+}
+
+TEST_CASE("Single synthesis: member access on an erased call result is rejected by the resolver",
+          "[gen][generic][synthesis][error]") {
+    // The early validator cannot see the type of 'ident(v)': the resolver rejects it.
+    require_generic_error(R"K(
+        module gen_generic_syn_5;
+
+        class Dog { public n : int = 5; }
+
+        generic<class T> ident(v : T*) : T* { return v; }
+        generic<class T> read(v : T*) : int { return ident(v)->n; }
+
+        test_syn() : int {
+            d : Dog;
+            return read<Dog>(&d);
+        }
+    )K", k::diag::generic_diag::ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM);
 }
 
 // ============================================================================
@@ -624,9 +967,8 @@ TEST_CASE("Explicit generic type arg in member method call: template parameter a
     REQUIRE(fn() == 6);
 }
 
-TEST_CASE("Explicit generic type arg in member method call: struct host, struct-typed body access",
+TEST_CASE("Explicit generic type arg in member method call: struct host",
           "[gen][generic][explicit-args]") {
-    // The generic method is monomorphised, so member access through T* is allowed.
     auto jit = gen_jit(R"K(
         module gen_generic_ea_5;
 
@@ -634,13 +976,14 @@ TEST_CASE("Explicit generic type arg in member method call: struct host, struct-
 
         struct Host {
             public:
-            generic<class T> read(v : T*) : int { return v->id; }
+            generic<class T> pass(v : T*) : T* { return v; }
         }
 
         test_ea() : int {
             d : zoo::Dog;
             h : Host;
-            return h.read<zoo::Dog>(&d);
+            r : zoo::Dog* = h.pass<zoo::Dog>(&d);
+            return r->id;
         }
     )K");
     REQUIRE(jit);

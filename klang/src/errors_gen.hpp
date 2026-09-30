@@ -585,17 +585,17 @@ enum class generic_diag : unsigned int {
     /**
      * A generic type parameter is used directly (not through an addresser).
      * E.g., a member variable 'val: T' where T is a generic param is forbidden;
-     * use 'val: T!' or 'val: T&' instead.
+     * use 'val: T*' or 'val: T&' instead.
      */
     ERR_GENERIC_DIRECT_TYPE_USAGE                 = 0x1101,
 
     /**
-     * An owner addresser ('!') is applied to a generic type parameter whose
-     * constraint is not 'class' or 'interface'.
-     * Owner of a generic type param requires a class/interface constraint so
-     * that the virtual destructor is reachable from the unifom synthesised code.
+     * An owner addresser ('!') is applied to a generic type parameter.
+     * Generic bodies are synthesised once with the type parameters erased, so
+     * they cannot run the destructor of an owned object of unknown type:
+     * owners of generic type parameters are not supported.
      */
-    ERR_GENERIC_OWNER_REQUIRES_CLASS              = 0x1102,
+    ERR_GENERIC_OWNER_NOT_SUPPORTED               = 0x1102,
 
     /**
      * A generic aggregate or function was instantiated with a concrete type
@@ -614,6 +614,27 @@ enum class generic_diag : unsigned int {
      * arguments (and no defaults are available).
      */
     ERR_GENERIC_TOO_FEW_ARGS                      = 0x1105,
+
+    /**
+     * A drain addresser ('#') is applied to a generic type parameter.
+     * Draining requires explicit member calls on an object of unknown type,
+     * which the erased generic synthesis cannot perform.
+     */
+    ERR_GENERIC_DRAIN_NOT_SUPPORTED               = 0x1106,
+
+    /**
+     * A generic aggregate or function was instantiated with an owner ('!') or
+     * drain ('#') type as a type argument.
+     */
+    ERR_GENERIC_ARG_OWNER_DRAIN_NOT_ALLOWED       = 0x1107,
+
+    /**
+     * A member (field or method) is accessed through an expression whose type
+     * is an erased generic type parameter (e.g. 'v->field' with 'v : T*').
+     * The generic body only sees an opaque pointer: such accesses are forbidden
+     * by design.
+     */
+    ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM     = 0x1108,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

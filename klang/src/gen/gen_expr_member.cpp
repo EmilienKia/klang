@@ -606,6 +606,13 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             }
         }
     } else {
+        if (type::is_erased_param(bare_subtype)) {
+            throw_error(static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM),
+                expr.first_lexeme(),
+                "Cannot access member '{}' through a generic type parameter: a generic body only sees "
+                "an opaque, erased pointer. Perform the member access at the call site, outside the generic body.",
+                {expr.symbol().get_name().to_string()});
+        }
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_ACCESS_ON_RVALUE), expr.first_lexeme(),
             "The '.' operator can only be applied to a reference to a struct type, "
             "but the left-hand side is a reference to '{}' which is not a struct",
@@ -898,6 +905,13 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
     auto pointed_nc = type::remove_const(pointed_type);
     auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_nc);
     if (!struct_subtype) {
+        if (type::is_erased_param(pointed_nc)) {
+            throw_error(static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM),
+                expr.first_lexeme(),
+                "Cannot access member '{}' through a generic type parameter: a generic body only sees "
+                "an opaque, erased pointer. Perform the member access at the call site, outside the generic body.",
+                {expr.symbol().get_name().to_string()});
+        }
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS), expr.first_lexeme(),
             "The '->' operator requires a pointer to a struct or array, "
             "but the pointed-to type is '{}'",

@@ -1337,6 +1337,8 @@ void kdi_builder::visit_function(function& fn) {
     // Skip compiler-generated and internal functions
     if (fn.is_compiler_generated()) return;
     if (!is_exported(fn.get_visibility())) return;
+    // Generic-function facades have no symbol of their own (see the erased synthesis).
+    if (fn.get_erased_target()) return;
 
     // Template definition: export as kdi_template_def, not as a regular function
     if (fn.is_template()) {

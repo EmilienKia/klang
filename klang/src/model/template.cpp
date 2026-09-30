@@ -47,6 +47,16 @@ std::pair<unsigned int, std::string> format_constraint_error(
     const auto& arg = args[error_index];
     std::string arg_type_str = arg.type_arg ? arg.type_arg->to_string() : "?";
 
+    if (error_kind == "generic_owner_arg" || error_kind == "generic_drain_arg") {
+        const bool is_owner = error_kind == "generic_owner_arg";
+        return {
+            static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_ARG_OWNER_DRAIN_NOT_ALLOWED),
+            "generic '" + template_name + "': argument " + std::to_string(error_index + 1)
+                + " ('" + arg_type_str + "') for parameter '" + param.name
+                + "' is " + (is_owner ? "an owner ('!')" : "a drain ('#')")
+                + " type; owners and drains are not supported as generic type arguments"
+        };
+    }
     if (error_kind == "not_aggregate") {
         return {
             static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_NOT_AGGREGATE),
@@ -89,6 +99,28 @@ std::pair<unsigned int, std::string> format_constraint_error(
 }
 
 bool validate_template_arg_constraints(
+    const tpl_info& ti,
+    const std::vector<template_argument>& args,
+    size_t& error_index,
+    std::string& error_kind)
+{
+    if (ti.is_generic) {
+        const size_t count = std::min(ti.params.size(), args.size());
+        for (size_t i = 0; i < count; ++i) {
+            if (!ti.params[i].is_type_param() || !args[i].is_type() || !args[i].type_arg) continue;
+            auto arg_type = type::remove_const(args[i].type_arg);
+            const bool is_owner = type::is_owner(arg_type);
+            if (is_owner || type::is_drain(arg_type)) {
+                error_index = i;
+                error_kind = is_owner ? "generic_owner_arg" : "generic_drain_arg";
+                return false;
+            }
+        }
+    }
+    return validate_template_arg_constraints(ti.params, args, error_index, error_kind);
+}
+
+bool validate_template_arg_constraints(
     const std::vector<template_param_descriptor>& params,
     const std::vector<template_argument>& args,
     size_t& error_index,
@@ -106,6 +138,10 @@ bool validate_template_arg_constraints(
         if (param.is_type_param() && arg.is_type()) {
             auto arg_type = arg.type_arg;
             if (!arg_type) continue;
+
+            // An erased generic parameter (a generic body instantiating another generic
+            // with its own erased parameter) has no kind or base type to check.
+            if (type::is_erased_param(arg_type)) continue;
 
             // ── Kind filter: STRUCT / CLASS / INTERFACE ────────────────────────
             if (param.kind != template_param_kind::TYPENAME) {

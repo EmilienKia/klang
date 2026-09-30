@@ -1707,15 +1707,17 @@ The template system currently does **not** support:
 
 ## 26. Generics
 
-> Formal grammar: see [`grammar.ebnf`](grammar.ebnf) §GenericDeclaration.
+> Formal grammar: see [`grammar.ebnf`](grammar.ebnf) §GenericDeclaration.  
+> Feature overview (work in progress): [generic.md](templates/generic.md)
 
-Generics provide **uniform** parametric polymorphism over type arguments. Unlike
-templates (§25), a generic aggregate or function is compiled **exactly once**:
-all generic type parameters are mapped to opaque pointers at the LLVM IR level,
-and a single binary artefact serves all concrete type arguments.
+Generics are **templates with restrictions**. Unlike templates (§25), a generic
+aggregate or function is synthesised **exactly once**: every generic type parameter is
+**erased** to an opaque pointer inside the body, and a single binary artefact serves all
+concrete type arguments. Users of the generic keep the full type information and perform
+the type checks and casts the erased body cannot do.
 
-This model resembles Java/C# generics (type erasure at the code level) but
-preserves static type-checking at the K source level.
+This resembles Java/C# generics (type erasure at the code level) while preserving static
+type checking at the K source level.
 
 ### 26.1 Generic Declaration
 
@@ -1739,9 +1741,10 @@ specifiers, in the same syntactic position as `TemplateDeclaration`.
 ```k
 // Generic aggregate
 generic<class T> class Box {
-    private val : T!;
+    private val : T*;
     public:
-    Box(v : T!) { val = v; }
+    Box() { val = null; }
+    set(v : T*) { val = v; }
     get() : T* { return val; }
 }
 
@@ -1757,38 +1760,38 @@ class Util {
 ### 26.2 Generic Parameters
 
 Only **type parameters** are allowed. Value parameters (`N : unsigned int`) are
-rejected at parse time with diagnostic `0x0381`
+rejected at parse time with diagnostic `0x036E`
 (`ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED`).
 
-| Keyword     | Constraint                                | Owner (`!`) allowed |
-|-------------|-------------------------------------------|---------------------|
-| `typename`  | Any type                                  | ✗                   |
-| `struct`    | Must be a `struct` type                   | ✗                   |
-| `class`     | Must be a `class` type                    | ✓                   |
-| `interface` | Must be an `interface` type               | ✓                   |
+| Keyword     | Constraint                                |
+|-------------|-------------------------------------------|
+| `typename`  | Any type that is not an owner or a drain  |
+| `struct`    | Must be a `struct` type                   |
+| `class`     | Must be a `class` type                    |
+| `interface` | Must be an `interface` type               |
 
 No default types are supported (templates support `= DefaultType`; generics do not).
+Owner (`Dog!`) and drain (`Dog#`) types are rejected as type arguments (`0x1107`).
 
-### 26.3 Constraints on Type Parameter Usage
+### 26.3 Restrictions on Type Parameter Usage
 
 Within the body of a generic declaration, the type parameters may appear **only
-through an addresser** (`&`, `*`, `!`, `?`, `+`, `#`). Direct bare usage (e.g.
-`local : T;`) is forbidden because the compiler maps type parameters to uniform
-opaque pointers, making value-type layout unknown.
+through a non-owning addresser** (`&`, `*`, `?`, `+`). Direct bare usage (e.g.
+`local : T;`) is forbidden because the compiler erases type parameters to opaque
+pointers, making value-type layout unknown. Owners (`T!`) and drains (`T#`) are not
+supported: they require explicit member calls (destructor, state stealing) on an object of
+unknown type.
 
 | Usage pattern          | Valid? | Error code |
 |------------------------|--------|------------|
-| `T&`, `T*`, `T?`       | ✓      | —          |
-| `T+`, `T#`             | ✓      | —          |
-| `T!` with `class T`    | ✓      | —          |
-| `T!` with `typename T` | ✗      | `0x1102`   |
-| `T!` with `struct T`   | ✗      | `0x1102`   |
+| `T&`, `T*`, `T?`, `T+` | ✓      | —          |
+| `T!` (owner)           | ✗      | `0x1102`   |
+| `T#` (drain)           | ✗      | `0x1106`   |
 | `T` (bare)             | ✗      | `0x1101`   |
 
-The **owner** addresser (`!`) requires a `class` or `interface` constraint
-because the uniform synthesised code calls the virtual destructor through the
-vtable. With `typename` or `struct`, no vtable exists, so destruction through a
-uniform pointer is unsafe.
+Any access to a **member** (field or method) through an expression whose type is an
+erased generic parameter (`v->field`, `v.method()` with `v : T*`) is an error
+(`0x1108`). Member accesses on the concrete type are done by the users of the generic.
 
 These rules are enforced at compile time by the `generic_constraint_validator`
 pass (runs immediately after model building).
@@ -1802,11 +1805,18 @@ LLVM IR and the same mangled symbol — no type-argument suffix is appended.
 
 Instantiation at use sites:
 1. Parse the concrete type argument list `<Dog>`.
-2. Validate the constraint (kind filter, `!` owner rule).
+2. Validate the constraints (kind filter, base type, no owner/drain argument).
 3. Look up the `"<generic_synthesis>"` entry — always a cache hit from the
    second use onward.
 4. Record a usage descriptor (`generic_aggregate_instance`) mapping the single
    synthesised aggregate to the concrete types for source-level type-checking.
+
+For generic functions and methods, each use site with concrete type arguments gets a
+body-less *facade* carrying the concrete signature (used for overload resolution and
+argument/result type checking); calls are emitted against the single erased synthesis.
+
+> **Work in progress:** see [generic.md](templates/generic.md) §8 for the current
+> limitations (notably cross-module use of generic aggregates).
 
 ### 26.5 Type-Checking at Usage Sites
 
@@ -1822,30 +1832,33 @@ instantiation key to a `generic_aggregate_instance` descriptor that holds the
 
 ### 26.6 Name Mangling
 
-Generic aggregates and functions are mangled **without** a type-argument suffix,
-unlike template instantiations:
+Generic aggregates, functions and methods are mangled **without** a type-argument suffix,
+unlike template instantiations (a generic function's symbol is derived from its erased
+parameter types):
 
 | Generic use  | Mangled form (example)          |
 |--------------|---------------------------------|
 | `Box`        | `N3BoxE` (no type suffix)       |
 | `Box::get`   | `_KFN3Box3getEv`                |
-| `identity`   | `_KFN8identityEP` (one ptr arg) |
+| `pick(v : T*, w : T*)` | `_KFN4pickEPPaPPa` (erased parameters) |
 
 This ensures a single binary symbol for all concrete uses.
 
 ### 26.7 Cross-Module Use (KDI)
 
-Generic aggregates and functions are exported to `.kdi` files as
-**signature-only** entries: the source text is not included (there is no
-monomorphization at import sites). The KDI entry preserves:
+Generic aggregates are exported to `.kdi` files as **signature-only** entries: the source
+text is not included. The KDI entry preserves:
 
 - Parameter names and kind constraints (`typename`, `class`, `interface`).
 - Member/parameter/return type signatures using `kdi_template_param_ref`
   placeholders.
 
-Importing modules can instantiate the generic normally; the compiler resolves the
-single synthesised aggregate symbol from the importing module's link-time
-dependencies.
+Generic functions are exported with their source text; the importing module re-synthesises
+the single erased body (weak linkage, merged across modules) and type-checks its own calls
+through facades.
+
+Cross-module use of generic aggregates is not fully reliable yet
+(see [generic.md](templates/generic.md) §8).
 
 ### 26.8 Invariance
 
@@ -1858,13 +1871,15 @@ their default (invariant) mode. Covariance and contravariance are future feature
 | Feature                    | `template`                         | `generic`                           |
 |----------------------------|------------------------------------|-------------------------------------|
 | Value parameters           | ✓                                  | ✗                                   |
-| Code synthesis             | Once per concrete argument set     | Once total (uniform materialization)|
+| Code synthesis             | Once per concrete argument set     | Once total (type erasure)           |
 | Default type parameters    | ✓                                  | ✗                                   |
 | Partial specialization     | Future                             | Not applicable                      |
 | KDI export                 | Full source text                   | Signature + constraints only        |
 | Name mangling              | Type-arg suffix (e.g. `I4DogE`)    | No suffix                           |
 | Covariance                 | Not applicable                     | Invariant (future: co/contra)       |
 | Direct bare-T usage        | ✓                                  | ✗ (must use an addresser)           |
+| Owner / drain of `T`       | ✓                                  | ✗                                   |
+| Member access through `T`  | ✓                                  | ✗ (by design)                       |
 
 ---
 

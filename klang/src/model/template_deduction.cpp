@@ -432,6 +432,20 @@ match_status deduce_from_types(
         return match_status::SUCCESS;
     }
 
+    // An lvalue of addresser type (e.g. the variable 'p : Dog*') passed to an addresser
+    // parameter ('T*') is read by value: deduce from the addressed type, not from the
+    // implicit reference to the variable (which would deduce T = Dog* instead of Dog).
+    if (!type::is_reference(param_type) && type::is_any_indirection(param_type) &&
+        type::is_reference(type::remove_const(arg_type))) {
+        auto inner = type::remove_const(type::remove_const(arg_type)->get_subtype());
+        if (inner && type::is_any_indirection(inner) && !type::is_reference(inner)) {
+            return deduce_from_types(
+                param_type, inner,
+                type_param_names, value_param_names,
+                type_deductions, value_deductions);
+        }
+    }
+
     // Check if param_type is a composite template type (e.g. Vector<T>, Map<K, V>)
     if (auto unres_param = std::dynamic_pointer_cast<unresolved_type>(param_type)) {
         if (unres_param->has_template_args()) {
