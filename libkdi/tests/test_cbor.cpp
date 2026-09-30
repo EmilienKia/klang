@@ -181,6 +181,15 @@ TEST_CASE("CBOR: owner type round-trips", "[cbor][type]") {
     REQUIRE(std::get<kdi_template_param_ref>(inner.value).name == "T");
 }
 
+TEST_CASE("CBOR: erased_param type round-trips", "[cbor][type]") {
+    // Erased stand-in of a generic type parameter, e.g. the pointee of 'T*' in a generic synthesis.
+    kdi_ptr_type p; p.inner = std::make_shared<kdi_type>(kdi_type::make_erased_param());
+    auto t = rt_type(kdi_type{std::move(p)});
+    REQUIRE(std::holds_alternative<kdi_ptr_type>(t.value));
+    auto& inner = *std::get<kdi_ptr_type>(t.value).inner;
+    REQUIRE(std::holds_alternative<kdi_erased_param_type>(inner.value));
+}
+
 TEST_CASE("CBOR: generic_ref type round-trips", "[cbor][type]") {
     // Reference to another (possibly still-uninstantiated) template applied
     // with template type arguments, e.g. "MultiSlot<T>" inside "Vector<T>".

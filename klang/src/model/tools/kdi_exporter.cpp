@@ -270,6 +270,9 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {  
         kdi::kdi_ref_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_type(rt->get_subtype()));
         return kdi::kdi_type{std::move(k)};
     }
+    if (type::is_erased_param(t)) {
+        return kdi::kdi_type::make_erased_param();
+    }
     if (auto pt = std::dynamic_pointer_cast<pointer_type>(t)) {
         kdi::kdi_ptr_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_type(pt->get_subtype()));
         return kdi::kdi_type{std::move(k)};
@@ -393,6 +396,9 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
     if (auto rt = std::dynamic_pointer_cast<reference_type>(t)) {
         kdi::kdi_ref_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(rt->get_subtype(), ti));
         return kdi::kdi_type{std::move(k)};
+    }
+    if (type::is_erased_param(t)) {
+        return kdi::kdi_type::make_erased_param();
     }
     if (auto pt = std::dynamic_pointer_cast<pointer_type>(t)) {
         kdi::kdi_ptr_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(pt->get_subtype(), ti));

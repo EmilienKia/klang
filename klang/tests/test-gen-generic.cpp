@@ -613,7 +613,7 @@ TEST_CASE("Generic class with view member compiles — view is non-rebindable", 
         generic<class T> class Reader {
             private target : T?;
             public:
-            Reader() { target = null; }
+            Reader() : target(null) { }
             hasTarget() : bool { return target != null; }
         }
     )K");
@@ -852,6 +852,35 @@ TEST_CASE("Single synthesis: member access on an erased call result is rejected 
             return read<Dog>(&d);
         }
     )K", k::diag::generic_diag::ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM);
+}
+
+TEST_CASE("Generic class: a link ('&d') is accepted for a 'T*' parameter and read back typed",
+          "[gen][generic][synthesis]") {
+    auto jit = gen_jit(R"K(
+        module gen_generic_syn_6;
+
+        class Dog { public n : int = 5; }
+
+        generic<class T> class Holder {
+            private val : T*;
+            public:
+            Holder() { val = null; }
+            set(v : T*) { val = v; }
+            get() : T* { return val; }
+        }
+
+        test_syn() : int {
+            d : Dog;
+            h : Holder<Dog>;
+            h.set(&d);
+            r : Dog* = h.get();
+            return r->n;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_syn");
+    REQUIRE(fn);
+    CHECK(fn() == 5);
 }
 
 // ============================================================================

@@ -112,6 +112,9 @@ KdiType = one of:
     -- round trip. A soft alias ('alias') is fully transparent and is always
     -- exported as the type it renames.
   { kind: "template_param", name: string } -- template-signature placeholder
+  { kind: "erased_param" }                 -- erased stand-in of a generic type
+    -- parameter (opaque pointer, `byte*` at the LLVM level) in the exported
+    -- single synthesis of a generic aggregate/function
   { kind: "generic_ref", name: string, args: [KdiType] }
     -- Reference to another (possibly still-uninstantiated) named type applied
     -- with template type arguments, as it appears inside an uninstantiated
@@ -252,9 +255,14 @@ Rules:
   same way as a regular (non-template) aggregate/function, with
   template-parameter-dependent types tagged as `template_param` /
   `generic_ref` instead of only a raw source dump.
-* `generic<...>` definitions export `is_generic = true`, MUST leave `source` empty,
-  and MUST provide exactly one matching signature field:
-  `aggregate_signature` for aggregate entities, `function_signature` for free functions.
+* `generic<...>` **aggregate** definitions export `is_generic = true`, MUST leave `source`
+  empty and MUST provide `aggregate_signature`. The single erased synthesis of the aggregate
+  is exported as a regular `KdiAggregate` (layout, mangled names, methods) whose types use
+  `erased_param` for the erased type parameters; importers link against it instead of
+  re-instantiating the definition.
+* `generic<...>` **function** definitions export `is_generic = true` and keep their `source`
+  (the importing module re-synthesises the single erased body); `function_signature` is only
+  provided as a fallback when no source is available.
 * Union templates are always classic (no signature payload exists for unions);
   they only ever export `source`.
 KdiAggregate {

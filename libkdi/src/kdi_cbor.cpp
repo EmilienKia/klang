@@ -476,6 +476,8 @@ cbor_item_t* encode_type(const kdi_type& t) {
         } else if constexpr (std::is_same_v<T, kdi_template_param_ref>) {
             map_push(m, "kind", cbor_str("template_param"));
             map_push(m, "name", cbor_str(v.name));
+        } else if constexpr (std::is_same_v<T, kdi_erased_param_type>) {
+            map_push(m, "kind", cbor_str("erased_param"));
         } else if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
             map_push(m, "kind", cbor_str("generic_ref"));
             map_push(m, "name", cbor_str(v.name));
@@ -559,6 +561,9 @@ kdi_type decode_type(cbor_item_t* item, const std::string& path) {
     }
     if (kind == "template_param") {
         return {kdi_template_param_ref{req_string(item, "name", path)}};
+    }
+    if (kind == "erased_param") {
+        return {kdi_erased_param_type{}};
     }
     if (kind == "generic_ref") {
         kdi_generic_ref_type t;

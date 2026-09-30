@@ -114,31 +114,27 @@
       the 5 copies of `is_generic_opaque_ptr` now use it. It mangles and compares exactly like
       `byte*`, so symbols are unchanged. Dedicated resolver diagnostic for member access on an
       erased type (`gen_expr_member.cpp`, `0x1108`) done.
-    - [ ] **Cross-module use of generic *aggregates* is unreliable** (klangc even segfaults in LLVM
-      passes). Diagnosis with a library exporting `generic<class T> class Holder { private val :
-      T*; ... }` and a consumer using `Holder<Seed>`: the consumer builds its own instance from
-      the signature-only template definition (`instantiate_aggregate`, real types), and the KDI
-      `aggregate_signature.layout` is empty, so the instance has no `val` member (size mismatch
-      with the library object); the library only emits the erased synthesis when it instantiates
-      it itself, so the symbols may be missing; body-less instantiation members get
-      `linkonce_odr` on their declarations (invalid IR: `Global is external, but doesn't have
-      external or weak linkage`). Note: keeping declarations external by testing "no body" in
-      `declaration_generator::visit_function` is NOT enough, because implicit destructors and
-      constructors of template instances also have no body block (it broke the static-link
-      diamond COMDAT tests in `klangc-tests`); imported signature-only members must be identified
-      explicitly.
-      Fix direction: (1) synthesise every generic aggregate at definition time in the defining
-      module (`instantiate_template_aggregate` with erased arguments, from the type-reference
-      pass over the generic definition) so its symbols always exist; (2) export the layout of the
-      erased synthesis in the signature (or export the erased class as a regular aggregate) and
-      make the consumer's `Holder<Seed>` use it instead of a re-instantiation, keeping the
-      `generic_usages` descriptor for type checking; (3) KDI must be able to represent the erased
-      parameter (a `kdi_template_param_ref` or a dedicated erased type), otherwise imported
-      `byte*` members are no longer recognised as erased by the adaptation rules (they test
-      `type::is_erased_param`); (4) KDI spec update under `doc/spec/kdi/`. Also export generic
-      methods of non-generic classes (missing from the KDI, like every member template of a
-      non-template aggregate). For generic *functions* the source-based export already works
-      (the consumer re-synthesises the erased body).
+    - [x] **Cross-module use of generic aggregates.** Done: every generic aggregate is synthesised
+      once in its defining module (`type_reference_resolver::visit_namespace`, step 1c, through
+      `instantiate_template_aggregate` with erased arguments), so the erased class, its symbols
+      and its layout always exist and are exported as a regular KDI aggregate; a new KDI type
+      `erased_param` (`kdi_erased_param_type`) carries the erased parameter through the
+      signatures (KDI DTO, JSON/CBOR codecs, dump/query/docgen, converter, exporter, specs);
+      `instantiate_template_aggregate` resolves an imported signature-only generic to that
+      exported synthesis (`get_or_create_imported_aggregate`) and only records the concrete
+      arguments. Also added the missing erasure rules for link/view sources (`&d` passed to a
+      `T*` parameter) in `compute_cast_weight` and `adapt_from_link/view`. Tests: `test-import-
+      templates.cpp` (`[generic]`), `libkdi` JSON/CBOR round trips.
+      Still open: (1) argument type checking of generic aggregate methods is at the erased level
+      (a `Cat*` is accepted by `Box<Dog>::set`; the spec §26.5 promise is only honoured for
+      results): use the concrete signature (template definition + `generic_usages`) for overload
+      resolution, as done with facades for generic functions; (2) an imported generic aggregate
+      from a library built before this change (no exported synthesis) falls back to the old,
+      unreliable re-instantiation; (3) generic methods of non-generic classes (and any member
+      template of a non-template aggregate) are not exported through KDI; (4) keeping declarations
+      of body-less template-instance members external (`gen_function.cpp`) needs an explicit
+      "imported signature-only" flag, not a "no body" test (implicit ctors/dtors of instances have
+      no body block either; it broke the static-link diamond COMDAT tests).
     - [ ] Owned members of an aggregate are not destroyed automatically when the aggregate is
       destroyed (observed on a non-generic class holding `Dog!`; not generic-specific). Check
       whether this is intended.

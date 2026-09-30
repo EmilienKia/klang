@@ -211,10 +211,14 @@ test() : int {
     b : Optional<Dog>;
     b.set(&d);                    // Dog* accepted
     p : Dog* = b.get();           // returns Dog*
-    // b.set(&someCat);           // error: Cat* is not Dog*
     return b.hasValue() ? 1 : 0;
 }
 ```
+
+The arguments of generic *functions and methods of non-generic classes* are checked against the
+concrete signature (`ident<Dog>(&cat)` is an error). For the methods of a generic *aggregate*,
+the concrete argument check is not implemented yet: only the results are typed by the concrete
+arguments (see §8, limitation 5).
 
 Generic types are **invariant**: `Optional<Dog>` is not an `Optional<Animal>`. Explicit
 type arguments on member calls of a non-generic class are supported
@@ -270,13 +274,16 @@ This list reflects the state of the implementation and is expected to shrink.
    access to the members of the base type.
 4. **A generic method declared inside a generic class** follows the class: it is erased with
    the class, and its own type parameters are still instantiated like a template's.
-5. **Cross-module use of generic aggregates is not reliable yet.** Generic free functions can
-   be exported and used through KDI (the consumer re-synthesises the single erased body from
-   the exported source). For a generic *aggregate*, the KDI signature carries no member
-   layout and the erased synthesis is only produced when the defining module instantiates it,
-   so importing modules can build an object of the wrong size or miss the symbols. Generic
-   methods of a non-generic class (and, more generally, member templates of a non-template
-   class) are not exported through KDI.
+5. **Cross-module use.** Generic free functions are exported with their source: the importing
+   module re-synthesises the single erased body (weak linkage, merged across modules). A
+   generic aggregate is synthesised once *in its defining module* — even if that module never
+   instantiates it — and the erased synthesis is exported as a regular aggregate (layout,
+   symbols, `erased_param` parameter types); importing modules link against it. Consequently,
+   type checking of an imported generic aggregate's *arguments* is at the erased level (any
+   pointer-like argument is accepted for a `T*` parameter, as for a local generic aggregate),
+   while results are typed by the concrete type arguments. Generic methods of a non-generic
+   class (and, more generally, member templates of a non-template class) are not exported
+   through KDI.
 6. **No default type arguments, no value parameters, no packs, no specialization.**
 7. **Generic methods are never virtual.**
 8. **Owned members of a generic (or non-generic) aggregate are not destroyed

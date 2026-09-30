@@ -1143,6 +1143,35 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
     std::shared_ptr<aggregate> concrete_agg;
     const bool is_imported_signature_only_generic =
         tpl_agg->is_generic() && tpl_agg->get_tpl_info() && tpl_agg->get_tpl_info()->is_imported_signature_only;
+
+    // An imported generic aggregate is not re-synthesised here: the exporting module
+    // already produced (and exported) its single erased synthesis, whose layout and
+    // symbols this module links against. Only the concrete arguments are recorded, for
+    // source-level type checking of the uses.
+    if (is_imported_signature_only_generic && ti) {
+        std::string origin_fq = !ti->origin_module_ns_fq.empty()
+                                ? ti->origin_module_ns_fq
+                                : (parent_ns_ptr ? parent_ns_ptr->get_fq_name() : std::string{});
+        if (origin_fq.size() >= 2 && origin_fq[0] == ':' && origin_fq[1] == ':') origin_fq = origin_fq.substr(2);
+        std::vector<std::string> parts;
+        for (std::size_t pos = 0; pos <= origin_fq.size();) {
+            auto sep = origin_fq.find("::", pos);
+            std::string part = origin_fq.substr(pos, sep == std::string::npos ? std::string::npos : sep - pos);
+            if (!part.empty()) parts.push_back(std::move(part));
+            if (sep == std::string::npos) break;
+            pos = sep + 2;
+        }
+        parts.push_back(tpl_agg->get_short_name());
+        auto synthesis = _unit.get_or_create_imported_aggregate(k::name(false, std::move(parts)), _context);
+        if (synthesis && synthesis->get_struct_type()) {
+            record_generic_usage(*ti, model_args);
+            if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
+                _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
+            }
+            return synthesis->get_struct_type();
+        }
+    }
+
     if (tpl_agg->is_generic() && !is_imported_signature_only_generic) {
         concrete_agg = template_instantiator::synthesize_generic_aggregate(
             *tpl_agg, parent_ns_ptr, _unit, _context, *this);
@@ -2549,6 +2578,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     return CAST_REF_CONV;
                 }
             }
+            // Generic erasure: lnk<Concrete> ↔ ptr<erased> (e.g. '&d' passed to a 'T*' parameter)
+            if ((src_st_type && type::is_erased_param(tgt_sub_nc)) ||
+                (tgt_st_type && type::is_erased_param(src_sub_nc)) ||
+                (type::is_erased_param(src_sub_nc) && type::is_erased_param(tgt_sub_nc))) {
+                return CAST_WIDENING;
+            }
             return CAST_IMPOSSIBLE;
         }
         // lnk<T> → ref<T>: borrow link target as reference
@@ -2581,6 +2616,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
                     return CAST_REF_CONV;
                 }
+            }
+            // Generic erasure: view<Concrete> ↔ view/ptr<erased>
+            if ((src_st_type && type::is_erased_param(tgt_sub_nc)) ||
+                (tgt_st_type && type::is_erased_param(src_sub_nc)) ||
+                (type::is_erased_param(src_sub_nc) && type::is_erased_param(tgt_sub_nc))) {
+                return CAST_WIDENING;
             }
             return CAST_IMPOSSIBLE;
         }

@@ -206,9 +206,10 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-oop-temporary` | named return + temporary construction |
 | `klang-tests-gen-scoping` | using/friend |
 | `klang-tests-gen-templates-core` | template functions/instantiation/mangling/members |
-| `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/generics |
+| `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params |
+| `klang-tests-gen-generics` | generic (type-erased) declarations, restrictions, single synthesis |
 | `klang-tests-import-core` | KDI import core, namespaces, enums, transitive |
-| `klang-tests-import-templates` | KDI cross-module template instantiation |
+| `klang-tests-import-templates` | KDI cross-module template instantiation (2 Catch2 shards: `-shard-0/1`) |
 | `klang-tests-import-interop` | KDI aliases, typedefs, callables, prod-lib |
 | `klangc-tests` | CLI/integration behavior |
 

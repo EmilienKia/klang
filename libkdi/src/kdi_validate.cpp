@@ -62,7 +62,8 @@ void validate_type(const kdi_type& t, const std::string& path,
                               + "' not found in type table");
         }
     }
-    if (std::holds_alternative<kdi_template_param_ref>(t.value)) {
+    if (std::holds_alternative<kdi_template_param_ref>(t.value) ||
+        std::holds_alternative<kdi_erased_param_type>(t.value)) {
         return;
     }
 }

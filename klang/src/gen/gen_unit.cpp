@@ -1306,6 +1306,32 @@ void type_reference_resolver::visit_namespace(ns& ns)
     // that is never used in this module is still fully typed when exported.
     materialize_aliases(ns, ns);
 
+    // Step 1c: Synthesise, once, every generic aggregate defined here, even if this module
+    // never instantiates it: the single erased synthesis is what importing modules link
+    // against (its layout and symbols are exported in the KDI).
+    {
+        std::vector<std::shared_ptr<aggregate>> generic_defs;
+        for (auto& child : ns.get_children()) {
+            auto agg = std::dynamic_pointer_cast<aggregate>(child);
+            auto* ti = agg ? agg->get_tpl_info() : nullptr;
+            if (agg && ti && agg->is_generic() && !ti->is_imported_signature_only) {
+                generic_defs.push_back(agg);
+            }
+        }
+        for (auto& agg : generic_defs) {
+            auto* ti = agg->get_tpl_info();
+            auto byte_type = _context->from_type(primitive_type::BYTE);
+            if (!byte_type) continue;
+            std::vector<template_argument> erased_args;
+            for (const auto& param : ti->params) {
+                if (param.is_type_param()) {
+                    erased_args.push_back(template_argument::make_type(byte_type->get_erased_param()));
+                }
+            }
+            (void)instantiate_template_aggregate(agg, erased_args, ns);
+        }
+    }
+
     // Step 2: Visit all children (namespaces, aggregates, functions, variables)
     // Full pass: visit everything (including function bodies).
     // Signature resolution is idempotent (already-resolved types are skipped),

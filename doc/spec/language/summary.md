@@ -1824,7 +1824,9 @@ Despite uniform code synthesis, the compiler still type-checks generic usages
 at the call site with the concrete type information:
 
 - `box.get()` on a `Box<Dog>` is statically known to return `Dog*`.
-- Passing a `Cat*` to a `Box<Dog>::set()` is a compile-time error.
+- Passing a `Cat*` to `ident<Dog>()` (a generic function or method) is a compile-time error.
+- Passing a `Cat*` to `Box<Dog>::set()` (a method of a generic aggregate) is intended to be
+  an error too, but is **not implemented yet** (work in progress).
 
 This is achieved via `tpl_info::generic_usages`, a map from the concrete
 instantiation key to a `generic_aggregate_instance` descriptor that holds the
@@ -1846,19 +1848,22 @@ This ensures a single binary symbol for all concrete uses.
 
 ### 26.7 Cross-Module Use (KDI)
 
-Generic aggregates are exported to `.kdi` files as **signature-only** entries: the source
-text is not included. The KDI entry preserves:
+A generic aggregate is synthesised once in its defining module, even if that module never
+instantiates it. The KDI carries two things for it:
 
-- Parameter names and kind constraints (`typename`, `class`, `interface`).
-- Member/parameter/return type signatures using `kdi_template_param_ref`
-  placeholders.
+- the erased synthesis, exported as a regular aggregate (layout, mangled symbols, methods
+  whose erased parameters use the `erased_param` type);
+- a **signature-only** template definition (parameter names and kind constraints, member,
+  parameter and return type signatures using `kdi_template_param_ref` placeholders).
+
+An importing module resolves `Holder<Seed>` to the exported erased synthesis and records the
+concrete arguments for source-level type checking of the results.
 
 Generic functions are exported with their source text; the importing module re-synthesises
 the single erased body (weak linkage, merged across modules) and type-checks its own calls
 through facades.
 
-Cross-module use of generic aggregates is not fully reliable yet
-(see [generic.md](templates/generic.md) §8).
+See [generic.md](templates/generic.md) §8 for the remaining cross-module limitations.
 
 ### 26.8 Invariance
 

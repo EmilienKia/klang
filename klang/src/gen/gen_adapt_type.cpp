@@ -395,6 +395,13 @@ type_reference_resolver::adapt_from_link(
                     return upcast;
                 }
             }
+            // Generic erasure: lnk<Concrete> ↔ ptr<erased> (no-op at IR level)
+            if (is_generic_erasure_pair(src_sub_nc, tgt_sub_nc) ||
+                (is_generic_opaque_ptr(src_sub_nc) && is_generic_opaque_ptr(tgt_sub_nc))) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
             // Union link to alternative or polymorphic base
             if (src_st_type && !src_st_type->get_struct()) {
                 auto root_ns = _unit.get_root_namespace();
@@ -492,6 +499,13 @@ type_reference_resolver::adapt_from_view(
                     upcast->set_type(type_nc);
                     return upcast;
                 }
+            }
+            // Generic erasure: view<Concrete> ↔ view/ptr<erased> (no-op at IR level)
+            if (is_generic_erasure_pair(src_sub_nc, tgt_sub_nc) ||
+                (is_generic_opaque_ptr(src_sub_nc) && is_generic_opaque_ptr(tgt_sub_nc))) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
             }
             // Union view to alternative or polymorphic base
             if (src_st_type && !src_st_type->get_struct()) {

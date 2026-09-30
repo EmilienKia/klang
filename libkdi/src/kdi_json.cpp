@@ -242,6 +242,8 @@ static json to_json(const kdi_type& t) {
             return {{"kind","alias"},{"fq_name",v.fq_name}};
         else if constexpr (std::is_same_v<T, kdi_template_param_ref>)
             return {{"kind","template_param"},{"name",v.name}};
+        else if constexpr (std::is_same_v<T, kdi_erased_param_type>)
+            return {{"kind","erased_param"}};
         else if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
             json as = json::array();
             for (auto& a : v.args) as.push_back(to_json(*a));
@@ -320,6 +322,8 @@ static kdi_type from_json_type(const json& j) {
         return kdi_type::make_alias(j.at("fq_name").get<std::string>());
     if (kind == "template_param")
         return kdi_type::make_template_param(j.at("name").get<std::string>());
+    if (kind == "erased_param")
+        return kdi_type::make_erased_param();
     if (kind == "generic_ref") {
         kdi_generic_ref_type r;
         r.name = j.at("name").get<std::string>();

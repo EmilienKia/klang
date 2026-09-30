@@ -194,6 +194,24 @@ macro(klang_gen_test TARGET TIMEOUT)
 endmacro()
 
 # ---------------------------------------------------------------------------
+# Helper macro: like klang_gen_test, but registers <SHARDS> CTest entries running
+# disjoint Catch2 shards of the same executable (each with its own timeout).
+# Usage: klang_gen_test_sharded(<target> <timeout_s> <shards> <source1> [<source2> ...])
+# ---------------------------------------------------------------------------
+macro(klang_gen_test_sharded TARGET TIMEOUT SHARDS)
+    add_executable(${TARGET} ${ARGN})
+    target_link_libraries(${TARGET} klang-test-helpers Catch2::Catch2WithMain)
+    target_link_options(${TARGET} PRIVATE -rdynamic)
+    add_dependencies(${TARGET} libk_stdlib)
+    math(EXPR _klang_last_shard "${SHARDS} - 1")
+    foreach(_klang_shard RANGE ${_klang_last_shard})
+        add_test(NAME ${TARGET}-shard-${_klang_shard}
+                 COMMAND ${TARGET} --shard-count ${SHARDS} --shard-index ${_klang_shard})
+        set_tests_properties(${TARGET}-shard-${_klang_shard} PROPERTIES TIMEOUT ${TIMEOUT})
+    endforeach()
+endmacro()
+
+# ---------------------------------------------------------------------------
 # Group 1 — Frontend: lexer, parser, file-resolver, process
 # No JIT, no libk dependency — runnable even before libk is built.
 # ---------------------------------------------------------------------------
@@ -459,7 +477,7 @@ klang_gen_test(klang-tests-gen-templates-core 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 9b — Templates: deduction, constraints, packs, value params, generics
+# Group 9b — Templates: deduction, constraints, packs, value params
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-templates-deduction 120
         tests/test-gen-template-constraints.cpp
@@ -468,6 +486,13 @@ klang_gen_test(klang-tests-gen-templates-deduction 120
         tests/test-gen-template-deduction.cpp
         tests/test-gen-ctad.cpp
         tests/test-gen-template-packs.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 9c — Generics: type-erased generic declarations (single synthesis),
+# restrictions and diagnostics, nested generics
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-generics 120
         tests/test-gen-generic.cpp
         tests/test-gen-nested-generics.cpp
 )
@@ -484,7 +509,7 @@ klang_gen_test(klang-tests-gen-templates-deduction 120
 klang_gen_test(klang-tests-import-core 120
         tests/test-import-core.cpp
 )
-klang_gen_test(klang-tests-import-templates 120
+klang_gen_test_sharded(klang-tests-import-templates 120 2
         tests/test-import-templates.cpp
         tests/test-import-template-reparse-diagnostic.cpp
 )

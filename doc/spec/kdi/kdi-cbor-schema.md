@@ -179,6 +179,7 @@ Type =
 | { "kind": "alias", "fq_name": text }
 | { "kind": "template_param", "name": text }
 | { "kind": "generic_ref", "name": text, "args": array[Type] }
+| { "kind": "erased_param" }
 ```
 
 `alias` references an exported strong alias (`typedef`) by its fully-qualified
@@ -188,6 +189,12 @@ always encoded as the type it renames.
 
 `template_param` references a template parameter by name (e.g. `T`) as it
 appears inside an uninstantiated template's own declaration.
+
+`erased_param` is the erased stand-in of a generic type parameter: the opaque pointer
+(`byte*` at the LLVM level) that every type parameter of a `generic<...>` declaration is
+replaced by in its single synthesised body. It appears in the signatures of the exported
+synthesis of a generic aggregate or function (e.g. `T*` is `ptr{erased_param}`), so that an
+importing module can tell an erased parameter from a `byte*` written by the user.
 
 `generic_ref` references another named type applied with template type
 arguments, as it appears inside an uninstantiated template's own declaration
@@ -495,8 +502,11 @@ Rules:
   fields/constructors/methods the same way as a regular (non-template)
   aggregate/function — with template-parameter-dependent types tagged as
   `template_param` / `generic_ref` — instead of only a raw source dump.
-* Generic templates set `is_generic = true`, serialize an empty `source`, and
-  provide exactly one declaration signature matching `entity_kind`.
+* Generic **aggregate** templates set `is_generic = true`, serialize an empty `source`,
+  and provide `aggregate_signature`; the single erased synthesis of the aggregate is exported
+  as a regular aggregate whose types use `erased_param`. Generic **function** templates set
+  `is_generic = true` and keep their `source` (`function_signature` is a fallback when no
+  source is available).
 * Union templates are always classic (no `union_signature` payload exists);
   they only ever serialize `source`.
 

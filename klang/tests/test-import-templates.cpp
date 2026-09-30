@@ -490,6 +490,87 @@ TEST_CASE("cross-module generic function — pointer parameter works after KDI i
     REQUIRE(result.exit_code == 42);
 }
 
+TEST_CASE("cross-module generic class — erased synthesis is exported even if the library never instantiates it",
+          "[import][e2e][template][generic]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module generic_class_lib;
+
+            public:
+            class Seed {
+                public id : int = 3;
+            }
+
+            generic<class T>
+            class Holder {
+                private val : T*;
+                public:
+                Holder() { val = null; }
+                set(v : T*) { val = v; }
+                has() : bool { return val != null; }
+                get() : T* { return val; }
+            }
+        )K",
+        R"K(
+            module generic_class_exe;
+            import generic_class_lib;
+
+            class Dog {
+                public n : int = 40;
+            }
+
+            main() : int {
+                d : Dog;
+                s : generic_class_lib::Seed;
+                a : Holder<Dog>;
+                b : Holder<generic_class_lib::Seed>;
+                a.set(&d);
+                b.set(&s);
+                pd : Dog* = a.get();
+                ps : generic_class_lib::Seed* = b.get();
+                if (!a.has()) return 100;
+                return pd->n + ps->id;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 43);
+}
+
+TEST_CASE("import generic class — erased synthesis is exported with erased parameter types",
+          "[import][template][generic][model]") {
+    TmpKdi lib(R"K(
+        module tplgenericerased;
+
+        public:
+        generic<class T>
+        class Box {
+            private item : T*;
+            public:
+            Box() { item = null; }
+            put(v : T*) { item = v; }
+            take() : T* { return item; }
+        }
+    )K");
+
+    auto kdi = kdi::kdi_read_cbor_file(lib.kdi_path);
+
+    bool found = false;
+    for (const auto& agg : kdi.unit.root_ns.aggregates) {
+        if (agg.name != "Box") continue;
+        found = true;
+        REQUIRE(agg.methods.size() == 2);
+        for (const auto& method : agg.methods) {
+            const kdi::kdi_type& t = method.name == "put" ? method.params[0].type : method.return_type;
+            REQUIRE(std::holds_alternative<kdi::kdi_ptr_type>(t.value));
+            auto& inner = *std::get<kdi::kdi_ptr_type>(t.value).inner;
+            REQUIRE(std::holds_alternative<kdi::kdi_erased_param_type>(inner.value));
+        }
+    }
+    REQUIRE(found);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Template with value parameter: verify template_origin includes value args.
 // ─────────────────────────────────────────────────────────────────────────────

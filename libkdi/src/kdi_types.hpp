@@ -211,6 +211,17 @@ struct kdi_template_param_ref {
 };
 
 /**
+ * The erased stand-in of a generic type parameter: the opaque pointer every
+ * type parameter of a generic declaration is replaced by in its single
+ * synthesised body (a `byte*` at the LLVM level). It appears in the signatures
+ * of the exported synthesis of a generic aggregate or function, and lets an
+ * importing module tell an erased parameter from a `byte*` written by the
+ * user (concrete arguments are converted to it at the call site).
+ */
+struct kdi_erased_param_type {
+};
+
+/**
  * Reference to a named type applied with template (type) arguments, as it
  * appears inside an uninstantiated template's own declaration (e.g. the
  * member type "MultiSlot<T>" inside `template<typename T> class Vector`).
@@ -254,7 +265,8 @@ using kdi_type_variant = std::variant<
     kdi_enum_ref,
     kdi_alias_ref,
     kdi_template_param_ref,
-    kdi_generic_ref_type
+    kdi_generic_ref_type,
+    kdi_erased_param_type
 >;
 
 /** A complete K type, encoded as a tagged union. */
@@ -282,6 +294,9 @@ struct kdi_type {
     }
     static kdi_type make_template_param(std::string name) {
         return {kdi_template_param_ref{std::move(name)}};
+    }
+    static kdi_type make_erased_param() {
+        return {kdi_erased_param_type{}};
     }
     static kdi_type make_owner(kdi_type inner) {
         return {kdi_owner_type{std::make_shared<kdi_type>(std::move(inner))}};
