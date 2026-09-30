@@ -69,7 +69,11 @@
 
 #### Current bugs and gaps to fix
 
-- Known generic call-site limitations (found by Phase 12, tracked for future fix):
+- Known generic call-site limitations (found by Phase 12, tracked for future fix).
+  Detailed analysis of the first two items (with examples and resolution options):
+  see `GENERICS-KNOWN-BUGS.md`. Note: the owner-argument constructor call already compiles;
+  the actual defect is that the erased `T!` is released with `free` without running the
+  destructor.
     - [ ] **Generic constructor call with owner `T!` argument.** Symptom: instantiating a
       generic class whose constructor takes `T!` (owner) with a concrete `ConcreteType!`
       argument at the call site fails to compile. Root cause: the "uniform synthesis" model
@@ -104,24 +108,14 @@
       (concepts / type traits, already listed above) rather than a point fix. Repro:
       `test-gen-generic.cpp`, "Known-limitation: member access on generic T* in generic
       body" (`[.][generic][known-limitation]`).
-    - [ ] **Explicit generic type args in a member method call on a non-generic host
-      class** (`obj.method<Dog>(arg)`). Symptom: calling a generic *method* of an
-      otherwise non-generic host class/struct with an explicit type argument list fails to
-      resolve `Dog` as a type argument. Root cause (to be confirmed by deeper
-      investigation, not yet root-caused to the same depth as the two items above):
-      overload resolution for member-function calls in `resolvers_type_ref.cpp` /
-      `gen_expr_invocation.cpp` appears to special-case explicit template argument lists
-      primarily for calls where the *enclosing aggregate itself* is generic (so the
-      argument-list parsing/binding path is wired through the aggregate's own template
-      parameter substitution machinery); when the host class is a plain non-generic
-      class but only the *method* is a generic (`generic<class T> method(...)`), the
-      explicit `<Dog>` argument list is not threaded through the same substitution path
-      and the call fails to bind. Fix direction: audit the explicit-template-argument
-      parsing/binding path for member-function invocation expressions and ensure it does
-      not assume the host aggregate is itself generic before accepting explicit type
-      arguments for a per-method generic. Repro: `test-gen-generic.cpp`,
-      "Known-limitation: explicit generic type args in member method call"
-      (`[.][generic][known-limitation]`).
+    - [x] **Explicit generic type args in a member method call on a non-generic host
+      class** (`obj.method<zoo::Dog>(arg)`). Fixed: the member-call path only used
+      `context::resolve_type`, so namespace-qualified types, aliases and enclosing template
+      parameters (`pass<U>`) were not resolved. It now shares
+      `type_reference_resolver::resolve_explicit_template_arg_type` with the free-function
+      path. Tests: `test-gen-generic.cpp`, `[generic][explicit-args]`. Still open: generic
+      member templates of a non-template host are not exported/imported through KDI
+      (`h.method<T>()` on an imported class finds no function).
     - [ ] `ConcreteType! → byte*` implicit cast at generic setter sites (runtime returns 0 instead of value)
     - [ ] **Homonymous imported templates from different modules** (origin-aware homing
       of imported template definitions). Symptom: a consumer module imports two libraries

@@ -266,6 +266,25 @@ protected:
         const element& context_elem);
 
     /**
+     * Resolve an explicit template/generic type argument written at a call site
+     * (e.g. the `zoo::Dog` of `obj.method<zoo::Dog>(x)` or the `U` of `pass<U>(v)`).
+     *
+     * Looks the name up from @p context_elem (namespace-relative, qualified,
+     * alias), maps the enclosing function/aggregate template parameters to their
+     * concrete instantiation arguments, and rebuilds addresser/array wrappers.
+     * Shared by free-function and member-function explicit-argument paths.
+     *
+     * @return The fully resolved type, or nullptr if it cannot be resolved.
+     */
+    std::shared_ptr<type> resolve_explicit_template_arg_type(
+        const std::shared_ptr<type>& arg_type,
+        const element& context_elem);
+
+    /** Map a bare template parameter name to the concrete argument of the enclosing instantiation. */
+    std::shared_ptr<type> resolve_type_from_instantiation_context(
+        const std::shared_ptr<unresolved_type>& unresolved);
+
+    /**
      * Recursively resolve a type chain, triggering template instantiation
      * for any inner unresolved_type that carries template arguments.
      *

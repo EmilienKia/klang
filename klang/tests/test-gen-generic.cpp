@@ -511,14 +511,163 @@ TEST_CASE("Known-limitation: member access on generic T* in generic body",
          "in the uniform-synthesis model.");
 }
 
-TEST_CASE("Known-limitation: explicit generic type args in member method call",
-          "[.][generic][known-limitation]") {
-    // LIMITATION: Calling a generic member function with explicit type arguments
-    // (e.g., `obj.method<Dog>(arg)`) does not yet resolve class names as type
-    // arguments when the enclosing aggregate is not itself generic.
-    // Tracked in TODO.md.
-    SKIP("Explicit generic type arguments in member method calls are not fully "
-         "supported for non-generic host aggregates.");
+// ============================================================================
+//  EXPLICIT GENERIC TYPE ARGS IN MEMBER METHOD CALLS (non-generic host)
+// ============================================================================
+
+TEST_CASE("Explicit generic type arg in member method call: unqualified class",
+          "[gen][generic][explicit-args]") {
+    auto jit = gen_jit(R"K(
+        module gen_generic_ea_1;
+
+        class Dog { public id : int = 3; }
+
+        class Host {
+            public:
+            generic<class T> pass(v : T*) : T* { return v; }
+        }
+
+        test_ea() : int {
+            d : Dog;
+            h : Host;
+            r : Dog* = h.pass<Dog>(&d);
+            return r->id;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_ea");
+    REQUIRE(fn);
+    REQUIRE(fn() == 3);
+}
+
+TEST_CASE("Explicit generic type arg in member method call: namespace-qualified class",
+          "[gen][generic][explicit-args]") {
+    auto jit = gen_jit(R"K(
+        module gen_generic_ea_2;
+
+        namespace zoo { class Dog { public id : int = 4; } }
+
+        class Host {
+            public:
+            generic<class T> pass(v : T*) : T* { return v; }
+        }
+
+        test_ea() : int {
+            d : zoo::Dog;
+            h : Host;
+            r : zoo::Dog* = h.pass<zoo::Dog>(&d);
+            return r->id;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_ea");
+    REQUIRE(fn);
+    REQUIRE(fn() == 4);
+}
+
+TEST_CASE("Explicit generic type arg in member method call: alias type argument",
+          "[gen][generic][explicit-args]") {
+    auto jit = gen_jit(R"K(
+        module gen_generic_ea_3;
+
+        class Dog { public id : int = 5; }
+        alias D : Dog;
+
+        class Host {
+            public:
+            generic<class T> pass(v : T*) : T* { return v; }
+        }
+
+        test_ea() : int {
+            d : D;
+            h : Host;
+            r : Dog* = h.pass<D>(&d);
+            return r->id;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_ea");
+    REQUIRE(fn);
+    REQUIRE(fn() == 5);
+}
+
+TEST_CASE("Explicit generic type arg in member method call: template parameter as argument",
+          "[gen][generic][explicit-args]") {
+    auto jit = gen_jit(R"K(
+        module gen_generic_ea_4;
+
+        class Dog { public id : int = 6; }
+
+        class Host {
+            public:
+            generic<class T> pass(v : T*) : T* { return v; }
+        }
+
+        template<typename U> class Wrap {
+            public:
+            run(v : U*) : U* {
+                h : Host;
+                return h.pass<U>(v);
+            }
+        }
+
+        test_ea() : int {
+            d : Dog;
+            w : Wrap<Dog>;
+            r : Dog* = w.run(&d);
+            return r->id;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_ea");
+    REQUIRE(fn);
+    REQUIRE(fn() == 6);
+}
+
+TEST_CASE("Explicit generic type arg in member method call: struct host, struct-typed body access",
+          "[gen][generic][explicit-args]") {
+    // The generic method is monomorphised, so member access through T* is allowed.
+    auto jit = gen_jit(R"K(
+        module gen_generic_ea_5;
+
+        namespace zoo { class Dog { public id : int = 7; } }
+
+        struct Host {
+            public:
+            generic<class T> read(v : T*) : int { return v->id; }
+        }
+
+        test_ea() : int {
+            d : zoo::Dog;
+            h : Host;
+            return h.read<zoo::Dog>(&d);
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_ea");
+    REQUIRE(fn);
+    REQUIRE(fn() == 7);
+}
+
+TEST_CASE("Explicit generic type arg in member method call: unknown type is rejected",
+          "[gen][generic][explicit-args][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"K(
+        module gen_generic_ea_6;
+
+        class Dog { public id : int = 3; }
+
+        class Host {
+            public:
+            generic<class T> pass(v : T*) : T* { return v; }
+        }
+
+        test_ea() : int {
+            d : Dog;
+            h : Host;
+            r : Dog* = h.pass<zoo::Missing>(&d);
+            return 0;
+        }
+    )K"));
 }
 
 // ============================================================================
