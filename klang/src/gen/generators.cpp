@@ -137,9 +137,45 @@ std::unique_ptr<jit> jit::create(std::shared_ptr<compiler> compiler) {
 }
 
 void jit::add_module(llvm::orc::ThreadSafeModule module) {
+    // Replace the default abort() uncaught-exception handler of the generated
+    // main guard with the host callback, so that an uncaught exception does not
+    // kill the host process.
+    module.withModuleDo([](llvm::Module& mod) {
+        auto* handler_gv = mod.getNamedGlobal(k_main_uncaught_handler_global);
+        if (!handler_gv) return;
+        auto& llvm_ctx = mod.getContext();
+        auto* int_ptr_ty = mod.getDataLayout().getIntPtrType(llvm_ctx);
+        auto* addr = llvm::ConstantInt::get(int_ptr_ty,
+            reinterpret_cast<uintptr_t>(&jit::uncaught_exception_handler));
+        handler_gv->setInitializer(
+            llvm::ConstantExpr::getIntToPtr(addr, llvm::PointerType::get(llvm_ctx, 0)));
+    });
+
     if (auto err = _lljit->addIRModule(std::move(module))) {
         std::cerr << "Cannot register module in JIT instance: " << llvm::toString(std::move(err)) << std::endl;
     }
+}
+
+thread_local jit::run_result* jit::_current_run = nullptr;
+
+void jit::uncaught_exception_handler(void* /*exception*/) {
+    if (_current_run) {
+        _current_run->uncaught_exception = true;
+    }
+}
+
+std::optional<jit::run_result> jit::run_main(int argc, char** argv) {
+    auto main_fn = lookup_main_entry_symbol<int(*)(int, char**)>();
+    if (!main_fn) {
+        return std::nullopt;
+    }
+
+    run_result result;
+    auto* previous_run = _current_run;
+    _current_run = &result;
+    result.status = main_fn(argc, argv);
+    _current_run = previous_run;
+    return result;
 }
 
 llvm::Expected<llvm::orc::ExecutorAddr> jit::lookup_symbol_address(const std::string& name) {
@@ -147,6 +183,12 @@ llvm::Expected<llvm::orc::ExecutorAddr> jit::lookup_symbol_address(const std::st
 }
 
 llvm::Expected<llvm::orc::ExecutorAddr> jit::lookup_main_entry_symbol_address() {
+    // Without this check, the lookup would fall through to the host process own
+    // 'main' symbol (the process symbol generator is registered on the main dylib).
+    if (!_compiler->has_main_method()) {
+        return llvm::make_error<llvm::StringError>("No main() entry point in the JIT-compiled program",
+                                                   llvm::inconvertibleErrorCode());
+    }
     return _lljit->lookup(_main_dynlib, llvm::StringRef("main"));
 }
 

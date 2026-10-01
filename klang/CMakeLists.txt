@@ -307,6 +307,7 @@ klang_gen_test(klang-tests-gen-control 120
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-exceptions 120
         tests/test-gen-exceptions.cpp
+        tests/test-gen-main-uncaught.cpp
 )
 
 # ---------------------------------------------------------------------------

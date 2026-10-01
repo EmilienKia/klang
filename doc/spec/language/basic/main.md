@@ -249,6 +249,10 @@ instead of returning an exit code. The stack is unwound up to the wrapper before
 is called, so destructors of the intermediate frames run first. Global constructors and
 destructors (steps 1 and 6) are not covered by this guard.
 
+When the program runs in a JIT, the hosting process is not aborted: the wrapper returns
+control to the host instead of calling `abort()`, and the host is told that an exception was
+uncaught.
+
 The wrapper is transparent to the programmer; user code simply defines `main()` (optionally
 with a `const String[]` parameter), or a full `class Application` when more structure is
 needed.

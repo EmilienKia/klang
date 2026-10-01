@@ -486,6 +486,11 @@ This applies to every thrown value, whatever its type. It does not cover global
 constructors/destructors, nor exceptions escaping a thread entry point (which are handled
 by the thread runtime).
 
+When the program runs in the JIT, the process hosting the JIT is not aborted: the wrapper
+returns control to the host, which learns that an exception was uncaught
+(`jit::run_main()` reports it in `run_result::uncaught_exception`). `klangc --jit-exec`
+then reports the error on standard error and terminates with `SIGABRT`, like a compiled program.
+
 ---
 
 ## 7. Implementation details

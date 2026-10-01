@@ -19,6 +19,8 @@
 #ifndef KLANG_GENERATORS_HPP
 #define KLANG_GENERATORS_HPP
 
+#include <optional>
+
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -67,6 +69,16 @@ inline bool needs_sret_return(const std::shared_ptr<k::model::type>& ret_type) {
     auto t = k::model::type::remove_const(ret_type);
     return k::model::type::is_struct(t) || k::model::type::is_array(t) || k::model::type::is_sized_array(t);
 }
+
+/**
+ * Name of the internal global (pointer to `void(void* exception)`) read by the
+ * generated C `main` guard when an exception reaches it. It defaults to a
+ * function calling abort(); jit::add_module() replaces it with a host callback.
+ */
+inline constexpr const char* k_main_uncaught_handler_global = "__k_main_uncaught_handler";
+
+/** Value returned by the generated C `main` when a host handler returns after an uncaught exception (128 + SIGABRT). */
+inline constexpr int k_main_uncaught_status = 134;
 
 class generation_error : public k::log::compiler_error {
 public:
@@ -949,11 +961,48 @@ public:
         }
     }
 
+    /**
+     * Resolve the C `main` entry point.
+     * @returns The entry point, or nullptr if it cannot be resolved.
+     */
     template<typename T>
     T lookup_main_entry_symbol() {
-        return lookup_main_entry_symbol_address()->toPtr<T>();
+        auto symb = lookup_main_entry_symbol_address();
+        if (!symb) {
+            llvm::consumeError(symb.takeError());
+            return nullptr;
+        }
+        return symb->toPtr<T>();
     }
 
+    /** Outcome of a run_main() call. */
+    struct run_result {
+        /** Value returned by the entry point (k_main_uncaught_status when an exception was uncaught). */
+        int status = 0;
+        /** True if an exception reached the entry point instead of main() returning normally. */
+        bool uncaught_exception = false;
+    };
+
+    /**
+     * Run the C `main` entry point of the JIT-compiled program.
+     *
+     * Unlike a native executable, an exception reaching the entry point does not
+     * abort the host process: the stack has been unwound up to the entry point
+     * and run_main() returns with run_result::uncaught_exception set.
+     *
+     * @returns The outcome, or std::nullopt if the entry point cannot be resolved.
+     */
+    std::optional<run_result> run_main(int argc = 0, char** argv = nullptr);
+
+    /**
+     * Host callback installed in the generated entry point guard in place of abort().
+     * Marks the current run_main() invocation (if any) as ended by an uncaught exception.
+     */
+    static void uncaught_exception_handler(void* exception);
+
+private:
+    // Run currently executing on this thread (the host callback has no other context).
+    static thread_local run_result* _current_run;
 };
 
 } // k::model::gen

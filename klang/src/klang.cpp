@@ -26,6 +26,7 @@
 #include <fstream>
 #include <sstream>
 #include <cctype>
+#include <csignal>
 #include <cstdlib>
 
 #include <dlfcn.h>
@@ -608,16 +609,22 @@ int main(int argc, const char** argv) {
                 // compiler::to_jit() already reported the diagnostic (ERR_JIT_INSTANTIATION_FAILED).
                 return -1;
             }
-            auto main_fn = jit->lookup_main_entry_symbol<int(*)(int, char**)>();
-            if (!main_fn) {
+            // Forward the original argc/argv so the K program can inspect them
+            // if it ever supports command-line argument access.
+            auto run = jit->run_main(0, nullptr);
+            if (!run) {
                 compiler->diagnostics().error(
                     static_cast<unsigned int>(k::diag::compiler_diag::ERR_JIT_MAIN_SYMBOL_NOT_FOUND),
                     "Cannot resolve main() symbol in JIT");
                 return -1;
             }
-            // Forward the original argc/argv so the K program can inspect them
-            // if it ever supports command-line argument access.
-            return main_fn(0, nullptr);
+            if (run->uncaught_exception) {
+                // Mirror the behaviour of a compiled program: die with SIGABRT.
+                std::cerr << "klangc: uncaught exception reached main(); aborting" << std::endl;
+                std::signal(SIGABRT, SIG_DFL);
+                std::raise(SIGABRT);
+            }
+            return run->status;
 
         } else if (want_compile) {
             // -c : just emit a native object file, no linking

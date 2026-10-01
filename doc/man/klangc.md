@@ -170,6 +170,10 @@ The integer value returned by `main()` (or `0` if `main` returns `void`)
 becomes the exit status of the **klangc** process itself. This makes
 `--jit-exec` suitable for scripting and rapid prototyping without the overhead
 of producing a native executable on disk.  
+If an exception reaches `main()`'s caller (i.e. is not caught by the program),
+**klangc** prints `klangc: uncaught exception reached main(); aborting` on
+standard error and terminates itself with `SIGABRT`, exactly as a compiled
+program would.  
 `--jit-exec` takes precedence over `-c`, `--dyn-lib`, `--static-lib` and
 normal executable generation; `-o` is ignored.  
 Pre-compiled `.o` files **cannot** be passed in this mode (there is no linker

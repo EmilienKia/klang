@@ -48,17 +48,12 @@
       (`klang/tests/test-klangc-main-abort.cpp`). Still missing: the diagnostic message itself.
       Tests that assert "the program traps" through `exit_code != 0` (e.g. `test-gen-callable-variance.cpp`,
       null-callable cases) should now be tightened to check for SIGABRT.
-    - [ ] Abort on uncaught exception inside the JIT (`klangc --jit-exec` / in-process JIT)
-      The abort guard of the generated `main` is emitted unconditionally, including for JIT-executed code.
-      `abort()` therefore kills the *host* process (`klangc` itself, or the test executable when `main` is
-      called in-process from a test through `lookup_main_entry_symbol`). Consequences to address:
-        - tests cannot call a throwing `main` in-process: they must run `klangc --jit-exec` (or an
-          executable) in a subprocess and check for SIGABRT (see `test-klangc-main-abort.cpp`);
-        - `klangc --jit-exec` exits with SIGABRT instead of a regular error exit code and no diagnostic;
-          decide whether the JIT should instead catch the exception in the host, report it through the
-          compiler diagnostics and return a deterministic non-zero status (e.g. guard emitted only in AOT
-          mode, or a JIT-specific handler installed by `jit::lookup_main_entry_symbol`);
-        - embedders using the JIT as a library get no chance to recover from a K program failure.
+    - [x] Abort on uncaught exception inside the JIT: the generated `main` guard calls the handler stored in
+      the internal global `__k_main_uncaught_handler` (defaults to `abort()`); `jit::add_module()` replaces it
+      with a host callback, so `jit::run_main()` returns `{status, uncaught_exception}` instead of killing the
+      host. `klangc --jit-exec` reports the error and re-raises SIGABRT. Remaining: after an uncaught exception
+      the JIT finalisation still runs global destructors on a possibly inconsistent state; the host callback
+      does not receive any information about the thrown type/code yet (see the diagnostic item above).
     - [ ] Stack not available for debugging after an uncaught-exception abort
       The abort guard uses a catch-all landing pad in the entry point: the unwinder's search phase finds a
       handler there, so phase 2 unwinds (and runs cleanups of) every frame between the `throw` and `main`

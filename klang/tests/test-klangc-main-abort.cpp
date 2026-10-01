@@ -85,6 +85,7 @@ TEST_CASE("main abort: uncaught throwable in main aborts (jit-exec)", "[main-abo
     )");
     INFO("klangc stderr: " << res.err);
     CHECK(is_sigabrt(res.exit_code));
+    CHECK(res.err.find("uncaught exception") != std::string::npos);
 }
 
 TEST_CASE("main abort: throwable propagating through nested frames aborts", "[main-abort][live]") {

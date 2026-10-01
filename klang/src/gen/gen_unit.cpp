@@ -1390,9 +1390,9 @@ void declaration_generator::visit_namespace(ns &ns) {
  *
  * In legacy mode (no Application class) delegates to visit_function().
  *
- * In both modes the resulting body is then wrapped by an abort guard
- * (see wrap_main_with_abort_guard): any exception reaching the C entry point
- * calls abort().
+ * In both modes the resulting body is then wrapped by an uncaught-exception
+ * guard (see wrap_main_with_abort_guard): any exception reaching the C entry
+ * point is passed to a handler which calls abort() unless the JIT replaced it.
  */
 void implementation_generator::visit_global_main_function(global_main_function& main_func) {
     emit_global_main_body(main_func);
@@ -1409,12 +1409,26 @@ void implementation_generator::visit_global_main_function(global_main_function& 
  *
  *   int main(argc, argv) {
  *       try { return __k_main_body(argc, argv); }
- *       catch (...) { __cxa_begin_catch(exc); abort(); }
+ *       catch (...) {
+ *           __cxa_begin_catch(exc);
+ *           (*__k_main_uncaught_handler)(exc);   // defaults to abort()
+ *           __cxa_end_catch();
+ *           return k_main_uncaught_status;
+ *       }
  *   }
  *
  * The catch-all clause (null typeinfo) matches every exception, K Throwable or
  * foreign, so the unwinder's search phase succeeds and the stack is unwound up
- * to the entry point (cleanups of intermediate frames run) before abort().
+ * to the entry point (cleanups of intermediate frames run) before the handler
+ * is called.
+ *
+ * The handler is read through an internal global pointer, initialised to a
+ * function calling abort(): compiled programs therefore die with SIGABRT.
+ * jit::add_module() patches the initialiser with a host callback, so a JIT
+ * execution gets control back instead of killing the host process. The pointer
+ * is read with a volatile load so that optimisation cannot fold it away before
+ * the JIT patches it.
+ *
  * Global constructors/destructors are registered separately through
  * llvm.global_ctors/dtors and are not covered by this guard.
  */
@@ -1440,6 +1454,23 @@ void implementation_generator::wrap_main_with_abort_guard(llvm::Function& proxy_
         body_fn->getArg(i)->setName(proxy_fn.getArg(i)->getName());
         proxy_fn.getArg(i)->replaceAllUsesWith(body_fn->getArg(i));
     }
+
+    // Default uncaught-exception handler: void __k_main_abort_on_uncaught(ptr) { abort(); }
+    auto* handler_ty = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+    auto* default_handler = llvm::Function::Create(handler_ty,
+        llvm::Function::InternalLinkage, "__k_main_abort_on_uncaught", mod);
+    {
+        auto abort_fn = mod.getOrInsertFunction("abort", llvm::FunctionType::get(void_ty, false));
+        if (auto* abort_llvm = llvm::dyn_cast<llvm::Function>(abort_fn.getCallee())) {
+            abort_llvm->addFnAttr(llvm::Attribute::NoReturn);
+        }
+        auto* bb = llvm::BasicBlock::Create(llvm_ctx, "entry", default_handler);
+        _builder->SetInsertPoint(bb);
+        _builder->CreateCall(abort_fn);
+        _builder->CreateUnreachable();
+    }
+    auto* handler_gv = new llvm::GlobalVariable(mod, ptr_ty, false,
+        llvm::GlobalValue::InternalLinkage, default_handler, k_main_uncaught_handler_global);
 
     // Rebuild the entry point as the guard.
     auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
@@ -1468,12 +1499,15 @@ void implementation_generator::wrap_main_with_abort_guard(llvm::Function& proxy_
         llvm::FunctionType::get(ptr_ty, {ptr_ty}, false));
     _builder->CreateCall(cxa_begin, {exc_ptr});
 
-    auto abort_fn = mod.getOrInsertFunction("abort", llvm::FunctionType::get(void_ty, false));
-    if (auto* abort_llvm = llvm::dyn_cast<llvm::Function>(abort_fn.getCallee())) {
-        abort_llvm->addFnAttr(llvm::Attribute::NoReturn);
-    }
-    _builder->CreateCall(abort_fn);
-    _builder->CreateUnreachable();
+    auto* handler_load = _builder->CreateLoad(ptr_ty, handler_gv, "uncaught_handler");
+    handler_load->setVolatile(true);
+    _builder->CreateCall(handler_ty, handler_load, {exc_ptr});
+
+    // Only reached when a host-provided handler returns (JIT execution).
+    auto cxa_end = mod.getOrInsertFunction("__cxa_end_catch",
+        llvm::FunctionType::get(void_ty, false));
+    _builder->CreateCall(cxa_end);
+    _builder->CreateRet(llvm::ConstantInt::get(i32_ty, k_main_uncaught_status));
 }
 
 void implementation_generator::emit_global_main_body(global_main_function& main_func) {

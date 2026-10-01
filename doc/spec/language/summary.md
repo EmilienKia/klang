@@ -2057,6 +2057,8 @@ When an exception propagates through a stack frame:
 An exception that is not caught and reaches the compiler-generated C `main` wrapper
 causes a call to the C `abort()` function (process terminated by `SIGABRT`, after the stack
 has been unwound up to the wrapper). Global constructors/destructors are not covered.
+When the program runs in the JIT, the hosting process is not aborted: the wrapper returns
+control to the host, which is told that an exception was uncaught.
 
 ### 27.7 Implementation Details
 
