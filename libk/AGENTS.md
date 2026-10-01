@@ -119,10 +119,11 @@ Scope: K stdlib modules, runtime C substrate, FFI bridges, and libk test executa
 - `libk-tests-rtti-exceptions`: functional RTTI and exception handling tests.
 - `libk-tests-strings`: string and string builder tests.
 - `libk-tests-types`: foundational types, optional, expected, shared, math, and application tests.
-- `libk-tests-io`: synchronous stream/file/path I/O tests.
+- `libk-tests-io`: synchronous stream/file/path I/O tests (2 Catch2 shards: `-shard-0/1`).
 - `libk-tests-collections-sequential`: sequential collection tests (List, Vector, Sequences).
 - `libk-tests-collections-associative`: associative collection tests (Set, Map).
-- `libk-thread-io-tests`: thread/future/sync/file/network tests.
+- `libk-thread-io-tests`: thread/future/sync/file/network tests (2 Catch2 shards).
+- `libk-tests-time`: time API tests (2 Catch2 shards).
 - `libk-perf-tests` (optional): stress/perf suite (`-DLIBK_PERF_TESTS=ON`).
 
 ### Scoped session rule

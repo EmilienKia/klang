@@ -145,9 +145,9 @@
       callables (the callable branch returned before reaching it, and the adapted right-hand side
       hid the source nullability). Fixed in `gen_operators_assign.cpp`; this was the cause of the
       intermittent `klang-tests-gen-functions` failure (`[callable][variance][null]`, test 19).
-    - [ ] Test time budget: `libk-tests-io` (~90 s), `libk-thread-io-tests` (~92 s) and
-      `libk-tests-time` (~61 s) are close to the 120 s CTest timeout and time out under VM load;
-      shard them (Catch2 `--shard-count`) as done for `klang-tests-import-templates`.
+    - [x] Test time budget: `libk-tests-io`, `libk-thread-io-tests` and `libk-tests-time` were close to
+      the 120 s CTest timeout and timed out under VM load; each is now two Catch2 shards
+      (`libk_add_test_sharded`), like `klang-tests-import-templates`.
     - [ ] Owned members of an aggregate are not destroyed automatically when the aggregate is
       destroyed (observed on a non-generic class holding `Dog!`; not generic-specific). Check
       whether this is intended.

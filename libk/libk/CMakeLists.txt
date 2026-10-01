@@ -649,6 +649,29 @@ macro(libk_add_test TARGET TIMEOUT)
     set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
 endmacro()
 
+# ── libk sharded test helper macro ───────────────────────────────────────────
+# Like libk_add_test, but registers <SHARDS> CTest entries running disjoint Catch2
+# shards of the same executable, each with its own timeout (keeps heavy suites
+# under the per-test budget on constrained machines).
+# Usage: libk_add_test_sharded(<target> <timeout_s> <shards> <source1> [<source2> ...])
+# ─────────────────────────────────────────────────────────────────────────────
+macro(libk_add_test_sharded TARGET TIMEOUT SHARDS)
+    add_executable(${TARGET} ${ARGN})
+    target_link_libraries(${TARGET} klang-test-helpers Catch2::Catch2WithMain dl)
+    add_dependencies(${TARGET} libk_stdlib)
+    target_compile_definitions(${TARGET} PRIVATE
+        LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
+        LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
+        LIBK_TIME_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/time/fixtures"
+    )
+    math(EXPR _libk_last_shard "${SHARDS} - 1")
+    foreach(_libk_shard RANGE ${_libk_last_shard})
+        add_test(NAME ${TARGET}-shard-${_libk_shard}
+                 COMMAND ${TARGET} --shard-count ${SHARDS} --shard-index ${_libk_shard})
+        set_tests_properties(${TARGET}-shard-${_libk_shard} PROPERTIES TIMEOUT ${TIMEOUT})
+    endforeach()
+endmacro()
+
 # ── libk RTTI & Exception tests ──────────────────────────────────────────────
 libk_add_test(libk-tests-rtti-exceptions 120
     tests/test-exceptions.cpp
@@ -677,7 +700,7 @@ libk_add_test(libk-tests-types 120
 )
 
 # ── libk basic stream I/O tests ──────────────────────────────────────────────
-libk_add_test(libk-tests-io 120
+libk_add_test_sharded(libk-tests-io 120 2
     tests/test-io-byte-array-streams.cpp
     tests/test-io-filter-streams.cpp
     tests/test-io-transform-streams.cpp
@@ -710,7 +733,7 @@ libk_add_test(libk-tests-collections-associative 120
 )
 
 # ── libk threading and I/O tests ─────────────────────────────────────────────
-libk_add_test(libk-thread-io-tests 120
+libk_add_test_sharded(libk-thread-io-tests 120 2
     # ── Time, threads, futures ────────────────────────────────────────────
     tests/test-thread-basic.cpp
     tests/test-future.cpp
@@ -745,7 +768,7 @@ libk_add_test(libk-tests-uuid 120
 )
 
 # ── libk time API tests (Phase 1, Phase 2, Phase 3 & Phase 4) ─────────────────
-libk_add_test(libk-tests-time 120
+libk_add_test_sharded(libk-tests-time 120 2
     tests/time/test-time-arithmetic.cpp
     tests/time/test-time-iso.cpp
     tests/time/test-time-clock.cpp
