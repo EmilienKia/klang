@@ -43,11 +43,33 @@
     - [ ] `noexcept` conditional expression (`noexcept(expr)`)
     - [ ] Exception handling in static constructors/destructors
     - [ ] Unhandled FatalError diagnostic: when an uncaught FatalError propagates past `main()`, the runtime should print a diagnostic message (exception type, code, optional stack trace) before terminating the process
-      Observed: today the process exits with an *arbitrary* code (uninitialised value, multiples of 16 in
-      0..240, sometimes 0) instead of aborting. Tests that assert "the program traps" through
-      `exit_code != 0` (e.g. `test-gen-callable-variance.cpp`, null-callable cases) are therefore
-      latently flaky (~1/16 per run); they should check for a deterministic failure status once the
-      runtime terminates properly (SIGABRT / fixed exit code).
+      Status: the generated C entry point now intercepts every exception reaching it (catch-all landing
+      pad, K `Throwable` or foreign) and calls `abort()`, so the process dies with SIGABRT
+      (`klang/tests/test-klangc-main-abort.cpp`). Still missing: the diagnostic message itself.
+      Tests that assert "the program traps" through `exit_code != 0` (e.g. `test-gen-callable-variance.cpp`,
+      null-callable cases) should now be tightened to check for SIGABRT.
+    - [ ] Abort on uncaught exception inside the JIT (`klangc --jit-exec` / in-process JIT)
+      The abort guard of the generated `main` is emitted unconditionally, including for JIT-executed code.
+      `abort()` therefore kills the *host* process (`klangc` itself, or the test executable when `main` is
+      called in-process from a test through `lookup_main_entry_symbol`). Consequences to address:
+        - tests cannot call a throwing `main` in-process: they must run `klangc --jit-exec` (or an
+          executable) in a subprocess and check for SIGABRT (see `test-klangc-main-abort.cpp`);
+        - `klangc --jit-exec` exits with SIGABRT instead of a regular error exit code and no diagnostic;
+          decide whether the JIT should instead catch the exception in the host, report it through the
+          compiler diagnostics and return a deterministic non-zero status (e.g. guard emitted only in AOT
+          mode, or a JIT-specific handler installed by `jit::lookup_main_entry_symbol`);
+        - embedders using the JIT as a library get no chance to recover from a K program failure.
+    - [ ] Stack not available for debugging after an uncaught-exception abort
+      The abort guard uses a catch-all landing pad in the entry point: the unwinder's search phase finds a
+      handler there, so phase 2 unwinds (and runs cleanups of) every frame between the `throw` and `main`
+      *before* `abort()` is called. The core dump / debugger backtrace then only shows the entry-point
+      frame, not the frames that were active at the `throw`. Options to investigate:
+        - no handler at all, letting the unwinder fail the search phase so the stack is left intact
+          (needs a runtime that calls `abort()` / `std::terminate` itself, see `__cxa_throw`), or install a
+          terminate handler that calls `abort()`;
+        - keep the catch-all but capture a backtrace (e.g. `backtrace()`/`libunwind`) at `__cxa_throw` time
+          and print it from the guard, in line with the "optional stack trace" of the diagnostic above;
+        - a `--debug`-only mode that omits the guard.
     - [ ] `catch(...)` catch-all clause (catch any `Throwable`)
 - Switch/case statements and expression
 - With-block - temporary change 'this' scope for a block of code (e.g. `with (obj) { ... }` to access members directly)

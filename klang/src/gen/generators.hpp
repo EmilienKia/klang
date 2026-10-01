@@ -437,6 +437,10 @@ public:
     void visit_annotation_type(annotation_type&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
 
+    // ── global main entry point helpers (defined in gen_unit.cpp) ────────────
+    void emit_global_main_body(global_main_function&);
+    void wrap_main_with_abort_guard(llvm::Function&);
+
     // ── visit_klass extracted helpers (defined in gen_class.cpp) ─────────────
 
     /** Check if this module imports libk (directly or transitively). */

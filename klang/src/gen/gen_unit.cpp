@@ -1389,8 +1389,94 @@ void declaration_generator::visit_namespace(ns &ns) {
  *   6. Return the int result (or 0 for void mains).
  *
  * In legacy mode (no Application class) delegates to visit_function().
+ *
+ * In both modes the resulting body is then wrapped by an abort guard
+ * (see wrap_main_with_abort_guard): any exception reaching the C entry point
+ * calls abort().
  */
 void implementation_generator::visit_global_main_function(global_main_function& main_func) {
+    emit_global_main_body(main_func);
+
+    auto proxy_it = _context->_functions.find(main_func.shared_as<function>());
+    if (proxy_it != _context->_functions.end() && proxy_it->second) {
+        wrap_main_with_abort_guard(*proxy_it->second);
+    }
+}
+
+/**
+ * Move the body of the C entry point into an internal function
+ * '__k_main_body' and rebuild the entry point as a thin guard:
+ *
+ *   int main(argc, argv) {
+ *       try { return __k_main_body(argc, argv); }
+ *       catch (...) { __cxa_begin_catch(exc); abort(); }
+ *   }
+ *
+ * The catch-all clause (null typeinfo) matches every exception, K Throwable or
+ * foreign, so the unwinder's search phase succeeds and the stack is unwound up
+ * to the entry point (cleanups of intermediate frames run) before abort().
+ * Global constructors/destructors are registered separately through
+ * llvm.global_ctors/dtors and are not covered by this guard.
+ */
+void implementation_generator::wrap_main_with_abort_guard(llvm::Function& proxy_fn) {
+    if (proxy_fn.isDeclaration()) return;
+
+    auto& llvm_ctx = **_context;
+    auto& mod = get_module();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+
+    // Move the existing body into the internal function.
+    auto* body_fn = llvm::Function::Create(proxy_fn.getFunctionType(),
+        llvm::Function::InternalLinkage, "__k_main_body", mod);
+    body_fn->copyAttributesFrom(&proxy_fn);
+    body_fn->setLinkage(llvm::Function::InternalLinkage);
+    body_fn->setVisibility(llvm::GlobalValue::DefaultVisibility);
+    body_fn->setSubprogram(proxy_fn.getSubprogram());
+    proxy_fn.setSubprogram(nullptr);
+    body_fn->splice(body_fn->begin(), &proxy_fn);
+    for (unsigned i = 0; i < proxy_fn.arg_size(); ++i) {
+        body_fn->getArg(i)->setName(proxy_fn.getArg(i)->getName());
+        proxy_fn.getArg(i)->replaceAllUsesWith(body_fn->getArg(i));
+    }
+
+    // Rebuild the entry point as the guard.
+    auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+        llvm::FunctionType::get(i32_ty, true));
+    proxy_fn.setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+
+    auto* entry_bb = llvm::BasicBlock::Create(llvm_ctx, "entry", &proxy_fn);
+    auto* ok_bb = llvm::BasicBlock::Create(llvm_ctx, "main_ok", &proxy_fn);
+    auto* lpad_bb = llvm::BasicBlock::Create(llvm_ctx, "main_uncaught", &proxy_fn);
+
+    _builder->SetInsertPoint(entry_bb);
+    std::vector<llvm::Value*> args;
+    for (auto& arg : proxy_fn.args()) args.push_back(&arg);
+    auto* result = _builder->CreateInvoke(body_fn, ok_bb, lpad_bb, args, "main_ret");
+
+    _builder->SetInsertPoint(ok_bb);
+    _builder->CreateRet(result);
+
+    _builder->SetInsertPoint(lpad_bb);
+    auto* lpad_ty = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+    auto* lpad = _builder->CreateLandingPad(lpad_ty, 1, "lpad_val");
+    lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+    auto* exc_ptr = _builder->CreateExtractValue(lpad, 0, "exc_ptr");
+
+    auto cxa_begin = mod.getOrInsertFunction("__cxa_begin_catch",
+        llvm::FunctionType::get(ptr_ty, {ptr_ty}, false));
+    _builder->CreateCall(cxa_begin, {exc_ptr});
+
+    auto abort_fn = mod.getOrInsertFunction("abort", llvm::FunctionType::get(void_ty, false));
+    if (auto* abort_llvm = llvm::dyn_cast<llvm::Function>(abort_fn.getCallee())) {
+        abort_llvm->addFnAttr(llvm::Attribute::NoReturn);
+    }
+    _builder->CreateCall(abort_fn);
+    _builder->CreateUnreachable();
+}
+
+void implementation_generator::emit_global_main_body(global_main_function& main_func) {
     if (!_unit._application_class) {
         // Legacy path: model body was built by type_reference_resolver
         visit_function(main_func);

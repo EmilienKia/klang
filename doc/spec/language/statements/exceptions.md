@@ -473,6 +473,19 @@ riskyWork() : int {
 }
 ```
 
+### Uncaught exceptions
+
+An exception that is not handled by any `catch` clause and reaches the program entry point
+(the compiler-generated C `main` wrapper, see
+[Main Function](../basic/main.md#7-compiler-generated-wrapper)) is intercepted by the
+wrapper, which calls the C `abort()` function. The process terminates with `SIGABRT`.
+The stack is unwound up to the wrapper before `abort()` is called, so destructors and
+`finally` blocks of the intermediate frames run first.
+
+This applies to every thrown value, whatever its type. It does not cover global
+constructors/destructors, nor exceptions escaping a thread entry point (which are handled
+by the thread runtime).
+
 ---
 
 ## 7. Implementation details

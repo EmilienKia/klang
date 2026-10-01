@@ -242,6 +242,13 @@ The K compiler synthesises a C-compatible `main(int argc, char** argv)` entry po
 6. Calls the global destructor function (runs destructors in reverse initialisation order).
 7. Returns the exit code.
 
+Steps 2 to 5 (and the return of the exit code) run under an exception guard: any exception
+that reaches the wrapper — a `::k::Throwable` or a foreign exception — is intercepted and the
+wrapper calls the C `abort()` function. The process then terminates with `SIGABRT`
+instead of returning an exit code. The stack is unwound up to the wrapper before `abort()`
+is called, so destructors of the intermediate frames run first. Global constructors and
+destructors (steps 1 and 6) are not covered by this guard.
+
 The wrapper is transparent to the programmer; user code simply defines `main()` (optionally
 with a `const String[]` parameter), or a full `class Application` when more structure is
 needed.

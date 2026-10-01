@@ -537,6 +537,7 @@ add_executable(klangc-tests
         tests/test-klangc-run.cpp
         tests/test-klangc-stdin.cpp
         tests/test-klangc-jit-exec.cpp
+        tests/test-klangc-main-abort.cpp
         tests/test-klangc-object-input.cpp
         tests/test-klangc-debug.cpp
         tests/test-klangc-mangling.cpp

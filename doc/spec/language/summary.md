@@ -2054,6 +2054,10 @@ When an exception propagates through a stack frame:
 - Nested try-catch blocks within the same function use direct CFG branching
   (resume to outer handler if innerhandlers don't match).
 
+An exception that is not caught and reaches the compiler-generated C `main` wrapper
+causes a call to the C `abort()` function (process terminated by `SIGABRT`, after the stack
+has been unwound up to the wrapper). Global constructors/destructors are not covered.
+
 ### 27.7 Implementation Details
 
 - Uses the **Itanium C++ ABI** unwinding mechanism (`__cxa_allocate_exception`,
