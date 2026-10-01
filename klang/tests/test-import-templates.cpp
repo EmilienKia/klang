@@ -538,6 +538,42 @@ TEST_CASE("cross-module generic class — erased synthesis is exported even if t
     REQUIRE(result.exit_code == 43);
 }
 
+TEST_CASE("cross-module generic method of a non-generic class — explicit and deduced arguments",
+          "[import][e2e][template][generic]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module generic_method_lib;
+
+            public:
+            class Seed {
+                public id : int = 3;
+            }
+
+            class Host {
+                public:
+                generic<class T> pass(v : T*) : T* { return v; }
+                generic<class T> pick(a : T*, b : T*) : T* { return b; }
+            }
+        )K",
+        R"K(
+            module generic_method_exe;
+            import generic_method_lib;
+
+            main() : int {
+                d : Seed;
+                h : Host;
+                a : Seed* = h.pass<Seed>(&d);
+                b : Seed* = h.pass(&d);
+                c : Seed* = h.pick(a, b);
+                return c->id;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 3);
+}
+
 TEST_CASE("import generic class — erased synthesis is exported with erased parameter types",
           "[import][template][generic][model]") {
     TmpKdi lib(R"K(

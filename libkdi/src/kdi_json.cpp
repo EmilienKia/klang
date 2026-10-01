@@ -437,6 +437,7 @@ static json to_json(const kdi_template_def& d) {
               {"visibility", d.visibility}, {"params", params}, {"source", d.source}};
     if (d.is_generic) j["is_generic"] = true;
     if (!d.origin_module.empty()) j["origin_module"] = d.origin_module;
+    if (!d.host_fq_name.empty()) j["host_fq_name"] = d.host_fq_name;
     if (d.aggregate_signature) j["aggregate_signature"] = to_json(*d.aggregate_signature);
     if (d.function_signature) j["function_signature"] = to_json(*d.function_signature);
     return j;
@@ -449,6 +450,7 @@ static kdi_template_def from_json_template_def(const json& j) {
     d.visibility  = j.value("visibility", "public");
     d.is_generic  = j.value("is_generic", false);
     d.origin_module = j.value("origin_module", "");
+    d.host_fq_name = j.value("host_fq_name", "");
     for (auto& p : j.value("params", json::array()))
         d.params.push_back(from_json_template_param(p));
     d.source = j.value("source", "");

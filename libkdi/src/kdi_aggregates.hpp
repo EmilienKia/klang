@@ -152,6 +152,12 @@ struct kdi_template_def {
      * across a transitive diamond (A and B both import k; C imports A and B).
      */
     std::string origin_module;
+    /**
+     * For a member function template of a (non-template) aggregate: the fully-qualified
+     * name of the hosting aggregate (e.g. "app::Registry"). Empty for a namespace-level
+     * template. Only signature-only member templates (generic methods) are exported.
+     */
+    std::string host_fq_name;
     std::vector<kdi_template_param> params; ///< template parameter descriptors
     std::string source;        ///< raw K source text (full declaration + body)
     std::shared_ptr<kdi_aggregate> aggregate_signature; ///< template declaration signature for aggregates

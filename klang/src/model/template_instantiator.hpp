@@ -109,6 +109,16 @@ public:
         k::log::logger& logger);
 
     /**
+     * Find the exported single erased synthesis of an imported (signature-only) generic
+     * aggregate: the regular KDI aggregate carrying the generic's origin namespace and
+     * name. Returns nullptr when the library does not export it.
+     */
+    static std::shared_ptr<aggregate> find_imported_generic_synthesis(
+        aggregate& tpl_def,
+        k::model::unit& unit,
+        std::shared_ptr<context> ctx);
+
+    /**
      * Synthesize a generic aggregate exactly once.
      *
      * For declarations marked with the `generic` keyword, all type parameters

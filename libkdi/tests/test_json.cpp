@@ -571,6 +571,23 @@ TEST_CASE("JSON: template_def round-trips in namespace", "[json][template]") {
     REQUIRE(rtd.source.find("Pair") != std::string::npos);
 }
 
+TEST_CASE("JSON: member template_def keeps its host aggregate", "[json][template][generic]") {
+    kdi_file f = make_minimal_file();
+
+    kdi_template_def td;
+    td.name          = "pass";
+    td.fq_name       = "test::json::Host::pass";
+    td.entity_kind   = "function";
+    td.visibility    = "public";
+    td.is_generic    = true;
+    td.host_fq_name  = "::test::json::Host";
+    f.unit.root_ns.template_defs.push_back(td);
+
+    auto restored = json_round_trip(f);
+    REQUIRE(restored.unit.root_ns.template_defs.size() == 1);
+    REQUIRE(restored.unit.root_ns.template_defs[0].host_fq_name == "::test::json::Host");
+}
+
 TEST_CASE("JSON: generic template_def round-trips with signature and no source", "[json][template][generic]") {
     kdi_file f = make_minimal_file();
 

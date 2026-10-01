@@ -944,6 +944,75 @@ type_reference_resolver::find_generic_usage_for_receiver(const std::shared_ptr<e
     return nullptr;
 }
 
+void type_reference_resolver::check_generic_call_arguments(
+    const function& called_func,
+    const std::shared_ptr<expression>& receiver_expr,
+    const std::vector<std::shared_ptr<expression>>& args,
+    const lex::opt_any_lexeme& lexeme)
+{
+    if (!receiver_expr || called_func.parameters().empty()) return;
+
+    const auto* usage = find_generic_usage_for_receiver(receiver_expr);
+    if (!usage || usage->type_bindings.empty()) return;
+
+    type_substitution_map subst;
+    for (const auto& kv : usage->type_bindings) {
+        if (kv.second) subst[kv.first] = kv.second;
+    }
+    if (subst.empty()) return;
+
+    // Declared (unspecialised) parameter types: from the source for a local generic,
+    // from the KDI signature for an imported one.
+    std::vector<std::shared_ptr<type>> declared(called_func.parameters().size());
+    bool any = false;
+    for (size_t i = 0; i < declared.size(); ++i) {
+        const auto& param = called_func.parameters()[i];
+        if (auto spec = param ? param->get_ast_parameter_spec() : nullptr; spec && spec->type) {
+            declared[i] = _context->from_type_specifier(*spec->type);
+            any = any || declared[i];
+        }
+    }
+    if (!any) {
+        if (auto owner_agg = called_func.parent<aggregate>()) {
+            auto agg_fq = owner_agg->get_fq_name();
+            if (agg_fq.size() >= 2 && agg_fq[0] == ':' && agg_fq[1] == ':') agg_fq = agg_fq.substr(2);
+            const kdi::kdi_template_def* tdef = agg_fq.empty() ? nullptr : find_imported_kdi_template_def(_unit, agg_fq);
+            if (!tdef) {
+                tdef = find_unique_imported_kdi_method_template_def(
+                    _unit, called_func.get_short_name(), called_func.parameters().size());
+            }
+            if (tdef && tdef->aggregate_signature) {
+                for (const auto& method_sig : tdef->aggregate_signature->methods) {
+                    if (method_sig.name != called_func.get_short_name()
+                        || method_sig.params.size() != declared.size()) continue;
+                    for (size_t i = 0; i < declared.size(); ++i) {
+                        declared[i] = build_model_type_from_kdi_signature(
+                            method_sig.params[i].type, *tdef, _unit, _context);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < declared.size() && i < args.size(); ++i) {
+        if (!declared[i] || !args[i]) continue;
+        auto specialized = substitute_type(declared[i], subst);
+        if (!specialized) continue;
+        auto resolved = _context->resolve_type(specialized);
+        if (!resolved) resolved = specialized;
+        if (type::contains_unresolved(resolved) || !type::is_resolved(resolved)) continue;
+        if (compute_cast_weight(args[i], resolved) == CAST_IMPOSSIBLE) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_NO_MATCHING_OVERLOAD), lexeme,
+                "Argument {} of '{}' has type '{}' which cannot be converted to '{}', "
+                "the parameter type for these generic arguments",
+                {std::to_string(i + 1), called_func.get_short_name(),
+                 args[i]->get_type() ? args[i]->get_type()->to_string() : std::string("?"),
+                 resolved->to_string()});
+        }
+    }
+}
+
 std::shared_ptr<type>
 type_reference_resolver::resolve_generic_call_return_type(
     const function& called_func,
@@ -1149,30 +1218,21 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
     // symbols this module links against. Only the concrete arguments are recorded, for
     // source-level type checking of the uses.
     if (is_imported_signature_only_generic && ti) {
-        std::string origin_fq = !ti->origin_module_ns_fq.empty()
-                                ? ti->origin_module_ns_fq
-                                : (parent_ns_ptr ? parent_ns_ptr->get_fq_name() : std::string{});
-        if (origin_fq.size() >= 2 && origin_fq[0] == ':' && origin_fq[1] == ':') origin_fq = origin_fq.substr(2);
-        std::vector<std::string> parts;
-        for (std::size_t pos = 0; pos <= origin_fq.size();) {
-            auto sep = origin_fq.find("::", pos);
-            std::string part = origin_fq.substr(pos, sep == std::string::npos ? std::string::npos : sep - pos);
-            if (!part.empty()) parts.push_back(std::move(part));
-            if (sep == std::string::npos) break;
-            pos = sep + 2;
+        auto synthesis = template_instantiator::find_imported_generic_synthesis(*tpl_agg, _unit, _context);
+        if (!synthesis) {
+            throw_error(static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_IMPORT_NO_SYNTHESIS),
+                lex::opt_any_lexeme{},
+                "Imported generic '" + tpl_agg->get_short_name() + "' has no exported synthesis in its KDI; "
+                "rebuild the library with the current compiler");
         }
-        parts.push_back(tpl_agg->get_short_name());
-        auto synthesis = _unit.get_or_create_imported_aggregate(k::name(false, std::move(parts)), _context);
-        if (synthesis && synthesis->get_struct_type()) {
-            record_generic_usage(*ti, model_args);
-            if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
-                _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
-            }
-            return synthesis->get_struct_type();
+        record_generic_usage(*ti, model_args);
+        if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
+            _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
         }
+        return synthesis->get_struct_type();
     }
 
-    if (tpl_agg->is_generic() && !is_imported_signature_only_generic) {
+    if (tpl_agg->is_generic()) {
         concrete_agg = template_instantiator::synthesize_generic_aggregate(
             *tpl_agg, parent_ns_ptr, _unit, _context, *this);
         if (concrete_agg && ti) {
@@ -1186,14 +1246,6 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
     } else {
         concrete_agg = template_instantiator::instantiate_aggregate(
             *tpl_agg, model_args, parent_ns_ptr, _unit, _context, *this);
-        if (concrete_agg && tpl_agg->is_generic() && ti) {
-            const auto key = build_instantiation_key(model_args);
-            ti->instantiations[key] = concrete_agg;
-            record_generic_usage(*ti, model_args);
-            if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
-                _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
-            }
-        }
     }
     if (!concrete_agg) return {};
 

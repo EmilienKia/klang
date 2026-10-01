@@ -1348,6 +1348,22 @@ void kdi_builder::visit_function(function& fn) {
 
     // Template definition: export as kdi_template_def, not as a regular function
     if (fn.is_template()) {
+        // Generic method of an aggregate: signature-only template attached to its host; the
+        // single erased synthesis is exported as a regular method of that aggregate.
+        if (!_agg_stack.empty() && !_ns_stack.empty() && fn.is_generic() && fn.get_tpl_info()) {
+            const std::string host_fq = _agg_stack.back()->fq_name;
+            std::string fq = host_fq + "::" + fn.get_short_name();
+            auto def = build_template_def(fn.get_short_name(),
+                                          fq.size() >= 2 && fq[0] == ':' && fq[1] == ':' ? fq.substr(2) : fq,
+                                          "function", fn.get_visibility(), *fn.get_tpl_info(), &fn);
+            def.source.clear();
+            def.aggregate_signature.reset();
+            def.function_signature = std::make_shared<kdi::kdi_function>(
+                build_generic_template_function_signature(fn, *fn.get_tpl_info(), def.fq_name));
+            def.host_fq_name = host_fq;
+            _ns_stack.back()->template_defs.push_back(std::move(def));
+            return;
+        }
         if (_agg_stack.empty() && !_ns_stack.empty() && fn.get_tpl_info()) {
             std::string fq = fn.get_fq_name();
             if (fq.empty() || fq == "::") {

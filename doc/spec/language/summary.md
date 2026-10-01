@@ -1859,6 +1859,9 @@ instantiates it. The KDI carries two things for it:
 An importing module resolves `Holder<Seed>` to the exported erased synthesis and records the
 concrete arguments for source-level type checking of the results.
 
+A generic method of a non-generic aggregate is exported as a signature-only member template
+of its host, together with its erased synthesis (a regular method of the host).
+
 Generic functions are exported with their source text; the importing module re-synthesises
 the single erased body (weak linkage, merged across modules) and type-checks its own calls
 through facades.

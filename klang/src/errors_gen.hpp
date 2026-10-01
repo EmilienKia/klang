@@ -635,6 +635,13 @@ enum class generic_diag : unsigned int {
      * by design.
      */
     ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM     = 0x1108,
+
+    /**
+     * An imported generic aggregate has no exported erased synthesis in its KDI
+     * (the library was built by a compiler that did not export it): the
+     * importing module cannot use it.
+     */
+    ERR_GENERIC_IMPORT_NO_SYNTHESIS               = 0x1109,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

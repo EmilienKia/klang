@@ -1022,6 +1022,22 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             } else if (new_callable->getType()->isPointerTy()) {
                 new_callable = _builder->CreateLoad(callable_llvm_type, new_callable, "callable_asgn_val");
             }
+            // Rebinding a non-null ('+') callable from a nullable one: trap before the store.
+            // The adaptation of the right-hand side to the target callable type wraps the
+            // original expression in a cast whose type is the (non-null) target type, so the
+            // nullability of the *source* has to be read through those wrappers.
+            if (new_callable && !ct->is_nullable()) {
+                auto rhs_model = expr.right();
+                auto source_type = rhs_model ? rhs_model->get_type() : nullptr;
+                for (auto inner = rhs_model; inner; ) {
+                    auto unary = std::dynamic_pointer_cast<unary_expression>(inner);
+                    if (!unary || !(std::dynamic_pointer_cast<cast_expression>(inner) ||
+                                    std::dynamic_pointer_cast<load_value_expression>(inner))) break;
+                    inner = unary->sub_expr();
+                    if (inner && inner->get_type()) source_type = inner->get_type();
+                }
+                emit_callable_nonnull_check(target_type, source_type, new_callable, expr.first_lexeme());
+            }
             _builder->CreateStore(new_callable, left);
             _value = left;
             return;
@@ -1052,16 +1068,6 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             // In an if-condition, soft-fail to _null_failure_bb instead of fatal trap.
             emit_null_check(right, fatal, "link_rebind", _null_failure_bb);
         }
-    }
-
-    // Callable rebind from a nullable source: emit the runtime null-check before
-    // the store. A `+` callable is non-null by construction and the call-site
-    // lowering skips the null check accordingly.
-    if (target_type && type::is_fat_callable(target_type)) {
-        auto rhs_model = expr.right();
-        emit_callable_nonnull_check(target_type,
-                                    rhs_model ? rhs_model->get_type() : nullptr,
-                                    right, expr.first_lexeme());
     }
 
     // ── Union inherited assignment (upcast: derived→base, downcast: base→derived) ──

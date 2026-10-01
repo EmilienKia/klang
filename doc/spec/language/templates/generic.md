@@ -278,12 +278,11 @@ This list reflects the state of the implementation and is expected to shrink.
    module re-synthesises the single erased body (weak linkage, merged across modules). A
    generic aggregate is synthesised once *in its defining module* — even if that module never
    instantiates it — and the erased synthesis is exported as a regular aggregate (layout,
-   symbols, `erased_param` parameter types); importing modules link against it. Consequently,
-   type checking of an imported generic aggregate's *arguments* is at the erased level (any
-   pointer-like argument is accepted for a `T*` parameter, as for a local generic aggregate),
-   while results are typed by the concrete type arguments. Generic methods of a non-generic
-   class (and, more generally, member templates of a non-template class) are not exported
-   through KDI.
+   symbols, `erased_param` parameter types); importing modules link against it, and check
+   the arguments and results of their calls against the concrete type arguments. A generic
+   *method* of a non-generic class is exported as a signature-only member template of its host
+   plus the erased synthesis as a regular method. Non-generic member templates
+   (`template<...>` methods of a non-template class) are not exported through KDI.
 6. **No default type arguments, no value parameters, no packs, no specialization.**
 7. **Generic methods are never virtual.**
 8. **Owned members of a generic (or non-generic) aggregate are not destroyed

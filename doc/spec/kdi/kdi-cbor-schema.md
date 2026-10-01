@@ -485,6 +485,8 @@ TemplateDef = {
   "entity_kind" : text,
   "visibility"  : text,
   ?"is_generic" : bool,
+  ?"origin_module" : text,
+  ?"host_fq_name" : text,     ; generic method: fully-qualified name of the hosting aggregate
   "params"      : array[TemplateParam],
   "source"      : text,
   ?"aggregate_signature" : Aggregate,
@@ -494,6 +496,10 @@ TemplateDef = {
 
 Rules:
 
+* `host_fq_name` is set only for a `generic<...>` method of a (non-template) aggregate: the
+  entry then has `entity_kind = "function"`, an empty `source` and a `function_signature`,
+  and its single erased synthesis is exported as a regular method of the host aggregate
+  named `<name><generic>`.
 * Classic (non-generic) templates serialize their full `source` (the
   authoritative form used by the compiler to re-parse/re-instantiate the
   template cross-module) **and** a declaration-only `aggregate_signature` or

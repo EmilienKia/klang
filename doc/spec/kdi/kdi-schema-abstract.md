@@ -260,6 +260,10 @@ Rules:
   is exported as a regular `KdiAggregate` (layout, mangled names, methods) whose types use
   `erased_param` for the erased type parameters; importers link against it instead of
   re-instantiating the definition.
+* A `generic<...>` **method** of a (non-template) aggregate is exported as a `KdiTemplateDef`
+  with `entity_kind = "function"`, `host_fq_name` set to the fully-qualified name of the
+  hosting aggregate, an empty `source` and a `function_signature`; its single erased
+  synthesis is exported as a regular method of the host named `<name><generic>`.
 * `generic<...>` **function** definitions export `is_generic = true` and keep their `source`
   (the importing module re-synthesises the single erased body); `function_signature` is only
   provided as a fallback when no source is available.

@@ -43,6 +43,11 @@
     - [ ] `noexcept` conditional expression (`noexcept(expr)`)
     - [ ] Exception handling in static constructors/destructors
     - [ ] Unhandled FatalError diagnostic: when an uncaught FatalError propagates past `main()`, the runtime should print a diagnostic message (exception type, code, optional stack trace) before terminating the process
+      Observed: today the process exits with an *arbitrary* code (uninitialised value, multiples of 16 in
+      0..240, sometimes 0) instead of aborting. Tests that assert "the program traps" through
+      `exit_code != 0` (e.g. `test-gen-callable-variance.cpp`, null-callable cases) are therefore
+      latently flaky (~1/16 per run); they should check for a deterministic failure status once the
+      runtime terminates properly (SIGABRT / fixed exit code).
     - [ ] `catch(...)` catch-all clause (catch any `Throwable`)
 - Switch/case statements and expression
 - With-block - temporary change 'this' scope for a block of code (e.g. `with (obj) { ... }` to access members directly)
@@ -125,16 +130,24 @@
       arguments. Also added the missing erasure rules for link/view sources (`&d` passed to a
       `T*` parameter) in `compute_cast_weight` and `adapt_from_link/view`. Tests: `test-import-
       templates.cpp` (`[generic]`), `libkdi` JSON/CBOR round trips.
-      Still open: (1) argument type checking of generic aggregate methods is at the erased level
-      (a `Cat*` is accepted by `Box<Dog>::set`; the spec §26.5 promise is only honoured for
-      results): use the concrete signature (template definition + `generic_usages`) for overload
-      resolution, as done with facades for generic functions; (2) an imported generic aggregate
-      from a library built before this change (no exported synthesis) falls back to the old,
-      unreliable re-instantiation; (3) generic methods of non-generic classes (and any member
-      template of a non-template aggregate) are not exported through KDI; (4) keeping declarations
-      of body-less template-instance members external (`gen_function.cpp`) needs an explicit
-      "imported signature-only" flag, not a "no body" test (implicit ctors/dtors of instances have
-      no body block either; it broke the static-link diamond COMDAT tests).
+      Also done afterwards: (1) the arguments of a call on a generic aggregate are type-checked
+      against the concrete type arguments (`check_generic_call_arguments`; `Box<Dog>::set(&cat)`
+      is rejected); (2) no backward compatibility: an imported generic aggregate or method whose
+      library exports no synthesis is an error (`0x1109`), the old re-instantiation path is gone;
+      (3) generic methods of non-generic classes are exported as signature-only member templates
+      (`kdi_template_def.host_fq_name`) plus the erased synthesis `<name><generic>` (regular
+      method), synthesised at definition time; the importer attaches the template to the imported
+      host and `link_generic_facade` targets the exported synthesis.
+      Still open: non-generic member templates (`template<...>` methods of a non-template class)
+      are not exported through KDI (`h.method<T>()` on an imported class finds no function).
+    - [x] Rebinding a non-null callable from a nullable one (`lnk = fp` with `lnk : +(...)`,
+      `fp : *(...)` null) did not trap: the null-check in `operator=` codegen was dead code for
+      callables (the callable branch returned before reaching it, and the adapted right-hand side
+      hid the source nullability). Fixed in `gen_operators_assign.cpp`; this was the cause of the
+      intermittent `klang-tests-gen-functions` failure (`[callable][variance][null]`, test 19).
+    - [ ] Test time budget: `libk-tests-io` (~90 s), `libk-thread-io-tests` (~92 s) and
+      `libk-tests-time` (~61 s) are close to the 120 s CTest timeout and time out under VM load;
+      shard them (Catch2 `--shard-count`) as done for `klang-tests-import-templates`.
     - [ ] Owned members of an aggregate are not destroyed automatically when the aggregate is
       destroyed (observed on a non-generic class holding `Dog!`; not generic-specific). Check
       whether this is intended.
@@ -143,9 +156,9 @@
       `context::resolve_type`, so namespace-qualified types, aliases and enclosing template
       parameters (`pass<U>`) were not resolved. It now shares
       `type_reference_resolver::resolve_explicit_template_arg_type` with the free-function
-      path. Tests: `test-gen-generic.cpp`, `[generic][explicit-args]`. Still open: generic
-      member templates of a non-template host are not exported/imported through KDI
-      (`h.method<T>()` on an imported class finds no function).
+      path. Tests: `test-gen-generic.cpp`, `[generic][explicit-args]`. Generic
+      methods of a non-template host are exported/imported through KDI; non-generic member
+      templates (`template<...>` methods) are still not.
     - [ ] `ConcreteType! → byte*` implicit cast at generic setter sites (runtime returns 0 instead of value)
     - [ ] **Homonymous imported templates from different modules** (origin-aware homing
       of imported template definitions). Symptom: a consumer module imports two libraries

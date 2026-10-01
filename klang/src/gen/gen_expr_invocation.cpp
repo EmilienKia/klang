@@ -202,13 +202,13 @@ std::shared_ptr<type> type_reference_resolver::instantiate_wrapped_return_type(
 }
 
 
-void type_reference_resolver::link_generic_facade(
-    const std::shared_ptr<function>& tpl_func,
-    const std::shared_ptr<function>& facade)
+std::shared_ptr<function> type_reference_resolver::ensure_generic_synthesis(
+    const std::shared_ptr<function>& tpl_func)
 {
-    if (!tpl_func || !facade) return;
+    if (!tpl_func) return nullptr;
 
-    std::shared_ptr<aggregate> host = tpl_func->is_member() ? facade->get_owner() : nullptr;
+    std::shared_ptr<aggregate> host = tpl_func->is_member()
+        ? std::dynamic_pointer_cast<aggregate>(tpl_func->parent<element>()) : nullptr;
     auto parent_ns = _unit.get_root_namespace();
     if (auto parent_elem = tpl_func->parent<element>()) {
         if (auto owner_ns = std::dynamic_pointer_cast<ns>(parent_elem)) parent_ns = owner_ns;
@@ -217,9 +217,7 @@ void type_reference_resolver::link_generic_facade(
     bool created = false;
     auto synthesis = template_instantiator::synthesize_generic_function(
         *tpl_func, parent_ns, host, _context, created);
-    if (!synthesis) return;
-
-    if (created) {
+    if (synthesis && created) {
         symbol_resolver sr(*this, _context, _unit);
         synthesis->accept(sr);
         aggregate_type_resolver atr(*this, _context, _unit);
@@ -228,7 +226,40 @@ void type_reference_resolver::link_generic_facade(
         synthesis->accept(sigr);
         synthesis->accept(*this);
     }
-    facade->set_erased_target(synthesis);
+    return synthesis;
+}
+
+void type_reference_resolver::link_generic_facade(
+    const std::shared_ptr<function>& tpl_func,
+    const std::shared_ptr<function>& facade)
+{
+    if (!tpl_func || !facade) return;
+
+    // Generic method of an imported aggregate: the erased synthesis is one of the host's
+    // exported methods (named '<name><generic>').
+    auto* ti = tpl_func->get_tpl_info();
+    if (ti && ti->is_imported_signature_only) {
+        auto host = std::dynamic_pointer_cast<aggregate>(tpl_func->parent<element>());
+        const std::string synthesis_name = tpl_func->get_short_name() + "<generic>";
+        std::shared_ptr<function> synthesis;
+        if (host) {
+            for (auto& fn : host->get_functions(synthesis_name)) {
+                if (fn && !fn->is_template()) { synthesis = fn; break; }
+            }
+        }
+        if (!synthesis) {
+            throw_error(static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_IMPORT_NO_SYNTHESIS),
+                lex::opt_any_lexeme{},
+                "Imported generic '" + tpl_func->get_short_name() + "' has no exported synthesis in its KDI; "
+                "rebuild the library with the current compiler");
+        }
+        facade->set_erased_target(synthesis);
+        return;
+    }
+
+    if (auto synthesis = ensure_generic_synthesis(tpl_func)) {
+        facade->set_erased_target(synthesis);
+    }
 }
 
 std::shared_ptr<type> type_reference_resolver::resolve_type_from_instantiation_context(
@@ -676,6 +707,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
             check_function_visibility(*best.func, expr);
         check_typedef_arguments(*best.func, expr.arguments(), expr.first_lexeme());
+        check_generic_call_arguments(*best.func, this_expr, expr.arguments(), expr.first_lexeme());
 
             callee->set_target(best.func);
             auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_expr);
@@ -1215,6 +1247,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // Check visibility of the resolved function
         check_function_visibility(*best.func, expr);
         check_typedef_arguments(*best.func, expr.arguments(), expr.first_lexeme());
+        check_generic_call_arguments(*best.func, this_expr, expr.arguments(), expr.first_lexeme());
 
         callee->set_target(best.func);
         auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_expr);

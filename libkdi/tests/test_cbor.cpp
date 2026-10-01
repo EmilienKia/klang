@@ -596,6 +596,31 @@ TEST_CASE("CBOR: template_def round-trips in namespace", "[cbor][template]") {
     REQUIRE(rtd.source == "template<typename T> struct Box { val: T; }");
 }
 
+TEST_CASE("CBOR: member template_def keeps its host aggregate", "[cbor][template][generic]") {
+    kdi_file f;
+    f.header.module_name = "tpl";
+    f.header.lib_base    = "tpl";
+    f.unit.name          = "tpl";
+
+    kdi_template_def td;
+    td.name          = "pass";
+    td.fq_name       = "tpl::Host::pass";
+    td.entity_kind   = "function";
+    td.visibility    = "public";
+    td.is_generic    = true;
+    td.host_fq_name  = "::tpl::Host";
+    f.unit.root_ns.template_defs.push_back(td);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+    std::istringstream iss(oss.str(), std::ios::binary);
+    kdi_file restored;
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(iss));
+
+    REQUIRE(restored.unit.root_ns.template_defs.size() == 1);
+    REQUIRE(restored.unit.root_ns.template_defs[0].host_fq_name == "::tpl::Host");
+}
+
 TEST_CASE("CBOR: generic template_def round-trips with signature and no source", "[cbor][template][generic]") {
     kdi_file f;
     f.header.module_name = "tpl";

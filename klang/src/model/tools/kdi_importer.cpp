@@ -1148,6 +1148,37 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                                              const kdi::kdi_namespace& parent_kdi_ns,
                                              std::shared_ptr<context> ctx)
 {
+    // Generic method of an imported aggregate: attach a signature-only template function to
+    // the imported host. Its single erased synthesis is one of the host's exported methods.
+    if (!tdef.host_fq_name.empty()) {
+        if (!tdef.function_signature) return;
+        std::string host_fq = tdef.host_fq_name;
+        if (host_fq.size() >= 2 && host_fq[0] == ':' && host_fq[1] == ':') host_fq = host_fq.substr(2);
+        std::vector<std::string> parts;
+        for (std::size_t pos = 0; pos <= host_fq.size();) {
+            auto sep = host_fq.find("::", pos);
+            std::string part = host_fq.substr(pos, sep == std::string::npos ? std::string::npos : sep - pos);
+            if (!part.empty()) parts.push_back(std::move(part));
+            if (sep == std::string::npos) break;
+            pos = sep + 2;
+        }
+        auto host = _unit.get_or_create_imported_aggregate(k::name(false, std::move(parts)), ctx);
+        if (!host) return;
+
+        std::unordered_set<std::string> param_names;
+        for (const auto& param : tdef.params) {
+            if (!param.name.empty()) param_names.insert(param.name);
+        }
+        ctx->push_template_param_scope(param_names);
+        auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
+        if (auto tpl_fn = host->define_function(tdef.name, tdef.function_signature->is_static)) {
+            tpl_fn->set_tpl_info(std::move(ti));
+            populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
+        }
+        ctx->pop_template_param_scope();
+        return;
+    }
+
     const bool generic_signature_only =
         tdef.is_generic &&
         (tdef.aggregate_signature != nullptr ||

@@ -829,6 +829,19 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     auto parent_ns = scope_lookup::enclosing_namespace(*tpl_agg);
     if (!parent_ns) return {};
 
+    // An imported generic aggregate resolves to the erased synthesis exported by its library.
+    if (tpl_agg->is_generic() && ti->is_imported_signature_only) {
+        auto synthesis = template_instantiator::find_imported_generic_synthesis(*tpl_agg, _unit, _context);
+        if (!synthesis) {
+            throw_error(static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_IMPORT_NO_SYNTHESIS),
+                lex::opt_any_lexeme{},
+                "Imported generic '" + tpl_agg->get_short_name() + "' has no exported synthesis in its KDI; "
+                "rebuild the library with the current compiler");
+        }
+        record_generic_usage(*ti, model_args);
+        return synthesis->get_struct_type();
+    }
+
     std::shared_ptr<aggregate> concrete;
     if (tpl_agg->is_generic()) {
         concrete = template_instantiator::synthesize_generic_aggregate(

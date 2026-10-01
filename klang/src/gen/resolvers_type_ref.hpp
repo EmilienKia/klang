@@ -289,6 +289,12 @@ protected:
     void link_generic_facade(const std::shared_ptr<function>& tpl_func,
                              const std::shared_ptr<function>& facade);
 
+    /**
+     * Build (once) and resolve the single type-erased synthesis of the generic function or
+     * method @p tpl_func; returns it (also when it already existed).
+     */
+    std::shared_ptr<function> ensure_generic_synthesis(const std::shared_ptr<function>& tpl_func);
+
     /** Map a bare template parameter name to the concrete argument of the enclosing instantiation. */
     std::shared_ptr<type> resolve_type_from_instantiation_context(
         const std::shared_ptr<unresolved_type>& unresolved);
@@ -333,6 +339,16 @@ protected:
 
     /** Infer generic usage bindings from a receiver expression (symbol/member/unary wrapper cases). */
     const tpl_info::generic_usage_descriptor* find_generic_usage_for_receiver(const std::shared_ptr<expression>& receiver) const;
+
+    /**
+     * Type-check the arguments of a call on a generic aggregate against the concrete
+     * parameter types given by the receiver's generic arguments (the erased synthesis only
+     * knows opaque pointers). No-op when the receiver carries no generic binding.
+     */
+    void check_generic_call_arguments(const function& called_func,
+                                      const std::shared_ptr<expression>& receiver_expr,
+                                      const std::vector<std::shared_ptr<expression>>& args,
+                                      const lex::opt_any_lexeme& lexeme);
 
     /**
      * Compute a concrete return type for generic member calls using receiver bindings.

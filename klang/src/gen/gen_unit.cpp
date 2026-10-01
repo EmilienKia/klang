@@ -1330,6 +1330,23 @@ void type_reference_resolver::visit_namespace(ns& ns)
             }
             (void)instantiate_template_aggregate(agg, erased_args, ns);
         }
+
+        // Generic methods of the (non-generic) aggregates defined here: their erased synthesis
+        // is exported as a regular method, which is what importing modules call.
+        std::vector<std::shared_ptr<function>> generic_methods;
+        for (auto& child : ns.get_children()) {
+            auto agg = std::dynamic_pointer_cast<aggregate>(child);
+            if (!agg || agg->is_template() || agg->is_imported()) continue;
+            for (auto& member : agg->get_children()) {
+                auto fn = std::dynamic_pointer_cast<function>(member);
+                if (fn && fn->is_generic() && fn->is_template() && !fn->is_instantiation()) {
+                    generic_methods.push_back(fn);
+                }
+            }
+        }
+        for (auto& fn : generic_methods) {
+            (void)ensure_generic_synthesis(fn);
+        }
     }
 
     // Step 2: Visit all children (namespaces, aggregates, functions, variables)

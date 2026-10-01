@@ -2083,6 +2083,37 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     return concrete;
 }
 
+std::shared_ptr<aggregate> template_instantiator::find_imported_generic_synthesis(
+    aggregate& tpl_def,
+    k::model::unit& unit,
+    std::shared_ptr<context> ctx)
+{
+    auto* ti = tpl_def.get_tpl_info();
+    if (!ti) return nullptr;
+
+    std::string origin_fq = ti->origin_module_ns_fq;
+    if (origin_fq.empty()) {
+        if (auto parent_ns = std::dynamic_pointer_cast<ns>(tpl_def.parent<element>())) {
+            origin_fq = parent_ns->get_fq_name();
+        }
+    }
+    if (origin_fq.size() >= 2 && origin_fq[0] == ':' && origin_fq[1] == ':') origin_fq = origin_fq.substr(2);
+
+    std::vector<std::string> parts;
+    for (std::size_t pos = 0; pos <= origin_fq.size();) {
+        auto sep = origin_fq.find("::", pos);
+        std::string part = origin_fq.substr(pos, sep == std::string::npos ? std::string::npos : sep - pos);
+        if (!part.empty()) parts.push_back(std::move(part));
+        if (sep == std::string::npos) break;
+        pos = sep + 2;
+    }
+    parts.push_back(tpl_def.get_short_name());
+
+    auto synthesis = unit.get_or_create_imported_aggregate(k::name(false, std::move(parts)), ctx);
+    if (!synthesis || !synthesis->get_struct_type()) return nullptr;
+    return std::static_pointer_cast<aggregate>(synthesis);
+}
+
 std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
     aggregate& tpl_def,
     std::shared_ptr<ns> parent_ns,

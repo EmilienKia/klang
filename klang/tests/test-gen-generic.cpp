@@ -883,6 +883,60 @@ TEST_CASE("Generic class: a link ('&d') is accepted for a 'T*' parameter and rea
     CHECK(fn() == 5);
 }
 
+TEST_CASE("Generic class: arguments are checked against the concrete type arguments",
+          "[gen][generic][synthesis][error]") {
+    // Box<Dog>::set(T*) expects a Dog*: a Cat* must be rejected (the erased body only knows byte*).
+    REQUIRE_THROWS(gen_jit_throws(R"K(
+        module gen_generic_syn_7;
+
+        class Dog { public n : int = 5; }
+        class Cat { public n : int = 9; }
+
+        generic<class T> class Box {
+            private val : T*;
+            public:
+            Box() { val = null; }
+            set(v : T*) { val = v; }
+        }
+
+        test_syn() : int {
+            c : Cat;
+            b : Box<Dog>;
+            b.set(&c);
+            return 0;
+        }
+    )K"));
+
+    // The matching type is accepted, through a pointer variable as well as through '&d'.
+    auto jit = gen_jit(R"K(
+        module gen_generic_syn_8;
+
+        class Dog { public n : int = 5; }
+
+        generic<class T> class Box {
+            private val : T*;
+            public:
+            Box() { val = null; }
+            set(v : T*) { val = v; }
+            get() : T* { return val; }
+        }
+
+        test_syn() : int {
+            d : Dog;
+            p : Dog* = &d;
+            b : Box<Dog>;
+            b.set(p);
+            b.set(&d);
+            r : Dog* = b.get();
+            return r->n;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_syn");
+    REQUIRE(fn);
+    CHECK(fn() == 5);
+}
+
 // ============================================================================
 //  EXPLICIT GENERIC TYPE ARGS IN MEMBER METHOD CALLS (non-generic host)
 // ============================================================================
