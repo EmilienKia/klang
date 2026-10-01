@@ -16,6 +16,7 @@ Application`, and multi-level application entry-point chains).
 ```k
 public abstract class Application : public Object {
     public const env() : const EnvironmentMap&;
+    public loadModule(path: const String&) : Expected<Module*, LoadModuleError>;
 }
 ```
 ---
@@ -40,6 +41,14 @@ main() : int {
     return 1;
 }
 ```
+
+### `loadModule(path: const String&) : Expected<Module*, LoadModuleError>`
+Load a dynamic library from a local file path. See [Module](module.md) for the
+full contract (dependencies, global constructors, de-duplication, errors).
+
+**Returns:** the (non-null) [`Module`](module.md) on success, or a
+[`LoadModuleError`](module.md#loadmoduleerror) describing the failure. No
+exception is thrown for a load failure.
 
 ---
 ## EnvironmentMap
@@ -77,4 +86,4 @@ Look up `key`, returning an empty [`OptionalConstRef`](optional.md) if absent.
 
 ---
 
-*See also:* [Main Function](../language/basic/main.md) · [Object](object.md) · [Optional Types](optional.md) · [Collections](collections.md)
+*See also:* [Module](module.md) · [Main Function](../language/basic/main.md) · [Object](object.md) · [Optional Types](optional.md) · [Collections](collections.md)

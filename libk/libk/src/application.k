@@ -45,6 +45,20 @@ module k;
  */
 @ffi::Extern("C") private __k_env_value_at(i: int): unsigned byte[]!;
 
+/**
+ * C helper: resolve a UTF-8 path (including trailing NUL) to an absolute,
+ * symlink-free path. Returns null and sets `err` (a LoadModuleError value)
+ * on failure.
+ */
+@ffi::Extern("C") private __k_module_realpath(path: const unsigned byte[], err: int*): unsigned byte[]!;
+
+/**
+ * C helper: dlopen() the library at the given absolute UTF-8 path (dependencies
+ * loaded, symbols resolved, global constructors run). Returns the native handle,
+ * or null and sets `err` (a LoadModuleError value) on failure.
+ */
+@ffi::Extern("C") private __k_module_open(path: const unsigned byte[], err: int*): byte*;
+
 // ── argv → String[] conversion (called from the synthesised C main proxy) ────
 
 /**
@@ -148,6 +162,43 @@ public final class EnvironmentMap : public Object {
     }
 }
 
+// ── Loaded-module bookkeeping ────────────────────────────────────────────────
+
+/**
+ * Map a LoadModuleError numeric value (as produced by the C runtime) to the enum.
+ */
+private __k_module_error_from_code(code: int): LoadModuleError {
+    r : LoadModuleError = LoadModuleError::LOAD_FAILED;
+    if (code == 0) { r = LoadModuleError::NOT_FOUND; }
+    else if (code == 1) { r = LoadModuleError::ACCESS_DENIED; }
+    else if (code == 2) { r = LoadModuleError::INVALID_PATH; }
+    else if (code == 3) { r = LoadModuleError::NOT_A_LIBRARY; }
+    else if (code == 4) { r = LoadModuleError::MISSING_DEPENDENCY; }
+    else if (code == 5) { r = LoadModuleError::UNRESOLVED_SYMBOL; }
+    return r;
+}
+
+/**
+ * ModuleNode — node of the singly linked, owning list of modules loaded by an
+ * Application. The list is keyed by the native library handle.
+ *
+ * Standard collections cannot hold owner ('!') values, hence this minimal list.
+ */
+public final class ModuleNode : public Object {
+    public _module : Module!;
+    public _next : ModuleNode!;
+
+    ModuleNode() {
+        _module = null;
+        _next = null;
+    }
+
+    ~ModuleNode() {
+        delete _module;
+        delete _next;
+    }
+}
+
 // ── ::k::Application — abstract base for all K application entry points ──────
 
 /**
@@ -176,8 +227,14 @@ public abstract class Application : public Object {
     // ── Environment variable map ─────────────────────────────────────────────
     private _env : EnvironmentMap!;
 
+    // ── Loaded modules (keyed by native handle), most recent first ───────────
+    private _modules : ModuleNode!;
+    private _modulesLock : ReentrantLock!;
+
     // ── Constructor ──────────────────────────────────────────────────────────
     Application() {
+        _modules = null;
+        _modulesLock = new ReentrantLock();
         _env = new EnvironmentMap();
         n : int = __k_env_count();
         i : int = 0;
@@ -189,6 +246,11 @@ public abstract class Application : public Object {
             _env.put(key, val);
             ++i;
         }
+    }
+
+    ~Application() {
+        delete _modules;
+        delete _modulesLock;
     }
 
     // ── Accessors ────────────────────────────────────────────────────────────
@@ -203,5 +265,75 @@ public abstract class Application : public Object {
      */
     public const env() : const EnvironmentMap& {
         return *_env;
+    }
+
+    // ── Dynamic modules ──────────────────────────────────────────────────────
+
+    /**
+     * Load a dynamic library from a local file path.
+     *
+     * The library is loaded with all its dependencies, its symbols are resolved
+     * immediately and its global constructors (including those of K global
+     * objects) have run when this function returns. Symbols are made available
+     * globally to the libraries loaded afterwards. Dependencies are initialised
+     * before the library itself, so a global object may register itself in
+     * an object of a library it depends on.
+     *
+     * Modules are identified by their native handle: loading a file already
+     * loaded by this process (explicitly, through another path or symbolic link,
+     * or implicitly as a dependency) returns the same Module. Modules are never
+     * unloaded; the returned pointer stays valid until the Application is destroyed.
+     *
+     * This function is thread-safe. It must not be called by a global constructor
+     * of a library being loaded from another thread.
+     *
+     * @param path  path of the library file (relative or absolute)
+     * @return      the (non-null) loaded module, or the reason of the failure
+     */
+    public loadModule(path: const String&) : Expected<Module*, LoadModuleError> {
+        err : int = 0;
+        utf8 : unsigned byte[]! = path.toUtf8();
+        real : unsigned byte[]! = __k_module_realpath(utf8, &err);
+        delete utf8;
+        if (real == null) {
+            failure : LoadModuleError = __k_module_error_from_code(err);
+            return Expected<Module*, LoadModuleError>::unexpected(failure);
+        }
+
+        realPath : String = String(real);
+        handle : byte* = null;
+        found : Module* = null;
+        lock : ReentrantLock* = _modulesLock;
+        lock->lock();
+        {
+            handle = __k_module_open(real, &err);
+            if (handle != null) {
+                node : ModuleNode* = _modules;
+                while (node != null && found == null) {
+                    if (node->_module->_handle == handle) {
+                        found = node->_module;
+                    }
+                    node = node->_next;
+                }
+                if (found == null) {
+                    created : ModuleNode! = new ModuleNode();
+                    created._module = new Module(handle, realPath);
+                    created._next = _modules;
+                    _modules = created;
+                    found = _modules._module;
+                }
+            }
+        }
+        try {
+            lock->unlock();
+        } catch (e: IllegalMonitorStateException&) {
+        }
+        delete real;
+
+        if (found == null) {
+            failure : LoadModuleError = __k_module_error_from_code(err);
+            return Expected<Module*, LoadModuleError>::unexpected(failure);
+        }
+        return Expected<Module*, LoadModuleError>::expected(found);
     }
 }

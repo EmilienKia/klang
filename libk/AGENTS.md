@@ -93,6 +93,7 @@ Scope: K stdlib modules, runtime C substrate, FFI bridges, and libk test executa
 
 ## 4. Fast file map
 
+- Dynamic modules: `application.k` (`loadModule`), `module.k`, `runtime/module_ffi.c`
 - Core: `libk/src/object.k`, `libk/src/string.k`, `libk/src/rtti.c`, `libk/src/fatal.c`
 - Thread/time: `thread.k`, `thread_exceptions.k`, `time.k`, `runtime/runtime_thread.c`, `runtime/thread_ffi.c`
 - Futures: `future.k`, `runtime/future_state.c`, `runtime/future_ffi.c`
@@ -119,6 +120,7 @@ Scope: K stdlib modules, runtime C substrate, FFI bridges, and libk test executa
 - `libk-tests-rtti-exceptions`: functional RTTI and exception handling tests.
 - `libk-tests-strings`: string and string builder tests.
 - `libk-tests-types`: foundational types, optional, expected, shared, math, and application tests.
+- `libk-tests-module`: dynamic module loading (`Application::loadModule`, `Module`); builds K/C fixture libraries from `libk/tests/modules/`.
 - `libk-tests-io`: synchronous stream/file/path I/O tests (2 Catch2 shards: `-shard-0/1`).
 - `libk-tests-collections-sequential`: sequential collection tests (List, Vector, Sequences).
 - `libk-tests-collections-associative`: associative collection tests (Set, Map).
@@ -132,7 +134,7 @@ If in a working session, only `libk` changes (`.c` and/or `.k`), only recompile 
 
 ```bash
 # Build libk tests
-cd cmake-build-debug && ninja -j3 libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests
+cd cmake-build-debug && ninja -j3 libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-module
 
 # Run libk tests
 cd cmake-build-debug && ctest -R "libk-tests|libk-thread-io-tests" --output-on-failure

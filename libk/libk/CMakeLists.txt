@@ -117,6 +117,7 @@ set(LIBK_SOURCES
     # ── Phase 8: executors and thread pools ───────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/executor.k
     # ── Application entry-point infrastructure ────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/module.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/application.k
     # ── Cryptography and identifiers ──────────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto/md5.k
@@ -427,6 +428,19 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile dynamic module loading FFI helpers ────────────────────────────
+set(MODULE_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/module_ffi.c)
+set(MODULE_FFI_OBJ ${LIBK_OUTPUT_DIR}/module_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${MODULE_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${MODULE_FFI_OBJ} ${MODULE_FFI_C}
+    DEPENDS ${MODULE_FFI_C}
+    COMMENT "Compiling K dynamic module loading FFI helpers (module_ffi.c)"
+    VERBATIM
+)
+
 # ── Compile UUID FFI helpers ──────────────────────────────────────────────
 set(UUID_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/uuid_ffi.c)
 set(UUID_FFI_OBJ ${LIBK_OUTPUT_DIR}/uuid_ffi.o)
@@ -555,6 +569,7 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}
                    ${NETWORK_FFI_OBJ}
                    ${APP_FFI_OBJ}
+                   ${MODULE_FFI_OBJ}
                    ${UUID_FFI_OBJ}
                    ${PLATFORM_CLOCK_POSIX_OBJ}
                    ${LEAP_SECOND_DATA_OBJ}
@@ -698,6 +713,44 @@ libk_add_test(libk-tests-types 120
     tests/test-application.cpp
     tests/test-symbol-mangling-native.cpp
 )
+
+# ── libk dynamic module loading tests (Application::loadModule) ──────────────
+# Fixture libraries: K libraries (a registry and two plugins whose global objects
+# register themselves in the registry) plus C libraries producing load errors.
+set(MODFX_DIR ${LIBK_OUTPUT_DIR}/module-fixtures)
+set(MODFX_SRC ${CMAKE_CURRENT_SOURCE_DIR}/tests/modules)
+set(MODFX_KLANGC $<TARGET_FILE:klangc>
+    -I ${LIBK_OUTPUT_DIR} -L ${LIBK_OUTPUT_DIR} -I ${MODFX_DIR} -L ${MODFX_DIR})
+set(MODFX_C_FLAGS -shared -fPIC)
+add_custom_command(
+    OUTPUT  ${MODFX_DIR}/.fixtures.stamp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${MODFX_DIR}
+    COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/modreg.k
+    COMMAND ${CMAKE_COMMAND} -E create_symlink libmodreg.kdi modreg.kdi
+    COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/plugin_a.k
+    COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/plugin_b.k
+    COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodmissing_target.so ${MODFX_SRC}/missing_target.c
+    COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodmissing_user.so ${MODFX_SRC}/missing_user.c
+            -L. -lmodmissing_target -Wl,-rpath,${MODFX_DIR}
+    COMMAND ${CMAKE_COMMAND} -E remove libmodmissing_target.so
+    COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodundef.so ${MODFX_SRC}/undefined_symbol.c
+    COMMAND ${CMAKE_COMMAND} -E copy ${MODFX_SRC}/not_a_library.txt ${MODFX_DIR}/not_a_library.txt
+    COMMAND ${CMAKE_COMMAND} -E touch ${MODFX_DIR}/.fixtures.stamp
+    DEPENDS klangc libk_stdlib
+            ${MODFX_SRC}/modreg.k ${MODFX_SRC}/plugin_a.k ${MODFX_SRC}/plugin_b.k
+            ${MODFX_SRC}/missing_target.c ${MODFX_SRC}/missing_user.c
+            ${MODFX_SRC}/undefined_symbol.c ${MODFX_SRC}/not_a_library.txt
+    WORKING_DIRECTORY ${MODFX_DIR}
+    COMMENT "Building dynamic module loading test fixtures"
+    VERBATIM
+)
+add_custom_target(libk_module_fixtures DEPENDS ${MODFX_DIR}/.fixtures.stamp)
+
+libk_add_test(libk-tests-module 120
+    tests/test-module.cpp
+)
+add_dependencies(libk-tests-module libk_module_fixtures)
+target_compile_definitions(libk-tests-module PRIVATE LIBK_MODULE_FIXTURES_DIR="${MODFX_DIR}")
 
 # ── libk basic stream I/O tests ──────────────────────────────────────────────
 libk_add_test_sharded(libk-tests-io 120 2
