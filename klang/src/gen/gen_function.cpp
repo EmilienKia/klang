@@ -397,6 +397,33 @@ void symbol_resolver::visit_function(function& fn) {
         param->accept(*this);
     }
 
+    resolve_function_annotations(fn);
+
+    // Resolve redirect target if this is a redirected function
+    if (fn.is_redirected()) {
+        auto target_name = fn.get_redirect_target_name();
+        auto result = resolve_symbol(fn, target_name);
+        if (auto* target_fn = std::get_if<std::shared_ptr<function>>(&result)) {
+            fn.set_redirect_target(*target_fn);
+        } else {
+            lex::opt_any_lexeme fn_lexeme;
+            if (auto ast_fd = fn.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_FUNC_RETURN_UNRESOLVED), fn_lexeme,
+                "Function redirector '{}' targets '{}', which could not be resolved to a function",
+                {fn.get_short_name(), target_name.to_string()});
+        }
+        // No body to visit for a redirect
+        return;
+    }
+
+    _function_stack.push_back(fn.shared_as<function>());
+    if (fn._block) {
+        visit_block(*fn._block);
+    }
+    _function_stack.pop_back();
+}
+
+void symbol_resolver::resolve_function_annotations(function& fn) {
     // ── Resolve annotation instances and validate @Target ─────────────────
     if (!fn.get_annotations().empty()) {
         lex::opt_any_lexeme fn_lexeme;
@@ -617,29 +644,6 @@ void symbol_resolver::visit_function(function& fn) {
             break;
         }
     }
-
-    // Resolve redirect target if this is a redirected function
-    if (fn.is_redirected()) {
-        auto target_name = fn.get_redirect_target_name();
-        auto result = resolve_symbol(fn, target_name);
-        if (auto* target_fn = std::get_if<std::shared_ptr<function>>(&result)) {
-            fn.set_redirect_target(*target_fn);
-        } else {
-            lex::opt_any_lexeme fn_lexeme;
-            if (auto ast_fd = fn.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_FUNC_RETURN_UNRESOLVED), fn_lexeme,
-                "Function redirector '{}' targets '{}', which could not be resolved to a function",
-                {fn.get_short_name(), target_name.to_string()});
-        }
-        // No body to visit for a redirect
-        return;
-    }
-
-    _function_stack.push_back(fn.shared_as<function>());
-    if (fn._block) {
-        visit_block(*fn._block);
-    }
-    _function_stack.pop_back();
 }
 
 /**
@@ -796,6 +800,13 @@ void type_reference_resolver::visit_function(function& fn) {
 
     for(auto param : fn.parameters()) {
         param->accept(*this);
+    }
+
+    // Cloned template declarations missed the initial symbol-resolution pass.
+    if (std::any_of(fn.get_annotations().begin(), fn.get_annotations().end(),
+                    [](const auto& ann) { return !ann.resolved_type; })) {
+        symbol_resolver annotation_resolver(*this, _context, _unit);
+        annotation_resolver.resolve_function_annotations(fn);
     }
 
     // Resolve return type if still unresolved (e.g. member functions returning StructType&)

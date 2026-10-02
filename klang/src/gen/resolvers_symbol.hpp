@@ -54,6 +54,9 @@ public:
     }
     void resolve();
 
+    /** Resolve function annotations for declarations instantiated after symbol resolution. */
+    void resolve_function_annotations(function& fn);
+
 protected:
 
     std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>

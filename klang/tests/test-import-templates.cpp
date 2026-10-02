@@ -34,6 +34,80 @@ namespace fs = std::filesystem;
 
 namespace {
 
+constexpr std::string_view private_extern_template_library = R"K(
+    module private_extern_tpl_lib;
+
+    template<typename T>
+    public final struct NativeCounter {
+        friend NativeOwner<T>;
+    private:
+        _count : int;
+        NativeCounter(value : int) : _count(value) {}
+        @ffi::Extern("C")
+        static __k_test_import_template_count(count : const int*) : int;
+        @ffi::Extern("C", null, "__k_test_import_template_count")
+        static aliased_count(count : const int*) : int;
+        read() : int {
+            return __k_test_import_template_count(&_count) + aliased_count(&_count);
+        }
+    }
+
+    template<typename T>
+    public struct NativeOwner {
+        read(value : int) : int {
+            counter : NativeCounter<T>(value);
+            return counter.read();
+        }
+    }
+
+    template<typename T>
+    public struct InvalidNativeCounter {
+        @ffi::Extern("Java") private static count(value : const int*) : int;
+    }
+)K";
+
+struct PrivateExternTemplateImport {
+    fs::path kdi_path;
+    std::shared_ptr<k::path_lookup_file_resolver> resolver =
+        std::make_shared<k::path_lookup_file_resolver>();
+
+    explicit PrivateExternTemplateImport(const std::string& name)
+        : kdi_path(fs::current_path() / (name + ".kdi")) {
+        auto lib = compile_model_with_stdlib(private_extern_template_library);
+        REQUIRE(lib);
+        k::model::kdi_builder builder(*lib->get_context_for_test());
+        lib->get_unit()->accept(builder);
+        REQUIRE(kdi::kdi_write_cbor_file(builder.take(), kdi_path.string()));
+        resolver->add_explicit_path("private_extern_tpl_lib", kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    }
+
+    ~PrivateExternTemplateImport() {
+        std::error_code ec;
+        fs::remove(kdi_path, ec);
+    }
+};
+
+TEST_CASE("import template — invalid private static extern annotations are still rejected",
+          "[import][template][ffi][template-extern][error]") {
+    PrivateExternTemplateImport lib("private_extern_template_negative");
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(lib.resolver);
+    try {
+        comp->parse_source("private_extern_tpl_bad.k", R"K(
+            module private_extern_tpl_bad;
+            import private_extern_tpl_lib;
+            test() : int {
+                counter : InvalidNativeCounter<int>;
+                return 0;
+            }
+        )K", false, false);
+        FAIL("Expected the unsupported FFI language diagnostic");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(std::string(error.what()).find("unsupported language 'Java'") != std::string::npos);
+    }
+}
+
 constexpr std::string_view private_friend_template_library = R"K(
     module private_friend_tpl_lib;
 

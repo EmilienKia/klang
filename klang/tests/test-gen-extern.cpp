@@ -201,6 +201,42 @@ extern "C" {
     }
 }
 
+TEST_CASE("FFI: instantiated template extern annotations are validated",
+          "[ffi][template][template-extern][error]") {
+    SECTION("unannotated bodyless static methods remain rejected") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"K(
+            module gen_extern_template_bodyless;
+            template<typename T>
+            struct Counter {
+                private static count(value : const int*) : int;
+            }
+            test() : int { counter : Counter<int>; return 0; }
+        )K"), k::log::compiler_error);
+    }
+
+    SECTION("unsupported language is rejected after instantiation") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"K(
+            module gen_extern_template_language;
+            template<typename T>
+            struct Counter {
+                @ffi::Extern("Java") private static count(value : const int*) : int;
+            }
+            test() : int { counter : Counter<int>; return 0; }
+        )K"), k::log::compiler_error);
+    }
+
+    SECTION("annotated method bodies remain rejected") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"K(
+            module gen_extern_template_body;
+            template<typename T>
+            struct Counter {
+                @ffi::Extern("C") private static count(value : const int*) : int { return 0; }
+            }
+            test() : int { counter : Counter<int>; return 0; }
+        )K"), k::log::compiler_error);
+    }
+}
+
 TEST_CASE("FFI: call to C function via @Extern declaration", "[ffi][gen][runtime]") {
     auto jit = gen_jit(R"K(
         module gen_extern_12;
