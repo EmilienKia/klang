@@ -56,21 +56,6 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
     auto right = expr.right();
 
     auto left_type = left->get_type();
-    auto right_type = right->get_type();
-
-    // Helper: is the type boolean-compatible? (primitive or indirection/null → bool via adapt_type)
-    auto is_bool_compatible = [](const std::shared_ptr<type>& t) {
-        if (type::is_primitive(t)) return true;
-        if (type::is_pointer(t) || type::is_link(t) || type::is_view(t)
-            || type::is_owner(t) || type::is_null(t)) return true;
-        // Also accept ref<indirection>
-        if (type::is_reference(t)) {
-            auto inner = t->get_subtype();
-            if (type::is_pointer(inner) || type::is_link(inner) ||
-                type::is_view(inner) || type::is_owner(inner)) return true;
-        }
-        return false;
-    };
 
     // Step 2: For struct types: look for operator overload
     // ── Operator overload for aggregate types (before reference stripping) ──
@@ -113,51 +98,10 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
         }
     }
 
-    if(type::is_reference(left_type)) {
-        // For ref<indirection>, don't unwrap — adapt_type handles ref<indirection>→bool.
-        auto inner = left_type->get_subtype();
-        if (type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)
-            || type::is_owner(inner)) {
-            // Leave as-is; adapt_type will handle ref<indirection>→bool.
-        } else {
-            left = adapt_reference_load_value(left);
-            expr.assign_left(left);
-            left_type = left_type->get_subtype();
-        }
-    } else if(type::is_drain(left_type)) {
-        left = adapt_reference_load_value(left);
-        expr.assign_left(left);
-        left_type = left_type->get_subtype();
-    }
-
-    if(type::is_reference(right_type)) {
-        auto inner = right_type->get_subtype();
-        if (type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)
-            || type::is_owner(inner)) {
-            // Leave as-is; adapt_type will handle ref<indirection>→bool.
-        } else {
-            right = adapt_reference_load_value(right);
-            expr.assign_right(right);
-            right_type = right_type->get_subtype();
-        }
-    } else if(type::is_drain(right_type)) {
-        right = adapt_reference_load_value(right);
-        expr.assign_right(right);
-        right_type = right_type->get_subtype();
-    }
-
-    if(!is_bool_compatible(left->get_type()) || !is_bool_compatible(right->get_type())) {
-        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_TOO_MANY_ARGS), expr.first_lexeme(),
-            "Logical operators ('&&', '||') are not supported for non-primitive types: "
-            "operands must be of a primitive type or indirection type convertible to boolean, "
-            "but found '{}' and '{}'",
-            {left->get_type() ? left->get_type()->to_string() : "?",
-             right->get_type() ? right->get_type()->to_string() : "?"});
-    }
-
     auto bool_type = _context->from_type(primitive_type::BOOL);
 
-    // Step 3: For non-bool types: insert implicit cast to bool
+    // Keep aggregate receivers addressable: adapt_type invokes their bool cast
+    // without loading or copying the aggregate, and preserves const qualification.
     auto cast_left = adapt_type(left, bool_type);
     if(!cast_left) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_TOO_FEW_ARGS), expr.first_lexeme(),

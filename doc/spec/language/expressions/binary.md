@@ -154,7 +154,7 @@ a || b       // true if at least one of a or b is true
 ```
 **Short-circuit evaluation (and-then / or-else):**
 
-`&&` and `||` use **short-circuit evaluation**: the right operand is only evaluated
+Built-in `&&` and `||` use **short-circuit evaluation**: the right operand is only evaluated
 if its value could change the result.
 
 - `&&` (**and-then**): if the left operand is `false`, the result is `false` without
@@ -187,8 +187,9 @@ This implicit conversion applies wherever a `bool` is expected:
 | `T*`, `T+`, `T?`, `T!` (null) | → `bool` | `false` |
 | `null` literal | → `bool` | `false` |
 
-> **Note:** References (`T&`) are **not** implicitly convertible to `bool`.
-> A reference can never be null, so such a conversion would be meaningless.
+> **Note:** A reference (`T&`) is not converted by testing its address.
+> Its referred value may still be convertible to `bool`, including through an
+> aggregate's conversion operator.
 
 **Examples:**
 ```k
@@ -203,6 +204,32 @@ if (!p) {
 // Combine with logical operators:
 if (p && q) { ... }   // both non-null
 if (p || q) { ... }   // at least one non-null
+```
+
+### Aggregate boolean conversions
+
+If no matching overloaded `operator &&` or `operator ||` is selected, an
+aggregate operand may provide `operator() : bool`. The built-in logical
+operator must invoke the conversion on the original operand without copying
+it. Const operands require a const conversion operator.
+
+The right operand, including its boolean conversion, must be skipped when
+short-circuiting. An overloaded logical operator is an ordinary function call
+and does not provide the built-in short-circuit guarantee.
+
+```k
+struct Flag {
+    value : bool;
+    Flag(v : bool) : value(v) {}
+    const operator() : bool { return value; }
+}
+
+enabled : const Flag(true);
+if (enabled || performFallback()) { ... } // Fallback is not evaluated.
+
+struct NoBool {}
+invalid : NoBool;
+result : bool = invalid && true; // Error: NoBool cannot convert to bool.
 ```
 ---
 ## 6. Conditional (ternary) operator

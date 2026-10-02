@@ -67,6 +67,131 @@
 
 #include "helpers.hpp"
 
+TEST_CASE("Builtin logical operators use const bool casts without copying receivers",
+          "[operator][gen][logical-bool-cast]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module logical_const_cast;
+
+        struct Flag {
+            value : bool;
+            visits : int*;
+            copies : int*;
+            Flag(v : bool, calls : int*, copied : int*)
+                : value(v), visits(calls), copies(copied) {}
+            Flag(other : const Flag&)
+                : value(other.value), visits(other.visits), copies(other.copies) {
+                (*copies)++;
+            }
+            const operator() : bool {
+                (*visits)++;
+                return value;
+            }
+        }
+
+        rhs(calls : int*, value : bool) : bool {
+            (*calls)++;
+            return value;
+        }
+
+        evaluate(on : const Flag&, off : const Flag&, calls : int*) : int {
+            score : int = 0;
+            if (off && rhs(calls, true)) return 100;
+            if (on || rhs(calls, false)) score += 1;
+            if (on && rhs(calls, true)) score += 2;
+            if (off || rhs(calls, true)) score += 4;
+            if (off && on) return 101;
+            if (on || off) score += 8;
+            if (on && off) return 102;
+            if (off || on) score += 16;
+            return score;
+        }
+
+        test() : int {
+            on_calls : int = 0;
+            off_calls : int = 0;
+            copies : int = 0;
+            rhs_calls : int = 0;
+            on : Flag(true, &on_calls, &copies);
+            off : Flag(false, &off_calls, &copies);
+            score : int = evaluate(on, off, &rhs_calls);
+            if (on_calls != 5 || off_calls != 5 || rhs_calls != 2) return 103;
+            if (on && off) return 104;
+            if (true && on) score += 1;
+            if (on_calls != 7 || off_calls != 6 || copies != 0) return 105;
+            return score;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 32);
+}
+
+TEST_CASE("Builtin logical operators preserve mutable bool cast receivers",
+          "[operator][gen][logical-bool-cast]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module logical_mutable_cast;
+
+        copies : int = 0;
+        rhs_calls : int = 0;
+        struct Flag {
+            value : bool;
+            calls : int = 0;
+            Flag(v : bool) : value(v) {}
+            Flag(other : const Flag&) : value(other.value) { copies++; }
+            operator() : bool {
+                calls++;
+                return value;
+            }
+        }
+
+        rhs() : bool { rhs_calls++; return true; }
+
+        test() : int {
+            on : Flag(true);
+            off : Flag(false);
+            if (off && rhs()) return 100;
+            if (!(on || rhs())) return 101;
+            if (on && off) return 102;
+            if (!(off || on)) return 103;
+            if (on.calls != 3 || off.calls != 3) return 104;
+            if (copies != 0 || rhs_calls != 0) return 105;
+            return 42;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("Builtin logical operators reject operands without a valid bool conversion",
+          "[operator][gen][logical-bool-cast][error]") {
+    SECTION("Invalid left operand") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"K(
+            module logical_bad_left;
+            struct NoBool {}
+            test() : bool { value : NoBool; return value && true; }
+        )K"), k::log::compiler_error);
+    }
+    SECTION("Invalid right operand") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"K(
+            module logical_bad_right;
+            struct NoBool {}
+            test() : bool { value : NoBool; return false || value; }
+        )K"), k::log::compiler_error);
+    }
+    SECTION("Mutable conversion on a const receiver") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"K(
+            module logical_bad_const;
+            struct Flag { operator() : bool { return true; } }
+            test(value : const Flag&) : bool { return value && true; }
+        )K"), k::log::compiler_error);
+    }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Parser tests
 // ═════════════════════════════════════════════════════════════════════════════
