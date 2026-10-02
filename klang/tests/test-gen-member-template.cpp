@@ -221,6 +221,70 @@ TEST_CASE("Member template with implicit deduction", "[gen][member-template][ded
     CHECK(fn() == 123);
 }
 
+TEST_CASE("Member template parameter may name an enclosing template specialization",
+          "[gen][member-template][template-type]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_member_template_enclosing_type;
+
+        class ElementA {}
+        class ElementB {}
+
+        template<class T>
+        class Channel {
+            Channel() {}
+
+            template<class U>
+            Channel(other : Channel<U>&) {}
+
+            template<class U>
+            probe(other : Channel<U>&) : int {
+                return 42;
+            }
+        }
+
+        test() : int {
+            source : Channel<ElementA>();
+            receiver : Channel<ElementB>(source);
+            return receiver.probe(source);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Member template assignment operator instantiates for specialized aggregate",
+          "[gen][member-template][operator]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_member_template_operator;
+
+        template<typename T>
+        struct Box {
+            value : T;
+
+            Box(value : T) : value(value) {}
+
+            template<typename U>
+            operator =(other : const Box<U>&) : Box<T>& {
+                value = (T) other.value;
+                return this;
+            }
+        }
+
+        test() : int {
+            target : Box<int>(0);
+            source : Box<byte>(42);
+            target = source;
+            return target.value;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 42);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  7. emplaceFront/emplaceBack/emplace — same-module LinkedList with struct
 // ════════════════════════════════════════════════════════════════════════════
@@ -640,6 +704,3 @@ TEST_CASE("Interface default member template method on secondary base with this 
     REQUIRE(fn != nullptr);
     CHECK(fn() == 50);
 }
-
-
-

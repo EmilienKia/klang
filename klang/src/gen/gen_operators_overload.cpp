@@ -21,9 +21,13 @@
 #include "gen_helpers.hpp"
 #include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
+#include "../model/template_deduction.hpp"
+#include "../model/template_instantiator.hpp"
 
 #include "../errors.hpp"
 #include "gen_operators_helpers.hpp"
+
+#include <unordered_map>
 
 namespace k::model::gen {
 
@@ -73,6 +77,84 @@ type_reference_resolver::resolve_named_binary_operator_overload(
     // otherwise the search recurses into base classes (BFS, diamond-safe).
     std::vector<std::shared_ptr<function>> member_funcs =
         collect_member_operators_from_hierarchy(left_agg, op_name);
+
+    std::vector<std::shared_ptr<function>> instantiated_member_funcs;
+    std::unordered_map<const function*, size_t> template_specificity;
+    for (const auto& func : member_funcs) {
+        if (!func || !func->is_template()) {
+            if (func) instantiated_member_funcs.push_back(func);
+            continue;
+        }
+
+        auto* ti = func->get_tpl_info();
+        auto owner = func->get_owner();
+        if (!ti || !owner) continue;
+        auto deduction = deduce_template_arguments(
+            *ti, func->parameters(),
+            std::vector<std::shared_ptr<type>>{right_expr ? right_expr->get_type() : nullptr});
+        if (!deduction.success) continue;
+        size_t constraint_error_index = 0;
+        std::string constraint_error_reason;
+        if (!validate_template_arg_constraints(
+                *ti, deduction.deduced_args, constraint_error_index, constraint_error_reason)) {
+            continue;
+        }
+
+        const std::string key = build_instantiation_key(deduction.deduced_args);
+        std::shared_ptr<function> concrete;
+        bool newly_instantiated = false;
+        if (auto cached = ti->instantiations.find(key); cached != ti->instantiations.end()) {
+            if (auto* cached_func = std::get_if<std::shared_ptr<function>>(&cached->second)) {
+                concrete = *cached_func;
+            }
+        }
+        if (!concrete) {
+            const std::string base_name = func->get_short_name();
+            const std::string instance_name = build_instantiated_name(base_name, deduction.deduced_args);
+            auto target_agg = func->get_owner();
+            if (!target_agg) continue;
+            concrete = target_agg->define_function(instance_name, func->is_static());
+            if (!concrete) continue;
+
+            concrete->set_visibility(func->get_visibility());
+            concrete->set_const_member(func->is_const_member());
+            concrete->set_operator(func->is_operator());
+            concrete->set_aliasing(func->get_aliasing());
+            concrete->set_compiler_generated(func->is_compiler_generated());
+            auto subst = template_instantiator::build_substitution_map_public(*ti, deduction.deduced_args);
+            auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduction.deduced_args);
+            auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
+            template_instantiator::populate_function_from_template_public(
+                concrete, *func, subst, val_subst, pack_subst, func->is_generic());
+            concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args);
+            concrete->mark_instantiation();
+            ti->instantiations[key] = concrete;
+            newly_instantiated = true;
+        }
+
+        if (newly_instantiated) {
+            symbol_resolver sr(*this, _context, _unit);
+            concrete->accept(sr);
+            aggregate_type_resolver atr(*this, _context, _unit);
+            concrete->accept(atr);
+            signature_resolver sigr(*this, _context, _unit);
+            concrete->accept(sigr);
+            concrete->accept(*this);
+        }
+        size_t specificity = 0;
+        for (const auto& param : ti->params) {
+            if (param.kind != template_param_kind::TYPENAME || param.constraint_type) {
+                ++specificity;
+            }
+        }
+        template_specificity[concrete.get()] = specificity;
+        if (std::find(instantiated_member_funcs.begin(), instantiated_member_funcs.end(), concrete)
+                == instantiated_member_funcs.end()) {
+            instantiated_member_funcs.push_back(std::move(concrete));
+        }
+    }
+    member_funcs = std::move(instantiated_member_funcs);
+
     std::vector<std::shared_ptr<function>> non_member_funcs = scope_lookup::lookup_functions(left_expr, op_name);
     // Remove any member functions that leaked into non_member_funcs via scope_lookup.
     // (scope_lookup walks up the element parent chain, which includes the enclosing aggregate.)
@@ -116,6 +198,8 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         cast_weight score;
         bool is_member;
         bool is_const_func;
+        bool is_template_instantiation;
+        size_t template_specificity;
         /** Target parameter type to adapt `right_expr` to if this candidate wins.
          * Adaptation is deferred until after selection (see below) because adapt_type()
          * may create a wrapping cast_expression that reparents its input expression as a
@@ -135,7 +219,16 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         auto right_param_type = params[0]->get_type();
         auto w = compute_cast_weight(right_expr, right_param_type);
         if (w != CAST_IMPOSSIBLE) {
-            valid.push_back({func, w, true, func->is_const_member(), right_param_type});
+            auto specificity = template_specificity.find(func.get());
+            valid.push_back({
+                func,
+                w,
+                true,
+                func->is_const_member(),
+                specificity != template_specificity.end(),
+                specificity == template_specificity.end() ? 0 : specificity->second,
+                right_param_type
+            });
         }
     }
 
@@ -159,7 +252,7 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         // Step 3: Score each candidate by cast_weight on the right operand (and left for non-member)
         // Overall score = worst of left and right
         cast_weight w = std::max(wl, wr);
-        valid.push_back({func, w, false, false, right_param_type});
+        valid.push_back({func, w, false, false, false, 0, right_param_type});
     }
 
     // Step 4: Prefer member operators over non-member when scores are equal
@@ -187,6 +280,25 @@ type_reference_resolver::resolve_named_binary_operator_overload(
     }
 
     // When multiple member candidates tie, prefer mutable over const on a mutable object.
+    if (best.size() > 1 && best_is_member) {
+        bool has_non_template = std::any_of(best.begin(), best.end(), [](const CandInfo* c) {
+            return !c->is_template_instantiation;
+        });
+        if (has_non_template) {
+            std::vector<CandInfo*> non_templates;
+            for (auto* c : best) {
+                if (!c->is_template_instantiation) non_templates.push_back(c);
+            }
+            best = std::move(non_templates);
+        } else {
+            size_t most_specific = 0;
+            for (auto* c : best) most_specific = std::max(most_specific, c->template_specificity);
+            best.erase(std::remove_if(best.begin(), best.end(), [most_specific](const CandInfo* c) {
+                return c->template_specificity != most_specific;
+            }), best.end());
+        }
+    }
+
     if (best.size() > 1 && !is_const_this && best_is_member) {
         std::vector<CandInfo*> mutable_best;
         for (auto* c : best) {

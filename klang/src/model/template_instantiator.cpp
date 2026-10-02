@@ -1619,6 +1619,17 @@ void template_instantiator::clone_method(
         auto* src_ti = src.get_tpl_info();
         auto new_ti = std::make_unique<tpl_info>();
         new_ti->params = src_ti->params;
+        for (auto& param : new_ti->params) {
+            if (param.constraint_type) {
+                param.constraint_type = substitute_type(param.constraint_type, subst);
+            }
+            if (param.value_type) {
+                param.value_type = substitute_type(param.value_type, subst);
+            }
+            if (param.default_type) {
+                param.default_type = substitute_type(param.default_type, subst);
+            }
+        }
         new_ti->is_generic = src_ti->is_generic;
         new_ti->source_text = src_ti->source_text;
         new_func->set_tpl_info(std::move(new_ti));
@@ -1650,6 +1661,26 @@ void template_instantiator::clone_constructor(
     new_ctor->set_aliasing(src.get_aliasing());
     new_ctor->set_compiler_generated(src.is_compiler_generated());
     new_ctor->set_copy_constructor(src.is_copy_constructor());
+
+    if (src.get_tpl_info()) {
+        auto* src_ti = src.get_tpl_info();
+        auto new_ti = std::make_unique<tpl_info>();
+        new_ti->params = src_ti->params;
+        for (auto& param : new_ti->params) {
+            if (param.constraint_type) {
+                param.constraint_type = substitute_type(param.constraint_type, subst);
+            }
+            if (param.value_type) {
+                param.value_type = substitute_type(param.value_type, subst);
+            }
+            if (param.default_type) {
+                param.default_type = substitute_type(param.default_type, subst);
+            }
+        }
+        new_ti->is_generic = src_ti->is_generic;
+        new_ti->source_text = src_ti->source_text;
+        new_ctor->set_tpl_info(std::move(new_ti));
+    }
 
     // Clone member inits
     for (auto& mi : src.member_inits()) {

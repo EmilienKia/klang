@@ -18,6 +18,7 @@
 #include "resolvers_type_ref.hpp"
 #include "resolvers_aggregate.hpp"
 #include "resolvers_signature.hpp"
+#include "resolvers_symbol.hpp"
 #include "resolvers_scope_lookup.hpp"
 #include "resolvers_constexpr.hpp"
 #include "gen_helpers.hpp"
@@ -3389,6 +3390,83 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     debug("[type_reference_resolver::get_best_matching_constructor] {} candidates, {} args", {std::to_string(constructors.size()), std::to_string(args.size())});
     const size_t arg_count = args.size();
 
+    std::vector<std::shared_ptr<constructor>> candidates;
+    std::vector<std::shared_ptr<constructor>> template_candidates;
+    std::unordered_map<const constructor*, size_t> template_specificity;
+    candidates.reserve(constructors.size());
+    for (const auto& ctor : constructors) {
+        if (ctor && ctor->is_template()) template_candidates.push_back(ctor);
+        else if (ctor) candidates.push_back(ctor);
+    }
+    std::vector<std::shared_ptr<type>> arg_types;
+    arg_types.reserve(arg_count);
+    for (const auto& arg : args) {
+        arg_types.push_back(arg ? arg->get_type() : nullptr);
+    }
+    for (const auto& ctor : template_candidates) {
+        if (!ctor || !ctor->is_template()) continue;
+        auto* ti = ctor->get_tpl_info();
+        auto owner = ctor->get_owner();
+        if (!ti || !owner) continue;
+
+        auto deduction = deduce_template_arguments(*ti, ctor->parameters(), arg_types);
+        if (!deduction.success) continue;
+
+        size_t constraint_error_index = 0;
+        std::string constraint_error_reason;
+        if (!validate_template_arg_constraints(
+                *ti, deduction.deduced_args, constraint_error_index, constraint_error_reason)) {
+            continue;
+        }
+
+        std::string key = build_instantiation_key(deduction.deduced_args);
+        std::shared_ptr<constructor> concrete;
+        bool newly_instantiated = false;
+        if (auto it = ti->instantiations.find(key); it != ti->instantiations.end()) {
+            if (auto* cached = std::get_if<std::shared_ptr<function>>(&it->second)) {
+                concrete = std::dynamic_pointer_cast<constructor>(*cached);
+            }
+        }
+        if (!concrete) {
+            concrete = std::dynamic_pointer_cast<constructor>(
+                owner->define_function(owner->get_short_name(), false));
+            if (!concrete) continue;
+
+            concrete->set_visibility(ctor->get_visibility());
+            concrete->set_aliasing(ctor->get_aliasing());
+            concrete->set_compiler_generated(ctor->is_compiler_generated());
+            auto subst = template_instantiator::build_substitution_map_public(*ti, deduction.deduced_args);
+            auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduction.deduced_args);
+            auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
+            template_instantiator::populate_function_from_template_public(
+                concrete, *ctor, subst, val_subst, pack_subst, ctor->is_generic());
+            concrete->set_tpl_instantiation_info(ctor->get_short_name(), deduction.deduced_args);
+            concrete->mark_instantiation();
+            ti->instantiations[key] = std::static_pointer_cast<function>(concrete);
+            newly_instantiated = true;
+        }
+
+        if (newly_instantiated) {
+            symbol_resolver sr(*this, _context, _unit);
+            concrete->accept(sr);
+            aggregate_type_resolver atr(*this, _context, _unit);
+            concrete->accept(atr);
+            signature_resolver sigr(*this, _context, _unit);
+            concrete->accept(sigr);
+            concrete->accept(*this);
+        }
+        size_t specificity = 0;
+        for (const auto& param : ti->params) {
+            if (param.kind != template_param_kind::TYPENAME || param.constraint_type) {
+                ++specificity;
+            }
+        }
+        template_specificity[concrete.get()] = specificity;
+        if (std::find(candidates.begin(), candidates.end(), concrete) == candidates.end()) {
+            candidates.push_back(std::move(concrete));
+        }
+    }
+
     auto ctor_is_callable = [&](const std::shared_ptr<constructor>& ctor) -> bool {
         const auto& params = ctor->parameters();
         if (params.size() == arg_count) return true;
@@ -3400,7 +3478,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     };
 
     std::vector<std::shared_ptr<constructor>> arity_matched;
-    for (auto& ctor : constructors) {
+    for (auto& ctor : candidates) {
         if (ctor_is_callable(ctor)) {
             arity_matched.push_back(ctor);
         }
@@ -3408,9 +3486,9 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
     if (arity_matched.empty()) {
         std::string avail;
-        if (!constructors.empty()) {
+        if (!candidates.empty()) {
             bool first = true;
-            for (auto& ctor : constructors) {
+            for (auto& ctor : candidates) {
                 if (!first) avail += ", ";
                 avail += std::to_string(ctor->parameters().size()) + " parameter(s)";
                 first = false;
@@ -3443,6 +3521,8 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         std::vector<std::shared_ptr<expression>> adapted_args;
         cast_weight score;
         size_t defaults_used;
+        bool is_template_instantiation;
+        size_t template_specificity;
     };
 
     struct FailedCandidate {
@@ -3489,7 +3569,15 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         if (has_impossible) {
             failed_candidates.push_back({ctor, std::move(failed_indices)});
         } else {
-            valid_candidates.push_back({ctor, std::move(adapted_args), max_weight, defaults_used});
+            auto specificity = template_specificity.find(ctor.get());
+            valid_candidates.push_back({
+                ctor,
+                std::move(adapted_args),
+                max_weight,
+                defaults_used,
+                specificity != template_specificity.end(),
+                specificity == template_specificity.end() ? 0 : specificity->second
+            });
         }
     }
 
@@ -3518,24 +3606,49 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
     cast_weight best_score = CAST_IMPOSSIBLE;
     size_t best_defaults = std::numeric_limits<size_t>::max();
+    size_t best_specificity = 0;
+    bool best_is_template_instantiation = true;
+    bool have_best = false;
     for (auto& cand : valid_candidates) {
-        if (cand.score < best_score || (cand.score == best_score && cand.defaults_used < best_defaults)) {
+        if (cand.score < best_score ||
+            (cand.score == best_score && cand.defaults_used < best_defaults)) {
             best_score = cand.score;
             best_defaults = cand.defaults_used;
+            best_is_template_instantiation = cand.is_template_instantiation;
+            best_specificity = cand.template_specificity;
+            have_best = true;
+        } else if (cand.score == best_score && cand.defaults_used == best_defaults &&
+                   (!have_best ||
+                    (best_is_template_instantiation && !cand.is_template_instantiation) ||
+                    (best_is_template_instantiation == cand.is_template_instantiation &&
+                     cand.template_specificity > best_specificity))) {
+            best_is_template_instantiation = cand.is_template_instantiation;
+            best_specificity = cand.template_specificity;
+            have_best = true;
         }
     }
 
     if (best_score == CAST_NONE && best_defaults == 0) {
+        Candidate* exact_match = nullptr;
         for (auto& cand : valid_candidates) {
-            if (cand.score == CAST_NONE && cand.defaults_used == 0) {
-                return {cand.ctor, cand.adapted_args};
+            if (cand.score == CAST_NONE && cand.defaults_used == 0 &&
+                cand.is_template_instantiation == best_is_template_instantiation &&
+                cand.template_specificity == best_specificity) {
+                if (exact_match) {
+                    exact_match = nullptr;
+                    break;
+                }
+                exact_match = &cand;
             }
         }
+        if (exact_match) return {exact_match->ctor, exact_match->adapted_args};
     }
 
     std::vector<Candidate*> best_candidates;
     for (auto& cand : valid_candidates) {
-        if (cand.score == best_score && cand.defaults_used == best_defaults) {
+        if (cand.score == best_score && cand.defaults_used == best_defaults &&
+            cand.is_template_instantiation == best_is_template_instantiation &&
+            cand.template_specificity == best_specificity) {
             best_candidates.push_back(&cand);
         }
     }

@@ -1888,6 +1888,8 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
  * Does NOT visit the function body (Phase 1.b).
  */
 void aggregate_type_resolver::visit_function(function& fn) {
+    if (fn.is_template()) return;
+
     // Step 1: Resolve 'this' parameter type for non-static member functions
     // Resolve 'this' parameter type for non-static member functions
     if (fn.is_member() && !fn.is_static() && fn.get_this_parameter()) {

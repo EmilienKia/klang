@@ -1610,6 +1610,7 @@ Function templates support automated deduction of type and value arguments from 
 arguments and contextual target types:
 - **Invocation Arguments**: `a : int = identity(42);` (deduces `T=int`). Supports composites (`Vector<T>`), indirections (`T*`, `T&`, `T!`), callables (`*(T):R`), sized arrays (`T[N]`), and parameter packs (`Ts...`).
 - **Contextual Return-Type Deduction**: When a template parameter only appears in the return type (or is partially deduced), Klang infers it from the expected target type in variable declarations (`x: int = make()`), return statements (`return make()`), assignments (`x = make()`), casts (`(int) make()`), ternary branches, array initializers, designated struct initializers, and function arguments.
+- **Member constructor templates**: A templated constructor declared in a class or struct template is cloned with its enclosing type arguments substituted, then its own template parameters are deduced from construction arguments. Constraints on those inner parameters are checked against the specialized enclosing type.
 
 #### Class Template Argument Deduction (CTAD)
 Constructors of template classes and structs support automated argument deduction:
