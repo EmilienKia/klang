@@ -781,8 +781,16 @@ std::optional<kdi::kdi_vtable> kdi_builder::build_vtable(const aggregate& agg) c
         kdi::kdi_secondary_vtable ksec;
         ksec.base_fq_name  = sec.base_class->get_fq_name();
         ksec.base_offset   = static_cast<uint64_t>(sec.base_offset);
-        ksec.vtable_symbol = mangler::mangle_vtable(agg.get_name())
-                             + "_for_" + sec.base_class->get_short_name();
+        ksec.vtable_symbol = mangler::mangle_secondary_vtable(
+            agg.get_name(), sec.base_class->get_name());
+        if (const auto* kl = dynamic_cast<const klass*>(&agg)) {
+            for (const auto& [base, layout] : kl->get_secondary_vtables()) {
+                if (base.get() == sec.base_class.get() && layout && layout->llvm_global) {
+                    ksec.vtable_symbol = layout->llvm_global->getName().str();
+                    break;
+                }
+            }
+        }
         for (auto& ti : sec.slot_thunks) {
             kdi::kdi_thunk kt;
             kt.slot_index       = static_cast<uint32_t>(ti.slot_index);

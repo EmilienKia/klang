@@ -20,6 +20,7 @@
 #include "resolvers_constexpr.hpp"
 #include "gen_helpers.hpp"
 #include "../model/imported.hpp"
+#include "../model/mangler.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
 #include "../model/template.hpp"
@@ -1658,7 +1659,8 @@ void aggregate_type_resolver::visit_klass(klass& klass) {
     for (size_t i = 0; i < num_slots; ++i) {
         vtable_fields.push_back(ptr_ty);
     }
-    std::string vtable_struct_name = "__vtable_" + klass.get_short_name() + "__";
+    std::string vtable_struct_name =
+        "__vtable_" + mangler::mangle_vtable(klass.get_name()) + "__";
     // Only create if not already created (idempotency)
     auto* existing = llvm::StructType::getTypeByName(llvm_ctx, vtable_struct_name);
     if (!existing) {

@@ -173,13 +173,17 @@ public:
     static std::string mangle_vtable(const name& class_name);
 
     /**
+     * Mangle a secondary vtable name using both fully qualified aggregate names.
+     */
+    static std::string mangle_secondary_vtable(
+        const name& class_name, const name& base_class_name);
+
+    /**
      * Mangle the RTTI global variable name for a class or interface.
      * Convention: _KTRIN<class>E
      *
-     * The RTTI global is a constant struct { ptr self, ptr name_cstr, ptr null_introspection }.
-     * The 'typeid' of the class is the address of this global itself (self-pointer), which
-     * guarantees uniqueness even across dynamically-loaded modules (the linker ensures a single
-     * definition per strong symbol).
+     * The 'typeid' of the class is the address of this global itself, which
+     * guarantees uniqueness across dynamically-loaded modules.
      */
     static std::string mangle_rtti(const name& class_name);
 

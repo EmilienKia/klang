@@ -1698,7 +1698,8 @@ void type_reference_resolver::visit_klass(klass& klass) {
         }
         return;
     }
-    std::string vtable_struct_name = "__vtable_" + klass.get_short_name() + "__";
+    std::string vtable_struct_name =
+        "__vtable_" + mangler::mangle_vtable(klass.get_name()) + "__";
     auto* existing = llvm::StructType::getTypeByName(llvm_ctx, vtable_struct_name);
     if (!existing) {
         existing = llvm::StructType::create(llvm_ctx, vtable_fields, vtable_struct_name);
@@ -1789,7 +1790,8 @@ void declaration_generator::visit_klass(klass& klass) {
                     const auto& kdi_vt = kdi_agg->vtable.value();
                     base_vtable_slot_count = kdi_vt.slots.size();
                     // Try to look up or build the vtable llvm type
-                    std::string vt_struct_name = "__vtable_" + base_imp->get_short_name() + "__";
+                    std::string vt_struct_name =
+                        "__vtable_" + mangler::mangle_vtable(base_imp->get_name()) + "__";
                     base_vtable_llvm_type = llvm::StructType::getTypeByName(**_context, vt_struct_name);
                     if (!base_vtable_llvm_type) {
                         // Build it: { ptr(RTTI), ptr*slot_count }
@@ -1807,8 +1809,8 @@ void declaration_generator::visit_klass(klass& klass) {
                 if (!already_created.count(base_agg.get())) {
                     already_created.insert(base_agg.get());
                     std::string sec_vtable_name =
-                        mangler::mangle_vtable(klass.get_name())
-                        + "_for_" + base_agg->get_short_name();
+                        mangler::mangle_secondary_vtable(
+                            klass.get_name(), base_agg->get_name());
 
                     std::vector<llvm::Constant*> null_init;
                     null_init.push_back(llvm::ConstantPointerNull::get(
@@ -1857,8 +1859,8 @@ void declaration_generator::visit_klass(klass& klass) {
             if (!base_vt || !base_vt->llvm_type) continue;
 
             std::string sec_vtable_name =
-                mangler::mangle_vtable(klass.get_name())
-                + "_for_" + vbase_klass->get_short_name();
+                mangler::mangle_secondary_vtable(
+                    klass.get_name(), vbase_klass->get_name());
 
             std::vector<llvm::Constant*> null_init;
             null_init.push_back(llvm::ConstantPointerNull::get(
@@ -2327,17 +2329,17 @@ void implementation_generator::patch_rtti_global(klass& klass) {
         // implicit Object base, one level deeper than AggregateType/TypeInfo —
         // see the RTTI struct layout comment above).
         std::string desc_vtable_name, desc_at_vtable_name, desc_ti_vtable_name, desc_obj_vtable_name;
-        if (is_iface) {
-            desc_vtable_name    = "_KTVN1k9InterfaceE";
-            desc_at_vtable_name = "_KTVN1k9InterfaceE_for_AggregateType";
-            desc_ti_vtable_name = "_KTVN1k9InterfaceE_for_TypeInfo";
-            desc_obj_vtable_name = "_KTVN1k9InterfaceE_for_Object";
-        } else {
-            desc_vtable_name    = "_KTVN1k5ClassE";
-            desc_at_vtable_name = "_KTVN1k5ClassE_for_AggregateType";
-            desc_ti_vtable_name = "_KTVN1k5ClassE_for_TypeInfo";
-            desc_obj_vtable_name = "_KTVN1k5ClassE_for_Object";
-        }
+        k::name descriptor_name(false, {"k", is_iface ? "Interface" : "Class"});
+        k::name aggregate_type_name(false, {"k", "AggregateType"});
+        k::name type_info_name(false, {"k", "TypeInfo"});
+        k::name object_name(false, {"k", "Object"});
+        desc_vtable_name = mangler::mangle_vtable(descriptor_name);
+        desc_at_vtable_name = mangler::mangle_secondary_vtable(
+            descriptor_name, aggregate_type_name);
+        desc_ti_vtable_name = mangler::mangle_secondary_vtable(
+            descriptor_name, type_info_name);
+        desc_obj_vtable_name = mangler::mangle_secondary_vtable(
+            descriptor_name, object_name);
         llvm::Constant* desc_vt    = _context->module().getNamedGlobal(desc_vtable_name);
         llvm::Constant* desc_at_vt = _context->module().getNamedGlobal(desc_at_vtable_name);
         llvm::Constant* desc_ti_vt = _context->module().getNamedGlobal(desc_ti_vtable_name);
@@ -3086,11 +3088,13 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
         auto base_vt = spec.base_class->get_vtable();
         if (!base_vt || !base_vt->llvm_type) continue;
 
-        std::string sec_vtable_name =
-            mangler::mangle_vtable(klass.get_name()) + "_for_" + spec.base_class->get_short_name();
-
-        llvm::GlobalVariable* sec_gv =
-            _context->module().getNamedGlobal(sec_vtable_name);
+        llvm::GlobalVariable* sec_gv = nullptr;
+        for (const auto& [base, layout] : klass.get_secondary_vtables()) {
+            if (base.get() == spec.base_class.get() && layout) {
+                sec_gv = layout->llvm_global;
+                break;
+            }
+        }
         if (!sec_gv) continue; // should have been created in declaration pass
 
         std::vector<llvm::Constant*> sec_init;
@@ -3258,9 +3262,13 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                 const auto* kdi_agg = base_imp->get_kdi_aggregate();
                 if (!kdi_agg || !kdi_agg->vtable.has_value()) continue;
 
-                std::string sec_vtable_name =
-                    mangler::mangle_vtable(klass.get_name()) + "_for_" + base_imp->get_short_name();
-                llvm::GlobalVariable* sec_gv = _context->module().getNamedGlobal(sec_vtable_name);
+                llvm::GlobalVariable* sec_gv = nullptr;
+                for (const auto& [base, layout] : klass.get_secondary_vtables()) {
+                    if (base.get() == base_imp.get() && layout) {
+                        sec_gv = layout->llvm_global;
+                        break;
+                    }
+                }
                 if (!sec_gv) {
                     // Recurse into this base's bases even if no sec vtable was created for it
                     auto base_imp_llvm = llvm::dyn_cast_or_null<llvm::StructType>(
@@ -3563,7 +3571,8 @@ void aggregate_type_resolver::visit_annotation_type(annotation_type& ann) {
     // Vtable: { ptr RTTI } — single slot
     std::vector<llvm::Type*> vtable_fields;
     vtable_fields.push_back(ptr_ty); // RTTI placeholder
-    std::string vtable_struct_name = "__vtable_" + ann.get_short_name() + "__";
+    std::string vtable_struct_name =
+        "__vtable_" + mangler::mangle_vtable(ann.get_name()) + "__";
     auto* existing = llvm::StructType::getTypeByName(llvm_ctx, vtable_struct_name);
     if (!existing) {
         existing = llvm::StructType::create(llvm_ctx, vtable_fields, vtable_struct_name);
@@ -3596,7 +3605,8 @@ void type_reference_resolver::visit_annotation_type(annotation_type& ann) {
 
     std::vector<llvm::Type*> vtable_fields;
     vtable_fields.push_back(ptr_ty); // RTTI slot only
-    std::string vtable_struct_name = "__vtable_" + ann.get_short_name() + "__";
+    std::string vtable_struct_name =
+        "__vtable_" + mangler::mangle_vtable(ann.get_name()) + "__";
     llvm::StructType* vtable_llvm_type = llvm::StructType::create(llvm_ctx, vtable_fields, vtable_struct_name);
     vt->llvm_type = vtable_llvm_type;
 }

@@ -71,6 +71,43 @@
 
 #include "helpers.hpp"
 
+TEST_CASE("Secondary interface vtables with identical short names remain distinct",
+          "[interface][vtable][mangling]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_interface_qualified_vtables;
+
+        namespace west {
+            interface Face {
+                west_value() : int;
+            }
+        }
+        namespace east {
+            interface Face {
+                east_value() : int;
+                extra_value() : int;
+            }
+        }
+        class BothFaces : public west::Face, public east::Face {
+            public BothFaces() {}
+            override west_value() : int { return 10; }
+            override east_value() : int { return 20; }
+            override extra_value() : int { return 30; }
+        }
+
+        test() : int {
+            both : BothFaces();
+            west_face : west::Face& = both;
+            east_face : east::Face& = both;
+            return west_face.west_value() + east_face.east_value()
+                + east_face.extra_value();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 60);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  [A] Interface is represented as k::model::interface in the model
 // ════════════════════════════════════════════════════════════════════════════
@@ -938,4 +975,3 @@ class Concrete : public Mid {
 }
 )SRC"));
 }
-

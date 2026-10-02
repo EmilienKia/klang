@@ -87,8 +87,8 @@ void emit_vptr_store(llvm::IRBuilder<>& builder,
         }
         // Second: check the LLVM module for secondary vtable globals created by the
         // declaration pass for imported bases.
-        // Name convention: mangler::mangle_vtable(st) + "_for_" + target.get_short_name()
-        std::string sec_name = mangler::mangle_vtable(st.get_name()) + "_for_" + target.get_short_name();
+        std::string sec_name =
+            mangler::mangle_secondary_vtable(st.get_name(), target.get_name());
         return ctx->module().getNamedGlobal(sec_name);
     };
 

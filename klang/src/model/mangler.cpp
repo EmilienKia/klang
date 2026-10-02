@@ -941,6 +941,11 @@ std::string mangler::mangle_vtable(const name& class_name) {
     return mangled.str();
 }
 
+std::string mangler::mangle_secondary_vtable(
+    const name& class_name, const name& base_class_name) {
+    return mangle_vtable(class_name) + "_for_" + mangle_vtable(base_class_name);
+}
+
 // RTTI global variable prefix: _KTRI
 #define SYMBOL_RTTI_PREFIX "TRI"
 
