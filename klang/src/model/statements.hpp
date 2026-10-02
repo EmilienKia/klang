@@ -73,6 +73,7 @@ protected:
     friend class block;
 
     std::shared_ptr<expression> _expression;
+    bool _named_result_assignment = false;
 
 public:
     return_statement() = delete;
@@ -91,6 +92,9 @@ public:
 
     std::shared_ptr<expression> get_expression() { return _expression; };
     std::shared_ptr<const expression> get_expression() const { return _expression; };
+
+    bool is_named_result_assignment() const { return _named_result_assignment; }
+    void set_named_result_assignment(bool value) { _named_result_assignment = value; }
 
     return_statement& set_expression(std::shared_ptr<expression> expr) {
         _expression = expr;

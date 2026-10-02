@@ -836,12 +836,15 @@ public:
      *                                      available, else raise a diagnostic.
      * When `destroy_dest_first` is true (assignment onto an existing object with
      * a destructor), the old contents of `dest` are destroyed before the copy.
+     * Named-result replacement additionally guards self-aliasing and updates
+     * the result's construction flag around unwind-aware copy construction.
      */
     void emit_value_copy_or_move(llvm::Value* dest, llvm::Value* src,
                                  const std::shared_ptr<type>& t,
                                  bool destroy_dest_first,
                                  const lex::opt_any_lexeme& lexeme,
-                                 const char* copy_context);
+                                 const char* copy_context,
+                                 bool named_result_assignment = false);
 
     /**
      * Emit cleanup (destructor / owner free) for a single condition variable.

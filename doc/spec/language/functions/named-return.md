@@ -81,6 +81,14 @@ The initialiser follows the same rules as any variable declaration:
 A function with a named return variable does not require an explicit `return` statement.
 Reaching the closing `}` of the function body is sufficient.
 
+For an aggregate, `return expr;` assigns to the already-constructed result using the
+normal assignment rules, including a user-defined `operator =` when available.
+Default assignment releases the result's previous contents, copies an lvalue using
+its copy constructor, or transfers a temporary's contents without destroying the
+transferred value. Default assignment from the result itself (including an alias to
+it) is a no-op. If replacement construction throws after the old contents have been
+destroyed, those old contents must not be destroyed again during unwinding.
+
 ---
 
 ## 5. NRVO guarantee
@@ -90,7 +98,9 @@ variable benefits from **guaranteed NRVO** (Named Return Value Optimisation).  T
 
 - The named variable is constructed directly into the caller's destination memory.
 - No copy or move occurs.
-- Exactly **1 constructor call** and **1 destructor call** are emitted for the object.
+- Without explicit replacement, exactly **1 constructor call** and **1 destructor call**
+  are emitted for the object. An explicit `return expr;` may perform additional
+  assignment, construction, and destruction before the final result is transferred.
 
 This is stronger than heuristic NRVO (which analyses `return` statements and may fail when
 multiple return paths exist).

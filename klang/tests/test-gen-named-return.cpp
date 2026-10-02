@@ -43,6 +43,12 @@
  *   NR-10: Return expr with named return (warning, assignment semantics)
  *   NR-11: Non-regression — classic return unchanged
  *   NR-12: Owner type named return
+ *   NR-18: Template member results — empty and owning aggregate lifetimes
+ *   NR-19: Template function results — aggregate and primitive returns
+ *   NR-20: Named aggregate results — exception unwinding
+ *   NR-21: Explicit aggregate returns — replacement and self-aliasing
+ *   NR-22: Explicit aggregate returns — failing replacement
+ *   NR-23: Explicit aggregate returns — overloaded assignment
  */
 
 #include <catch2/catch_all.hpp>
@@ -900,6 +906,266 @@ TEST_CASE("NR-20: Named aggregate results are destroyed only after successful co
 // Explicit aggregate expression returns
 // =============================================================================
 
+TEST_CASE("NR-21: Explicit named aggregate returns replace ownership without destroying aliases",
+          "[gen][named-return][template][lifecycle][nr21]") {
+    const bool optimize = GENERATE(false, true);
+    const std::string aggregate_kind = GENERATE(std::string{"struct"}, std::string{"class"});
+    CAPTURE(optimize, aggregate_kind);
+    const std::string source = std::string{R"SRC(
+        module gen_named_return_replacement;
+        g_ctors : int = 0;
+        g_copies : int = 0;
+        g_dtors : int = 0;
+
+        struct Resource { strong : int = 0; }
+    )SRC"} + aggregate_kind + R"SRC( Handle {
+            public:
+            resource : Resource*;
+            Handle(r : Resource&) : resource(&r) {
+                ++resource->strong;
+                ++g_ctors;
+            }
+            Handle(other : Handle&) : resource(other.resource) {
+                ++resource->strong;
+                ++g_copies;
+            }
+            ~Handle() { --resource->strong; ++g_dtors; }
+        }
+
+        template<typename T>
+        produce(r : Resource&) result : T(r) { }
+
+        template<typename T>
+        make(first : Resource&, second : Resource&, mode : int) result : T(first) {
+            if (mode == 0) { return result; }
+            if (mode == 1) {
+                result_ref : T& = result;
+                return result_ref;
+            }
+            if (mode == 2) {
+                other : T(second);
+                return other;
+            }
+            if (mode == 3) { return Handle(second); }
+            return produce<T>(second);
+        }
+
+        make_direct(first : Resource&, second : Resource&, mode : int) result : Handle(first) {
+            if (mode == 0) { return result; }
+            if (mode == 1) {
+                result_ref : Handle& = result;
+                return result_ref;
+            }
+            if (mode == 2) {
+                other : Handle(second);
+                return other;
+            }
+            if (mode == 3) { return Handle(second); }
+            return produce<Handle>(second);
+        }
+
+        check_live(handle : Handle&, first : Resource&, second : Resource&, mode : int) : int {
+            if (mode < 2) {
+                if (handle.resource != &first || first.strong != 1 || second.strong != 0) { return 1; }
+                if (g_ctors != 1 || g_copies != 0 || g_dtors != 0) { return 2; }
+            } else {
+                if (handle.resource != &second || first.strong != 0 || second.strong != 1) { return 3; }
+                if (g_ctors != 2) { return 4; }
+                if (mode == 2) {
+                    if (g_copies != 1 || g_dtors != 2) { return 5; }
+                } else {
+                    if (g_copies != 0 || g_dtors != 1) { return 6; }
+                }
+            }
+            return 0;
+        }
+
+        exercise(mode : int, templated : bool) : int {
+            g_ctors = 0;
+            g_copies = 0;
+            g_dtors = 0;
+            first : Resource;
+            second : Resource;
+            status : int = 0;
+            if (templated) {
+                handle : Handle = make<Handle>(first, second, mode);
+                status = check_live(handle, first, second, mode);
+            } else {
+                handle : Handle = make_direct(first, second, mode);
+                status = check_live(handle, first, second, mode);
+            }
+            if (status != 0) { return status; }
+            if (first.strong != 0 || second.strong != 0) { return 7; }
+            if (mode < 2) {
+                if (g_dtors != 1) { return 8; }
+            } else if (mode == 2) {
+                if (g_dtors != 3) { return 9; }
+            } else {
+                if (g_dtors != 2) { return 10; }
+            }
+            return 0;
+        }
+    )SRC";
+    auto jit = gen_jit(source, false, optimize);
+    REQUIRE(jit);
+    auto exercise = jit->lookup_symbol<int(*)(int, bool)>("exercise");
+    REQUIRE(exercise != nullptr);
+    for (bool templated : {false, true}) {
+        for (int mode = 0; mode < 5; ++mode) {
+            CAPTURE(templated, mode);
+            CHECK(exercise(mode, templated) == 0);
+        }
+    }
+}
+
+TEST_CASE("NR-22: Failed named aggregate replacement cleans only live objects",
+          "[gen][named-return][template][lifecycle][exceptions][nr22]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto jit = gen_jit(R"SRC(
+        module gen_named_return_replacement_unwind;
+        g_ctors : int = 0;
+        g_copy_attempts : int = 0;
+        g_dtors : int = 0;
+
+        class Failure : public Exception { }
+        fail() { throw Failure(); }
+
+        struct Resource { strong : int = 0; }
+        struct Handle {
+            resource : Resource*;
+            Handle(r : Resource&) : resource(&r) {
+                ++resource->strong;
+                ++g_ctors;
+            }
+            Handle(other : Handle&) : resource(other.resource) {
+                ++g_copy_attempts;
+                fail();
+            }
+            ~Handle() { --resource->strong; ++g_dtors; }
+        }
+
+        template<typename T>
+        throwing_value(r : Resource&) result : T(r) { fail(); }
+
+        template<typename T>
+        make(first : Resource&, second : Resource&, mode : int) result : T(first) {
+            if (mode == 0) { return result; }
+            if (mode == 1) {
+                other : T(second);
+                return other;
+            }
+            return throwing_value<T>(second);
+        }
+
+        exercise(mode : int) : int {
+            g_ctors = 0;
+            g_copy_attempts = 0;
+            g_dtors = 0;
+            first : Resource;
+            second : Resource;
+            caught : bool = false;
+            try {
+                handle : Handle = make<Handle>(first, second, mode);
+                if (mode != 0 || first.strong != 1 || g_dtors != 0) { return 1; }
+            } catch (error : Failure&) {
+                caught = true;
+            }
+            if (caught != (mode != 0)) { return 2; }
+            if (first.strong != 0 || second.strong != 0) { return 3; }
+            if (mode == 0) {
+                if (g_ctors != 1 || g_copy_attempts != 0 || g_dtors != 1) { return 4; }
+            } else {
+                if (g_ctors != 2 || g_dtors != 2) { return 5; }
+                if (mode == 1 && g_copy_attempts != 1) { return 6; }
+                if (mode == 2 && g_copy_attempts != 0) { return 7; }
+            }
+            return 0;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto exercise = jit->lookup_symbol<int(*)(int)>("exercise");
+    REQUIRE(exercise != nullptr);
+    CHECK(exercise(0) == 0);
+    CHECK(exercise(1) == 0);
+    CHECK(exercise(2) == 0);
+}
+
+TEST_CASE("NR-23: Explicit named aggregate returns use the assignment overload",
+          "[gen][named-return][template][lifecycle][exceptions][nr23]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto jit = gen_jit(R"SRC(
+        module gen_named_return_assignment_overload;
+        g_assigns : int = 0;
+        g_dtors : int = 0;
+        g_fail : bool = false;
+
+        class Failure : public Exception { }
+        struct Resource { strong : int = 0; }
+        struct Handle {
+            resource : Resource*;
+            Handle(r : Resource&) : resource(&r) { ++resource->strong; }
+            ~Handle() { --resource->strong; ++g_dtors; }
+            operator =(other : Handle&) : Handle& {
+                ++g_assigns;
+                if (g_fail) { throw Failure(); }
+                if (resource != other.resource) {
+                    --resource->strong;
+                    resource = other.resource;
+                    ++resource->strong;
+                }
+                return this;
+            }
+        }
+
+        template<typename T>
+        make(first : Resource&, second : Resource&, mode : int) result : T(first) {
+            if (mode == 0) { return result; }
+            other : T(second);
+            return other;
+        }
+
+        exercise(mode : int) : int {
+            g_assigns = 0;
+            g_dtors = 0;
+            g_fail = mode == 2;
+            first : Resource;
+            second : Resource;
+            caught : bool = false;
+            try {
+                handle : Handle = make<Handle>(first, second, mode);
+                if (g_assigns != 1) { return 1; }
+                if (mode == 0) {
+                    if (first.strong != 1 || second.strong != 0 || g_dtors != 0) { return 2; }
+                } else {
+                    if (first.strong != 0 || second.strong != 1 || g_dtors != 1) { return 3; }
+                }
+            } catch (error : Failure&) {
+                caught = true;
+            }
+            if (caught != (mode == 2) || g_assigns != 1) { return 4; }
+            if (first.strong != 0 || second.strong != 0) { return 5; }
+            if (mode == 0) {
+                if (g_dtors != 1) { return 6; }
+            } else {
+                if (g_dtors != 2) { return 7; }
+            }
+            return 0;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto exercise = jit->lookup_symbol<int(*)(int)>("exercise");
+    REQUIRE(exercise != nullptr);
+    CHECK(exercise(0) == 0);
+    CHECK(exercise(1) == 0);
+    CHECK(exercise(2) == 0);
+}
+
+// =============================================================================
+// Parser-level tests (in this file for convenience)
+// =============================================================================
+
 TEST_CASE("Parse named return — basic", "[parser][named-return]") {
     test_logger log;
     k::source src{"make() r : int = 42 { }"};
@@ -987,4 +1253,3 @@ TEST_CASE("Parse named return — abstract rejected", "[parser][named-return]") 
     k::parse::parser parser(log, src);
     REQUIRE_THROWS(parser.parse_function_decl());
 }
-

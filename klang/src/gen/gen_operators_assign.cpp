@@ -26,6 +26,8 @@
 #include "../errors.hpp"
 #include "gen_operators_helpers.hpp"
 
+#include <llvm/ADT/ScopeExit.h>
+
 namespace k::model::gen {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +60,8 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
                                                        const std::shared_ptr<type>& t,
                                                        bool destroy_dest_first,
                                                        const lex::opt_any_lexeme& lexeme,
-                                                       const char* copy_context) {
+                                                       const char* copy_context,
+                                                       bool named_result_assignment) {
     auto nt = type::remove_const(t);
     llvm::Type* struct_llvm = _context->get_llvm_type(nt);
     if (!struct_llvm || struct_llvm->isPointerTy()) {
@@ -73,9 +76,41 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
     auto agg       = st_type ? st_type->get_struct() : nullptr;
     bool trivially = is_trivially_copyable(nt);
 
+    const bool src_is_return_value = named_result_assignment && !src->getType()->isPointerTy();
+    if (src_is_return_value) {
+        auto* func = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&func->getEntryBlock(), func->getEntryBlock().begin());
+        auto* storage = entry_builder.CreateAlloca(struct_llvm, nullptr, "named_result_value");
+        _builder->CreateStore(src, storage);
+        src = storage;
+    }
+
+    llvm::BasicBlock* assignment_done = nullptr;
+    llvm::AllocaInst* constructed_flag = nullptr;
+    if (named_result_assignment) {
+        if (dest == src) return;
+        auto* func = _builder->GetInsertBlock()->getParent();
+        auto* assignment_body = llvm::BasicBlock::Create(_builder->getContext(), "named_result_assign", func);
+        assignment_done = llvm::BasicBlock::Create(_builder->getContext(), "named_result_assigned", func);
+        _builder->CreateCondBr(_builder->CreateICmpEQ(dest, src), assignment_done, assignment_body);
+        _builder->SetInsertPoint(assignment_body);
+        if (auto it = _dtor_flags.find(_nrvo_candidate); it != _dtor_flags.end()) {
+            constructed_flag = it->second;
+        }
+    }
+    auto assignment_guard = llvm::make_scope_exit([&]() {
+        if (constructed_flag) {
+            _builder->CreateStore(llvm::ConstantInt::getTrue(_builder->getContext()), constructed_flag);
+        }
+        if (assignment_done) {
+            _builder->CreateBr(assignment_done);
+            _builder->SetInsertPoint(assignment_done);
+        }
+    });
+
     // Is `src` a materialised temporary currently scheduled for destruction?
     // If so, it is a prvalue whose contents we may steal (move).
-    bool src_is_tracked_temp = false;
+    bool src_is_tracked_temp = src_is_return_value;
     for (auto& e : _expression_temporaries) {
         if (e.alloca == src) { src_is_tracked_temp = true; break; }
     }
@@ -86,6 +121,9 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
         auto dtor = agg->get_destructor();
         auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
         if (dtor_it != _context->_functions.end()) {
+            if (constructed_flag) {
+                _builder->CreateStore(llvm::ConstantInt::getFalse(_builder->getContext()), constructed_flag);
+            }
             _builder->CreateCall(dtor_it->second, {dest});
         }
     }
@@ -116,7 +154,11 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
         if (auto cc = agg->get_copy_constructor()) {
             auto cc_it = _context->_functions.find(cc->shared_as<k::model::function>());
             if (cc_it != _context->_functions.end()) {
-                _builder->CreateCall(cc_it->second, {dest, src});
+                if (named_result_assignment) {
+                    create_call_or_invoke(cc_it->second, {dest, src});
+                } else {
+                    _builder->CreateCall(cc_it->second, {dest, src});
+                }
                 return;
             }
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), lexeme,
@@ -175,6 +217,9 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     }
 
     auto right = expr.right();
+    auto return_stmt = std::dynamic_pointer_cast<return_statement>(expr.find_statement());
+    const bool named_result_assignment = return_stmt && return_stmt->is_named_result_assignment()
+        && return_stmt->get_expression().get() == &expr;
 
     // ── Assignment to a struct rvalue via an operator= overload ──────────────
     // K normally requires the LHS of '=' to be an lvalue (a reference). However a
@@ -661,7 +706,8 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 }
                 bool is_const_left = type::is_const(target_type);
                 auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
-                if (op_func) {
+                if (op_func && !(named_result_assignment && op_func->is_compiler_generated()
+                                 && op_func->get_short_name() == "__operator_aS_")) {
                     // Store the resolved operator function on the expression
                     expr.set_operator_func(op_func);
                     // Apply the adapted right operand (implicit cast if needed)
@@ -724,6 +770,20 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         }
         // No operator overload found — fall through to default struct assignment (memcpy/store).
         expr.set_type(ref_target_type);
+        if (named_result_assignment) {
+            auto src_value_type = source_type;
+            if (type::is_reference(src_value_type)) {
+                src_value_type = src_value_type->get_subtype();
+            }
+            if (!type::are_equal(type::canonical(type::remove_const(src_value_type)),
+                                 type::canonical(type::remove_const(target_type)))) {
+                throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH),
+                            expr.first_lexeme(), "Return expression type must be compatible to the expected function return type");
+            }
+            // Keep an lvalue's address: loading it by value would lose both
+            // self-alias detection and copy-constructor lifetime semantics.
+            return;
+        }
         // If source type is reference, deref it
         if(type::is_reference(source_type)) {
             right = load_value_expression::make_shared(right);
@@ -1179,11 +1239,15 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     //     aggregates such as Vector<T> are not double-freed;
     //   - COPIES an lvalue via the copy constructor when available.
     // The old destination contents are destroyed first for non-trivial types.
-    if (target_type && type::is_struct(target_type) && right->getType()->isPointerTy()) {
+    auto ret_stmt = std::dynamic_pointer_cast<return_statement>(expr.find_statement());
+    const bool named_result_assignment = ret_stmt && ret_stmt->is_named_result_assignment()
+        && ret_stmt->get_expression().get() == &expr;
+    if (target_type && type::is_struct(target_type) && (right->getType()->isPointerTy() || named_result_assignment)) {
         auto* struct_llvm = _context->get_llvm_type(type::remove_const(target_type));
         if (struct_llvm && !struct_llvm->isPointerTy()) {
             emit_value_copy_or_move(left, right, target_type, /*destroy_dest_first=*/true,
-                                    expr.first_lexeme(), "assignment");
+                                    expr.first_lexeme(), "assignment",
+                                    named_result_assignment);
             _value = left;
             return;
         }

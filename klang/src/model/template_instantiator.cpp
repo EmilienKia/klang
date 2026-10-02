@@ -1039,6 +1039,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
         auto new_rs = std::make_shared<return_statement>(parent_stmt);
         new_rs->_ast_node = rs->get_ast_node(); // optional, for diagnostics
         new_rs->_documentation = rs->get_documentation();
+        new_rs->set_named_result_assignment(rs->is_named_result_assignment());
         if (rs->get_expression()) {
             new_rs->set_expression(clone_and_substitute_expr(
                 std::const_pointer_cast<expression>(rs->get_expression()), subst, val_subst));

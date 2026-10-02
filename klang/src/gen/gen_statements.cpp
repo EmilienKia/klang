@@ -726,6 +726,11 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
 
     auto ret_type = func->get_return_type();
 
+    if (stmt.is_named_result_assignment()) {
+        expr->accept(*this);
+        return;
+    }
+
     // Step 1: Resolve the return expression (if any)
     if(expr) {
         // Warn if function uses named return variable and return has an expression
@@ -736,6 +741,15 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
                     "the expression will be assigned to '{}' before returning",
                     {func->get_named_return_var()->get_short_name(),
                      func->get_named_return_var()->get_short_name()});
+            }
+
+            if (type::is_struct(type::canonical(ret_type))) {
+                auto assignment = simple_assignation_expression::make_shared(
+                    symbol_expression::from_variable(func->get_named_return_var()), expr);
+                stmt.set_expression(assignment);
+                stmt.set_named_result_assignment(true);
+                assignment->accept(*this);
+                return;
             }
         }
 
@@ -848,7 +862,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
             _value = nullptr;
 
             // Store into named return variable
-            if (ret_value) {
+            if (ret_value && !stmt.is_named_result_assignment()) {
                 auto var_it = _context->_variables.find(named_ret_var);
                 if (var_it != _context->_variables.end()) {
                     if (_sret_ptr) {
