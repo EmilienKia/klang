@@ -686,6 +686,142 @@ TEST_CASE("NR-17: Named return struct — method call on named var", "[gen][name
 // Parser-level tests (in this file for convenience)
 // =============================================================================
 
+TEST_CASE("NR-18: Template member named result preserves empty and owning aggregate lifetimes",
+          "[gen][named-return][template][lifecycle][nr18]") {
+    const bool optimize = GENERATE(false, true);
+    const std::string aggregate_kind = GENERATE(std::string{"struct"}, std::string{"class"});
+    CAPTURE(optimize, aggregate_kind);
+    const std::string source = std::string{R"SRC(
+        module gen_named_return_template_member;
+
+        g_ctors : int = 0;
+        g_dtors : int = 0;
+        g_local_dtors : int = 0;
+
+        struct Resource {
+            strong : int = 0;
+        }
+        struct Probe {
+            ~Probe() { ++g_local_dtors; }
+        }
+
+        template<typename T>
+    )SRC"} + aggregate_kind + R"SRC( Handle {
+            public:
+            resource : T*;
+            Handle() : resource(null) { ++g_ctors; }
+            ~Handle() {
+                ++g_dtors;
+                if (resource != null) { --resource->strong; }
+            }
+        }
+
+        template<typename T>
+        struct Weak {
+            _resource : T*;
+            Weak(r : T&) : _resource(&r) { }
+            const lock(empty : bool, early : bool) result : Handle<T> {
+                local : Probe;
+                if (!empty) {
+                    ++_resource->strong;
+                    result.resource = _resource;
+                }
+                if (early) { return; }
+            }
+        }
+
+        exercise(empty : bool, early : bool) : int {
+            g_ctors = 0;
+            g_dtors = 0;
+            g_local_dtors = 0;
+            resource : Resource;
+            weak : Weak<Resource>(resource);
+            {
+                handle : Handle<Resource> = weak.lock(empty, early);
+                if (g_ctors != 1 || g_dtors != 0) { return 1; }
+                if (g_local_dtors != 1) { return 2; }
+                if (empty) {
+                    if (handle.resource != null || resource.strong != 0) { return 3; }
+                } else {
+                    if (handle.resource != &resource || resource.strong != 1) { return 4; }
+                }
+            }
+            if (g_dtors != 1 || resource.strong != 0) { return 5; }
+            return 0;
+        }
+    )SRC";
+    auto jit = gen_jit(source, false, optimize);
+    REQUIRE(jit);
+    auto exercise = jit->lookup_symbol<int(*)(bool, bool)>("exercise");
+    REQUIRE(exercise != nullptr);
+    CHECK(exercise(true, false) == 0);
+    CHECK(exercise(true, true) == 0);
+    CHECK(exercise(false, false) == 0);
+    CHECK(exercise(false, true) == 0);
+}
+
+TEST_CASE("NR-19: Template function named results retain aggregate and primitive return semantics",
+          "[gen][named-return][template][lifecycle][nr19]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto jit = gen_jit(R"SRC(
+        module gen_named_return_template_function;
+
+        g_ctors : int = 0;
+        g_dtors : int = 0;
+
+        struct Obj {
+            val : int;
+            Obj(v : int) : val(v) { ++g_ctors; }
+            ~Obj() { ++g_dtors; }
+        }
+
+        template<typename T>
+        make(v : int, early : bool) result : T(v) {
+            ++result.val;
+            if (early) { return; }
+        }
+
+        template<typename T>
+        increment(v : T, early : bool) result : T = v {
+            ++result;
+            if (early) { return; }
+        }
+
+        template<typename T>
+        assigned(v : T) result : T = 0 { return v + 1; }
+
+        ordinary() : Obj {
+            local : Obj(42);
+            return local;
+        }
+
+        exercise(early : bool) : int {
+            g_ctors = 0;
+            g_dtors = 0;
+            {
+                result : Obj = make<Obj>(41, early);
+                if (result.val != 42 || g_ctors != 1 || g_dtors != 0) { return 1; }
+            }
+            if (g_dtors != 1) { return 2; }
+            if (increment<int>(41, early) != 42 || assigned<int>(41) != 42) { return 3; }
+            g_ctors = 0;
+            g_dtors = 0;
+            {
+                result : Obj = ordinary();
+                if (result.val != 42 || g_ctors != 1 || g_dtors != 0) { return 4; }
+            }
+            if (g_dtors != 1) { return 5; }
+            return 0;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto exercise = jit->lookup_symbol<int(*)(bool)>("exercise");
+    REQUIRE(exercise != nullptr);
+    CHECK(exercise(false) == 0);
+    CHECK(exercise(true) == 0);
+}
+
 TEST_CASE("Parse named return — basic", "[parser][named-return]") {
     test_logger log;
     k::source src{"make() r : int = 42 { }"};

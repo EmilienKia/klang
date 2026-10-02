@@ -693,7 +693,9 @@ make(v : int) result : Obj(v) { result.val = result.val + 1; }
 
 - Variable declared at the start of the body. Implicit return on reaching `}`.
 - `return;` = return the named variable. `return expr;` = warning + assignment.
-- For aggregates returned by value: **guaranteed NRVO** (zero copy).
+- For aggregates returned by value, including templates: **guaranteed NRVO** (zero copy).
+- Normal return transfers lifetime to the caller; exception unwinding destroys a
+  successfully constructed result in the callee.
 - Forbidden on constructors, destructors, `abstract`, `void`.
 
 ### 10.5 Function Redirectors

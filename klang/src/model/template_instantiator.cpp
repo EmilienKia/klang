@@ -1557,6 +1557,12 @@ void template_instantiator::populate_function_from_template(
         auto dst_block = dst->get_block();
         if (dst_block) {
             clone_block_contents(*src_block, dst_block, subst, val_subst);
+            // The injected result declaration is cloned with the body, but its
+            // function-level identity must refer to the new declaration.
+            if (auto named_result = src.get_named_return_var()) {
+                dst->set_named_return_var(std::dynamic_pointer_cast<variable_statement>(
+                    dst_block->get_variable(named_result->get_short_name())));
+            }
             // Post-process: expand pack_expansion_expression in function/constructor invocations
             if (!pack_expansion_names.empty()) {
                 expand_pack_expressions_in_block(dst_block, pack_expansion_names);

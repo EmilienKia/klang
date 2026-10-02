@@ -91,6 +91,9 @@ variable benefits from **guaranteed NRVO** (Named Return Value Optimisation).  T
 This is stronger than heuristic NRVO (which analyses `return` statements and may fail when
 multiple return paths exist).
 
+The guarantee also applies to instantiated template functions and methods, including
+default-constructed results, implicit fallthrough, and early `return;` statements.
+
 ---
 
 ## 6. Restrictions
@@ -166,4 +169,3 @@ struct Vec {
 ---
 
 *See also:* [Functions](functions.md) · [Return Statement](../statements/return.md) · [Destructors](../structs/destructors.md)
-
