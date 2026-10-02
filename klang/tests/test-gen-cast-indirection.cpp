@@ -571,6 +571,50 @@ TEST_CASE("Explicit cast error: dynamic downcast to struct (no RTTI) is rejected
     )SRC"));
 }
 
+TEST_CASE("Explicit checked casts cannot remove pointee constness", "[gen][cast][const]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_cast_indirection_const_preserving;
+
+        interface Base {
+            value() : int;
+        }
+        class Derived : public Base {
+            public Derived() {}
+            override value() : int { return 7; }
+        }
+
+        test() : int {
+            d : Derived();
+            source : const Derived* = &d;
+            target : const Base* = (const Base*) source;
+            return target != null ? 7 : 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 7);
+
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module gen_cast_indirection_const_removal;
+
+        interface Base {
+            value() : int;
+        }
+        class Derived : public Base {
+            public Derived() {}
+            override value() : int { return 7; }
+        }
+
+        test() : int {
+            d : Derived();
+            source : const Base* = &d;
+            target : Derived* = (Derived*) source;
+            return target != null ? 7 : 0;
+        }
+    )SRC"));
+}
+
 // =============================================================================
 // [IC1] Implicit upcast — f(p : Base*) called with ptr<Derived>
 // =============================================================================
@@ -845,4 +889,3 @@ TEST_CASE("Implicit upcast: f(IFace&) called with class ref implementing IFace",
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 42);
 }
-

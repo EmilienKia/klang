@@ -141,6 +141,25 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
         }
     }
 
+    auto indirection_subtype = [](const std::shared_ptr<type>& t) -> std::shared_ptr<type> {
+        auto value_type = type::remove_const(t);
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(value_type)) {
+            value_type = type::remove_const(ref->get_referenced_type());
+        }
+        if (auto ptr = std::dynamic_pointer_cast<pointer_type>(value_type)) return ptr->get_pointed_type();
+        if (auto link = std::dynamic_pointer_cast<link_type>(value_type)) return link->get_linked_type();
+        if (auto view = std::dynamic_pointer_cast<view_type>(value_type)) return view->get_viewed_type();
+        return nullptr;
+    };
+    auto source_subtype = indirection_subtype(source_type);
+    auto target_subtype = indirection_subtype(target_type);
+    if (source_subtype && target_subtype &&
+        type::is_const(source_subtype) && !type::is_const(target_subtype)) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_INCOMPATIBLE), expr.first_lexeme(),
+            "Explicit cast: cannot remove const qualification from '{}' to '{}'",
+            {source_type->to_string(), target_type->to_string()});
+    }
+
     if(source_type==target_type) {
         // TODO warn about useless casting
     } else {
