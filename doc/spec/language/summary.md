@@ -1470,6 +1470,8 @@ p : T[N]! = new T(args…)[N];    // heap, same
 - Mangling: direct C name (no K name mangling).
 - On a class member: must be `static`.
 - Optional `symbol` member to specify the exact C symbol.
+- Static members of template aggregates retain extern linkage across local
+  and imported instantiation; the C symbol is not template-mangled.
 
 ### 23.2 `@ffi::CString`
 

@@ -695,8 +695,8 @@ std::string describe_element(const k::model::named_element& elem) {
 } // anonymous namespace
 
 void compiler::verify_mangled_names() {
-    // fq-name of the first owner of each mangled name, so a collision can name both sides.
-    std::unordered_map<std::string, std::string> seen;
+    // Keep the first declaration so collisions can distinguish shared C extern symbols.
+    std::unordered_map<std::string, const k::model::named_element*> seen;
 
     const auto check = [&](const k::model::named_element& elem, const char* kind) {
         const std::string& mangled = elem.get_mangled_name();
@@ -709,13 +709,17 @@ void compiler::verify_mangled_names() {
             report(diag);
             throw k::log::compiler_error(std::move(diag));
         }
-        auto [it, inserted] = seen.emplace(mangled, who);
-        if (!inserted && it->second != who) {
+        auto [it, inserted] = seen.emplace(mangled, &elem);
+        if (!inserted && describe_element(*it->second) != who) {
+            auto* fn = dynamic_cast<const k::model::function*>(&elem);
+            auto* previous_fn = dynamic_cast<const k::model::function*>(it->second);
+            // Extern declarations may share a C symbol; codegen checks their LLVM signatures.
+            if (fn && previous_fn && fn->is_extern() && previous_fn->is_extern()) return;
             auto diag = k::log::diagnostic::make_fatal(
                 static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME),
                 "Internal error: {0} '{1}' and '{2}' both mangle to '{3}'; "
                 "distinct entities must never share a mangled name",
-                {kind, who, it->second, mangled});
+                {kind, who, describe_element(*it->second), mangled});
             report(diag);
             throw k::log::compiler_error(std::move(diag));
         }

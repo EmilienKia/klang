@@ -199,6 +199,40 @@ extern "C" {
     int __k_test_extern_custom_symbol(int x) {
         return x * 10;
     }
+    int __k_test_extern_template_count(const int* count) {
+        return *count;
+    }
+}
+
+TEST_CASE("FFI: private static template externs call a shared raw C symbol",
+          "[ffi][gen][runtime][template][template-extern]") {
+    auto jit = gen_jit(R"K(
+        module gen_extern_template;
+        template<typename T>
+        struct Counter {
+        private:
+            _count : int;
+            @ffi::Extern("C")
+            static __k_test_extern_template_count(count : const int*) : int;
+            @ffi::Extern{.language="C", .symbol="__k_test_extern_template_count"}
+            static aliased_count(count : const int*) : int;
+        public:
+            Counter(value : int) : _count(value) {}
+            read() : int {
+                return __k_test_extern_template_count(&_count) + aliased_count(&_count);
+            }
+        }
+        inspect(counter : Counter<int>&) : int { return counter.read(); }
+        test() : int {
+            first : Counter<int>(10);
+            second : Counter<double>(11);
+            return inspect(first) + second.read();
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 42);
 }
 
 TEST_CASE("FFI: instantiated template extern annotations are validated",
@@ -233,6 +267,22 @@ TEST_CASE("FFI: instantiated template extern annotations are validated",
                 @ffi::Extern("C") private static count(value : const int*) : int { return 0; }
             }
             test() : int { counter : Counter<int>; return 0; }
+        )K"), k::log::compiler_error);
+    }
+
+    SECTION("one raw C symbol cannot have incompatible instantiated signatures") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"K(
+            module gen_extern_template_signature;
+            template<typename T>
+            struct Counter {
+                @ffi::Extern("C", null, "__k_test_extern_template_conflict")
+                private static count(value : T) : T;
+            }
+            test() : int {
+                first : Counter<int>;
+                second : Counter<double>;
+                return 0;
+            }
         )K"), k::log::compiler_error);
     }
 }

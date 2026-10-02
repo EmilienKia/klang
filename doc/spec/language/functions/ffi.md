@@ -53,6 +53,7 @@ annotation Extern {
 | **Static members only** | When used on a class member function, the function must be `static`. Non-static member functions have a hidden `this` parameter that has no C equivalent. |
 | **Language** | The `language` parameter is mandatory and must be `"C"` (case-insensitive). Other languages are not yet supported. |
 | **Mangling** | The mangled name of an `@Extern("C")` function is its C symbol name (no K name mangling). |
+| **Templates** | Static member declarations in a template aggregate retain their extern annotation when instantiated locally or from an imported library. Their symbol remains the specified C name, not a template-specialisation name. All instantiations bound to that symbol must use its compatible C signature. |
 
 ### Syntax
 
@@ -239,5 +240,4 @@ send_message(fd : int) : long {
 ---
 
 *See also:* [Functions](functions.md) · [Annotations](../annotations/annotations.md)
-
 

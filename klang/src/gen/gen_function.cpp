@@ -1001,9 +1001,18 @@ void declaration_generator::visit_function(function &function) {
         }
         llvm::FunctionType* func_type = llvm::FunctionType::get(ret_type, param_types, false);
         // Use the mangled name — for extern functions this is the C symbol name.
-        llvm::Function* func = llvm::Function::Create(
-            func_type, llvm::Function::ExternalLinkage,
-            function.get_mangled_name(), *_context->_module);
+        auto* func = _context->_module->getFunction(function.get_mangled_name());
+        if (func && func->getFunctionType() != func_type) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME),
+                lex::opt_any_lexeme{},
+                "FFI extern declarations for symbol '{}' have incompatible signatures",
+                {function.get_mangled_name()});
+        }
+        if (!func) {
+            func = llvm::Function::Create(
+                func_type, llvm::Function::ExternalLinkage,
+                function.get_mangled_name(), *_context->_module);
+        }
         _context->_functions.insert({function.shared_as<k::model::function>(), func});
         return;
     }

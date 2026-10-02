@@ -32,6 +32,10 @@
 
 namespace fs = std::filesystem;
 
+extern "C" int __k_test_import_template_count(const int* count) {
+    return *count;
+}
+
 namespace {
 
 constexpr std::string_view private_extern_template_library = R"K(
@@ -88,26 +92,6 @@ struct PrivateExternTemplateImport {
     }
 };
 
-TEST_CASE("import template — invalid private static extern annotations are still rejected",
-          "[import][template][ffi][template-extern][error]") {
-    PrivateExternTemplateImport lib("private_extern_template_negative");
-    auto comp = k::compiler::create();
-    comp->set_file_resolver(lib.resolver);
-    try {
-        comp->parse_source("private_extern_tpl_bad.k", R"K(
-            module private_extern_tpl_bad;
-            import private_extern_tpl_lib;
-            test() : int {
-                counter : InvalidNativeCounter<int>;
-                return 0;
-            }
-        )K", false, false);
-        FAIL("Expected the unsupported FFI language diagnostic");
-    } catch (const k::log::compiler_error& error) {
-        CHECK(std::string(error.what()).find("unsupported language 'Java'") != std::string::npos);
-    }
-}
-
 constexpr std::string_view private_friend_template_library = R"K(
     module private_friend_tpl_lib;
 
@@ -161,6 +145,59 @@ struct PrivateFriendTemplateImport {
 };
 
 } // namespace
+
+TEST_CASE("import template — private static externs retain raw C linkage in consumer instantiations",
+          "[import][template][consumer-inst][ffi][template-extern]") {
+    PrivateExternTemplateImport lib("private_extern_template_positive");
+    REQUIRE(ensure_libk_loaded());
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(lib.resolver);
+    comp->parse_source("private_extern_tpl_exe.k", R"K(
+        module private_extern_tpl_exe;
+        import private_extern_tpl_lib;
+
+        struct FirstTag {}
+        struct SecondTag {}
+        inspect(owner : NativeOwner<FirstTag>&) : int { return owner.read(10); }
+        test() : int {
+            first : NativeOwner<FirstTag>;
+            second : NativeOwner<SecondTag>;
+            return inspect(first) + second.read(11);
+        }
+    )K", false, false);
+
+    auto& module = comp->get_context_for_test()->module();
+    auto* native = module.getFunction("__k_test_import_template_count");
+    REQUIRE(native != nullptr);
+    CHECK(native->isDeclaration());
+    CHECK(module.getFunction("__k_test_import_template_count.1") == nullptr);
+
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("import template — invalid private static extern annotations are still rejected",
+          "[import][template][ffi][template-extern][error]") {
+    PrivateExternTemplateImport lib("private_extern_template_negative");
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(lib.resolver);
+    try {
+        comp->parse_source("private_extern_tpl_bad.k", R"K(
+            module private_extern_tpl_bad;
+            import private_extern_tpl_lib;
+            test() : int {
+                counter : InvalidNativeCounter<int>;
+                return 0;
+            }
+        )K", false, false);
+        FAIL("Expected the unsupported FFI language diagnostic");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(std::string(error.what()).find("unsupported language 'Java'") != std::string::npos);
+    }
+}
 
 TEST_CASE("import template — private constructor and helper methods remain accessible to friends",
           "[import][template][cross-tpl][consumer-inst][private-template-friend]") {
