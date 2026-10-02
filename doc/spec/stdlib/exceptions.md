@@ -26,6 +26,7 @@ Throwable (_code: int)                    root of all throwable types
 │   ├── IndexOutOfBoundsException (code=3)
 │   ├── IllegalArgumentException (code=4)
 │   └── IllegalStateException (code=5)
+│       └── BadWeakReferenceException (code=5, shared.k)
 └── FatalError                            unchecked — no `throws` needed
     ├── OutOfMemory (code=1)
     ├── ConstructionException (code=6)
@@ -110,6 +111,20 @@ types must declare them in their `throws` clause. Extends `Throwable`.
 | `Exception()` | Construct with default code (0) |
 | `Exception(code: int)` | Construct with the given error code |
 | `Exception(code: int, cause: Throwable?)` | Construct with error code and cause |
+
+---
+
+## BadWeakReferenceException
+
+Signals that a `Shared<T>` constructor could not acquire ownership from an
+empty or expired `Weak<T>`. Defined in `shared.k`; extends
+`IllegalStateException` and retains its default error code **5**.
+
+This is a checked exception. Callers must catch it or declare it in a
+`throws` clause. `Weak<T>::lock()` instead returns an empty strong handle
+when promotion fails and does not throw this exception.
+
+See [Shared ownership](shared.md).
 
 ---
 

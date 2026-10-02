@@ -184,6 +184,18 @@ add_custom_command(
     VERBATIM
 )
 
+set(SHARED_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/shared_ffi.c)
+set(SHARED_FFI_OBJ ${LIBK_OUTPUT_DIR}/shared_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${SHARED_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${SHARED_FFI_OBJ} ${SHARED_FFI_C}
+    DEPENDS ${SHARED_FFI_C}
+    COMMENT "Compiling K atomic shared ownership counters (shared_ffi.c)"
+    VERBATIM
+)
+
 # ── Compile the I/O C runtime helpers ─────────────────────────────────────
 set(IO_HELPERS_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/io_helpers.c)
 set(IO_HELPERS_OBJ ${LIBK_OUTPUT_DIR}/io_helpers.o)
@@ -563,6 +575,7 @@ add_custom_command(
 )
 
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
+                   ${SHARED_FFI_OBJ}
                    ${TIME_OBJ} ${RUNTIME_TLS_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
@@ -708,6 +721,7 @@ libk_add_test(libk-tests-types 120
     tests/test-expected.cpp
     tests/test-optional.cpp
     tests/test-shared.cpp
+    tests/test-shared-weak.cpp
     tests/test-memory.cpp
     tests/test-math.cpp
     tests/test-application.cpp

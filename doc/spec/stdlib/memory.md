@@ -227,3 +227,5 @@ them only when removed.
 - [Exception Types](exceptions.md) — `ConstructionException`, `OutOfMemory`
 - [Dynamic Allocation — `new` and `delete`](../language/memory/new-delete.md) — heap allocation with owners
 - [Collections](collections.md) — `Vector<T>`, `LinkedList<T>`, `DoubleLinkedList<T>`
+- [Shared ownership](shared.md) — `Shared<T>`, `Weak<T>`, atomic reference
+  counting and weak promotion

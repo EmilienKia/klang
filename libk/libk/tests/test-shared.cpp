@@ -426,7 +426,7 @@ TEST_CASE("Shared<IntBox> — reset with new pointer", "[libk][shared]") {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  8. Share with null shared is no-op
+//  8. Share with empty shared
 // ═══════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Shared<IntBox> — share with null remains null", "[libk][shared]") {

@@ -16,280 +16,375 @@
  * limitations under the License.
  */
 module k;
+
 /**
- * Shared<T> — reference-counted shared ownership smart pointer.
+ * Thrown when constructing a Shared from an empty or expired Weak.
+ * Use Weak.lock() for a non-throwing promotion attempt.
+ */
+public final class BadWeakReferenceException : public IllegalStateException {
+    public BadWeakReferenceException() : IllegalStateException() {}
+}
+
+// Imported template bodies need the helper's definition in KDI. Only its type
+// is exported; its entire API is private to Shared and Weak.
+template<class T>
+public final struct SharedBlock {
+private:
+    friend Shared<T>;
+    friend Weak<T>;
+
+    @ffi::Extern("C") private static __k_shared_count(count : const int*) : int;
+    @ffi::Extern("C") private static __k_shared_retain(count : int*);
+    @ffi::Extern("C") private static __k_shared_try_retain(count : int*) : bool;
+    @ffi::Extern("C") private static __k_shared_release(count : int*) : bool;
+
+    _ptr : T!;
+    _strong : int;
+    _weak : int;
+
+    SharedBlock(ptr : T!) : _ptr(ptr), _strong(1), _weak(1) {}
+
+    ~SharedBlock() {
+        delete _ptr;
+    }
+
+    const getPtr() : T* {
+        return _ptr;
+    }
+
+    const useCount() : int {
+        return __k_shared_count(&_strong);
+    }
+
+    retainStrong() {
+        __k_shared_retain(&_strong);
+    }
+
+    tryRetainStrong() : bool {
+        return __k_shared_try_retain(&_strong);
+    }
+
+    retainWeak() {
+        __k_shared_retain(&_weak);
+    }
+
+    releaseStrong() {
+        if (__k_shared_release(&_strong)) {
+            // The implicit weak reference protects the block during T's
+            // destructor, which may itself release explicit Weak handles.
+            delete _ptr;
+            releaseWeak();
+        }
+    }
+
+    releaseWeak() {
+        if (__k_shared_release(&_weak)) {
+            // Only the final releaser reconstructs the owner for deletion,
+            // as in Future/Promise's reference-counted payload cleanup.
+            owner : SharedBlock<T>! = (SharedBlock<T>!) &this;
+            delete owner;
+        }
+    }
+}
+
+/**
+ * Shared<T> — shared ownership of a dynamically allocated class object.
  *
- * Multiple Shared<T> instances can share ownership of a single
- * dynamically-allocated T object. The managed object is destroyed
- * when the last Shared<T> referencing it is destroyed or reset.
+ * Copies retain the same object; drains transfer a handle and leave the source
+ * empty. The last Shared destroys the object. Weak handles keep only the
+ * control block alive and can attempt to acquire a new Shared with lock().
  *
- * Implementation uses an intrusive doubly-linked list of ChainNodes,
- * each embedded in a Shared<T>. The Block (holding the owned T! and
- * a reference count) is owned by exactly one ChainNode at a time.
- * When the block holder is released, it transfers Block ownership to
- * a neighbor in the chain. When the refcount reaches zero, the Block
- * (and thus T) is deleted.
- *
- * Usage:
- *   obj : MyClass! = new MyClass(42);
- *   s1 : Shared<MyClass>;
- *   s1.acquire(obj);            // s1 takes ownership, obj becomes null
- *
- *   s2 : Shared<MyClass>;
- *   s2.share(s1);               // s2 shares with s1, useCount = 2
- *
- *   ref : MyClass* = s1.get();  // access the managed object
- *   s1.reset();                 // s1 releases, s2 is now sole owner
- *
- * Thread safety: NONE. This implementation is not thread-safe.
- * A single Shared<T> must not be accessed from multiple threads
- * without external synchronisation.
- *
- * Note: This is a template struct — T must be a class type.
- * Each instantiation produces specialised code for the concrete T,
- * which allows calling T's destructor directly.
+ * Reference counting is atomic. Distinct handles may be used concurrently.
+ * Modifying the same handle concurrently, or accessing T concurrently,
+ * requires external synchronisation. T's destructor must not throw.
  */
 template<class T>
-final struct Shared {
-    private:
-    /**
-     * Block — internal control block for Shared<T>.
-     *
-     * Holds the owned pointer to the managed object and a reference
-     * count. Allocated once per sharing group via `new Block()`.
-     * The Block is owned by exactly one ChainNode; ownership is
-     * transferred between nodes as Shared instances are created and
-     * destroyed.
-     */
-    final static struct Block {
-        _ptr : T!;
-        _refCount : int;
-        Block() {
-            _ptr = null;
-            _refCount = 0;
-        }
-        /**
-         * Explicit destructor to ensure the owned T is properly destroyed.
-         * Required because the compiler does not yet auto-delete owner fields
-         * in nested template struct destructors.
-         */
-        ~Block() {
-            delete _ptr;
-        }
-        /** Move the given owner into this block. */
-        setPtr(ptr : T!) {
-            _ptr = ptr;
-        }
-        /** Return an observer pointer to the managed object. */
-        const getPtr() : T* {
-            return _ptr;
-        }
-        /** Increment the reference count. */
-        retain() {
-            ++_refCount;
-        }
-        /** Decrement the reference count. Returns the new count. */
-        release() : int {
-            --_refCount;
-            return _refCount;
+public final struct Shared {
+private:
+    friend Weak<T>;
+
+    _block : SharedBlock<T>*;
+
+    doRelease() {
+        block : SharedBlock<T>* = _block;
+        _block = null;
+        if (block != null) {
+            block->releaseStrong();
         }
     }
-    /**
-     * ChainNode — intrusive doubly-linked list node.
-     *
-     * Each Shared<T> embeds one ChainNode. The chain links all
-     * Shared<T> instances sharing the same managed object. Exactly
-     * one node in the chain holds the Block! owner.
-     */
-    final static struct ChainNode {
-        _block : Block!;
-        _prev  : ChainNode*;
-        _next  : ChainNode*;
-        ChainNode() {
-            _block = null;
-            _prev = null;
-            _next = null;
+
+public:
+    /** Create an empty handle without allocating a control block. */
+    Shared() : _block(null) {}
+
+    /** Acquire an owner. A null owner produces an empty handle. */
+    Shared(ptr : T!) : _block(null) {
+        if (ptr != null) {
+            _block = new SharedBlock<T>(ptr);
         }
     }
-    _node : ChainNode;
-    _obs  : T*;
-    public:
-    /**
-     * Create an empty (null) shared pointer.
-     * No object is managed; get() returns null.
-     */
-    Shared() {
-        _obs = null;
+
+    /** Share ownership without copying T. The source may be const. */
+    Shared(other : const Shared<T>&) : _block(other._block) {
+        if (_block != null) {
+            _block->retainStrong();
+        }
     }
-    /**
-     * Create a shared pointer by acquiring ownership of a
-     * dynamically-allocated object. The owner is drained
-     * (ptr becomes null after this call).
-     */
-    Shared(ptr : T!) {
-        _obs = ptr;
-        _node._block = new Block();
-        _node._block.setPtr(ptr);
-        _node._block.retain();
+
+    /** Transfer a handle without changing the reference count. */
+    Shared(other : Shared<T>#) : _block(other._block) {
+        other._block = null;
     }
-    /**
-     * Destructor. Removes this node from the sharing chain.
-     * If this was the last reference, destroys the managed object.
-     */
+
+    /** Promote a Weak, or throw if its object is no longer alive. */
+    Shared(other : const Weak<T>&) : _block(null)
+        throws(BadWeakReferenceException) {
+        block : SharedBlock<T>* = other._block;
+        if (block != null) {
+            if (block->tryRetainStrong()) {
+                _block = block;
+                return;
+            }
+        }
+        throw BadWeakReferenceException();
+    }
+
     ~Shared() {
         doRelease();
     }
-    /**
-     * Acquire ownership of a dynamically-allocated object.
-     * The owner is drained (ptr becomes null after this call).
-     * If this Shared already manages an object, it is released first.
-     */
-    acquire(ptr : T!) {
-        doRelease();
-        _obs = ptr;
-        _node._block = new Block();
-        _node._block.setPtr(ptr);
-        _node._block.retain();
+
+    /** Copy assignment. Self-assignment is safe. */
+    operator =(other : const Shared<T>&) : Shared<T>& {
+        share(other);
+        return this;
     }
-    /**
-     * Share ownership with another Shared instance.
-     * This Shared joins the sharing group of 'other'.
-     * If this Shared already manages an object, it is released first.
-     * If 'other' is empty, this Shared remains empty.
-     */
-    share(other : Shared<T>&) {
-        if (other._obs == null) { return; }
-        doRelease();
-        _obs = other._obs;
-        _node._block = null;
-        // Insert self after other's node in the chain
-        _node._prev = &other._node;
-        _node._next = other._node._next;
-        if (_node._next != null) {
-            _node._next->_prev = &_node;
-        }
-        other._node._next = &_node;
-        // Retain: find the block in the chain and increment refcount
-        p : ChainNode* = _node._prev;
-        while (p != null) {
-            if (p->_block != null) { p->_block.retain(); break; }
-            p = p->_prev;
-        }
-        if (p == null) {
-            n : ChainNode* = _node._next;
-            while (n != null) {
-                if (n->_block != null) { n->_block.retain(); break; }
-                n = n->_next;
+
+    /** Drain assignment. Self-draining leaves the handle unchanged. */
+    operator =(other : Shared<T>#) : Shared<T>& {
+        source : Shared<T>* = other;
+        if (&this != source) {
+            block : SharedBlock<T>* = other._block;
+            other._block = null;
+            previous : SharedBlock<T>* = _block;
+            _block = block;
+            if (previous != null) {
+                previous->releaseStrong();
             }
         }
+        return this;
     }
-    /**
-     * Return an observer pointer to the managed object.
-     * Returns null if this Shared is empty.
-     */
-    get() : T* {
-        return _obs;
+
+    /** Replace the current object by acquiring an owner, including null. */
+    operator =(ptr : T!) : Shared<T>& {
+        acquire(ptr);
+        return this;
     }
-    /**
-     * Return true if this Shared is empty (manages no object).
-     */
-    isNull() : bool {
-        return _obs == null;
+
+    /** Replace the current object. Allocation failure leaves this unchanged. */
+    acquire(ptr : T!) {
+        replacement : Shared<T>(ptr);
+        swap(replacement);
     }
-    /**
-     * Return the number of Shared instances sharing this object.
-     * Returns 0 if empty.
-     * Complexity: O(n) for chain traversal to find the block.
-     */
-    useCount() : int {
-        if (_obs == null) { return 0; }
-        if (_node._block != null) { return _node._block._refCount; }
-        p : ChainNode* = _node._prev;
-        while (p != null) {
-            if (p->_block != null) { return p->_block._refCount; }
-            p = p->_prev;
+
+    /** Copy another handle's ownership; an empty source clears this handle. */
+    share(other : const Shared<T>&) {
+        block : SharedBlock<T>* = other._block;
+        if (_block == block) {
+            return;
         }
-        n : ChainNode* = _node._next;
-        while (n != null) {
-            if (n->_block != null) { return n->_block._refCount; }
-            n = n->_next;
+        if (block != null) {
+            block->retainStrong();
         }
-        return 0;
+        previous : SharedBlock<T>* = _block;
+        _block = block;
+        if (previous != null) {
+            previous->releaseStrong();
+        }
     }
-    /**
-     * Release this Shared's participation in the sharing group.
-     * After this call, this Shared is empty (get() returns null).
-     * If this was the last Shared in the group, the managed object
-     * is destroyed.
-     */
+
+    /** Return a borrowed pointer, or null. Constness of the handle does not
+     * make the managed object const. */
+    const get() : T* {
+        if (_block == null) {
+            return null;
+        }
+        return _block->getPtr();
+    }
+
+    /** Return true if no object is managed. */
+    const isNull() : bool {
+        return _block == null;
+    }
+
+    /** Return an atomic snapshot of the number of strong handles, or zero. */
+    const useCount() : int {
+        if (_block == null) {
+            return 0;
+        }
+        return _block->useCount();
+    }
+
+    /** Boolean conversion: true if an object is managed. */
+    const operator() : bool {
+        return _block != null;
+    }
+
+    /** Logical negation: true if this handle is empty. */
+    const operator !() : bool {
+        return _block == null;
+    }
+
+    /** Compare the managed object addresses. */
+    const operator ==(other : const Shared<T>&) : bool {
+        return get() == other.get();
+    }
+
+    const operator !=(other : const Shared<T>&) : bool {
+        return get() != other.get();
+    }
+
+    /** Release ownership and leave an empty handle. */
     reset() {
         doRelease();
     }
-    /**
-     * Release current managed object (if any) and acquire a new one.
-     */
+
+    /** Replace the current object by acquiring an owner. */
     reset(ptr : T!) {
-        doRelease();
-        _obs = ptr;
-        _node._block = new Block();
-        _node._block.setPtr(ptr);
-        _node._block.retain();
+        acquire(ptr);
     }
-    private:
-    /**
-     * Internal: unlink self from the chain, decrement refcount,
-     * and handle block ownership transfer or deletion.
-     */
+
+    /** Exchange handles without allocating or changing reference counts. */
+    swap(other : Shared<T>&) {
+        block : SharedBlock<T>* = _block;
+        _block = other._block;
+        other._block = block;
+    }
+}
+
+/**
+ * Weak<T> — non-owning observation of a Shared ownership group.
+ *
+ * A Weak never extends T's lifetime. lock() atomically acquires a Shared if
+ * the object is still alive, or returns an empty Shared otherwise. An expired
+ * group cannot be resurrected.
+ *
+ * Distinct handles may be used concurrently. Concurrent modification of the
+ * same handle requires external synchronisation.
+ */
+template<class T>
+public final struct Weak {
+private:
+    friend Shared<T>;
+
+    _block : SharedBlock<T>*;
+
     doRelease() {
-        if (_obs == null) { return; }
-        // Unlink self from the doubly-linked chain
-        if (_node._prev != null) {
-            _node._prev->_next = _node._next;
+        block : SharedBlock<T>* = _block;
+        _block = null;
+        if (block != null) {
+            block->releaseWeak();
         }
-        if (_node._next != null) {
-            _node._next->_prev = _node._prev;
+    }
+
+public:
+    /** Create an empty weak handle. */
+    Weak() : _block(null) {}
+
+    /** Observe an ownership group without retaining its object. */
+    Weak(other : const Shared<T>&) : _block(other._block) {
+        if (_block != null) {
+            _block->retainWeak();
         }
-        // Handle block ownership and refcount
-        if (_node._block != null) {
-            // We hold the block — decrement and decide
-            rc : int = _node._block.release();
-            if (rc == 0) {
-                // Last reference — delete block (auto-deletes T)
-                delete _node._block;
-            } else {
-                // Transfer block ownership to a neighbor
-                if (_node._next != null) {
-                    _node._next->_block = _node._block;
-                } else if (_node._prev != null) {
-                    _node._prev->_block = _node._block;
-                }
-            }
-        } else {
-            // We don't hold the block — find it in the chain and decrement
-            p : ChainNode* = _node._prev;
-            while (p != null) {
-                if (p->_block != null) {
-                    rc : int = p->_block.release();
-                    if (rc == 0) { delete p->_block; }
-                    break;
-                }
-                p = p->_prev;
-            }
-            if (p == null) {
-                n : ChainNode* = _node._next;
-                while (n != null) {
-                    if (n->_block != null) {
-                        rc : int = n->_block.release();
-                        if (rc == 0) { delete n->_block; }
-                        break;
-                    }
-                    n = n->_next;
-                }
+    }
+
+    /** Copy a weak handle, including an expired one. */
+    Weak(other : const Weak<T>&) : _block(other._block) {
+        if (_block != null) {
+            _block->retainWeak();
+        }
+    }
+
+    /** Transfer a weak handle and leave the source empty. */
+    Weak(other : Weak<T>#) : _block(other._block) {
+        other._block = null;
+    }
+
+    ~Weak() {
+        doRelease();
+    }
+
+    /** Copy assignment. Self-assignment is safe. */
+    operator =(other : const Weak<T>&) : Weak<T>& {
+        block : SharedBlock<T>* = other._block;
+        if (_block == block) {
+            return this;
+        }
+        if (block != null) {
+            block->retainWeak();
+        }
+        doRelease();
+        _block = block;
+        return this;
+    }
+
+    /** Observe a Shared, replacing any previous observation. */
+    operator =(other : const Shared<T>&) : Weak<T>& {
+        block : SharedBlock<T>* = other._block;
+        if (_block == block) {
+            return this;
+        }
+        if (block != null) {
+            block->retainWeak();
+        }
+        doRelease();
+        _block = block;
+        return this;
+    }
+
+    /** Drain assignment. Self-draining leaves the handle unchanged. */
+    operator =(other : Weak<T>#) : Weak<T>& {
+        source : Weak<T>* = other;
+        if (&this != source) {
+            block : SharedBlock<T>* = other._block;
+            other._block = null;
+            doRelease();
+            _block = block;
+        }
+        return this;
+    }
+
+    /** Return an atomic snapshot of the number of strong handles, or zero. */
+    const useCount() : int {
+        if (_block == null) {
+            return 0;
+        }
+        return _block->useCount();
+    }
+
+    /** Return true if empty or if the last strong handle has been released. */
+    const expired() : bool {
+        return useCount() == 0;
+    }
+
+    /** Atomically acquire ownership, or return an empty Shared. */
+    const lock() result : Shared<T> {
+        block : SharedBlock<T>* = _block;
+        if (block != null) {
+            if (block->tryRetainStrong()) {
+                result._block = block;
             }
         }
-        // Clear to empty state
-        _obs = null;
-        _node._prev = null;
-        _node._next = null;
+    }
+
+    /** Release the observation and leave an empty weak handle. */
+    reset() {
+        doRelease();
+    }
+
+    /** Exchange weak handles without changing reference counts. */
+    swap(other : Weak<T>&) {
+        block : SharedBlock<T>* = _block;
+        _block = other._block;
+        other._block = block;
     }
 }

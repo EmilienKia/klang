@@ -91,6 +91,56 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Dependent constructor-call expressions in template functions.**
+      Calling a bound type parameter as `T(args)` is unresolved in instantiated
+      function bodies: the NR-21 named-return regression's `return T(second);`
+      produced `00910: No function named 'T' found` for both struct and class
+      arguments, with and without optimisation. A concrete
+      `return Handle(second);` works in the same fixture. Investigate
+      constructor-name lookup through template type bindings separately from
+      named-result replacement. `klang/src/model/template_instantiator.cpp`
+      substitutes expression types but leaves the callee name unchanged;
+      `klang/src/gen/gen_expr_invocation.cpp` subsequently looks up `T`.
+      Minimal analogous repro (not independently executed):
+      ```k
+      module dependent_constructor_repro;
+      struct Value {
+          number : int;
+          Value(n : int) : number(n) {}
+      }
+      template<typename T>
+      make() : T { return T(42); }
+      test() : int {
+          value : Value = make<Value>();
+          return value.number;
+      }
+      ```
+
+- [ ] **Implicit struct assignment bypasses resource lifetime operations.**
+      `klang/src/gen/gen_struct.cpp` generates implicit assignment, but
+      `implementation_generator::emit_copy_assignment_operator()` in
+      `klang/src/gen/gen_function.cpp` implements it with bare memcpy, without
+      releasing the destination's previous contents or invoking the copy
+      constructor. Source-inspection finding; this repro has not been run.
+      Expected result: `0`; inferred result: `9` (`a.strong == 1`,
+      `b.strong == -1`). Explicit user-defined assignment is unaffected.
+      ```k
+      module ordinary_assignment_repro;
+      struct Resource { strong : int = 0; }
+      struct Handle {
+          r : Resource*;
+          Handle(x : Resource&) : r(&x) { ++r->strong; }
+          Handle(x : Handle&) : r(x.r) { ++r->strong; }
+          ~Handle() { --r->strong; }
+      }
+      test() : int {
+          a : Resource;
+          b : Resource;
+          { x : Handle(a); y : Handle(b); x = y; }
+          return a.strong * 10 + b.strong;
+      }
+      ```
+
 - Generics (type-erased, single synthesis). Feature overview:
   `doc/spec/language/templates/generic.md`. Model recap: a generic is a template with
   restrictions; its body is synthesised once with every type parameter erased to an opaque
@@ -223,6 +273,38 @@
 
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts. 
       Workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
+- [ ] KDI export omits module-private helper templates referenced by public templates.
+      Observed while extending `Shared<T>`/`Weak<T>`: declaring their helper as
+      `template<class T> private final struct SharedBlock` allows libk to build,
+      but importing its KDI and instantiating `Shared<Payload>` fails with
+      `0F003: Internal error: variable '<generated Weak<T>::doRelease::block>'
+      has an unresolvable type that is not an unresolved_type instance`.
+      `Weak<T>::doRelease()` declares `block : SharedBlock<T>* = _block`.
+      The exporter (`klang/src/model/tools/kdi_exporter.cpp`) skips private
+      template definitions, and KDI currently permits only public/protected
+      template visibility. Preserve referenced implementation templates or
+      diagnose this unsupported dependency instead of reporting an internal
+      compiler error. Current workaround: export the helper type but keep all
+      its operations private, accessible only to the public templates as friends.
+- [ ] Binding a drain to a reference variable contradicts the documented
+      drain-to-observer conversions. For example, in a template drain assigner,
+      `source : Weak<T>& = other` with `other : Weak<T>#` is rejected with
+      `00D06: the initializer ... has type Weak<T>#`, although drains are
+      specified as implicitly convertible to references. A pointer observer
+      is sufficient for the address-only self-drain guard in `Shared`/`Weak`;
+      reference initialisation should consistently accept a drain without
+      transferring resources or copying the referred object.
+- [ ] KDI does not preserve annotation-type retention metadata. Imported
+      `ffi::Extern` therefore appears to have RUNTIME rather than SOURCE
+      retention and emits spurious `00506` warnings for private declarations.
+      Minimal consumer repro: `module retention_repro; struct Host {
+      @ffi::Extern("C") private static native(x : int) : int; }`.
+      `libk/libk/src/ffi.k` declares SOURCE retention, but `kdi_aggregate` and
+      `kdi_builder::begin_aggregate()` export no retention metadata;
+      `imported_annotation_type` inherits the default false
+      `aggregate::is_source_retention()`. Preserve this metadata across the
+      DTO/codecs/export/import boundary rather than suppressing warnings or
+      hardcoding standard-library annotation names.
 
 ### Auxiliary Tools (libkdi / kditool)
 

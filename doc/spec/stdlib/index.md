@@ -30,6 +30,7 @@ Contents:
 | [`String`](string.md#string) | Immutable, final string class wrapping a null-terminated `char[]!` buffer. | `src/string.k` |
 | [`StringBuilder`](string.md#stringbuilder) | Mutable, growable string builder backed by a single contiguous buffer. | `src/string.k` |
 | [`UniSlot<T>`, `MultiSlot<T>`](memory.md) | Low-level memory primitives for explicit lifetime management of objects. | `src/memory.k` |
+| [`Shared<T>`, `Weak<T>`](shared.md) | Atomic shared ownership and non-owning weak observation, with copy/drain semantics and atomic weak promotion. | `src/shared.k` |
 | [`Collection<T>`, `Vector<T>`, `LinkedList<T>`, `DoubleLinkedList<T>`](collections.md) | Generic collection framework: interface + three concrete implementations (dynamic array, singly-linked list, doubly-linked list). | `src/collections.k` |
 | [`Set<T>`, `MutableSet<T>`, `OrderedSet<T>`, `MutableOrderedSet<T>`, `SortedSet<T>`, `MutableSortedSet<T>`, `ListSet<T>`, `TreeSet<T>`, `HashSet<T>`](collections-set.md) | Generic set framework: interfaces + three concrete implementations (list-backed insertion-ordered set, AVL-tree-backed sorted set, hash-table-backed set). | `src/set.k` |
 | [`Entry<K,V>`, `MutableEntry<K,V>`, `Map<K,V>`, `MutableMap<K,V>`, `OrderedMap<K,V>`, `MutableOrderedMap<K,V>`, `SortedMap<K,V>`, `MutableSortedMap<K,V>`, `ListMap<K,V>`, `TreeMap<K,V>`, `HashMap<K,V>`](collections-map.md) | Generic map (dictionary) framework: interfaces + three concrete implementations (list-backed insertion-ordered map, AVL-tree-backed sorted map, hash-table-backed map). | `src/map.k` |
@@ -81,7 +82,9 @@ K language:
 - Heap-allocated buffers are held as owners (`T!`).
 - Public accessors that expose internal data without transferring ownership
   return a view (`T?`) or pointer (`T*`), never an owner.
-- Copy constructors allocate fresh buffers; the original is unmodified.
+- Owning buffer types allocate fresh buffers when copied. `Shared<T>` copies
+  instead retain the same object; `Weak<T>` copies retain only its ownership
+  metadata.
 
 ---
 
