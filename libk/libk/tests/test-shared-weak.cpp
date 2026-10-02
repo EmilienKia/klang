@@ -627,3 +627,522 @@ TEST_CASE("Weak lock races safely with the last strong release",
         CHECK(finish() == round + 1);
     }
 }
+
+TEST_CASE("Shared converting views adjust secondary interfaces and preserve one owner",
+          "[libk][shared][conversion][interface]") {
+    auto j = jit_shared("converting_views", R"SRC(
+        dualDestroyed : int = 0;
+        otherDestroyed : int = 0;
+
+        interface FirstFace {
+            first() : int;
+        }
+        interface SecondFace {
+            second() : int;
+        }
+        class DualFace : public FirstFace, public SecondFace {
+            public DualFace() {}
+            override first() : int { return 11; }
+            override second() : int { return 22; }
+            ~DualFace() { ++dualDestroyed; }
+        }
+        class OtherFace : public SecondFace {
+            public OtherFace() {}
+            override second() : int { return 99; }
+            ~OtherFace() { ++otherDestroyed; }
+        }
+        callSecond(value : SecondFace&) : int { return value.second(); }
+
+        test() : int {
+            original : Shared<DualFace>(new DualFace());
+            second : Shared<SecondFace>(original);
+            if (original.useCount() != 2) return 1;
+            if (callSecond(*second.get()) != 22) return 2;
+
+            downcast : Shared<DualFace>(second);
+            if (downcast.useCount() != 3) return 3;
+            if (callSecond(*downcast.get()) != 22) return 4;
+            downcast = second;
+            if (!downcast) return 5;
+            if (original.useCount() != 3) return 5;
+            downcast.reset();
+            if (original.useCount() != 2) return 6;
+
+            mismatch : Shared<OtherFace>(new OtherFace());
+            mismatch = second;
+            if (mismatch) return 7;
+            if (otherDestroyed != 1) return 8;
+            if (original.useCount() != 2) return 9;
+
+            failedDrainSource : Shared<SecondFace>(original);
+            mismatch.acquire(new OtherFace());
+            mismatch = #failedDrainSource;
+            if (mismatch) return 10;
+            if (failedDrainSource.useCount() != 3) return 11;
+            if (otherDestroyed != 2) return 12;
+
+            moved : Shared<DualFace>(#second);
+            if (second) return 13;
+            if (moved.useCount() != 3) return 14;
+            if (callSecond(*moved.get()) != 22) return 15;
+            moved.reset();
+            failedDrainSource.reset();
+            original.reset();
+            if (dualDestroyed != 1) return 16;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Shared and Weak sibling-interface cross-casts retain the original owner",
+          "[libk][shared][weak][conversion][interface]") {
+    auto j = jit_shared("sibling_interface_crosscasts", R"SRC(
+        dualDestroyed : int = 0;
+        otherDestroyed : int = 0;
+        interface FirstFacet {
+            first() : int;
+        }
+        interface SecondFacet {
+            second() : int;
+        }
+        class BothFacets : public FirstFacet, public SecondFacet {
+            public BothFacets() {}
+            override first() : int { return 11; }
+            override second() : int { return 22; }
+            ~BothFacets() { ++dualDestroyed; }
+        }
+        class FirstOnly : public FirstFacet {
+            public FirstOnly() {}
+            override first() : int { return 33; }
+        }
+        class OtherSecond : public SecondFacet {
+            public OtherSecond() {}
+            override second() : int { return 44; }
+            ~OtherSecond() { ++otherDestroyed; }
+        }
+        getSecond(value : SecondFacet&) : int { return value.second(); }
+
+        test() : int {
+            root : Shared<BothFacets>(new BothFacets());
+            first : Shared<FirstFacet>(root);
+            second : Shared<SecondFacet>(first);
+            secondAssigned : Shared<SecondFacet>;
+            secondAssigned = first;
+            if (!second || getSecond(*second.get()) != 22) return 1;
+            if (!secondAssigned || getSecond(*secondAssigned.get()) != 22) return 23;
+            if (root.useCount() != 4) return 2;
+
+            weakFirst : Weak<FirstFacet>(first);
+            weakSecond : Weak<SecondFacet>(weakFirst);
+            if (root.useCount() != 4) return 3;
+            locked : Shared<SecondFacet> = weakSecond.lock();
+            if (!locked || getSecond(*locked.get()) != 22) return 4;
+            if (root.useCount() != 5) return 5;
+            locked.reset();
+
+            drainSource : Shared<FirstFacet>(root);
+            drainAssigned : Shared<SecondFacet>();
+            drainAssigned = #drainSource;
+            if (drainSource || getSecond(*drainAssigned.get()) != 22) return 14;
+            drainAssigned.reset();
+
+            weakAssignedSource : Weak<FirstFacet>(root);
+            weakAssigned : Weak<SecondFacet>(weakSecond);
+            weakAssigned = weakAssignedSource;
+            weakAssignedLock : Shared<SecondFacet> = weakAssigned.lock();
+            if (!weakAssignedLock || getSecond(*weakAssignedLock.get()) != 22) return 15;
+            weakAssignedLock.reset();
+
+            weakDrainSource : Weak<FirstFacet>(root);
+            weakDrainAssigned : Weak<SecondFacet>();
+            weakDrainAssigned = #weakDrainSource;
+            if (weakDrainSource.useCount() != 0) return 16;
+            weakDrainLock : Shared<SecondFacet> = weakDrainAssigned.lock();
+            if (!weakDrainLock || getSecond(*weakDrainLock.get()) != 22) return 17;
+            weakDrainLock.reset();
+            weakDrainConstructSource : Weak<FirstFacet>(root);
+            weakDrainConstruct : Weak<SecondFacet>(#weakDrainConstructSource);
+            if (weakDrainConstructSource.useCount() != 0) return 20;
+            weakDrainConstructLock : Shared<SecondFacet> = weakDrainConstruct.lock();
+            if (!weakDrainConstructLock ||
+                getSecond(*weakDrainConstructLock.get()) != 22) return 21;
+            weakDrainConstructLock.reset();
+
+            moved : Shared<SecondFacet>(#first);
+            if (first || moved.useCount() != 4) return 6;
+            second.reset();
+            moved.reset();
+            secondAssigned.reset();
+            root.reset();
+            if (dualDestroyed != 1) return 7;
+            if (!weakSecond.expired()) return 8;
+
+            only : Shared<FirstOnly>(new FirstOnly());
+            onlyView : Shared<FirstFacet>(only);
+            mismatch : Shared<SecondFacet>(onlyView);
+            if (mismatch) return 9;
+            failedDrainSource : Shared<FirstFacet>(only);
+            rejectedDrain : Shared<SecondFacet>(#failedDrainSource);
+            if (rejectedDrain || failedDrainSource.useCount() != 3) return 10;
+
+            destination : Shared<SecondFacet>(new OtherSecond());
+            destination = onlyView;
+            if (destination || otherDestroyed != 1) return 11;
+            failedDrainAssignSource : Shared<FirstFacet>(only);
+            failedDrainAssigned : Shared<SecondFacet>(new OtherSecond());
+            failedDrainAssigned = #failedDrainAssignSource;
+            if (failedDrainAssigned || failedDrainAssignSource.useCount() != 4 ||
+                otherDestroyed != 2) return 22;
+
+            weakOnly : Weak<FirstFacet>(onlyView);
+            weakMismatch : Weak<SecondFacet>(#weakOnly);
+            if (weakMismatch.useCount() != 0 || weakOnly.useCount() != 4) return 12;
+            weakDestination : Weak<SecondFacet>(weakSecond);
+            weakDestination = weakOnly;
+            if (weakDestination.useCount() != 0 || weakOnly.useCount() != 4) return 18;
+            weakMismatchDrainSource : Weak<FirstFacet>(onlyView);
+            weakMismatchDrain : Weak<SecondFacet>(weakSecond);
+            weakMismatchDrain = #weakMismatchDrainSource;
+            if (weakMismatchDrain.useCount() != 0 ||
+                weakMismatchDrainSource.useCount() != 4) return 19;
+            only.reset();
+            onlyView.reset();
+            failedDrainSource.reset();
+            failedDrainAssignSource.reset();
+            weakOnly.reset();
+            weakFirst.reset();
+            weakSecond.reset();
+            if (dualDestroyed != 1 || otherDestroyed != 2) return 13;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Converting Shared drain construction transfers without retaining and preserves failed sources",
+          "[libk][shared][conversion][drain]") {
+    auto j = jit_shared("converting_drains", R"SRC(
+        destroyedDual : int = 0;
+        destroyedOther : int = 0;
+        interface Face {
+            value() : int;
+        }
+        class Dual : public Face {
+            public Dual() {}
+            override value() : int { return 42; }
+            ~Dual() { ++destroyedDual; }
+        }
+        class Other : public Face {
+            public Other() {}
+            override value() : int { return -1; }
+            ~Other() { ++destroyedOther; }
+        }
+        getValue(value : Face&) : int { return value.value(); }
+        test() : int {
+            strong : Shared<Dual>(new Dual());
+            face : Shared<Face>(strong);
+            before : int = strong.useCount();
+            moved : Shared<Dual>(#face);
+            if (face) return 1;
+            if (moved.useCount() != before) return 2;
+            if (getValue(*moved.get()) != 42) return 3;
+
+            successSource : Shared<Face>(strong);
+            successDestination : Shared<Dual>();
+            successDestination = #successSource;
+            if (successSource) return 16;
+            if (successDestination.useCount() != before + 1) return 17;
+            if (getValue(*successDestination.get()) != 42) return 18;
+            successDestination.reset();
+
+            failedSource : Shared<Face>(strong);
+            rejected : Shared<Other>(#failedSource);
+            if (rejected) return 4;
+            if (failedSource.useCount() != before + 1) return 5;
+            if (destroyedOther != 0) return 6;
+
+            old : Shared<Other>(new Other());
+            old = #failedSource;
+            if (old) return 7;
+            if (failedSource.useCount() != before + 1) return 8;
+            if (destroyedOther != 1) return 9;
+
+            strong.reset();
+            moved.reset();
+            failedSource.reset();
+            if (destroyedDual != 1) return 10;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Weak converting views lock live objects, preserve static expired groups, and reject expired dynamic views",
+          "[libk][weak][shared][conversion]") {
+    auto j = jit_shared("weak_conversions", R"SRC(
+        dualDestroyed : int = 0;
+        interface BaseFace {
+            value() : int;
+        }
+        class DerivedFace : public BaseFace {
+            public DerivedFace() {}
+            override value() : int { return 42; }
+            ~DerivedFace() { ++dualDestroyed; }
+        }
+        class OtherFace : public BaseFace {
+            public OtherFace() {}
+            override value() : int { return -1; }
+        }
+        getValue(value : BaseFace&) : int { return value.value(); }
+
+        test() : int {
+            strong : Shared<DerivedFace>(new DerivedFace());
+            baseWeak : Weak<BaseFace>(strong);
+            derivedWeak : Weak<DerivedFace>(baseWeak);
+            if (baseWeak.useCount() != 1) return 1;
+            if (derivedWeak.useCount() != 1) return 2;
+            locked : Shared<DerivedFace> = derivedWeak.lock();
+            if (!locked || getValue(*locked.get()) != 42) return 3;
+            locked.reset();
+            try {
+                promoted : Shared<DerivedFace>(baseWeak);
+                if (!promoted || promoted.useCount() != 2 || getValue(*promoted.get()) != 42) return 21;
+                promoted.reset();
+            } catch (e : BadWeakReferenceException&) {
+                return 21;
+            }
+            try {
+                rejectedPromotion : Shared<OtherFace>(baseWeak);
+                if (rejectedPromotion || strong.useCount() != 1) return 22;
+            } catch (e : BadWeakReferenceException&) {
+                return 22;
+            }
+
+            failedWeakSource : Weak<BaseFace>(strong);
+            rejected : Weak<OtherFace>(#failedWeakSource);
+            if (rejected.useCount() != 0) return 4;
+            if (failedWeakSource.useCount() != 1) return 5;
+
+            assignedSource : Weak<BaseFace>(strong);
+            assigned : Weak<DerivedFace>();
+            assigned = assignedSource;
+            if (assigned.useCount() != 1 || assignedSource.useCount() != 1) return 16;
+            assignedLock : Shared<DerivedFace> = assigned.lock();
+            if (!assignedLock || getValue(*assignedLock.get()) != 42) return 17;
+            assignedLock.reset();
+
+            movedSource : Weak<BaseFace>(strong);
+            moved : Weak<DerivedFace>(#movedSource);
+            if (movedSource.useCount() != 0) return 6;
+            if (moved.useCount() != 1) return 7;
+            check : Shared<DerivedFace> = moved.lock();
+            if (!check || getValue(*check.get()) != 42) return 8;
+            check.reset();
+
+            drainAssignSource : Weak<BaseFace>(strong);
+            drainAssigned : Weak<DerivedFace>();
+            drainAssigned = #drainAssignSource;
+            if (drainAssignSource.useCount() != 0 || drainAssigned.useCount() != 1) return 18;
+
+            mismatchAssignSource : Weak<BaseFace>(strong);
+            mismatchAssigned : Weak<OtherFace>();
+            mismatchAssigned = mismatchAssignSource;
+            if (mismatchAssigned.useCount() != 0 || mismatchAssignSource.useCount() != 1) return 19;
+
+            mismatchDrainSource : Weak<BaseFace>(strong);
+            mismatchDrainAssigned : Weak<OtherFace>();
+            mismatchDrainAssigned = #mismatchDrainSource;
+            if (mismatchDrainAssigned.useCount() != 0 || mismatchDrainSource.useCount() != 1) return 20;
+
+            strong.reset();
+            locked.reset();
+            if (!baseWeak.expired() || !derivedWeak.expired()) return 9;
+
+            try {
+                expiredPromotion : Shared<DerivedFace>(baseWeak);
+                return 23;
+            } catch (e : BadWeakReferenceException&) {}
+
+            staticExpired : Weak<BaseFace>(derivedWeak);
+            if (!staticExpired.expired() || staticExpired.useCount() != 0) return 10;
+            dynamicExpired : Weak<DerivedFace>(baseWeak);
+            if (dynamicExpired.useCount() != 0) return 11;
+
+            failedExpiredDrain : Weak<BaseFace>(baseWeak);
+            rejectedExpired : Weak<DerivedFace>(#failedExpiredDrain);
+            if (rejectedExpired.useCount() != 0) return 12;
+            if (!failedExpiredDrain.expired()) return 13;
+
+            expiredStaticDrain : Weak<BaseFace>(#derivedWeak);
+            if (derivedWeak.useCount() != 0 || !expiredStaticDrain.expired()) return 14;
+            if (dualDestroyed != 1) return 15;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Same-group assignments replace adjusted Shared and Weak views",
+          "[libk][shared][weak][conversion][assignment]") {
+    auto j = jit_shared("same_group_view_assignment", R"SRC(
+        dualDestroyed : int = 0;
+        class BaseView {
+            public BaseView() {}
+        }
+        class LeftBranch : public BaseView {}
+        class RightBranch : public BaseView {}
+        class Holder : public BaseView {
+            public left : LeftBranch;
+            public right : RightBranch;
+            public Holder() {}
+            ~Holder() { ++dualDestroyed; }
+        }
+
+        makeHolder() : Shared<Holder>! {
+            return new Shared<Holder>(new Holder());
+        }
+        copyBase(owner : const Shared<Holder>&) : Shared<BaseView>! {
+            return new Shared<BaseView>(owner);
+        }
+        holderView(owner : const Shared<Holder>&) : Holder* {
+            return owner.get();
+        }
+        leftView(holder : Holder&) : BaseView* { return &holder.left; }
+        rightView(holder : Holder&) : BaseView* { return &holder.right; }
+        shareInto(destination : Shared<BaseView>*, source : const Shared<BaseView>&) {
+            destination->share(source);
+        }
+        sharedView(handle : const Shared<BaseView>&) : BaseView* {
+            return handle.get();
+        }
+        makeWeak(handle : const Shared<BaseView>&) : Weak<BaseView>! {
+            return new Weak<BaseView>(handle);
+        }
+        assignWeak(destination : Weak<BaseView>*, source : const Weak<BaseView>&) {
+            *destination = source;
+        }
+        lockWeak(handle : const Weak<BaseView>&) : Shared<BaseView>! {
+            return new Shared<BaseView>(handle.lock());
+        }
+        dropShared(handle : Shared<BaseView>!) { delete handle; }
+        dropWeak(handle : Weak<BaseView>!) { delete handle; }
+        dropHolder(handle : Shared<Holder>!) { delete handle; }
+        destroyedCount() : int { return dualDestroyed; }
+    )SRC");
+    REQUIRE(j);
+
+    struct HandleLayout {
+        void* block;
+        void* view;
+    };
+    static_assert(sizeof(HandleLayout) == 2 * sizeof(void*));
+
+    auto makeHolder = j->lookup_symbol<void*(*)()>("makeHolder");
+    auto copyBase = j->lookup_symbol<void*(*)(void*)>("copyBase");
+    auto holderView = j->lookup_symbol<void*(*)(void*)>("holderView");
+    auto leftView = j->lookup_symbol<void*(*)(void*)>("leftView");
+    auto rightView = j->lookup_symbol<void*(*)(void*)>("rightView");
+    auto shareInto = j->lookup_symbol<void(*)(void*, void*)>("shareInto");
+    auto sharedView = j->lookup_symbol<void*(*)(void*)>("sharedView");
+    auto makeWeak = j->lookup_symbol<void*(*)(void*)>("makeWeak");
+    auto assignWeak = j->lookup_symbol<void(*)(void*, void*)>("assignWeak");
+    auto lockWeak = j->lookup_symbol<void*(*)(void*)>("lockWeak");
+    auto dropShared = j->lookup_symbol<void(*)(void*)>("dropShared");
+    auto dropWeak = j->lookup_symbol<void(*)(void*)>("dropWeak");
+    auto dropHolder = j->lookup_symbol<void(*)(void*)>("dropHolder");
+    auto destroyedCount = j->lookup_symbol<int(*)()>("destroyedCount");
+    REQUIRE(makeHolder);
+    REQUIRE(copyBase);
+    REQUIRE(holderView);
+    REQUIRE(leftView);
+    REQUIRE(rightView);
+    REQUIRE(shareInto);
+    REQUIRE(sharedView);
+    REQUIRE(makeWeak);
+    REQUIRE(assignWeak);
+    REQUIRE(lockWeak);
+    REQUIRE(dropShared);
+    REQUIRE(dropWeak);
+    REQUIRE(dropHolder);
+    REQUIRE(destroyedCount);
+
+    auto* owner = static_cast<HandleLayout*>(makeHolder());
+    REQUIRE(owner);
+    auto* holder = holderView(owner);
+    REQUIRE(holder);
+    void* leftBase = leftView(holder);
+    void* rightBase = rightView(holder);
+    REQUIRE(leftBase);
+    REQUIRE(rightBase);
+    REQUIRE(leftBase != rightBase);
+
+    auto* left = static_cast<HandleLayout*>(copyBase(owner));
+    auto* right = static_cast<HandleLayout*>(copyBase(owner));
+    REQUIRE(left);
+    REQUIRE(right);
+    CHECK(left->block == owner->block);
+    CHECK(right->block == owner->block);
+
+    // K coalesces repeated inheritance bases; use distinct branch-member
+    // subobjects to exercise Shared's same-control-block view-copy fast path.
+    left->view = leftBase;
+    right->view = rightBase;
+    shareInto(left, right);
+    CHECK(sharedView(left) == rightBase);
+
+    auto* leftWeak = static_cast<HandleLayout*>(makeWeak(left));
+    auto* rightWeak = static_cast<HandleLayout*>(makeWeak(right));
+    REQUIRE(leftWeak);
+    REQUIRE(rightWeak);
+    CHECK(leftWeak->block == rightWeak->block);
+    leftWeak->view = leftBase;
+    rightWeak->view = rightBase;
+    assignWeak(leftWeak, rightWeak);
+    auto* locked = static_cast<HandleLayout*>(lockWeak(leftWeak));
+    REQUIRE(locked);
+    CHECK(sharedView(locked) == rightBase);
+    dropShared(locked);
+
+    dropShared(left);
+    dropShared(right);
+    dropHolder(owner);
+    CHECK(destroyedCount() == 1);
+
+    assignWeak(leftWeak, rightWeak);
+    CHECK(leftWeak->view == nullptr);
+    dropWeak(leftWeak);
+    dropWeak(rightWeak);
+}
+
+TEST_CASE("Shared converting views reject const removal",
+          "[libk][shared][conversion][diagnostic]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __shared_const_drop__;
+        class Base {
+            public Base() {}
+            public virtualMethod() : int { return 0; }
+        }
+        class Derived : public Base {
+            public Derived() {}
+            public value() : int { return 42; }
+        }
+        test() : int {
+            source : Shared<const Derived>(new Derived());
+            destination : Shared<Base>(source);
+            return 0;
+        }
+    )SRC"));
+}

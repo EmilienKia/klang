@@ -6,16 +6,22 @@
 
 ## Overview
 
-`Shared<T>` shares ownership of a dynamically allocated class object.
-`Weak<T>` observes the same ownership group without extending the object's
-lifetime. Both templates require a class type `T`.
+`Shared<T>` shares ownership of a dynamically allocated class or interface
+view. `Weak<T>` observes the same ownership group without extending the
+object's lifetime.
 
 Copying either handle does not copy `T`. Draining a handle with `#` transfers
-its participation in the group and leaves the source empty.
+its participation in the group and leaves the source empty on success.
+A failed checked converting drain leaves the source unchanged and makes the
+destination empty.
 
 The last strong handle destroys the object exactly once. Weak handles may
 outlive the object; they do not delay its destruction. An expired group must
 not be resurrected, even if another group subsequently manages a new object.
+Converting a handle changes only its typed pointer view: all converted handles
+continue to share the original control block and its original-type destruction
+callback. The control-block types are implementation plumbing, not user-facing
+ownership APIs.
 
 ## Shared<T>
 
@@ -26,15 +32,21 @@ final struct Shared {
     Shared(ptr : T!);
     Shared(other : const Shared<T>&);
     Shared(other : Shared<T>#);
+    template<typename U> Shared(other : const Shared<U>&);
+    template<typename U> Shared(other : Shared<U>#);
     Shared(other : const Weak<T>&) throws(BadWeakReferenceException);
+    template<typename U> Shared(other : const Weak<U>&) throws(BadWeakReferenceException);
     ~Shared();
 
     operator =(other : const Shared<T>&) : Shared<T>&;
     operator =(other : Shared<T>#) : Shared<T>&;
+    template<typename U> operator =(other : const Shared<U>&) : Shared<T>&;
+    template<typename U> operator =(other : Shared<U>#) : Shared<T>&;
     operator =(ptr : T!) : Shared<T>&;
 
     acquire(ptr : T!);
     share(other : const Shared<T>&);
+    template<typename U> share(other : const Shared<U>&);
     reset();
     reset(ptr : T!);
     swap(other : Shared<T>&);
@@ -58,6 +70,10 @@ final struct Shared {
 | Copy construction or assignment | Retain the same object. An empty source produces an empty destination. |
 | Drain construction or assignment | Transfer the handle without incrementing the count. The source becomes empty. |
 | Construction from `Weak<T>` | Atomically acquire a strong reference, or throw `BadWeakReferenceException` if empty or expired. |
+| Conversion from `Shared<U>` | Adapt the typed view by accessible, unambiguous static upcast when possible, otherwise a checked RTTI conversion supported by K's current class/interface cast rules. A match shares the original control block; mismatch or an empty source produces an empty destination. |
+| Converting copy assignment | Apply the same checked adaptation before releasing the destination's previous group. A mismatch clears the destination and leaves the source unchanged. |
+| Converting drain construction or assignment | Transfer the handle without retaining when adaptation succeeds and empty the source. On mismatch, clear the destination but preserve the source. |
+| Conversion from `Weak<U>` | Promote temporarily to perform checked RTTI adaptation. A compatible live object shares its original group; a live mismatch produces an empty destination. Empty or expired input retains the existing `BadWeakReferenceException` contract. |
 | `acquire(ptr)`, `reset(ptr)`, assignment from `T!` | Replace the current ownership by acquiring the supplied owner. Allocation failure must leave the destination's previous ownership unchanged. |
 | `share(other)` | Equivalent to copy assignment. Sharing an empty source clears the destination. |
 | `reset()` | Release this handle's strong reference and leave it empty. |
@@ -97,11 +113,17 @@ final struct Weak {
     Weak(other : const Shared<T>&);
     Weak(other : const Weak<T>&);
     Weak(other : Weak<T>#);
+    template<typename U> Weak(other : const Shared<U>&);
+    template<typename U> Weak(other : const Weak<U>&);
+    template<typename U> Weak(other : Weak<U>#);
     ~Weak();
 
     operator =(other : const Shared<T>&) : Weak<T>&;
     operator =(other : const Weak<T>&) : Weak<T>&;
     operator =(other : Weak<T>#) : Weak<T>&;
+    template<typename U> operator =(other : const Shared<U>&) : Weak<T>&;
+    template<typename U> operator =(other : const Weak<U>&) : Weak<T>&;
+    template<typename U> operator =(other : Weak<U>#) : Weak<T>&;
 
     const useCount() : int;
     const expired() : bool;
@@ -116,8 +138,10 @@ final struct Weak {
 |-----------|----------|
 | Default construction | Create an empty handle. |
 | Construction or assignment from `Shared<T>` | Observe its group without adding a strong reference. An empty source produces an empty handle. |
+| Conversion from `Shared<U>` | Observe the original group through an adjusted view when the checked conversion succeeds; mismatch or empty input produces an empty handle. |
 | Copy construction or assignment | Observe the same group, including when it has already expired. |
 | Drain construction or assignment | Transfer the observation and empty the source. Self-draining is a no-op. |
+| Conversion from `Weak<U>` | Dynamic conversions lock temporarily, then retain the target observation only if the cast succeeds. Static upcasts also acquire a temporary strong reference while computing their adjusted view, because virtual-base adjustment may read object metadata. An expired static source preserves the group identity with an unusable view; an expired dynamic source or mismatch produces an empty destination. Failed dynamic drains preserve their source; successful drains empty it. |
 | `useCount()` | Return a snapshot of the strong count, or zero if empty. |
 | `expired()` | Return true if empty or if the strong count is zero. |
 | `lock()` | Atomically return a new strong handle if the object is alive; otherwise return an empty `Shared<T>`. Failure is a normal result and does not throw. |
@@ -127,6 +151,21 @@ final struct Weak {
 `Weak<T>` deliberately has no raw-object accessor, boolean conversion, or
 dereference operation. Access must first acquire a strong handle through
 `lock()` or the checked `Shared<T>` constructor.
+
+Checked conversions use K's runtime RTTI cast lowering. They support class to
+interface, interface to class, and sibling-interface cross-casts when the
+most-derived object has the requested subobject. Successful conversions retain
+the same ownership group while storing the adjusted target view; mismatches
+produce an empty nullable handle. Weak dynamic conversions lock temporarily
+while computing the adjusted view, so an expired object's memory is never
+inspected.
+
+### Compiled-module compatibility
+
+Dynamic casts depend on matching compiler/runtime RTTI layouts and
+secondary-vtable symbols. When upgrading a compiler or `libk` version that
+changes this metadata ABI, rebuild K modules and libraries that emit or consume
+RTTI together; do not mix stale compiled artifacts with the updated runtime.
 
 Testing `expired()` and then assuming the object is alive is incorrect:
 another thread may release the last strong reference between those operations.
@@ -191,9 +230,8 @@ owner allocates ownership metadata and may throw `OutOfMemory`.
 Reference counts must fit in a positive `int`; exhausting that range is
 diagnosed by the runtime and terminates execution rather than wrapping.
 
-Custom deleters, `enable_shared_from_this` equivalents, aliasing constructors,
-array specialisations and conversions between different template arguments
-are not provided.
+Custom deleters, `enable_shared_from_this` equivalents, aliasing constructors
+and array specialisations are not provided.
 
 ## Migration from the intrusive implementation
 
@@ -202,9 +240,11 @@ The existing `acquire()`, `share()`, `get()`, `isNull()`, `useCount()` and
 clears its destination when the source is empty, matching copy assignment.
 Acquiring a null owner produces an empty handle without allocating metadata.
 
-The handle representation has changed. Applications and libraries using
-`Shared<T>` must be rebuilt together; the old and new representations are not
-ABI-compatible.
+The handle representation has changed to a common erased control block plus an
+adjusted typed view. Applications and libraries using `Shared<T>` or `Weak<T>`
+must be rebuilt together; the old and new representations are not
+ABI-compatible, and dependent modules compiled against the previous layout
+must not be mixed with the new library.
 
 ## See also
 

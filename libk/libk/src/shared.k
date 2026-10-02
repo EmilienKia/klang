@@ -25,33 +25,28 @@ public final class BadWeakReferenceException : public IllegalStateException {
     public BadWeakReferenceException() : IllegalStateException() {}
 }
 
-// Imported template bodies need the helper's definition in KDI. Only its type
-// is exported; its entire API is private to Shared and Weak.
-template<class T>
-public final struct SharedBlock {
+// The common owner identity is independent of the typed pointer view held by
+// each Shared/Weak handle. The erased base dispatches destruction back to the
+// allocation's original typed block.
+abstract class SharedControlBlock {
 private:
-    friend Shared<T>;
-    friend Weak<T>;
+    friend Shared;
+    friend Weak;
 
     @ffi::Extern("C") private static __k_shared_count(count : const int*) : int;
     @ffi::Extern("C") private static __k_shared_retain(count : int*);
     @ffi::Extern("C") private static __k_shared_try_retain(count : int*) : bool;
     @ffi::Extern("C") private static __k_shared_release(count : int*) : bool;
 
-    _ptr : T!;
     _strong : int;
     _weak : int;
 
-    SharedBlock(ptr : T!) : _ptr(ptr), _strong(1), _weak(1) {}
+    protected abstract destroyObject();
 
-    ~SharedBlock() {
-        delete _ptr;
-    }
+protected:
+    SharedControlBlock() : _strong(1), _weak(1) {}
 
-    const getPtr() : T* {
-        return _ptr;
-    }
-
+public:
     const useCount() : int {
         return __k_shared_count(&_strong);
     }
@@ -72,7 +67,7 @@ private:
         if (__k_shared_release(&_strong)) {
             // The implicit weak reference protects the block during T's
             // destructor, which may itself release explicit Weak handles.
-            delete _ptr;
+            destroyObject();
             releaseWeak();
         }
     }
@@ -81,9 +76,29 @@ private:
         if (__k_shared_release(&_weak)) {
             // Only the final releaser reconstructs the owner for deletion,
             // as in Future/Promise's reference-counted payload cleanup.
-            owner : SharedBlock<T>! = (SharedBlock<T>!) &this;
+            owner : SharedControlBlock! = (SharedControlBlock!) &this;
             delete owner;
         }
+    }
+}
+
+// This private helper supports imported Shared template bodies and is not part
+// of the public ownership API.
+template<typename T>
+final class SharedBlock : public SharedControlBlock {
+private:
+    friend Shared<T>;
+    friend Weak<T>;
+
+    _ptr : T!;
+
+    SharedBlock(ptr : T!) : SharedControlBlock(), _ptr(ptr) {}
+
+protected:
+    override destroyObject() {
+        ptr : T! = _ptr;
+        _ptr = null;
+        delete ptr;
     }
 }
 
@@ -98,16 +113,19 @@ private:
  * Modifying the same handle concurrently, or accessing T concurrently,
  * requires external synchronisation. T's destructor must not throw.
  */
-template<class T>
+template<typename T>
 public final struct Shared {
 private:
-    friend Weak<T>;
+    friend Shared;
+    friend Weak;
 
-    _block : SharedBlock<T>*;
+    _block : SharedControlBlock*;
+    _view : T*;
 
     doRelease() {
-        block : SharedBlock<T>* = _block;
+        block : SharedControlBlock* = _block;
         _block = null;
+        _view = null;
         if (block != null) {
             block->releaseStrong();
         }
@@ -115,38 +133,88 @@ private:
 
 public:
     /** Create an empty handle without allocating a control block. */
-    Shared() : _block(null) {}
+    Shared() : _block(null), _view(null) {}
 
     /** Acquire an owner. A null owner produces an empty handle. */
-    Shared(ptr : T!) : _block(null) {
+    Shared(ptr : T!) : _block(null), _view(null) {
         if (ptr != null) {
+            view : T* = ptr;
             _block = new SharedBlock<T>(ptr);
+            _view = view;
         }
     }
 
     /** Share ownership without copying T. The source may be const. */
-    Shared(other : const Shared<T>&) : _block(other._block) {
+    Shared(other : const Shared<T>&) : _block(other._block), _view(other._view) {
         if (_block != null) {
             _block->retainStrong();
         }
     }
 
     /** Transfer a handle without changing the reference count. */
-    Shared(other : Shared<T>#) : _block(other._block) {
+    Shared(other : Shared<T>#) : _block(other._block), _view(other._view) {
         other._block = null;
+        other._view = null;
+    }
+
+    /**
+     * Share a related or polymorphic object through an adjusted typed view.
+     * An unsuccessful checked cast creates an empty handle.
+     */
+    template<typename U>
+    Shared(other : const ::k::Shared<U>&) : _block(null), _view(null) {
+        source_block : SharedControlBlock* = other._block;
+        if (source_block != null) {
+            view : T* = (T*) other._view;
+            if (view != null) {
+                _block = source_block;
+                _view = view;
+                _block->retainStrong();
+            }
+        }
+    }
+
+    /** Transfer a compatible handle; failed checked casts leave the source. */
+    template<typename U>
+    Shared(other : ::k::Shared<U>#) : _block(null), _view(null) {
+        source_block : SharedControlBlock* = other._block;
+        if (source_block != null) {
+            view : T* = (T*) other._view;
+            if (view != null) {
+                _block = source_block;
+                _view = view;
+                other._block = null;
+                other._view = null;
+            }
+        }
     }
 
     /** Promote a Weak, or throw if its object is no longer alive. */
-    Shared(other : const Weak<T>&) : _block(null)
+    Shared(other : const Weak<T>&) : _block(null), _view(null)
         throws(BadWeakReferenceException) {
-        block : SharedBlock<T>* = other._block;
+        block : SharedControlBlock* = other._block;
         if (block != null) {
             if (block->tryRetainStrong()) {
                 _block = block;
+                _view = other._view;
                 return;
             }
         }
         throw BadWeakReferenceException();
+    }
+
+    /** Promote a compatible weak view; mismatched live objects yield empty. */
+    template<typename U>
+    Shared(other : const ::k::Weak<U>&) : _block(null), _view(null)
+        throws(BadWeakReferenceException) {
+        promoted : ::k::Shared<U>(other);
+        view : T* = (T*) promoted._view;
+        if (view != null) {
+            _block = promoted._block;
+            _view = view;
+            promoted._block = null;
+            promoted._view = null;
+        }
     }
 
     ~Shared() {
@@ -159,17 +227,54 @@ public:
         return this;
     }
 
+    /** Copy assignment adapts before releasing the previous ownership. */
+    template<typename U>
+    operator =(other : const ::k::Shared<U>&) : Shared<T>& {
+        replacement : Shared<T>(other);
+        block : SharedControlBlock* = replacement._block;
+        view : T* = replacement._view;
+        replacement._block = null;
+        replacement._view = null;
+        previous : SharedControlBlock* = _block;
+        _block = block;
+        _view = view;
+        if (previous != null) {
+            previous->releaseStrong();
+        }
+        return this;
+    }
+
     /** Drain assignment. Self-draining leaves the handle unchanged. */
     operator =(other : Shared<T>#) : Shared<T>& {
         source : Shared<T>* = other;
         if (&this != source) {
-            block : SharedBlock<T>* = other._block;
+            block : SharedControlBlock* = other._block;
+            view : T* = other._view;
             other._block = null;
-            previous : SharedBlock<T>* = _block;
+            other._view = null;
+            previous : SharedControlBlock* = _block;
             _block = block;
+            _view = view;
             if (previous != null) {
                 previous->releaseStrong();
             }
+        }
+        return this;
+    }
+
+    /** Drain assignment leaves the source unchanged when checked adaptation fails. */
+    template<typename U>
+    operator =(other : ::k::Shared<U>#) : Shared<T>& {
+        replacement : Shared<T>(other);
+        block : SharedControlBlock* = replacement._block;
+        view : T* = replacement._view;
+        replacement._block = null;
+        replacement._view = null;
+        previous : SharedControlBlock* = _block;
+        _block = block;
+        _view = view;
+        if (previous != null) {
+            previous->releaseStrong();
         }
         return this;
     }
@@ -184,19 +289,38 @@ public:
     acquire(ptr : T!) {
         replacement : Shared<T>(ptr);
         swap(replacement);
+        replacement.reset();
     }
 
     /** Copy another handle's ownership; an empty source clears this handle. */
     share(other : const Shared<T>&) {
-        block : SharedBlock<T>* = other._block;
+        block : SharedControlBlock* = other._block;
         if (_block == block) {
+            _view = other._view;
             return;
         }
         if (block != null) {
             block->retainStrong();
         }
-        previous : SharedBlock<T>* = _block;
+        previous : SharedControlBlock* = _block;
         _block = block;
+        _view = other._view;
+        if (previous != null) {
+            previous->releaseStrong();
+        }
+    }
+
+    /** Copy a related or polymorphic Shared view; mismatch clears this handle. */
+    template<typename U>
+    share(other : const ::k::Shared<U>&) {
+        replacement : Shared<T>(other);
+        block : SharedControlBlock* = replacement._block;
+        view : T* = replacement._view;
+        replacement._block = null;
+        replacement._view = null;
+        previous : SharedControlBlock* = _block;
+        _block = block;
+        _view = view;
         if (previous != null) {
             previous->releaseStrong();
         }
@@ -205,10 +329,7 @@ public:
     /** Return a borrowed pointer, or null. Constness of the handle does not
      * make the managed object const. */
     const get() : T* {
-        if (_block == null) {
-            return null;
-        }
-        return _block->getPtr();
+        return _view;
     }
 
     /** Return true if no object is managed. */
@@ -255,9 +376,12 @@ public:
 
     /** Exchange handles without allocating or changing reference counts. */
     swap(other : Shared<T>&) {
-        block : SharedBlock<T>* = _block;
+        block : SharedControlBlock* = _block;
         _block = other._block;
         other._block = block;
+        view : T* = _view;
+        _view = other._view;
+        other._view = view;
     }
 }
 
@@ -271,16 +395,19 @@ public:
  * Distinct handles may be used concurrently. Concurrent modification of the
  * same handle requires external synchronisation.
  */
-template<class T>
+template<typename T>
 public final struct Weak {
 private:
-    friend Shared<T>;
+    friend Shared;
+    friend Weak;
 
-    _block : SharedBlock<T>*;
+    _block : SharedControlBlock*;
+    _view : T*;
 
     doRelease() {
-        block : SharedBlock<T>* = _block;
+        block : SharedControlBlock* = _block;
         _block = null;
+        _view = null;
         if (block != null) {
             block->releaseWeak();
         }
@@ -288,25 +415,101 @@ private:
 
 public:
     /** Create an empty weak handle. */
-    Weak() : _block(null) {}
+    Weak() : _block(null), _view(null) {}
 
     /** Observe an ownership group without retaining its object. */
-    Weak(other : const Shared<T>&) : _block(other._block) {
+    Weak(other : const Shared<T>&) : _block(other._block), _view(other._view) {
         if (_block != null) {
             _block->retainWeak();
+        }
+    }
+
+    /** Observe a compatible or polymorphic Shared view. */
+    template<typename U>
+    Weak(other : const ::k::Shared<U>&) : _block(null), _view(null) {
+        source_block : SharedControlBlock* = other._block;
+        if (source_block != null) {
+            view : T* = (T*) other._view;
+            if (view != null) {
+                _block = source_block;
+                _view = view;
+                _block->retainWeak();
+            }
         }
     }
 
     /** Copy a weak handle, including an expired one. */
-    Weak(other : const Weak<T>&) : _block(other._block) {
+    Weak(other : const Weak<T>&) : _block(other._block), _view(null) {
         if (_block != null) {
             _block->retainWeak();
+            if (_block->useCount() != 0) {
+                _view = other._view;
+            }
+        }
+    }
+
+    /** Static upcasts preserve expired ownership identity without stale views. */
+    template<typename U : T>
+    Weak(other : const ::k::Weak<U>&) : _block(other._block), _view(null) {
+        if (_block != null) {
+            _block->retainWeak();
+            if (_block->tryRetainStrong()) {
+                _view = other._view;
+                _block->releaseStrong();
+            }
+        }
+    }
+
+    /** Dynamic conversion uses a temporary strong reference before RTTI access. */
+    template<typename U>
+    Weak(other : const ::k::Weak<U>&) : _block(null), _view(null) {
+        source_block : SharedControlBlock* = other._block;
+        if (source_block != null) {
+            promoted : ::k::Shared<U> = other.lock();
+            if (promoted) {
+                view : T* = (T*) promoted._view;
+                if (view != null) {
+                    _block = source_block;
+                    _view = view;
+                    _block->retainWeak();
+                }
+            }
         }
     }
 
     /** Transfer a weak handle and leave the source empty. */
-    Weak(other : Weak<T>#) : _block(other._block) {
+    Weak(other : Weak<T>#) : _block(other._block), _view(other._view) {
         other._block = null;
+        other._view = null;
+    }
+
+    /** Transfer even an expired statically-upcast observation safely. */
+    template<typename U : T>
+    Weak(other : ::k::Weak<U>#) : _block(other._block), _view(null) {
+        if (_block != null && _block->tryRetainStrong()) {
+            _view = other._view;
+            _block->releaseStrong();
+        }
+        other._block = null;
+        other._view = null;
+    }
+
+    /** A failed dynamic weak drain leaves its source unchanged. */
+    template<typename U>
+    Weak(other : ::k::Weak<U>#) : _block(null), _view(null) {
+        source_block : SharedControlBlock* = other._block;
+        if (source_block != null) {
+            promoted : ::k::Shared<U> = other.lock();
+            if (promoted) {
+                view : T* = (T*) promoted._view;
+                if (view != null) {
+                    _block = source_block;
+                    _view = view;
+                    _block->retainWeak();
+                    other.doRelease();
+                }
+            }
+        }
     }
 
     ~Weak() {
@@ -315,8 +518,14 @@ public:
 
     /** Copy assignment. Self-assignment is safe. */
     operator =(other : const Weak<T>&) : Weak<T>& {
-        block : SharedBlock<T>* = other._block;
+        block : SharedControlBlock* = other._block;
+        view : T* = null;
+        if (block != null && block->tryRetainStrong()) {
+            view = other._view;
+            block->releaseStrong();
+        }
         if (_block == block) {
+            _view = view;
             return this;
         }
         if (block != null) {
@@ -324,13 +533,24 @@ public:
         }
         doRelease();
         _block = block;
+        _view = view;
+        return this;
+    }
+
+    /** Copy-convert a weak view; expired dynamic sources produce empty. */
+    template<typename U>
+    operator =(other : const ::k::Weak<U>&) : Weak<T>& {
+        replacement : Weak<T>(other);
+        swap(replacement);
+        replacement.reset();
         return this;
     }
 
     /** Observe a Shared, replacing any previous observation. */
     operator =(other : const Shared<T>&) : Weak<T>& {
-        block : SharedBlock<T>* = other._block;
+        block : SharedControlBlock* = other._block;
         if (_block == block) {
+            _view = other._view;
             return this;
         }
         if (block != null) {
@@ -338,6 +558,16 @@ public:
         }
         doRelease();
         _block = block;
+        _view = other._view;
+        return this;
+    }
+
+    /** Observe a compatible or polymorphic Shared view. */
+    template<typename U>
+    operator =(other : const ::k::Shared<U>&) : Weak<T>& {
+        replacement : Weak<T>(other);
+        swap(replacement);
+        replacement.reset();
         return this;
     }
 
@@ -345,11 +575,27 @@ public:
     operator =(other : Weak<T>#) : Weak<T>& {
         source : Weak<T>* = other;
         if (&this != source) {
-            block : SharedBlock<T>* = other._block;
-            other._block = null;
-            doRelease();
-            _block = block;
+            replacement : Weak<T>(other);
+            source_block : SharedControlBlock* = other._block;
+            if (source_block == null || replacement._block != null) {
+                other.doRelease();
+            }
+            swap(replacement);
+            replacement.reset();
         }
+        return this;
+    }
+
+    /** A failed dynamic weak drain leaves its source unchanged. */
+    template<typename U>
+    operator =(other : ::k::Weak<U>#) : Weak<T>& {
+        replacement : Weak<T>(other);
+        source_block : SharedControlBlock* = other._block;
+        if (source_block == null || replacement._block != null) {
+            other.doRelease();
+        }
+        swap(replacement);
+        replacement.reset();
         return this;
     }
 
@@ -368,10 +614,11 @@ public:
 
     /** Atomically acquire ownership, or return an empty Shared. */
     const lock() result : Shared<T> {
-        block : SharedBlock<T>* = _block;
+        block : SharedControlBlock* = _block;
         if (block != null) {
             if (block->tryRetainStrong()) {
                 result._block = block;
+                result._view = _view;
             }
         }
     }
@@ -383,8 +630,11 @@ public:
 
     /** Exchange weak handles without changing reference counts. */
     swap(other : Weak<T>&) {
-        block : SharedBlock<T>* = _block;
+        block : SharedControlBlock* = _block;
         _block = other._block;
         other._block = block;
+        view : T* = _view;
+        _view = other._view;
+        other._view = view;
     }
 }
