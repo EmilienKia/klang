@@ -49,8 +49,12 @@ The named return variable is semantically equivalent to a local variable declare
 first statement of the function body.  It can be read, written, passed by reference, and
 have member functions called on it — just like any other local.
 
-The named return variable is **not destroyed** during scope cleanup at function exit.  It
-lives in the caller's storage and its lifetime is managed by the caller.
+On a normal return, the named return variable is **not destroyed** during scope cleanup
+at function exit. For aggregates returned by value, it lives in the caller's storage
+and its lifetime is managed by the caller. If the function exits by propagating an
+exception instead, a successfully constructed result is destroyed during unwinding;
+no result is transferred to the caller. A result whose constructor throws is not
+destroyed as a complete object.
 
 ---
 

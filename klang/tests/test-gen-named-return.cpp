@@ -682,10 +682,6 @@ TEST_CASE("NR-17: Named return struct — method call on named var", "[gen][name
     CHECK(test() == 42);
 }
 
-// =============================================================================
-// Parser-level tests (in this file for convenience)
-// =============================================================================
-
 TEST_CASE("NR-18: Template member named result preserves empty and owning aggregate lifetimes",
           "[gen][named-return][template][lifecycle][nr18]") {
     const bool optimize = GENERATE(false, true);
@@ -821,6 +817,88 @@ TEST_CASE("NR-19: Template function named results retain aggregate and primitive
     CHECK(exercise(false) == 0);
     CHECK(exercise(true) == 0);
 }
+
+TEST_CASE("NR-20: Named aggregate results are destroyed only after successful construction on unwind",
+          "[gen][named-return][template][lifecycle][exceptions][nr20]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto jit = gen_jit(R"SRC(
+        module gen_named_return_unwind;
+
+        g_ctors : int = 0;
+        g_constructed : int = 0;
+        g_dtors : int = 0;
+        g_local_dtors : int = 0;
+
+        class Failure : public Exception { }
+        fail() {
+            error : Failure;
+            throw error;
+        }
+
+        struct Probe {
+            ~Probe() { ++g_local_dtors; }
+        }
+        struct Obj {
+            Obj(phase : int) {
+                ++g_ctors;
+                if (phase == 0) { fail(); }
+                ++g_constructed;
+            }
+            ~Obj() { ++g_dtors; }
+        }
+
+        make(phase : int) result : Obj(phase) {
+            local : Probe;
+            if (phase == 1) { fail(); }
+        }
+
+        template<typename T>
+        make_template(phase : int) result : T(phase) {
+            local : Probe;
+            if (phase == 1) { fail(); }
+        }
+
+        exercise(phase : int, templated : bool) : int {
+            g_ctors = 0;
+            g_constructed = 0;
+            g_dtors = 0;
+            g_local_dtors = 0;
+            caught : bool = false;
+            try {
+                if (templated) {
+                    result : Obj = make_template<Obj>(phase);
+                    if (g_dtors != 0 || g_local_dtors != 1) { return 1; }
+                } else {
+                    result : Obj = make(phase);
+                    if (g_dtors != 0 || g_local_dtors != 1) { return 1; }
+                }
+            } catch (error : Failure&) {
+                caught = true;
+            }
+            if (caught != (phase < 2) || g_ctors != 1) { return 2; }
+            if (phase == 0) {
+                if (g_constructed != 0 || g_dtors != 0 || g_local_dtors != 0) { return 3; }
+            } else {
+                if (g_constructed != 1 || g_dtors != 1 || g_local_dtors != 1) { return 4; }
+            }
+            return 0;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto exercise = jit->lookup_symbol<int(*)(int, bool)>("exercise");
+    REQUIRE(exercise != nullptr);
+    for (bool templated : {false, true}) {
+        CAPTURE(templated);
+        CHECK(exercise(0, templated) == 0);
+        CHECK(exercise(1, templated) == 0);
+        CHECK(exercise(2, templated) == 0);
+    }
+}
+
+// =============================================================================
+// Explicit aggregate expression returns
+// =============================================================================
 
 TEST_CASE("Parse named return — basic", "[parser][named-return]") {
     test_logger log;

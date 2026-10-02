@@ -235,7 +235,10 @@ void implementation_generator::emit_scope_variable_cleanup(
     for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
         auto& var_stmt = *it;
 
-        if ((_nrvo_candidate && var_stmt == _nrvo_candidate) || (extra_skip && var_stmt == extra_skip)) {
+        // NRVO transfers lifetime only on a normal return. A constructed result
+        // still belongs to the callee when it unwinds without returning.
+        if (!use_dtor_flags
+            && ((_nrvo_candidate && var_stmt == _nrvo_candidate) || (extra_skip && var_stmt == extra_skip))) {
             continue;
         }
 
