@@ -21,7 +21,8 @@ This directory contains in-depth technical design specifications for the **Klang
 3. **[03. Class Layout, Vtables, RTTI & Call Synthesis](03-class-layout-vtables-rtti-and-calls.md)**
    - Aggregate memory layouts (struct, class, interface, annotation, diamond virtual inheritance).
    - Virtual method tables (vtables), universal destructor slot (Slot 0), secondary vtables, and adjustor thunks.
-   - Runtime Type Information (RTTI) metadata hierarchy and dynamic type operations (`is`, `as`).
+   - Runtime Type Information (RTTI) descriptor schemas, per-dynamic-type subobject maps, and checked class/interface/annotation casts.
+   - Fully qualified secondary-vtable identities for local and imported aggregates.
    - Call synthesis mechanisms (direct, virtual, interface, constructor C1/C2, destructor D1/D2, exception unwinding).
 
 4. **[04. Callables & Lambdas](04-callables-and-lambdas.md)**
@@ -35,6 +36,7 @@ This directory contains in-depth technical design specifications for the **Klang
    - Semantic model representation (`tpl_info`, parameter descriptors, argument descriptors).
    - Model-level instantiation engine (`template_instantiator`), substitution maps, and COMDAT deduplication.
    - Automated template argument deduction pattern matching across scalars, indirections, composites, arrays, callables, and packs.
+   - Member-template substitution and deduction on specialized aggregates, including constructors and overloaded operators.
    - SFINAE overload resolution integration, non-template preference tie-breaking, and dependent return type materialization.
    - Cross-module KDI template serialization and origin tracking.
 
@@ -44,3 +46,11 @@ This directory contains in-depth technical design specifications for the **Klang
    - Scope isolation rules preventing unwanted member function leakage.
    - Deduction, specialization, and instantiation of free and member template functions under UCS.
    - Overload resolution scoring, argument adaptation, and code generation lowering.
+
+7. **[07. `Shared<T>` / `Weak<T>` Ownership Architecture](07-shared-weak-ownership.md)**
+   - Strong/weak control-block lifetime, atomic promotion, and original-type destruction.
+   - Adjusted class/interface views, checked converting copies/drains, and ABI compatibility.
+
+For a user-facing overview of local/global storage, addressers, owners,
+`Shared`/`Weak`, and explicit storage slots, see the
+[Memory, Storage, and Ownership guide](../guides/memory.md).

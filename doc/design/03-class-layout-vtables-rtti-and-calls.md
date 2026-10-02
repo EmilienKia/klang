@@ -119,11 +119,17 @@ Every polymorphic aggregate with `has_vtable() == true` generates a global vtabl
 
 ```
 @_KTVN6module3DogE = linkonce_odr constant { ptr, ptr, ptr } {
-    ptr @_KTRN6module3DogE,          ; Slot -1 (Byte Offset 0): Pointer to RTTI Class Descriptor
-    ptr @_KFDN6module3Dog8destructE, ; Slot 0  (Byte Offset 8): Universal Virtual Destructor
-    ptr @_KFMvN6module3Dog5speakE    ; Slot 1  (Byte Offset 16): Dog::speak()
+    ptr @_KTRN6module3DogE,          ; Physical entry 0: RTTI header
+    ptr @_KFDN6module3Dog8destructE, ; Physical entry 1: logical virtual slot 0 (destructor)
+    ptr @_KFMvN6module3Dog5speakE    ; Physical entry 2: logical virtual slot 1
 }
 ```
+
+The first physical entry is the RTTI header. The following entries are the
+logical virtual slots: slot 0 is the universal destructor, followed by user
+virtual methods. Thus a codegen lookup by logical slot `n` reads physical
+entry `n + 1`. Older diagrams sometimes label the RTTI header as slot `-1`;
+that is a logical shorthand, not its physical array index.
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -164,6 +170,13 @@ Caller (has Drawable*) ──► [Secondary Vtable Slot] ──► [Adjustor Thu
                                                       [Circle::draw]
 ```
 
+Secondary-vtable globals and their LLVM type identities are qualified by both
+the source aggregate and the fully qualified base aggregate. A base's short
+name alone is not unique: two namespaces may each define an interface named
+`Face`, with different slot layouts. The qualified identity is used
+consistently for local and imported bases, including KDI-based vtable lookup
+and emission.
+
 ### 2.4 Linkage & COMDAT Deduplication
 Vtables for template instantiations (e.g. `Vector<int>`) are emitted with `linkonce_odr` linkage and attached to an `llvm::Comdat` group keyed by the mangled vtable name. The linker guarantees that only a single instance of the vtable exists across all compilation units.
 
@@ -199,42 +212,65 @@ K provides a rich, reflection-ready RTTI metadata hierarchy defined in `libk/src
 
 ### 3.2 RTTI Structure Emission
 
-For every class `MyClass`, the compiler emits an immutable global structure `@_KTR...`:
+For every polymorphic class or interface `MyType`, the compiler emits an RTTI
+global `@_KTR...`. Its aggregate descriptor schema has 14 fields:
 
 ```
 @_KTRN8mymodule7MyClassE = constant %"k::Class" {
-    ptr @_KTVN1k5ClassE,                   ; Class vptr
-    ptr @_KTVN1k13AggregateTypeE,          ; AggregateType vptr
-    ptr @_KTVN1k8TypeInfoE,               ; TypeInfo vptr
-    ptr @_KTVN1k6ObjectE,                 ; Object vptr
-    ptr @.str.name,                       ; "MyClass"
-    ptr @.str.fullname,                   ; "::mymodule::MyClass"
-    ptr @_KTR_bases_array,                ; Array of base TypeInfo descriptors
-    ptr @_KTR_nested_array,               ; Array of nested TypeInfo descriptors
-    ptr @_KTR_enclosing_type,             ; Enclosing type descriptor (or null)
-    i32 0,                                ; Flags (Visibility, static modifier)
-    ptr @_KTR_annotations_array,          ; Attached annotations array
-    ptr @_KTR_functions_array,            ; Member Function descriptors array
-    ptr @_KTR_constructors_array          ; Constructor descriptors array
+    ptr %class_vptr,                      ; 0: Class descriptor vptr
+    ptr %aggregate_type_vptr,             ; 1: AggregateType vptr
+    ptr %type_info_vptr,                  ; 2: TypeInfo vptr
+    ptr %object_vptr,                     ; 3: Object vptr
+    ptr @.str.name,                       ; 4: unqualified name
+    ptr @.str.fullname,                   ; 5: fully qualified name
+    ptr @_KTR_bases_array,                ; 6: public base descriptors
+    ptr @_KTR_nested_array,               ; 7: nested type descriptors
+    ptr @_KTR_enclosing_type,             ; 8: enclosing descriptor, or null
+    i32 %flags,                           ; 9: visibility and nested-type flags
+    ptr @_KTR_annotations_array,          ; 10: retained annotations
+    ptr @_KTR_cast_map,                   ; 11: private dynamic-cast map
+    ptr @_KTR_functions_array,             ; 12: public member functions
+    ptr @_KTR_constructors_array          ; 13: public constructors (Class)
 }
 ```
 
-### 3.3 Dynamic Casting & Type Matching (`is` / `as`)
+`Interface` uses the same 14-field descriptor layout and field indices; its
+constructor slot (13) is null. `AnnotationType` has a distinct 13-field
+layout: it does not have class/interface constructors, while its cast map and
+function list remain at indices 11 and 12. These positions are an ABI contract
+with the runtime accessors in `libk`, not an interchangeable reflection
+layout.
 
-1. **Extracting Runtime Class (`__k_object_get_class`)**:
-   ```c
-   void* __k_object_get_class(void* obj) {
-       void** vptr = *(void***)obj; // Dereference field 0 (vptr)
-       return vptr[0];              // Vtable slot 0 is RTTI Class pointer
-   }
-   ```
-2. **`is` Operator (Type Test)**:
-   - Evaluates whether object's dynamic type is identical to or derived from target type.
-   - Compares RTTI descriptor pointers directly or walks the `getBases()` descriptor tree.
-3. **`as` Operator (Safe Downcast)**:
-   - Performs dynamic type verification.
-   - If dynamic type matches target, computes necessary base-subobject pointer adjustment and returns the cast pointer.
-   - If match fails, returns `null` for nullable pointer/view targets or throws `ClassCastException` for reference targets.
+Each class/interface cast map is emitted for its dynamic type. It records the
+RTTI identity, byte offset, and concrete subobject vtable for each relevant
+subobject. Annotation RTTI has a compatible map at field 11. The map is used
+to identify a unique source subobject and adjust to a unique target subobject;
+RTTI identity alone is not sufficient when a type occurs in multiple
+subobjects.
+
+### 3.3 Dynamic Casting & Type Matching
+
+Dynamic class/interface conversions are emitted through the runtime adjustment
+helper `__k_dynamic_cast_adjust`. It reads the source subobject's vptr, obtains
+the most-derived RTTI descriptor from physical vtable entry 0, and consults that
+descriptor's cast map. An entry matches the source using both RTTI identity and
+the source subobject's vtable; a unique compatible target entry supplies the
+byte offset and target subobject view. This supports non-zero base/interface
+offsets, transitive recovery of an intermediate base from a more-derived
+object, sibling-interface cross-casts, and annotation-type casts.
+
+The runtime helper treats a null object or missing metadata as a failed cast.
+Ambiguous source or target subobjects are not guessed. A nullable target
+receives null on failure; a non-null target conversion traps with
+`NullCastError`. Source pointee constness is preserved: an explicit checked
+cast cannot produce a mutable target from a const source.
+
+Class, interface, and annotation metadata use the same runtime map lookup
+contract. Metadata changes therefore require the compiler's RTTI emitter and
+the matching `libk` runtime to be rebuilt together. Imported aggregates use
+the layout and symbol identities from their KDI; downstream modules and
+libraries that emit or consume RTTI must not be mixed with stale compiler or
+runtime artifacts.
 
 ### 3.4 Exception Catching Integration
 

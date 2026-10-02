@@ -222,6 +222,49 @@ In `type_reference_resolver::resolve_ctad`:
 3. Overload resolution ranks candidates by lowest conversion weight (`cast_weight`), fewest defaulted parameters, and copy guide preference.
 4. Ambiguous deductions with equal score but distinct concrete specializations are rejected with `ERR_CTAD_AMBIGUOUS` (0x100A).
 
+### 4.4 Member Templates on Specialized Aggregates
+
+Member templates declared in a class or struct template are retained as
+templates when the enclosing aggregate is specialized. During aggregate
+instantiation the compiler clones the member declaration and substitutes the
+enclosing aggregate's arguments through the member template's own parameter
+descriptors, constraints, and dependent types. The member's remaining
+parameters are then deduced or supplied explicitly at the call site.
+
+This applies to ordinary methods and variadic members such as
+`UniSlot<T>::construct(Args... args)`. It also applies when overload resolution
+selects a member-template constructor for a specialization, and to overloaded
+operators such as a templated assignment operator. These candidates are
+instantiated against the concrete receiver and argument types before overload
+selection; constructor and operator resolution must not stop at the
+uninstantiated declaration.
+
+Template bodies are deferred until a concrete specialization is available.
+This prevents phase-one aggregate resolution from trying to resolve dependent
+member bodies as if their template parameters were concrete types.
+
+```k
+template<typename T>
+struct Box {
+    value : T;
+    Box(value : T) : value(value) {}
+
+    template<typename U>
+    operator =(other : const Box<U>&) : Box<T>& {
+        value = (T) other.value;
+        return this;
+    }
+}
+
+target : Box<int>(0);
+source : Box<byte>(42);
+target = source; // Instantiates the member operator for Box<int> and Box<byte>.
+```
+
+The member-template declarations and their source are serialized through KDI
+with the enclosing aggregate's template definition. An importing module can
+therefore instantiate the same members when it materializes a specialization.
+
 ---
 
 ## 5. Overload Resolution Integration

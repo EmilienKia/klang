@@ -120,6 +120,9 @@ struct MultiSlot {
     get(index : int) : T&;
 
     const getCapacity() : int;
+
+    MultiSlot(other : MultiSlot<T>#);
+    operator =(other : MultiSlot<T>#) : MultiSlot<T>&;
 }
 ```
 
@@ -138,23 +141,26 @@ This is the array counterpart to `UniSlot<T>` and is the storage backing for
 | Method | Description |
 |--------|-------------|
 | `MultiSlot()` | Initialize (null buffer, capacity = 0). |
-| `~MultiSlot()` | Finalize (does **not** free buffer or destroy elements). |
-| `allocate(capacity)` | Allocate a buffer for `capacity` elements. |
+| `~MultiSlot()` | Free the backing buffer without destroying its elements. |
+| `allocate(capacity)` | Allocate a buffer for `capacity` elements. Call only when the slot has no buffer; it does not first free an existing allocation. |
 | `reallocate(newCapacity)` | Grow/shrink the buffer. Preserves raw content up to the old capacity. |
-| `deallocate()` | Free the buffer. |
+| `deallocate()` | Free the buffer and reset the pointer and capacity to empty. |
 | `construct(index, Args...args)` | Placement-construct a `T` at `index`, forwarding `args`. If the constructor throws a checked exception, it is intercepted and replaced by `ConstructionException` (a `FatalError`). |
 | `destruct(index)` | Call `T`'s destructor on the element at `index`. |
 | `get(index) : T&` | Return a mutable reference to the element at `index`. |
 | `getCapacity() : int` | Return the current buffer capacity. |
+| `MultiSlot(other : MultiSlot<T>#)` | Transfer the buffer and capacity; leave the source empty. |
+| `operator =(other : MultiSlot<T>#)` | Free the destination's current raw buffer, transfer the source buffer and capacity, and leave the source empty. |
 
 ### Intrinsics
 
 All lifecycle and access methods are compiler intrinsics:
 - `MultiSlot::constructor` — initializes `_data = null`, `_capacity = 0`
-- `MultiSlot::destructor` — no-op
+- `MultiSlot::destructor` — frees `_data` if it is non-null; does not call
+  destructors for contained objects
 - `MultiSlot::allocate` — `malloc(capacity * sizeof(T))`; throws `OutOfMemory` on failure
 - `MultiSlot::reallocate` — `realloc(_data, newCapacity * sizeof(T))`; throws `OutOfMemory` on failure
-- `MultiSlot::deallocate` — `free(_data)`
+- `MultiSlot::deallocate` — `free(_data)`, then set `_data = null` and `_capacity = 0`
 - `MultiSlot::construct` — placement-constructs at `_data + index`; wraps checked
   exceptions from `T`'s constructor as `ConstructionException` (a `FatalError`)
 - `MultiSlot::destruct` — calls destructor at `_data + index`
@@ -173,7 +179,9 @@ try {
 }
 slots.get(0).x = 99;                    // access element
 slots.destruct(0);                      // destroy Point at index 0
-slots.deallocate();                     // free the buffer
+slots.deallocate();                     // free the buffer and reset capacity to 0
+// Without explicit deallocate(), MultiSlot's destructor frees the buffer
+// when slots leaves scope; it never destructs contained Points automatically.
 ```
 
 ### Reallocation
@@ -181,6 +189,16 @@ slots.deallocate();                     // free the buffer
 `reallocate()` preserves raw memory content but does **not** guarantee object
 validity beyond the old capacity. The caller must track which indices contain
 live objects.
+
+Before `deallocate()` or scope exit, call `destruct(i)` exactly once for each
+live element. `MultiSlot` releases its allocation automatically at
+destruction, but it does not run the contained element destructors.
+
+`allocate()` is for an empty `MultiSlot`; calling it again while a buffer is
+already allocated overwrites the buffer pointer without releasing the old
+allocation. Call `deallocate()` first. Before drain-assigning into a slot,
+destroy its live elements: move assignment frees its current backing buffer
+but does not call element destructors.
 
 ```k
 slots.reallocate(20);   // grow buffer to 20 elements
@@ -229,3 +247,5 @@ them only when removed.
 - [Collections](collections.md) — `Vector<T>`, `LinkedList<T>`, `DoubleLinkedList<T>`
 - [Shared ownership](shared.md) — `Shared<T>`, `Weak<T>`, atomic reference
   counting and weak promotion
+- [Memory, Storage, and Ownership guide](../../guides/memory.md) — practical
+  lifetime and addresser selection advice

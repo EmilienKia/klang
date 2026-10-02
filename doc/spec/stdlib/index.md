@@ -93,3 +93,5 @@ K language:
 - [Module System](../language/basic/modules.md)
 - [Libraries — Export and Import](../language/basic/libraries.md)
 - [Types — Indirection Types](../language/basic/types.md)
+- [Practical guides](../../guides/README.md) — memory and ownership, file
+  systems, and date/time workflows.

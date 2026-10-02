@@ -251,3 +251,4 @@ must not be mixed with the new library.
 - [Memory primitives](memory.md)
 - [Exception types](exceptions.md)
 - [Ownership and indirection types](../language/basic/types.md)
+- [Memory, Storage, and Ownership guide](../../guides/memory.md)
