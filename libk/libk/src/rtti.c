@@ -16,6 +16,9 @@
  * limitations under the License.
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
 /**
  * __k_object_get_class — Extract the RTTI Class reference from an object.
  *
@@ -56,21 +59,22 @@ void* __k_annotation_get_type(void* ann) {
 /**
  * __k_class_get_functions — Extract the functions array from a Class RTTI global.
  *
- * In the RTTI struct layout, the functions array is stored at field index 11
- * (after the 4 vptrs, name, fullName, bases, nested, enclosing, flags, annotations).
+ * In the RTTI struct layout, the functions array is stored at field index 12
+ * (after the 4 vptrs, name, fullName, bases, nested, enclosing, flags,
+ * annotations, and the private dynamic-cast map).
  * The struct layout is:
  *   { ptr vptr, ptr vptr_at, ptr vptr_ti, ptr vptr_obj, ptr name, ptr fullName,
- *     ptr bases, ptr nested, ptr enclosing, i32 flags, ptr annotations, ptr functions }
+ *     ptr bases, ptr nested, ptr enclosing, i32 flags, ptr annotations,
+ *     ptr castMap, ptr functions, ptr constructors }
  *
  * IMPORTANT: this function takes a Class& (not AggregateType&) so that the K
  * compiler passes a pointer to the START of the RTTI struct, without any
  * base-class pointer adjustment.  If we used AggregateType&, the pointer
- * would be shifted by +8 bytes to the AggregateType sub-object, causing
- * fields[11] to read past the end of the struct.
+ * would be shifted by +8 bytes to the AggregateType sub-object, making the
+ * helper read the wrong field.
  *
  * On 64-bit systems, fields 0-8 are ptrs (72 bytes), field 9 is i32 with
- * 4 bytes of padding (total 8 bytes), field 10 is ptr (8 bytes), field 11
- * is ptr (8 bytes).  Field 11 is at byte offset 88 = 11 * sizeof(void*).
+ * 4 bytes of padding (total 8 bytes), and fields 10-13 are ptrs.
  *
  * @param rtti  Pointer to the Class RTTI global (start of struct).
  * @return      Pointer to the functions K-array (Function?[]?), or null.
@@ -78,8 +82,8 @@ void* __k_annotation_get_type(void* ann) {
 void* __k_class_get_functions(void* rtti) {
     if (!rtti) return (void*)0;
     void** fields = (void**)rtti;
-    /* Field 11 = functions (after 4 vptrs + name + fullName + bases + nested + enclosing + flags_slot + annotations) */
-    return fields[11];
+    /* Field 12 = functions (after the cast map at field 11). */
+    return fields[12];
 }
 
 /**
@@ -95,18 +99,18 @@ void* __k_class_get_functions(void* rtti) {
 void* __k_iface_get_functions(void* rtti) {
     if (!rtti) return (void*)0;
     void** fields = (void**)rtti;
-    return fields[11];
+    return fields[12];
 }
 
 /**
  * __k_class_get_constructors — Extract the constructors array from a Class RTTI global.
  *
- * In the RTTI struct layout, the constructors array is stored at field index 12
- * (after functions at field 11).
+ * In the RTTI struct layout, the constructors array is stored at field index 13
+ * (after the private dynamic-cast map and functions).
  * The struct layout is:
  *   { ptr vptr, ptr vptr_at, ptr vptr_ti, ptr vptr_obj, ptr name, ptr fullName,
  *     ptr bases, ptr nested, ptr enclosing, i32 flags, ptr annotations,
- *     ptr functions, ptr constructors }
+ *     ptr castMap, ptr functions, ptr constructors }
  *
  * IMPORTANT: this function takes a Class& (not AggregateType&) so that the K
  * compiler passes a pointer to the START of the RTTI struct, without any
@@ -118,8 +122,58 @@ void* __k_iface_get_functions(void* rtti) {
 void* __k_class_get_constructors(void* rtti) {
     if (!rtti) return (void*)0;
     void** fields = (void**)rtti;
-    /* Field 12 = constructors (after functions at field 11) */
-    return fields[12];
+    /* Field 13 = constructors (after functions at field 12). */
+    return fields[13];
+}
+
+typedef struct {
+    void* type_info;
+    intptr_t offset;
+    void* vtable;
+} k_cast_subobject;
+
+typedef struct {
+    uint64_t count;
+    k_cast_subobject entries[];
+} k_cast_map;
+
+/**
+ * Find a compatible target subobject using the dynamic type's compiler-emitted
+ * cast map. Each entry records the RTTI identity, object offset, and concrete
+ * subobject vtable. The vtable check distinguishes same-typed subobjects when
+ * the source object contains the type more than once. Field 11 is the map in
+ * both the class/interface RTTI schema and the distinct AnnotationType schema;
+ * AnnotationType keeps its functions placeholder at field 12.
+ */
+void* __k_dynamic_cast_adjust(void* object, void* source_type, void* target_type) {
+    if (!object || !source_type || !target_type) return (void*)0;
+
+    void** source_vtable = *(void***)object;
+    if (!source_vtable) return (void*)0;
+    void* actual_type = source_vtable[0];
+    if (!actual_type) return (void*)0;
+
+    const k_cast_map* map = (const k_cast_map*)((void**)actual_type)[11];
+    if (!map) return (void*)0;
+
+    const k_cast_subobject* source = NULL;
+    const k_cast_subobject* target = NULL;
+    for (uint64_t i = 0; i < map->count; ++i) {
+        const k_cast_subobject* entry = &map->entries[i];
+        if (entry->type_info == source_type && entry->vtable == source_vtable) {
+            /* Duplicate metadata for one physical subobject is harmless. */
+            if (source && source->offset != entry->offset) return (void*)0;
+            source = entry;
+        }
+        if (entry->type_info == target_type) {
+            /* Repeated metadata at one location is one physical subobject. */
+            if (target && target->offset != entry->offset) return (void*)0;
+            target = entry;
+        }
+    }
+    if (!source || !target) return (void*)0;
+
+    return (void*)((char*)object - source->offset + target->offset);
 }
 
 

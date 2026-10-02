@@ -654,7 +654,7 @@ static bool ensure_vtable_llvm_global(const std::shared_ptr<vtable_layout>& vt,
         auto* existing_rtti = ctx->module().getNamedGlobal(vt->rtti_symbol);
         if (!existing_rtti) {
             existing_rtti = new llvm::GlobalVariable(
-                ctx->module(), ptr_ty,
+                ctx->module(), annotation_rtti_value_type(llvm_ctx),
                 /*isConstant=*/true,
                 llvm::GlobalValue::ExternalLinkage,
                 /*Initializer=*/nullptr,
@@ -1901,9 +1901,9 @@ void declaration_generator::visit_klass(klass& klass) {
     //
     // Each RTTI global is a genuine ::k::Class or ::k::Interface instance.
     //
-    // Both classes and interfaces share the same layout (6 fields):
-    //   { ptr __vptr__, ptr __vptr_TypeInfo__, ptr name, ptr bases,
-    //     ptr nested, ptr enclosing }
+    // Classes and interfaces share the same 14-field flattened RTTI layout:
+    // four vptrs, name/fullName, bases/nested/enclosing, flags, annotations,
+    // cast map, functions, and constructors (null for interfaces).
     //
     // The __vptr__ and __vptr_TypeInfo__ point to the Class/Interface vtable and
     // its secondary vtable for the TypeInfo interface.  These vtables are defined
@@ -1941,9 +1941,9 @@ void declaration_generator::visit_klass(klass& klass) {
         // Both interfaces and classes:
         //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
         //     ptr __vptr_Object__, ptr name, ptr fullName, ptr bases, ptr nested,
-        //     ptr enclosing, i32 flags, ptr annotations, ptr functions,
-        //     ptr constructors }
-        //   (12 ptr fields + 1 i32 field = 13 fields)
+        //     ptr enclosing, i32 flags, ptr annotations, ptr castMap,
+        //     ptr functions, ptr constructors }
+        //   (13 ptr fields + 1 i32 field = 14 fields)
         //
         // The __vptr_Object__ field exists because ::k::TypeInfo (the root of
         // the AggregateType/TypeInfo interface chain that ::k::Class/::k::Interface
@@ -1960,15 +1960,7 @@ void declaration_generator::visit_klass(klass& klass) {
         // globals reinterpreted as a Class/Interface instance.
         std::string rtti_struct_name = "__rtti_" + klass.get_short_name() + "__";
         llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-        std::vector<llvm::Type*> rtti_fields = {
-            ptr_ty, ptr_ty, ptr_ty, ptr_ty,  // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__, __vptr_Object__
-            ptr_ty, ptr_ty,             // name, fullName
-            ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
-            i32_ty,                      // flags
-            ptr_ty,                      // annotations
-            ptr_ty,                      // functions
-            ptr_ty                       // constructors
-        };
+        std::vector<llvm::Type*> rtti_fields = aggregate_rtti_fields(llvm_ctx);
         llvm::StructType* rtti_llvm_type = llvm::StructType::create(
             llvm_ctx, rtti_fields, rtti_struct_name);
 
@@ -2020,8 +2012,9 @@ void declaration_generator::visit_klass(klass& klass) {
             null_ptr,       // field 8: enclosing               → patched later
             llvm::ConstantInt::get(i32_ty, 0),  // field 9: flags → patched later
             null_ptr,       // field 10: annotations            → patched later
-            null_ptr,       // field 11: functions              → patched later
-            null_ptr        // field 12: constructors           → patched later
+            null_ptr,       // field 11: cast map               → patched later
+            null_ptr,       // field 12: functions              → patched later
+            null_ptr        // field 13: constructors           → patched later
         };
         llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
         auto rtti_gv = new llvm::GlobalVariable(
@@ -2298,7 +2291,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
     //       annotations, and function descriptors ───────────────────────────────────────
     // The declaration pass created the RTTI global with null/zero placeholders.
     // Now that all classes in the module have been declared, we can:
-    //   a) Fill in the Class/Interface vtable pointers (fields 0, 1, 2).
+    //   a) Fill in the Class/Interface vtable pointers (fields 0 through 3).
     //   b) Generate K-array globals for the bases and nested fields.
     //   c) Set the enclosing field to the RTTI of the enclosing aggregate (if any).
     //   d) Set the flags field (visibility + is_static).
@@ -2306,11 +2299,12 @@ void implementation_generator::patch_rtti_global(klass& klass) {
     //   f) Synthesize Function RTTI globals for public member functions.
     //   g) Synthesize Constructor RTTI globals for public constructors (classes only).
     //
-    // Both interfaces and classes share the same layout (13 fields):
+    // Both interfaces and classes share the same core layout, with the class
+    // descriptor adding its constructor list after the shared cast map:
     //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
     //     ptr __vptr_Object__, ptr name, ptr fullName, ptr bases, ptr nested,
-    //     ptr enclosing, i32 flags, ptr annotations, ptr functions,
-    //     ptr constructors }
+    //     ptr enclosing, i32 flags, ptr annotations, ptr castMap, ptr functions,
+    //     [Class only: ptr constructors] }
     //
     // When the vtable symbols are not available (e.g. standalone compilation
     // without libk), the RTTI global keeps null vptrs.  typeid comparison
@@ -2319,7 +2313,6 @@ void implementation_generator::patch_rtti_global(klass& klass) {
         llvm::LLVMContext& llvm_ctx = **_context;
         llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
         llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
-
         const bool is_iface = dynamic_cast<const k::model::interface*>(&klass) != nullptr;
 
         // ── a) Look up the correct descriptor vtable symbols ───────────────────
@@ -2434,11 +2427,143 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                 return existing;
             }
             auto* extern_gv = new llvm::GlobalVariable(
-                _context->module(), ptr_ty,
+                _context->module(), is_annotation_aggregate(base_agg)
+                    ? annotation_rtti_value_type(llvm_ctx)
+                    : aggregate_rtti_value_type(llvm_ctx),
                 true, llvm::GlobalValue::ExternalLinkage,
                 nullptr, base_rtti_name);
             return extern_gv;
         };
+
+        // Each dynamic class publishes the byte offsets and concrete vtables
+        // for its class/interface subobjects. RTTI identities alone cannot
+        // adjust a sibling-interface cast from an arbitrary secondary base.
+        llvm::Constant* cast_map_gv =
+            llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+        {
+            struct cast_subobject {
+                llvm::Constant* type_info;
+                int64_t offset;
+                llvm::Constant* vtable;
+            };
+            std::vector<cast_subobject> subobjects;
+            llvm::DataLayout dl(&_context->module());
+            auto dynamic_vtable = klass.get_vtable();
+
+            auto secondary_vtable_for = [&](const aggregate* base) -> llvm::GlobalVariable* {
+                if (!dynamic_vtable || !base) return nullptr;
+                for (const auto& [candidate, layout] : klass.get_secondary_vtables()) {
+                    if (candidate.get() == base && layout) {
+                        return layout->llvm_global;
+                    }
+                }
+                return nullptr;
+            };
+
+            auto add_subobject = [&](const std::shared_ptr<aggregate>& base,
+                                     size_t offset,
+                                     bool is_dynamic_type) {
+                if (!base) return;
+                llvm::Constant* base_rtti = is_dynamic_type
+                    ? static_cast<llvm::Constant*>(rtti_gv)
+                    : get_base_rtti(base);
+                if (!base_rtti) return;
+
+                llvm::Constant* base_vtable = nullptr;
+                if (is_dynamic_type || offset == 0) {
+                    if (dynamic_vtable && dynamic_vtable->llvm_global) {
+                        base_vtable = dynamic_vtable->llvm_global;
+                    }
+                } else {
+                    base_vtable = secondary_vtable_for(base.get());
+                }
+                if (base_vtable) {
+                    const int64_t byte_offset = static_cast<int64_t>(offset);
+                    auto duplicate = std::find_if(subobjects.begin(), subobjects.end(),
+                        [&](const cast_subobject& entry) {
+                            return entry.type_info == base_rtti
+                                && entry.offset == byte_offset
+                                && entry.vtable == base_vtable;
+                        });
+                    if (duplicate == subobjects.end()) {
+                        subobjects.push_back({base_rtti, byte_offset, base_vtable});
+                    }
+                }
+            };
+
+            auto field_offset = [&](const aggregate& owner,
+                                    const std::string& field_name) -> size_t {
+                auto st_type = owner.get_struct_type();
+                if (!st_type) return SIZE_MAX;
+                auto field = st_type->get_member(field_name);
+                auto* llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(
+                    st_type->get_llvm_type());
+                if (!field || !llvm_type) return SIZE_MAX;
+                return dl.getStructLayout(llvm_type)->getElementOffset(
+                    static_cast<unsigned>(field->index));
+            };
+
+            std::function<void(const aggregate&, size_t)> collect_nonvirtual;
+            collect_nonvirtual = [&](const aggregate& owner, size_t owner_offset) {
+                for (const auto& base_spec : owner.get_bases()) {
+                    if (!base_spec.base || base_spec.is_virtual) continue;
+                    const size_t local_offset = field_offset(
+                        owner, "__base_" + base_spec.sanitised_name() + "__");
+                    if (local_offset == SIZE_MAX) continue;
+                    const size_t offset = owner_offset + local_offset;
+                    add_subobject(base_spec.base, offset, false);
+                    collect_nonvirtual(*base_spec.base, offset);
+                }
+            };
+
+            if (dynamic_vtable && dynamic_vtable->llvm_global) {
+                subobjects.push_back({
+                    rtti_gv, 0, dynamic_vtable->llvm_global
+                });
+            }
+            collect_nonvirtual(klass, 0);
+
+            // Virtual bases are stored once in the most-derived collector. Add
+            // those storage locations directly, then walk their non-virtual
+            // descendants without visiting duplicate intermediate vbase slots.
+            for (const auto& vbase : klass.get_all_virtual_base_structs()) {
+                if (!vbase) continue;
+                const size_t offset = field_offset(
+                    klass, "__vbase_" + vbase->get_short_name() + "__");
+                if (offset == SIZE_MAX) continue;
+                add_subobject(vbase, offset, false);
+                collect_nonvirtual(*vbase, offset);
+            }
+
+            if (!subobjects.empty()) {
+                auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+                auto* entry_ty = llvm::StructType::get(
+                    llvm_ctx, {ptr_ty, i64_ty, ptr_ty}, /*isPacked=*/false);
+                auto* entries_ty = llvm::ArrayType::get(
+                    entry_ty, subobjects.size());
+                auto* map_ty = llvm::StructType::get(
+                    llvm_ctx, {i64_ty, entries_ty}, /*isPacked=*/false);
+                std::vector<llvm::Constant*> entries;
+                entries.reserve(subobjects.size());
+                for (const auto& entry : subobjects) {
+                    entries.push_back(llvm::ConstantStruct::get(entry_ty, {
+                        entry.type_info,
+                        llvm::ConstantInt::getSigned(i64_ty, entry.offset),
+                        entry.vtable
+                    }));
+                }
+                llvm::Constant* map_init = llvm::ConstantStruct::get(map_ty, {
+                    llvm::ConstantInt::get(i64_ty, subobjects.size()),
+                    llvm::ConstantArray::get(entries_ty, entries)
+                });
+                auto* map_gv = new llvm::GlobalVariable(
+                    _context->module(), map_ty, true,
+                    llvm::GlobalValue::PrivateLinkage, map_init,
+                    mangler::mangle_rtti(klass.get_name()) + "_cast_map");
+                map_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+                cast_map_gv = map_gv;
+            }
+        }
 
         // Collect public base RTTI pointers (all kinds merged into one list)
         std::vector<llvm::Constant*> base_rttis;
@@ -2811,7 +2936,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
         // a ::k::Constructor RTTI global constant.
         // Constructor layout: { ptr __vptr__, ptr __vptr_Object__, i32 paramCount,
         //                       ptr annotations }
-        // Interfaces have no constructors — field 11 stays null for them.
+        // Interfaces have no constructors — their functions remain at field 12.
         llvm::Constant* constructors_gv = null_ptr;
         if (!is_iface) {
             // Look up ::k::Constructor vtable symbol
@@ -2936,8 +3061,9 @@ void implementation_generator::patch_rtti_global(klass& klass) {
             enclosing_rtti,                    // field 8: enclosing
             llvm::ConstantInt::get(i32_ty, flags_val),  // field 9: flags
             annotations_gv,                    // field 10: annotations
-            functions_gv,                      // field 11: functions
-            constructors_gv                    // field 12: constructors
+            cast_map_gv ? cast_map_gv : null_ptr, // field 11: dynamic-cast map
+            functions_gv,                      // field 12: functions
+            constructors_gv                    // field 13: constructors
         };
 
         // Step 8: Create final ConstantStruct and set as initializer for RTTI global
@@ -3627,20 +3753,13 @@ void declaration_generator::visit_annotation_type(annotation_type& ann) {
     // Layout: { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
     //           ptr __vptr_Object__, ptr name, ptr fullName, ptr bases,
     //           ptr nested, ptr enclosing, i32 flags, ptr annotations,
-    //           ptr functions }
+    //           ptr castMap, ptr functions }
     // (see the klass RTTI struct comment in declaration_generator::visit_klass
     // for why a 4th __vptr_Object__ field is needed: ::k::AnnotationType also
     // extends ::k::AggregateType, whose TypeInfo root now implicitly extends
     // ::k::Object.)
     std::string rtti_struct_name = "__rtti_" + ann.get_short_name() + "__";
-    std::vector<llvm::Type*> rtti_fields = {
-        ptr_ty, ptr_ty, ptr_ty, ptr_ty,  // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__, __vptr_Object__
-        ptr_ty, ptr_ty,             // name, fullName
-        ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
-        i32_ty,                      // flags
-        ptr_ty,                      // annotations
-        ptr_ty                       // functions
-    };
+    std::vector<llvm::Type*> rtti_fields = annotation_rtti_fields(llvm_ctx);
     llvm::StructType* rtti_llvm_type = llvm::StructType::create(
         llvm_ctx, rtti_fields, rtti_struct_name);
 
@@ -3683,7 +3802,8 @@ void declaration_generator::visit_annotation_type(annotation_type& ann) {
         null_ptr,       // field 8: enclosing               → patched later
         llvm::ConstantInt::get(i32_ty, 0),  // field 9: flags → patched later
         null_ptr,       // field 10: annotations            → patched later
-        null_ptr        // field 11: functions              (always null for annotations)
+        null_ptr,       // field 11: cast map               → patched later
+        null_ptr        // field 12: functions              (always null for annotations)
     };
     llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
     auto rtti_gv = new llvm::GlobalVariable(
@@ -3715,7 +3835,8 @@ void declaration_generator::visit_annotation_type(annotation_type& ann) {
 
 // implementation_generator::visit_annotation_type
 // ────────────────────────────────────────────────
-// Patch the RTTI global with real vtable pointers, bases, nested, enclosing, and flags.
+// Patch the RTTI global with real vtable pointers, bases, nested, enclosing,
+// flags, annotations, and the private cast map.
 // Then synthesize annotation instances for classes/interfaces that use this annotation.
 void implementation_generator::visit_annotation_type(annotation_type& ann) {
     visit_aggregate(ann);
@@ -3728,26 +3849,39 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
     llvm::LLVMContext& llvm_ctx = **_context;
     llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
     llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    llvm::Constant* null_ptr =
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
 
     // ── Look up AnnotationType vtable symbols ────────────────────────────────
-    std::string desc_vtable_name    = "_KTVN1k14AnnotationTypeE";
-    std::string desc_at_vtable_name = "_KTVN1k14AnnotationTypeE_for_AggregateType";
-    std::string desc_ti_vtable_name = "_KTVN1k14AnnotationTypeE_for_TypeInfo";
-    std::string desc_obj_vtable_name = "_KTVN1k14AnnotationTypeE_for_Object";
+    k::name descriptor_name(false, {"k", "AnnotationType"});
+    k::name aggregate_type_name(false, {"k", "AggregateType"});
+    k::name type_info_name(false, {"k", "TypeInfo"});
+    k::name object_name(false, {"k", "Object"});
+    std::string desc_vtable_name = mangler::mangle_vtable(descriptor_name);
+    std::string desc_at_vtable_name = mangler::mangle_secondary_vtable(
+        descriptor_name, aggregate_type_name);
+    std::string desc_ti_vtable_name = mangler::mangle_secondary_vtable(
+        descriptor_name, type_info_name);
+    std::string desc_obj_vtable_name = mangler::mangle_secondary_vtable(
+        descriptor_name, object_name);
 
     llvm::Constant* desc_vt    = _context->module().getNamedGlobal(desc_vtable_name);
     llvm::Constant* desc_at_vt = _context->module().getNamedGlobal(desc_at_vtable_name);
     llvm::Constant* desc_ti_vt = _context->module().getNamedGlobal(desc_ti_vtable_name);
     llvm::Constant* desc_obj_vt = _context->module().getNamedGlobal(desc_obj_vtable_name);
 
-    // Try external declaration if not in this module
-    if (!desc_vt) {
-        bool has_libk = _unit.find_import(k::name("k")) != nullptr;
-        if (!has_libk) {
-            for (const auto& tdep : _unit.get_transitive_kdis()) {
-                if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
+    bool has_libk = _unit.find_import(k::name("k")) != nullptr;
+    if (!has_libk) {
+        for (const auto& tdep : _unit.get_transitive_kdis()) {
+            if (tdep && tdep->header.module_name == "k") {
+                has_libk = true;
+                break;
             }
         }
+    }
+
+    // Try external declaration if not in this module
+    if (!desc_vt) {
         if (has_libk) {
             desc_vt = new llvm::GlobalVariable(
                 _context->module(), ptr_ty,
@@ -3767,12 +3901,132 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
         flags_val |= 4;
     }
 
+    // ── Build the annotation's subobject map ────────────────────────────────
+    // Annotation instances store the concrete annotation vtable in each base
+    // subobject as well as in the complete object. The map therefore uses that
+    // same vtable for every statically typed source view, with RTTI and byte
+    // offsets identifying the selected subobject.
+    llvm::Constant* cast_map_gv = null_ptr;
+    if (ann.get_vtable()->llvm_global && rtti_gv) {
+        struct cast_subobject {
+            llvm::Constant* type_info;
+            size_t offset;
+            llvm::Constant* vtable;
+        };
+        std::vector<cast_subobject> subobjects;
+        llvm::DataLayout dl(&_context->module());
+        llvm::Constant* annotation_vtable = ann.get_vtable()->llvm_global;
+
+        auto has_rtti_definition = [](const std::shared_ptr<aggregate>& agg) {
+            if (auto klass = std::dynamic_pointer_cast<k::model::klass>(agg))
+                return klass->has_vtable();
+            if (auto annotation = std::dynamic_pointer_cast<annotation_type>(agg))
+                return annotation->has_vtable();
+            if (auto imported = std::dynamic_pointer_cast<imported_aggregate>(agg)) {
+                auto* kdi = imported->get_kdi_aggregate();
+                return kdi && kdi->vtable.has_value();
+            }
+            return false;
+        };
+
+        auto get_base_rtti = [&](const std::shared_ptr<aggregate>& base) -> llvm::Constant* {
+            if (!base || !has_rtti_definition(base)) return nullptr;
+            const std::string name = mangler::mangle_rtti(base->get_name());
+            if (auto* existing = _context->module().getNamedGlobal(name)) return existing;
+            auto* declared = get_or_declare_typeinfo_global(
+                _context->module(), name, has_libk, is_annotation_aggregate(base));
+            return declared;
+        };
+
+        auto add_subobject = [&](const std::shared_ptr<aggregate>& base,
+                                 size_t offset,
+                                 bool is_dynamic_type) {
+            llvm::Constant* type_info = is_dynamic_type
+                ? static_cast<llvm::Constant*>(rtti_gv)
+                : get_base_rtti(base);
+            if (!type_info) return;
+
+            auto duplicate = std::find_if(subobjects.begin(), subobjects.end(),
+                [&](const cast_subobject& entry) {
+                    return entry.type_info == type_info
+                        && entry.offset == offset
+                        && entry.vtable == annotation_vtable;
+                });
+            if (duplicate == subobjects.end()) {
+                subobjects.push_back({type_info, offset, annotation_vtable});
+            }
+        };
+
+        auto field_offset = [&](const aggregate& owner,
+                                const std::string& field_name) -> size_t {
+            auto owner_type = owner.get_struct_type();
+            if (!owner_type) return SIZE_MAX;
+            auto field = owner_type->get_member(field_name);
+            auto* llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(
+                owner_type->get_llvm_type());
+            if (!field || !llvm_type || llvm_type->isOpaque()) return SIZE_MAX;
+            return dl.getStructLayout(llvm_type)->getElementOffset(
+                static_cast<unsigned>(field->index));
+        };
+
+        std::function<void(const aggregate&, size_t)> collect_nonvirtual;
+        collect_nonvirtual = [&](const aggregate& owner, size_t owner_offset) {
+            for (const auto& base_spec : owner.get_bases()) {
+                if (!base_spec.base || base_spec.is_virtual) continue;
+                const size_t local_offset = field_offset(
+                    owner, "__base_" + base_spec.sanitised_name() + "__");
+                if (local_offset == SIZE_MAX) continue;
+                const size_t offset = owner_offset + local_offset;
+                add_subobject(base_spec.base, offset, false);
+                collect_nonvirtual(*base_spec.base, offset);
+            }
+        };
+
+        add_subobject(nullptr, 0, true);
+        collect_nonvirtual(ann, 0);
+        for (const auto& vbase : ann.get_all_virtual_base_structs()) {
+            if (!vbase) continue;
+            const size_t offset = field_offset(
+                ann, "__vbase_" + vbase->get_short_name() + "__");
+            if (offset == SIZE_MAX) continue;
+            add_subobject(vbase, offset, false);
+            collect_nonvirtual(*vbase, offset);
+        }
+
+        if (!subobjects.empty()) {
+            auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+            auto* entry_ty = llvm::StructType::get(
+                llvm_ctx, {ptr_ty, i64_ty, ptr_ty}, /*isPacked=*/false);
+            auto* entries_ty = llvm::ArrayType::get(entry_ty, subobjects.size());
+            auto* map_ty = llvm::StructType::get(
+                llvm_ctx, {i64_ty, entries_ty}, /*isPacked=*/false);
+            std::vector<llvm::Constant*> entries;
+            entries.reserve(subobjects.size());
+            for (const auto& entry : subobjects) {
+                entries.push_back(llvm::ConstantStruct::get(entry_ty, {
+                    entry.type_info,
+                    llvm::ConstantInt::getSigned(i64_ty, entry.offset),
+                    entry.vtable
+                }));
+            }
+            llvm::Constant* map_init = llvm::ConstantStruct::get(map_ty, {
+                llvm::ConstantInt::get(i64_ty, subobjects.size()),
+                llvm::ConstantArray::get(entries_ty, entries)
+            });
+            auto* map_gv = new llvm::GlobalVariable(
+                _context->module(), map_ty, true,
+                llvm::GlobalValue::PrivateLinkage, map_init,
+                mangler::mangle_rtti(ann.get_name()) + "_cast_map");
+            map_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+            cast_map_gv = map_gv;
+        }
+    }
+
     // ── Patch RTTI initializer ───────────────────────────────────────────────
     auto* rtti_type = llvm::cast<llvm::StructType>(rtti_gv->getValueType());
     auto* old_init = rtti_gv->getInitializer();
     auto* old_struct = llvm::cast<llvm::ConstantStruct>(old_init);
 
-    llvm::Constant* null_ptr = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
     llvm::Constant* vptr_field    = desc_vt    ? desc_vt    : old_struct->getOperand(0);
     llvm::Constant* at_vptr_field = desc_at_vt ? desc_at_vt : old_struct->getOperand(1);
     llvm::Constant* ti_vptr_field = desc_ti_vt ? desc_ti_vt : old_struct->getOperand(2);
@@ -3872,7 +4126,8 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
         null_ptr,                          // field 8: enclosing
         llvm::ConstantInt::get(i32_ty, flags_val),  // field 9: flags
         annotations_gv,                    // field 10: annotations
-        null_ptr                           // field 11: functions (always null for annotations)
+        cast_map_gv,                        // field 11: dynamic-cast map
+        null_ptr                            // field 12: functions (always null for annotations)
     };
 
     rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));

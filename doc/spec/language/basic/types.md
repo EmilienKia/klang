@@ -1295,9 +1295,9 @@ This is a **dynamic (RTTI-based) downcast** — the compiler inserts a runtime t
 
 **Semantics:**
 
-1. At runtime, the RTTI pointer stored in the object's vtable is compared with the RTTI descriptor of `Derived`.
-2. If they match, the pointer is adjusted (byte offset subtracted) to point to the start of the `Derived` sub-object, and the result is assigned.
-3. If they do not match, **null** is assigned to the target.
+1. At runtime, the most-derived object's RTTI metadata is checked for a compatible `Derived` subobject.
+2. If found, the pointer is adjusted from its source subobject to the requested `Derived` subobject, and the result is assigned. The actual type may derive further from `Derived`.
+3. On mismatch, ambiguity, or a null source, **null** is assigned to the target.
 4. Null assigned to a **non-null** indirection (`link +` or `reference &`) immediately throws `NullCastError` (a `FatalError`).
 
 **Binding rules (same as static upcast):**
@@ -1362,7 +1362,7 @@ Dynamic downcast works through any depth of inheritance:
 ```k
 // C → B → A: ptr<C> from ptr<A>
 ap : A* = &c_obj;
-cp : C* = ap;    // RTTI check: matches only if *ap is actually a C
+cp : C* = ap;    // RTTI check: succeeds if the object has a compatible C subobject
 ```
 
 **Interface downcast:**
@@ -1495,6 +1495,13 @@ lb : Base+ = (Base+) pd;    // cross-kind with null-check
 
 When the cast target type is a *derived class* (or interface implementor) of the expression's pointed type, the cast is a **dynamic (RTTI) downcast** — identical to the implicit dynamic downcast (§13.4).
 
+Explicit checked casts also permit class/interface and sibling-interface
+cross-casts without a static inheritance relationship. The actual object must
+contain a compatible target subobject; otherwise nullable casts produce null
+and non-null casts throw `NullCastError`. Such casts must not remove pointee
+constness. See [Interface cross-casts](../structs/inheritance.md#dynamic-indirection-downcast-classinterface-only)
+for successful and failed examples.
+
 Note: explicit cast to `(T!)` is **not permitted** — owner values may only be produced by
 `new` or transferred from another owner variable.
 
@@ -1539,7 +1546,7 @@ test() : int {
 
 | Situation | Result |
 |-----------|--------|
-| Source and target have no inheritance relationship | Compile error `0x0922` |
+| Source and target have no supported static or dynamic conversion | Compile error `0x0922` |
 | Target is a `struct` type and source is derived class (no RTTI) | Compile error `0x0922` |
 | Ref source and target have no inheritance relationship | Compile error `0x0D07` |
 | Target type name cannot be resolved | Compile error `0x0901` |

@@ -238,6 +238,174 @@ TEST_CASE("if-link soft-fail: dynamic downcast to link, wrong type — enters el
     REQUIRE(fn() == 2);
 }
 
+TEST_CASE("dynamic class and sibling-interface cross-casts adjust secondary views",
+          "[gen][dyncast][crosscast][interface]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_link_softfail_crosscast;
+
+        interface FirstView {
+            first() : int;
+        }
+        interface SecondView {
+            second() : int;
+        }
+        namespace first_side {
+            interface Face {
+                first_value() : int;
+            }
+        }
+        namespace second_side {
+            interface Face {
+                second_value() : int;
+                extra_value() : int;
+            }
+        }
+        class ClassSource {
+            public ClassSource() {}
+        }
+        class BothViews : public ClassSource, public FirstView, public SecondView {
+            public BothViews() {}
+            first() : int { return 11; }
+            second() : int { return 22; }
+        }
+        class FirstOnly : public FirstView {
+            public FirstOnly() {}
+            first() : int { return 33; }
+        }
+        class SameNameFaces : public ClassSource,
+                              public first_side::Face,
+                              public second_side::Face {
+            public SameNameFaces() {}
+            first_value() : int { return 44; }
+            second_value() : int { return 55; }
+            extra_value() : int { return 66; }
+        }
+
+        get_second(value : SecondView&) : int { return value.second(); }
+        get_second_face(value : second_side::Face&) : int {
+            return value.second_value();
+        }
+
+        test() : int {
+            both : BothViews();
+            first : FirstView* = &both;
+            second : SecondView* = (SecondView*) first;
+            if (second == null) return 1;
+            if (get_second(*second) != 22) return 2;
+
+            class_source : ClassSource* = &both;
+            class_crosscast : SecondView* = (SecondView*) class_source;
+            if (class_crosscast == null || get_second(*class_crosscast) != 22) return 6;
+
+            recovered : BothViews* = (BothViews*) second;
+            if (recovered == null) return 3;
+
+            only : FirstOnly();
+            only_first : FirstView* = &only;
+            mismatch : SecondView* = (SecondView*) only_first;
+            if (mismatch != null) return 4;
+            wrong_class : BothViews* = (BothViews*) only_first;
+            if (wrong_class != null) return 5;
+
+            same_name : SameNameFaces();
+            first_face : first_side::Face* = &same_name;
+            second_face : second_side::Face* =
+                (second_side::Face*) first_face;
+            if (second_face == null || get_second_face(*second_face) != 55) {
+                return 7;
+            }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 0);
+}
+
+TEST_CASE("inheritance spec interface cross-cast example compiles and runs",
+          "[gen][dyncast][crosscast][interface][doc]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_link_doc_crosscast;
+
+        interface Readable { read() : int; }
+        interface Writable { write() : int; }
+        class Buffer : public Readable, public Writable {
+            public Buffer() {}
+            public read() : int { return 1; }
+            public write() : int { return 2; }
+        }
+        class ReadOnly : public Readable {
+            public ReadOnly() {}
+            public read() : int { return 1; }
+        }
+
+        testCrossCast() : bool {
+            buffer : Buffer;
+            source : Readable* = &buffer;
+            target : Writable* = (Writable*) source; // Compatible secondary interface.
+            readOnly : ReadOnly;
+            incompatible : Readable* = &readOnly;
+            missing : Writable* = (Writable*) incompatible; // Null: no Writable subobject.
+            return target != null && missing == null;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<bool(*)()>("testCrossCast");
+    REQUIRE(fn != nullptr);
+    CHECK(fn());
+}
+
+TEST_CASE("diamond interface source view cross-casts to unique branches",
+          "[gen][dyncast][crosscast][interface][diamond]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_if_link_softfail_crosscast_diamond;
+
+        interface I {
+            value() : int;
+        }
+        class L : public I {
+            public L() {}
+            override value() : int { return 20; }
+            left() : int { return 21; }
+        }
+        class R : public I {
+            public R() {}
+            override value() : int { return 30; }
+            right() : int { return 31; }
+        }
+        class D : public L, public R {
+            public D() {}
+            override value() : int { return 10; }
+        }
+        class Other : public I {
+            public Other() {}
+            override value() : int { return 40; }
+        }
+
+        test() : int {
+            d : D();
+            left : L* = &d;
+            through_left : I* = (I*) left;
+
+            recovered_left : L* = (L*) through_left;
+            if (recovered_left == null || recovered_left != left) return 1;
+            recovered_right : R* = (R*) through_left;
+            if (recovered_right == null || recovered_right->right() != 31) return 2;
+
+            other : Other();
+            other_i : I* = &other;
+            mismatch : L* = (L*) other_i;
+            if (mismatch != null) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 0);
+}
+
 TEST_CASE("if-link soft-fail: dynamic downcast to link, wrong type, no else — continues",
           "[gen][if-link][softfail][dyncast][else]") {
     auto jit = gen_jit(R"SRC(
@@ -480,5 +648,3 @@ TEST_CASE("Non-regression: pointer dereference null in if-condition — still fa
     )SRC");
     REQUIRE(res.exit_code != 0);
 }
-
-

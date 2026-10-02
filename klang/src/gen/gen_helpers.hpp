@@ -21,6 +21,7 @@
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/DerivedTypes.h>
 #include "llvm/Support/raw_os_ostream.h"
 
 #include "../model/model.hpp"
@@ -31,8 +32,52 @@
 
 #include <map>
 #include <memory>
+#include <vector>
 
 namespace k::model::gen {
+
+/** Field schema shared by local RTTI definitions and imported RTTI declarations. */
+inline std::vector<llvm::Type*> aggregate_rtti_fields(llvm::LLVMContext& context) {
+    auto* ptr_ty = llvm::PointerType::get(context, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(context);
+    return {
+        ptr_ty, ptr_ty, ptr_ty, ptr_ty, // vptrs (fields 0-3)
+        ptr_ty, ptr_ty,                 // name and fullName (fields 4-5)
+        ptr_ty, ptr_ty, ptr_ty,         // bases, nested, enclosing (fields 6-8)
+        i32_ty,                         // flags (field 9)
+        ptr_ty,                         // annotations (field 10)
+        ptr_ty,                         // cast map (field 11)
+        ptr_ty,                         // functions (field 12)
+        ptr_ty                          // constructors (field 13)
+    };
+}
+
+inline llvm::StructType* aggregate_rtti_value_type(llvm::LLVMContext& context) {
+    return llvm::StructType::get(context, aggregate_rtti_fields(context), false);
+}
+
+inline std::vector<llvm::Type*> annotation_rtti_fields(llvm::LLVMContext& context) {
+    auto* ptr_ty = llvm::PointerType::get(context, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(context);
+    return {
+        ptr_ty, ptr_ty, ptr_ty, ptr_ty, // vptrs (fields 0-3)
+        ptr_ty, ptr_ty,                 // name and fullName (fields 4-5)
+        ptr_ty, ptr_ty, ptr_ty,         // bases, nested, enclosing (fields 6-8)
+        i32_ty,                         // flags (field 9)
+        ptr_ty,                         // annotations (field 10)
+        ptr_ty,                         // cast map (field 11)
+        ptr_ty                          // functions (field 12)
+    };
+}
+
+inline llvm::StructType* annotation_rtti_value_type(llvm::LLVMContext& context) {
+    return llvm::StructType::get(context, annotation_rtti_fields(context), false);
+}
+
+inline bool is_annotation_aggregate(const std::shared_ptr<aggregate>& agg) {
+    return std::dynamic_pointer_cast<annotation_type>(agg) != nullptr
+        || std::dynamic_pointer_cast<imported_annotation_type>(agg) != nullptr;
+}
 
 /**
  * Return true if the given aggregate is ::k::Object (the root base class).
@@ -987,12 +1032,12 @@ inline bool has_external_rtti_definition(const std::shared_ptr<aggregate>& agg)
  * real definition and is returned as-is.
  *
  * When it is absent the aggregate comes from another module (a KDI import): the
- * global must then be introduced as a plain *external declaration* so that both
- * AOT linking and the ORC JIT bind it to the single definition exported by the
- * defining library. Emitting a `linkonce_odr null` definition instead would give
- * the importing module its own copy of the symbol; exception dispatch compares
- * typeinfo pointers by identity, so a duplicated copy silently breaks every
- * `catch` of an imported exception type across the module boundary.
+ * global must then be introduced as a layout-compatible *external declaration*
+ * so that both AOT linking and the ORC JIT bind it to the single definition
+ * exported by the defining library. Emitting a `linkonce_odr null` definition
+ * instead would give the importing module its own copy of the symbol; exception
+ * dispatch compares typeinfo pointers by identity, so a duplicate silently
+ * breaks every `catch` of an imported exception type across the module boundary.
  *
  * @param mod             Module being generated.
  * @param name            Mangled RTTI symbol name.
@@ -1003,7 +1048,8 @@ inline bool has_external_rtti_definition(const std::shared_ptr<aggregate>& agg)
  *                        that they stay linkable.
  */
 inline llvm::GlobalVariable* get_or_declare_typeinfo_global(
-    llvm::Module& mod, const std::string& name, bool external_if_absent)
+    llvm::Module& mod, const std::string& name, bool external_if_absent,
+    bool annotation_rtti = false)
 {
     if (auto* existing = mod.getNamedGlobal(name)) {
         return existing;
@@ -1011,7 +1057,10 @@ inline llvm::GlobalVariable* get_or_declare_typeinfo_global(
     auto* ptr_ty = llvm::PointerType::get(mod.getContext(), 0);
     if (external_if_absent) {
         return new llvm::GlobalVariable(
-            mod, ptr_ty, /*isConstant=*/true,
+            mod, annotation_rtti
+                ? annotation_rtti_value_type(mod.getContext())
+                : aggregate_rtti_value_type(mod.getContext()),
+            /*isConstant=*/true,
             llvm::GlobalValue::ExternalLinkage,
             /*Initializer=*/nullptr, name);
     }
@@ -1038,4 +1087,3 @@ inline STM& operator << (STM& stm, const llvm::Value& value) {
 }
 
 #endif // KLANG_GEN_HELPERS_HPP
-

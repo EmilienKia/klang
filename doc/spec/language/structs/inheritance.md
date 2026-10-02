@@ -103,11 +103,11 @@ attempting a dynamic downcast on struct pointers is a **compile-time error**.
 
 **Semantics:**
 
-1. The compiler loads the RTTI pointer from the object's vtable slot 0.
-2. It compares the loaded RTTI pointer with the RTTI descriptor of `Derived`.
-3. On match: the raw pointer is adjusted (byte-offset subtraction) to point to the start of the
-   `Derived` sub-object; the result is assigned.
-4. On mismatch: **null** is assigned.
+1. The runtime identifies the most-derived object from the source subobject's vtable.
+2. It checks for a compatible `Derived` subobject in that object's RTTI metadata.
+3. On match: the pointer is adjusted to the requested subobject; the result is assigned.
+   The most-derived type may itself derive from `Derived`.
+4. On mismatch, an ambiguous conversion, or a null source: **null** is assigned.
 5. Null assigned to a non-null target (`+` or `&`) immediately throws `NullCastError` (a `FatalError`).
 
 **Binding constraints:**
@@ -145,8 +145,7 @@ test() : int {
 ```
 
 **Transitive downcast** (e.g. `ptr<C>` from `ptr<A>` where `C→B→A`) is fully supported:
-the byte offset through the entire inheritance chain is computed at compile time and subtracted
-from the source pointer at runtime when RTTI matches.
+the runtime uses the most-derived object's subobject offsets to adjust the source pointer.
 
 **Interface downcast:**
 
@@ -165,6 +164,38 @@ test() : int {
     ip : IBase*   = &d;      // static upcast to IBase*
     dp : Derived* = ip;      // dynamic downcast via RTTI → non-null
     return dp->get_val();    // → 21 (if supported)
+}
+```
+
+**Interface cross-cast:**
+
+An explicit cast may convert between sibling interfaces, or between a class
+and an interface without a static inheritance relationship. It succeeds only
+when the most-derived object contains a compatible target subobject. A
+nullable target receives null on failure; a non-null target throws
+`NullCastError`. Casting must not remove pointee constness.
+
+```k
+interface Readable { read() : int; }
+interface Writable { write() : int; }
+class Buffer : public Readable, public Writable {
+    public Buffer() {}
+    public read() : int { return 1; }
+    public write() : int { return 2; }
+}
+class ReadOnly : public Readable {
+    public ReadOnly() {}
+    public read() : int { return 1; }
+}
+
+testCrossCast() : bool {
+    buffer : Buffer;
+    source : Readable* = &buffer;
+    target : Writable* = (Writable*) source; // Compatible secondary interface.
+    readOnly : ReadOnly;
+    incompatible : Readable* = &readOnly;
+    missing : Writable* = (Writable*) incompatible; // Null: no Writable subobject.
+    return target != null && missing == null;
 }
 ```
 

@@ -226,6 +226,11 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                                tgt_agg->has_rtti()) {
                         // Set null_is_fatal on the cast_expression for non-null targets.
                         expr.set_null_is_fatal(target_is_nonnull(target_type));
+                    } else if ((src_agg->is_interface() || tgt_agg->is_interface()) &&
+                               src_agg->has_rtti() && tgt_agg->has_rtti()) {
+                        // Checked class/interface cross-casts use the
+                        // dynamic object's RTTI subobject map.
+                        expr.set_null_is_fatal(target_is_nonnull(target_type));
                     } else {
                         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_INCOMPATIBLE), expr.first_lexeme(),
                             "Explicit cast: cannot cast from '{}' to '{}': "
@@ -265,6 +270,11 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                     } else if (tgt_agg->is_derived_from(src_agg) &&
                                tgt_agg->has_rtti()) {
                         // Dynamic downcast ref<Base>→ref<Derived>: ref is non-null → fatal.
+                        expr.set_null_is_fatal(true);
+                    } else if ((src_agg->is_interface() || tgt_agg->is_interface()) &&
+                               src_agg->has_rtti() && tgt_agg->has_rtti()) {
+                        // Checked cross-casts use the same RTTI lookup while
+                        // preserving references' non-null contract.
                         expr.set_null_is_fatal(true);
                     } else {
                         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_UNSUPPORTED), expr.first_lexeme(),
@@ -1473,10 +1483,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         }
     }
 
-    // ── Dynamic cast (RTTI-based): Base→Derived for klass/interface indirections ──
-    // Triggered when target_st is derived from source_st (i.e. going "upward" in the
-    // type hierarchy from a base pointer to a more-derived pointer).
-    // This is the inverse of the static upcast handled above.
+    // ── Dynamic cast (RTTI-based): checked class/interface casts ─────────────
     {
         // Helper: extract struct_type from any indirection or ref<indirection> or ref<struct>
         auto get_pointed_struct = [](const std::shared_ptr<type>& t) -> std::shared_ptr<struct_type> {
@@ -1500,8 +1507,9 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             auto src_st = src_st_type->get_struct();
             auto tgt_st = tgt_st_type->get_struct();
             bool is_dynamic = src_st && tgt_st &&
-                tgt_st->is_derived_from(src_st) &&
-                tgt_st->has_rtti();
+                ((tgt_st->is_derived_from(src_st)) ||
+                 src_st->is_interface() || tgt_st->is_interface()) &&
+                src_st->has_rtti() && tgt_st->has_rtti();
             if (is_dynamic) {
                 emit_dynamic_cast(expr, src_st_type, tgt_st_type);
                 return;
@@ -1675,25 +1683,22 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 // ─── Dynamic cast (RTTI-based): emit_dynamic_cast ────────────────────────────
 //
 // Called from visit_cast_expression when types require a runtime RTTI check.
-// source is a base-typed indirection; target is a derived-typed indirection.
+// source and target are class/interface indirections.
 // Algorithm:
-//  1. Evaluate source → raw base pointer.
-//  2. Load the vptr (field 0 of the base klass layout).
-//  3. Load vtable[0] → actual RTTI pointer of the most-derived object.
-//  4. Compare with the RTTI global of the target klass.
-//  5. On match: subtract compile-time byte-offset → Derived* result.
-//  6. On mismatch: null.
-//  7. If expr.null_is_fatal(): emit debugtrap on null (target is lnk or ref).
+//  1. Evaluate source → raw subobject pointer.
+//  2. Ask the runtime to resolve source/target subobject entries in the
+//     dynamic class's RTTI cast map and compute the adjusted target pointer.
+//  3. On a mismatch or null source: return null.
+//  4. If expr.null_is_fatal(): emit the established non-null failure path.
 //
 /**
  * Emit RTTI-based dynamic cast IR for a cast_expression.
  *
  * Steps:
- *   1. Load the vptr from the source object.
- *   2. Load the RTTI pointer from the vtable (slot 0).
- *   3. Call the runtime dynamic_cast function with source RTTI, target RTTI, and object ptr.
- *   4. If null_is_fatal: emit a null check + fatal trap.
- *   5. Set _value to the cast result pointer.
+ *   1. Pass the source pointer and static source/target RTTI identities to the
+ *      runtime helper, which checks the dynamic object's cast map.
+ *   2. If null_is_fatal: emit a null check + fatal trap.
+ *   3. Set _value to the adjusted cast result.
  */
 void implementation_generator::emit_dynamic_cast(
         cast_expression& expr,
@@ -1704,14 +1709,13 @@ void implementation_generator::emit_dynamic_cast(
 
     auto& llvm_ctx  = _builder->getContext();
     auto* ptr_ty    = llvm::PointerType::get(llvm_ctx, 0);
-    auto* i64_ty    = llvm::Type::getInt64Ty(llvm_ctx);
 
     auto source_type = expr.sub_expr()->get_type();
 
     auto src_st = src_st_type->get_struct();
     auto tgt_st = tgt_st_type->get_struct();
 
-    if (!src_st || !tgt_st || !tgt_st->has_rtti()) {
+    if (!src_st || !tgt_st || !src_st->has_rtti() || !tgt_st->has_rtti()) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F040), expr.first_lexeme(),
             "emit_dynamic_cast: source or target is not a class/interface/annotation aggregate");
     }
@@ -1765,9 +1769,7 @@ void implementation_generator::emit_dynamic_cast(
                 emit_null_check(base_raw, fatal_fn, "dyncast_src");
                 set_debug_location(expr.first_lexeme());
             }
-            // For non-fatal targets (ptr/view) with null source, the vptr load
-            // would still segfault.  This is a known limitation.
-            // TODO: guard the vptr load for non-fatal nullable targets too.
+            // The runtime cast helper handles null for nullable targets.
         }
     }
 
@@ -1780,109 +1782,22 @@ void implementation_generator::emit_dynamic_cast(
             {rtti_name});
     }
 
-    // Step 1: Load the vptr from the source object
-    // ── 3. Load the vptr from the source object (field 0 of the aggregate) ──
-    if (!src_st->has_rtti()) {
-        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F042), expr.first_lexeme(),
-            "emit_dynamic_cast: source aggregate '{}' has no vtable/vptr",
-            {src_st->get_short_name()});
+    std::string source_rtti_name = mangler::mangle_rtti(src_st->get_name());
+    llvm::GlobalVariable* source_rtti_gv =
+        _context->module().getNamedGlobal(source_rtti_name);
+    if (!source_rtti_gv) {
+        source_rtti_gv = new llvm::GlobalVariable(
+            _context->module(), aggregate_rtti_value_type(llvm_ctx), true,
+            llvm::GlobalValue::ExternalLinkage, nullptr, source_rtti_name);
     }
-    auto src_vt = src_st->get_vtable();
-    auto* src_llvm_type = src_st_type->get_llvm_type();
-    if (!src_llvm_type) {
-        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F043), expr.first_lexeme(),
-            "emit_dynamic_cast: source class LLVM type not built");
-    }
-    llvm::Value* vptr_addr = _builder->CreateStructGEP(
-        src_llvm_type, base_raw, 0, "dyncast_vptr_addr");
-    llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "dyncast_vptr");
 
-    // Step 2: Load the RTTI pointer from the vtable (slot 0)
-    // ── 4. Load vtable[0] → actual RTTI pointer ──────────────────────────────
-    // For imported classes, no vtable_layout exists — synthesise a minimal
-    // vtable struct { ptr } since RTTI is always at slot 0.
-    llvm::Type* vt_llvm_type = nullptr;
-    if (src_vt && src_vt->llvm_type) {
-        vt_llvm_type = src_vt->llvm_type;
-    } else {
-        std::vector<llvm::Type*> vt_fields_vec;
-        vt_fields_vec.push_back(ptr_ty);
-        vt_llvm_type = llvm::StructType::get(llvm_ctx, vt_fields_vec);
-    }
-    llvm::Value* rtti_slot_addr = _builder->CreateStructGEP(
-        vt_llvm_type, vptr, 0, "dyncast_rtti_slot_addr");
-    llvm::Value* actual_rtti = _builder->CreateLoad(ptr_ty, rtti_slot_addr, "dyncast_actual_rtti");
-
-    // ── 5. Compare RTTI pointers ──────────────────────────────────────────────
-    llvm::Value* rtti_match = _builder->CreateICmpEQ(
-        actual_rtti, tgt_rtti_gv, "dyncast_rtti_match");
-
-    // ── 6. Compute adjusted pointer (Derived* = Base* − byte_offset) ─────────
-    llvm::Value* derived_ptr = nullptr;
-    {
-        llvm::DataLayout dl(&_context->module());
-
-        // Try direct base first
-        std::string subobj_name;
-        for (auto& bs : tgt_st->get_bases()) {
-            if (!bs.base) continue;
-            if (bs.base.get() == src_st.get()) {
-                subobj_name = bs.is_virtual
-                    ? "__vbase_" + bs.sanitised_name() + "__"
-                    : "__base_" + bs.sanitised_name() + "__";
-                break;
-            }
-        }
-        if (subobj_name.empty()) {
-            std::string vbase_name = "__vbase_" + src_st->get_short_name() + "__";
-            if (tgt_st_type->get_member(vbase_name)) subobj_name = vbase_name;
-        }
-        if (!subobj_name.empty()) {
-            if (auto field = tgt_st_type->get_member(subobj_name)) {
-                auto* tgt_llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(tgt_st_type->get_llvm_type());
-                if (tgt_llvm_type) {
-                    uint64_t off = dl.getStructLayout(tgt_llvm_type)->getElementOffset((unsigned)field->index);
-                    llvm::Value* bi = _builder->CreatePtrToInt(base_raw, i64_ty, "dyncast_base_int");
-                    llvm::Value* di = _builder->CreateSub(bi, llvm::ConstantInt::get(i64_ty, off), "dyncast_derived_int");
-                    derived_ptr = _builder->CreateIntToPtr(di, ptr_ty, "dyncast_derived_ptr");
-                }
-            }
-        }
-        if (!derived_ptr) {
-            // Transitive DFS: accumulate byte offsets through hierarchy
-            std::function<int64_t(aggregate*, struct_type*)> dfs_offset;
-            dfs_offset = [&](aggregate* cur_agg, struct_type* cur_st_type) -> int64_t {
-                for (auto& bs : cur_agg->get_bases()) {
-                    if (!bs.base || bs.is_virtual) continue;
-                    std::string fname = "__base_" + bs.sanitised_name() + "__";
-                    auto field = cur_st_type->get_member(fname);
-                    if (!field) continue;
-                    auto* cur_llvm = llvm::dyn_cast_or_null<llvm::StructType>(cur_st_type->get_llvm_type());
-                    if (!cur_llvm) continue;
-                    uint64_t this_off = dl.getStructLayout(cur_llvm)->getElementOffset((unsigned)field->index);
-                    if (bs.base.get() == src_st.get()) return (int64_t)this_off;
-                    auto base_st_type = bs.base->get_struct_type();
-                    if (!base_st_type) continue;
-                    int64_t inner = dfs_offset(bs.base.get(), base_st_type.get());
-                    if (inner >= 0) return (int64_t)this_off + inner;
-                }
-                return -1;
-            };
-            int64_t total = dfs_offset(tgt_st.get(), tgt_st_type.get());
-            if (total >= 0) {
-                llvm::Value* bi2 = _builder->CreatePtrToInt(base_raw, i64_ty);
-                llvm::Value* di2 = _builder->CreateSub(bi2, llvm::ConstantInt::get(i64_ty, (uint64_t)total), "dyncast_trans_int");
-                derived_ptr = _builder->CreateIntToPtr(di2, ptr_ty, "dyncast_trans_ptr");
-            }
-        }
-    }
-    if (!derived_ptr) derived_ptr = base_raw; // degenerate: same address
-
-    // Step 3: Call the runtime dynamic_cast function with source RTTI, target RTTI, and object ptr
-    // ── 7. Select result: derived_ptr on match, null on mismatch ─────────────
+    auto* cast_fn_type = llvm::FunctionType::get(
+        ptr_ty, {ptr_ty, ptr_ty, ptr_ty}, false);
+    auto cast_fn = _context->module().getOrInsertFunction(
+        "__k_dynamic_cast_adjust", cast_fn_type);
     set_debug_location(expr.first_lexeme());
-    auto* null_val = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
-    llvm::Value* result = _builder->CreateSelect(rtti_match, derived_ptr, null_val, "dyncast_result");
+    llvm::Value* result = _builder->CreateCall(
+        cast_fn, {base_raw, source_rtti_gv, tgt_rtti_gv}, "dyncast_result");
 
     // Step 4: If null_is_fatal: emit a null check + fatal trap
     // ── 8. Fatal-null check for lnk/ref targets ───────────────────────────────

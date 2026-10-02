@@ -1361,6 +1361,45 @@ TEST_CASE("RTTI: annotation int field value via view downcast", "[libk][rtti][an
     CHECK(test() == 42);
 }
 
+TEST_CASE("RTTI: annotation downcast from Annotation checks concrete RTTI",
+          "[libk][rtti][annotation][cast]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_dynamic_cast__;
+        import k;
+
+        annotation Priority {
+            value : int;
+        }
+        annotation Other {
+            value : int;
+        }
+
+        @Priority(42)
+        class Task {
+            public Task() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            t : Task;
+            anns : const k::Annotation?[]? = t.getClass().getAnnotations();
+            if (anns == null) return 1;
+            ann : const k::Annotation? = anns[0];
+            if (ann == null) return 2;
+            priority : const Priority? = ann;
+            if (priority == null || priority->value != 42) return 3;
+            other : const Other? = ann;
+            if (other != null) return 4;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
 
 // =========================================================================
 // 41. RTTI: annotation multiple int fields via view downcast

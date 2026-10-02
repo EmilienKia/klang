@@ -190,8 +190,10 @@ test_write() : int { b: Buffer; return b.write(); }   // → 2
 ```
 
 > **Note — secondary base dispatch:**  
-> Dispatching through a reference to a *secondary* interface base (the second or later interface in the base clause) requires per-base vtable thunks, which are not yet implemented in the current compiler.  
-> Direct calls and dispatch through the **primary** (first) interface reference work correctly.
+> Dispatch through a secondary interface uses an adjusted subobject pointer and
+> a per-base vtable. Checked casts between sibling interfaces must return the
+> target interface's adjusted pointer, not the original source address.
+> See [Interface cross-casts](inheritance.md#dynamic-indirection-downcast-classinterface-only).
 
 ---
 
@@ -429,4 +431,3 @@ for a worked example of implementing an imported interface.
 ---
 
 *See also:* [Classes and Virtuality](classes.md) · [Inheritance](inheritance.md) · [Structures](structs.md) · [Libraries — Export and Import](../basic/libraries.md) · [Types — §11.4 Dynamic downcast](../basic/types.md#114-dynamic-indirection-downcast-classinterface)
-

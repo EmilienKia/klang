@@ -272,6 +272,7 @@ final const class Interface : public AggregateType {
     enclosing : const TypeInfo?;
     flags : unsigned int;
     annotations : const Annotation?[]?;
+    _castMap : byte*;
     @ffi::Extern("C") private static __k_iface_get_functions(rtti : const Interface&) : const Function?[]?;
 
     /**
@@ -286,7 +287,7 @@ final const class Interface : public AggregateType {
                       nested : const TypeInfo?[]?, enclosing : const TypeInfo?,
                       flags : unsigned int, annotations : const Annotation?[]?)
         : name(name), fullName(fullName), bases(bases), nested(nested),
-          enclosing(enclosing), flags(flags), annotations(annotations) {}
+          enclosing(enclosing), flags(flags), annotations(annotations), _castMap(null) {}
 
     /**
      * Return the name of the interface.
@@ -372,6 +373,7 @@ final const class Class : public AggregateType {
     enclosing : const TypeInfo?;
     flags : unsigned int;
     annotations : const Annotation?[]?;
+    _castMap : byte*;
     @ffi::Extern("C") private static __k_class_get_functions(rtti : const Class&) : const Function?[]?;
     @ffi::Extern("C") private static __k_class_get_constructors(rtti : const Class&) : const Constructor?[]?;
 
@@ -387,7 +389,7 @@ final const class Class : public AggregateType {
                   nested : const TypeInfo?[]?, enclosing : const TypeInfo?,
                   flags : unsigned int, annotations : const Annotation?[]?)
         : name(name), fullName(fullName), bases(bases), nested(nested),
-          enclosing(enclosing), flags(flags), annotations(annotations) {}
+          enclosing(enclosing), flags(flags), annotations(annotations), _castMap(null) {}
 
     /**
      * Return the name of the class.

@@ -831,17 +831,10 @@ test() : int {
 Every **concrete** (non-abstract) `class` and every `class` or `interface` that has virtual
 functions automatically receives an **RTTI descriptor** at compile time.
 
-The RTTI descriptor is a global constant struct with the layout:
-
-```
-{ ptr self_rtti_ptr, ptr mangled_name_cstr, ptr null_introspection }
-```
-
-| Field | Content |
-|-------|---------|
-| `self_rtti_ptr` | Pointer to this RTTI global itself (used as the unique *typeid*) |
-| `mangled_name_cstr` | Null-terminated C string of the mangled class name |
-| `null_introspection` | Reserved — currently null; reserved for future introspection data |
+The RTTI descriptor identifies the type and supports reflection and checked
+subobject conversion. Its binary layout is compiler/runtime metadata, not a
+user-facing language contract. Compiled modules that use RTTI must be rebuilt
+together when this metadata ABI changes.
 
 The RTTI global is stored at **vtable slot 0** (before the first virtual function pointer).
 Every vtable — primary and secondary — carries the RTTI of the **concrete** (most-derived) class
@@ -857,15 +850,18 @@ A **dynamic downcast** assigns a `Base*` (or `Base+`, `Base?`, `Base&`) to a `De
 
 1. Load the vptr from field 0 of the pointed-at object (via the Base sub-object layout).
 2. Load vtable[0] — the actual RTTI pointer of the concrete object.
-3. Compare with Derived's RTTI global address.
-4. **Match** → subtract the byte offset of the Base sub-object inside Derived from the source
-   pointer to obtain the start of Derived; assign the adjusted pointer.
-5. **Mismatch** → assign **null**.
+3. Find the source and requested target subobjects in the dynamic type's RTTI metadata.
+4. **Match** → adjust the pointer from the source subobject to the requested target.
+   This also succeeds when the actual type derives further from `Derived`.
+5. **Mismatch, ambiguity, or null source** → assign **null**.
 6. If null is assigned to a non-null target (`+` link or `&` reference) → throws
    `NullCastError`.
 
 The operation is emitted implicitly whenever the compiler detects that a `Base` indirection is
 being assigned to a `Derived` indirection and `Derived` is a class/interface derived from `Base`.
+Explicit casts also support class/interface and sibling-interface cross-casts
+when the actual object has a compatible target subobject. These casts follow
+the same nullable and non-null failure rules and must preserve pointee constness.
 
 ### 14.3 Binding rules
 
@@ -965,7 +961,7 @@ test() : int {
 
 | Code | Condition |
 |------|-----------|
-| `0x0922` | Source and target have no inheritance relationship — compile-time error |
+| `0x0922` | Source and target have no supported static or dynamic conversion |
 | *(runtime)* | RTTI mismatch on non-null target → throws `NullCastError` |
 
 *See also:* [Types — §11.4](../basic/types.md#114-dynamic-indirection-downcast-classinterface) · [Inheritance — Dynamic downcast](inheritance.md#dynamic-indirection-downcast-classinterface-only)

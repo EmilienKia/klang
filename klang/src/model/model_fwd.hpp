@@ -265,8 +265,9 @@ struct vtable_layout {
 
     /**
      * LLVM global variable holding the RTTI constant for this class.
-     * The RTTI global is a genuine ::k::Class instance with layout:
-     *   { ptr __vptr__ (Class vtable), ptr __vptr_TypeInfo__ (Class secondary vtable), ptr name (short name) }
+     * The RTTI global is a flattened ::k::Class or ::k::Interface instance:
+     * four vptrs, name/fullName, bases/nested/enclosing, flags, annotations,
+     * the private cast map, functions, and constructors (null for interfaces).
      * The 'typeid' is the address of this global, valid across dynamic modules.
      * Set during declaration generation. May be non-null even if llvm_global is null
      * (e.g. for abstract classes that have no emitted vtable global).

@@ -1372,7 +1372,8 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
         typeinfo_name = "_KTI_" + (inner_type ? inner_type->to_string() : expr_type->to_string());
     }
     auto* typeinfo_gv = get_or_declare_typeinfo_global(
-        mod, typeinfo_name, has_external_rtti_definition(thrown_agg));
+        mod, typeinfo_name, has_external_rtti_definition(thrown_agg),
+        is_annotation_aggregate(thrown_agg));
 
     // 4. Build the typeinfo chain: [{ti, offset}, {ti, offset}, ..., {null, 0}]
     //    This supports polymorphic catch (catching by base class).
@@ -1450,7 +1451,8 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
 
                 std::string base_ti_name = mangler::mangle_rtti(base_agg->get_name());
                 auto* base_ti = get_or_declare_typeinfo_global(
-                    mod, base_ti_name, has_external_rtti_definition(base_agg));
+                    mod, base_ti_name, has_external_rtti_definition(base_agg),
+                    is_annotation_aggregate(base_agg));
                 chain_data.push_back({base_ti, base_offset});
                 add_bases(base_agg, base_offset); // Recursive
             }
@@ -1844,10 +1846,12 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
 
         std::string typeinfo_name;
         bool typeinfo_is_external = false;
+        bool is_annotation_rtti = false;
         if (auto st = std::dynamic_pointer_cast<struct_type>(inner_type)) {
             if (auto agg = st->get_struct()) {
                 typeinfo_name = mangler::mangle_rtti(agg->get_name());
                 typeinfo_is_external = has_external_rtti_definition(agg);
+                is_annotation_rtti = is_annotation_aggregate(agg);
             } else {
                 typeinfo_name = "_KTI_" + st->name();
             }
@@ -1855,7 +1859,8 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
             typeinfo_name = "_KTI_" + (inner_type ? inner_type->to_string() : "unknown");
         }
 
-        auto* ti_gv = get_or_declare_typeinfo_global(mod, typeinfo_name, typeinfo_is_external);
+        auto* ti_gv = get_or_declare_typeinfo_global(
+            mod, typeinfo_name, typeinfo_is_external, is_annotation_rtti);
         typeinfos.push_back(ti_gv);
     }
 

@@ -212,8 +212,15 @@ The parameter type list (excluding the implicit `this` for member methods) serve
 #### Static Upcast (aggregate types)
 `Derived*` → `Base*` implicitly. Compile-time GEP to address the Base sub-object.
 
-#### Dynamic Downcast (class/interface)
-`Base*` → `Derived*` with runtime RTTI. On mismatch: null (for `T*`, `T?`) or throws `NullCastError` (for `T+`, `T&`).
+#### Checked Dynamic Cast (class/interface)
+`Base*` → `Derived*` uses runtime RTTI and adjusts the result to the requested
+subobject. Explicit casts may also cross-cast between a class and an interface,
+or between sibling interfaces implemented by the same most-derived object.
+The runtime must identify the source subobject and find a unique target
+subobject; it must not assume that either subobject is at offset zero. A
+mismatched or ambiguous cast is null for nullable targets (`T*`, `T?`) and
+throws `NullCastError` for non-null targets (`T+`, `T&`).
+An explicit pointer, link, or view cast may not remove `const` from the pointed-to type.
 
 #### Owner Upcast/Downcast
 Owner follows the same rules as indirections for upcast/downcast, with the same move constraints.
@@ -883,7 +890,13 @@ If no actual override = error. Omitting `override` on a valid override = warning
 
 ### 12.9 RTTI and Dynamic Downcast
 
-Classes have an RTTI slot in the vtable (slot 0). Downcast via explicit cast `(Derived*) base_ptr` uses runtime RTTI. Nullable targets → null on mismatch. Non-null targets → throws `NullCastError`.
+Polymorphic classes and interfaces have an RTTI slot in the vtable (slot 0).
+An explicit checked cast uses the most-derived type and the actual source view
+to adjust the pointer to a unique target class or interface subobject. This
+supports class downcasts, class/interface cross-casts, and sibling-interface
+cross-casts when the target is present. It does not rely on RTTI identity alone
+or assume a zero subobject offset. If the target is absent or ambiguous, a
+nullable target yields null and a non-null target throws `NullCastError`.
 
 ---
 
@@ -1284,6 +1297,9 @@ Rules:
 - Implicitly inherits from `k::Annotation`.
 - Implicitly `const` (fields immutable after construction, methods implicitly `const`).
 - Vtable with a single RTTI slot (slot 0). Methods are **not** virtual.
+- A checked cast from `k::Annotation*` to a concrete annotation type uses RTTI
+  to adjust to that annotation instance; an incompatible type follows the
+  target's nullability rules.
 - Default visibility: `public` (like structs).
 
 ### 20.2 Members
