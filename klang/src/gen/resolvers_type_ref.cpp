@@ -146,7 +146,8 @@ std::shared_ptr<type> build_model_type_from_kdi_signature(const kdi::kdi_type& s
 /**
  * Check function visibility from access site.
  * - Namespace-level functions: public = open, protected = same module, private = same ns.
- * - Struct member functions: public = open, protected/private = member functions of same struct (or nested).
+ * - Struct member functions: private = declaring struct (or nested) and friends;
+ *   protected additionally permits derived structs.
  * Static constructors and destructors inherit the struct's own visibility — they are not
  * individually checked (their owner struct visibility gates them).
  */
@@ -157,13 +158,13 @@ void type_reference_resolver::check_function_visibility(const function& func, co
     auto owner_agg = std::const_pointer_cast<aggregate>(func.get_owner());
     if (owner_agg) {
         if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
-        if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
+        if (scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
         throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_ACCESS_DENIED), func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "{} member function '{}' of struct '{}' is not accessible here; "
             "it can only be called from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
              func.get_short_name(), owner_agg->get_short_name(), owner_agg->get_short_name(),
-             vis == PROTECTED ? " or its subclasses or friends" : ""});
+             vis == PROTECTED ? " or its subclasses or friends" : " or its friends"});
     } else {
         // Namespace-level function
         auto owner_ns = scope_lookup::enclosing_namespace(func);
@@ -198,14 +199,14 @@ void type_reference_resolver::check_constructor_visibility(const constructor& ct
     if (!owner_agg) return;
 
     if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
-    if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
+    if (scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
 
     throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_VISIBILITY_MISMATCH), ctor.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{ctor.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
         "{} constructor of struct '{}' is not accessible here; "
         "it can only be called from member functions of '{}'{}",
         {vis == PROTECTED ? "protected" : "private",
          owner_agg->get_short_name(), owner_agg->get_short_name(),
-         vis == PROTECTED ? " or its subclasses or friends" : ""});
+         vis == PROTECTED ? " or its subclasses or friends" : " or its friends"});
 }
 
 /**

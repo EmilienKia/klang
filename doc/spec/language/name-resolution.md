@@ -845,6 +845,7 @@ IS_MEMBER_ACCESSIBLE(member, access_site):
   if vis == PRIVATE:
     return access_site is inside a member function of owner
            OR inside a member function of a type nested inside owner
+           OR access_site is in a friend of owner (§13.3)
 
   if vis == PROTECTED:
     return access_site is inside a member function of owner
@@ -907,8 +908,9 @@ api() : void { helperFunc(); }  // ok: within same module
 ### 13.3 Friendship
 
 A `friend` declaration inside an aggregate grants a named external entity access to
-the aggregate's **protected** members (it does not grant access to private members
-beyond the normal private access rule).
+the aggregate's **private and protected** members, including constructors and
+member functions accessed through either `.` or `->`. This does not change
+their visibility for non-friends.
 
 ```k
 class Safe {
@@ -1298,6 +1300,5 @@ After standard resolution yields nothing:
 ---
 
 _End of K language name resolution specification._
-
 
 

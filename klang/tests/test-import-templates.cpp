@@ -23,6 +23,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/model/tools/kdi_exporter.hpp"
 
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
@@ -30,6 +31,120 @@
 #include <algorithm>
 
 namespace fs = std::filesystem;
+
+namespace {
+
+constexpr std::string_view private_friend_template_library = R"K(
+    module private_friend_tpl_lib;
+
+    template<typename T>
+    public final struct Block {
+        friend Owner<T>;
+        friend Reader<T>;
+    private:
+        _tag : T*;
+        _value : int;
+        Block(v : int) : _value(v) {}
+        get() : int { return _value; }
+    }
+
+    template<typename T>
+    public struct Reader {
+        read(block : Block<T>*) : int { return block->get(); }
+    }
+
+    template<typename T>
+    public struct Owner {
+        read(v : int) : int {
+            block : Block<T>(v);
+            reader : Reader<T>;
+            return block.get() + reader.read(&block);
+        }
+    }
+
+    dummy() : int { return 0; }
+)K";
+
+struct PrivateFriendTemplateImport {
+    fs::path kdi_path;
+    std::shared_ptr<k::path_lookup_file_resolver> resolver =
+        std::make_shared<k::path_lookup_file_resolver>();
+
+    explicit PrivateFriendTemplateImport(const std::string& name)
+        : kdi_path(fs::current_path() / (name + ".kdi")) {
+        auto lib = compile_model(private_friend_template_library);
+        REQUIRE(lib);
+        k::model::kdi_builder builder(*lib->get_context_for_test());
+        lib->get_unit()->accept(builder);
+        REQUIRE(kdi::kdi_write_cbor_file(builder.take(), kdi_path.string()));
+        resolver->add_explicit_path("private_friend_tpl_lib", kdi_path);
+    }
+
+    ~PrivateFriendTemplateImport() {
+        std::error_code ec;
+        fs::remove(kdi_path, ec);
+    }
+};
+
+} // namespace
+
+TEST_CASE("import template — private constructor and helper methods remain accessible to friends",
+          "[import][template][cross-tpl][consumer-inst][private-template-friend]") {
+    PrivateFriendTemplateImport lib("private_friend_template_positive");
+    REQUIRE(ensure_libk_loaded());
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(lib.resolver);
+    comp->parse_source("private_friend_tpl_exe.k", R"K(
+            module private_friend_tpl_exe;
+            import private_friend_tpl_lib;
+
+            struct ConsumerTag {}
+
+            test() : int {
+                owner : Owner<ConsumerTag>;
+                return owner.read(21);
+            }
+        )K", false, false);
+
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("import template — private helper API remains inaccessible to non-friends",
+          "[import][template][cross-tpl][private-template-friend][error]") {
+    PrivateFriendTemplateImport lib("private_friend_template_negative");
+
+    SECTION("private constructor") {
+        REQUIRE(compile_should_fail(R"K(
+            module private_friend_ctor_denied;
+            import private_friend_tpl_lib;
+
+            struct ConsumerTag {}
+
+            main() : int {
+                block : Block<ConsumerTag>(42);
+                return 0;
+            }
+        )K", lib.resolver));
+    }
+
+    SECTION("private pointer member invocation") {
+        REQUIRE(compile_should_fail(R"K(
+            module private_friend_call_denied;
+            import private_friend_tpl_lib;
+
+            struct ConsumerTag {}
+
+            main() : int {
+                block : Block<ConsumerTag>*;
+                return block->get();
+            }
+        )K", lib.resolver));
+    }
+}
 
 // Template struct / function import tests
 //
@@ -2398,4 +2513,3 @@ TEST_CASE("import struct — indirect members targeting an imported aggregate re
 // ═════════════════════════════════════════════════════════════════════════════
 // Exported aliasing across a module boundary — 'alias' and 'typedef'
 // ═════════════════════════════════════════════════════════════════════════════
-

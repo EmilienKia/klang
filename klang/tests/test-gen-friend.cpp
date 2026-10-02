@@ -580,6 +580,69 @@ TEST_CASE("Template friend — access private member via friend Getter<T>", "[ge
     REQUIRE(fn() == 1);
 }
 
+TEST_CASE("Template friend — private constructor and methods through dot and arrow",
+          "[gen][friend][template-friend][private-template-friend]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"SRC(
+        module gen_friend_private_calls;
+
+        template<typename T>
+        struct Block {
+            friend Owner<T>;
+        private:
+            _tag : T*;
+            _value : int;
+            Block(v : int) : _value(v) {}
+            get() : int { return _value; }
+        }
+
+        template<typename T>
+        struct Owner {
+            read(v : int) : int {
+                block : Block<T>(v);
+                ptr : Block<T>* = &block;
+                return block.get() + ptr->get();
+            }
+        }
+
+        struct Tag {}
+
+        test() : int {
+            owner : Owner<Tag>;
+            return owner.read(21);
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("Template friend — private method rejects a different template argument",
+          "[gen][friend][template-friend][private-template-friend][error]") {
+    REQUIRE(compile_should_fail(R"SRC(
+        module gen_friend_private_wrong_arg;
+
+        template<typename T>
+        struct Block {
+            friend Reader<int>;
+        private:
+            get() : int { return 42; }
+        }
+
+        template<typename T>
+        struct Reader {
+            read(block : Block<T>*) : int { return block->get(); }
+        }
+
+        test() : int {
+            block : Block<short>;
+            reader : Reader<short>;
+            return reader.read(&block);
+        }
+    )SRC", nullptr));
+}
+
 TEST_CASE("Template friend — friend declaration with struct filter", "[gen][friend][template-friend]") {
     auto jit = gen_jit(R"SRC(
         module gen_friend_20;
@@ -811,4 +874,3 @@ TEST_CASE("Template friend — free function template wrong param rejects access
         }
     )SRC", nullptr));
 }
-
