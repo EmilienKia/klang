@@ -627,6 +627,56 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
         if (!imp.kdi) continue;
         materialise_namespace(imp.kdi->unit.root_ns, ctx);
     }
+
+    // Signatures can refer to unions or aliases in namespaces materialised later.
+    // Complete their metadata only after every imported declaration exists.
+    const auto complete_signature = [&](function& fn, const auto& signature) {
+        for (size_t i = 0; i < signature.params.size(); ++i) {
+            auto param = fn.get_parameter(i);
+            if (param->get_type()) continue;
+            auto resolved = kdi_type_to_model_type(signature.params[i].type, _unit, ctx);
+            if (!resolved) {
+                auto diag = k::log::diagnostic::make_error(
+                    static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED),
+                    "Cannot materialise imported parameter '{}' of '{}': its KDI type is unavailable",
+                    {param->get_short_name(), fn.get_fq_name()});
+                _logger.report(diag);
+                throw k::log::compiler_error(std::move(diag));
+            }
+            param->set_type(std::move(resolved));
+        }
+        if constexpr (requires { signature.return_type; }) {
+            if (!fn.get_return_type()
+                && !std::holds_alternative<kdi::kdi_void_type>(signature.return_type.value)) {
+                auto resolved = kdi_type_to_model_type(signature.return_type, _unit, ctx);
+                if (!resolved) {
+                    auto diag = k::log::diagnostic::make_error(
+                        static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                        "Cannot materialise imported return type of '{}': its KDI type is unavailable",
+                        {fn.get_fq_name()});
+                    _logger.report(diag);
+                    throw k::log::compiler_error(std::move(diag));
+                }
+                fn.set_return_type(std::move(resolved));
+            }
+        }
+    };
+    for (const auto& [mangled, fn] : _unit.get_imported_functions()) {
+        if (auto signature = fn->get_kdi_function()) complete_signature(*fn, *signature);
+    }
+    for (const auto& [fq, agg] : _unit.get_imported_aggregates()) {
+        for (const auto& ctor : agg->constructors()) {
+            if (auto imported = std::dynamic_pointer_cast<imported_constructor>(ctor)) {
+                if (auto signature = imported->get_kdi_constructor())
+                    complete_signature(*imported, *signature);
+            }
+        }
+        for (const auto& child : agg->get_children()) {
+            if (auto method = std::dynamic_pointer_cast<imported_method>(child)) {
+                if (auto signature = method->get_kdi_method()) complete_signature(*method, *signature);
+            }
+        }
+    }
 }
 
 void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,

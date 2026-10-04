@@ -1674,6 +1674,82 @@ TEST_CASE("private producer native aliases share symbols only with compatible de
     }
 }
 
+TEST_CASE("imported Vector defaulted and declared copy constructors retain complete signatures",
+          "[import][template][stdlib][constructor][native-abi][regression]") {
+    auto compiler = compile_model_with_stdlib(R"K(
+        module vectorimportsignatures;
+        test(): int {
+            values: Vector<int>;
+            copy: Vector<int>(values);
+            array: int[2]{17, 25};
+            fromArray: Vector<int>(array);
+            copiedArray: Vector<int>(fromArray);
+            fromArray.set(0u, 99);
+            if (array[0] != 17 || copiedArray.get(0u) != 17 ||
+                fromArray.size() != 2u || copiedArray.size() != 2u) return -4;
+            iterator: Iterator<int>! = copiedArray.iterator();
+            first: OptionalRef<int> = iterator->next();
+            second: OptionalRef<int> = iterator->next();
+            if (!first.hasValue() || !second.hasValue()) return -1;
+            readonly: OptionalConstRef<int>(first);
+            empty: OptionalRef<int>;
+            readonlyEmpty: OptionalConstRef<int>(empty);
+            if (!readonly.hasValue() || readonlyEmpty.hasValue()) return -3;
+            total: int = readonly.get() + second.get();
+            delete iterator;
+            return copy.size() == 0u ? total : -2;
+        }
+    )K");
+    REQUIRE(compiler);
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    REQUIRE(compiler->verify_gen_code());
+    auto ctx = compiler->get_context_for_test();
+    const auto& aggregates = compiler->get_unit()->get_imported_aggregates();
+    const auto it = aggregates.find("k::Vector__k_Nio_Nfile_NAnyFileSystemEntry");
+    REQUIRE(it != aggregates.end());
+    auto vector = it->second;
+    auto entry = ctx->from_string("k::io::file::AnyFileSystemEntry");
+    REQUIRE(k::model::type::is_struct(entry));
+    bool defaulted = false;
+    bool declared_copy = false;
+    bool array_copy = false;
+    for (const auto& ctor : vector->constructors()) {
+        REQUIRE(std::dynamic_pointer_cast<k::model::imported_constructor>(ctor));
+        if (ctor->parameters().empty()) {
+            CHECK(ctor->is_defaulted());
+            defaulted = true;
+        }
+        for (const auto& param : ctor->parameters()) {
+            REQUIRE(param->get_type());
+            CHECK_FALSE(k::model::type::contains_unresolved(param->get_type()));
+            CHECK(ctx->get_llvm_type(param->get_type()) != nullptr);
+        }
+        if (ctor->parameters().size() != 1) continue;
+        auto parameter = k::model::type::canonical(ctor->parameters().front()->get_type());
+        if (!k::model::type::is_reference(parameter)) continue;
+        auto referred = parameter->get_subtype();
+        auto bare = k::model::type::remove_const(referred);
+        if (bare == vector->get_struct_type()) {
+            CHECK(k::model::type::is_const(referred));
+            CHECK_FALSE(ctor->is_defaulted());
+            declared_copy = true;
+        } else if (k::model::type::is_array(bare)) {
+            auto element = bare->get_subtype();
+            CHECK(k::model::type::is_const(element));
+            CHECK(k::model::type::remove_const(element) == entry);
+            array_copy = true;
+        }
+    }
+    CHECK(defaulted);
+    CHECK(declared_copy);
+    CHECK(array_copy);
+    auto jit = compiler->to_jit();
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
 TEST_CASE("import homonymous template aliases specialize in independent origin namespaces",
           "[import][template][alias][homonym-imports][type-provenance]") {
     std::vector<LibSpec> libraries = {
