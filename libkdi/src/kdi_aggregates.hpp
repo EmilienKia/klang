@@ -430,6 +430,9 @@ struct kdi_alias {
     /// Raw K source text of a parameterised alias, from the 'template' keyword
     /// through the closing ';'. Re-parsed by an importing compiler.
     std::string                  source;
+    /// Lexical namespace of the original template alias, preserved across re-export.
+    /// Empty defaults to the namespace of fq_name (legacy schema 0.1 files).
+    std::string                  origin_module;
 
     std::optional<kdi_doc_block> doc;
 };

@@ -1034,7 +1034,7 @@ void kdi_builder::export_aliases(const alias_holder& holder, std::vector<kdi::kd
                                  const std::string& scope_fq_name) {
     for (const auto& al : holder.get_aliases()) {
         if (!al || !al->is_exported()) continue;
-        if (al->is_imported()) continue;
+        if (al->is_imported() && !al->is_template()) continue;
 
         kdi::kdi_alias ka;
         ka.name       = al->get_short_name();
@@ -1055,6 +1055,7 @@ void kdi_builder::export_aliases(const alias_holder& holder, std::vector<kdi::kd
             ka.is_template = true;
             if (auto* ti = al->get_tpl_info()) {
                 ka.source = ti->source_text;
+                ka.origin_module = ti->origin_module_ns_fq;
                 for (const auto& p : ti->params) {
                     kdi::kdi_template_param kp;
                     kp.name = p.name;
@@ -1828,6 +1829,8 @@ build_using_alias_map(const element* entity) {
         auto uh = dynamic_cast<const using_holder*>(current.get());
         if (!uh) continue;
         for (const auto& dir : uh->get_using_directives()) {
+            // Import exposure is lookup metadata, not a source-level type alias.
+            if (!dir.ast_node) continue;
             if (dir.has_alias() && !dir.is_namespace()) {
                 // Aliased using: using Alias = X::Y::Z;
                 auto fq = resolve_target_fq_name(dir.target_name, current.get());
@@ -1920,7 +1923,7 @@ kdi::kdi_template_def kdi_builder::build_template_def(
             alias_map = build_using_alias_map(entity);
         }
 
-        if (!ti.source_text.empty() && alias_map.empty()) {
+        if (!ti.source_text.empty() && (alias_map.empty() || !ti.origin_module_ns_fq.empty())) {
             // Prefer raw source_text (captured verbatim from the parser) when no
             // alias resolution is needed. It preserves annotations, member template
             // clauses, and other syntax that k_source_emitter may not reconstruct.

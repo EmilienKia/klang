@@ -334,16 +334,17 @@ lex::opt_any_lexeme unresolved_type::get_interest_lexeme() const {
 
 std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
     const k::parse::ast::type_specifier* spec,
-    const std::unordered_map<std::string, std::shared_ptr<type>>& subst)
+    const std::unordered_map<std::string, std::shared_ptr<type>>& subst,
+    const std::shared_ptr<ns>& definition_namespace)
 {
     if (!spec) return nullptr;
 
     if (auto ct = dynamic_cast<const k::parse::ast::const_type_specifier*>(spec)) {
-        auto sub = substitute_ast_type_spec(ct->subtype.get(), subst);
+        auto sub = substitute_ast_type_spec(ct->subtype.get(), subst, definition_namespace);
         return sub ? type::make_pinned_const(sub) : nullptr;
     }
     if (auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(spec)) {
-        auto sub = substitute_ast_type_spec(ptr->subtype.get(), subst);
+        auto sub = substitute_ast_type_spec(ptr->subtype.get(), subst, definition_namespace);
         if (!sub) return nullptr;
         if (ptr->pointer_type == k::lex::operator_::AMPERSAND) return type::make_pinned_reference(sub);
         if (ptr->pointer_type == k::lex::operator_::STAR) return type::make_pinned_pointer(sub);
@@ -353,11 +354,11 @@ std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
         return nullptr;
     }
     if (auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(spec)) {
-        auto sub = substitute_ast_type_spec(own->subtype.get(), subst);
+        auto sub = substitute_ast_type_spec(own->subtype.get(), subst, definition_namespace);
         return sub ? type::make_pinned_owner(sub) : nullptr;
     }
     if (auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(spec)) {
-        auto sub = substitute_ast_type_spec(arr->subtype.get(), subst);
+        auto sub = substitute_ast_type_spec(arr->subtype.get(), subst, definition_namespace);
         if (!sub) return nullptr;
         if (arr->lex_int) return sub->get_array(arr->lex_int->to_unsigned_int());
         return type::make_pinned_array(sub);
@@ -370,6 +371,7 @@ std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
         if (id_spec->has_explicit_template_args) {
             auto nested = std::shared_ptr<unresolved_type>(
                 new unresolved_type(id_spec->name.to_name()));
+            nested->set_definition_namespace(definition_namespace);
             nested->_ast_template_args = id_spec->template_args;
             nested->_has_explicit_template_args = true;
             if (auto cloned = nested->clone_with_substituted_model_args(subst)) {
@@ -377,14 +379,17 @@ std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
             }
             return nested;
         }
-        if (id_spec->name.size() == 1) {
+        if (id_spec->name.size() == 1 && !id_spec->name.to_name().has_root_prefix()) {
             std::string arg_name{id_spec->name.names[0].content};
             auto sit = subst.find(arg_name);
             if (sit != subst.end() && sit->second) {
                 return sit->second;
             }
         }
-        return std::shared_ptr<unresolved_type>(new unresolved_type(id_spec->name.to_name()));
+        auto unresolved = std::shared_ptr<unresolved_type>(
+            new unresolved_type(id_spec->name.to_name()));
+        unresolved->set_definition_namespace(definition_namespace);
+        return unresolved;
     }
     return nullptr;
 }
@@ -403,7 +408,8 @@ std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_a
             model_args.push_back(nullptr);
             continue;
         }
-        auto sub = substitute_ast_type_spec(ast_arg->type_arg.get(), subst);
+        auto sub = substitute_ast_type_spec(
+            ast_arg->type_arg.get(), subst, get_definition_namespace());
         if (sub) {
             model_args.push_back(sub);
             any_substituted = true;
@@ -416,6 +422,7 @@ std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_a
 
     // Create a new unresolved_type sharing the AST template args but with model overrides.
     auto new_ut = std::shared_ptr<unresolved_type>(new unresolved_type(_type_id));
+    new_ut->_definition_namespace = _definition_namespace;
     new_ut->_ast_template_args = _ast_template_args;
     new_ut->_has_explicit_template_args = _has_explicit_template_args;
     new_ut->_model_template_args = std::move(model_args);
@@ -1292,6 +1299,25 @@ lex::opt_any_lexeme enum_type::get_interest_lexeme() const {
 // Type substitution (template instantiation support)
 // ═══════════════════════════════════════════════════════════════════════════
 
+void set_type_definition_namespace(const std::shared_ptr<type>& t, const std::shared_ptr<ns>& scope) {
+    if (!t || !scope) return;
+    if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (!ut->get_definition_namespace()) ut->set_definition_namespace(scope);
+        return;
+    }
+    if (auto ct = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        set_type_definition_namespace(ct->get_return_type(), scope);
+        for (const auto& pt : ct->parameter_types()) set_type_definition_namespace(pt, scope);
+        for (const auto& th : ct->get_throws()) set_type_definition_namespace(th, scope);
+    }
+    if (auto ct = std::dynamic_pointer_cast<callable_type>(t)) {
+        set_type_definition_namespace(ct->get_return_type(), scope);
+        for (const auto& pt : ct->get_parameter_types()) set_type_definition_namespace(pt, scope);
+        for (const auto& th : ct->get_throws()) set_type_definition_namespace(th, scope);
+    }
+    set_type_definition_namespace(t->get_subtype(), scope);
+}
+
 std::shared_ptr<type> substitute_type(
     const std::shared_ptr<type>& t,
     const type_substitution_map& subst)
@@ -1305,12 +1331,12 @@ std::shared_ptr<type> substitute_type(
         auto it = subst.find(tid.to_string());
         if (it != subst.end()) return it->second;
 
-        if (tid.has_root_prefix()) {
+        if (tid.has_root_prefix() && tid.size() > 1) {
             it = subst.find(tid.without_root_prefix().to_string());
             if (it != subst.end()) return it->second;
         }
 
-        if (!tid.empty()) {
+        if (!tid.empty() && !tid.has_root_prefix() && tid.size() == 1) {
             it = subst.find(tid.back());
             if (it != subst.end()) return it->second;
         }

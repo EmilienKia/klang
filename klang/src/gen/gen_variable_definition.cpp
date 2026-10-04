@@ -386,19 +386,19 @@ void type_reference_resolver::resolve_variable_type(
         if (var_elem) {
             resolved = resolve_type_by_name(unres_type->type_id(), *var_elem);
         }
-        if (!resolved || !type::is_resolved(resolved)) {
+        if ((!resolved || !type::is_resolved(resolved)) && !unres_type->get_definition_namespace()) {
             auto root_ns = _unit.get_root_namespace();
             if (root_ns) {
                 resolved = resolve_type_by_name(unres_type->type_id(), *root_ns);
             }
         }
     }
-    if (!resolved || !type::is_resolved(resolved)) {
+    if ((!resolved || !type::is_resolved(resolved)) && !unres_type->get_definition_namespace()) {
         // Step 5b: Primitive type lookup via context->from_string
         // Fall back to context->from_string (handles primitive types by string)
         resolved = _context->from_string(unres_type->type_id());
     }
-    if (!resolved || !type::is_resolved(resolved)) {
+    if ((!resolved || !type::is_resolved(resolved)) && !unres_type->get_definition_namespace()) {
         // Fall back to imported aggregates
         // Step 5c: Imported aggregate lookup (get_or_create_imported_aggregate)
         auto imported_agg = _unit.get_or_create_imported_aggregate(
@@ -407,7 +407,7 @@ void type_reference_resolver::resolve_variable_type(
             resolved = imported_agg->get_struct_type();
         }
     }
-    if (!resolved || !type::is_resolved(resolved)) {
+    if ((!resolved || !type::is_resolved(resolved)) && !unres_type->get_definition_namespace()) {
         // Fall back to imported enums
         // Step 5d: Imported enum lookup (get_or_create_imported_enum)
         auto imported_en = _unit.get_or_create_imported_enum(
@@ -416,7 +416,7 @@ void type_reference_resolver::resolve_variable_type(
             resolved = imported_en->get_enum_type();
         }
     }
-    if (!resolved || !type::is_resolved(resolved)) {
+    if ((!resolved || !type::is_resolved(resolved)) && !unres_type->get_definition_namespace()) {
         // Step 5e: Union type lookup (search all namespaces for a union with this name)
         auto type_name = unres_type->type_id();
         std::vector<std::string> parts;
@@ -1369,4 +1369,3 @@ void type_reference_resolver::validate_sized_array_variable(var_init_context& ct
 
 
 } // namespace k::model::gen
-

@@ -1952,6 +1952,11 @@ std::shared_ptr<type> context::resolve_type_uncollapsed(const std::shared_ptr<ty
             if (unres->has_template_args()) {
                 return nullptr;
             }
+            if (unres->get_definition_namespace()) {
+                // Imported template references require lexical lookup, not the
+                // context's short-name registry.
+                return nullptr;
+            }
             auto resolved_type = from_string(unres->type_id().to_string());
             // If from_string returned a struct_type, accept it even if its LLVM type is not
             // yet generated: resolve_struct_type will handle the LLVM materialisation

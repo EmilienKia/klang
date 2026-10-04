@@ -64,6 +64,43 @@ std::shared_ptr<aggregate> scope_lookup::lookup_imported_lexical_aggregate(
     return {};
 }
 
+namespace {
+
+/** Navigate from @p from through the leading parts of @p name (all but the last). */
+std::shared_ptr<const element> navigate_scope(const std::shared_ptr<const element>& from,
+                                              const k::name& name) {
+    std::shared_ptr<const element> current = from;
+    for (std::size_t i = 0; i + 1 < name.size() && current; ++i) {
+        std::shared_ptr<const element> next;
+        if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
+            next = nspc->get_child_namespace(name[i]);
+        }
+        if (!next) {
+            if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
+                next = ah->get_aggregate(name[i]);
+            }
+        }
+        current = next;
+    }
+    return current;
+}
+
+} // anonymous namespace
+
+bool scope_lookup::is_definition_namespace_boundary(const element& scope) {
+    auto current = dynamic_cast<const ns*>(&scope);
+    auto parent = current ? current->parent<ns>() : nullptr;
+    return parent && parent->is_root()
+        && current->get_name().without_back() != parent->get_name();
+}
+
+bool scope_lookup::is_imported_definition_context(const element& context) {
+    for (auto current = context.shared_as<const element>(); current; current = current->parent<element>()) {
+        if (is_definition_namespace_boundary(*current)) return true;
+    }
+    return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // scope_lookup — visibility helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -442,6 +479,20 @@ scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string&
                 append_unique_simple(fn);
             }
         }
+        if (auto uh = std::dynamic_pointer_cast<using_holder>(current)) {
+            auto root = root_namespace(*current);
+            auto owner = root ? root->parent<unit>() : nullptr;
+            if (owner) {
+                for (const auto& directive : uh->get_using_directives()) {
+                    if (!directive.is_namespace() || directive.has_alias()) continue;
+                    auto target = resolve_using_target(directive.target_name, *owner);
+                    if (auto holder = std::dynamic_pointer_cast<const function_holder>(target)) {
+                        for (const auto& fn : holder->get_functions(name)) append_unique_simple(fn);
+                    }
+                }
+            }
+        }
+        if (is_definition_namespace_boundary(*current)) break;
     }
     return result;
 }
@@ -525,7 +576,7 @@ scope_lookup::lookup_union(std::shared_ptr<element> elem, const std::string& nam
     if (sep != std::string::npos) {
         // Qualified: walk from root namespace
         std::vector<std::string> parts;
-        std::size_t pos = 0;
+        std::size_t pos = name.starts_with("::") ? 2 : 0;
         while (true) {
             auto s = name.find("::", pos);
             if (s == std::string::npos) { parts.push_back(name.substr(pos)); break; }
@@ -535,6 +586,11 @@ scope_lookup::lookup_union(std::shared_ptr<element> elem, const std::string& nam
         // Traverse from root
         auto root = root_namespace(*elem);
         if (!root) return {};
+        const auto module = root->get_name().without_root_prefix();
+        if (parts.size() > module.size() && std::equal(
+                module.parts().begin(), module.parts().end(), parts.begin())) {
+            parts.erase(parts.begin(), parts.begin() + module.size());
+        }
         std::shared_ptr<element> current = root;
         for (size_t i = 0; i + 1 < parts.size(); ++i) {
             bool stepped = false;
@@ -556,32 +612,22 @@ scope_lookup::lookup_union(std::shared_ptr<element> elem, const std::string& nam
         if (auto uh = std::dynamic_pointer_cast<union_holder>(current)) {
             if (auto un = uh->get_union(name)) return un;
         }
+        if (auto holder = std::dynamic_pointer_cast<using_holder>(current)) {
+            if (auto owner = current->ancestor<unit>()) {
+                for (const auto& directive : holder->get_using_directives()) {
+                    if (!directive.is_namespace() || directive.has_alias()) continue;
+                    if (auto target = resolve_using_target(directive.target_name, *owner)) {
+                        if (auto unions = std::dynamic_pointer_cast<const union_holder>(target)) {
+                            if (auto un = unions->get_union(name)) return un;
+                        }
+                    }
+                }
+            }
+        }
+        if (is_definition_namespace_boundary(*current)) break;
     }
     return {};
 }
-
-namespace {
-
-/** Navigate from @p from through the leading parts of @p name (all but the last). */
-std::shared_ptr<const element> navigate_scope(const std::shared_ptr<const element>& from,
-                                              const k::name& name) {
-    std::shared_ptr<const element> current = from;
-    for (std::size_t i = 0; i + 1 < name.size() && current; ++i) {
-        std::shared_ptr<const element> next;
-        if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
-            next = nspc->get_child_namespace(name[i]);
-        }
-        if (!next) {
-            if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
-                next = ah->get_aggregate(name[i]);
-            }
-        }
-        current = next;
-    }
-    return current;
-}
-
-} // anonymous namespace
 
 std::shared_ptr<alias_definition>
 scope_lookup::lookup_alias(std::shared_ptr<const element> elem, const k::name& name) {
@@ -590,8 +636,13 @@ scope_lookup::lookup_alias(std::shared_ptr<const element> elem, const k::name& n
     if (name.has_root_prefix()) {
         auto root = root_namespace(*elem);
         if (!root) return {};
+        auto relative = name.without_root_prefix();
+        auto module = root->get_name().without_root_prefix();
+        if (relative.size() > module.size() && relative.start_with(module)) {
+            relative = relative.without_front(module.size());
+        }
         auto scope = navigate_scope(std::static_pointer_cast<const element>(root),
-                                    name.without_root_prefix());
+                                    relative);
         if (auto ah = std::dynamic_pointer_cast<const alias_holder>(scope)) {
             return ah->get_alias(name.back());
         }
@@ -610,6 +661,29 @@ scope_lookup::lookup_alias(std::shared_ptr<const element> elem, const k::name& n
                 }
             }
         }
+        if (name.size() == 1) {
+            if (auto holder = std::dynamic_pointer_cast<const aggregate_holder>(current);
+                holder && holder->get_aggregate(name.front())) return {};
+            if (auto holder = std::dynamic_pointer_cast<const enum_holder>(current);
+                holder && holder->get_enum(name.front())) return {};
+            if (auto holder = std::dynamic_pointer_cast<const union_holder>(current);
+                holder && holder->get_union(name.front())) return {};
+        }
+        if (auto holder = std::dynamic_pointer_cast<const using_holder>(current)) {
+            auto root = root_namespace(*current);
+            auto owner = root ? root->parent<unit>() : nullptr;
+            if (owner) {
+                for (const auto& directive : holder->get_using_directives()) {
+                    if (!directive.is_namespace() || directive.has_alias()) continue;
+                    auto target = resolve_using_target(directive.target_name, *owner);
+                    auto scope = navigate_scope(target, name);
+                    if (auto aliases = std::dynamic_pointer_cast<const alias_holder>(scope)) {
+                        if (auto alias = aliases->get_alias(name.back())) return alias;
+                    }
+                }
+            }
+        }
+        if (is_definition_namespace_boundary(*current)) break;
     }
     return {};
 }
@@ -695,6 +769,52 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
     alias->_resolved = true;
     return alias->get_declared_type();
 }
+
+namespace {
+
+bool contains_template_parameter(const std::shared_ptr<type>& t,
+                                 const element& scope,
+                                 const std::shared_ptr<context>& ctx) {
+    if (!t) return false;
+    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (unres->is_template_param_placeholder()
+            || (unres->type_id().size() == 1 && !unres->type_id().has_root_prefix()
+                && is_enclosing_template_param_name(scope, unres->type_id().back()))) {
+            return true;
+        }
+        const auto& model_args = unres->get_model_template_args();
+        const auto& ast_args = unres->get_ast_template_args();
+        for (std::size_t i = 0; i < ast_args.size(); ++i) {
+            auto arg = i < model_args.size() ? model_args[i] : nullptr;
+            if (!arg && ast_args[i] && ast_args[i]->is_type() && ast_args[i]->type_arg) {
+                arg = ctx->from_type_specifier(*ast_args[i]->type_arg);
+            }
+            if (contains_template_parameter(arg, scope, ctx)) return true;
+        }
+        return false;
+    }
+    if (auto callable = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (contains_template_parameter(callable->get_return_type(), scope, ctx)) return true;
+        for (const auto& param : callable->parameter_types()) {
+            if (contains_template_parameter(param, scope, ctx)) return true;
+        }
+        for (const auto& thrown : callable->get_throws()) {
+            if (contains_template_parameter(thrown, scope, ctx)) return true;
+        }
+    }
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(t)) {
+        if (contains_template_parameter(callable->get_return_type(), scope, ctx)) return true;
+        for (const auto& param : callable->get_parameter_types()) {
+            if (contains_template_parameter(param, scope, ctx)) return true;
+        }
+        for (const auto& thrown : callable->get_throws()) {
+            if (contains_template_parameter(thrown, scope, ctx)) return true;
+        }
+    }
+    return contains_template_parameter(t->get_subtype(), scope, ctx);
+}
+
+} // anonymous namespace
 
 std::shared_ptr<type> scope_lookup::resolve_alias_template(
     const std::shared_ptr<alias_definition>& alias,
@@ -784,10 +904,17 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
             }
         }
 
-        if (auto res_arg = resolve_chain(arg_type, context_elem)) {
+        const auto declaration_scope = alias->parent<element>();
+        const element& argument_scope = i < given || !declaration_scope
+            ? context_elem : *declaration_scope;
+        // Definition signatures can still contain symbolic caller arguments
+        // (Consumer<const T&>, Completion<Result<T>>). Do not expand the alias
+        // or bind those parameters to same-named concrete declarations yet.
+        if (contains_template_parameter(arg_type, argument_scope, ctx)) return {};
+        if (auto res_arg = resolve_chain(arg_type, argument_scope)) {
             arg_type = res_arg;
         }
-        if (!arg_type) {
+        if (!arg_type || type::contains_unresolved(arg_type)) {
             report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH),
                          "Template argument for parameter '{}' of parameterised {} '{}' could not be resolved",
                          {param.name, kind, alias->get_short_name()});
@@ -808,18 +935,14 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
     }
 
     auto substituted = substitute_type(target, subst);
-    if (auto res_sub = resolve_chain(substituted, context_elem)) {
+    auto declaration_scope = alias->parent<element>();
+    if (auto res_sub = resolve_chain(substituted, declaration_scope ? *declaration_scope : context_elem)) {
         substituted = res_sub;
     }
-    if (substituted && !type::is_resolved(substituted)) {
-        if (auto retry = ctx->resolve_type(substituted)) {
-            if (type::is_resolved(retry)) substituted = retry;
-        }
-    }
-    if (!substituted) {
+    if (!substituted || (!type::is_resolved(substituted) && type::contains_unresolved(substituted))) {
         report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_TARGET_UNRESOLVED),
-                     "The renamed type of parameterised {} '{}' could not be resolved with the given arguments",
-                     {kind, alias->get_short_name()});
+                     "The renamed type '{}' of parameterised {} '{}' could not be resolved in its declaration scope",
+                     {substituted ? substituted->to_string() : "<none>", kind, alias->get_fq_name()});
     }
 
     // A soft alias is transparent: the substituted type is the answer. A strong

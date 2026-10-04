@@ -953,6 +953,7 @@ static json to_json(const kdi_alias& al) {
     if (al.is_template) {
         obj["is_template"] = true;
         if (!al.source.empty()) obj["source"] = al.source;
+        if (!al.origin_module.empty()) obj["origin_module"] = al.origin_module;
         if (!al.params.empty()) {
             json ps = json::array();
             for (auto& p : al.params) ps.push_back(to_json(p));
@@ -973,6 +974,7 @@ static kdi_alias from_json_alias(const json& j) {
     if (j.contains("target_fq_name")) al.target_fq_name = j.at("target_fq_name").get<std::string>();
     al.is_template = j.value("is_template", false);
     al.source      = j.value("source", std::string{});
+    al.origin_module = j.value("origin_module", std::string{});
     for (auto& p : j.value("params", json::array()))
         al.params.push_back(from_json_template_param(p));
     if (j.contains("doc")) al.doc = from_json_doc_block(j.at("doc"));

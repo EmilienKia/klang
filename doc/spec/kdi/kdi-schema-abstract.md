@@ -193,6 +193,7 @@ KdiAlias {
   is_template    : bool            -- true for a parameterised alias
   params         : [KdiTemplateParam]  -- parameterised alias only (informative)
   source         : string          -- raw K source of a parameterised alias
+  origin_module  : string?         -- original lexical namespace, parameterised alias only
   doc            : KdiDocBlock?
 }
 ```
@@ -206,6 +207,14 @@ Notes:
   placeholders, so it is round-tripped as raw K source text in `source` — like a
   `KdiTemplateDef` — and re-parsed by the importing compiler. `target_type` and
   `target_fq_name` are then unset.
+* Parameterised aliases must retain their declaration namespace across import
+  and re-export. `origin_module`, when present, identifies that namespace without
+  a leading `::`; otherwise it is the namespace part of `fq_name`.
+  Explicit arguments resolve at the use site, but defaults and non-parameter
+  names in the substituted target resolve in the declaration scope.
+  Qualified and unqualified uses of one alias specialization must yield the
+  same canonical type. Imported aliases must not be replaced by duplicated
+  aggregate or callable definitions.
 * A `typedef` never changes the mangling of a symbol: mangled names always use
   the fully resolved (alias-free) type.
 
@@ -254,11 +263,13 @@ KdiTemplateDef {
   entity_kind  : "struct" | "class" | "interface" | "function"
   visibility   : "public" | "protected"
   is_generic   : bool?                 -- true for `generic<...>` declarations
+  origin_module: string?               -- original lexical namespace, when different
+  host_fq_name : string?               -- hosting aggregate for a member template
   params       : [KdiTemplateParam]
-  source       : string                -- full source for classic templates
-                                       -- MUST be empty for generic definitions
+  source       : string                -- full source for classic templates and
+                                       -- source-backed generic functions
   aggregate_signature : KdiAggregate?  -- declaration-only aggregate signature
-  function_signature  : KdiFunction?   -- declaration-only free-function signature
+  function_signature  : KdiFunction?   -- declaration-only function or method signature
 }
 ```
 
@@ -272,6 +283,12 @@ Rules:
   same way as a regular (non-template) aggregate/function, with
   template-parameter-dependent types tagged as `template_param` /
   `generic_ref` instead of only a raw source dump.
+
+* Re-parsed templates retain the original namespace identified by
+  `origin_module` (or their declaring namespace when it is absent). Import
+  lookup exposes them without flattening their declarations into the consumer
+  root. Non-parameter names in signatures, callable components, and bodies
+  resolve lexically in that namespace.
 * `generic<...>` **aggregate** definitions export `is_generic = true`, MUST leave `source`
   empty and MUST provide `aggregate_signature`. The single erased synthesis of the aggregate
   is exported as a regular `KdiAggregate` (layout, mangled names, methods) whose types use
@@ -296,6 +313,11 @@ Rules:
 * `generic<...>` **function** definitions export `is_generic = true` and keep their `source`
   (the importing module re-synthesises the single erased body); `function_signature` is only
   provided as a fallback when no source is available.
+* A signature-only `generic<...>` definition MUST leave `source` empty and
+  provide exactly one applicable signature field. Aggregate definitions use
+  `aggregate_signature`; free functions and generic member methods use
+  `function_signature`. A generic member method also sets `host_fq_name` and is
+  imported as a method of that host.
 * Union templates are always classic (no signature payload exists for unions);
   they only ever export `source`.
 KdiAggregate {

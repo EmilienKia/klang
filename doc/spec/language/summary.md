@@ -1664,6 +1664,11 @@ Trailing arguments with defaults may be omitted.
 
 Instantiation occurs lazily (on first use). Concrete entities are placed in the same scope
 as the template definition.
+Imported definitions retain their original lexical namespace and canonical type identity.
+Non-parameter types, including nested callable components and alias targets, resolve in
+the declaration scope. Explicit arguments resolve at the use site; defaults resolve in
+the declaration scope. Consumer declarations with the same short names do not replace
+definition-scope types.
 
 ### 25.5 Type Constraints
 

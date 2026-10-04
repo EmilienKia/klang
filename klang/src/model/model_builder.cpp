@@ -69,10 +69,45 @@ namespace k::model {
 
     void model_builder::visit_member(k::log::logger& logger, std::shared_ptr<k::model::context> context,
                                       k::parse::ast::function_decl& src, k::model::unit& unit,
-                                      std::shared_ptr<aggregate> host, visibility vis) {
+                                      std::shared_ptr<aggregate> host, visibility vis,
+                                      const std::shared_ptr<ns>& definition_namespace) {
         model_builder visitor(logger, context, unit);
+        visitor._building_imported_declarations = static_cast<bool>(definition_namespace);
+        visitor._imported_definition_namespace = definition_namespace;
         stack<struct_context> push(visitor._contexts, std::move(host), vis);
         visitor.visit_function_decl(src);
+    }
+
+    void model_builder::visit_imported_declarations(k::log::logger& logger,
+        std::shared_ptr<k::model::context> context, k::parse::ast::unit& src,
+        k::model::unit& unit, const std::shared_ptr<ns>& declaration_scope) {
+        model_builder visitor(logger, context, unit);
+        visitor._building_imported_declarations = true;
+        visitor._imported_definition_namespace = declaration_scope;
+        stack<ns_context> push(visitor._contexts, declaration_scope);
+        for (auto& decl : src.declarations) {
+            visitor._current_ast_decl = decl;
+            decl->visit(visitor);
+            visitor._current_ast_decl.reset();
+        }
+    }
+
+    std::shared_ptr<type> model_builder::from_type_specifier(const parse::ast::type_specifier& spec) {
+        auto result = _context->from_type_specifier(spec);
+        if (!_building_imported_declarations) return result;
+        auto scope = _imported_definition_namespace;
+        if (!scope) {
+            auto current = current_context_content<element>();
+            while (current) {
+                if (auto namespace_scope = std::dynamic_pointer_cast<ns>(current)) {
+                    scope = std::move(namespace_scope);
+                    break;
+                }
+                current = current->parent<element>();
+            }
+        }
+        set_type_definition_namespace(result, scope);
+        return result;
     }
 
     void model_builder::visit_unit(parse::ast::unit &unit) {
@@ -366,10 +401,10 @@ namespace k::model {
                     desc.kind = model::template_param_kind::TYPENAME;
                 }
                 if (tp->constraint_type) {
-                    desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
+                    desc.constraint_type = from_type_specifier(*tp->constraint_type);
                 }
                 if (tp->default_type_spec) {
-                    desc.default_type = _context->from_type_specifier(*tp->default_type_spec);
+                    desc.default_type = from_type_specifier(*tp->default_type_spec);
                 }
                 ti->params.push_back(std::move(desc));
             }
@@ -432,7 +467,7 @@ namespace k::model {
                 {decl.is_strong ? "Typedef" : "Alias", alias_name,
                  decl.is_strong ? "a type" : "a type or a symbol"});
         }
-        alias->_target_type = _context->from_type_specifier(*decl.type);
+        alias->_target_type = from_type_specifier(*decl.type);
         if (tpl_scope_pushed) {
             _context->pop_template_param_scope();
         }
@@ -670,18 +705,18 @@ namespace k::model {
                     desc.is_pack = tp->is_pack;
                     // Store constraint type if present (e.g. class T : Base)
                     if (tp->constraint_type) {
-                        desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
+                        desc.constraint_type = from_type_specifier(*tp->constraint_type);
                     }
                     // Store default type if present (e.g. typename T = int)
                     if (tp->default_type_spec) {
-                        desc.default_type = _context->from_type_specifier(*tp->default_type_spec);
+                        desc.default_type = from_type_specifier(*tp->default_type_spec);
                     }
                 } else {
                     // Value parameter
                     desc.kind = template_param_kind::VALUE;
                     // Store value type (e.g. N : unsigned int)
                     if (tp->value_type) {
-                        desc.value_type = _context->from_type_specifier(*tp->value_type);
+                        desc.value_type = from_type_specifier(*tp->value_type);
                     }
                     // Evaluate default value expression if present.
                     if (tp->default_expr) {
@@ -812,15 +847,15 @@ namespace k::model {
                     }
                     desc.is_pack = tp->is_pack;
                     if (tp->constraint_type) {
-                        desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
+                        desc.constraint_type = from_type_specifier(*tp->constraint_type);
                     }
                     if (tp->default_type_spec) {
-                        desc.default_type = _context->from_type_specifier(*tp->default_type_spec);
+                        desc.default_type = from_type_specifier(*tp->default_type_spec);
                     }
                 } else {
                     desc.kind = template_param_kind::VALUE;
                     if (tp->value_type) {
-                        desc.value_type = _context->from_type_specifier(*tp->value_type);
+                        desc.value_type = from_type_specifier(*tp->value_type);
                     }
                     if (tp->default_expr) {
                         desc.default_value_expr = tp->default_expr;
@@ -858,7 +893,7 @@ namespace k::model {
             }
 
             // Check for drain addresser ('#') — forbidden on union alternatives
-            auto alt_type = _context->from_type_specifier(*var_decl->type);
+            auto alt_type = from_type_specifier(*var_decl->type);
             if (alt_type && type::is_drain(alt_type)) {
                 throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_DRAIN_ADDRESSER),
                     var_decl->name,
@@ -920,7 +955,7 @@ namespace k::model {
         // immediately (no forward-reference concern), so this can be done eagerly here.
         if (decl.explicit_underlying_type) {
             if (auto kts = std::dynamic_pointer_cast<parse::ast::keyword_type_specifier>(decl.explicit_underlying_type)) {
-                auto resolved = _context->from_type_specifier(*kts);
+                auto resolved = from_type_specifier(*kts);
                 if (auto prim = std::dynamic_pointer_cast<model::primitive_type>(resolved)) {
                     en->set_explicit_underlying_type(prim);
                 }
@@ -1024,7 +1059,7 @@ namespace k::model {
                 }
             }
         }
-        auto var_type = _context->from_type_specifier(*decl.type);
+        auto var_type = from_type_specifier(*decl.type);
         // Normalize: if the type itself is const-qualified (e.g. "var : const T"),
         // strip the const from the type and promote it to the is_const flag.
         // This makes "const var : T", "var : const T", and "const var : const T" semantically identical.
@@ -1332,17 +1367,17 @@ namespace k::model {
                     desc.is_pack = tp->is_pack;
                     // Store constraint type if present (e.g. class T : Base)
                     if (tp->constraint_type) {
-                        desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
+                        desc.constraint_type = from_type_specifier(*tp->constraint_type);
                     }
                     // Store default type if present (e.g. typename T = int)
                     if (tp->default_type_spec) {
-                        desc.default_type = _context->from_type_specifier(*tp->default_type_spec);
+                        desc.default_type = from_type_specifier(*tp->default_type_spec);
                     }
                 } else {
                     desc.kind = template_param_kind::VALUE;
                     // Store value type (e.g. N : unsigned int)
                     if (tp->value_type) {
-                        desc.value_type = _context->from_type_specifier(*tp->value_type);
+                        desc.value_type = from_type_specifier(*tp->value_type);
                     }
                     // Evaluate default value expression if present.
                     if (tp->default_expr) {
@@ -1698,7 +1733,7 @@ namespace k::model {
             } else if(std::dynamic_pointer_cast<static_destructor>(function)) {
                 throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STATIC_DTOR_HAS_RETURN_TYPE), func.name, "Static destructor '~{}' must not have a return type; static destructors are void by definition", {std::string{func.name.content}});
             } else {
-                function->set_return_type(_context->from_type_specifier(*func.type));
+                function->set_return_type(from_type_specifier(*func.type));
                 function->set_has_explicit_return_type(true);
             }
         } else {
@@ -1729,7 +1764,7 @@ namespace k::model {
 
         for(auto param : func.params) {
             bool param_is_const = lex::keyword::has(param->specifiers, lex::keyword::CONST);
-            auto param_type = _context->from_type_specifier(*(param->type));
+            auto param_type = from_type_specifier(*(param->type));
             // Normalize: if the type itself is const-qualified (e.g. "n : const T"),
             // strip the const from the type and promote it to param_is_const.
             // Makes "const n : T", "n : const T" and "const n : const T" semantically identical.
@@ -2023,7 +2058,7 @@ namespace k::model {
             std::string var_name = std::string{clause->var_name.content};
             auto var = catch_model->append_variable(var_name, false);
             if(var && clause->var_type) {
-                var->set_type(_context->from_type_specifier(*clause->var_type));
+                var->set_type(from_type_specifier(*clause->var_type));
             }
             catch_model->set_exception_var(std::dynamic_pointer_cast<model::variable_statement>(var));
 
@@ -2284,7 +2319,7 @@ namespace k::model {
             var_stmt->set_ast_variable_decl(stmt.decl_expr);
         }
 
-        auto var_type = _context->from_type_specifier(*decl.type);
+        auto var_type = from_type_specifier(*decl.type);
         // Normalize: if the type itself is const-qualified, strip the const from the
         // type and promote it to the is_const flag (same normalization as visit_variable_decl).
         if (type::is_const(var_type)) {
@@ -2505,7 +2540,7 @@ namespace k::model {
     void model_builder::visit_cast_expr(parse::ast::cast_expr& expr) {
         _expr = nullptr;
         expr.expr()->visit(*this);
-        _expr = model::cast_expression::make_shared(_expr, _context->from_type_specifier(*expr.type));
+        _expr = model::cast_expression::make_shared(_expr, from_type_specifier(*expr.type));
         if (_expr) {
             _expr->set_ast_expression(expr.shared_as<parse::ast::cast_expr>());
         }
@@ -2858,7 +2893,7 @@ namespace k::model {
                 }
                 for (const auto& param : expr.params) {
                     if (param && param->type) {
-                        builder.append_parameter_type(_context->from_type_specifier(*param->type));
+                        builder.append_parameter_type(from_type_specifier(*param->type));
                     }
                 }
                 _expr->set_type(builder.build());
@@ -3018,7 +3053,7 @@ namespace k::model {
                 }
                 for (const auto& param : expr.params) {
                     if (param && param->type) {
-                        builder.append_parameter_type(_context->from_type_specifier(*param->type));
+                        builder.append_parameter_type(from_type_specifier(*param->type));
                     }
                 }
                 _expr->set_type(builder.build());
@@ -3029,7 +3064,7 @@ namespace k::model {
 
     void model_builder::visit_new_expr(parse::ast::new_expr& expr) {
         // Resolve the allocated type from the AST type specifier
-        auto alloc_type = _context->from_type_specifier(*expr.type);
+        auto alloc_type = from_type_specifier(*expr.type);
 
         if (expr.is_uniform_array) {
             // ── Uniform array form: new T(args)[N] ──

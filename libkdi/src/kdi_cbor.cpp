@@ -1254,6 +1254,7 @@ cbor_item_t* encode_alias(const kdi_alias& a) {
     if (a.is_template) {
         map_push(m, "is_template", cbor_bool(true));
         if (!a.source.empty()) map_push(m, "source", cbor_str(a.source));
+        if (!a.origin_module.empty()) map_push(m, "origin_module", cbor_str(a.origin_module));
         if (!a.params.empty()) {
             cbor_item_t* params = cbor_new_indefinite_array();
             for (auto& p : a.params) cbor_array_push(params, cbor_move(encode_template_param(p)));
@@ -1275,6 +1276,7 @@ kdi_alias decode_alias(cbor_item_t* item, const std::string& path) {
     if (auto* tn = map_get(item, "target_fq_name"); tn && cbor_isa_string(tn))
         a.target_fq_name = read_string(tn, path + ".target_fq_name");
     a.is_template = opt_bool(item, "is_template");
+    a.origin_module = opt_string(item, "origin_module");
     if (auto* sr = map_get(item, "source"); sr && cbor_isa_string(sr))
         a.source = read_string(sr, path + ".source");
     if (auto* pa = map_get(item, "params"); pa && cbor_isa_array(pa)) {

@@ -103,10 +103,10 @@ symbol_resolver::resolve_symbol_from_root(const name& name) {
     // the module namespace already (it IS the ns named by the module declaration),
     // we just try to enter it if name.front() == the last part of the unit name.
     const auto& unit_name = _unit.get_unit_name(); // k::name, e.g. "the::test"
-    if (!unit_name.empty() && name.front() == unit_name.back()) {
+    if (!unit_name.empty() && (name.start_with(unit_name) || name.front() == unit_name.back())) {
         // The caller wrote ::module_last_part::...  — but actually root_ns IS that
         // namespace, so we continue resolving the rest from root_ns.
-        auto rest = name.without_front();
+        auto rest = name.without_front(name.start_with(unit_name) ? unit_name.size() : 1);
         if (rest.empty()) {
             // ::module_name alone — doesn't resolve to a symbol
             return std::monostate{};
@@ -307,6 +307,9 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
                     return res;
                 }
             }
+            if (nspc->is_root() && name.start_with(_unit.get_unit_name())) {
+                return resolve_symbol_from_root(name);
+            }
         }
 
     } else /*(name.size() == 1)*/ {
@@ -387,7 +390,8 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         if (using_result.index() != 0) return using_result;
     }
 
-    if (auto parent_elem = elem.parent<element>()) {
+    if (auto parent_elem = scope_lookup::is_definition_namespace_boundary(elem)
+            ? _unit.shared_as<element>() : elem.parent<element>()) {
         // Try to find the symbol in the parent element context
         return resolve_symbol(*parent_elem, name);
     } else {

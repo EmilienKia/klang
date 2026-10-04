@@ -20,6 +20,7 @@
 #include "model_fwd.hpp"
 #include "constant_value.hpp"
 #include "symbol_reference.hpp"
+#include <algorithm>
 namespace k::model {
 /**
  * Base class for all language construction.
@@ -395,6 +396,9 @@ public:
     virtual std::shared_ptr<function> get_function(const std::string& name) const;
     /** Return ALL functions matching name (for overload resolution). */
     virtual std::vector<std::shared_ptr<function>> get_functions(const std::string& name) const;
+    void add_function_reference(const std::shared_ptr<function>& fn) {
+        if (fn && std::find(_functions.begin(), _functions.end(), fn) == _functions.end()) _functions.push_back(fn);
+    }
 
     std::vector<std::shared_ptr<function>> functions() {return _functions;}
 
@@ -449,6 +453,9 @@ protected:
 
 public:
     const std::map<std::string, std::shared_ptr<aggregate>>& aggregates() const {return _structs;}
+    void add_aggregate_reference(const std::string& name, const std::shared_ptr<aggregate>& agg) {
+        if (agg) _structs.try_emplace(name, agg);
+    }
 };
 
 
@@ -462,6 +469,9 @@ public:
     virtual std::shared_ptr<enumeration> get_enum(const std::string& name) const;
 
     const std::map<std::string, std::shared_ptr<enumeration>>& enums() const { return _enums; }
+    void add_enum_reference(const std::string& name, const std::shared_ptr<enumeration>& en) {
+        if (en) _enums.try_emplace(name, en);
+    }
 
 protected:
     /** Map of all defined enumerations. */

@@ -107,6 +107,9 @@ protected:
     }
 
     std::shared_ptr<k::model::context> _context;
+    bool _building_imported_declarations = false;
+    std::shared_ptr<ns> _imported_definition_namespace;
+    std::shared_ptr<type> from_type_specifier(const parse::ast::type_specifier& spec);
 
     /** Stack of contexts. */
     std::vector<std::shared_ptr<context>> _contexts;
@@ -203,9 +206,13 @@ protected:
 
 public:
     static void visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit);
+    static void visit_imported_declarations(k::log::logger& logger,
+        std::shared_ptr<k::model::context> context, k::parse::ast::unit& src,
+        k::model::unit& unit, const std::shared_ptr<ns>& declaration_scope);
     static void visit_member(k::log::logger& logger, std::shared_ptr<k::model::context> context,
                              k::parse::ast::function_decl& src, k::model::unit& unit,
-                             std::shared_ptr<aggregate> host, visibility vis);
+                             std::shared_ptr<aggregate> host, visibility vis,
+                             const std::shared_ptr<ns>& definition_namespace = {});
 
 
 };

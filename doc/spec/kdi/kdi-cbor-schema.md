@@ -133,6 +133,7 @@ Alias = {
   ?"is_template"    : bool,    -- present and true for a parameterised alias
   ?"params"         : array[TemplateParam],  -- parameterised alias only
   ?"source"         : text,    -- raw K source, parameterised alias only
+  ?"origin_module"  : text,    -- original lexical namespace, parameterised alias only
   ?"doc"            : DocBlock
 }
 ```
@@ -148,6 +149,11 @@ round-tripped as raw K source text in `source`, exactly like a `TemplateDef`,
 and re-parsed by the importing compiler. `target_type` and `target_fq_name` are
 then absent; `params` is informative only (documentation tooling), the compiler
 rebuilds the parameters from `source`.
+`origin_module` preserves the alias's original declaration namespace across
+re-export. When absent, the namespace part of `fq_name` is used. Parameter
+arguments resolve at the use site; defaults and non-parameter target names
+resolve in that declaration namespace. This optional field remains in schema 0.1
+and has the same meaning in JSON.
 
 ---
 

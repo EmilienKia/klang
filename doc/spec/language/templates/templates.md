@@ -536,6 +536,20 @@ generated in the consumer, even when the host itself is imported. A `default`
 member template retains its interface context; importing it does not permit
 `default` methods in classes or namespaces.
 
+Reconstructed templates retain their original lexical namespace, even though
+their model nodes live in the consumer's compilation unit. Import lookup exposes
+definitions without changing their canonical names or declaration scope.
+Homonymous definitions from different modules remain distinct and can be selected
+by qualification. Non-parameter names in signatures, nested callable types, bodies,
+and alias targets resolve in the definition scope, not against consumer shadows.
+Explicit type arguments resolve at the use site; omitted defaults resolve at the
+declaration site.
+
+Parameterised aliases are exported as alias declarations with their source and
+optional original namespace metadata. They specialize by substituting their target,
+not by generating duplicate aggregates or callables. These declaration and type
+identities are retained on re-export.
+
 ### 8.7 Operator Overloading
 
 Template functions may be operator overloads:

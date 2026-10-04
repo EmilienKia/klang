@@ -59,6 +59,7 @@ namespace gen {
 class kdi_importer;
 
 class context;
+class ns;
 
 class aggregate;
 class structure;
@@ -252,6 +253,7 @@ public:
 class unresolved_type : public type {
 protected:
     name _type_id;
+    std::weak_ptr<ns> _definition_namespace;
 
     std::shared_ptr<type> _resolved;
 
@@ -298,6 +300,8 @@ protected:
 public:
     const name& type_id() const {return _type_id;}
     void set_type_id(const name& n) { _type_id = n; }
+    std::shared_ptr<ns> get_definition_namespace() const { return _definition_namespace.lock(); }
+    void set_definition_namespace(const std::shared_ptr<ns>& scope) { _definition_namespace = scope; }
 
     std::string to_string() const override;
 
@@ -339,7 +343,8 @@ public:
 
     static std::shared_ptr<type> substitute_ast_type_spec(
         const k::parse::ast::type_specifier* spec,
-        const std::unordered_map<std::string, std::shared_ptr<type>>& subst);
+        const std::unordered_map<std::string, std::shared_ptr<type>>& subst,
+        const std::shared_ptr<ns>& definition_namespace = {});
 
     /**
      * Create a clone of this unresolved_type with model-level template arg overrides
@@ -1442,6 +1447,8 @@ using value_substitution_map = std::unordered_map<std::string, value_param_bindi
 
 /** Map from template pack parameter name to a list of concrete types. */
 using pack_substitution_map = std::unordered_map<std::string, std::vector<std::shared_ptr<type>>>;
+
+void set_type_definition_namespace(const std::shared_ptr<type>& t, const std::shared_ptr<ns>& scope);
 
 /**
  * Recursively substitute types through wrapper chains.

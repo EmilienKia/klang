@@ -28,6 +28,302 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
+#include "../src/model/model_builder.hpp"
+
+TEST_CASE("template substitution preserves caller provenance and scopes only fresh declaration references",
+          "[gen][alias][template][type-provenance][regression]") {
+    k::source source{R"K(
+        module k;
+        namespace declaration {
+            struct Error { code: int; }
+            template<typename T, typename E> struct Box {}
+            template<typename T> alias Result: Box<const T&, Error>;
+        }
+        namespace caller {
+            struct Value { value: int; }
+            template<typename T> struct Arguments { value: Value; }
+        }
+    )K"};
+    test_logger logger;
+    k::parse::parser parser(logger, source);
+    auto ast = parser.parse_unit();
+    REQUIRE(ast);
+    auto context = k::model::context::create();
+    auto unit = k::model::unit::create(context);
+    k::model::model_builder::visit(logger, context, *ast, *unit);
+    REQUIRE_FALSE(logger.has_error());
+    auto root = unit->get_root_namespace();
+    auto declaration = root->get_child_namespace("declaration");
+    auto target = std::dynamic_pointer_cast<k::model::unresolved_type>(
+        declaration->get_alias("Result")->get_target_type());
+    REQUIRE(target);
+    CHECK_FALSE(target->get_definition_namespace());
+    target->set_definition_namespace(declaration);
+
+    auto argument = std::dynamic_pointer_cast<k::model::unresolved_type>(
+        root->get_child_namespace("caller")->get_aggregate("Arguments")
+            ->get_variable("value")->get_type());
+    REQUIRE(argument);
+    CHECK_FALSE(argument->is_resolved());
+    auto substituted = target->clone_with_substituted_model_args({{"T", argument}});
+    REQUIRE(substituted);
+    CHECK(substituted->get_definition_namespace() == declaration);
+    REQUIRE(substituted->get_model_template_args().size() == 2);
+    auto wrapped_argument = substituted->get_model_template_args()[0];
+    REQUIRE(k::model::type::is_reference(wrapped_argument));
+    REQUIRE(k::model::type::is_const(wrapped_argument->get_subtype()));
+    CHECK(wrapped_argument->get_subtype()->get_subtype() == argument);
+    CHECK_FALSE(argument->get_definition_namespace());
+    auto error = std::dynamic_pointer_cast<k::model::unresolved_type>(
+        substituted->get_model_template_args()[1]);
+    REQUIRE(error);
+    CHECK(error->get_definition_namespace() == declaration);
+
+    auto caller = root->get_child_namespace("caller");
+    argument->set_definition_namespace(caller);
+    auto repeated = target->clone_with_substituted_model_args({{"T", argument}});
+    REQUIRE(repeated);
+    CHECK(argument->get_definition_namespace() == caller);
+}
+
+TEST_CASE("template alias - functional Consumer stays symbolic until specialization",
+          "[gen][alias][template][callable][symbolic-alias]") {
+    auto compiler = compile_model(R"SRC(
+        module k;
+        struct T { wrong: long; }
+        namespace functional {
+            template<typename T> alias Consumer : *(T);
+            template<typename T> alias Broken : *(DoesNotExist):T;
+        }
+        template<typename T> struct Box { value: T; }
+        template<typename T>
+        struct Collection {
+            visitor: functional::Consumer<const T&>;
+            nestedVisitor: functional::Consumer<const Box<T>&>;
+            forEach(consumer: functional::Consumer<const T&>) {}
+        }
+        template<typename T>
+        consume(consumer: functional::Consumer<const T&>) {}
+        template<typename T>
+        struct Unused { callback: functional::Broken<T>; }
+        struct Uses { values: Collection<int>; }
+        use() { consume<int>(null); }
+    )SRC");
+    REQUIRE(compiler);
+    CHECK(compiler->get_unit()->get_imports().empty());
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto consumerAlias = root->get_child_namespace("functional")->get_alias("Consumer");
+    REQUIRE(consumerAlias);
+    auto consumerTarget = std::dynamic_pointer_cast<k::model::unresolved_callable_type>(
+        consumerAlias->get_target_type());
+    REQUIRE(consumerTarget);
+    REQUIRE(consumerTarget->parameter_types().size() == 1);
+    auto placeholder = std::dynamic_pointer_cast<k::model::unresolved_type>(
+        consumerTarget->parameter_types().front());
+    REQUIRE(placeholder);
+    CHECK(placeholder->is_template_param_placeholder());
+    CHECK_FALSE(placeholder->is_resolved());
+    auto definition = root->get_aggregate("Collection");
+    REQUIRE(definition);
+    CHECK_FALSE(k::model::type::is_resolved(definition->get_variable("visitor")->get_type()));
+    CHECK_FALSE(k::model::type::is_resolved(
+        definition->get_function("forEach")->parameters().front()->get_type()));
+    CHECK_FALSE(k::model::type::is_resolved(
+        root->get_function("consume")->parameters().front()->get_type()));
+    auto uses = root->get_aggregate("Uses");
+    REQUIRE(uses);
+    auto collectionType = std::dynamic_pointer_cast<k::model::struct_type>(
+        uses->get_variable("values")->get_type());
+    REQUIRE(collectionType);
+    auto collection = collectionType->get_struct();
+    REQUIRE(collection);
+    auto visitor = std::dynamic_pointer_cast<k::model::callable_type>(
+        collection->get_variable("visitor")->get_type());
+    REQUIRE(visitor);
+    REQUIRE(visitor->get_parameter_types().size() == 1);
+    auto param = visitor->get_parameter_types().front();
+    REQUIRE(k::model::type::is_reference(param));
+    REQUIRE(k::model::type::is_const(param->get_subtype()));
+    CHECK(param->get_subtype()->get_subtype() ==
+          compiler->get_context_for_test()->from_string("int"));
+    CHECK(k::model::type::are_equal(
+        visitor, collection->get_function("forEach")->parameters().front()->get_type()));
+
+    auto nested = std::dynamic_pointer_cast<k::model::callable_type>(
+        collection->get_variable("nestedVisitor")->get_type());
+    REQUIRE(nested);
+    REQUIRE(nested->get_parameter_types().size() == 1);
+    auto nestedParam = nested->get_parameter_types().front();
+    REQUIRE(k::model::type::is_reference(nestedParam));
+    REQUIRE(k::model::type::is_const(nestedParam->get_subtype()));
+    auto box = std::dynamic_pointer_cast<k::model::struct_type>(
+        nestedParam->get_subtype()->get_subtype());
+    REQUIRE(box);
+    REQUIRE(box->get_struct()->get_tpl_args().size() == 1);
+    CHECK(box->get_struct()->get_tpl_args().front().type_arg ==
+          compiler->get_context_for_test()->from_string("int"));
+}
+
+TEST_CASE("template alias - nested IoCompletion and plain callable aliases retain declaration types",
+          "[gen][alias][template][callable][owner][declaration-scope][symbolic-alias]") {
+    auto compiler = compile_model(R"SRC(
+        module k;
+        template<typename T, typename E>
+        struct Expected { value: T; error: E; }
+        namespace io {
+            struct IoError { code: int; }
+            struct Value { value: int; }
+            alias PlainConsumer : *(const Value&);
+            alias Prototype : (const Value&):Value;
+            alias PlainOwner : !(const Value&):Value;
+            template<typename T> alias PrototypeOf : (const T&):T;
+            template<typename T> alias Owner : !(const T&):T;
+            template<typename T> alias IoResult : Expected<T, IoError>;
+            template<typename T> alias IoCompletion : !(IoResult<T>);
+            template<typename T> struct Carrier { completion: IoCompletion<T>; }
+        }
+        namespace caller {
+            struct T { wrong: long; }
+            struct IoError { wrong: long; }
+            struct Value { wrong: long; }
+            template<typename T> alias IoResult : int;
+            struct Uses {
+                carrier: io::Carrier<Value>;
+                completion: ::k::io::IoCompletion<Value>;
+                consumer: io::PlainConsumer;
+                prototype: io::Prototype*;
+                specializedPrototype: io::PrototypeOf<io::Value>*;
+                owner: io::PlainOwner;
+                specializedOwner: io::Owner<io::Value>;
+            }
+        }
+    )SRC");
+    REQUIRE(compiler);
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto io = root->get_child_namespace("io");
+    auto caller = root->get_child_namespace("caller");
+    REQUIRE(io);
+    REQUIRE(caller);
+    auto uses = caller->get_aggregate("Uses");
+    REQUIRE(uses);
+    auto completion = std::dynamic_pointer_cast<k::model::callable_type>(
+        uses->get_variable("completion")->get_type());
+    REQUIRE(completion);
+    CHECK(completion->is_owner());
+    REQUIRE(completion->get_parameter_types().size() == 1);
+    auto result = std::dynamic_pointer_cast<k::model::struct_type>(
+        completion->get_parameter_types().front());
+    REQUIRE(result);
+    CHECK(result->get_struct()->get_fq_name().starts_with("::k::Expected"));
+    REQUIRE(result->get_struct()->get_tpl_args().size() == 2);
+    CHECK(result->get_struct()->get_tpl_args()[0].type_arg ==
+          caller->get_aggregate("Value")->get_struct_type());
+    CHECK(result->get_struct()->get_tpl_args()[1].type_arg ==
+          io->get_aggregate("IoError")->get_struct_type());
+    auto carrier = std::dynamic_pointer_cast<k::model::struct_type>(
+        uses->get_variable("carrier")->get_type());
+    REQUIRE(carrier);
+    CHECK(k::model::type::are_equal(
+        carrier->get_struct()->get_variable("completion")->get_type(), completion));
+    for (const auto* name : {"consumer", "prototype", "specializedPrototype", "owner", "specializedOwner"}) {
+        auto callable = std::dynamic_pointer_cast<k::model::callable_type>(
+            uses->get_variable(name)->get_type());
+        REQUIRE(callable);
+        REQUIRE(callable->get_parameter_types().size() == 1);
+        auto param = callable->get_parameter_types().front();
+        REQUIRE(k::model::type::is_reference(param));
+        REQUIRE(k::model::type::is_const(param->get_subtype()));
+        CHECK(param->get_subtype()->get_subtype() == io->get_aggregate("Value")->get_struct_type());
+    }
+    CHECK(k::model::type::are_equal(uses->get_variable("owner")->get_type(),
+                                  uses->get_variable("specializedOwner")->get_type()));
+    CHECK(k::model::type::are_equal(uses->get_variable("prototype")->get_type(),
+                                  uses->get_variable("specializedPrototype")->get_type()));
+    auto prototype = std::dynamic_pointer_cast<k::model::callable_type>(
+        io->get_alias("Prototype")->get_target_type());
+    REQUIRE(prototype);
+    CHECK(prototype->is_prototype());
+}
+
+TEST_CASE("template alias - unknown concrete types are not symbolic parameters",
+          "[gen][alias][template][diagnostics][symbolic-alias]") {
+    std::string_view source;
+    auto expectedCode = k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH;
+    SECTION("An unknown argument used by a callable alias fails") {
+        source = R"SRC(
+            module k;
+            template<typename T> alias Consumer : *(T);
+            use(consumer: Consumer<DoesNotExist>) {}
+        )SRC";
+    }
+    SECTION("An unknown argument ignored by the alias body still fails") {
+        source = R"SRC(
+            module k;
+            template<typename T> alias Constant : int;
+            use(value: Constant<DoesNotExist>) {}
+        )SRC";
+    }
+    SECTION("An unknown concrete callable parameter in the alias body fails") {
+        source = R"SRC(
+            module k;
+            template<typename T> alias Broken : *(DoesNotExist):T;
+            use(callback: Broken<int>) {}
+        )SRC";
+        expectedCode = k::diag::alias_diag::ERR_ALIAS_TEMPLATE_TARGET_UNRESOLVED;
+    }
+    auto compiler = k::compiler::create();
+    try {
+        compiler->parse_source("unknown-alias-argument.k", source, true, false);
+        FAIL("Expected an unresolved concrete alias argument diagnostic");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code == static_cast<unsigned int>(expectedCode));
+        CHECK(error.get_diagnostic().message.find("could not be resolved") != std::string::npos);
+    }
+}
+
+TEST_CASE("template alias - declaration types do not bind to use-site shadows",
+          "[gen][alias][template][declaration-scope]") {
+    auto compiler = compile_model(R"SRC(
+        module aliases::declaration_scope;
+        namespace definition {
+            struct Error { code: int; }
+            struct DefaultValue { value: int; }
+            template<typename T, typename E>
+            struct Result { value: T; error: E; }
+            template<typename T = DefaultValue> alias Answer : Result<T, Error>;
+            template<typename T> alias Completion : !(Answer<T>);
+        }
+        namespace consumer {
+            struct Error { wrong: long; }
+            struct DefaultValue { wrong: long; }
+            struct Value { value: int; }
+            struct Uses {
+                result: ::aliases::declaration_scope::definition::Answer<Value>;
+                fallback: definition::Answer<>;
+                callback: definition::Completion<Value>;
+            }
+        }
+    )SRC");
+    REQUIRE(compiler);
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto definition = root->get_child_namespace("definition");
+    auto consumer = root->get_child_namespace("consumer");
+    auto uses = consumer->get_aggregate("Uses");
+    REQUIRE(uses);
+    auto result = std::dynamic_pointer_cast<k::model::struct_type>(uses->get_variable("result")->get_type());
+    auto fallback = std::dynamic_pointer_cast<k::model::struct_type>(uses->get_variable("fallback")->get_type());
+    auto callback = std::dynamic_pointer_cast<k::model::callable_type>(uses->get_variable("callback")->get_type());
+    REQUIRE(result);
+    REQUIRE(fallback);
+    REQUIRE(callback);
+    CHECK(result->get_struct()->get_tpl_args()[0].type_arg == consumer->get_aggregate("Value")->get_struct_type());
+    CHECK(result->get_struct()->get_tpl_args()[1].type_arg == definition->get_aggregate("Error")->get_struct_type());
+    CHECK(fallback->get_struct()->get_tpl_args()[0].type_arg == definition->get_aggregate("DefaultValue")->get_struct_type());
+    REQUIRE(callback->get_parameter_types().size() == 1);
+    CHECK(callback->get_parameter_types()[0] == result);
+}
+
 
 TEST_CASE("template alias — renames a template aggregate", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(

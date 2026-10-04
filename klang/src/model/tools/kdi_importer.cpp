@@ -38,6 +38,36 @@ namespace k::model {
 
 namespace {
 
+std::shared_ptr<ns> imported_namespace(unit& owner, std::string fq_name) {
+    if (fq_name.starts_with("::")) fq_name.erase(0, 2);
+    auto result = owner.get_root_namespace();
+    k::name absolute{true, std::vector<std::string>{}};
+    for (size_t pos = 0; pos < fq_name.size();) {
+        auto end = fq_name.find("::", pos);
+        auto part = fq_name.substr(pos, end == std::string::npos ? end : end - pos);
+        absolute = absolute.with_back(part);
+        result = result->get_child_namespace(part);
+        result->assign_name(absolute);
+        if (end == std::string::npos) break;
+        pos = end + 2;
+    }
+    return result;
+}
+
+void expose_imported_namespace(unit& owner, const std::shared_ptr<ns>& scope) {
+    auto root = owner.get_root_namespace();
+    if (!scope || scope == root) return;
+    auto target = scope->get_name();
+    for (const auto& directive : root->get_using_directives()) {
+        if (directive.is_namespace() && !directive.has_alias()
+            && directive.target_name == target) return;
+    }
+    using_directive directive;
+    directive.filter = using_directive::filter_t::NAMESPACE;
+    directive.target_name = target;
+    root->add_using_directive(std::move(directive));
+}
+
 std::shared_ptr<doc::namespace_doc>
 to_namespace_doc(const std::optional<kdi::kdi_doc_block>& kdoc) {
     if (!kdoc) return nullptr;
@@ -601,21 +631,9 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
 {
     // Ensure the namespace node exists in the model so namespace documentation
     // can be attached even when no symbol is explicitly referenced yet.
-    auto model_ns = _unit.get_root_namespace();
+    auto model_ns = imported_namespace(_unit, ns.fq_name);
     std::string ns_fq = ns.fq_name;
     if (ns_fq.size() >= 2 && ns_fq[0] == ':' && ns_fq[1] == ':') ns_fq = ns_fq.substr(2);
-    if (!ns_fq.empty()) {
-        std::size_t pos = 0;
-        while (true) {
-            auto sep = ns_fq.find("::", pos);
-            std::string part = (sep == std::string::npos) ? ns_fq.substr(pos) : ns_fq.substr(pos, sep - pos);
-            if (!part.empty()) {
-                model_ns = model_ns->get_child_namespace(part);
-            }
-            if (sep == std::string::npos) break;
-            pos = sep + 2;
-        }
-    }
     if (model_ns) {
         if (auto doc = to_namespace_doc(ns.doc)) {
             model_ns->set_documentation(std::move(doc));
@@ -674,11 +692,19 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
     // derived classes that reference them in their llvm_def).
     for (const auto& agg : ns.aggregates) {
         materialise_aggregate(agg, ctx);
+        if (auto imported = _unit.get_or_create_imported_aggregate(
+                model_ns->get_name().with_back(agg.name).without_root_prefix(), ctx)) {
+            model_ns->add_aggregate_reference(agg.name, imported);
+        }
     }
 
     // Pass 2 — enumerations in this namespace
     for (const auto& en : ns.enums) {
         materialise_enum(en, ctx);
+        if (auto imported = _unit.get_or_create_imported_enum(
+                model_ns->get_name().with_back(en.name).without_root_prefix(), ctx)) {
+            model_ns->add_enum_reference(en.name, imported);
+        }
     }
 
     // Pass 2a — exported aliases / typedefs in this namespace.
@@ -691,6 +717,7 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
     // Pass 3 — free functions in this namespace
     for (const auto& fn : ns.functions) {
         materialise_function(fn, ctx);
+        model_ns->add_function_reference(_unit.get_or_create_imported_function(&fn, ctx));
     }
 
     // Pass 4 — global / static variables in this namespace
@@ -804,13 +831,6 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
     if (target_ns->get_alias(alias_name)) return; // already materialised
 
     auto root_ns = _unit.get_root_namespace();
-    if (root_ns && root_ns->get_alias(alias_name)) {
-        auto existing = root_ns->get_alias(alias_name);
-        if (target_ns != root_ns && !target_ns->get_alias(alias_name)) {
-            target_ns->add_alias(existing);
-        }
-        return;
-    }
 
     if (al.is_template) {
         // A parameterised alias is round-tripped as source text: re-parse the
@@ -863,7 +883,7 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
     target_ns->add_alias(adef);
 
     // Also populate root namespace and sub-namespace paths
-    if (parts.size() == 2 && root_ns != target_ns) {
+    if (parts.size() == 2 && root_ns != target_ns && !root_ns->get_alias(alias_name)) {
         root_ns->add_alias(adef);
     } else if (parts.size() > 2) {
         auto sub_ns = root_ns;
@@ -871,7 +891,7 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
             if (sub_ns) sub_ns = sub_ns->get_child_namespace(parts[i]);
         }
         if (sub_ns && sub_ns != root_ns && sub_ns != target_ns) {
-            sub_ns->add_alias(adef);
+            if (!sub_ns->get_alias(alias_name)) sub_ns->add_alias(adef);
         }
     }
 }
@@ -880,27 +900,9 @@ void kdi_importer::materialise_template_alias(const kdi::kdi_alias& al,
                                               const std::vector<std::string>& parts,
                                               std::shared_ptr<context> ctx)
 {
-    if (al.source.empty()) return;
-
-    auto root_ns = _unit.get_root_namespace();
-    if (root_ns && root_ns->get_alias(al.name)) {
-        auto adef = root_ns->get_alias(al.name);
-        auto target_ns = root_ns;
-        for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
-            if (target_ns) target_ns = target_ns->get_child_namespace(parts[i]);
-        }
-        if (target_ns && target_ns != root_ns && !target_ns->get_alias(al.name)) {
-            target_ns->add_alias(adef);
-        }
-        if (parts.size() > 2) {
-            auto sub_ns = root_ns;
-            for (std::size_t i = 1; i + 1 < parts.size(); ++i) {
-                if (sub_ns) sub_ns = sub_ns->get_child_namespace(parts[i]);
-            }
-            if (sub_ns && sub_ns != root_ns && sub_ns != target_ns && !sub_ns->get_alias(al.name)) {
-                sub_ns->add_alias(adef);
-            }
-        }
+    if (al.source.empty()) {
+        _logger.error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_TEMPLATE_REPARSE_FAILED),
+            "Imported parameterised alias '{0}' has no stored declaration source", {al.fq_name});
         return;
     }
 
@@ -910,16 +912,18 @@ void kdi_importer::materialise_template_alias(const kdi::kdi_alias& al,
         if (!ns_fq.empty()) ns_fq += "::";
         ns_fq += parts[i];
     }
+    const auto origin = al.origin_module.empty() ? ns_fq : al.origin_module;
+    auto definition_scope = imported_namespace(_unit, origin);
+    auto target_ns = imported_namespace(_unit, ns_fq);
+    if (auto existing = definition_scope->get_alias(al.name)) {
+        if (target_ns != definition_scope && !target_ns->get_alias(al.name)) target_ns->add_alias(existing);
+        expose_imported_namespace(_unit, target_ns);
+        return;
+    }
 
     try {
-        // Same module-rename trick as for template definitions: the re-parsed
-        // declaration is homed under the consumer's root namespace so that it
-        // stays reachable unqualified, like every other imported symbol.
-        std::string wrapped_src = ns_fq.empty() ? al.source
-                                                : ("module " + ns_fq + ";\n" + al.source);
-
         // Keep the source alive: lexemes hold string_views into this buffer.
-        auto source_text = std::make_unique<std::string>(std::move(wrapped_src));
+        auto source_text = std::make_unique<std::string>(al.source);
         auto ksrc_ptr = std::make_unique<k::source>(
             std::string_view("lib.k"), std::string_view(*source_text));
         auto& ksrc = *ksrc_ptr;
@@ -937,35 +941,19 @@ void kdi_importer::materialise_template_alias(const kdi::kdi_alias& al,
             return;
         }
 
-        auto saved_name = _unit.get_unit_name();
-        k::model::model_builder::visit(_logger, ctx, *ast_unit, _unit);
-        _unit.set_unit_name(saved_name);
+        k::model::model_builder::visit_imported_declarations(
+            _logger, ctx, *ast_unit, _unit, definition_scope);
 
-        root_ns = _unit.get_root_namespace();
-        auto adef = root_ns ? root_ns->get_alias(al.name) : nullptr;
+        auto adef = definition_scope->get_alias(al.name);
         if (adef) {
             adef->set_imported(true);
             adef->set_visibility(al.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
-
-            // Register in the full qualified namespace (e.g. k::functional)
-            auto target_ns = root_ns;
-            for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
-                if (target_ns) target_ns = target_ns->get_child_namespace(parts[i]);
-            }
-            if (target_ns && target_ns != root_ns) {
-                target_ns->add_alias(adef);
-            }
-
-            // Register in the sub-namespace (e.g. functional)
-            if (parts.size() > 2) {
-                auto sub_ns = root_ns;
-                for (std::size_t i = 1; i + 1 < parts.size(); ++i) {
-                    if (sub_ns) sub_ns = sub_ns->get_child_namespace(parts[i]);
-                }
-                if (sub_ns && sub_ns != root_ns && sub_ns != target_ns) {
-                    sub_ns->add_alias(adef);
-                }
-            }
+            if (auto ti = adef->get_tpl_info()) ti->origin_module_ns_fq = origin.starts_with("::") ? origin.substr(2) : origin;
+            if (target_ns != definition_scope) target_ns->add_alias(adef);
+            expose_imported_namespace(_unit, target_ns);
+        } else {
+            _logger.error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_TEMPLATE_REPARSE_FAILED),
+                "Imported parameterised alias '{0}' has no declaration in its stored source", {al.fq_name});
         }
     } catch (const std::exception& ex) {
         _logger.error(
@@ -1235,20 +1223,10 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
          (tdef.function_signature != nullptr && tdef.source.empty()));
 
     if (generic_signature_only) {
-        std::shared_ptr<ns> target_ns = _unit.get_root_namespace();
+        std::shared_ptr<ns> target_ns = imported_namespace(_unit,
+            tdef.origin_module.empty() ? parent_kdi_ns.fq_name : tdef.origin_module);
         const std::string& ns_fq = parent_kdi_ns.fq_name;
-        if (!ns_fq.empty()) {
-            std::size_t pos = 0;
-            while (true) {
-                auto sep = ns_fq.find("::", pos);
-                std::string part = (sep == std::string::npos) ? ns_fq.substr(pos) : ns_fq.substr(pos, sep - pos);
-                if (!part.empty()) {
-                    target_ns = target_ns->get_child_namespace(part);
-                }
-                if (sep == std::string::npos) break;
-                pos = sep + 2;
-            }
-        }
+        expose_imported_namespace(_unit, target_ns);
 
         std::unordered_set<std::string> param_names;
         for (const auto& param : tdef.params) {
@@ -1319,29 +1297,11 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
 
     if (tdef.source.empty()) return;
 
-    // ── 1. Navigate to (or create) the target namespace in the model ────────
-    //    Use the parent KDI namespace's fq_name to place the template.
-    std::shared_ptr<ns> target_ns = _unit.get_root_namespace();
-    {
-        const std::string& ns_fq = parent_kdi_ns.fq_name;
-        if (!ns_fq.empty()) {
-            std::size_t pos = 0;
-            while (true) {
-                auto sep = ns_fq.find("::", pos);
-                std::string part;
-                if (sep == std::string::npos) {
-                    part = ns_fq.substr(pos);
-                } else {
-                    part = ns_fq.substr(pos, sep - pos);
-                }
-                if (!part.empty()) {
-                    target_ns = target_ns->get_child_namespace(part);
-                }
-                if (sep == std::string::npos) break;
-                pos = sep + 2;
-            }
-        }
-    }
+    // Definitions retain lexical ownership; importing a name only adds lookup exposure.
+    std::string origin = tdef.origin_module.empty() ? parent_kdi_ns.fq_name : tdef.origin_module;
+    if (origin.starts_with("::")) origin.erase(0, 2);
+    auto target_ns = imported_namespace(_unit, origin);
+    expose_imported_namespace(_unit, target_ns);
 
     // ── 2. Check if a template with this name already exists ────────────────
     if (!template_host) {
@@ -1358,27 +1318,9 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
 
     // ── 3. Parse the template source text ───────────────────────────────────
     try {
-        // The source is a complete template declaration.  Wrap in a module
-        // declaration matching the parent namespace so model_builder places
-        // the template in the correct namespace.
-        //
-        // NOTE: this `module <ns>` trick renames the root namespace and thus
-        // *flattens* the re-parsed template into the consumer's root namespace.
-        // This is intentional for now: imported top-level symbols (including
-        // function templates) must be reachable *unqualified* from the consumer
-        // (i.e. `import mylib;` behaves like `using namespace mylib;`). Homing the
-        // template under root::<origin> instead would break that unqualified
-        // access. See TODO.md for the deeper origin-aware-homing follow-up.
-        std::string wrapped_src;
-        const std::string& ns_fq = parent_kdi_ns.fq_name;
-        if (!ns_fq.empty()) {
-            wrapped_src = "module " + ns_fq + ";\n" + tdef.source;
-        } else {
-            wrapped_src = tdef.source;
-        }
         // Store the source in the unit so lexer tokens (string_views into the
         // source buffer) remain valid throughout compilation.
-        auto source_text = std::make_unique<std::string>(std::move(wrapped_src));
+        auto source_text = std::make_unique<std::string>(tdef.source);
         auto ksrc_ptr = std::make_unique<k::source>(
             std::string_view("lib.k"), std::string_view(*source_text));
         auto& ksrc = *ksrc_ptr;
@@ -1398,9 +1340,6 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             return;
         }
 
-        // ── 4. Build the parsed declaration into the model ──────────────────
-        //    Save and restore the unit name because model_builder::visit will
-        //    set it from the module declaration in the wrapped source.
         if (template_host) {
             auto fn_decl = std::dynamic_pointer_cast<k::parse::ast::function_decl>(
                 ast_unit->declarations.front());
@@ -1409,20 +1348,15 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             }
             k::model::model_builder::visit_member(
                 _logger, ctx, *fn_decl, _unit, template_host,
-                tdef.visibility == "protected" ? PROTECTED : PUBLIC);
-            return;
+                tdef.visibility == "protected" ? PROTECTED : PUBLIC, target_ns);
         } else {
-            auto saved_name = _unit.get_unit_name();
-            k::model::model_builder::visit(_logger, ctx, *ast_unit, _unit);
-            _unit.set_unit_name(saved_name);
+            // Build declarations without changing the consumer unit or its AST.
+            k::model::model_builder::visit_imported_declarations(
+                _logger, ctx, *ast_unit, _unit, target_ns);
         }
 
         // ── 5. Tag the re-parsed template with its originating module namespace ──
-        //    Imported template definitions are re-homed under the consumer module's
-        //    root namespace (the module-rename trick above), which loses their true
-        //    origin. Record it (normalised, no root prefix) on the template's
-        //    tpl_info so the local instantiator can build an origin-qualified
-        //    registry key and avoid cross-namespace instantiation-identity collisions.
+        //    Keep the origin tag for canonical instantiation keys and re-export.
         {
             // Prefer the template's TRUE origin module when the KDI records it
             // (set for re-exported templates: a lib that imported k::Optional and
@@ -1439,11 +1373,14 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             auto tag = [&origin](tpl_info* ti) {
                 if (ti && ti->origin_module_ns_fq.empty()) ti->origin_module_ns_fq = origin;
             };
-            // The re-parsed template is homed under the consumer root namespace.
-            auto root = _unit.get_root_namespace();
-            if (auto agg = root->get_aggregate(tdef.name))  tag(agg->get_tpl_info());
-            if (auto fn  = root->get_function(tdef.name))   tag(fn->get_tpl_info());
-            if (auto un  = root->get_union(tdef.name))      tag(un->get_tpl_info());
+            if (template_host) {
+                for (auto& fn : template_host->get_functions(tdef.name)) tag(fn->get_tpl_info());
+            } else {
+                if (auto agg = target_ns->get_aggregate(tdef.name)) tag(agg->get_tpl_info());
+                for (auto& fn : target_ns->get_functions(tdef.name)) tag(fn->get_tpl_info());
+                if (auto un = target_ns->get_union(tdef.name)) tag(un->get_tpl_info());
+                if (auto al = target_ns->get_alias(tdef.name)) tag(al->get_tpl_info());
+            }
         }
 
     } catch (const std::exception& ex) {

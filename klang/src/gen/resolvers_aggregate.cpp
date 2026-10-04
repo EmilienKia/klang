@@ -326,9 +326,9 @@ aggregate_type_resolver::resolve_type_from_root(const k::name& name_without_pref
     auto root_ns = _unit.get_root_namespace();
     if (!root_ns) return {};
 
-    const auto& unit_name = _unit.get_unit_name();
-    if (!unit_name.empty() && name_without_prefix.front() == unit_name.back()) {
-        auto rest = name_without_prefix.without_front();
+    const auto unit_name = _unit.get_unit_name().without_root_prefix();
+    if (!unit_name.empty() && name_without_prefix.start_with(unit_name)) {
+        auto rest = name_without_prefix.without_front(unit_name.size());
         if (!rest.empty()) {
             if (auto st = resolve_struct_from(*root_ns, rest)) return st->get_struct_type();
         }
@@ -345,8 +345,8 @@ aggregate_type_resolver::resolve_type_from_root(const k::name& name_without_pref
         // the name with that segment stripped.
         std::vector<k::name> candidates_names;
         candidates_names.push_back(name_without_prefix);
-        if (!unit_name.empty() && name_without_prefix.front() == unit_name.back()) {
-            auto rest = name_without_prefix.without_front();
+        if (!unit_name.empty() && name_without_prefix.start_with(unit_name)) {
+            auto rest = name_without_prefix.without_front(unit_name.size());
             if (!rest.empty()) candidates_names.push_back(rest);
         }
         for (const auto& cand : candidates_names) {
@@ -447,8 +447,21 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             if (st->is_template()) { tpl_agg = st; break; }
             return {};
         }
+        if (auto holder = std::dynamic_pointer_cast<const using_holder>(current)) {
+            for (const auto& directive : holder->get_using_directives()) {
+                if (!directive.is_namespace() || directive.has_alias()) continue;
+                if (auto scope = resolve_using_target(directive.target_name, _unit)) {
+                    if (auto st = resolve_struct_from(*scope, base_name); st && st->is_template()) {
+                        tpl_agg = st;
+                        break;
+                    }
+                }
+            }
+        }
+        if (tpl_agg || scope_lookup::is_definition_namespace_boundary(*current)) break;
     }
-    if (!tpl_agg) {
+    if (!tpl_agg && (!scope_lookup::is_imported_definition_context(context_elem)
+        || base_name.has_root_prefix() || base_name.size() > 1)) {
         auto root_ns = _unit.get_root_namespace();
         if (root_ns) {
             if (auto st = resolve_struct_from(*root_ns, base_name)) {
@@ -461,6 +474,8 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         if (auto root_ns = _unit.get_root_namespace()) {
             for (const auto& imp : _unit.get_imports()) {
                 if (imp.module_name.empty()) continue;
+                if (scope_lookup::is_imported_definition_context(context_elem)
+                    && imp.module_name != k::name{"k"}) continue;
                 auto imported_name = imp.module_name.with_back(base_name.front());
                 if (auto st = resolve_struct_from(*root_ns, imported_name)) {
                     if (st->is_template()) {
@@ -475,36 +490,11 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         for (const auto& imp : _unit.get_imports()) {
             if (imp.module_name.empty()) continue;
             if (!base_name.start_with(imp.module_name)) continue;
-            auto rest = base_name.without_front(imp.module_name.size());
-            if (rest.empty()) continue;
-            if (auto root_ns = _unit.get_root_namespace()) {
-                if (auto st = resolve_struct_from(*root_ns, rest)) {
-                    if (st->is_template()) {
-                        tpl_agg = st;
-                        break;
-                    }
-                }
-            }
-            if (auto imp_st = _unit.get_or_create_imported_aggregate(rest, _context)) {
+            if (auto imp_st = _unit.get_or_create_imported_aggregate(base_name, _context)) {
                 auto st = std::dynamic_pointer_cast<aggregate>(imp_st);
                 if (st && st->is_template()) {
                     tpl_agg = st;
                     break;
-                }
-            }
-            // Imported template definitions with bodies are re-homed (flattened)
-            // directly into the consumer's root namespace under their SHORT name by
-            // the kdi_importer `module <ns>;` re-parse trick (intermediate namespaces
-            // such as `io` are dropped). So when the remainder still carries namespace
-            // components (e.g. [io, FilterInputStream]), also try the bare short name.
-            if (rest.size() > 1) {
-                if (auto root_ns = _unit.get_root_namespace()) {
-                    if (auto st = resolve_struct_from(*root_ns, k::name(false, rest.back()))) {
-                        if (st->is_template()) {
-                            tpl_agg = st;
-                            break;
-                        }
-                    }
                 }
             }
         }
@@ -521,8 +511,9 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     }
                 }
             }
+            if (scope_lookup::is_definition_namespace_boundary(*current)) break;
         }
-        if (!tpl_union) {
+        if (!tpl_union && !scope_lookup::is_imported_definition_context(context_elem)) {
             auto root_ns = _unit.get_root_namespace();
             if (root_ns && base_name.size() == 1) {
                 if (auto un = root_ns->get_union(base_name.front())) {
@@ -530,10 +521,17 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                 }
             }
         }
+        if (!tpl_union) {
+            if (auto un = scope_lookup::lookup_union(
+                    std::const_pointer_cast<element>(context_elem.shared_as<const element>()),
+                    base_name.to_string()); un && un->is_template()) tpl_union = un;
+        }
         if (!tpl_union && base_name.size() == 1) {
             if (auto root_ns = _unit.get_root_namespace()) {
                 for (const auto& imp : _unit.get_imports()) {
                     if (imp.module_name.empty()) continue;
+                    if (scope_lookup::is_imported_definition_context(context_elem)
+                        && imp.module_name != k::name{"k"}) continue;
                     auto imported_ns = root_ns;
                     for (std::size_t i = 0; imported_ns && i < imp.module_name.size(); ++i) {
                         imported_ns = imported_ns->get_child_namespace(imp.module_name[i]);
@@ -1066,17 +1064,12 @@ std::shared_ptr<type>
  *   5. Fallback: imported aggregates and enums.
  */
 aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const element& context_elem) {
-    // Step 1: Root-prefixed: delegate to resolve_type_from_root
     if (type_name.empty()) return {};
-
-    if (type_name.has_root_prefix()) {
-        return resolve_type_from_root(type_name.without_root_prefix());
-    }
 
     // Step 2: Try primitive types via context->from_string
     if (type_name.size() == 1) {
         auto prim = _context->from_string(type_name.front());
-        if (prim && type::is_resolved(prim)) return prim;
+        if (prim && type::is_primitive(prim)) return prim;
     }
 
 
@@ -1090,17 +1083,17 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
             [this](const k::name& n, const element& e) { return resolve_type_by_name(n, e); },
             cycle,
             [this](const std::shared_ptr<type>& t, const element& e) -> std::shared_ptr<type> {
-                // Phase 1.a has no full type resolver: only a callable prototype
-                // needs the extra hand here, everything else is name-resolvable.
-                if (auto uc = std::dynamic_pointer_cast<unresolved_callable_type>(t))
-                    return resolve_unresolved_callable_type(uc, e);
-                return nullptr;
+                return resolve_one_type(t, *this, e, _context);
             });
         if (cycle) {
             throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE), al->get_decl_lexeme(),
                 "Alias '{}' is defined in terms of itself", {al->get_fq_name()});
         }
         if (aliased) return aliased;
+    }
+
+    if (type_name.has_root_prefix()) {
+        return resolve_type_from_root(type_name.without_root_prefix());
     }
 
     // Step 3: Walk up the scope chain looking for aggregates, unions, and enumerations
@@ -1323,34 +1316,25 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
                 }
             }
         }
+        if (scope_lookup::is_definition_namespace_boundary(*current)) break;
     }
 
     // Step 5: Fallback: imported aggregates and enums
     // Fallback: search imported modules (relative name, scope chain exhausted)
+    if (scope_lookup::is_imported_definition_context(context_elem) && type_name.size() == 1) {
+        const auto standard_name = k::name{"k"}.with_back(type_name.front());
+        if (auto agg = _unit.get_or_create_imported_aggregate(standard_name, _context))
+            return agg->get_struct_type();
+        if (auto en = _unit.get_or_create_imported_enum(standard_name, _context))
+            return en->get_enum_type();
+        return {};
+    }
     if (auto agg = _unit.get_or_create_imported_aggregate(type_name, _context)) {
         return agg->get_struct_type();
-    }
-    for (const auto& imp : _unit.get_imports()) {
-        if (imp.module_name.empty()) continue;
-        if (type_name.size() <= imp.module_name.size()) continue;
-        if (!type_name.start_with(imp.module_name)) continue;
-        auto rest = type_name.without_front(imp.module_name.size());
-        if (auto agg = _unit.get_or_create_imported_aggregate(rest, _context)) {
-            return agg->get_struct_type();
-        }
     }
     // Fallback: search imported enums
     if (auto en = _unit.get_or_create_imported_enum(type_name, _context)) {
         return en->get_enum_type();
-    }
-    for (const auto& imp : _unit.get_imports()) {
-        if (imp.module_name.empty()) continue;
-        if (type_name.size() <= imp.module_name.size()) continue;
-        if (!type_name.start_with(imp.module_name)) continue;
-        auto rest = type_name.without_front(imp.module_name.size());
-        if (auto en = _unit.get_or_create_imported_enum(rest, _context)) {
-            return en->get_enum_type();
-        }
     }
     return {};
 }
@@ -1381,9 +1365,15 @@ resolve_one_type(const std::shared_ptr<type>& t,
         // definition) must remain unresolved until instantiation — never bind
         // them to an ambient same-named symbol in the consumer scope.
         if (unres->is_template_param_placeholder()) return t;
+        if (auto definition = unres->get_definition_namespace();
+            definition && scope_lookup::enclosing_namespace(context_elem) != definition) {
+            return resolve_one_type(t, resolver, *definition, ctx);
+        }
         if (unres->has_template_args()) {
             auto tpl_resolved = resolver.try_instantiate_template_type(unres, context_elem);
-            if (tpl_resolved && type::is_resolved(tpl_resolved)) return tpl_resolved;
+            if (tpl_resolved && (type::is_resolved(tpl_resolved)
+                || !type::contains_unresolved(tpl_resolved))) return tpl_resolved;
+            return t;
         }
     }
 
@@ -1428,17 +1418,26 @@ resolve_one_type(const std::shared_ptr<type>& t,
             // A wrapped template parameter placeholder (e.g. member of type 'E&'
             // inside a template definition) must stay unresolved until instantiation.
             if (!unres_inner->is_template_param_placeholder()) {
+            auto definition = unres_inner->get_definition_namespace();
+            const element& lookup_context =
+                definition && scope_lookup::enclosing_namespace(context_elem) != definition
+                    ? static_cast<const element&>(*definition) : context_elem;
             std::shared_ptr<type> resolved_inner;
             if (unres_inner->has_template_args()) {
-                resolved_inner = resolver.try_instantiate_template_type(unres_inner, context_elem);
+                resolved_inner = resolver.try_instantiate_template_type(unres_inner, lookup_context);
+                if (!resolved_inner || type::contains_unresolved(resolved_inner)) return t;
             }
-            if (!resolved_inner || !type::is_resolved(resolved_inner)) {
-                resolved_inner = resolver.resolve_type_by_name(unres_inner->type_id(), context_elem);
+            if ((!resolved_inner || !type::is_resolved(resolved_inner))
+                && !unres_inner->has_template_args()) {
+                resolved_inner = resolver.resolve_type_by_name(unres_inner->type_id(), lookup_context);
             }
-            if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+            if ((!resolved_inner || !type::is_resolved(resolved_inner))
+                && !unres_inner->get_definition_namespace()
+                && !unres_inner->has_template_args()) {
                 resolved_inner = ctx->from_string(unres_inner->type_id());
             }
-            if (resolved_inner && type::is_resolved(resolved_inner)) {
+            if (resolved_inner && (type::is_resolved(resolved_inner)
+                || !type::contains_unresolved(resolved_inner))) {
                 auto rebuilt = resolved_inner;
                 for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
                     switch (it->kind) {
@@ -1453,7 +1452,7 @@ resolve_one_type(const std::shared_ptr<type>& t,
                         case WrapKind::SizedArray: rebuilt = rebuilt->get_array(it->size);    break;
                     }
                 }
-                if (rebuilt && type::is_resolved(rebuilt)) {
+                if (rebuilt && (type::is_resolved(rebuilt) || !type::contains_unresolved(rebuilt))) {
                     // An addresser applied to a name that turned out to denote a
                     // callable re-addresses it in place instead of wrapping it.
                     if (auto collapsed = ctx->collapse_callable_addresser(rebuilt)) return collapsed;
@@ -1472,7 +1471,7 @@ resolve_one_type(const std::shared_ptr<type>& t,
     if (!unres) return t; // cannot resolve further
 
     auto resolved = resolver.resolve_type_by_name(unres->type_id(), context_elem);
-    if (!resolved || !type::is_resolved(resolved)) {
+    if ((!resolved || !type::is_resolved(resolved)) && !unres->get_definition_namespace()) {
         resolved = ctx->from_string(unres->type_id());
     }
     return resolved;
@@ -1831,94 +1830,19 @@ void aggregate_type_resolver::visit_global_variable_definition(global_variable_d
 /**
  * Resolve the type of a function parameter during Phase 1.a (signatures only).
  *
- * Steps:
- *   1. Handle unresolved_callable_type: resolve parameter types and optional owner.
- *   2. For other types: try context->resolve_type, then peel composite wrappers to find
- *      the inner unresolved_type, resolve it by name, and re-apply wrappers.
- *
  * Does NOT process default expressions (type_reference_resolver handles those).
  */
 void aggregate_type_resolver::visit_parameter(parameter& param) {
     // Some synthesized/template-only params can be temporarily typeless during early resolution.
     if (!param.get_type()) return;
 
-    // Step 1: Handle unresolved_callable_type: resolve parameter types and optional owner
-    // Resolve the type only (no default expressions — those are handled by type_reference_resolver)
-    if (!type::is_resolved(param.get_type())) {
-        // Handle unresolved_callable_type (function pointer/pin/link parameter type)
-        if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(param.get_type())) {
-            // Delegate to the shared routine: it resolves every component of the
-            // signature (parameters, return, *throws set*, nested callables) with the
-            // regular Phase 1.a machinery. Rebuilding the callable here would silently
-            // drop the throws set, and two callable types differing only by their
-            // throws clause would then mangle to the same symbol.
-            const element& scope = param.parent<function>()
-                ? static_cast<const element&>(*param.parent<function>())
-                : static_cast<const element&>(param);
-            if (auto resolved = resolve_unresolved_callable_type(ufrt, scope)) {
-                param.set_type(resolved);
-            }
-            return;
-        }
-        auto res_type = _context->resolve_type(param.get_type());
-        if (!type::is_resolved(res_type)) {
-            // Try name-based resolution.
-            // The parameter type may be a composite wrapping an unresolved_type
-            // (e.g. reference_type("iface_one::ICounter&")), so we peel wrappers to
-            // Step 2: For other types: try context->resolve_type, then peel composite wrappers to find the inner unreso...
-            // find the inner unresolved name, resolve the inner aggregate, then
-            // rebuild the composite wrapper around the resolved inner type.
-            auto owner_func = param.parent<function>();
-            if (owner_func) {
-                // Collect wrapper kinds (from outermost to innermost unresolved_type)
-                enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain, Array };
-                std::vector<WrapKind> wrappers;
-                auto inner = param.get_type();
-                while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
-                    if      (type::is_reference(inner))  wrappers.push_back(WrapKind::Ref);
-                    else if (type::is_pointer(inner))    wrappers.push_back(WrapKind::Ptr);
-                    else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
-                    else if (type::is_view(inner))       wrappers.push_back(WrapKind::View);
-                    else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
-                    else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
-                    else if (type::is_drain(inner))      wrappers.push_back(WrapKind::Drain);
-                    else if (type::is_array(inner))      wrappers.push_back(WrapKind::Array);
-                    else break;
-                    inner = inner->get_subtype();
-                }
-                auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
-                if (unres && !unres->type_id().empty() && !unres->is_template_param_placeholder()) {
-                    // Resolve the inner aggregate type
-                    std::shared_ptr<type> inner_resolved;
-                    // If the inner type has template args, try template instantiation first
-                    if (unres->has_template_args()) {
-                        inner_resolved = try_instantiate_template_type(unres, *owner_func);
-                    }
-                    if (!inner_resolved || !type::is_resolved(inner_resolved)) {
-                        inner_resolved = resolve_type_by_name(unres->type_id(), *owner_func);
-                    }
-                    if (type::is_resolved(inner_resolved)) {
-                        // Re-apply wrappers in reverse order (innermost first)
-                        res_type = inner_resolved;
-                        for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
-                            switch (*it) {
-                                case WrapKind::Ref:   res_type = res_type->get_reference(); break;
-                                case WrapKind::Ptr:   res_type = res_type->get_pointer();   break;
-                                case WrapKind::Link:  res_type = res_type->get_link();      break;
-                                case WrapKind::View:  res_type = res_type->get_view();      break;
-                                case WrapKind::Const: res_type = res_type->get_const();     break;
-                                case WrapKind::Owner: res_type = res_type->get_owner();     break;
-                                case WrapKind::Drain: res_type = res_type->get_drain();     break;
-                                case WrapKind::Array: res_type = res_type->get_array();     break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (type::is_resolved(res_type)) {
-            param.set_type(res_type);
-        }
+    auto owner_func = param.parent<function>();
+    const element& scope = owner_func
+        ? static_cast<const element&>(*owner_func)
+        : static_cast<const element&>(param);
+    auto resolved = resolve_one_type(param.get_type(), *this, scope, _context);
+    if (resolved && (type::is_resolved(resolved) || !type::contains_unresolved(resolved))) {
+        param.set_type(resolved);
     }
 }
 

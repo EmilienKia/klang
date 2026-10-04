@@ -266,11 +266,11 @@ type_reference_resolver::resolve_type_from_root(const k::name& name_without_pref
     auto root_ns = _unit.get_root_namespace();
     if (!root_ns) return {};
 
-    const auto& unit_name = _unit.get_unit_name();
+    const auto unit_name = _unit.get_unit_name().without_root_prefix();
 
-    // Strategy 1: first component is the module name last part
-    if (!unit_name.empty() && name_without_prefix.front() == unit_name.back()) {
-        auto rest = name_without_prefix.without_front();
+    // A local self-prefix spans the complete module name.
+    if (!unit_name.empty() && name_without_prefix.start_with(unit_name)) {
+        auto rest = name_without_prefix.without_front(unit_name.size());
         if (!rest.empty()) {
             if (auto st = resolve_struct_from(*root_ns, rest)) {
                 return st->get_struct_type();
@@ -293,8 +293,8 @@ type_reference_resolver::resolve_type_from_root(const k::name& name_without_pref
     {
         std::vector<k::name> candidates_names;
         candidates_names.push_back(name_without_prefix);
-        if (!unit_name.empty() && name_without_prefix.front() == unit_name.back()) {
-            auto rest = name_without_prefix.without_front();
+        if (!unit_name.empty() && name_without_prefix.start_with(unit_name)) {
+            auto rest = name_without_prefix.without_front(unit_name.size());
             if (!rest.empty()) candidates_names.push_back(rest);
         }
         for (const auto& cand : candidates_names) {
@@ -376,11 +376,6 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
     // Step 1: Root-prefixed: delegate to resolve_type_from_root
     if (type_name.empty()) return {};
 
-    // Root-prefixed: anchor at unit root
-    if (type_name.has_root_prefix()) {
-        return resolve_type_from_root(type_name.without_root_prefix());
-    }
-
     // Step 2: Try primitive types via context->from_string
     // Try primitive types first via context (for simple names only)
     if (type_name.size() == 1) {
@@ -406,6 +401,10 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
                 "Alias '{}' is defined in terms of itself", {al->get_fq_name()});
         }
         if (aliased) return aliased;
+    }
+
+    if (type_name.has_root_prefix()) {
+        return resolve_type_from_root(type_name.without_root_prefix());
     }
 
     // Step 3: Walk the scope chain: aggregates, enums, unions, using directives
@@ -674,34 +673,25 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
                 }
             }
         }
+        if (scope_lookup::is_definition_namespace_boundary(*current)) break;
     }
 
     // Step 4: Fallback: imported aggregates and enums
     // Fallback: search imported modules (scope chain exhausted)
+    if (scope_lookup::is_imported_definition_context(context_elem) && type_name.size() == 1) {
+        const auto standard_name = k::name{"k"}.with_back(type_name.front());
+        if (auto agg = _unit.get_or_create_imported_aggregate(standard_name, _context))
+            return agg->get_struct_type();
+        if (auto en = _unit.get_or_create_imported_enum(standard_name, _context))
+            return en->get_enum_type();
+        return {};
+    }
     if (auto agg = _unit.get_or_create_imported_aggregate(type_name, _context)) {
         return agg->get_struct_type();
-    }
-    for (const auto& imp : _unit.get_imports()) {
-        if (imp.module_name.empty()) continue;
-        if (type_name.size() <= imp.module_name.size()) continue;
-        if (!type_name.start_with(imp.module_name)) continue;
-        auto rest = type_name.without_front(imp.module_name.size());
-        if (auto agg = _unit.get_or_create_imported_aggregate(rest, _context)) {
-            return agg->get_struct_type();
-        }
     }
     // Fallback: search imported enums
     if (auto en = _unit.get_or_create_imported_enum(type_name, _context)) {
         return en->get_enum_type();
-    }
-    for (const auto& imp : _unit.get_imports()) {
-        if (imp.module_name.empty()) continue;
-        if (type_name.size() <= imp.module_name.size()) continue;
-        if (!type_name.start_with(imp.module_name)) continue;
-        auto rest = type_name.without_front(imp.module_name.size());
-        if (auto en = _unit.get_or_create_imported_enum(rest, _context)) {
-            return en->get_enum_type();
-        }
     }
 
     return {};
@@ -839,10 +829,11 @@ type_reference_resolver::resolve_callable_type(
             resolved = pt;
         } else if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
             resolved = resolve_type_chain(pt, &context_elem);
-            if (!resolved || !type::is_resolved(resolved)) {
+            if ((!resolved || !type::is_resolved(resolved)) && !u->has_template_args()) {
                 resolved = resolve_type_by_name(u->type_id(), context_elem);
             }
-            if (!resolved || !type::is_resolved(resolved)) {
+            if ((!resolved || !type::is_resolved(resolved)) && !u->has_template_args()
+                && !u->get_definition_namespace()) {
                 resolved = _context->from_string(u->type_id());
             }
         } else if (auto nested = std::dynamic_pointer_cast<unresolved_callable_type>(pt)) {
@@ -855,7 +846,10 @@ type_reference_resolver::resolve_callable_type(
         }
         if (!resolved || !type::is_resolved(resolved)) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SIGNATURE_STRUCT_NOT_FOUND), std::nullopt,
-                "Cannot resolve {} in callable type", {what});
+                "Cannot resolve {} '{}' in callable type '{}' from declaration scope '{}'",
+                {what, pt ? pt->to_string() : "<none>", ufrt->to_string(),
+                 scope_lookup::enclosing_namespace(context_elem)
+                     ? scope_lookup::enclosing_namespace(context_elem)->get_fq_name() : "<none>"});
         }
         return resolved;
     };
@@ -1172,10 +1166,23 @@ std::shared_ptr<aggregate> type_reference_resolver::find_template_aggregate(
                 }
             }
         }
+        if (auto holder = std::dynamic_pointer_cast<const using_holder>(current)) {
+            for (const auto& directive : holder->get_using_directives()) {
+                if (!directive.is_namespace() || directive.has_alias()) continue;
+                if (auto scope = resolve_using_target(directive.target_name, _unit)) {
+                    if (auto st = resolve_struct_from(*scope, base_name)) {
+                        return st->is_template() ? st : nullptr;
+                    }
+                }
+            }
+        }
+        if (scope_lookup::is_definition_namespace_boundary(*current)) break;
     }
 
     // 2. Try root namespace
-    auto root_ns = _unit.get_root_namespace();
+    auto root_ns = !scope_lookup::is_imported_definition_context(context_elem)
+        || base_name.has_root_prefix() || base_name.size() > 1
+        ? _unit.get_root_namespace() : nullptr;
     if (root_ns) {
         if (auto st = resolve_struct_from(*root_ns, base_name)) {
             if (st->is_template()) return st;
@@ -1184,11 +1191,10 @@ std::shared_ptr<aggregate> type_reference_resolver::find_template_aggregate(
         // module-name-stripping logic as resolve_type_from_root.
         if (base_name.has_root_prefix()) {
             auto name_no_prefix = base_name.without_root_prefix();
-            const auto& unit_name = _unit.get_unit_name();
-            // Strategy 1: strip the module-name prefix if the first component matches
-            if (!unit_name.empty() && !name_no_prefix.empty()
-                && name_no_prefix.front() == unit_name.back()) {
-                auto rest = name_no_prefix.without_front();
+            const auto unit_name = _unit.get_unit_name().without_root_prefix();
+            // Strip the complete local module prefix, not an imported origin.
+            if (!unit_name.empty() && name_no_prefix.start_with(unit_name)) {
+                auto rest = name_no_prefix.without_front(unit_name.size());
                 if (!rest.empty()) {
                     if (auto st = resolve_struct_from(*root_ns, rest)) {
                         if (st->is_template()) return st;
@@ -1199,22 +1205,14 @@ std::shared_ptr<aggregate> type_reference_resolver::find_template_aggregate(
             if (auto st = resolve_struct_from(*root_ns, name_no_prefix)) {
                 if (st->is_template()) return st;
             }
-            // Strategy 3: strip any import-module prefix
-            for (const auto& imp : _unit.get_imports()) {
-                if (imp.module_name.empty()) continue;
-                if (!name_no_prefix.start_with(imp.module_name)) continue;
-                auto rest = name_no_prefix.without_front(imp.module_name.size());
-                if (rest.empty()) continue;
-                if (auto st = resolve_struct_from(*root_ns, rest)) {
-                    if (st->is_template()) return st;
-                }
-            }
         }
     }
 
     if (base_name.size() == 1) {
         for (const auto& imp : _unit.get_imports()) {
             if (imp.module_name.empty()) continue;
+            if (scope_lookup::is_imported_definition_context(context_elem)
+                && imp.module_name != k::name{"k"}) continue;
 
             auto imported_ns = _unit.get_root_namespace();
             for (std::size_t i = 0; imported_ns && i < imp.module_name.size(); ++i) {
@@ -1234,22 +1232,9 @@ std::shared_ptr<aggregate> type_reference_resolver::find_template_aggregate(
         for (const auto& imp : _unit.get_imports()) {
             if (imp.module_name.empty()) continue;
             if (!base_name.start_with(imp.module_name)) continue;
-            auto rest = base_name.without_front(imp.module_name.size());
-            if (rest.empty()) continue;
-            auto r_ns = _unit.get_root_namespace();
-            if (r_ns) {
-                if (auto st = resolve_struct_from(*r_ns, rest)) {
-                    if (st->is_template()) return st;
-                }
-            }
-            if (auto imp_st = _unit.get_or_create_imported_aggregate(rest, _context)) {
+            if (auto imp_st = _unit.get_or_create_imported_aggregate(base_name, _context)) {
                 auto st = std::dynamic_pointer_cast<aggregate>(imp_st);
                 if (st && st->is_template()) return st;
-            }
-            if (rest.size() > 1 && r_ns) {
-                if (auto st = resolve_struct_from(*r_ns, k::name(false, rest.back()))) {
-                    if (st->is_template()) return st;
-                }
             }
         }
     }
@@ -1740,8 +1725,9 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                     }
                 }
             }
+            if (scope_lookup::is_definition_namespace_boundary(*current)) break;
         }
-        if (!tpl_union) {
+        if (!tpl_union && !scope_lookup::is_imported_definition_context(context_elem)) {
             auto root_ns = _unit.get_root_namespace();
             if (root_ns && base_name.size() == 1) {
                 if (auto un = root_ns->get_union(base_name.front())) {
@@ -1749,9 +1735,16 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                 }
             }
         }
+        if (!tpl_union) {
+            if (auto un = scope_lookup::lookup_union(
+                    std::const_pointer_cast<element>(context_elem.shared_as<const element>()),
+                    base_name.to_string()); un && un->is_template()) tpl_union = un;
+        }
         if (!tpl_union && base_name.size() == 1) {
             for (const auto& imp : _unit.get_imports()) {
                 if (imp.module_name.empty()) continue;
+                if (scope_lookup::is_imported_definition_context(context_elem)
+                    && imp.module_name != k::name{"k"}) continue;
                 auto imported_ns = _unit.get_root_namespace();
                 for (std::size_t i = 0; imported_ns && i < imp.module_name.size(); ++i) {
                     imported_ns = imported_ns->get_child_namespace(imp.module_name[i]);
@@ -2225,6 +2218,11 @@ std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
     }
 
     if (auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(inner)) {
+        auto definition_namespace = unres_inner->get_definition_namespace();
+        if (definition_namespace
+            && (!scope_elem || scope_lookup::enclosing_namespace(*scope_elem) != definition_namespace)) {
+            scope_elem = definition_namespace.get();
+        }
 
         // ── Template instantiation path ─────────────────────────────────
         // If the unresolved type carries AST template arguments (e.g. Box<int>),
@@ -2233,22 +2231,24 @@ std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
         if (unres_inner->has_template_args() && scope_elem) {
             auto resolved = try_instantiate_template_type(unres_inner, *scope_elem);
             if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) return resolved;
-            // If instantiation failed (e.g. not a template), fall through
-            // to normal resolution for a better error message.
+            return {};
         }
 
         std::shared_ptr<type> resolved;
         if (scope_elem) {
             resolved = resolve_type_by_name(unres_inner->type_id(), *scope_elem);
         }
-        if (!resolved || (!type::is_resolved(resolved) && !std::dynamic_pointer_cast<struct_type>(resolved))) {
+        if ((!resolved || (!type::is_resolved(resolved) && !std::dynamic_pointer_cast<struct_type>(resolved)))
+            && !unres_inner->get_definition_namespace()) {
             resolved = _context->from_string(unres_inner->type_id());
         }
-        if (!resolved || (!type::is_resolved(resolved) && !std::dynamic_pointer_cast<struct_type>(resolved))) {
+        if ((!resolved || (!type::is_resolved(resolved) && !std::dynamic_pointer_cast<struct_type>(resolved)))
+            && !unres_inner->get_definition_namespace()) {
             auto imported_agg = _unit.get_or_create_imported_aggregate(unres_inner->type_id(), _context);
             if (imported_agg && imported_agg->get_struct_type()) resolved = imported_agg->get_struct_type();
         }
-        if (!resolved || (!type::is_resolved(resolved) && !std::dynamic_pointer_cast<struct_type>(resolved))) {
+        if ((!resolved || (!type::is_resolved(resolved) && !std::dynamic_pointer_cast<struct_type>(resolved)))
+            && !unres_inner->get_definition_namespace()) {
             auto imported_en = _unit.get_or_create_imported_enum(unres_inner->type_id(), _context);
             if (imported_en && imported_en->get_enum_type()) resolved = imported_en->get_enum_type();
         }

@@ -948,6 +948,161 @@ TEST_CASE("import generic — template_def exported as signature-only metadata",
     REQUIRE(found_def);
 }
 
+#include "../src/model/tools/kdi_exporter.hpp" // Temporary alias-regression prerequisite.
+#include <sstream> // Temporary alias-regression prerequisite.
+
+TEST_CASE("import template aliases retain canonical declaration types under consumer shadows",
+          "[import][template][alias][declaration-scope][type-provenance]") {
+    constexpr std::string_view library = R"K(
+        module tplaliasorigin;
+        namespace io {
+            struct KdiAliasIoError { code: int; }
+            template<typename T, typename E>
+            struct Result { value: T; error: E; }
+            public template<typename T> alias IoResult : Result<T, KdiAliasIoError>;
+            public template<typename T> alias IoCompletion : !(IoResult<T>);
+            template<typename T>
+            makeResult(value: T): IoResult<T> {
+                result: IoResult<T>;
+                result.value = value;
+                result.error.code = 2;
+                return result;
+            }
+        }
+    )K";
+    TmpKdi lib(library, true);
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("tplaliasorigin", lib.kdi_path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    constexpr std::string_view consumer = R"K(
+        module tplaliasconsumer;
+        import tplaliasorigin;
+        namespace consumer {
+        struct KdiAliasIoError { wrong: long; }
+        template<typename T> alias IoResult : int;
+        template<typename T, typename E> struct Result { wrong: int; }
+        receive(completion: tplaliasorigin::io::IoCompletion<int>) {}
+        run(): int {
+            result: tplaliasorigin::io::IoResult<int> = tplaliasorigin::io::makeResult<int>(40);
+            receive([](value: tplaliasorigin::io::IoResult<int>) {});
+            return result.value + result.error.code;
+        }
+        }
+        run(): int { return consumer::run(); }
+        main(): int { return run(); }
+    )K";
+    compiler->parse_source("aliasconsumer.k", consumer);
+    auto root = compiler->get_unit()->get_root_namespace();
+    CHECK(root->get_fq_name() == "::tplaliasconsumer");
+    auto origin = root->get_child_namespace("tplaliasorigin")->get_child_namespace("io");
+    REQUIRE(origin->get_alias("IoResult"));
+    CHECK(origin->get_alias("IoResult")->parent<k::model::ns>() == origin);
+    CHECK(origin->get_alias("IoResult")->get_tpl_info()->origin_module_ns_fq == "tplaliasorigin::io");
+    REQUIRE(origin->get_aggregate("Result"));
+    CHECK(origin->get_aggregate("Result")->parent<k::model::ns>() == origin);
+    auto completion = std::dynamic_pointer_cast<k::model::callable_type>(
+        root->get_child_namespace("consumer")->get_function("receive")->parameters().front()->get_type());
+    REQUIRE(completion);
+    REQUIRE(completion->get_parameter_types().size() == 1);
+    auto result = std::dynamic_pointer_cast<k::model::struct_type>(completion->get_parameter_types()[0]);
+    REQUIRE(result);
+    CHECK(result->get_struct()->get_fq_name().starts_with("::tplaliasorigin::io::Result"));
+    REQUIRE(result->get_struct()->get_tpl_args().size() == 2);
+    CHECK(result->get_struct()->get_tpl_args()[1].type_arg == origin->get_aggregate("KdiAliasIoError")->get_struct_type());
+    auto facade = k::model::build_kdi(*compiler->get_context_for_test(), *compiler->get_unit(), "libaliasfacade.so");
+    std::ostringstream encoded;
+    kdi::kdi_write_json(facade, encoded);
+    std::istringstream json(encoded.str());
+    auto restored = kdi::kdi_read_json(json);
+    size_t aliases = 0;
+    std::function<void(const kdi::kdi_namespace&)> check_aliases = [&](const auto& ns) {
+        for (const auto& alias : ns.aliases) {
+            if (!alias.is_template || alias.origin_module != "tplaliasorigin::io") continue;
+            ++aliases;
+            CHECK_FALSE(alias.source.empty());
+            CHECK(alias.fq_name.starts_with("tplaliasorigin::io::"));
+        }
+        for (const auto& child : ns.namespaces) check_aliases(child);
+    };
+    check_aliases(restored.unit.root_ns);
+    CHECK(aliases == 2);
+
+    auto direct = build_exec_with_lib(library, consumer);
+    INFO(direct.err);
+    CHECK(direct.exit_code == 42);
+
+    std::vector<LibSpec> libraries = {{library}, {R"K(
+        module tplaliasfacade;
+        import tplaliasorigin;
+        exported(): int { return 0; }
+    )K"}};
+    auto transitive = build_exec_with_libs(libraries, R"K(
+        module tplaliastransitive;
+        import tplaliasfacade;
+        namespace consumer {
+        struct KdiAliasIoError { wrong: long; }
+        template<typename T> alias IoResult : int;
+        run(): int {
+            result: tplaliasorigin::io::IoResult<int> = tplaliasorigin::io::makeResult<int>(40);
+            return result.value + result.error.code;
+        }
+        }
+        main(): int { return consumer::run(); }
+    )K");
+    INFO(transitive.err);
+    CHECK(transitive.exit_code == 42);
+}
+
+TEST_CASE("import homonymous template aliases specialize in independent origin namespaces",
+          "[import][template][alias][homonym-imports][type-provenance]") {
+    std::vector<LibSpec> libraries = {
+        {R"K(
+            module tplaliasleft;
+            namespace detail { struct LeftAliasError { code: int; } }
+            template<typename T, typename E> struct Result { value: T; error: E; }
+            public template<typename T> alias IoResult: Result<T, detail::LeftAliasError>;
+            template<typename T> make(value: T): IoResult<T> {
+                result: IoResult<T>;
+                result.value = value;
+                result.error.code = 2;
+                return result;
+            }
+        )K"},
+        {R"K(
+            module tplaliasright;
+            namespace detail { struct RightAliasError { padding: long; code: int; } }
+            template<typename T, typename E> struct Result { error: E; value: T; }
+            public template<typename T> alias IoResult: Result<T, detail::RightAliasError>;
+            template<typename T> make(value: T): IoResult<T> {
+                result: IoResult<T>;
+                result.value = value;
+                result.error.code = 3;
+                return result;
+            }
+        )K"}
+    };
+    auto result = build_exec_with_libs(libraries, R"K(
+        module tplaliashomonyms;
+        import tplaliasleft;
+        import tplaliasright;
+        namespace consumer {
+        struct LeftAliasError { wrong: long; }
+        struct RightAliasError { wrong: long; }
+        template<typename T> alias IoResult: int;
+        run(): int {
+            left: tplaliasleft::IoResult<int> = tplaliasleft::make<int>(17);
+            right: tplaliasright::IoResult<int> = tplaliasright::make<int>(20);
+            return left.value + left.error.code + right.value + right.error.code;
+        }
+        }
+        main(): int { return consumer::run(); }
+    )K");
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
 TEST_CASE("import generic — signature-only template_def is materialised into model",
           "[import][template][generic][model]") {
     TmpKdi lib(R"K(

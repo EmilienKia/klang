@@ -611,6 +611,33 @@ TEST_CASE("JSON: member template_def keeps its host aggregate", "[json][template
     REQUIRE(restored.unit.root_ns.template_defs[0].host_fq_name == "::test::json::Host");
 }
 
+TEST_CASE("JSON: template aliases preserve source and lexical origin", "[json][template][alias]") {
+    auto file = make_minimal_file();
+    kdi_alias alias;
+    alias.name = "Completion";
+    alias.fq_name = "facade::Completion";
+    alias.is_template = true;
+    alias.origin_module = "producer::io";
+    alias.source = "template<typename T> alias Completion : !(Result<T, Error>);";
+    alias.params.push_back(kdi_template_param{"typename", "T"});
+    file.unit.root_ns.aliases.push_back(alias);
+    auto restored = json_round_trip(file);
+    REQUIRE(restored.unit.root_ns.aliases.size() == 1);
+    const auto& result = restored.unit.root_ns.aliases.front();
+    CHECK(result.is_template);
+    CHECK(result.source == alias.source);
+    CHECK(result.origin_module == alias.origin_module);
+    REQUIRE(result.params.size() == 1);
+    CHECK(result.params[0].name == "T");
+    CHECK_FALSE(result.target_type.has_value());
+    CHECK(restored.header.schema_major == 0);
+    CHECK(restored.header.schema_minor == 1);
+
+    alias.origin_module.clear();
+    file.unit.root_ns.aliases[0] = alias;
+    CHECK(json_round_trip(file).unit.root_ns.aliases.front().origin_module.empty());
+}
+
 TEST_CASE("JSON: generic template_def round-trips with signature and no source", "[json][template][generic]") {
     kdi_file f = make_minimal_file();
 

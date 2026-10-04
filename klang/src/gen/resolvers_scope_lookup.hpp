@@ -27,7 +27,7 @@ namespace k::model::gen {
  * Scope lookup utility: all symbol search algorithms with scope-chain traversal.
  * Kept entirely in the resolver layer; the model is unaware of resolution strategies.
  *
- * The three entry points are:
+ * The main entry points are:
  *   - lookup_variable  : find a variable definition by name, walking up the scope chain.
  *   - lookup_function  : find the first function matching a name, walking up the scope chain.
  *   - lookup_functions : collect ALL overloads matching a name across the full scope chain.
@@ -37,6 +37,8 @@ namespace k::model::gen {
  */
 class scope_lookup {
 public:
+    static bool is_definition_namespace_boundary(const element& scope);
+    static bool is_imported_definition_context(const element& context);
     /**
      * Resolve a sibling type in an imported aggregate's defining namespace,
      * including locally synthesized specializations of imported recipes.
