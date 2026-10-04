@@ -406,15 +406,26 @@ add_custom_command(
 
 set(ASYNC_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_ffi.c)
 set(ASYNC_FFI_OBJ ${LIBK_OUTPUT_DIR}/async_ffi.o)
+set(IO_OPERATION_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_operation.c)
+set(IO_OPERATION_OBJ ${LIBK_OUTPUT_DIR}/io_operation.o)
 
 add_custom_command(
     OUTPUT  ${ASYNC_FFI_OBJ}
+    OUTPUT  ${IO_OPERATION_OBJ}
     COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${ASYNC_C_FLAGS}
             -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
             -o ${ASYNC_FFI_OBJ} ${ASYNC_FFI_C}
     DEPENDS ${ASYNC_FFI_C}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_io.h
     COMMENT "Compiling K runtime asynchronous I/O FFI wrappers (async_ffi.c)"
+            -o ${IO_OPERATION_OBJ} ${IO_OPERATION_C}
+    DEPENDS ${IO_OPERATION_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_operation.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_datagram_ffi.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/callable_abi.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_backend.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_runtime.h
+    COMMENT "Compiling K runtime io_operation (io_operation.c)"
     VERBATIM
 )
 
@@ -453,6 +464,9 @@ add_custom_command(
     VERBATIM
 )
 # Header changes must rebuild every C object that shares these state layouts.
+    add_custom_command(OUTPUT ${_obj} APPEND DEPENDS ${LIBK_PROACTOR_HEADERS})
+endforeach()
+
 # ── Compile Application entry-point FFI helpers ───────────────────────────
 set(APP_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/application_ffi.c)
 set(APP_FFI_OBJ ${LIBK_OUTPUT_DIR}/application_ffi.o)
@@ -608,6 +622,7 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}
                    ${NETWORK_FFI_OBJ}
                    ${EXECUTOR_RUNTIME_OBJ}
+                   ${IO_OPERATION_OBJ}
                    ${APP_FFI_OBJ}
                    ${MODULE_FFI_OBJ}
                    ${UUID_FFI_OBJ}
@@ -743,6 +758,10 @@ libk_add_test(libk-tests-strings 120
     tests/test-string-builder-mutation.cpp
 )
 
+# ── libk proactor io_uring tests (Lot C & Lot E) ─────────────────────────────
+libk_add_test(libk-tests-io-proactor 120
+    tests/test-io-operation-backend.cpp
+)
 libk_add_test(libk-tests-io-foundations-api 120
     tests/test-io-foundations-api.cpp
 )

@@ -18,6 +18,9 @@ FileChannel, stream socket and datagram primitives use three forms: a proactive 
 `IoOperation!`, an `Async` method returning `Future<T>!`, and an interruptible
 `Sync` bridge built on the same prepared native operation and Future publisher.
 The callback and Async forms must not block the caller on filesystem I/O.
+Future publication must not depend on the callback executor: Sync and Future
+`get()` may be used inside an EventLoop task without waiting for that loop to
+dispatch an I/O callback.
 
 The layer separates native buffers and proactive channels from synchronous streams:
 
@@ -77,6 +80,22 @@ callback's execution context, or `null` outside a callback. The
 cancellation/interruption state even through a const `ExecutionContext&`.
 Destroying that observer only releases its native reference; it does not cancel
 the operation.
+
+### Operation observers and drain
+
+`IoOperation::share()` creates another owning observer of the same operation.
+`stage()`, `isIoDone()`, `isCallbackRunning()`, `isDone()`, `isCancelled()`,
+`isInterruptionRequested()`, `bytesTransferred()` and `error()` expose its state.
+`cancel()` returns whether cancellation or cooperative interruption was accepted;
+destroying an observer does not cancel.
+
+`waitQuiescent() : int` waits indefinitely for native drain.
+`waitQuiescent(timeout: Duration&) : int` limits that wait, with negative
+durations treated as zero. Zero means drain completed; nonzero means it did
+not complete successfully and must not be ignored before reusing a buffer.
+Quiescence releases kernel leases but does not imply that a queued user callback
+has run or that a running callback has finished. The process shutdown barrier
+also waits for user delivery cleanup, as described in [section 9](#9-runtime-and-application-lifecycle).
 
 ---
 

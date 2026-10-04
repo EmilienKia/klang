@@ -145,6 +145,260 @@ TEST_CASE("I/O foundations: result aliases and explicit callable carriers import
     REQUIRE(test() == 42);
 }
 
+TEST_CASE("I/O carriers: empty IoDone survives Future and union subobject cleanup before delivery",
+          "[libk][io][proactor][api][io-done-carrier][callback-carrier][regression]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_done_deferred_carrier__;
+        calls : int = 0;
+        callbackState : int = -2;
+        stage : int = 0;
+        caught : bool = false;
+        failureCode : int = 0;
+        live : int = 0;
+        drops : int = 0;
+        invalid : int = 0;
+        closureDrops : int = 0;
+        preDeliveryClosureDrops : int = -1;
+        deliveryReady : bool = false;
+        fixtureCaptured : bool = false;
+        struct Probe {
+            ~Probe() { ++closureDrops; }
+        }
+        class Payload {
+            magic : int = 73;
+            Payload() { ++live; }
+            Payload(other: const Payload&) {
+                if (other.magic != 73) ++invalid;
+                ++live;
+            }
+            ~Payload() {
+                if (magic != 73) ++invalid;
+                magic = 0;
+                --live;
+                ++drops;
+            }
+        }
+        struct Slot {
+            carrier : k::io::IoCallbackCarrier<k::io::IoDone>! = null;
+        }
+        decodeDone(value: long) : k::io::IoDone { return k::io::IoDone(); }
+        decodeCount(value: long) : int { return (int) value; }
+        @ffi::Extern("C") private k_io_operation_on_kernel_completion(
+            operation: k::io::NativeIoOperation*, result: int);
+        record(result: k::io::IoResult<k::io::IoDone>&) {
+            ++calls;
+            callbackState = result.hasResult() ? 1 : (result.hasError() ? 0 : -1);
+            if (callbackState != 1) return;
+            copied : k::io::IoResult<k::io::IoDone>(result);
+            if (!copied.hasResult() || copied.hasError()) { callbackState = -3; return; }
+            value : k::io::IoDone = copied.getResult();
+            copied.setResult(value);
+            if (!copied.hasResult() || copied.hasError()) callbackState = -4;
+        }
+        test(nativeResult: byte*, captured: bool) : int {
+            calls = 0; callbackState = -2; stage = 0;
+            caught = false; failureCode = 0;
+            live = 0; drops = 0; invalid = 0; closureDrops = 0;
+            preDeliveryClosureDrops = -1; deliveryReady = false; fixtureCaptured = captured;
+            slot : Slot;
+            slotPtr : Slot* = &slot;
+            task : !() = [slotPtr, captured]() {
+                stage = 1;
+                probe : Probe! = new Probe();
+                completion : k::io::IoCompletion<k::io::IoDone> = null;
+                if (captured) {
+                    completion = [probe](r: k::io::IoResult<k::io::IoDone>) { record(r); };
+                } else {
+                    delete probe;
+                    completion = [](r: k::io::IoResult<k::io::IoDone>) { record(r); };
+                }
+                slotPtr->carrier = new k::io::IoCallbackCarrier<k::io::IoDone>(
+                    completion, decodeDone);
+                if (completion != null || probe != null) return;
+                stage = 2;
+                {
+                    executor : DirectExecutor;
+                    lease : ExecutorLease! = executor.acquireLease();
+                    operation : k::io::IoOperation! = k::io::prepareOperation<int>(
+                        1, null, null, 0, 0L, 0, null, *lease, decodeCount);
+                    future : Future<int>! = k::io::futureFor<int>(*operation, decodeCount);
+                    {
+                        empty : Expected<Payload, int>;
+                        copiedEmpty : Expected<Payload, int>(empty);
+                    }
+                    if (live != 0 || drops != 0 || invalid != 0) return;
+                    source : Payload;
+                    holder : Expected<Payload, int>;
+                    holder.setResult(source);
+                    k_io_operation_on_kernel_completion(operation->native(), 17);
+                    deadline : Duration = Duration::ofSeconds(5L);
+                    try {
+                        if (future->get(deadline) != 17 || !holder.hasResult() ||
+                            live != 2 || calls != 0) return;
+                    } catch (e: Throwable&) {
+                        caught = true;
+                        failureCode = e.getCode();
+                        return;
+                    }
+                    stage = 3;
+                }
+                if (live != 0 || drops != 2 || invalid != 0 || calls != 0) return;
+                stage = 4;
+            };
+            {
+                loop : k::io::EventLoop;
+                deadline : Duration = Duration::ofSeconds(5L);
+                loop.execute(task);
+                if (task != null || !loop.runOnce(deadline)) return -1;
+            }
+            valid : bool = stage == 4 && calls == 0 &&
+                closureDrops == (captured ? 0 : 1);
+            preDeliveryClosureDrops = closureDrops;
+            deliveryReady = valid;
+            if (slot.carrier == null) return -2;
+            k::io::IoCallbackCarrier<k::io::IoDone>::invoke((byte*) slot.carrier, nativeResult);
+            delete slot.carrier;
+            return valid && calls == 1 && callbackState == 1 && closureDrops == 1 &&
+                live == 0 && drops == 2 && invalid == 0 ? 1 : -3;
+        }
+        deliveryState() : int { return callbackState; }
+        progress() : int { return stage; }
+        caughtException() : bool { return caught; }
+        exceptionCode() : int { return failureCode; }
+        callbackCount() : int { return calls; }
+        closureDropCount() : int { return closureDrops; }
+        preDeliveryClosureDropCount() : int { return preDeliveryClosureDrops; }
+        livePayloadCount() : int { return live; }
+        payloadDropCount() : int { return drops; }
+        invalidPayloadCount() : int { return invalid; }
+        readyForDelivery() : bool { return deliveryReady; }
+        capturedMode() : bool { return fixtureCaptured; }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, std::getenv("KLANG_F1_DUMP_IR") != nullptr);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(CarrierResult*, bool)>("test");
+    auto deliveryState = jit->lookup_symbol<int (*)()>("deliveryState");
+    auto progress = jit->lookup_symbol<int (*)()>("progress");
+    auto caughtException = jit->lookup_symbol<bool (*)()>("caughtException");
+    auto exceptionCode = jit->lookup_symbol<int (*)()>("exceptionCode");
+    auto callbackCount = jit->lookup_symbol<int (*)()>("callbackCount");
+    auto closureDropCount = jit->lookup_symbol<int (*)()>("closureDropCount");
+    auto preDeliveryClosureDropCount = jit->lookup_symbol<int (*)()>("preDeliveryClosureDropCount");
+    auto livePayloadCount = jit->lookup_symbol<int (*)()>("livePayloadCount");
+    auto payloadDropCount = jit->lookup_symbol<int (*)()>("payloadDropCount");
+    auto invalidPayloadCount = jit->lookup_symbol<int (*)()>("invalidPayloadCount");
+    auto readyForDelivery = jit->lookup_symbol<bool (*)()>("readyForDelivery");
+    auto capturedMode = jit->lookup_symbol<bool (*)()>("capturedMode");
+    REQUIRE(test);
+    REQUIRE(deliveryState);
+    REQUIRE(progress);
+    REQUIRE(caughtException);
+    REQUIRE(exceptionCode);
+    REQUIRE(callbackCount);
+    REQUIRE(closureDropCount);
+    REQUIRE(preDeliveryClosureDropCount);
+    REQUIRE(livePayloadCount);
+    REQUIRE(payloadDropCount);
+    REQUIRE(invalidPayloadCount);
+    REQUIRE(readyForDelivery);
+    REQUIRE(capturedMode);
+    for (bool captured : {false, true}) {
+        CarrierResult result{0, 0, 0, 0};
+        int value = 0;
+        REQUIRE_NOTHROW(value = test(&result, captured));
+        INFO("captured=" << captured << " stage=" << progress()
+             << " callback state=" << deliveryState() << " native claimed=" << result.resourceClaimed
+             << " caught=" << caughtException() << " exception code=" << exceptionCode()
+             << " fixture captured=" << capturedMode() << " ready for delivery=" << readyForDelivery()
+             << " pre-delivery closure drops=" << preDeliveryClosureDropCount()
+             << " closure drops=" << closureDropCount() << " live payloads=" << livePayloadCount()
+             << " payload drops=" << payloadDropCount() << " invalid payloads=" << invalidPayloadCount()
+             << " callback count=" << callbackCount());
+        CHECK_FALSE(caughtException());
+        CHECK(result.resourceClaimed == 1);
+        CHECK(capturedMode() == captured);
+        CHECK(readyForDelivery());
+        CHECK(preDeliveryClosureDropCount() == (captured ? 0 : 1));
+        CHECK(callbackCount() == 1);
+        CHECK(closureDropCount() == 1);
+        CHECK(livePayloadCount() == 0);
+        CHECK(payloadDropCount() == 2);
+        CHECK(invalidPayloadCount() == 0);
+        CHECK(value == 1);
+    }
+}
+
+TEST_CASE("I/O carriers: KDI aliases move owned completions through null decoder construction",
+          "[libk][io][proactor][api][callback-carrier][owner][null]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_carrier_owned_aliases__;
+        drops : int = 0;
+        calls : int = 0;
+        struct Probe {
+            ~Probe() { ++drops; }
+        }
+        template<typename T>
+        makeCarrier(completion: k::io::IoCompletion<T>) : k::io::IoCallbackCarrier<T>! {
+            return new k::io::IoCallbackCarrier<T>(completion, null);
+        }
+        testDone(result: byte*) : int {
+            drops = 0;
+            calls = 0;
+            probe : Probe! = new Probe();
+            callback : k::io::IoCompletion<k::io::IoDone> =
+                [probe](r: k::io::IoResult<k::io::IoDone>) {
+                    if (r.hasError()) {
+                        error : k::io::IoError = r.getError();
+                        if (error.kind() == k::io::IoErrorKind::Unsupported) ++calls;
+                    }
+                };
+            carrier : k::io::IoCallbackCarrier<k::io::IoDone>! =
+                makeCarrier<k::io::IoDone>(callback);
+            moved : bool = callback == null && probe == null && drops == 0;
+            k::io::IoCallbackCarrier<k::io::IoDone>::invoke((byte*) carrier, result);
+            delete carrier;
+            return moved && calls == 1 && drops == 1 ? 1 : 0;
+        }
+        testInt(result: byte*) : int {
+            drops = 0;
+            calls = 0;
+            probe : Probe! = new Probe();
+            callback : k::io::IoCompletion<int> =
+                [probe](r: k::io::IoResult<int>) {
+                    if (r.hasError()) ++calls;
+                };
+            carrier : k::io::IoCallbackCarrier<int>! = makeCarrier<int>(callback);
+            moved : bool = callback == null && probe == null && drops == 0;
+            k::io::IoCallbackCarrier<int>::invoke((byte*) carrier, result);
+            delete carrier;
+            return moved && calls == 1 && drops == 1 ? 1 : 0;
+        }
+        testNull() : int {
+            callback : k::io::IoCallbackCarrier<k::io::IoDone>! =
+                new k::io::IoCallbackCarrier<k::io::IoDone>(null, null);
+            promise : k::io::IoPromiseCarrier<k::io::IoDone>! =
+                new k::io::IoPromiseCarrier<k::io::IoDone>(null);
+            future : Future<k::io::IoDone>! = promise->future();
+            delete promise;
+            pending : bool = !future->isDone();
+            delete future;
+            delete callback;
+            return pending ? 1 : 0;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto done = jit->lookup_symbol<int (*)(CarrierResult*)>("testDone");
+    auto integer = jit->lookup_symbol<int (*)(CarrierResult*)>("testInt");
+    auto null = jit->lookup_symbol<int (*)()>("testNull");
+    REQUIRE(done);
+    REQUIRE(integer);
+    REQUIRE(null);
+    CarrierResult result{5, 95, 0, 0};
+    CHECK(done(&result) == 1);
+    CHECK(integer(&result) == 1);
+    CHECK(null() == 1);
+    CHECK(result.resourceClaimed == 0);
+}
+
 TEST_CASE("I/O foundations: shared Future cancel hooks survive until target quiescence",
           "[libk][io][proactor][api][future][cancel]") {
     auto jit = gen_jit_with_stdlib(R"SRC(
@@ -248,6 +502,123 @@ TEST_CASE("I/O boundaries: inherited Future waits and unavailable system leases 
     CHECK(WEXITSTATUS(status) == 0);
 }
 
+TEST_CASE("I/O carriers: Future failure uses the shared I/O taxonomy",
+          "[libk][io][proactor][api][future][boundary-errors]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_carrier_taxonomy__;
+        decode(value: long) : int { return (int) value; }
+        test(result: byte*, cancelled: bool, expectedErr: int, expectedBytes: long) : int throws(Throwable) {
+            carrier : k::io::IoPromiseCarrier<int>* =
+                new k::io::IoPromiseCarrier<int>(decode);
+            future : Future<int>! = carrier->future();
+            k::io::IoPromiseCarrier<int>::invoke((byte*) carrier, result);
+            k::io::IoPromiseCarrier<int>::drop((byte*) carrier);
+            if (!future->isDone() || future->isSuccess() ||
+                future->isCancelled() != cancelled) {
+                delete future;
+                return -1;
+            }
+            code : int = -2;
+            try {
+                future->get(Duration::ofMillis(0L));
+            } catch (e: CancellationException&) {
+                code = e.getCode();
+            } catch (e: ExecutionException&) {
+                cause : Throwable* = e.getCause();
+                if (cause != null) {
+                    code = cause->getCode();
+                    if (code == 200) {
+                        error : k::io::IOException* = (k::io::IOException*) cause;
+                        if (error == null || error->getErrno() != expectedErr) code = -3;
+                    } else if (code == 202) {
+                        error : k::io::ClosedChannelException* =
+                            (k::io::ClosedChannelException*) cause;
+                        if (error == null || error->getErrno() != expectedErr) code = -3;
+                    } else if (code == 203) {
+                        error : k::io::EndOfStreamException* =
+                            (k::io::EndOfStreamException*) cause;
+                        if (error == null || error->getBytesTransferred() != expectedBytes)
+                            code = -4;
+                    } else if (code == 204) {
+                        error : k::io::InterruptedIOException* =
+                            (k::io::InterruptedIOException*) cause;
+                        if (error == null || error->getBytesTransferred() != expectedBytes)
+                            code = -5;
+                    }
+                }
+            }
+            delete future;
+            return code;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(CarrierResult*, bool, int, int64_t)>("test");
+    REQUIRE(test);
+    struct Case {
+        CarrierResult result;
+        int code;
+        bool cancelled;
+    };
+    const Case cases[] = {
+        {{0, EACCES, 0, 0}, 200, false},
+        {{1, ECANCELED, 0, 0}, 103, true},
+        {{1, ECANCELED, 9, 0}, 204, false},
+        {{2, EBADF, 0, 0}, 202, false},
+        {{3, ETIMEDOUT, 0, 0}, 102, false},
+        {{4, 0, 7, 0}, 203, false},
+        {{5, ENOTSUP, 0, 0}, 200, false},
+        {{7, ESHUTDOWN, 0, 0}, 107, false},
+        {{9, EINTR, 0, 0}, 101, false},
+        {{9, EINTR, 4, 0}, 204, false},
+        // Kind, not a magic platform errno, determines cancellation.
+        {{0, ECANCELED, 0, 0}, 200, false}
+    };
+    for (auto entry : cases) {
+        INFO("kind=" << entry.result.kind << " errno=" << entry.result.error);
+        REQUIRE(test(&entry.result, entry.cancelled, entry.result.error,
+                     entry.result.bytes) == entry.code);
+        REQUIRE(entry.result.resourceClaimed == 0);
+    }
+}
+
+TEST_CASE("I/O carriers: throwing decode fails the Future and diagnoses its original code",
+          "[libk][io][proactor][api][future][boundary-errors]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_carrier_decode_failure__;
+        decode(value: long) : int { throw Exception(911); }
+        test(result: byte*) : int throws(Throwable) {
+            carrier : k::io::IoPromiseCarrier<int>* =
+                new k::io::IoPromiseCarrier<int>(decode);
+            future : Future<int>! = carrier->future();
+            k::io::IoPromiseCarrier<int>::invoke((byte*) carrier, result);
+            k::io::IoPromiseCarrier<int>::drop((byte*) carrier);
+            if (!future->isFailed() || future->isCancelled()) {
+                delete future;
+                return -1;
+            }
+            code : int = -2;
+            try {
+                future->get(Duration::ofMillis(0L));
+            } catch (e: ExecutionException&) {
+                cause : Throwable* = e.getCause();
+                if (cause != null) code = cause->getCode();
+            }
+            delete future;
+            return code;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(CarrierResult*)>("test");
+    REQUIRE(test);
+    CarrierResult result{0, 0, 0, 17};
+    NativeStderrCapture capture;
+    const int code = test(&result);
+    const auto output = capture.finish();
+    REQUIRE(code == 911);
+    REQUIRE(result.resourceClaimed == 0);
+    REQUIRE(output.find("origin=io.promise.publish code=911") != std::string::npos);
+}
+
 TEST_CASE("I/O carriers: throwing payload publication unlocks the Promise and fails it",
           "[libk][io][proactor][api][future][boundary-errors]") {
     auto jit = gen_jit_with_stdlib(R"SRC(
@@ -302,6 +673,92 @@ TEST_CASE("I/O carriers: throwing payload publication unlocks the Promise and fa
     REQUIRE(code == 912);
     REQUIRE(result.resourceClaimed == 0);
     REQUIRE(output.find("origin=io.promise.publish code=912") != std::string::npos);
+}
+
+TEST_CASE("I/O carriers: callback decode failure is delivered once and diagnosed",
+          "[libk][io][proactor][api][boundary-errors]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_callback_decode_failure__;
+        calls : int = 0;
+        decode(value: long) : int { throw Exception(913); }
+        test(result: byte*) : int {
+            calls = 0;
+            callback : k::io::IoCompletion<int> = [](r: k::io::IoResult<int>) {
+                if (r.hasError()) {
+                    error : k::io::IoError = r.getError();
+                    if (error.kind() == k::io::IoErrorKind::System &&
+                        error.getErrno() == 0) ++calls;
+                }
+            };
+            carrier : k::io::IoCallbackCarrier<int>* =
+                new k::io::IoCallbackCarrier<int>(callback, decode);
+            k::io::IoCallbackCarrier<int>::invoke((byte*) carrier, result);
+            k::io::IoCallbackCarrier<int>::drop((byte*) carrier);
+            return calls;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(CarrierResult*)>("test");
+    REQUIRE(test);
+    CarrierResult result{0, 0, 0, 17};
+    NativeStderrCapture capture;
+    const int calls = test(&result);
+    const auto output = capture.finish();
+    REQUIRE(calls == 1);
+    REQUIRE(result.resourceClaimed == 0);
+    REQUIRE(output.find("origin=io.decode code=913") != std::string::npos);
+}
+
+TEST_CASE("I/O carriers: a throwing callback completes its operation without false cancellation",
+          "[libk][io][proactor][api][boundary-errors]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_callback_failure_terminal__;
+        calls : int = 0;
+        observedContext : bool = false;
+        decode(value: long) : int { return (int) value; }
+        @ffi::Extern("C") private k_io_operation_on_kernel_completion(
+            operation: k::io::NativeIoOperation*, result: int) : void;
+        test() : int {
+            calls = 0;
+            observedContext = false;
+            loop : k::io::EventLoop;
+            lease : ExecutorLease! = loop.acquireLease();
+            callback : k::io::IoCompletion<int> = [](r: k::io::IoResult<int>) {
+                ++calls;
+                context : k::io::ExecutionContext! = k::io::ExecutionContext::current();
+                currentOperation : k::io::IoOperation! = k::io::IoOperation::current();
+                observedContext = context != null && currentOperation != null &&
+                    !context->isCancellationRequested() &&
+                    currentOperation->isCallbackRunning();
+                delete currentOperation;
+                delete context;
+                throw Exception(914);
+            };
+            operation : k::io::IoOperation! = k::io::prepareOperation<int>(
+                1, null, null, 0, 0L, 0, callback, *lease, decode);
+            k_io_operation_on_kernel_completion(operation->native(), 17);
+            // Dispatch is bounded, even if the worker has not enqueued yet.
+            limit : int = 0;
+            while (!operation->isDone() && limit < 20) {
+                loop.runOnce(Duration::ofMillis(100L));
+                ++limit;
+            }
+            result : int = calls == 1 && observedContext && operation->isDone() &&
+                !operation->isCancelled() &&
+                operation->stage() == k::io::IoOperationStage::Completed ? 1 : 0;
+            delete operation;
+            delete lease;
+            return result;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    NativeStderrCapture capture;
+    const int result = test();
+    const auto output = capture.finish();
+    REQUIRE(result == 1);
+    REQUIRE(output.find("origin=io.callback code=914") != std::string::npos);
 }
 
 TEST_CASE("Executor carriers: Runnable failures are contained and diagnosed once per submission",
@@ -435,3 +892,55 @@ TEST_CASE("Executor carriers: throwing task cleanup is diagnosed and dropped exa
     REQUIRE(output.find(diagnostic, second + diagnostic.size()) == std::string::npos);
 }
 
+TEST_CASE("I/O carriers: callback and Promise drop failures are diagnosed exactly once",
+          "[libk][io][proactor][api][boundary-errors]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_carrier_drop_failure__;
+        drops : int = 0;
+        struct Probe {
+            ~Probe() { ++drops; throw Exception(918); }
+        }
+        struct Payload {
+            Payload() {}
+            Payload(other: const Payload&) {}
+            ~Payload() { ++drops; throw Exception(919); }
+        }
+        decode(value: long) : int { return (int) value; }
+        testCallback() : int {
+            drops = 0;
+            probe : Probe! = new Probe();
+            callback : k::io::IoCompletion<int> =
+                [probe](r: k::io::IoResult<int>) {};
+            carrier : k::io::IoCallbackCarrier<int>* =
+                new k::io::IoCallbackCarrier<int>(callback, decode);
+            k::io::IoCallbackCarrier<int>::drop((byte*) carrier);
+            return drops;
+        }
+        testPromise() : int {
+            drops = 0;
+            carrier : k::io::IoPromiseCarrier<Payload>* =
+                new k::io::IoPromiseCarrier<Payload>(null);
+            k::io::IoPromiseCarrier<Payload>::drop((byte*) carrier);
+            return drops;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto callback = jit->lookup_symbol<int (*)()>("testCallback");
+    auto promise = jit->lookup_symbol<int (*)()>("testPromise");
+    REQUIRE(callback);
+    REQUIRE(promise);
+    NativeStderrCapture capture;
+    const int callbackDrops = callback();
+    const int promiseDrops = promise();
+    const auto output = capture.finish();
+    REQUIRE(callbackDrops == 1);
+    REQUIRE(promiseDrops == 1);
+    const std::string diagnostics[] = {
+        "origin=io.callback.drop code=918", "origin=io.promise.drop code=919"
+    };
+    for (const auto& diagnostic : diagnostics) {
+        const auto first = output.find(diagnostic);
+        REQUIRE(first != std::string::npos);
+        REQUIRE(output.find(diagnostic, first + diagnostic.size()) == std::string::npos);
+    }
+}
