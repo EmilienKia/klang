@@ -53,7 +53,11 @@ async file stream adapters and their separate file backend are removed.
 TCP/IPv4 and Unix stream channels use the same prepared operations and native
 fully parents, with whole-direction rather than file-cursor reservations.
 Hostname connects compose bounded resolver work with kernel connect under one
-deadline.
+deadline. UDP/IPv4 and Unix datagrams use persistent SENDMSG/RECVMSG contexts
+and structured packet results, never fully loops. See [io-network.md](io-network.md)
+for both APIs, packet truncation and ownership rules. The transitional
+blocking `network_ffi.c` bridge is retired. RECVMSG and SENDMSG are required
+kernel data-plane opcodes along with the stream/file operations.
 
 `IoRuntime::initialize()` probes the required kernel data-plane opcodes.
 The old FileChannel backend-selection helper is removed: this implementation

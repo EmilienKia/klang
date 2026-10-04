@@ -7,6 +7,7 @@
 #include "../src/runtime/callable_abi.h"
 #include "../src/runtime/io_file_ffi.h"
 #include "../src/runtime/io_stream_ffi.h"
+#include "../src/runtime/io_datagram_ffi.h"
 #include "../../klang/tests/helpers.hpp"
 #include <dlfcn.h>
 #include <atomic>
@@ -2631,3 +2632,603 @@ TEST_CASE("Stream native: close observes DNS and connect parents and owns the de
     if (resolving) REQUIRE(install(nullptr) == 0);
 }
 
+namespace {
+struct DatagramNative : FullyFile {
+    void* (*create_address)(const uint32_t*, int, int) =
+        symbol<decltype(create_address)>(rt.library, "__k_io_address_create");
+    void (*release_address)(void*) =
+        symbol<decltype(release_address)>(rt.library, "__k_io_address_release");
+    int (*endpoint)(void*, const void*) =
+        symbol<decltype(endpoint)>(rt.library, "__k_io_op_set_datagram_endpoint");
+    int (*message)(void*) =
+        symbol<decltype(message)>(rt.library, "__k_io_op_set_datagram_message");
+    void (*result)(const void*, void*) =
+        symbol<decltype(result)>(rt.library, "k_io_operation_error");
+    DatagramNative() {
+        release_handle(handle);
+        int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+        REQUIRE(fd >= 0);
+        auto create = symbol<void* (*)(int)>(rt.library, "__k_io_datagram_handle_create");
+        handle = create(fd);
+        REQUIRE(handle);
+    }
+    void* primitive(void* buffer, int length, int opcode = K_IO_OP_RECVMSG,
+                    const Callback* callback = nullptr, ManualExecutor* executor = nullptr) {
+        void* op = prepare(opcode, handle, buffer, length, 0, 0,
+            callback ? callback->context : nullptr,
+            KCallable{callback ? reinterpret_cast<void*>(callback->invoke) : nullptr, nullptr},
+            KCallable{callback ? reinterpret_cast<void*>(callback->drop) : nullptr, nullptr},
+            executor ? &executor->lease : nullptr);
+        REQUIRE(op);
+        if (opcode != K_IO_OP_CONNECT && opcode != K_IO_OP_CLOSE) REQUIRE(message(op) == 0);
+        return op;
+    }
+    void address(void* op, const char* name, int port = 12345, bool unix_socket = false) {
+        auto text = native_text(name);
+        void* value = create_address(text.data(), port, unix_socket ? 1 : 0);
+        REQUIRE(value);
+        REQUIRE(endpoint(op, value) == 0);
+        release_address(value);
+        std::fill(text.begin(), text.end(), 0);
+    }
+    struct NativeResult { int kind, error; int64_t bytes, value; int claimed; };
+    NativeResult outcome(void* op) {
+        NativeResult value{};
+        result(op, &value);
+        return value;
+    }
+    static void ipv4(const KIoBackendRequest& request, int port = 45678) {
+        REQUIRE(request.message);
+        REQUIRE(request.message->msg_name);
+        sockaddr_in source{};
+        source.sin_family = AF_INET;
+        source.sin_port = htons(static_cast<uint16_t>(port));
+        source.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        std::memcpy(request.message->msg_name, &source, sizeof(source));
+        request.message->msg_namelen = sizeof(source);
+    }
+};
+}
+
+TEST_CASE("Datagram native: copied bytes packet length and zero packets never overshoot buffer bounds",
+          "[libk][io][proactor][mock][datagram-channel][packet][truncation]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    unsigned capacity = 3;
+    int packet_length = 7;
+    bool flag_only = false;
+    SECTION("Truncated packet") {}
+    SECTION("Exact packet") { packet_length = 3; }
+    SECTION("Short packet") { packet_length = 1; }
+    SECTION("Zero packet") { packet_length = 0; }
+    SECTION("Zero capacity consumes a nonempty packet") { capacity = 0; }
+    SECTION("Zero capacity consumes an empty packet") { capacity = 0; packet_length = 0; }
+    SECTION("Kernel truncation flag is preserved independently") { packet_length = 3; flag_only = true; }
+    void* buffer = datagram.allocate(capacity);
+    void* op = datagram.primitive(buffer, static_cast<int>(capacity));
+    REQUIRE(datagram.submit(op, -1) == 0);
+    auto request = rt.mock->last();
+    REQUIRE(request.opcode == K_IO_OP_RECVMSG);
+    REQUIRE((request.flags & MSG_TRUNC) != 0);
+    REQUIRE(request.fixed_index == -1);
+    REQUIRE(request.message->msg_iovlen == 1);
+    REQUIRE(request.message->msg_iov->iov_len == capacity);
+    DatagramNative::ipv4(request);
+    unsigned copied = std::min(capacity, static_cast<unsigned>(packet_length));
+    if (copied) std::memset(request.message->msg_iov->iov_base, 75, copied);
+    request.message->msg_flags = flag_only || static_cast<unsigned>(packet_length) > capacity ? MSG_TRUNC : 0;
+    rt.mock->complete(request.tag, packet_length);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(datagram.position(buffer) == copied);
+    REQUIRE(rt.bytes(op) == copied);
+    REQUIRE(datagram.leases(buffer) == 0);
+    auto result = datagram.outcome(op);
+    REQUIRE(result.error == 0);
+    REQUIRE(result.kind == 0); // datagrams have no EOF
+    auto* context = reinterpret_cast<KDatagramMessage*>(result.value);
+    REQUIRE(context);
+    REQUIRE(context->copied == copied);
+    REQUIRE(context->datagram_length == packet_length);
+    REQUIRE(context->truncated == (flag_only || static_cast<unsigned>(packet_length) > capacity));
+    REQUIRE(context->source);
+    rt.release(op); datagram.release_buffer(buffer);
+}
+
+TEST_CASE("Datagram native: message iovec address and buffer survive both linked CQEs in either order",
+          "[libk][io][proactor][mock][datagram-channel][timeout][cancel][lifetime]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    bool timeout_first = false, cancelled = false, expired = false;
+    SECTION("Target first") {}
+    SECTION("Timeout first") { timeout_first = true; }
+    SECTION("Cancellation with irreversible bytes") { cancelled = true; }
+    SECTION("Deadline first") { timeout_first = true; expired = true; }
+    void* buffer = datagram.allocate(2);
+    void* op = datagram.primitive(buffer, 2);
+    REQUIRE(datagram.submit(op, 5000000000LL) == 0);
+    auto request = rt.mock->last();
+    DatagramNative::ipv4(request);
+    auto* message = request.message;
+    auto* vector = message->msg_iov;
+    auto* source = message->msg_name;
+    if (cancelled) REQUIRE(rt.cancel(op));
+    uint64_t first = timeout_first ? request.tag | K_TAG_LINKED_TIMEOUT_FLAG : request.tag;
+    rt.mock->complete(first, timeout_first ? (expired ? -ETIME : -ECANCELED) : 5);
+    rt.mock->wait_processed(first);
+    REQUIRE(rt.wait(op, 0) == ETIMEDOUT);
+    REQUIRE(datagram.leases(buffer) == 1);
+    REQUIRE(datagram.position(buffer) == 0);
+    REQUIRE(message->msg_iov == vector);
+    REQUIRE(message->msg_name == source);
+    rt.mock->complete(timeout_first ? request.tag : request.tag | K_TAG_LINKED_TIMEOUT_FLAG,
+                      timeout_first ? (expired ? -ECANCELED : 5) : -ECANCELED);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(datagram.leases(buffer) == 0);
+    REQUIRE(rt.bytes(op) == (expired ? 0 : 2));
+    REQUIRE(datagram.position(buffer) == (expired ? 0 : 2));
+    REQUIRE(datagram.kind(op) == (expired ? 3 : cancelled ? 1 : 0));
+    rt.release(op); datagram.release_buffer(buffer);
+}
+
+TEST_CASE("Datagram native: delayed callbacks clone Unix and IPv4 sources before message destruction",
+          "[libk][io][proactor][mock][datagram-channel][callback][address][lifetime]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    bool unix_socket = false;
+    SECTION("IPv4 source") {}
+    SECTION("Unix source") { unix_socket = true; }
+    struct Capture {
+        void* source = nullptr;
+        int invokes = 0, drops = 0;
+        int64_t bytes = -1;
+        static void invoke(void* native, void* value) {
+            auto& self = *static_cast<Capture*>(native);
+            auto& result = *static_cast<DatagramNative::NativeResult*>(value);
+            auto source = symbol<void* (*)(int64_t)>(runtime().library, "__k_io_datagram_source");
+            self.source = source(result.value);
+            self.bytes = result.bytes; ++self.invokes;
+        }
+        static void drop(void* native) { ++static_cast<Capture*>(native)->drops; }
+    } capture;
+    Callback callback{&capture, Capture::invoke, Capture::drop};
+    ManualExecutor executor;
+    void* buffer = datagram.allocate(1);
+    void* op = datagram.primitive(buffer, 1, K_IO_OP_RECVMSG, &callback, &executor);
+    REQUIRE(datagram.submit(op, -1) == 0);
+    auto request = rt.mock->last();
+    if (unix_socket) {
+        sockaddr_un source{};
+        source.sun_family = AF_UNIX;
+        std::strcpy(source.sun_path, "/tmp/metadata-only");
+        std::memcpy(request.message->msg_name, &source, sizeof(source));
+        request.message->msg_namelen = offsetof(sockaddr_un, sun_path) + std::strlen(source.sun_path) + 1;
+    } else DatagramNative::ipv4(request);
+    rt.mock->complete(request.tag, 1);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(capture.invokes == 0);
+    REQUIRE(datagram.leases(buffer) == 0);
+    rt.release(op); datagram.release_buffer(buffer);
+    Task task = executor.take();
+    task.run(task.context); task.drop(task.context);
+    executor.wait_released();
+    REQUIRE(capture.invokes == 1);
+    REQUIRE(capture.drops == 1);
+    REQUIRE(capture.bytes == 1);
+    REQUIRE(capture.source);
+    auto family = symbol<int (*)(const void*)>(rt.library, "__k_io_address_family");
+    auto port = symbol<int (*)(const void*)>(rt.library, "__k_io_address_port");
+    REQUIRE(family(capture.source) == (unix_socket ? 1 : 4));
+    REQUIRE(port(capture.source) == (unix_socket ? 0 : 45678));
+    auto copy_host = symbol<decltype(&__k_io_address_copy_host)>(rt.library, "__k_io_address_copy_host");
+    auto expected = native_text(unix_socket ? "/tmp/metadata-only" : "127.0.0.1");
+    std::vector<uint32_t> text(expected.size() + 1, 0xFFFFFFFFu);
+    REQUIRE(copy_host(capture.source, nullptr, static_cast<int>(expected.size())) == -EINVAL);
+    REQUIRE(copy_host(capture.source, text.data(), -1) == -EINVAL);
+    REQUIRE(copy_host(capture.source, text.data(), static_cast<int>(expected.size()) - 1) == -ERANGE);
+    REQUIRE(std::all_of(text.begin(), text.end(), [](uint32_t cp) { return cp == 0xFFFFFFFFu; }));
+    REQUIRE(copy_host(capture.source, text.data(), static_cast<int>(expected.size())) ==
+            static_cast<int>(expected.size()) - 1);
+    REQUIRE(text.back() == 0xFFFFFFFFu);
+    datagram.release_address(capture.source);
+    REQUIRE(std::equal(expected.begin(), expected.end(), text.begin()));
+    REQUIRE(copy_host(nullptr, text.data(), 0) == -ERANGE);
+    REQUIRE(text[0] == expected[0]);
+    REQUIRE(copy_host(nullptr, text.data(), 1) == 0);
+    REQUIRE(text[0] == 0);
+    REQUIRE(text[1] == expected[1]);
+}
+
+TEST_CASE("Datagram native: callback rejection queued cancellation and task drop clean carriers once",
+          "[libk][io][proactor][mock][datagram-channel][callback][drop]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    bool cancelled = false, rejected = false;
+    SECTION("Accepted task is dropped") {}
+    SECTION("Cancel queued task") { cancelled = true; }
+    SECTION("Reject task") { rejected = true; }
+    Tracker tracker;
+    Callback callback = tracker.callback();
+    ManualExecutor executor;
+    executor.reject = rejected;
+    void* buffer = datagram.allocate(0);
+    void* op = datagram.primitive(buffer, 0, K_IO_OP_RECVMSG, &callback, &executor);
+    REQUIRE(datagram.submit(op, -1) == 0);
+    auto request = rt.mock->last();
+    DatagramNative::ipv4(request);
+    rt.mock->complete(request.tag, 0);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    if (!rejected) {
+        Task task = executor.take();
+        if (cancelled) REQUIRE(rt.cancel(op));
+        task.drop(task.context);
+    }
+    rt.release(op);
+    executor.wait_released();
+    REQUIRE(tracker.invokes == 0);
+    REQUIRE(tracker.drops == 1);
+    REQUIRE(datagram.leases(buffer) == 0);
+    datagram.release_buffer(buffer);
+}
+
+TEST_CASE("Datagram native: shared receive and send gates reject overlap including DNS reservations",
+          "[libk][io][proactor][mock][datagram-channel][direction]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    void* input = datagram.allocate(2);
+    void* output = datagram.allocate(2);
+    void* other = datagram.allocate(2);
+    void* read = datagram.primitive(input, 2);
+    REQUIRE(datagram.submit(read, -1) == 0);
+    auto reading = rt.mock->last();
+    void* overlap = datagram.primitive(other, 2);
+    REQUIRE(datagram.submit(overlap, -1) == -EBUSY);
+    REQUIRE(datagram.kind(overlap) == 6);
+    REQUIRE(datagram.leases(other) == 0);
+    void* write = datagram.primitive(output, 2, K_IO_OP_SENDMSG);
+    REQUIRE(datagram.submit(write, -1) == 0);
+    auto writing = rt.mock->last();
+    REQUIRE((writing.flags & MSG_NOSIGNAL) != 0);
+    void* overlap_write = datagram.primitive(other, 2, K_IO_OP_SENDMSG);
+    REQUIRE(datagram.submit(overlap_write, -1) == -EBUSY);
+    void* overlap_connect = datagram.primitive(nullptr, 0, K_IO_OP_CONNECT);
+    datagram.address(overlap_connect, "127.0.0.1");
+    REQUIRE(datagram.submit(overlap_connect, -1) == -EBUSY);
+    DatagramNative::ipv4(reading);
+    rt.mock->complete(reading.tag, 2);
+    rt.mock->complete(writing.tag, 1);
+    REQUIRE(rt.wait(read, 5000000000LL) == 0);
+    REQUIRE(rt.wait(write, 5000000000LL) == 0);
+    REQUIRE(datagram.position(output) == 1); // partial CQE is not a fully loop
+    REQUIRE(rt.bytes(write) == 1);
+    REQUIRE(datagram.leases(input) == 0);
+    REQUIRE(datagram.leases(output) == 0);
+    rt.release(read); rt.release(write); rt.release(overlap);
+    rt.release(overlap_write); rt.release(overlap_connect);
+    datagram.release_buffer(input); datagram.release_buffer(output); datagram.release_buffer(other);
+}
+
+TEST_CASE("Datagram native: sendTo owns destination message and emits empty packets",
+          "[libk][io][proactor][mock][datagram-channel][sendto][empty]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    bool unix_socket = false;
+    SECTION("IPv4 destination") {}
+    SECTION("Unix destination") { unix_socket = true; }
+    void* buffer = datagram.allocate(0);
+    void* op = datagram.primitive(buffer, 0, K_IO_OP_SENDMSG);
+    datagram.address(op, unix_socket ? "/tmp/destination-only" : "127.0.0.1", 32123, unix_socket);
+    REQUIRE(datagram.submit(op, 5000000000LL) == 0);
+    auto request = rt.mock->last();
+    REQUIRE(request.opcode == K_IO_OP_SENDMSG);
+    REQUIRE(request.message->msg_name == request.addr);
+    REQUIRE(request.message->msg_namelen == request.addrlen);
+    REQUIRE(request.message->msg_iovlen == 1);
+    REQUIRE(request.message->msg_iov->iov_len == 0);
+    REQUIRE(request.addr->sa_family == (unix_socket ? AF_UNIX : AF_INET));
+    if (unix_socket) REQUIRE(std::string(reinterpret_cast<sockaddr_un*>(request.addr)->sun_path) == "/tmp/destination-only");
+    else REQUIRE(ntohs(reinterpret_cast<sockaddr_in*>(request.addr)->sin_port) == 32123);
+    rt.mock->complete(request.tag, 0);
+    rt.mock->wait_processed(request.tag);
+    REQUIRE(datagram.leases(buffer) == 1);
+    REQUIRE(request.message->msg_name == request.addr);
+    rt.mock->complete(request.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(datagram.kind(op) == 0);
+    REQUIRE(rt.bytes(op) == 0);
+    rt.release(op); datagram.release_buffer(buffer);
+}
+
+TEST_CASE("Datagram native: connected receive without a kernel name clones the persistent peer",
+          "[libk][io][proactor][mock][datagram-channel][connect][source]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    void* connect = datagram.primitive(nullptr, 0, K_IO_OP_CONNECT);
+    datagram.address(connect, "127.0.0.1", 33445);
+    REQUIRE(datagram.submit(connect, -1) == 0);
+    auto connecting = rt.mock->last();
+    rt.mock->complete(connecting.tag, 0);
+    REQUIRE(rt.wait(connect, 5000000000LL) == 0);
+    rt.release(connect);
+    void* buffer = datagram.allocate(1);
+    void* read = datagram.primitive(buffer, 1);
+    REQUIRE(datagram.submit(read, -1) == 0);
+    auto request = rt.mock->last();
+    request.message->msg_namelen = 0;
+    rt.mock->complete(request.tag, 0);
+    REQUIRE(rt.wait(read, 5000000000LL) == 0);
+    auto result = datagram.outcome(read);
+    REQUIRE(result.error == 0);
+    auto source = symbol<void* (*)(int64_t)>(rt.library, "__k_io_datagram_source");
+    auto port = symbol<int (*)(const void*)>(rt.library, "__k_io_address_port");
+    void* address = source(result.value);
+    REQUIRE(address);
+    rt.release(read);
+    datagram.release_handle(datagram.handle); datagram.handle = nullptr;
+    REQUIRE(port(address) == 33445);
+    datagram.release_address(address); datagram.release_buffer(buffer);
+}
+
+TEST_CASE("Datagram native: asynchronous hostname connect and sendTo use UDP hints and one deadline",
+          "[libk][io][proactor][mock][datagram-channel][dns][timeout][cancel]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    int opcode = K_IO_OP_SENDMSG;
+    bool cancel = false, timeout = false;
+    SECTION("sendTo resolves and submits") {}
+    SECTION("connect resolves and submits") { opcode = K_IO_OP_CONNECT; }
+    SECTION("cancel suppresses sendTo after DNS") { cancel = true; }
+    SECTION("deadline includes DNS") { timeout = true; }
+    LookupBarrier barrier;
+    auto install = symbol<int (*)(void*)>(rt.library, "k_io_runtime_set_test_resolver_lookup");
+    REQUIRE(install(reinterpret_cast<void*>(LookupBarrier::lookup)) == 0);
+    void* buffer = opcode == K_IO_OP_CONNECT ? nullptr : datagram.allocate(1);
+    void* op = datagram.primitive(buffer, buffer ? 1 : 0, opcode);
+    datagram.address(op, "localhost", 31234);
+    auto count = rt.mock->request_count();
+    REQUIRE(datagram.submit(op, timeout ? 1000000LL : 5000000000LL) == 0);
+    barrier.await();
+    REQUIRE(barrier.socket_type == SOCK_DGRAM);
+    REQUIRE(barrier.protocol == IPPROTO_UDP);
+    void* overlap = datagram.primitive(nullptr, 0, K_IO_OP_SENDMSG);
+    REQUIRE(datagram.submit(overlap, -1) == -EBUSY);
+    REQUIRE(datagram.kind(overlap) == 6);
+    rt.release(overlap);
+    if (cancel) REQUIRE(rt.cancel(op));
+    if (timeout) std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    barrier.unblock();
+    if (cancel || timeout) {
+        REQUIRE(rt.wait(op, 5000000000LL) == 0);
+        REQUIRE(rt.mock->request_count() == count);
+        REQUIRE(datagram.kind(op) == (cancel ? 1 : 3));
+    } else {
+        auto request = rt.mock->request_after(count);
+        REQUIRE(request.opcode == opcode);
+        REQUIRE(request.addr->sa_family == AF_INET);
+        REQUIRE(request.timeout_nanos > 0);
+        REQUIRE(request.timeout_nanos <= 5000000000LL);
+        if (opcode == K_IO_OP_SENDMSG) {
+            REQUIRE(request.message->msg_name == request.addr);
+            REQUIRE(request.message->msg_namelen == sizeof(sockaddr_in));
+        }
+        rt.mock->complete(request.tag, buffer ? 1 : 0);
+        rt.mock->complete(request.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+        REQUIRE(rt.wait(op, 5000000000LL) == 0);
+        REQUIRE(datagram.kind(op) == 0);
+    }
+    REQUIRE(install(nullptr) == 0);
+    if (buffer) { REQUIRE(datagram.leases(buffer) == 0); datagram.release_buffer(buffer); }
+    rt.release(op);
+}
+
+TEST_CASE("Datagram native: close cancels both directions and waits for linked targets before one fd close",
+          "[libk][io][proactor][mock][datagram-channel][close][drain]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    void* input = datagram.allocate(2);
+    void* output = datagram.allocate(2);
+    void* read = datagram.primitive(input, 2);
+    void* write = datagram.primitive(output, 2, K_IO_OP_SENDMSG);
+    REQUIRE(datagram.submit(read, 5000000000LL) == 0);
+    auto reading = rt.mock->last();
+    REQUIRE(datagram.submit(write, 5000000000LL) == 0);
+    auto writing = rt.mock->last();
+    auto descriptor = symbol<int (*)(void*)>(rt.library, "__k_io_handle_fd");
+    int fd = descriptor(datagram.handle);
+    auto count = rt.mock->request_count();
+    void* closing = datagram.primitive(nullptr, 0, K_IO_OP_CLOSE);
+    REQUIRE(datagram.submit(closing, -1) == 0);
+    REQUIRE(rt.wait(closing, 0) == ETIMEDOUT);
+    REQUIRE(rt.mock->request_count() == count);
+    DatagramNative::ipv4(reading);
+    rt.mock->complete(reading.tag, 5);
+    rt.mock->complete(reading.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    rt.mock->complete(writing.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    rt.mock->wait_processed(writing.tag | K_TAG_LINKED_TIMEOUT_FLAG);
+    REQUIRE(datagram.leases(output) == 1);
+    REQUIRE(rt.mock->request_count() == count);
+    rt.mock->complete(writing.tag, 1);
+    auto close_request = rt.mock->request_after(count);
+    REQUIRE(close_request.opcode == K_IO_OP_CLOSE);
+    REQUIRE(close_request.fd == fd);
+    REQUIRE(::close(fd) == 0);
+    rt.mock->complete(close_request.tag, 0);
+    REQUIRE(rt.wait(closing, 5000000000LL) == 0);
+    REQUIRE(rt.wait(read, 5000000000LL) == 0);
+    REQUIRE(rt.wait(write, 5000000000LL) == 0);
+    REQUIRE(rt.bytes(read) == 2);
+    REQUIRE(rt.bytes(write) == 1);
+    REQUIRE(datagram.leases(input) == 0);
+    REQUIRE(datagram.leases(output) == 0);
+    REQUIRE(descriptor(datagram.handle) == -1);
+    rt.release(read); rt.release(write); rt.release(closing);
+    datagram.release_buffer(input); datagram.release_buffer(output);
+}
+
+TEST_CASE("Datagram native: malformed source metadata fails explicitly without losing copied bytes",
+          "[libk][io][proactor][mock][datagram-channel][address][errors]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    bool no_peer = false, oversize = false, wrong_family = false;
+    SECTION("Short IPv4 name") {}
+    SECTION("Oversized name") { oversize = true; }
+    SECTION("Unsupported family") { wrong_family = true; }
+    SECTION("Absent unconnected peer") { no_peer = true; }
+    void* buffer = datagram.allocate(1);
+    void* op = datagram.primitive(buffer, 1);
+    REQUIRE(datagram.submit(op, -1) == 0);
+    auto request = rt.mock->last();
+    DatagramNative::ipv4(request);
+    request.message->msg_namelen = no_peer ? 0 : oversize ? sizeof(sockaddr_storage) + 1 : sizeof(sa_family_t);
+    if (wrong_family) static_cast<sockaddr*>(request.message->msg_name)->sa_family = AF_INET6;
+    rt.mock->complete(request.tag, 4);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(datagram.error(op) == (no_peer ? EDESTADDRREQ : wrong_family ? EAFNOSUPPORT : EINVAL));
+    REQUIRE(rt.bytes(op) == 1);
+    REQUIRE(datagram.position(buffer) == 1);
+    REQUIRE(datagram.leases(buffer) == 0);
+    rt.release(op); datagram.release_buffer(buffer);
+}
+
+TEST_CASE("Datagram native: invalid destinations fully requests and shared buffer mutation are rejected",
+          "[libk][io][proactor][mock][datagram-channel][prepare][buffer]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    void* buffer = datagram.allocate(2);
+    void* first = datagram.primitive(buffer, 2);
+    REQUIRE(datagram.submit(first, -1) == 0);
+    auto request = rt.mock->last();
+    void* second = datagram.primitive(buffer, 2, K_IO_OP_SENDMSG);
+    REQUIRE(datagram.submit(second, -1) == -EBUSY);
+    REQUIRE(datagram.leases(buffer) == 1);
+    auto error = symbol<int (*)(void*, int)>(rt.library, "__k_io_op_set_request_error");
+    void* bad = datagram.primitive(nullptr, 0, K_IO_OP_SENDMSG);
+    REQUIRE(error(bad, datagram.endpoint(bad, nullptr)) == -EINVAL);
+    REQUIRE(datagram.submit(bad, -1) == -EINVAL);
+    void* fully = datagram.primitive(nullptr, 0, K_IO_OP_SENDMSG);
+    REQUIRE(datagram.fully(fully) == -EINVAL);
+    REQUIRE(datagram.submit(fully, -1) == -EINVAL);
+    auto text = native_text("127.0.0.1");
+    REQUIRE_FALSE(datagram.create_address(text.data(), 65536, 0));
+    auto native_errno = symbol<int (*)()>(rt.library, "__k_io_setup_errno");
+    REQUIRE(native_errno() == EINVAL);
+    DatagramNative::ipv4(request);
+    rt.mock->complete(request.tag, 0);
+    REQUIRE(rt.wait(first, 5000000000LL) == 0);
+    rt.release(first); rt.release(second); rt.release(bad); rt.release(fully);
+    datagram.release_buffer(buffer);
+}
+
+TEST_CASE("Datagram native: Unix bind owns only a successfully created unique pathname",
+          "[libk][io][proactor][mock][datagram-channel][unix][ownership]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    char pattern[] = "/tmp/klang-native-datagram-XXXXXX";
+    char* directory = mkdtemp(pattern);
+    REQUIRE(directory);
+    std::filesystem::path root(directory);
+    struct Cleanup {
+        std::filesystem::path root;
+        ~Cleanup() { std::filesystem::remove(root / "socket"); std::filesystem::remove(root / "occupied"); std::filesystem::remove(root); }
+    } cleanup{root};
+    auto bind = symbol<void* (*)(const uint32_t*, int, int)>(rt.library, "__k_io_datagram_bind");
+    auto text = native_text((root / "occupied").c_str());
+    { std::ofstream output(root / "occupied"); output << "keep"; REQUIRE(output.good()); }
+    REQUIRE_FALSE(bind(text.data(), 0, 1));
+    std::ifstream input(root / "occupied");
+    std::string contents; input >> contents;
+    REQUIRE(contents == "keep");
+    text = native_text((root / "socket").c_str());
+    void* handle = bind(text.data(), 0, 1);
+    REQUIRE(handle);
+    void* remote = datagram.create_address(text.data(), 0, 1);
+    REQUIRE(remote);
+    datagram.release_address(remote);
+    REQUIRE(std::filesystem::exists(root / "socket"));
+    REQUIRE_FALSE(bind(text.data(), 0, 1));
+    REQUIRE(std::filesystem::exists(root / "socket"));
+    datagram.release_handle(handle);
+    REQUIRE_FALSE(std::filesystem::exists(root / "socket"));
+}
+
+TEST_CASE("Datagram native: close cancels accepted DNS work and drains its message lease before closing",
+          "[libk][io][proactor][mock][datagram-channel][dns][close]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    LookupBarrier barrier;
+    auto install = symbol<int (*)(void*)>(rt.library, "k_io_runtime_set_test_resolver_lookup");
+    REQUIRE(install(reinterpret_cast<void*>(LookupBarrier::lookup)) == 0);
+    void* buffer = datagram.allocate(1);
+    void* send = datagram.primitive(buffer, 1, K_IO_OP_SENDMSG);
+    datagram.address(send, "localhost", 12345);
+    auto count = rt.mock->request_count();
+    REQUIRE(datagram.submit(send, 5000000000LL) == 0);
+    barrier.await();
+    auto descriptor = symbol<int (*)(void*)>(rt.library, "__k_io_handle_fd");
+    int fd = descriptor(datagram.handle);
+    void* closing = datagram.primitive(nullptr, 0, K_IO_OP_CLOSE);
+    REQUIRE(datagram.submit(closing, -1) == 0);
+    REQUIRE(datagram.leases(buffer) == 1);
+    REQUIRE(rt.wait(closing, 0) == ETIMEDOUT);
+    REQUIRE(rt.mock->request_count() == count);
+    barrier.unblock();
+    auto request = rt.mock->request_after(count);
+    REQUIRE(request.opcode == K_IO_OP_CLOSE);
+    REQUIRE(request.fd == fd);
+    REQUIRE(datagram.leases(buffer) == 0);
+    REQUIRE(rt.wait(send, 5000000000LL) == 0);
+    REQUIRE(datagram.kind(send) == 1);
+    REQUIRE(close(fd) == 0);
+    rt.mock->complete(request.tag, 0);
+    REQUIRE(rt.wait(closing, 5000000000LL) == 0);
+    REQUIRE(install(nullptr) == 0);
+    rt.release(send); rt.release(closing); datagram.release_buffer(buffer);
+}
+
+TEST_CASE("Datagram native: unsupported data plane and admission pressure fail without transport fallback",
+          "[libk][io][proactor][mock][datagram-channel][support][capacity]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    bool unsupported = false;
+    int opcode = K_IO_OP_RECVMSG;
+    SECTION("Receive opcode unavailable") { unsupported = true; }
+    SECTION("Send opcode unavailable") { unsupported = true; opcode = K_IO_OP_SENDMSG; }
+    SECTION("Backend capacity pressure") {}
+    void* buffer = datagram.allocate(1);
+    void* op = datagram.primitive(buffer, 1, opcode);
+    if (unsupported) rt.mock->unsupported_opcode = opcode;
+    else rt.mock->reject = true;
+    int result = datagram.submit(op, -1);
+    rt.mock->unsupported_opcode = -1;
+    rt.mock->reject = false;
+    REQUIRE(result == (unsupported ? -ENOTSUP : -EBUSY));
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(datagram.error(op) == (unsupported ? ENOTSUP : EBUSY));
+    REQUIRE(datagram.kind(op) == (unsupported ? 5 : 6));
+    REQUIRE(datagram.leases(buffer) == 0);
+    REQUIRE(datagram.position(buffer) == 0);
+    rt.release(op); datagram.release_buffer(buffer);
+}
+
+TEST_CASE("Datagram native: inherited runtime rejects bind and transport after fork",
+          "[libk][io][proactor][mock][datagram-channel][fork]") {
+    DatagramNative datagram;
+    auto& rt = datagram.rt;
+    auto bind = symbol<void* (*)(const uint32_t*, int, int)>(rt.library, "__k_io_datagram_bind");
+    auto native_errno = symbol<int (*)()>(rt.library, "__k_io_setup_errno");
+    auto text = native_text("127.0.0.1");
+    pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (!child) {
+        if (bind(text.data(), 0, 0) || native_errno() != ENOTSUP) _exit(1);
+        void* op = datagram.prepare(K_IO_OP_SENDMSG, datagram.handle, nullptr, 0,
+                                   0, 0, nullptr, {}, {}, nullptr);
+        if (!op) _exit(2);
+        int result = datagram.submit(op, -1);
+        rt.release(op);
+        _exit(result == -ENOTSUP ? 0 : 3);
+    }
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    REQUIRE(WIFEXITED(status));
+    REQUIRE(WEXITSTATUS(status) == 0);
+}

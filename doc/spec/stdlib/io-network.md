@@ -1,7 +1,9 @@
 # Proactive Network I/O (`k::io`)
 
-TCP/IPv4 and AF_UNIX stream channels use the Linux io_uring
-proactor described in [io-async.md](io-async.md).
+TCP/IPv4, UDP/IPv4 and AF_UNIX stream/datagram channels use the Linux io_uring
+proactor described in [io-async.md](io-async.md). Datagram transfers preserve
+packet boundaries and return structured receive results; stream fully/EOF
+contracts do not apply to datagrams.
 
 ## Addresses and creation
 
@@ -19,6 +21,19 @@ is requested; an out-of-range port raises `IOException` with exception code `200
 and platform errno `EINVAL`. This is distinct from operation preparation failure.
 
 `NetworkAddress` is a copyable immutable value sharing native address storage.
+The `ofName(host, port)` convenience factory preserves unresolved hostnames;
+datagram `connect` and `sendTo` resolve them asynchronously on the same bounded
+pool, using UDP hints and one deadline across lookup and transport. `family()`
+returns `4` for IPv4, `1` for Unix, and `0` for an empty address;
+`isResolved()` distinguishes numeric/path endpoints from hostname inputs.
+`host()` returns an independently owned, zero-terminated `char[]!` copy.
+For a default empty address, this array contains exactly one zero character.
+`NetworkAddress::unix(path)` returns a Unix address value, with `path` either
+`const file::Path&` or `const char[]`. Pathname support is provided; abstract
+namespace and other address families are not supported. An unnamed Unix
+sender is represented by a valid Unix source with empty text and cannot be
+used as a destination. An empty value or an IPv4 destination with port zero
+or wildcard address fails explicitly, not as a successful no-op.
 The default constructor creates an empty value without throwing. Passing that
 value to `SocketChannel::connect` returns an operation whose result reports
 `IoErrorKind::InvalidArgument` / `EINVAL`; it does not throw during construction.
@@ -33,6 +48,19 @@ listen are immediate setup methods; their errors raise the canonical I/O
 exceptions. Connect preparation errors are delivered through its operation
 result, including invalid arguments, allocation failure and runtime rejection.
 Inherited post-fork runtime use is unsupported.
+
+`DatagramSocket::open()` binds IPv4 port zero immediately.
+`DatagramSocket::bind(address)` and `bind(path)` return owners of copyable
+socket values, with checked NONBLOCK/CLOEXEC setup. `boundAddress()` returns
+a shared address value snapshot; `localPort()` exposes the actual assigned
+IPv4 port. Both raise canonical exceptions with the actual setup errno.
+Unix datagram bind must not pre-unlink a pathname: an existing file/socket
+fails with `EADDRINUSE` and remains intact. Only a successful bind owns the
+created pathname. Successful close removes that path, or it is removed when
+the last owning native handle is released after in-flight operations drain.
+Cleanup checks the recorded socket identity and must not remove a replacement
+file. Releasing copies, remote/source addresses, or a failed bind must not
+unlink another socket's pathname. Descriptor adoption does not claim a path.
 
 ## Three operation forms
 
@@ -113,6 +141,69 @@ canonical exception taxonomy and native errno. Resolver failures expose
 `EAGAIN`, `ENOMEM`, `ENOENT`, `EAFNOSUPPORT`, `EHOSTUNREACH`, or the actual
 `EAI_SYSTEM` errno, rather than success or an errno-zero placeholder.
 
+## Datagram operations and packet results
+
+| Operation | Callback result | Future form | Sync form |
+|-----------|-----------------|-------------|-----------|
+| `datagram.connect(remote, completion, executor)` | `IoResult<IoDone>` | `connectAsync(remote)` | `connectSync(remote)` |
+| `datagram.send(buffer, completion, executor)` | `IoResult<int>` | `sendAsync(buffer)` | `sendSync(buffer)` |
+| `datagram.sendTo(buffer, remote, completion, executor)` | `IoResult<int>` | `sendToAsync(buffer, remote)` | `sendToSync(buffer, remote)` |
+| `datagram.receive(buffer, completion, executor)` | `IoResult<DatagramReceive>` | `receiveAsync(buffer)` | `receiveSync(buffer)` |
+| `datagram.close(completion, executor)` | `IoResult<IoDone>` | `closeAsync()` | `closeSync()` |
+
+Each transport method has selected/default executor forms and raw-nanosecond
+or `const Duration&` I/O deadlines, with the same parameter order as stream
+methods. `connect` and `sendTo` accept `NetworkAddress` or `file::Path` in
+every form. Close has no deadline and is non-cancellable. Existing char-array
+Unix convenience calls and parameterless blocking aliases delegate to Sync;
+blocking `receive` now returns `DatagramReceive`, not an integer.
+
+Connected `send` uses the socket's peer; unconnected `sendTo` supplies its
+own persistent destination and does not connect the socket. `sendTo` on a
+connected socket supplies an explicit destination. Native SENDMSG/RECVMSG
+are the only transport path; no blocking send/receive/connect/poll engine
+runs on a caller, control worker, or callback executor. Buffer registration
+does not imply use of fixed-buffer packet operations.
+
+One operation submits one packet, including a zero-length send. There is
+no datagram fully loop, and receive zero is a valid empty packet, never EOF.
+A zero-capacity receive still consumes one packet and can report truncation.
+The result is a copyable value, safe for repeated Future `get()` and `share()`:
+
+| Accessor | Meaning |
+|----------|---------|
+| `bytesTransferred(): int` | Number of bytes actually copied into the buffer. |
+| `source(): NetworkAddress` | Independently retained source address value. |
+| `isTruncated(): bool` | Kernel `MSG_TRUNC` or a packet length exceeding capacity. |
+| `datagramLength(): long` | Full packet length from Linux `MSG_TRUNC` input; `-1` if unavailable. |
+
+The buffer cursor, `IoOperation::bytesTransferred()` and all error counts
+advance by `min(nonnegative kernel result, remaining buffer capacity)`, not
+by the full truncated packet length. The unused part of a packet is discarded,
+not returned by a later receive. Kernel-provided source names are validated
+using their actual returned family/length. A connected receive without a name
+uses the retained peer; a missing unconnected source fails explicitly.
+Invalid source metadata preserves irreversible copied bytes in the operation
+error; it does not manufacture a successful null address.
+
+Socket copies share one receive gate and one send/connect gate. DNS sendTo
+and connect retain the send gate through queue wait, resolution and all kernel
+CQEs. A buffer cannot be leased by two operations even in opposite directions.
+Same-direction overlap fails with `ResourceExhausted` / `EBUSY`. All request
+iovecs, msghdrs and sockaddr storage remain owned through both target and linked
+timeout CQEs. Callback metadata remains alive after native quiescence until
+executor delivery or task drop. Source address copies outlive both operation
+and socket. Metadata does not represent an adopted descriptor.
+
+Close cancels/drains receive, send and accepted resolver work before closing
+one shared descriptor. Cancellation suppresses queued callbacks, while actual
+copied/sent counts remain observable after native drain. Simple Future
+cancellation can publish before target drain; `waitQuiescent` or the Sync
+bridge is required before accessing a still-leased buffer. Sync methods use
+`getIoSync` and the same partial-byte cancellation/interruption rules as other
+channels. Preparation, resolver, unsupported kernel, post-fork, close and
+capacity errors must be explicit; there is no synthetic success fallback.
+
 ## Example
 
 ```k
@@ -143,4 +234,5 @@ engine. New code should use the explicit callback/Future/Sync names.
 unchanged.
 
 See [`samples/stream_channel_loopback.k`](../../../samples/stream_channel_loopback.k)
-for a complete Future/Sync example with ephemeral endpoints.
+and [`samples/datagram_loopback.k`](../../../samples/datagram_loopback.k) for
+complete Future/Sync examples with ephemeral endpoints.

@@ -115,6 +115,7 @@ set(LIBK_SOURCES
     # ── Phase 6: event loop / reactor foundation ──────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/socket_channel.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/server_socket.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/datagram_socket.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/event_loop.k
     # ── Phase 7: functional programming ───────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/functional.k
@@ -422,18 +423,13 @@ add_custom_command(
     VERBATIM
 )
 
-set(NETWORK_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/network_ffi.c)
-set(NETWORK_FFI_OBJ ${LIBK_OUTPUT_DIR}/network_ffi.o)
 set(IO_RESOLVER_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_resolver.c)
 set(IO_RESOLVER_OBJ ${LIBK_OUTPUT_DIR}/io_resolver.o)
 
 add_custom_command(
-    OUTPUT  ${NETWORK_FFI_OBJ}
     OUTPUT  ${IO_RESOLVER_OBJ}
     COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
             -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
-            -o ${NETWORK_FFI_OBJ} ${NETWORK_FFI_C}
-    DEPENDS ${NETWORK_FFI_C}
             -o ${IO_RESOLVER_OBJ} ${IO_RESOLVER_C}
     DEPENDS ${IO_RESOLVER_C}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_resolver.h
@@ -458,7 +454,6 @@ add_custom_command(
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_operation.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_resolver.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
-    COMMENT "Compiling K runtime network I/O FFI wrappers (network_ffi.c)"
     COMMENT "Compiling K runtime io_runtime (io_runtime.c)"
     VERBATIM
 )
@@ -675,7 +670,6 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${TIME_OBJ} ${RUNTIME_TLS_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
-                   ${NETWORK_FFI_OBJ}
                    ${PARK_LOT_OBJ}
                    ${IO_URING_BACKEND_OBJ} ${IO_OPERATION_OBJ} ${IO_RUNTIME_OBJ}
                    ${IO_RESOLVER_OBJ} ${IO_FFI_OBJ}
@@ -831,6 +825,9 @@ libk_add_test(libk-tests-file-channel-fully 120
 )
 libk_add_test(libk-tests-stream-channels 120
     tests/test-io-stream-channels.cpp
+)
+libk_add_test(libk-tests-datagram-channels 120
+    tests/test-io-datagram-channels.cpp
 )
 # ── libk foundational types & memory tests ───────────────────────────────────
 libk_add_test(libk-tests-types 120

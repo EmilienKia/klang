@@ -23,7 +23,7 @@ callback/Future/Sync primitives and native fully transfers. Streams remain
 synchronous; the former async file stream adapters are removed.
 For interruptible TCP and Unix-domain networking (`NetworkAddress`,
 `SocketChannel`, `ServerSocket`, `DatagramSocket`), see
-[Asynchronous Network I/O](io-network.md).
+[Proactive Network I/O](io-network.md).
 
 The hierarchy:
 

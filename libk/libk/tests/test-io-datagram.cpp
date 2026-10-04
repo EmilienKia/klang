@@ -46,7 +46,8 @@ TEST_CASE("DatagramSocket: UDP loopback sendTo/receive", "[libk][io][socket][udp
             Receiver(sock: k::io::DatagramSocket*) : _sock(sock), _ok(0) {}
             override run() : void {
                 b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
-                n : int = _sock->receive(b, 2000000000L);
+                packet : k::io::DatagramReceive = _sock->receiveSync(b, 2000000000L);
+                n : int = packet.bytesTransferred();
                 if (n == 4) {
                     b->flip();
                     if (b->get(0u) == (byte) 80 && b->get(3u) == (byte) 71) {
@@ -98,7 +99,9 @@ TEST_CASE("DatagramSocket: UDP loopback sendTo/receive", "[libk][io][socket][udp
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 3);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 3);
 }
 
 TEST_CASE("DatagramSocket: connected mode send/receive", "[libk][io][socket][udp]") {
@@ -112,7 +115,8 @@ TEST_CASE("DatagramSocket: connected mode send/receive", "[libk][io][socket][udp
             Receiver(sock: k::io::DatagramSocket*) : _sock(sock), _ok(0) {}
             override run() : void {
                 b : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
-                n : int = _sock->receive(b, 2000000000L);
+                packet : k::io::DatagramReceive = _sock->receiveSync(b, 2000000000L);
+                n : int = packet.bytesTransferred();
                 if (n == 3) {
                     b->flip();
                     if (b->get(0u) == (byte) 65 && b->get(2u) == (byte) 67) {
@@ -170,7 +174,9 @@ TEST_CASE("DatagramSocket: connected mode send/receive", "[libk][io][socket][udp
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 3);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 3);
 }
 
 TEST_CASE("DatagramSocket: receive timeout raises TimeoutException",
@@ -198,7 +204,9 @@ TEST_CASE("DatagramSocket: receive timeout raises TimeoutException",
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
 
 TEST_CASE("DatagramSocket: receive is interruptible", "[libk][io][socket][udp][interruption]") {
@@ -244,10 +252,12 @@ TEST_CASE("DatagramSocket: receive is interruptible", "[libk][io][socket][udp][i
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
 
-TEST_CASE("DatagramSocket: close during blocking receive raises ClosedChannelException",
+TEST_CASE("DatagramSocket: close cancels an admitted receive or rejects late admission",
           "[libk][io][socket][udp][close]") {
     auto jit = jit_k(R"SRC(
         module __dgram_close_during_receive__;
@@ -263,6 +273,8 @@ TEST_CASE("DatagramSocket: close during blocking receive raises ClosedChannelExc
                     _sock->receive(b);
                     _res = 0;
                 } catch (e: k::io::ClosedChannelException&) {
+                    _res = 1;
+                } catch (e: k::CancellationException&) {
                     _res = 1;
                 }
                 delete b;
@@ -290,5 +302,7 @@ TEST_CASE("DatagramSocket: close during blocking receive raises ClosedChannelExc
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
