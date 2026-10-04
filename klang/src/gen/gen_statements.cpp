@@ -3954,7 +3954,9 @@ void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_ty
             case_bb);
 
         _builder->SetInsertPoint(case_bb);
-        // GEP to storage, bitcast to alternative struct pointer, call destructor
+        // Disarm before any potentially throwing destructor; this alternative
+        // must not be revisited by a later cleanup path.
+        _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
         auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, storage, 1, "union_dtor_storage");
         if (dtor->is_virtual()) {
             auto* vptr_val = _builder->CreateLoad(llvm::PointerType::get(**_context, 0), storage_ptr, "union_dtor_vptr");
@@ -3967,7 +3969,6 @@ void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_ty
             _builder->SetInsertPoint(dtor_call_bb);
         }
         auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-        _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
         create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {storage_ptr});
         _builder->CreateBr(merge_bb);
     }

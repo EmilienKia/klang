@@ -38,6 +38,10 @@ Value members with destructors must be destroyed in reverse declaration order
 after the enclosing destructor body. This rule also applies to instantiated
 template structs: the compiler must generate an implicit destructor when a
 concrete value member requires one, even if the template declares no destructor.
+An embedded union member follows the same rule: its active non-trivial alternative
+must be destroyed after the enclosing destructor body. Empty or trivial alternatives
+require no destruction. This applies to default-constructed and copy-constructed
+enclosing values alike.
 ---
 ## 2. When destructors are called
 ### Local variables

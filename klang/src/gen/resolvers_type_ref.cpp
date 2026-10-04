@@ -2149,6 +2149,16 @@ void type_reference_resolver::finalize_aggregate_destructor(aggregate& agg) {
                     type::canonical(type::remove_const(member->get_type())))) {
                 if (auto member_aggregate = member_type->get_struct()) {
                     inspect_subobject(member_aggregate);
+                } else if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), member_type)) {
+                    for (const auto* alternative : un->all_alternatives_ptrs()) {
+                        if (auto alternative_type = std::dynamic_pointer_cast<struct_type>(
+                                alternative->resolved_type)) {
+                            if (auto alternative_aggregate = alternative_type->get_struct()) {
+                                finalize(*alternative_aggregate);
+                            }
+                        }
+                    }
+                    if (un->has_nontrivial_destructor_alternative()) needs_dtor = true;
                 }
             }
         }

@@ -25,6 +25,64 @@ using namespace k::model::gen;
 using namespace k::parse;
 using namespace k::parse::ast;
 
+TEST_CASE("Template union members: copied holders destroy only their active class value",
+          "[gen][union][template][class][lifecycle][union-member-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_union_member_cleanup;
+        refs : int = 0;
+        copies : int = 0;
+        drops : int = 0;
+        class Resource {
+            Resource() { ++refs; }
+            Resource(other : const Resource&) { ++refs; ++copies; }
+            ~Resource() { --refs; ++drops; }
+        }
+        template<typename T>
+        struct Holder {
+            union Storage { empty : byte; value : T; }
+            storage : Storage;
+            Holder() {}
+            Holder(other : Holder<T>&) {
+                if (other.storage.index() == Storage::Kind::value)
+                    storage.value = other.storage.value;
+            }
+            set(value : T&) { storage.value = value; }
+            const get() : T { return storage.value; }
+        }
+        test() : int {
+            refs = 0; copies = 0; drops = 0;
+            {
+                empty : Holder<Resource>;
+                copyEmpty : Holder<Resource>(empty);
+            }
+            if (refs != 0 || drops != 0 || copies != 0) return -1;
+            {
+                source : Resource;
+                {
+                    holder : Holder<Resource>;
+                    holder.set(source);
+                    if (refs != 2 || copies != 1) return -2;
+                    {
+                        copy : Holder<Resource>(holder);
+                        if (refs != 3 || copies != 2) return -3;
+                        value : Resource = copy.get();
+                        if (refs != 4 || copies != 3) return -4;
+                    }
+                    if (refs != 2 || drops != 2) return -5;
+                }
+                if (refs != 1 || drops != 3) return -6;
+            }
+            return refs == 0 && drops == 4 ? 1 : -7;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    int result = 0;
+    REQUIRE_NOTHROW(result = test());
+    CHECK(result == 1);
+}
+
 TEST_CASE("Template union basic instantiation", "[gen][union][template]") {
     auto jit = gen_jit(R"(
         module gen_union_template_01;

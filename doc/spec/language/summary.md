@@ -1090,6 +1090,8 @@ static StructName() { /* called at program startup */ }
 - **By-value parameters**: destructor at end of the callee.
 - **Value members**: after the enclosing destructor body, in reverse declaration order;
   concrete template members also require implicit destructor generation when needed.
+  Embedded union members destroy only their active non-trivial alternative, also
+  when the enclosing value was copy-constructed.
 - **Expression temporaries**: destroyed at end of statement (`;`) in reverse creation order.
 - **Temporaries in conditions** (`if`, `while`, `for`): destroyed after condition evaluation, before the body.
 

@@ -2254,11 +2254,12 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
             if (var->get_short_name().rfind("__vbptr_", 0) == 0) continue;
             if (var->get_short_name().rfind("__vbase_", 0) == 0) continue;
             if (var->get_short_name().rfind("__vptr", 0) == 0) continue;
-            if (auto m_st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(var->get_type()))) {
-                auto member_agg = m_st_type->get_struct();
-                auto member_union = member_agg ? nullptr
+            if (auto m_st_type = std::dynamic_pointer_cast<struct_type>(
+                    type::canonical(type::remove_const(var->get_type())))) {
+                auto member_aggregate = m_st_type->get_struct();
+                auto member_union = member_aggregate ? nullptr
                     : find_union_by_struct_type(_unit.get_root_namespace(), m_st_type);
-                if ((member_agg && member_agg->get_destructor())
+                if ((member_aggregate && member_aggregate->get_destructor())
                     || (member_union && member_union->has_nontrivial_destructor_alternative())) {
                     auto field_opt = st->get_struct_type()->get_member(var->get_short_name());
                     if (field_opt) {
@@ -2274,20 +2275,22 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
     // Call member destructors in reverse declaration order
     for (auto it = dtor_members.rbegin(); it != dtor_members.rend(); ++it) {
         auto& [var, field_idx] = *it;
-        auto m_st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(var->get_type()));
+        auto m_st_type = std::dynamic_pointer_cast<struct_type>(
+            type::canonical(type::remove_const(var->get_type())));
         auto member_ptr = _builder->CreateStructGEP(
             _context->get_llvm_type(st->get_struct_type()),
             this_ptr, field_idx,
             "member_" + var->get_short_name() + "_ptr");
-        if (auto member_agg = m_st_type->get_struct()) {
-            auto m_dtor = member_agg->get_destructor();
-            auto m_dtor_it = _context->_functions.find(m_dtor->shared_as<k::model::function>());
-            if (m_dtor_it != _context->_functions.end()) {
-                create_call_or_invoke(m_dtor_it->second->getFunctionType(), m_dtor_it->second, {member_ptr});
+        if (!m_st_type->get_struct()) {
+            if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), m_st_type)) {
+                emit_union_cleanup(member_ptr, *un);
             }
-        } else if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), m_st_type)) {
-            emit_union_cleanup(member_ptr, *un);
+            continue;
         }
+        auto m_dtor = m_st_type->get_struct()->get_destructor();
+        auto m_dtor_it = _context->_functions.find(m_dtor->shared_as<k::model::function>());
+        if (m_dtor_it == _context->_functions.end()) continue;
+        create_call_or_invoke(m_dtor_it->second->getFunctionType(), m_dtor_it->second, {member_ptr});
     }
 
     // Step 2: Call destructors for owner-typed member variables (free heap memory)
