@@ -353,8 +353,8 @@ klang_gen_test(klang-tests-gen-casts 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 5a — Enums, unions, const, null semantics, annotations
-# Split into enums/unions and const/null/metadata test executables.
+# Group 5a — Types: enums/unions, const/null, metadata/designated init
+# Split into enums/unions, const/null and metadata/designated-init executables.
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-types-enums-unions 120
         tests/test-gen-enum.cpp
@@ -364,9 +364,11 @@ klang_gen_test(klang-tests-gen-types-enums-unions 120
         tests/test-gen-union-polymorphic.cpp
         tests/test-gen-union-cast.cpp
 )
-klang_gen_test(klang-tests-gen-types-const-meta 240
+klang_gen_test(klang-tests-gen-types-const-null 120
         tests/test-gen-const.cpp
         tests/test-gen-null-semantics.cpp
+)
+klang_gen_test(klang-tests-gen-types-meta-designated 120
         tests/test-gen-annotation-meta.cpp
         tests/test-gen-designated-init.cpp
 )
