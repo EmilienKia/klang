@@ -117,6 +117,10 @@ K has **no `void` keyword**. A callable that returns nothing simply omits the `:
 | `*()` | callable taking no parameters, returning nothing |
 | `*() : int` | callable taking no parameters, returning `int` |
 
+An omitted return type is a complete void signature, not an inference placeholder.
+Invoking it must not infer a return type from the enclosing function, including
+when that function returns an owner. This also applies to member function pointers.
+
 Writing `: void` is a **parse error**.
 
 ```k

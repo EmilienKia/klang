@@ -27,6 +27,53 @@
 #include "../src/parse/parser.hpp"
 #include "../src/model/model_builder.hpp"
 
+TEST_CASE("Lambda: void owner and member callbacks do not inherit an enclosing owner return",
+          "[gen][lambda][owner][return][func-ref][void-callable-return][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_void_callable_owner_return;
+        observed : int = 0;
+        drops : int = 0;
+        struct Result {
+            value : int;
+            Result(v : int) : value(v) {}
+            ~Result() { ++drops; }
+        }
+        struct Sink {
+            emit(value : int) { observed += value; }
+        }
+        invoke(callback : !(int)) : Result! {
+            callback(42);
+            return new Result(73);
+        }
+        invokeMember(callback : Sink::*(int), sink : Sink&) : Result! {
+            (sink.*callback)(5);
+            return new Result(74);
+        }
+        test() : int {
+            observed = 0; drops = 0;
+            {
+                callback : !(int) = [](value : int) { observed = value; };
+                first : Result! = invoke(callback);
+                if (callback != null || observed != 42 || first->value != 73) return -1;
+                sink : Sink;
+                member : Sink::*(int) = Sink::emit;
+                second : Result! = invokeMember(member, sink);
+                if (observed != 47 || second->value != 74 || drops != 0) return -2;
+                callback = [](value : int) { observed += value; };
+                callback(1);
+                if (observed != 48) return -3;
+            }
+            return drops == 2 ? 1 : -4;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    int result = 0;
+    REQUIRE_NOTHROW(result = test());
+    CHECK(result == 1);
+}
+
 TEST_CASE("Lambda: capture-free lambda binds to a callable", "[gen][lambda]") {
     auto jit = gen_jit(R"SRC(
         module gen_lambda_01;

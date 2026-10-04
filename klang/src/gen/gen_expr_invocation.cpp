@@ -510,18 +510,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 {pm_callee->is_arrow() ? "->*" : ".*", mfp_type ? mfp_type->to_string() : "?"});
         }
 
-        // Set return type of the invocation expression
-        // If the frt has no return type (e.g. it's a parameter with inferred type),
-        // propagate from the enclosing function's return type.
-        auto ret_type = frt->get_return_type();
-        if (!ret_type && !_function_stack.empty()) {
-            ret_type = _function_stack.back()->get_return_type();
-            if (ret_type) {
-                // Cache on the frt so later uses (e.g. in impl_gen) see it
-                frt->set_return_type(ret_type);
-            }
-        }
-        expr.set_type(ret_type);
+        // An omitted callable return type is void, not an inference placeholder.
+        expr.set_type(frt->get_return_type());
 
         // Adapt arguments against the frt's parameter types.
         // NOTE: for member_function_reference_type, get_parameter_types() returns ONLY the
@@ -1342,19 +1332,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             // If the inner type is a callable_type, this is an indirect call
             auto frt = std::dynamic_pointer_cast<callable_type>(inner_type);
             if (frt) {
-                // Set the return type of the call expression.
-                // If the frt has no return type yet (e.g. parameter with no init expression),
-                // try to propagate the return type from the enclosing function's context.
-                auto ret_type = frt->get_return_type();
-                if (!ret_type && !_function_stack.empty()) {
-                    // Propagate from the enclosing function's return type
-                    ret_type = _function_stack.back()->get_return_type();
-                    if (ret_type) {
-                        // Mutate the frt in-place to record the inferred return type.
-                        frt->set_return_type(ret_type);
-                    }
-                }
-                expr.set_type(ret_type);
+                expr.set_type(frt->get_return_type());
                 // Type-adapt arguments against the callable_type's parameter types
                 const auto& params = frt->get_parameter_types();
                 for (size_t n = 0; n < expr.arguments().size() && n < params.size(); ++n) {
