@@ -22,7 +22,11 @@
 #include <catch2/catch_all.hpp>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 #include <unistd.h>
+#include <llvm/ADT/SmallString.h>
+#include <llvm/Support/FileSystem.h>
 #include "helpers.hpp"
 
 // ---------------------------------------------------------------------------
@@ -236,4 +240,208 @@ TEST_CASE("klangc: .o files rejected with -c", "[klangc][object-input]") {
     std::filesystem::remove(o_path);
 }
 
+namespace {
 
+struct ArchiveTestEnv {
+    std::filesystem::path previous = std::filesystem::current_path();
+    std::filesystem::path root;
+
+    ArchiveTestEnv() {
+        llvm::SmallString<128> directory;
+        auto ec = llvm::sys::fs::createUniqueDirectory(
+            (std::filesystem::temp_directory_path() / "klang-archive-test").string(), directory);
+        REQUIRE_FALSE(ec);
+        root = directory.c_str();
+        REQUIRE(std::filesystem::create_directory(root / "archive fixtures"));
+        std::filesystem::current_path(root / "archive fixtures");
+    }
+
+    ~ArchiveTestEnv() {
+        std::error_code ec;
+        std::filesystem::current_path(previous, ec);
+        CHECK_FALSE(ec);
+        std::filesystem::remove_all(root, ec);
+        CHECK_FALSE(ec);
+    }
+};
+
+void write_archive_fixture(const std::filesystem::path& path, const std::string& contents) {
+    std::ofstream file(path);
+    REQUIRE(file.is_open());
+    file << contents;
+    file.close();
+    REQUIRE_FALSE(file.fail());
+}
+
+std::string read_archive_fixture(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    REQUIRE(file.is_open());
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+}
+
+std::vector<std::string> archive_members(const std::string& archive) {
+    auto result = k::tools::lookup_run_process("ar", {"t", archive});
+    INFO("ar stdout: " << result.out);
+    INFO("ar stderr: " << result.err);
+    REQUIRE(result.exit_code == 0);
+    std::vector<std::string> members;
+    std::istringstream lines(result.out);
+    for (std::string member; std::getline(lines, member);) {
+        members.push_back(member);
+    }
+    return members;
+}
+
+void require_archive_consumer(const std::filesystem::path& klangc,
+                              const std::string& module, int expected) {
+    const std::string base = "lib" + module;
+    // Remove only this fixture's shared output, forcing the imported library to resolve to .a.
+    if (std::filesystem::exists(base + ".so")) {
+        REQUIRE(std::filesystem::remove(base + ".so"));
+    }
+    write_archive_fixture("consumer source.k",
+        "module archive_consumer; import " + module + "; "
+        "main() : int { return " + module + "::answer(); }\n");
+    auto link = k::tools::run_process(klangc.string(),
+        {"-o", "archive consumer", "consumer source.k", "-i", module + "=" + base + ".kdi",
+         "-I", ".", "-L", "."});
+    INFO("consumer link stdout: " << link.out);
+    INFO("consumer link stderr: " << link.err);
+    REQUIRE(link.exit_code == 0);
+    ScopedLdLibraryPath ld_scope(find_libk_dir());
+    auto run = k::tools::run_process(
+        (std::filesystem::current_path() / "archive consumer").string(), {});
+    INFO("consumer stdout: " << run.out);
+    INFO("consumer stderr: " << run.err);
+    REQUIRE(run.exit_code == expected);
+}
+
+void require_no_archive_temporaries() {
+    for (const auto& entry : std::filesystem::directory_iterator(".")) {
+        CHECK_FALSE(entry.is_directory());
+    }
+}
+
+void check_archive_replacement(bool combined) {
+    const auto klangc = find_klangc();
+    ArchiveTestEnv env;
+    const std::string module = combined ? "archive_replace_combined" : "archive_replace_static";
+    const std::string base = "lib" + module;
+    const std::string archive = base + ".a";
+    const std::string source = "library source.k";
+    std::vector<std::string> args = {"--static-lib"};
+    if (combined) {
+        args.push_back("--dyn-lib");
+    } else {
+        args.insert(args.end(), {"-o", archive});
+    }
+    args.push_back(source);
+    args.push_back("current marker.o");
+
+    write_archive_fixture("removed marker.c", "int obsolete_c_marker(void) { return 17; }\n");
+    auto c_object = k::tools::lookup_run_process("clang",
+        {"-c", "-fPIC", "-o", "removed marker.o", "removed marker.c"});
+    INFO("clang stdout: " << c_object.out);
+    INFO("clang stderr: " << c_object.err);
+    REQUIRE(c_object.exit_code == 0);
+    write_archive_fixture("current marker.c", "int current_c_marker(void) { return 23; }\n");
+    auto current_object = k::tools::lookup_run_process("clang",
+        {"-c", "-fPIC", "-o", "current marker.o", "current marker.c"});
+    INFO("current clang stdout: " << current_object.out);
+    INFO("current clang stderr: " << current_object.err);
+    REQUIRE(current_object.exit_code == 0);
+
+    write_archive_fixture(source, "module " + module +
+        "; answer() : int { return 1; } obsoleteRoot() : int { return 17; }\n");
+    auto first_args = args;
+    first_args.push_back("removed marker.o");
+    auto first = k::tools::run_process(klangc.string(), first_args);
+    INFO("first generation stdout: " << first.out);
+    INFO("first generation stderr: " << first.err);
+    REQUIRE(first.exit_code == 0);
+    const auto before = archive_members(archive);
+    REQUIRE(before.size() == 3);
+    REQUIRE(before[1] == "current marker.o");
+    REQUIRE(before[2] == "removed marker.o");
+    REQUIRE(std::filesystem::exists(base + ".kdi"));
+    if (combined) REQUIRE(std::filesystem::exists(base + ".so"));
+
+    write_archive_fixture(source, "module " + module + "; answer() : int { return 2; }\n");
+    auto second = k::tools::run_process(klangc.string(), args);
+    INFO("second generation stdout: " << second.out);
+    INFO("second generation stderr: " << second.err);
+    REQUIRE(second.exit_code == 0);
+    const auto after = archive_members(archive);
+    REQUIRE(after.size() == 2);
+    REQUIRE(after.front() != before.front());
+    REQUIRE(after[1] == "current marker.o");
+    auto symbols = k::tools::lookup_run_process("nm", {"--defined-only", archive});
+    INFO("nm stdout: " << symbols.out);
+    INFO("nm stderr: " << symbols.err);
+    REQUIRE(symbols.exit_code == 0);
+    CHECK(symbols.out.find("current_c_marker") != std::string::npos);
+    CHECK(symbols.out.find("obsolete_c_marker") == std::string::npos);
+    CHECK(symbols.out.find("obsoleteRoot") == std::string::npos);
+    require_no_archive_temporaries();
+    require_archive_consumer(klangc, module, 2);
+}
+
+void check_archive_failure(bool combined) {
+    const auto klangc = find_klangc();
+    ArchiveTestEnv env;
+    const std::string module = combined ? "archive_failure_combined" : "archive_failure_static";
+    const std::string base = "lib" + module;
+    const std::string archive = base + ".a";
+    const std::string source = "library source.k";
+    std::vector<std::string> args = {"--static-lib"};
+    if (combined) {
+        args.push_back("--dyn-lib");
+    } else {
+        args.insert(args.end(), {"-o", archive});
+    }
+    args.push_back(source);
+    write_archive_fixture(source, "module " + module + "; answer() : int { return 1; }\n");
+    auto first = k::tools::run_process(klangc.string(), args);
+    INFO("first generation stdout: " << first.out);
+    INFO("first generation stderr: " << first.err);
+    REQUIRE(first.exit_code == 0);
+    const auto good_archive = read_archive_fixture(archive);
+    const auto good_kdi = read_archive_fixture(base + ".kdi");
+    const auto good_members = archive_members(archive);
+
+    write_archive_fixture(source, "module " + module + "; answer() : int { return 2; }\n");
+    args.push_back("missing object.o");
+    auto failed = k::tools::run_process(klangc.string(), args);
+    INFO("failed generation stdout: " << failed.out);
+    INFO("failed generation stderr: " << failed.err);
+    REQUIRE(failed.exit_code != 0);
+    CHECK(failed.err.find("missing object.o") != std::string::npos);
+    CHECK(failed.out.find("ar exited with status") != std::string::npos);
+    CHECK(read_archive_fixture(archive) == good_archive);
+    CHECK(read_archive_fixture(base + ".kdi") == good_kdi);
+    CHECK(archive_members(archive) == good_members);
+    require_no_archive_temporaries();
+    require_archive_consumer(klangc, module, 1);
+}
+
+} // namespace
+
+TEST_CASE("klangc: static archive rebuild replaces removed inputs and module code",
+          "[klangc][object-input][archive-replacement][static-only]") {
+    check_archive_replacement(false);
+}
+
+TEST_CASE("klangc: combined library rebuild replaces removed archive inputs and module code",
+          "[klangc][object-input][archive-replacement][combined]") {
+    check_archive_replacement(true);
+}
+
+TEST_CASE("klangc: static archive failure preserves the previous archive and KDI",
+          "[klangc][object-input][archive-replacement][archive-failure][static-only]") {
+    check_archive_failure(false);
+}
+
+TEST_CASE("klangc: combined archive failure preserves the previous archive and KDI",
+          "[klangc][object-input][archive-replacement][archive-failure][combined]") {
+    check_archive_failure(true);
+}

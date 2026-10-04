@@ -81,6 +81,7 @@ enum class compiler_diag : unsigned int {
      * for cross-module instantiation; this used to fail completely silently.
      */
     ERR_KDI_TEMPLATE_REPARSE_FAILED               = 0x011C,
+    ERR_CREATE_STATIC_LIB_FAILED                 = 0x011D,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

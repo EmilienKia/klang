@@ -106,12 +106,21 @@ the module defines a `main` function. The archive is created with `ar rcs`.
 If `-o` is not specified, the output name is derived automatically.  
 A warning is emitted if the module contains a `main` function.
 
+Each invocation builds a fresh archive containing only the current generated
+object and the supplied pre-compiled objects. Removed inputs and earlier
+generated module objects are not retained. The archive is built beside the
+destination and replaces it atomically after `ar` succeeds; an archiver or
+publication failure leaves an existing archive unchanged. KDI generation
+follows archive publication, so a later KDI failure does not roll it back.
+
 **`--dyn-lib` + `--static-lib`** (combined)  
 Produce **both** a shared library and a static archive in a **single
 compilation pass** — the object file is generated only once and then fed to
 both `clang -shared` and `ar`. `-o` is ignored in this mode (a warning is
 emitted); output names are always derived automatically.  
 A warning is also emitted if the module contains a `main` function.
+The static archive uses the same fresh-archive replacement policy as
+`--static-lib`; shared output and KDI generation retain their usual ordering.
 
 **`--emit-kdi-json`**  
 When producing a library (`.so` or `.a`), also write a `.kdi.json` file

@@ -446,7 +446,9 @@ public:
      * The archived object uses PIC so it can also be linked into a shared library.
      * If output_file is empty, the output is named lib<base>.a in the current
      * directory, where <base> = unit_name_to_lib_base(module_name).
-     * Uses "ar rcs" — no linker involved.
+     * Uses "ar rcs" on a fresh archive, then atomically replaces the output.
+     * Only current input objects are included; archiver failure preserves an
+     * existing archive. KDI generation follows successful archive publication.
      */
     bool gen_static_library(const std::string& output_file = "");
 
@@ -455,6 +457,7 @@ public:
      * generation pass.  At least one of shared_out / static_out must be non-empty
      * when the module name cannot be determined, otherwise the names are derived
      * automatically (lib<base>.so and lib<base>.a).
+     * The static archive has the same replacement semantics as gen_static_library().
      *
      * @param shared_out  Output path for the .so, or empty for automatic naming.
      * @param static_out  Output path for the .a,  or empty for automatic naming.

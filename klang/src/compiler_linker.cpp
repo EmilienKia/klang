@@ -29,6 +29,8 @@
 #include <iostream>
 #include <unordered_set>
 #include <unistd.h>
+#include <llvm/ADT/ScopeExit.h>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/FileSystem.h>
@@ -73,6 +75,71 @@ std::filesystem::path make_temp_object_path(const std::string& prefix) {
     auto count = counter.fetch_add(1);
     auto filename = fmt::format("{}_{}_{}.o", prefix, pid, count);
     return std::filesystem::temp_directory_path() / filename;
+}
+
+bool create_static_archive(log::logger& logger,
+                           const std::filesystem::path& output_path,
+                           const std::filesystem::path& object_path,
+                           const std::vector<std::string>& extra_objects) {
+    const auto failure_code =
+        static_cast<unsigned int>(diag::compiler_diag::ERR_CREATE_STATIC_LIB_FAILED);
+    std::error_code ec;
+    const auto destination = std::filesystem::absolute(output_path, ec);
+    if (ec) {
+        logger.error(failure_code, "Cannot resolve static library output '{}': {}",
+                     {output_path.string(), ec.message()});
+        return false;
+    }
+    llvm::SmallString<128> temp_dir;
+    const auto prefix = destination.parent_path() /
+        ("." + destination.filename().string() + ".tmp");
+    ec = llvm::sys::fs::createUniqueDirectory(prefix.string(), temp_dir);
+    if (ec) {
+        logger.error(failure_code, "Cannot prepare static library '{}': {}",
+                     {output_path.string(), ec.message()});
+        return false;
+    }
+
+    const std::filesystem::path directory(temp_dir.c_str());
+    const auto archive_path = directory / destination.filename();
+    auto cleanup = llvm::make_scope_exit([&] {
+        for (const auto& path : {archive_path, directory}) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            if (ec) {
+                logger.error(failure_code, "Cannot remove static library temporary '{}': {}",
+                             {path.string(), ec.message()});
+            }
+        }
+    });
+
+    // ar updates existing archives, so build a fresh one on the destination filesystem.
+    tools::exec_result result;
+    try {
+        std::vector<std::string> args = {"rcs", archive_path.string(), object_path.string()};
+        args.insert(args.end(), extra_objects.begin(), extra_objects.end());
+        result = tools::lookup_run_process("ar", args);
+    } catch (const tools::tool_not_found& e) {
+        logger.error(
+            static_cast<unsigned int>(diag::compiler_diag::ERR_TOOL_NOT_FOUND_CREATE_STATIC_LIB),
+            "{} (needed to create static library)", {e.what()});
+        return false;
+    }
+    if (!result.out.empty()) std::cout << result.out << std::endl;
+    if (!result.err.empty()) std::cerr << result.err << std::endl;
+    if (result.exit_code != 0) {
+        logger.error(failure_code, "Cannot create static library '{}': ar exited with status {}",
+                     {output_path.string(), std::to_string(result.exit_code)});
+        return false;
+    }
+
+    std::filesystem::rename(archive_path, destination, ec);
+    if (ec) {
+        logger.error(failure_code, "Cannot publish static library '{}': {}",
+                     {output_path.string(), ec.message()});
+        return false;
+    }
+    return true;
 }
 
 } // anonymous namespace
@@ -357,25 +424,9 @@ bool compiler::gen_static_library(const std::string& output_file) {
     }
 
     trace("[compiler::gen_static_library] generating static library '{}'", {output_path.string()});
-    // ar rcs: create archive, add index, be silent on missing files
-    tools::exec_result exec_res;
-    try {
-        std::vector<std::string> ar_args = {"rcs", output_path.string(), object_path.string()};
-        // Append extra pre-compiled object files (.o)
-        ar_args.insert(ar_args.end(), _extra_object_files.begin(), _extra_object_files.end());
-        exec_res = tools::lookup_run_process("ar", ar_args);
-    } catch (const tools::tool_not_found& e) {
-        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_TOOL_NOT_FOUND_CREATE_STATIC_LIB),
-              "{} (needed to create static library)", {e.what()});
-        std::filesystem::remove(object_path);
-        return false;
-    }
-
+    const bool ok = create_static_archive(diagnostics(), output_path, object_path, _extra_object_files);
     std::filesystem::remove(object_path);
-
-    if (!exec_res.out.empty()) std::cout << exec_res.out << std::endl;
-    if (!exec_res.err.empty()) std::cerr << exec_res.err << std::endl;
-    return exec_res.exit_code == 0 && gen_kdi(output_path.string());
+    return ok && gen_kdi(output_path.string());
 }
 
 bool compiler::gen_libraries(const std::string& shared_out, const std::string& static_out) {
@@ -424,21 +475,7 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
 
     // Static library
     trace("[compiler::gen_libraries] generating static library '{}'", {a_path.string()});
-    tools::exec_result ar_res;
-    try {
-        std::vector<std::string> ar_args = {"rcs", a_path.string(), object_path.string()};
-        // Append extra pre-compiled object files (.o)
-        ar_args.insert(ar_args.end(), _extra_object_files.begin(), _extra_object_files.end());
-        ar_res = tools::lookup_run_process("ar", ar_args);
-    } catch (const tools::tool_not_found& e) {
-        error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_TOOL_NOT_FOUND_CREATE_STATIC_LIB),
-              "{} (needed to create static library)", {e.what()});
-        std::filesystem::remove(object_path);
-        return false;
-    }
-    if (!ar_res.out.empty()) std::cout << ar_res.out << std::endl;
-    if (!ar_res.err.empty()) std::cerr << ar_res.err << std::endl;
-    ok &= (ar_res.exit_code == 0);
+    ok &= create_static_archive(diagnostics(), a_path, object_path, _extra_object_files);
 
     std::filesystem::remove(object_path);
     // Generate KDI once (keyed on the .so path; same content for both libs)
