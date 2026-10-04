@@ -84,6 +84,12 @@ message(STATUS "KLANG_STDLIB_KDI_DIR: ${KLANG_STDLIB_KDI_DIR}")
 message(STATUS "KLANG_STDLIB_LIB_DIR: ${KLANG_STDLIB_LIB_DIR}")
 
 # ── Sub-projects ──────────────────────────────────────────────────────────────
+option(KLANG_BUILD_SAMPLES "Compile the example K programs" OFF)
+option(KLANG_BUILD_IO_SAMPLES "Include file and TCP I/O examples when samples are enabled" ON)
+
 add_subdirectory(libkdi)
 add_subdirectory(klang)
 add_subdirectory(libk)
+if(KLANG_BUILD_SAMPLES)
+    add_subdirectory(samples)
+endif()
