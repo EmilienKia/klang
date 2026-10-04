@@ -901,12 +901,9 @@ type_reference_resolver::resolve_callable_type(
     // Step 2: If member function reference: resolve the owner aggregate
     // Member function reference: resolve the owner structure
     if (!ufrt->owner_name().empty()) {
-        auto owner_agg = resolve_struct_from(context_elem, ufrt->owner_name());
-        if (!owner_agg) {
-            // Try from root
-            auto root_ns = _unit.get_root_namespace();
-            if (root_ns) owner_agg = resolve_struct_from(*root_ns, ufrt->owner_name());
-        }
+        auto owner_type = std::dynamic_pointer_cast<struct_type>(
+            resolve_type_by_name(ufrt->owner_name(), context_elem));
+        auto owner_agg = owner_type ? owner_type->get_struct() : nullptr;
         if (!owner_agg) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SIGNATURE_STRUCT_WRONG_KIND), std::nullopt,
                 "Cannot find owner struct '{}' for member function reference type",

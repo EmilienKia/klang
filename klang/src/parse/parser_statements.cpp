@@ -992,7 +992,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
             _lexer.unget();
         }
 
-        // Attempt to parse an optional owner prefix of the form "Ident (:: Ident)* ::"
+        // Attempt to parse an optional owner prefix of the form "[::] Ident (:: Ident)* ::"
         // followed by an addresser and '('.
         // We MUST NOT call parse_qualified_identifier() here because it throws when
         // the token after '::' is not an identifier (e.g. when it is '*').
@@ -1005,9 +1005,14 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
         {
             lex::lex_holder peek_holder(_lexer);
             std::vector<lex::identifier> names;
+            std::optional<lex::punctuator> initial_doublecolon;
 
             // Try to collect qualified identifier parts
             auto t = _lexer.get();
+            if (t == lex::punctuator::DOUBLE_COLON) {
+                initial_doublecolon = lex::as<lex::punctuator>(t);
+                t = _lexer.get();
+            }
             if (lex::is<lex::identifier>(t)) {
                 names.push_back(lex::as<lex::identifier>(t));
                 // Try additional ":: Ident" parts — stop on ":: Addresser("
@@ -1029,7 +1034,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                             _lexer.unget(); // unget '('
                             _lexer.unget(); // unget Addresser
                             // :: is consumed — that's intentional (we're past it)
-                            owner_opt = ast::qualified_identifier(std::nullopt, names);
+                            owner_opt = ast::qualified_identifier(initial_doublecolon, names);
                             seg.sync();
                             is_function_ref = true;
                             break;

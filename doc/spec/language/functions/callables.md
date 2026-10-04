@@ -622,6 +622,10 @@ In the old function reference system, `&` was not used for function types. It is
 
 The `T::*(Params)` / `T::?(Params)` / `T::+(Params)` member-function-reference syntax is unchanged and continues to work as before. Member function references are distinct from callables: they do not carry a bound receiver and must still be called via `.*` / `->*`. See [Function References](function_references.md).
 
+The owner may be root-qualified, for example
+`::callbacks::Receiver::*(int):int throws(::k::Exception)`. The leading `::`
+must retain its root-scope meaning when the type is serialized and re-parsed.
+
 ---
 
 ## 13. Grammar summary

@@ -733,6 +733,8 @@ public compute() : int -> Base::impl;  // visibility change
 
 Callables are fat pointers `{fn_ptr, ctx_ptr}` supporting uniform invocation across free functions, methods, functors, and lambdas:
 
+Unbound member-reference owners may be root-qualified, for example
+`::callbacks::Receiver::*(int):int`; serialization must preserve that scope.
 Equal-parameter same-owner member redeclarations retain the first declaration
 for lookup and callable compatibility, while virtual dispatch uses the final
 implementation of the selected slot.

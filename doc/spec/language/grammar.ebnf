@@ -767,10 +767,12 @@ CallableAddresser
     ;
 
 (* Unbound member function reference: T::*(params):R, T::?(params), T::+(params).
+   The owner QualifiedIdentifier may be root-qualified: ::ns::T::*(params):R.
    The return type suffix is optional but strongly recommended to avoid ambiguity.
    Retained for backward compatibility; see doc/spec/language/functions/callables.md. *)
 MemberFnRefType
-    = ( '*' | '?' | '+' ) , '(' , [ TypeList ] , ')' , [ ':' , TypeSpec ]
+    = ( '*' | '?' | '+' ) , '(' , [ TypeList ] , ')' , [ ':' , TypeSpec ] ,
+      [ ThrowsClause ]
     ;
 
 FundamentalTypeSpec

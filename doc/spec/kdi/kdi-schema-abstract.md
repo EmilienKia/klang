@@ -349,6 +349,10 @@ Rules:
   preserving addressers, member owners, return types and checked `throws`
   contracts. FFI annotations must be fully qualified (`@k::ffi::Extern`,
   `@k::ffi::CString`); callback types must not be replaced with raw pointers.
+  Root-qualified member-reference owners are valid K syntax (for example
+  `::callbacks::Receiver::*(int):int`) and must retain their root prefix on
+  re-parsing. Canonical resolved exception types may likewise be rooted, such
+  as `throws(::k::Exception)`.
   Required private namespace-level aggregate definitions, including typed native
   handles used within nested callback/result types, are source dependencies too.
   Namespace declarations in those fragments must use legal K syntax (no leading

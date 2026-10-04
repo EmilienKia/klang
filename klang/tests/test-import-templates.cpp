@@ -1821,6 +1821,111 @@ TEST_CASE("import template execute preserves every same-named overload",
     CHECK(result == 42);
 }
 
+TEST_CASE("private FFI source — callable addressers and contracts reparse",
+          "[import][template][ffi][private-dependency][source-emitter][callable]") {
+    auto compiler = compile_model_with_stdlib(R"K(
+        module tplprivatecallablesource;
+        struct CallbackOwner {
+            apply(x : int) : int { return x; }
+        }
+        alias CaptureCString: const char*;
+        alias CallbackFailure: k::Exception;
+        @k::ffi::Extern("C", null, "__k_private_callback_source")
+        private __private_callbacks(
+            invoke : *(byte*, byte*), drop : *(byte*),
+            borrowed : &(int):int throws(CallbackFailure), owned : !(int):int,
+            view : ?(int):int, linked : +(int):int,
+            nested : *(*(int):int):!(int):int,
+            member : CallbackOwner::*(int):int,
+            @k::ffi::CString text : CaptureCString) : int throws(k::Exception);
+
+        template<typename T>
+        dependentCallbacks(owned : !(T):T,
+                           nested : *(*(T):T):!(T):T,
+                           member : CallbackOwner::*(T):T) : int { return 0; }
+    )K");
+    REQUIRE(compiler);
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto native = root->get_function("__private_callbacks");
+    REQUIRE(native);
+    k::model::k_source_emitter emitter;
+    auto emitted = emitter.emit_extern_function_declaration(*native);
+    INFO(emitted);
+    REQUIRE(emitted.find("invoke : *(byte*, byte*)") != std::string::npos);
+    REQUIRE(emitted.find("drop : *(byte*)") != std::string::npos);
+    REQUIRE(emitted.find("borrowed : &(int) : int throws(::k::Exception)") != std::string::npos);
+    REQUIRE(emitted.find("owned : !(int) : int") != std::string::npos);
+    REQUIRE(emitted.find("view : ?(int) : int") != std::string::npos);
+    REQUIRE(emitted.find("linked : +(int) : int") != std::string::npos);
+    REQUIRE(emitted.find("nested : *(*(int) : int) : !(int) : int") != std::string::npos);
+    REQUIRE(emitted.find("member : ::tplprivatecallablesource::CallbackOwner::*(int) : int")
+            != std::string::npos);
+    REQUIRE(emitted.find("@k::ffi::CString text : const char*") != std::string::npos);
+    REQUIRE(emitted.find(") : int throws(::k::Exception);") != std::string::npos);
+    REQUIRE(emitted.find("void") == std::string::npos);
+    REQUIRE(emitted.find("->") == std::string::npos);
+    REQUIRE(emitted.find("CaptureCString") == std::string::npos);
+    REQUIRE(emitted.find("CallbackFailure") == std::string::npos);
+    auto native_text = k::model::type::canonical(native->parameters().back()->get_type());
+    REQUIRE(k::model::type::is_pointer(native_text));
+    REQUIRE(k::model::type::is_const(native_text->get_subtype()));
+    CHECK(k::model::type::canonical(native_text->get_subtype()->get_subtype())
+        == compiler->get_context_for_test()->from_string("char"));
+    REQUIRE(native->get_throws_spec().size() == 1);
+    auto native_exception = std::dynamic_pointer_cast<k::model::struct_type>(
+        k::model::type::canonical(std::const_pointer_cast<k::model::type>(
+            native->get_throws_spec().front())));
+    REQUIRE(native_exception);
+    CHECK(native_exception->get_struct()->get_fq_name() == "::k::Exception");
+    auto borrowed = std::dynamic_pointer_cast<k::model::callable_type>(
+        k::model::type::canonical(native->parameters()[2]->get_type()));
+    REQUIRE(borrowed);
+    REQUIRE(borrowed->get_throws().size() == 1);
+    CHECK(k::model::type::canonical(borrowed->get_throws().front()) == native_exception);
+
+    test_logger logger;
+    k::source native_source{emitted};
+    k::parse::parser native_parser(logger, native_source);
+    auto unit = native_parser.parse_unit();
+    REQUIRE(unit);
+    REQUIRE(unit->declarations.size() == 1);
+    auto declaration = std::dynamic_pointer_cast<k::parse::ast::function_decl>(unit->declarations[0]);
+    REQUIRE(declaration);
+    REQUIRE(declaration->params.size() == 9);
+    REQUIRE(declaration->throws_spec.size() == 1);
+    for (size_t i = 0; i < 8; ++i) {
+        auto callable = std::dynamic_pointer_cast<k::parse::ast::callable_type_specifier>(
+            declaration->params[i]->type);
+        REQUIRE(callable);
+        REQUIRE(callable->addresser);
+        if (i < 2) REQUIRE(callable->return_type == nullptr);
+        if (i == 2) REQUIRE(callable->throws_spec.size() == 1);
+        if (i == 3) REQUIRE(callable->addresser->type == k::lex::operator_::EXCLAMATION_MARK);
+        if (i == 7) {
+            REQUIRE(callable->owner.has_value());
+            CHECK(callable->owner->has_root_prefix());
+            CHECK(callable->owner->to_name().to_string()
+                  == "::tplprivatecallablesource::CallbackOwner");
+        }
+    }
+    REQUIRE(declaration->params[8]->annotations.size() == 1);
+
+    auto dependent = root->get_function("dependentCallbacks");
+    REQUIRE(dependent);
+    auto dependent_emitted = emitter.emit_template_function(*dependent);
+    INFO(dependent_emitted);
+    REQUIRE(dependent_emitted.find("owned : !(T) : T") != std::string::npos);
+    REQUIRE(dependent_emitted.find("nested : *(*(T) : T) : !(T) : T") != std::string::npos);
+    REQUIRE(dependent_emitted.find("CallbackOwner::*(T) : T") != std::string::npos);
+    REQUIRE(dependent_emitted.find("unknown type") == std::string::npos);
+    k::source dependent_source{dependent_emitted};
+    k::parse::parser dependent_parser(logger, dependent_source);
+    auto dependent_unit = dependent_parser.parse_unit();
+    REQUIRE(dependent_unit);
+    REQUIRE_FALSE(logger.has_error());
+    REQUIRE(dependent_unit->declarations.size() == 1);
+}
+
 TEST_CASE("import template — private callback preludes preserve native ABI and privacy",
           "[import][template][ffi][private-dependency][callable][cstring][throws]") {
     TmpKdi lib(R"K(
