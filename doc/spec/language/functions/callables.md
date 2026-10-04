@@ -218,8 +218,33 @@ own2 : !(int) : int = own;   // MOVE: own ← null; own2 owns the closure
 ```
 
 - **Move-only:** Assigning, passing as a parameter, or returning an owned callable transfers ownership and zeroes the source slot.
+- **Owned lvalues:** A reference to a local owned callable (`!()&` in diagnostics)
+  must match a by-value owned parameter (`!()`). This is a move from the local
+  slot, not a borrowed-to-owned conversion, and must not depend on overload
+  declaration order.
 - **Destruction:** When an owned callable goes out of scope while non-null, its closure drop function is called (destroying captured fields in reverse order and freeing heap memory).
-- **Conversion directionality:** An owned callable (`!`) can be converted (borrowed) into any non-owning callable (`&`, `+`, `*`, `?`). A borrowed callable can **never** be converted into an owned callable (`ERR_CALLABLE_OWNER_FROM_BORROW`).
+- **Conversion directionality:** An owned callable (`!`) can be converted (borrowed) into any non-owning callable (`&`, `+`, `*`, `?`). A stored borrowed callable cannot be converted into an owned callable (`ERR_CALLABLE_OWNER_FROM_BORROW`).
+
+A fresh lambda expression may bind directly to an owning assignment, parameter,
+or return destination. Its closure is then allocated on the heap; this is
+destination-context materialization, not promotion of a stored borrowed value.
+Overload scoring must permit this binding without allocating or moving captures.
+The selected destination determines materialization. An owned local can also
+be forwarded and is consumed exactly once:
+
+```k
+execute([value]() { use(value); }); // heap closure when execute expects !()
+task : !() = [value]() { use(value); };
+execute(task);              // moves task, even alongside execute(Runnable+)
+// task is now null
+borrowed : &() = [value]() { use(value); };
+// execute(borrowed);        // ERROR if execute requires !()
+```
+
+Borrowing an owner into a non-owning parameter must leave the owner intact.
+Converting a nullable callable to a non-null parameter must check the target
+address before entering the function or constructor; a null value raises
+`NullAssignationError`, even if the callee never invokes the callable.
 
 ---
 
@@ -227,14 +252,14 @@ own2 : !(int) : int = own;   // MOVE: own ← null; own2 owns the closure
 
 ### 6.1 null
 
-Only `*` (pointer) and `?` (view) callable types accept `null`. `+`, `&` and `!` do not accept `null` literals directly.
+Only nullable callable types (`*`, `?`, and `!`) accept `null`. `+` and `&` do not accept `null` literals.
 
 ```k
 fp : *(int) : int = null;   // OK
 vw : ?(int) : int = null;   // OK
 lnk : +(int) : int = null;  // ERROR — link cannot be null
 ref : &(int) : int = null;  // ERROR — reference cannot be null
-own : !(int) : int = null;  // ERROR — owner cannot be initialized from null literal
+own : !(int) : int = null;  // OK — empty owner, no closure to destroy
 ```
 
 ### 6.2 Free function name
@@ -247,6 +272,12 @@ add_one(x : int) : int { return x + 1; }
 fp : *(int) : int = add_one;   // context pointer = null
 own : !(int) : int = add_one;  // context pointer = null; no environment to free
 ```
+
+The `null` literal is also a valid argument for a nullable callable parameter
+(`*`, `?`, or `!`), including constructor parameters and parameters named through
+transparent aliases. It is not a valid argument for a non-null callable (`+` or
+`&`). Passing an owning callable variable by value transfers ownership and clears
+the source; passing `null` creates an empty callable with no environment to drop.
 
 ### 6.3 Static member function
 

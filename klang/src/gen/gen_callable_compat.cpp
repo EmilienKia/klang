@@ -308,6 +308,23 @@ callable_compat callable_signature_compatible(const callable_type& src, const ca
                                          callable_signature_view::of(dst));
 }
 
+callable_compat callable_conversion_compatible(const callable_type& src, const callable_type& dst) {
+    callable_compat res;
+    if (src.is_unbound_member() != dst.is_unbound_member()
+        || src.is_prototype() || dst.is_prototype()) {
+        res.result = callable_compat::status::incompatible;
+        res.reason = "the callable representations do not match";
+        return res;
+    }
+    if (dst.is_owner() && !src.is_owner()) {
+        res.result = callable_compat::status::incompatible;
+        res.ownership_violation = true;
+        res.reason = "a borrowed callable cannot transfer closure ownership";
+        return res;
+    }
+    return callable_signature_compatible(src, dst);
+}
+
 callable_compat callable_signature_compatible(const function& src, const callable_type& dst) {
     return callable_signature_compatible(callable_signature_view::of(src),
                                          callable_signature_view::of(dst));

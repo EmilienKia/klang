@@ -2545,23 +2545,31 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
 
     // Step 1: Function reference type cases
     // ── Function reference type cases ─────────────────────────────────────────
-    // frt → frt (any addresser combination): free conversion (same LLVM type).
-    // ref<frt> → frt: allowed (load from variable / direct function address).
+    // A reference to an owned callable is loaded with ownership transfer; it is
+    // not a borrowed callable. Binding a function symbol creates a fresh value.
+    auto callable_source = expr;
+    while (callable_source) {
+        if (auto cast = std::dynamic_pointer_cast<cast_expression>(callable_source)) {
+            callable_source = cast->sub_expr();
+        } else if (auto load = std::dynamic_pointer_cast<load_value_expression>(callable_source)) {
+            callable_source = load->sub_expr();
+        } else {
+            break;
+        }
+    }
+    auto callable_symbol = std::dynamic_pointer_cast<symbol_expression>(callable_source);
+    const bool binds_function = callable_symbol && callable_symbol->is_function();
+    const bool fresh_lambda = std::dynamic_pointer_cast<lambda_expression>(callable_source) != nullptr;
     auto check_callable_match = [&](const std::shared_ptr<callable_type>& src_ct,
                                     const std::shared_ptr<callable_type>& tgt_ct) -> cast_weight {
         if (!src_ct || !tgt_ct) return CAST_IMPOSSIBLE;
         if (type::are_equal(src_ct, tgt_ct)) return CAST_NONE;
-        auto compat = callable_signature_compatible(*src_ct, *tgt_ct);
+        auto compat = binds_function || fresh_lambda
+            ? callable_signature_compatible(*src_ct, *tgt_ct)
+            : callable_conversion_compatible(*src_ct, *tgt_ct);
         if (compat.ok()) return CAST_WIDENING;
-        if (!src_ct->get_return_type()) {
-            auto peel = expr;
-            while (peel) {
-                if (std::dynamic_pointer_cast<lambda_expression>(peel)) break;
-                if (auto c = std::dynamic_pointer_cast<cast_expression>(peel)) { peel = c->sub_expr(); continue; }
-                if (auto ld = std::dynamic_pointer_cast<load_value_expression>(peel)) { peel = ld->sub_expr(); continue; }
-                break;
-            }
-            if (peel && std::dynamic_pointer_cast<lambda_expression>(peel)) {
+        if (!compat.ownership_violation && !src_ct->get_return_type()) {
+            if (std::dynamic_pointer_cast<lambda_expression>(callable_source)) {
                 callable_signature_view src_view = callable_signature_view::of(*src_ct);
                 src_view.return_type = tgt_ct->get_return_type();
                 auto lcompat = callable_signature_compatible(src_view, callable_signature_view::of(*tgt_ct));
@@ -2572,7 +2580,10 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     };
 
     if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(tgt_nc)) {
-        if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type_src)) {
+        if (type::is_null(type_src) && !tgt_frt->is_unbound_member() && tgt_frt->is_nullable()) {
+            return CAST_WIDENING;
+        }
+        if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type::remove_const(type_src))) {
             return check_callable_match(src_frt, tgt_frt);
         }
         if (type::is_reference(type_src)) {
@@ -2596,7 +2607,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     return check_callable_match(src_frt, tgt_frt);
                 }
             }
-            if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type_src)) {
+            if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type::remove_const(type_src))) {
                 auto w = check_callable_match(src_frt, tgt_frt);
                 if (w == CAST_NONE) return CAST_WIDENING;
                 return w;

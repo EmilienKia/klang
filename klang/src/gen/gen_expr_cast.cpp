@@ -541,14 +541,15 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     // Every callable shares a single representation (the fat { ptr, ptr } value,
     // or a bare function pointer for an unbound member reference), so a cast
     // between two callables — typically the alias-stripping / re-tagging cast
-    // introduced by adapt_type around a typedef'd callable — is a pure
-    // annotation change with no code to emit.
+    // introduced by adapt_type around a typedef'd callable — preserves the
+    // representation. Nullable-to-nonnull conversions still require a guard.
     {
         auto src_c = std::dynamic_pointer_cast<callable_type>(type::remove_const(source_type));
         auto tgt_c = std::dynamic_pointer_cast<callable_type>(type::remove_const(target_type));
         if (src_c && tgt_c && src_c->is_unbound_member() == tgt_c->is_unbound_member()) {
             _value = nullptr;
             expr.sub_expr()->accept(*this);
+            emit_callable_nonnull_check(target_type, source_type, _value, expr.first_lexeme());
             return;
         }
     }

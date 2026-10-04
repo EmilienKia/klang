@@ -168,11 +168,16 @@ type_reference_resolver::adapt_callable_type(
         }
     }
     if (auto tgt_frt = std::dynamic_pointer_cast<callable_type>(eff_type_nc)) {
-        if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type_src)) {
+        if (auto src_frt = std::dynamic_pointer_cast<callable_type>(type::remove_const(type_src))) {
             // Source is already a bare frt — no load needed, but the prototypes must
             // still satisfy the co/contravariance rules (phase B.7).
             if (!tgt_frt->is_unbound_member() && !src_frt->is_unbound_member()) {
                 check_callable_conversion(src_frt, tgt_frt, expr ? expr->first_lexeme() : lex::opt_any_lexeme{});
+            }
+            if (!type::are_equal(src_frt, tgt_frt)) {
+                auto cast = cast_expression::make_shared(expr, tgt_frt);
+                cast->set_type(tgt_frt);
+                return cast;
             }
             return expr;
         }
@@ -220,7 +225,13 @@ type_reference_resolver::adapt_callable_type(
                     move->set_type(tgt_frt);
                     return move;
                 }
-                return adapt_reference_load_value(expr);
+                auto loaded = adapt_reference_load_value(expr);
+                if (!type::are_equal(src_frt, tgt_frt)) {
+                    auto cast = cast_expression::make_shared(loaded, tgt_frt);
+                    cast->set_type(tgt_frt);
+                    return cast;
+                }
+                return loaded;
             }
         }
         return {};

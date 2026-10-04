@@ -398,6 +398,76 @@ TEST_CASE("Lambda: member closures contain only explicit captures",
     CHECK(run() == 2);
 }
 
+TEST_CASE("Lambda: direct literals materialize owned arguments and returns",
+          "[gen][lambda][owner][param][return][fresh-lambda][lifecycle]") {
+    auto jit = gen_jit(R"SRC(
+        module fresh_lambda_ownership;
+        drops: int = 0;
+        struct Resource {
+            value: int;
+            Resource(v: int): value(v) {}
+            ~Resource() { drops += 1; }
+        }
+        consume(task: !():int): int { return task(); }
+        template<typename T>
+        execute(task: !():T): T { return task(); }
+        make(): !():int {
+            resource: Resource! = new Resource(22);
+            return [resource]():int { return resource->value; };
+        }
+        run(): int {
+            drops = 0;
+            resource: Resource! = new Resource(20);
+            value: int = consume([resource]():int { return resource->value; });
+            if (resource != null || drops != 1) return -1;
+            if (execute<int>([]() { return 42; }) != 42) return -2;
+            {
+                returned: !():int = make();
+                value += returned();
+            }
+            if (drops != 2) return -3;
+            return value;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Lambda: stored borrowed values cannot become owners",
+          "[gen][lambda][owner][error][fresh-lambda]") {
+    SECTION("argument") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+            module borrowed_lambda_argument;
+            consume(task: !():int): int { return task(); }
+            run(): int {
+                borrowed: &():int = []():int { return 42; };
+                return consume(borrowed);
+            }
+        )SRC"), k::log::compiler_error);
+    }
+    SECTION("return") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+            module borrowed_lambda_return;
+            make(): !():int {
+                borrowed: &():int = []():int { return 42; };
+                return borrowed;
+            }
+        )SRC"), k::log::compiler_error);
+    }
+    SECTION("owning argument still forbids local reference captures") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+            module borrowed_capture_argument;
+            consume(task: !():int): int { return task(); }
+            run(): int {
+                value: int = 42;
+                return consume([&value]():int { return value; });
+            }
+        )SRC"), k::log::compiler_error);
+    }
+}
+
 TEST_CASE("Lambda: explicit generic execute selects owning free and UCS overloads",
           "[gen][lambda][owner][template][ucs][fresh-lambda][regression]") {
     const bool priority_first = GENERATE(false, true);
@@ -557,6 +627,85 @@ TEST_CASE("Lambda: capture owner object in owned lambda runs destructor on clean
     auto test_fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test_fn != nullptr);
     REQUIRE(test_fn() == 1);
+}
+
+TEST_CASE("Lambda: forwarding owned tasks clears every source and drops each closure once",
+          "[gen][lambda][owner][move][param][overload][lifecycle]") {
+    auto jit = gen_jit(R"SRC(
+        module owned_task_forwarding;
+        destructions: int = 0;
+        total: int = 0;
+        struct Resource {
+            value: int;
+            Resource(v: int) : value(v) {}
+            ~Resource() { destructions += 1; }
+        }
+        forward(task: !()) : bool {
+            consume(task);
+            return task == null;
+        }
+        consume(task: !()) { task(); }
+        class Relay {
+            forward(task: !()) : bool {
+                execute(task);
+                return task == null;
+            }
+            execute(task: !()) { task(); }
+        }
+        run() : int {
+            destructions = 0;
+            total = 0;
+            {
+                resource: Resource! = new Resource(20);
+                task: !() = [resource]() { total += resource.value; };
+                if (resource != null) return -1;
+                if (!forward(task) || task != null || destructions != 1) return -2;
+            }
+            if (destructions != 1) return -3;
+            {
+                relay: Relay;
+                resource: Resource! = new Resource(22);
+                task: !() = [resource]() { total += resource.value; };
+                if (!relay.forward(task) || task != null || destructions != 2) return -4;
+            }
+            if (destructions != 2) return -5;
+            return total;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Lambda: forwarded owned error suppliers retain their owner return type",
+          "[gen][lambda][owner][move][param][exceptions]") {
+    auto jit = gen_jit(R"SRC(
+        module owned_error_supplier_forwarding;
+        class Errors {
+            forward(supplier: !():Throwable!) : int {
+                code: int = consume(supplier);
+                return supplier == null ? code : -1;
+            }
+            consume(supplier: !():Throwable!) : int {
+                error: Throwable! = supplier();
+                return error.getCode();
+            }
+        }
+        run() : int {
+            errors: Errors;
+            code: int = 42;
+            supplier: !():Throwable! = [code]() : Throwable! {
+                return new Exception(code);
+            };
+            result: int = errors.forward(supplier);
+            return supplier == null ? result : -2;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
 }
 
 TEST_CASE("Lambda: re-assignment of owned callable cleans up old closure", "[gen][lambda][owner][assign]") {

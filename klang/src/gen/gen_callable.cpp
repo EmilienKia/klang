@@ -295,13 +295,13 @@ void type_reference_resolver::check_callable_conversion(
 {
     if (!src || !tgt) return;
 
-    if (tgt->is_owner() && !src->is_owner()) {
+    auto compat = callable_conversion_compatible(*src, *tgt);
+    if (compat.ownership_violation) {
         throw_error(static_cast<unsigned int>(k::diag::callable_model_diag::ERR_CALLABLE_OWNER_FROM_BORROW),
             where, "A borrowed callable of type '{}' cannot be converted to the owned callable type '{}'",
             {src->to_string(), tgt->to_string()});
     }
 
-    auto compat = callable_signature_compatible(*src, *tgt);
     if (compat.ok()) return;
 
     if (compat.result == callable_compat::status::needs_adjustment) {

@@ -246,7 +246,8 @@ makeCounter() : &():int {
 
 ### 7.2 Owned Closures (`!(Params):Ret`)
 
-When assigned to or returned as an **owned callable** (`!(Params):Ret`), the closure is **heap-allocated** via `new`:
+When assigned, passed directly as an argument, or returned as an **owned callable**
+(`!(Params):Ret`), a fresh lambda's closure is **heap-allocated** via `new`:
 
 - The closure is uniquely owned by the receiving `!(Params):Ret` variable.
 - When the owner goes out of scope or is reassigned, the closure environment is automatically destroyed (captured members destructed in reverse order) and freed.

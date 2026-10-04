@@ -162,6 +162,28 @@ TEST_CASE("callable alias — re-addressing is canonical in functions constructo
     CHECK(run() == 42);
 }
 
+TEST_CASE("callable alias — re-addressing cannot promote a borrowed variable to an owner",
+          "[gen][callable][alias][owner][borrow][param][return][error][regression]") {
+    const std::string destination = GENERATE(
+        "return consume(borrowed);",
+        "carrier: Carrier(borrowed); return 0;",
+        "owned: F! = promote(borrowed); return 0;");
+    CAPTURE(destination);
+    const std::string promotion = destination.starts_with("owned:")
+        ? "promote(f: F&) : F! { return f; }\n" : "";
+    const std::string source = R"SRC(
+        module gen_callable_alias_borrowed_owner;
+        alias F : ():int;
+        consume(f: F!) : int { return f(); }
+        struct Carrier { Carrier(f: F!) {} }
+    )SRC" + promotion + R"SRC(
+        run() : int {
+            value: int = 42;
+            borrowed: F& = [value]() : int { return value; };
+    )SRC" + destination + " }\n";
+    REQUIRE(compile_should_fail(source, nullptr));
+}
+
 // =============================================================================
 // Strong alias (typedef) — nominality
 // =============================================================================

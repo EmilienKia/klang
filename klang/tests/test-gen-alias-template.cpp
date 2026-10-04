@@ -324,6 +324,144 @@ TEST_CASE("template alias - declaration types do not bind to use-site shadows",
     CHECK(callback->get_parameter_types()[0] == result);
 }
 
+TEST_CASE("template alias - owned callback carrier accepts a null decoder with canonical result types",
+          "[gen][alias][template][callable][owner][null][callback-carrier]") {
+    auto comp = compile_model(R"SRC(
+        module gen_alias_owned_callback_carrier;
+        template<typename R, typename E>
+        struct Expected { value : R; error : E; }
+        namespace io {
+            struct IoDone {}
+            struct IoError { code : int; }
+            template<typename T> alias IoResult : Expected<T, IoError>;
+            template<typename T> alias IoCompletion : !(IoResult<T>);
+            template<typename T>
+            struct IoCallbackCarrier {
+                _completion : IoCompletion<T>;
+                _decode : *(long):T;
+                IoCallbackCarrier(completion: IoCompletion<T>, decode: *(long):T) {
+                    _completion = completion;
+                    _decode = decode;
+                }
+                ~IoCallbackCarrier() { _completion = null; }
+            }
+            template<typename T>
+            unsupportedOperation(completion: IoCompletion<T>) : IoCallbackCarrier<T>! {
+                return new IoCallbackCarrier<T>(completion, null);
+            }
+            makeDone(completion: IoCompletion<IoDone>) : IoCallbackCarrier<IoDone>! {
+                return unsupportedOperation<IoDone>(completion);
+            }
+            makeInt(completion: IoCompletion<int>) : IoCallbackCarrier<int>! {
+                return unsupportedOperation<int>(completion);
+            }
+        }
+    )SRC");
+    REQUIRE(comp);
+    auto root = comp->get_unit()->get_root_namespace();
+    auto io = root->get_child_namespace("io");
+    REQUIRE(io);
+    auto done = io->get_aggregate("IoDone");
+    auto error = io->get_aggregate("IoError");
+    REQUIRE(done);
+    REQUIRE(error);
+    CHECK(done->get_fq_name() == "::gen_alias_owned_callback_carrier::io::IoDone");
+    CHECK(error->get_fq_name() == "::gen_alias_owned_callback_carrier::io::IoError");
+
+    for (const auto& name : {"makeDone", "makeInt"}) {
+        auto factory = io->get_function(name);
+        REQUIRE(factory);
+        REQUIRE(factory->parameters().size() == 1);
+        auto completion = std::dynamic_pointer_cast<k::model::callable_type>(
+            factory->parameters().front()->get_type());
+        REQUIRE(completion);
+        CHECK(completion->is_owner());
+        REQUIRE(completion->get_parameter_types().size() == 1);
+        auto result = std::dynamic_pointer_cast<k::model::struct_type>(
+            completion->get_parameter_types().front());
+        REQUIRE(result);
+        auto expected = result->get_struct();
+        REQUIRE(expected);
+        REQUIRE(expected->get_tpl_args().size() == 2);
+        CHECK(expected->get_tpl_args()[1].type_arg == error->get_struct_type());
+        if (std::string{name} == "makeDone") {
+            CHECK(expected->get_tpl_args()[0].type_arg == done->get_struct_type());
+        }
+
+        auto carrierType = std::dynamic_pointer_cast<k::model::struct_type>(
+            factory->get_return_type()->get_subtype());
+        REQUIRE(carrierType);
+        auto carrier = carrierType->get_struct();
+        REQUIRE(carrier);
+        REQUIRE(carrier->constructors().size() == 1);
+        const auto& params = carrier->constructors().front()->parameters();
+        REQUIRE(params.size() == 2);
+        CHECK(k::model::type::are_equal(params[0]->get_type(), completion));
+        auto decoder = std::dynamic_pointer_cast<k::model::callable_type>(params[1]->get_type());
+        REQUIRE(decoder);
+        CHECK(decoder->is_nullable());
+        CHECK(k::model::type::are_equal(
+            decoder->get_return_type(), expected->get_tpl_args()[0].type_arg));
+    }
+}
+
+TEST_CASE("template alias - owned IoCompletion moves through forwarding and carrier construction",
+          "[gen][alias][template][callable][owner][move][lifecycle][callback-carrier]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_alias_owned_completion_lifecycle;
+        destructions: int = 0;
+        total: int = 0;
+        struct Resource {
+            value: int;
+            Resource(v: int) : value(v) {}
+            ~Resource() { destructions += 1; }
+        }
+        template<typename T>
+        struct IoResult { value: T; }
+        template<typename T> alias IoCompletion : !(IoResult<T>);
+        template<typename T>
+        struct IoCallbackCarrier {
+            _completion: IoCompletion<T>;
+            _decode: *(long):T;
+            IoCallbackCarrier(completion: IoCompletion<T>, decode: *(long):T)
+                : _completion(completion), _decode(decode) {}
+            ~IoCallbackCarrier() { _completion = null; }
+            complete(value: T) {
+                result: IoResult<T>;
+                result.value = value;
+                _completion(result);
+            }
+        }
+        template<typename T>
+        forward(completion: IoCompletion<T>) : IoCallbackCarrier<T>! {
+            carrier: IoCallbackCarrier<T>! = new IoCallbackCarrier<T>(completion, null);
+            if (completion != null) return null;
+            return carrier;
+        }
+        run() : int {
+            destructions = 0;
+            total = 0;
+            {
+                resource: Resource! = new Resource(20);
+                completion: IoCompletion<int> = [resource](result: IoResult<int>) {
+                    total += resource.value + result.value;
+                };
+                carrier: IoCallbackCarrier<int>! = forward<int>(completion);
+                if (completion != null || resource != null || carrier == null) return -1;
+                if (destructions != 0) return -2;
+                carrier.complete(22);
+                delete carrier;
+                if (destructions != 1) return -3;
+            }
+            if (destructions != 1) return -4;
+            return total;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
 
 TEST_CASE("template alias — renames a template aggregate", "[gen][alias][template]") {
     auto jit = gen_jit(R"SRC(

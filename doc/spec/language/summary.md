@@ -756,12 +756,15 @@ implementation of the selected slot.
   - Owned lambda (`!`): heap closure, move-only, destroyed on scope exit (local captures by value only).
 - Invocations: `fp(args)`.
 - Return type is required (omitted = void).
-- Move-only semantics apply to `!(Params):Ret`. Borrowed callables cannot be converted to owned callables.
 - A suffix on a transparent callable alias re-addresses its signature identically
   in variables, function/constructor parameters, and return types (`F&` is
   `&(Params):Ret`, not a reference to a prototype). Alias chains and `const`
   bindings preserve this rule; re-addressing does not promote borrowed values
   to owners.
+- Move-only semantics apply to `!(Params):Ret`. Stored borrowed callables cannot be converted to owned callables.
+  A fresh lambda may bind directly to an owned assignment, argument, or return destination;
+  its closure is heap-materialized for that destination, rather than promoted from a borrowed slot.
+- `null` is accepted for nullable callable parameters (`*`, `?`, `!`), including constructors and transparent aliases, but not for `+` or `&`. Passing an owning callable variable by value moves it and clears the source.
 
 ### 10.7 Operator Overloading
 

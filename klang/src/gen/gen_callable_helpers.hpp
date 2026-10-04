@@ -169,6 +169,7 @@ struct callable_compat {
     std::string reason;
     /** True when the failure is specifically a `throws(src) ⊄ throws(dst)` violation. */
     bool throws_violation = false;
+    bool ownership_violation = false;
 
     bool ok() const { return result == status::ok; }
     explicit operator bool() const { return ok(); }
@@ -209,6 +210,9 @@ callable_compat callable_signature_compatible(const callable_signature_view& src
 
 /** Convenience overload: compare two declared callable types. */
 callable_compat callable_signature_compatible(const callable_type& src, const callable_type& dst);
+
+/** Check a stored callable conversion, including its representation and ownership. */
+callable_compat callable_conversion_compatible(const callable_type& src, const callable_type& dst);
 
 /** Convenience overload: compare a function target against a declared callable type. */
 callable_compat callable_signature_compatible(const function& src, const callable_type& dst);
