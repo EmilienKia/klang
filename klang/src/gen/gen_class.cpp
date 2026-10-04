@@ -1775,6 +1775,8 @@ void symbol_resolver::visit_klass(klass& klass) {
         // Inject __vptr__ as first synthetic member using the public API
         klass.inject_vptr_field("__vptr__");
     }
+    _resolving_aggregates.erase(&klass);
+    visit_nested_aggregates(klass);
 }
 
 void signature_resolver::visit_klass(klass& klass) {
@@ -3773,6 +3775,7 @@ void implementation_generator::visit_interface(interface& iface) {
 // then build a minimal vtable with only the RTTI slot (no user virtual functions).
 // Annotation member functions are never virtual.
 void symbol_resolver::visit_annotation_type(annotation_type& ann) {
+    if (_visited_aggregates.count(&ann)) return;
     visit_aggregate(ann);
 
     // Build a vtable layout with zero user slots — only the RTTI slot (slot 0).

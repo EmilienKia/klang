@@ -342,3 +342,198 @@ TEST_CASE("Multi-source: forced module name with multiple files, some with modul
     REQUIRE(fb() == 2);
 }
 
+TEST_CASE("Multi-source: forward interface overrides are independent of source order",
+          "[multi-source][override][interface][forward-base]") {
+    const std::pair<std::string, std::string> implementation = {
+        "multi_source_forward_executor.impl.k", R"SRC(
+module multi_source_forward_executor;
+executions : int = 0;
+recordExecution() { executions += 1; }
+namespace io {
+    class SerialExecutor : public LeaseProvider {
+        override acquireLease() : Lease! throws(RejectedExecutionException) {
+            return new Lease(42);
+        }
+        override const execute(task: !()) : void throws(RejectedExecutionException) {
+            if (task != null) task();
+        }
+        override const execute(task: !(), priority: int) : void throws(RejectedExecutionException) {
+            execute(task);
+        }
+    }
+}
+readLease(provider: LeaseProvider&) : int throws(RejectedExecutionException) {
+    lease : Lease! = provider.acquireLease();
+    return lease->value();
+}
+test() : int throws(RejectedExecutionException) {
+    executor : io::SerialExecutor;
+    executions = 0;
+    first : !() = recordExecution;
+    executor.execute(first);
+    if (first != null || executions != 1) return -1;
+    second : !() = recordExecution;
+    executor.execute(second, 7);
+    if (second != null || executions != 2) return -2;
+    base : const LeaseProvider& = executor;
+    third : !() = recordExecution;
+    base.execute(third);
+    fourth : !() = recordExecution;
+    base.execute(fourth, 9);
+    if (third != null || fourth != null || executions != 4) return -3;
+    fifth : !() = recordExecution;
+    execute(executor, fifth);
+    if (fifth != null || executions != 5) return -4;
+    return readLease(executor);
+}
+)SRC"};
+    const std::pair<std::string, std::string> contract = {
+        "multi_source_forward_executor.contract.k", R"SRC(
+module multi_source_forward_executor;
+interface LeaseProvider {
+    acquireLease() : Lease! throws(RejectedExecutionException);
+    const execute(task: !()) : void throws(RejectedExecutionException);
+    default const execute(task: !(), priority: int) : void throws(RejectedExecutionException) {
+        execute(task);
+    }
+}
+)SRC"};
+    const std::pair<std::string, std::string> lease_type = {
+        "multi_source_forward_executor.lease.k", R"SRC(
+module multi_source_forward_executor;
+class Lease {
+    _value : int;
+    Lease(value: int) { _value = value; }
+    const value() : int { return _value; }
+}
+)SRC"};
+
+    std::vector<std::pair<std::string, std::string>> sources;
+    SECTION("Implementation before interface and owner return type") {
+        sources = {implementation, contract, lease_type};
+    }
+    SECTION("Interface before implementation and owner return type") {
+        sources = {contract, implementation, lease_type};
+    }
+    SECTION("Return type and interface before implementation") {
+        sources = {lease_type, contract, implementation};
+    }
+    SECTION("Return type before implementation and interface") {
+        sources = {lease_type, implementation, contract};
+    }
+    auto jit = gen_jit_multi(std::move(sources));
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("Multi-source: forward interface still requires every abstract method",
+          "[multi-source][override][interface][forward-base]") {
+    REQUIRE_THROWS_AS(gen_jit_multi_throws({
+        {"multi_source_forward_missing.impl.k", R"SRC(
+module multi_source_forward_missing;
+namespace io {
+    class MissingImplementation : public Contract {}
+}
+)SRC"},
+        {"multi_source_forward_missing.contract.k", R"SRC(
+module multi_source_forward_missing;
+interface Contract {
+    required() : int;
+}
+)SRC"}
+    }), k::model::gen::resolution_error);
+}
+
+TEST_CASE("Forward base: owned-callable override retains inherited priority overload",
+          "[multi-source][override][interface][forward-base][callable]") {
+    auto jit = gen_jit_multi({
+        {"forward_callable_priority.impl.k", R"SRC(
+            module forward_callable_priority;
+            executions: int = 0;
+            selectedPriority: int = 0;
+            recordExecution() { executions += 1; }
+            class DirectExecutor : Executor {
+                override const execute(task: !()) { task(); }
+            }
+            test() : int {
+                executor: DirectExecutor;
+                first: !() = recordExecution;
+                executor.execute(first);
+                second: !() = recordExecution;
+                executor.execute(second, 7);
+                third: !() = recordExecution;
+                execute(executor, third);
+                if (first != null || second != null || third != null) return -1;
+                if (executions != 3 || selectedPriority != 7) return -2;
+                return 42;
+            }
+        )SRC"},
+        {"forward_callable_priority.contract.k", R"SRC(
+            module forward_callable_priority;
+            interface Executor {
+                const execute(task: !());
+                default const execute(task: !(), priority: int) {
+                    selectedPriority = priority;
+                    execute(task);
+                }
+            }
+        )SRC"}
+    });
+    REQUIRE(jit != nullptr);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("Multi-source: forward base does not accept an unrelated override",
+          "[multi-source][override][interface][forward-base]") {
+    REQUIRE_THROWS_AS(gen_jit_multi_throws({
+        {"multi_source_forward_typo.impl.k", R"SRC(
+module multi_source_forward_typo;
+namespace io {
+    class WrongOverride : public Contract {
+        override unrelated() : int { return 42; }
+    }
+}
+)SRC"},
+        {"multi_source_forward_typo.contract.k", R"SRC(
+module multi_source_forward_typo;
+interface Contract {
+    required() : int;
+}
+)SRC"}
+    }), k::model::gen::resolution_error);
+}
+
+TEST_CASE("Forward base: nested class can override its enclosing class",
+          "[multi-source][override][forward-base][nested]") {
+    auto jit = gen_jit(R"SRC(
+module forward_base_nested;
+class Outer {
+    value() : int { return 1; }
+    static class Inner : public Outer {
+        override value() : int { return 42; }
+    }
+}
+readValue(outer: Outer&) : int { return outer.value(); }
+test() : int {
+    inner : Outer::Inner;
+    return readValue(inner);
+}
+)SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("Forward base: inheritance cycles remain rejected",
+          "[multi-source][override][forward-base]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+module forward_base_cycle;
+struct A : public B {}
+struct B : public A {}
+)SRC"), k::model::gen::resolution_error);
+}

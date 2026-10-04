@@ -188,6 +188,32 @@ void symbol_resolver::resolve_and_validate_annotations(
 // Aggregate / Structure / Klass
 //
 
+void symbol_resolver::visit_nested_aggregates(aggregate& st) {
+    for (auto& child : st.get_children()) {
+        auto nested = std::dynamic_pointer_cast<aggregate>(child);
+        if (!nested || _visited_aggregates.count(nested.get())) continue;
+
+        // A nested type may inherit from its enclosing type. Defer it until
+        // that base's layout (including its vtable) is complete.
+        std::unordered_set<const aggregate*> seen;
+        std::function<bool(const aggregate&)> depends_on_resolving_base;
+        depends_on_resolving_base = [&](const aggregate& current) {
+            if (!seen.insert(&current).second) return false;
+            for (const auto& bs : current.get_bases()) {
+                if (!bs.base) continue;
+                if (_resolving_aggregates.count(bs.base.get())
+                    || depends_on_resolving_base(*bs.base)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!depends_on_resolving_base(*nested)) {
+            nested->accept(*this);
+        }
+    }
+}
+
 // symbol_resolver::visit_aggregate
 // ---------------------------------
 // Resolves symbols and builds the structural skeleton of an aggregate (struct or class).
@@ -196,13 +222,12 @@ void symbol_resolver::resolve_and_validate_annotations(
 //  1. Resolve the named-element identity (name lookup, scope registration).
 //  2. Pre-declare the aggregate's LLVM struct type and register it in the context
 //     so recursive/forward references can succeed.
-//  3. Recursively visit nested aggregate children first, so their types exist
-//     before the outer aggregate's members reference them.
+//  3. Visit nested aggregates, deferring those inheriting from an active enclosing base.
 //  4. For each declared base:
 //     a. Resolve the base name to a concrete aggregate via scope lookup.
 //     b. Validate constraints: final base, const/mutable mismatch, struct/class cross-inheritance.
 //     c. Emit warnings for inner↔outer circular nesting patterns.
-//  5. Detect cycles in the inheritance graph (DFS-based visited set).
+//  5. Detect inheritance cycles, then fully visit local bases regardless of source order.
 //  6. Inject synthetic member-variable fields for each direct base (in reverse declaration order
 //     so they appear in declaration order in the LLVM struct layout):
 //     - Non-virtual base → __base_X__ (embedded sub-object).
@@ -235,6 +260,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
         trace("[symbol_resolver::visit_aggregate] '{}' already processed, skipping", {st.get_short_name()});
         return;
     }
+    _resolving_aggregates.insert(&st);
     trace("[symbol_resolver::visit_aggregate] '{}'", {st.get_short_name()});
     lex::opt_any_lexeme st_lexeme;
     if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
@@ -260,11 +286,10 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
         st.set_struct_type(st_type);
     }
 
-    // Visit nested aggregate children first (they need their own types declared)
+    // Visit nested aggregate children first unless they depend on this layout.
+    visit_nested_aggregates(st);
     for(auto& child : st.get_children()) {
-        if(auto nested_st = std::dynamic_pointer_cast<aggregate>(child)) {
-            nested_st->accept(*this);
-        } else if(auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
+        if(auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
             nested_un->accept(*this);
         }
     }
@@ -424,13 +449,6 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                                     _context->add_struct(st_type);
                                     base_st->set_struct_type(st_type);
                                 }
-                                // Visit the instantiated base to build its vtable
-                                // (interfaces/classes need vtable layout resolved
-                                // before the derived class's vtable can inherit slots).
-                                if (base_st && !base_st->has_vtable()
-                                    && std::dynamic_pointer_cast<klass>(base_st)) {
-                                    base_st->accept(*this);
-                                }
                             }
                         }
                     }
@@ -513,6 +531,15 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_STRUCT_SELF_INHERIT), st_lexeme,
                 "Circular inheritance detected in struct '{}'",
                 {st.get_short_name()});
+        }
+
+        // Resolve every local base before inheriting fields, destructors or
+        // virtual slots. Name lookup alone does not construct a forward base.
+        for (const auto& bs : st.get_bases()) {
+            if (bs.base && !_visited_aggregates.count(bs.base.get())
+                && !std::dynamic_pointer_cast<imported_aggregate>(bs.base)) {
+                bs.base->accept(*this);
+            }
         }
 
         // Inject base sub-objects as synthetic member variables in DECLARATION ORDER.
@@ -832,6 +859,10 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
     // Mark this aggregate as fully processed so that double-visitation is
     // detected and skipped (see guard at the top of this function).
     _visited_aggregates.insert(&st);
+    if (!std::dynamic_pointer_cast<klass>(st.shared_as<element>())) {
+        _resolving_aggregates.erase(&st);
+        visit_nested_aggregates(st);
+    }
 }
 
 // signature_resolver::visit_aggregate

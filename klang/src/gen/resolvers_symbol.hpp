@@ -46,6 +46,9 @@ protected:
      */
     std::unordered_set<aggregate*> _visited_aggregates;
 
+    /** Aggregates whose inherited layout or vtable is still being constructed. */
+    std::unordered_set<aggregate*> _resolving_aggregates;
+
 public:
     symbol_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
     k::log::logger_relay(logger),
@@ -137,6 +140,7 @@ protected:
     void visit_unit(unit&) override;
 
     void visit_namespace(ns&) override;
+    void visit_nested_aggregates(aggregate&);
     void visit_aggregate(aggregate&) override;
     void visit_klass(klass&) override;
     void visit_interface(interface&) override;
