@@ -1075,6 +1075,7 @@ TEST_CASE("import template — private FFI dependencies keep their definition sc
             CHECK(error.get_diagnostic().code
                 == static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_AMBIGUOUS_OVERLOAD));
         }
+        REQUIRE(compiler->has_compilation_error());
         CHECK_FALSE(compiler->to_jit());
     }
 
@@ -1101,6 +1102,7 @@ TEST_CASE("import template — private FFI dependencies keep their definition sc
                 CHECK(error.get_diagnostic().code
                     == static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED));
             }
+            REQUIRE(compiler->has_compilation_error());
         }
     }
 
@@ -1124,6 +1126,7 @@ TEST_CASE("import template — private FFI dependencies keep their definition sc
                 CHECK(error.get_diagnostic().code
                     == static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED));
             }
+            REQUIRE(compiler->has_compilation_error());
         }
     }
 
@@ -1194,6 +1197,7 @@ TEST_CASE("import template aliases retain canonical declaration types under cons
         main(): int { return run(); }
     )K";
     compiler->parse_source("aliasconsumer.k", consumer);
+    REQUIRE_FALSE(compiler->has_compilation_error());
     auto root = compiler->get_unit()->get_root_namespace();
     CHECK(root->get_fq_name() == "::tplaliasconsumer");
     auto origin = root->get_child_namespace("tplaliasorigin")->get_child_namespace("io");
@@ -1354,6 +1358,64 @@ TEST_CASE("import template native dependencies resolve parent and sibling scopes
     CHECK(result.exit_code == 42);
 }
 
+TEST_CASE("template dependency export leaves deferred this unbound and reports export failures",
+          "[import][template][ffi][private-dependency][diagnostics][regression]") {
+    TmpDir artifacts;
+    auto compiler = k::compiler::create(make_pic_target_machine());
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    compiler->parse_source("deferred-this.k", R"K(
+        module tpldeferredthis;
+        @k::ffi::Extern("C", null, "abs") private __private_abs(value: int): int;
+        template<typename T>
+        struct DeferredSelf {
+            value: int;
+            read(): int { return __private_abs(this.value); }
+        }
+    )K", false, false);
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    auto definition = compiler->get_unit()->get_root_namespace()->get_aggregate("DeferredSelf");
+    REQUIRE(definition);
+    auto method = definition->get_function("read");
+    REQUIRE(method);
+    REQUIRE_FALSE(method->get_this_parameter());
+
+    auto output = artifacts.path / "libtpldeferredthis.so";
+    auto kdi_path = artifacts.path / "libtpldeferredthis.kdi";
+    SECTION("export probes do not resolve this or latch a speculative error") {
+        REQUIRE(compiler->gen_kdi(output.string()));
+        CHECK_FALSE(compiler->has_compilation_error());
+        CHECK_FALSE(method->get_this_parameter());
+        auto file = kdi::kdi_read_cbor_file(kdi_path.string());
+        auto exported = std::find_if(file.unit.root_ns.template_defs.begin(),
+            file.unit.root_ns.template_defs.end(),
+            [](const auto& def) { return def.name == "DeferredSelf"; });
+        REQUIRE(exported != file.unit.root_ns.template_defs.end());
+        CHECK(exported->source.find("this.value") != std::string::npos);
+        CHECK(exported->source.find(".symbol = \"abs\"") != std::string::npos);
+        CHECK(std::none_of(file.unit.root_ns.functions.begin(), file.unit.root_ns.functions.end(),
+            [](const auto& fn) { return fn.name == "__private_abs"; }));
+    }
+    SECTION("missing dependency source metadata reports the origin and latches failure") {
+        definition->set_ast_node(nullptr);
+        try {
+            compiler->gen_kdi(output.string());
+            FAIL("Expected a KDI dependency source-range diagnostic");
+        } catch (const k::log::compiler_error& error) {
+            CHECK(error.get_diagnostic().code
+                == static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F001));
+            CHECK(std::string(error.what()).find("Template dependency has no declaration source range")
+                != std::string::npos);
+            CHECK(std::string(error.what()).find("tpldeferredthis") != std::string::npos);
+            CHECK(std::string(error.what()).find(kdi_path.string()) != std::string::npos);
+        }
+        CHECK(compiler->has_compilation_error());
+        CHECK_FALSE(fs::exists(kdi_path));
+        CHECK_FALSE(compiler->gen_kdi(output.string()));
+    }
+}
+
 TEST_CASE("import template native dependency aliases require compatible ABI declarations",
           "[import][template][ffi][private-dependency][native-abi][regression]") {
     TmpKdi lib(R"K(
@@ -1393,11 +1455,13 @@ TEST_CASE("import template native dependency aliases require compatible ABI decl
             == static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME));
     }
     if (compatible) {
+        REQUIRE_FALSE(compiler->has_compilation_error());
         REQUIRE(compiler->verify_gen_code());
         auto& module = compiler->get_context_for_test()->module();
         CHECK(module.getFunction("abs") != nullptr);
         CHECK(module.getFunction("abs.1") == nullptr);
     } else {
+        REQUIRE(compiler->has_compilation_error());
         CHECK_FALSE(compiler->to_jit());
     }
 }
@@ -1448,6 +1512,7 @@ TEST_CASE("private producer native aliases share symbols only with compatible de
             == static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME));
     }
     if (compatible) {
+        REQUIRE_FALSE(compiler->has_compilation_error());
         REQUIRE(compiler->verify_gen_code());
         auto root = compiler->get_unit()->get_root_namespace();
         auto ctx = compiler->get_context_for_test();
@@ -1465,6 +1530,7 @@ TEST_CASE("private producer native aliases share symbols only with compatible de
         INFO(result.err);
         CHECK(result.exit_code == 42);
     } else {
+        REQUIRE(compiler->has_compilation_error());
         CHECK_FALSE(compiler->to_jit());
     }
 }
@@ -1613,6 +1679,7 @@ TEST_CASE("import template private native handles and nested result callables us
         }
         runNativeConsumer(): int { return consumer::test(null); }
     )K");
+    REQUIRE_FALSE(compiler->has_compilation_error());
     REQUIRE(compiler->verify_gen_code());
     auto origin = compiler->get_unit()->get_root_namespace()->get_child_namespace("tplnativeorigin")->get_child_namespace("io");
     auto ctx = compiler->get_context_for_test();
@@ -1726,6 +1793,7 @@ TEST_CASE("import template execute preserves every same-named overload",
             return first + tploverloadedexecute::execute<int>(0, []():int { return 22; }, 7);
         }
     )K");
+    REQUIRE_FALSE(compiler->has_compilation_error());
     REQUIRE(compiler->verify_gen_code());
     auto origin = compiler->get_unit()->get_root_namespace()->get_child_namespace("tploverloadedexecute");
     REQUIRE(origin);
@@ -1851,6 +1919,7 @@ TEST_CASE("import template — private callback preludes preserve native ABI and
             return result == 42 && again == 42 && invokeCalls == 2 && dropCalls == 2 ? 42 : -1;
         }
     )K"));
+    REQUIRE_FALSE(compiler->has_compilation_error());
     auto root = compiler->get_unit()->get_root_namespace();
     auto origin = root->get_child_namespace("tplprivatecallbacks");
     REQUIRE(origin);
@@ -1912,6 +1981,7 @@ TEST_CASE("import template — private callback preludes preserve native ABI and
     REQUIRE(compiler->verify_gen_code());
     std::string load_error;
     const auto load_failed = llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+        (std::string(KLANG_STDLIB_LIB_DIR) + "/libk.so").c_str(), &load_error);
     INFO(load_error);
     REQUIRE_FALSE(load_failed);
     auto jit = compiler->to_jit();

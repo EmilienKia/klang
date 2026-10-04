@@ -300,6 +300,9 @@ void type_reference_resolver::resolve_parameter_type(parameter& param) {
         if (auto ast_ps = param.get_ast_parameter_spec(); ast_ps && ast_ps->name) {
             param_lexeme = lex::any_lexeme{*ast_ps->name};
         }
+        auto function_owner = param.ancestor<function>();
+        if (!param_lexeme && function_owner) param_lexeme = function_owner->get_first_lexeme();
+        const auto owner_name = function_owner ? function_owner->get_fq_name() : std::string{"<unknown>"};
         // Handle unresolved_callable_type (function pointer/pin/link type)
         if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(var_type)) {
             auto resolved = resolve_callable_type(ufrt, param);
@@ -307,8 +310,8 @@ void type_reference_resolver::resolve_parameter_type(parameter& param) {
                 param.set_type(resolved);
             } else {
                 throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED), param_lexeme,
-                    "Cannot resolve function reference type for parameter '{}'",
-                    {param.get_short_name()});
+                    "Cannot resolve function reference type '{}' for parameter '{}' of '{}'",
+                    {var_type->to_string(), param.get_short_name(), owner_name});
             }
         } else {
         std::shared_ptr<type> res_type = _context->resolve_type(var_type);
@@ -369,8 +372,8 @@ void type_reference_resolver::resolve_parameter_type(parameter& param) {
         // (struct_type without LLVM type), as long as no unresolved_type nodes remain.
         if (!res_type || type::contains_unresolved(res_type)) {
             throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED), param_lexeme,
-                "Cannot resolve type for parameter '{}': the type name is unknown",
-                {param.get_short_name()});
+                "Cannot resolve type '{}' for parameter '{}' of '{}': the type name is unknown",
+                {var_type->to_string(), param.get_short_name(), owner_name});
         }
         param.set_type(_context->collapse_callable_addresser(res_type));
         } // end else (not unresolved_callable_type)
@@ -1026,7 +1029,13 @@ void declaration_generator::visit_function(function &function) {
         std::vector<llvm::Type*> param_types;
         for (const auto& param : function.parameters()) {
             auto ptype = _context->get_llvm_type(param->get_type());
-            if (!ptype) return;
+            if (!ptype || !llvm::FunctionType::isValidArgumentType(ptype)) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                    param->get_first_lexeme(),
+                    "Cannot declare native symbol '{}' for '{}': parameter '{}' of type '{}' has no valid LLVM ABI type",
+                    {function.get_mangled_name(), function.get_fq_name(), param->get_short_name(),
+                     param->get_type() ? param->get_type()->to_string() : "<null>"});
+            }
             param_types.push_back(ptype);
         }
         llvm::Type* ret_type = nullptr;
@@ -1034,6 +1043,13 @@ void declaration_generator::visit_function(function &function) {
             ret_type = _context->get_llvm_type(ret);
         } else {
             ret_type = llvm::Type::getVoidTy(**_context);
+        }
+        if (!ret_type || !llvm::FunctionType::isValidReturnType(ret_type)) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                function.get_first_lexeme(),
+                "Cannot declare native symbol '{}' for '{}': return type '{}' has no valid LLVM ABI type",
+                {function.get_mangled_name(), function.get_fq_name(),
+                 function.get_return_type() ? function.get_return_type()->to_string() : "void"});
         }
         llvm::FunctionType* func_type = llvm::FunctionType::get(ret_type, param_types, false);
         // Use the mangled name — for extern functions this is the C symbol name.
@@ -1084,17 +1100,28 @@ void declaration_generator::visit_function(function &function) {
         // First parameter is the 'this' pointer
         auto this_param = function.get_this_parameter();
         if (!this_param || !this_param->get_type()) {
-            // Cannot emit declaration without a valid 'this' parameter type.
-            // This can happen for imported methods whose struct type is not yet resolved.
-            return;
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                function.get_first_lexeme(),
+                "Cannot declare function '{}': missing this-parameter type",
+                {function.get_fq_name()});
         }
-        param_types.push_back(_context->get_llvm_type(this_param->get_type()));
+        auto this_type = _context->get_llvm_type(this_param->get_type());
+        if (!this_type || !llvm::FunctionType::isValidArgumentType(this_type)) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                function.get_first_lexeme(),
+                "Cannot declare function '{}': this-parameter type '{}' has no valid LLVM ABI type",
+                {function.get_fq_name(), this_param->get_type()->to_string()});
+        }
+        param_types.push_back(this_type);
     }
     for(const auto& param : function.parameters()) {
         auto ptype = _context->get_llvm_type(param->get_type());
-        if (!ptype) {
-            // Skip declaration if any parameter type is unresolved.
-            return;
+        if (!ptype || !llvm::FunctionType::isValidArgumentType(ptype)) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                param->get_first_lexeme(),
+                "Cannot declare function '{}': parameter '{}' of type '{}' has no valid LLVM ABI type",
+                {function.get_fq_name(), param->get_short_name(),
+                 param->get_type() ? param->get_type()->to_string() : "<null>"});
         }
         param_types.push_back(ptype);
     }
@@ -1124,6 +1151,14 @@ void declaration_generator::visit_function(function &function) {
         }
     } else {
         ret_type = llvm::Type::getVoidTy(**_context);
+    }
+    if (!ret_type || !llvm::FunctionType::isValidReturnType(ret_type)
+        || (use_sret && !_context->get_llvm_type(function.get_return_type()))) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+            function.get_first_lexeme(),
+            "Cannot declare function '{}': return type '{}' has no valid LLVM ABI type",
+            {function.get_fq_name(),
+             function.get_return_type() ? function.get_return_type()->to_string() : "void"});
     }
 
     if (function.get_mangled_name().empty()) {
@@ -1229,7 +1264,7 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
                 {function.get_fq_name()});
         }
         auto* this_ty = _context->get_llvm_type(this_param->get_type());
-        if (!this_ty) {
+        if (!this_ty || !llvm::FunctionType::isValidArgumentType(this_ty)) {
             lex::opt_any_lexeme fn_lexeme;
             if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
@@ -1240,7 +1275,7 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
     }
     for (const auto& param : function.parameters()) {
         auto* ptype = _context->get_llvm_type(param->get_type());
-        if (!ptype) {
+        if (!ptype || !llvm::FunctionType::isValidArgumentType(ptype)) {
             lex::opt_any_lexeme fn_lexeme;
             if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
@@ -1266,7 +1301,8 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
     } else {
         late_ret_type = llvm::Type::getVoidTy(**_context);
     }
-    if (!late_ret_type) {
+    if (!late_ret_type || !llvm::FunctionType::isValidReturnType(late_ret_type)
+        || (late_use_sret && !_context->get_llvm_type(function.get_return_type()))) {
         lex::opt_any_lexeme fn_lexeme;
         if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,

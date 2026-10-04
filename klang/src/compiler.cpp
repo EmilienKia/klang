@@ -252,6 +252,7 @@ void compiler::run_declaration_resolution_passes(bool dump) {
         std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
     }
     var_resolver.resolve();
+    if (_has_compilation_error) return;
 
     if(dump) {
         k::model::dump::unit_dump unit_dump(std::cout);
@@ -263,10 +264,12 @@ void compiler::run_declaration_resolution_passes(bool dump) {
     trace("[compiler::run_declaration_resolution_passes] generic constraint validation");
     k::model::gen::generic_constraint_validator generic_validator(*this, _context, *_model_unit);
     generic_validator.validate();
+    if (_has_compilation_error) return;
 
     trace("[compiler::run_declaration_resolution_passes] aggregate type resolution");
     k::model::gen::aggregate_type_resolver agg_type_resolver(*this, _context, *_model_unit);
     agg_type_resolver.resolve();
+    if (_has_compilation_error) return;
 
     // Re-resolve types for any template instantiations that were created
     // during aggregate type resolution (their LLVM struct types need to be built).
@@ -281,6 +284,7 @@ void compiler::run_type_reference_resolution_passes(bool dump) {
     trace("[compiler::run_type_reference_resolution_passes] type reference resolution");
     k::model::gen::type_reference_resolver type_ref_resolver(*this, _context, *_model_unit);
     type_ref_resolver.resolve();
+    if (_has_compilation_error) return;
 
     // Rebuild any template-instantiation layouts whose LLVM body was frozen
     // before late-discovered virtual-base subobject fields were injected.
@@ -295,6 +299,7 @@ void compiler::run_type_reference_resolution_passes(bool dump) {
 
 void compiler::run_resolution_passes(bool dump) {
     run_declaration_resolution_passes(dump);
+    if (_has_compilation_error) return;
     run_type_reference_resolution_passes(dump);
 }
 
@@ -432,6 +437,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         // in the same logical unit from being named under an anonymous unit.
 
         k::model::model_builder::visit(*this, _context, *_ast_unit, *_model_unit);
+        if (_has_compilation_error) return;
 
         // ── Implicit import of base standard library (module "k") ───────
         // Every K module automatically imports "k" unless:
@@ -464,6 +470,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         // imported type is registered in the context before type resolution begins.
         // To switch to lazy loading in the future, simply remove this call.
         importer.materialise_all(_context);
+        if (_has_compilation_error) return;
 
         if(dump) {
             k::model::dump::unit_dump unit_dump(std::cout);
@@ -474,6 +481,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         if (_plugin_manager && _plugin_manager->has_model_passes()) {
             trace("[compiler::parse_sources] Phase 4 — initial declaration resolution pass for plugins");
             run_declaration_resolution_passes(dump);
+            if (_has_compilation_error) return;
 
             // ── Phase 5 — Model visitor plugin passes ─────────────────────
             trace("[compiler::parse_sources] Phase 5 — executing model plugin passes");
@@ -481,18 +489,22 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
             for (const auto& pass : _plugin_manager->get_model_passes()) {
                 debug("[compiler::parse_sources] running plugin pass '{}'", {std::string{pass->name()}});
                 bool modified = pass->run(*this, *_model_unit, *_context);
+                if (_has_compilation_error) return;
                 if (modified) {
                     any_modified = true;
                     trace("[compiler::parse_sources] re-running full resolution after pass '{}'", {std::string{pass->name()}});
                     run_resolution_passes(dump);
+                    if (_has_compilation_error) return;
                 }
             }
             if (!any_modified) {
                 run_type_reference_resolution_passes(dump);
+                if (_has_compilation_error) return;
             }
         } else {
             trace("[compiler::parse_sources] Phase 4 — complete resolution pass");
             run_resolution_passes(dump);
+            if (_has_compilation_error) return;
         }
 
         // ── Phase C — unused-import check ─────────────────────────────────
@@ -505,9 +517,9 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         report(e.get_diagnostic());
         _has_compilation_error = true;
         throw;
-    } catch (k::log::compiler_error&) {
-        // Diagnostic already reported via logger_relay::report() before the throw.
-        // Mark compilation as failed, then propagate to the caller.
+    } catch (k::log::compiler_error& e) {
+        // Some model helpers throw a diagnostic without posting it to the logger.
+        if (!_has_compilation_error) report(e.get_diagnostic());
         _has_compilation_error = true;
         throw;
     } catch (std::exception& e) {
@@ -527,6 +539,7 @@ bool compiler::has_main_method() const {
 }
 
 void compiler::process_generation(bool optimize, bool dump) {
+    if (_has_compilation_error) return;
 
     trace("[compiler::process_generation] verifying mangled names");
     verify_mangled_names();
@@ -546,6 +559,7 @@ void compiler::process_generation(bool optimize, bool dump) {
     k::model::gen::declaration_generator gen_decl(*this, *this, _context, *_model_unit);
 
     _model_unit->accept(gen_decl);
+    if (_has_compilation_error) return;
 
     if(dump) {
         std::cout << "#" << std::endl << "# Generate implementation in LLVM module" << std::endl << "#" << std::endl;
@@ -554,8 +568,9 @@ void compiler::process_generation(bool optimize, bool dump) {
     k::model::gen::implementation_generator gen_impl(*this, *this, _context, *_model_unit);
 
     _model_unit->accept(gen_impl);
+    if (_has_compilation_error) return;
     gen_impl.finalize_debug_info();
-    verify_gen_code();
+    if (!verify_gen_code()) return;
     if(dump) {
         dump_gen_code();
     }
@@ -569,7 +584,7 @@ void compiler::process_generation(bool optimize, bool dump) {
             std::cout << "#" << std::endl << "# Optimize LLVM module" << std::endl << "#" << std::endl;
         }
         optimize_gen_code();
-        verify_gen_code();
+        if (_has_compilation_error || !verify_gen_code()) return;
         if(dump) {
             dump_gen_code();
         }
@@ -580,6 +595,7 @@ void compiler::process_generation(bool optimize, bool dump) {
 }
 
 void compiler::dump_gen_code() {
+    if (_has_compilation_error) return;
     _context->module().print(llvm::outs(), nullptr);
 }
 
@@ -653,6 +669,7 @@ void compiler::set_log_file(const std::string& path) {
 }
 
 void compiler::emit_ir(const std::string& filepath) {
+    if (_has_compilation_error) return;
     if (filepath.empty()) {
         _context->module().print(llvm::outs(), nullptr);
     } else {
@@ -806,6 +823,7 @@ bool compiler::verify_gen_code() {
 }
 
 void compiler::optimize_gen_code() {
+    if (_has_compilation_error || !verify_gen_code()) return;
     // TODO switch to new pass manager
     std::shared_ptr<llvm::legacy::FunctionPassManager> passes;
 
@@ -831,7 +849,7 @@ void compiler::optimize_gen_code() {
 
 std::unique_ptr<k::model::gen::jit> compiler::to_jit(bool init_runtime) {
 
-    if (_has_compilation_error) {
+    if (_has_compilation_error || !verify_gen_code()) {
         return nullptr;
     }
 
@@ -857,6 +875,8 @@ bool compiler::gen_object_file(const std::string& output_file) {
 }
 
 bool compiler::emit_object_file(const std::string& output_file, bool position_independent) {
+    if (_has_compilation_error || !verify_gen_code()) return false;
+
     // Link-time -fPIC cannot change relocations already emitted into an object.
     // Keep the caller's target intact for executable, standalone object and JIT use.
     std::unique_ptr<llvm::TargetMachine> pic_target;

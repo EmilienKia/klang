@@ -124,8 +124,12 @@ static const char* severity_str[] = {
 };
 
 void compiler::report(const k::log::diagnostic& diag) {
+    if (diag.level >= log::diagnostic::severity::error) {
+        _has_compilation_error = true;
+    }
+
     // Filter by log-level threshold
-    if (diag.level < _log_level) return;
+    if (diag.level < log::diagnostic::severity::error && diag.level < _log_level) return;
 
     // Filter by ignored diagnostic codes. Only ever applies to diagnostics
     // strictly below `error` severity (trace/debug/info/warning) that carry

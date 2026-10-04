@@ -78,6 +78,7 @@ std::filesystem::path make_temp_object_path(const std::string& prefix) {
 } // anonymous namespace
 
 bool compiler::gen_executable(const std::string& output_file) {
+    if (_has_compilation_error) return false;
     if (!has_main_method()) {
         error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_NO_MAIN_FOR_EXECUTABLE),
               "Cannot generate executable: no main function");
@@ -92,7 +93,10 @@ bool compiler::gen_executable(const std::string& output_file) {
     auto object_path = make_temp_object_path(output_path.stem().string());
 
     trace("[compiler::gen_executable] generating object '{}'", {object_path.string()});
-    gen_object_file(object_path);
+    if (!gen_object_file(object_path)) {
+        std::filesystem::remove(object_path);
+        return false;
+    }
 
     trace("[compiler::gen_executable] generating executable '{}'", {output_path.string()});
     tools::exec_result exec_res;
@@ -237,6 +241,7 @@ std::vector<std::string> compiler::build_import_link_args() const {
 }
 
 bool compiler::gen_kdi(const std::string& lib_path) {
+    if (_has_compilation_error) return false;
     // --no-emit-kdi: silently skip KDI generation
     if (_ir_output_options.no_emit_kdi) return true;
 
@@ -245,6 +250,7 @@ bool compiler::gen_kdi(const std::string& lib_path) {
               "gen_kdi: no compiled unit available");
         return false;
     }
+    if (!verify_gen_code()) return false;
 
     // Derive .kdi path: same stem as lib_path, extension = ".kdi"
     std::filesystem::path kdi_path(lib_path);
@@ -252,7 +258,24 @@ bool compiler::gen_kdi(const std::string& lib_path) {
 
     const std::string ver = "klangc-" + std::string(PROJECT_VER);
 
-    kdi::kdi_file kdi_file = k::model::build_kdi(*_context, *_model_unit, lib_path, ver);
+    trace("[compiler::gen_kdi] building KDI '{}'", {kdi_path.string()});
+    kdi::kdi_file kdi_file;
+    try {
+        kdi_file = k::model::build_kdi(*_context, *_model_unit, lib_path, ver);
+    } catch (const k::log::compiler_error& e) {
+        auto diag = e.get_diagnostic();
+        diag.add_note("While building KDI '{}' for module '{}'",
+                      {kdi_path.string(), _model_unit->get_unit_name().to_string()});
+        report(diag);
+        throw;
+    } catch (const std::exception& e) {
+        auto diag = k::log::diagnostic::make_fatal(
+            static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F001),
+            "KDI export failed for module '{}' while building '{}': {}",
+            {_model_unit->get_unit_name().to_string(), kdi_path.string(), e.what()});
+        report(diag);
+        throw k::log::compiler_error(std::move(diag));
+    }
 
     if (!kdi::kdi_write_cbor_file(kdi_file, kdi_path.string())) {
         error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_GEN_KDI_WRITE_FAILED),
@@ -267,6 +290,7 @@ bool compiler::gen_kdi(const std::string& lib_path) {
         if (!kdi::kdi_write_json_file(kdi_file, json_path)) {
             error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_GEN_KDI_JSON_WRITE_FAILED),
                   "gen_kdi: failed to write JSON '{}'", {json_path});
+            return false;
         } else {
             trace("[compiler::gen_kdi] generated KDI JSON '{}'", {json_path});
         }
@@ -275,6 +299,7 @@ bool compiler::gen_kdi(const std::string& lib_path) {
 }
 
 bool compiler::gen_shared_library(const std::string& output_file) {
+    if (_has_compilation_error) return false;
     std::filesystem::path output_path(
         output_file.empty() ? "lib" + get_lib_base_name() + ".so"
                             : output_file);
@@ -313,11 +338,11 @@ bool compiler::gen_shared_library(const std::string& output_file) {
 
     if (!exec_res.out.empty()) std::cout << exec_res.out << std::endl;
     if (!exec_res.err.empty()) std::cerr << exec_res.err << std::endl;
-    if (exec_res.exit_code == 0) gen_kdi(output_path.string());
-    return exec_res.exit_code == 0;
+    return exec_res.exit_code == 0 && gen_kdi(output_path.string());
 }
 
 bool compiler::gen_static_library(const std::string& output_file) {
+    if (_has_compilation_error) return false;
     std::filesystem::path output_path(
         output_file.empty() ? "lib" + get_lib_base_name() + ".a"
                             : output_file);
@@ -350,11 +375,11 @@ bool compiler::gen_static_library(const std::string& output_file) {
 
     if (!exec_res.out.empty()) std::cout << exec_res.out << std::endl;
     if (!exec_res.err.empty()) std::cerr << exec_res.err << std::endl;
-    if (exec_res.exit_code == 0) gen_kdi(output_path.string());
-    return exec_res.exit_code == 0;
+    return exec_res.exit_code == 0 && gen_kdi(output_path.string());
 }
 
 bool compiler::gen_libraries(const std::string& shared_out, const std::string& static_out) {
+    if (_has_compilation_error) return false;
     // Determine output paths up front
     const std::string base = get_lib_base_name();
     std::filesystem::path so_path(shared_out.empty() ? "lib" + base + ".so" : shared_out);
@@ -417,8 +442,7 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
 
     std::filesystem::remove(object_path);
     // Generate KDI once (keyed on the .so path; same content for both libs)
-    if (ok) gen_kdi(so_path.string());
-    return ok;
+    return ok && gen_kdi(so_path.string());
 }
 
 } // k

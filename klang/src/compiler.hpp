@@ -104,8 +104,8 @@ protected:
 
     bool emit_object_file(const std::string& output_file, bool position_independent);
 
-    /** Set to true when a fatal compilation error occurs (e.g. overload collision).
-     *  to_jit() returns nullptr when this flag is set. */
+    /** Latched by every error/fatal diagnostic, including non-throwing reports.
+     *  Failed compilations cannot generate artifacts or be transferred to a JIT. */
     bool _has_compilation_error = false;
 
     IrOutputOptions _ir_output_options;
@@ -472,6 +472,8 @@ public:
      * internally, instead of writing directly to std::cout/cerr.
      */
     log::logger& diagnostics() { return *this; }
+
+    bool has_compilation_error() const { return _has_compilation_error; }
 
 protected:
     void find_elements_from(const name& name, const std::shared_ptr<model::element>& element, std::vector<std::shared_ptr<model::element>>& res) const;

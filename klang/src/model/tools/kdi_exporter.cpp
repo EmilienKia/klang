@@ -65,9 +65,20 @@ static int64_t integer_literal_to_i64(const lex::integer& lit) {
     }, lit.value());
 }
 
-class definition_lookup_logger : public log::logger {
+class dependency_diagnostics : public log::logger {
+    std::string _template_name;
 public:
-    void report(const log::diagnostic&) override {}
+    explicit dependency_diagnostics(std::string template_name)
+        : _template_name(std::move(template_name)) {}
+
+    void report(const log::diagnostic& diagnostic) override {
+        if (diagnostic.level >= log::diagnostic::severity::error) {
+            auto error = diagnostic;
+            error.add_note("While collecting private native dependencies of template '{}'",
+                           {_template_name});
+            throw log::compiler_error(std::move(error));
+        }
+    }
 };
 
 class definition_symbol_lookup : public gen::symbol_resolver {
@@ -79,7 +90,7 @@ public:
 // Template bodies have not necessarily passed symbol resolution. Walk their
 // model expressions without mutating them, using the normal lexical resolver.
 class private_dependency_collector : public default_model_visitor {
-    definition_lookup_logger _lookup_logger;
+    dependency_diagnostics _diagnostics;
     definition_symbol_lookup _lookup;
     std::unordered_set<const element*> _visited;
     std::unordered_set<const function*> _seen_functions;
@@ -118,7 +129,8 @@ public:
     std::vector<std::pair<expression*, std::shared_ptr<function>>> references;
 
     explicit private_dependency_collector(element& entity, const std::string& template_name)
-        : _lookup(_lookup_logger, entity.get_context(), *entity.ancestor<unit>()) {
+        : _diagnostics(template_name),
+          _lookup(_diagnostics, entity.get_context(), *entity.ancestor<unit>()) {
         walk(entity.shared_as<element>());
     }
 
@@ -167,6 +179,9 @@ public:
             add(symbol.get_function(), &symbol);
             return;
         }
+        // Uninstantiated member bodies have no this-parameter yet. It cannot
+        // name a native dependency; leave its validation to instantiation.
+        if (symbol.get_name().size() == 1 && symbol.get_name().to_string() == "this") return;
         auto target = _lookup.resolve_symbol(symbol, symbol.get_name());
         if (auto fn = std::get_if<std::shared_ptr<function>>(&target)) {
             add(*fn, &symbol);

@@ -571,6 +571,7 @@ int main(int argc, const char** argv) {
         }
 
         compiler->parse_sources(std::move(sources), true, false, forced_module_name);
+        if (compiler->has_compilation_error()) return -1;
 
         const bool want_compile    = vm.count("compile")     > 0;
         const bool want_dyn_lib    = vm.count("dyn-lib")     > 0;

@@ -535,6 +535,7 @@ add_dependencies(klang-tests-plugins klang-plugin-structural klang-plugin-naming
 #
 
 add_executable(klangc-tests
+        tests/test-compiler-fatal-diagnostics.cpp
         tests/test-klangc-run.cpp
         tests/test-klangc-stdin.cpp
         tests/test-klangc-jit-exec.cpp
