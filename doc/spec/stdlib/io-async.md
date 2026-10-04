@@ -48,6 +48,8 @@ statx, fsync and ftruncate may run on a bounded internal control pool, never on
 the caller. This control path does not perform channel data transfers.
 Close cancels and drains target requests before submitting the descriptor close.
 
+FileChannel includes native parent-operation fully transfers. The obsolete
+async file stream adapters and their separate file backend are removed.
 
 `IoRuntime::initialize()` probes the required kernel data-plane opcodes.
 The old FileChannel backend-selection helper is removed: this implementation
@@ -56,6 +58,18 @@ does not select a synchronous data-plane fallback.
 Interruption and timeout are honoured by submitting an asynchronous cancel and
 then waiting **uninterruptibly** for the real completion, so the kernel never
 writes into a buffer the caller has already released.
+The Sync bridge must also drain kernel activity before propagating Future
+cancellation. Cancellation with no transferred bytes raises
+`CancellationException`; cancellation after a partial transfer raises
+`InterruptedIOException` with the actual byte count. A forbidden completion-thread
+wait or an inherited post-fork Future raises `IllegalStateException` without
+attempting another blocking wait.
+
+Thread interruption follows the same drain rule for primitive and fully
+operations. If kernel completion races with interruption, the exception must
+report all transferred bytes, even when the entire requested transfer completed.
+The buffer position must match that count and its in-flight lease must be released
+before control returns to the caller.
 
 Stress test coverage exercises concurrent positional reads, repeated
 cancellation, and runtime teardown while async channels are active.
@@ -246,64 +260,157 @@ Options are a bitwise combination of:
 | `OPEN_TRUNCATE` | Truncate an existing file to zero length. |
 | `OPEN_EXCLUSIVE` | With `OPEN_CREATE`, fail when the file already exists. |
 
-A missing file raises `FileNotFoundException`; any other failure raises
-`IOException` carrying the platform `errno`.
+Unknown flags, missing access mode, exclusive without create, and append or
+truncate without write fail with `IoErrorKind::InvalidArgument`.
+Callback errors are `IoResult` values, not caller exceptions. Allocation failure
+may prevent construction of an observable operation. Overloads acquiring the
+system executor raise `RejectedExecutionException` when no system lease can be
+acquired; they must not substitute an inactive lease or another dispatch path.
+An operation already constructed with a lease retains observable callback
+rejection if that executor subsequently rejects dispatch. Sync open preserves
+`FileNotFoundException` for ENOENT and ENOTDIR; Future failures wrap the same
+cause in `ExecutionException`.
+
+FileChannel is a value with a native atomic reference count. Its default
+constructor makes a closed value. Copies, assignment, repeated `Future.get()`,
+and shared Future observers must all retain the same descriptor state. Destroying
+one copy must not close other copies. Closing any copy closes the shared handle.
+A newly produced descriptor must be owned by its channel before successful
+Future publication becomes observable or callback delivery begins. If decoding
+fails before adoption, the operation closes the unclaimed descriptor. If
+publication fails or loses to cancellation after adoption, the owning channel
+value releases it. These paths must close the descriptor exactly once; operation
+rollback must not close a descriptor already adopted by a channel.
 
 ### Position and size
 
 | Method | Description |
 |--------|-------------|
-| `position()` / `position(newPosition)` | The channel's own cursor, used only by the non-positional overloads. |
-| `size() : long` | Current file size. |
-| `truncate(newSize: long) : FileChannel&` | Truncate or extend the file. |
-| `force() : void` | Flush pending writes to stable storage. |
+| `position()` / `position(newPosition)` | Shared, synchronized native cursor. A setter with queued implicit requests raises `BufferInUseException`; negative positions are invalid. |
+| `size(completion: IoCompletion<long>, executor: ExecutorLease&) : IoOperation!` | Query size using fd-based statx. |
+| `sizeAsync() : Future<long>!` / `sizeSync() : long` | Future and Sync size forms. |
+| `truncate(newSize: long, completion: IoCompletion<IoDone>, executor: ExecutorLease&) : IoOperation!` | Truncate or extend, then clamp the shared cursor after successful completion. |
+| `truncateAsync(newSize: long) : Future<IoDone>!` / `truncateSync(newSize: long) : FileChannel&` | Future and Sync truncate forms. |
+| `force(completion: IoCompletion<IoDone>, executor: ExecutorLease&) : IoOperation!` | Flush writes to stable storage. |
+| `forceAsync() : Future<IoDone>!` / `forceSync()` | Future and Sync fsync forms. |
+| `close(completion: IoCompletion<IoDone>, executor: ExecutorLease&) : IoOperation!` | Cancel and drain file requests, then close. |
+| `closeAsync() : Future<IoDone>!` / `closeSync()` | Future and Sync close forms. |
 | `nativeDescriptor() : int` | Underlying descriptor, `-1` once closed. |
+
+With an available executor, closing a default or already closed FileChannel
+succeeds without closing another descriptor. A concurrent close while the first
+close is still pending may fail with `ResourceExhausted`; it must not take
+ownership of the pending close.
 
 ### Transfers
 
 | Method | Description |
 |--------|-------------|
-| `read(dst: ByteBuffer+, position: long, timeoutNanos: long) : int` | Positional read with a deadline. |
-| `read(dst: ByteBuffer+, position: long) : int` | Positional read. |
-| `read(dst: ByteBuffer+) : int` | Read at the channel position, then advance it. |
-| `readFully(dst: ByteBuffer+, position: long) : void` | Fill the buffer entirely. |
-| `write(src: ByteBuffer+, position: long, timeoutNanos: long) : int` | Positional write with a deadline. |
-| `write(src: ByteBuffer+, position: long) : int` | Positional write. |
-| `write(src: ByteBuffer+) : int` | Write at the channel position, then advance it. |
-| `writeFully(src: ByteBuffer+, position: long) : void` | Write every remaining byte. |
+| `read(dst: ByteBuffer+, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation!` | Queue an implicit-position read. |
+| `read(dst: ByteBuffer+, offset: long, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation!` | Positional read, independent of the shared cursor. |
+| `readAsync(dst: ByteBuffer+) : Future<int>!` / `readSync(dst: ByteBuffer+) : int` | Implicit read Future and Sync forms. |
+| `readAsync(dst: ByteBuffer+, offset: long) : Future<int>!` / `readSync(dst: ByteBuffer+, offset: long) : int` | Positional read Future and Sync forms. |
+| `write(src: ByteBuffer+, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation!` | Queue an implicit-position write. |
+| `write(src: ByteBuffer+, offset: long, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation!` | Positional write. |
+| `writeAsync(src: ByteBuffer+) : Future<int>!` / `writeSync(src: ByteBuffer+) : int` | Implicit write Future and Sync forms. |
+| `writeAsync(src: ByteBuffer+, offset: long) : Future<int>!` / `writeSync(src: ByteBuffer+, offset: long) : int` | Positional write Future and Sync forms. |
+| `readFully(dst: ByteBuffer+, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation!` | Native implicit-position composite read. |
+| `writeFully(src: ByteBuffer+, offset: long, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation!` | Native positional composite write; read/write both provide implicit and positional forms. |
+| `readFullyAsync(dst: ByteBuffer+) : Future<int>!` / `writeFullyAsync(src: ByteBuffer+, offset: long) : Future<int>!` | Future publication from the same native parent, independent of callback execution. |
+| `readFullySync(dst: ByteBuffer+) : int` / `writeFullySync(src: ByteBuffer+, offset: long) : int` | Thin Future/getIoSync bridges, not transfer loops. |
 
-Positional overloads never touch the channel position, so several threads may
-use one channel concurrently without coordination.
+Callback overloads without an executor use the system executor. Timeout
+overloads retain the same semantics. Positive nanosecond durations establish an
+operation deadline; non-positive values disable it. Negative explicit offsets
+and lengths exceeding the signed native transfer range are invalid.
 
-`read` returns `0` at end of stream. `readFully` raises `EndOfStreamException`
-when the file ends first; both `readFully` and `writeFully` raise
-`InterruptedIOException` when the thread is interrupted **after** some bytes
-have already been transferred, so no transfer is ever silently lost.
+Implicit transfers and truncate are serialized in a bounded FIFO shared by all
+channel copies. Offsets are selected when a request reaches the head, and the
+cursor advances by actual completed bytes, not requested bytes. Up to 128
+requests, including the active request, may be queued; excess requests fail
+with ResourceExhausted. Queue wait time counts toward the deadline. Positional
+overloads do not use or change this cursor and may run concurrently.
+
+Buffer and channel positions must advance before Future publication or user
+callback dispatch, including irreversible bytes from cancelled requests.
+Zero-length transfers remain valid asynchronous operations. A closed-channel
+request returns an observable failed operation, not a null handle.
+
+Legacy `read`/`write` overloads returning `int`, `size()`, `truncate(size)`,
+`force()`, and `close()` explicitly call the new Sync bridges. They are
+compatibility aliases, not proactive primitives, and are pending removal.
+
+### Fully transfer contract
+
+Each fully operation snapshots the buffer's remaining bytes during preparation,
+retains one native buffer lease continuously across all children, and returns one
+parent `IoOperation`. The caller's buffer owner is borrowed, not consumed.
+Dropping either wrapper does not cancel the operation or release kernel storage.
+Each drained child advances the buffer position by its actual completed bytes,
+even after cancellation; a subsequent explicit offset is the initial offset plus
+the cumulative count. The parent exposes that count while pending and on every
+terminal outcome. Neither a failed nor a cancelled child resets it.
+
+Implicit fully operations reserve one FIFO slot for the **whole** composite.
+No implicit primitive, truncate or other fully request may interleave between
+children. The shared cursor advances per completed child; the slot is released
+only at final drain. Positional fully operations leave the shared cursor alone.
+Every native child passes normal bounded registry/backend admission.
+
+A positive timeout establishes one absolute monotonic deadline, including FIFO
+wait. Children receive only the remaining duration; a short transfer must not
+renew the deadline. Internal chaining runs on native completion/control paths,
+never on a callback worker, and never waits on a user's executor.
+
+Success produces one `Expected<int, IoError>` containing the total requested
+count; an empty buffer produces observable success `0`. Invalid offsets,
+offset-plus-count overflow and counts above `INT_MAX` produce InvalidArgument,
+not an empty success. `read` itself still returns `0` at EOF. In contrast,
+`readFully` ending early produces EndOfStream (native ENODATA) with the cumulative
+partial count. A nonempty `writeFully` child returning zero produces System/EIO
+with the partial count, using the existing IOException convention, and must
+not spin. Other child errors retain their classification and cumulative count.
+
+Only one final user callback is dispatched on the selected/default executor.
+Cancelling the parent atomically selects/cancels its current child and prevents
+the next child, including cancellation before registration. A suppressed callback
+does not undo bytes or cursor movement. Cancelling a running callback is
+cooperative through ExecutionContext, never Thread::interrupt.
+`waitQuiescent` must wait for the child's target **and linked-timeout** CQEs;
+a cancel CQE or a target alone cannot release the parent's lease.
+
+Fully Futures attach both parent hooks before submission, including immediate
+preparation failures. Their cancellation acknowledges the request but defers
+terminal publication until drain: zero bytes yield CancellationException; partial
+bytes yield ExecutionException with an InterruptedIOException cause containing
+the final count. Sync maps the same outcomes through getIoSync. EOF maps to
+EndOfStreamException with the partial count. Thread interruption requests
+cancellation, drains uninterruptibly, then reports InterruptedIOException after
+any transfer, otherwise ThreadInterruptionException. An observation timeout on
+Future.get does not change the I/O deadline.
+
+Both readFully/writeFully families provide selected/default callback executors,
+implicit/positional Future forms, and Sync forms. Duration overloads place the
+timeout before the completion or executor. Positional raw-nanosecond overloads
+take `(buffer, offset, timeoutNanos, ...)`. To avoid conflating a `long` offset
+with an implicit `long` timeout, implicit callbacks take
+`(buffer, completion, timeoutNanos, executor)` (or omit executor); implicit
+Futures take `(buffer, executor, timeoutNanos)`. The default-executor raw form is
+`readFullyAsyncWithTimeout(buffer, timeoutNanos)` (likewise write), and implicit
+Sync uses `readFullySyncWithTimeout(buffer, timeoutNanos)` (likewise write).
+The old blocking `readFully(buffer, offset)` / `writeFully(buffer, offset)`
+signatures are removed; use their explicitly named Sync counterparts.
 
 Use `IO_NO_TIMEOUT` to wait indefinitely.
 
 ---
 
-## 5. Asynchronous file streams
+## 5. Synchronous streams remain separate
 
-`AsyncFileInputStream` and `AsyncFileOutputStream` adapt a `FileChannel` to the
-stream framework of [io.md](io.md). They own their channel and close it on
-`close()`.
-
-They differ from `FileInputStream` / `FileOutputStream` — which sit on the C
-standard library — only in that their blocking points are interruptible and
-cancellable.
-
-| Type | Implements | Construction |
-|------|-----------|--------------|
-| `AsyncFileInputStream` | `InputStream<byte>` | `AsyncFileInputStream(path: const Path&)`, or adopt a `FileChannel!`. |
-| `AsyncFileOutputStream` | `OutputStream<byte>` | `AsyncFileOutputStream(path: const Path&)` (create + truncate), `AsyncFileOutputStream(path, append: bool)`, or adopt a `FileChannel!`. |
-
-Both expose `isOpen()` and `channel()` for positional access to the underlying
-channel.
-
-`AsyncFileInputStream::skip()` and `available()` are computed from the file
-size and the channel position, so they never block.
+The previous async file stream adapters are removed. Use FileChannel's
+callback/Future/Sync forms for cancellable channel I/O, or the unchanged
+FileInputStream/FileOutputStream and InputStream/OutputStream framework for
+synchronous stream semantics. No proactive stream replacement is provided.
 
 ---
 
@@ -331,22 +438,21 @@ threading, synchronisation and I/O layers.
 ```k
 module sample;
 
-copyFile(from: const k::io::file::Path&, to: const k::io::file::Path&) : void {
-    src : k::io::file::AsyncFileInputStream! = new k::io::file::AsyncFileInputStream(from);
-    dst : k::io::file::AsyncFileOutputStream! = new k::io::file::AsyncFileOutputStream(to);
-    chunk : byte[4096];
+copyFile(from: const k::io::file::Path&, to: const k::io::file::Path&) : void throws(Throwable) {
+    src : k::io::file::FileChannel = k::io::file::FileChannel::openSync(from);
+    dst : k::io::file::FileChannel = k::io::file::FileChannel::openSync(to,
+        k::io::file::OPEN_WRITE | k::io::file::OPEN_CREATE | k::io::file::OPEN_TRUNCATE);
+    chunk : k::io::ByteBuffer! = k::io::ByteBuffer::allocateDirect(4096u);
     while (true) {
-        n : k::Expected<unsigned int, k::io::StreamOutOfData> = src->read(chunk);
-        if (n.hasError() || n.getResult() == 0u) {
-            break;
-        }
-        dst->write(chunk, 0u, n.getResult());
+        chunk->clear();
+        if (src.readSync(chunk) == 0) break;
+        chunk->flip();
+        dst.writeFullySync(chunk);
     }
-    dst->flush();
-    dst->close();
-    src->close();
-    delete dst;
-    delete src;
+    dst.forceSync();
+    dst.closeSync();
+    src.closeSync();
+    delete chunk;
 }
 ```
 
@@ -354,12 +460,20 @@ copyFile(from: const k::io::file::Path&, to: const k::io::file::Path&) : void {
 
 ## 8. Threading contract
 
-- A `FileChannel` may be shared between threads as long as only the
-  **positional** overloads are used; the non-positional ones mutate the shared
-  channel position.
-- `close()` is safe to call from any thread and at any time: in-flight
-  operations are cancelled and their callers observe `ClosedChannelException`.
-- Closing twice is harmless.
+- Distinct FileChannel copies may submit concurrently. Implicit requests are
+  serialized natively; positional requests remain independent.
+- A wrapper must not be assigned or destroyed concurrently with a method call
+  on that same wrapper. Once preparation returns, native resources, not the
+  wrapper, own the operation's lifetime.
+- Close cancels and drains outstanding requests before fd close. Submission
+  on a closing or closed handle fails with Closed. Cancellation suppresses a
+  queued user callback; irreversible transferred bytes remain observable.
+- Closing an already closed value is harmless. A second close while the first
+  is still draining reports ResourceExhausted (EBUSY), without changing the
+  first close's ownership or reopening the handle.
+- Sync waits are forbidden on the native completion thread. Interruption
+  requests cancellation and waits uninterruptibly for kernel resource drain
+  before throwing, with any partial-byte count preserved.
 - Interrupting a thread that is not blocked leaves the flag set; the next
   blocking I/O call observes it. Clear it with `Thread::interrupted()`.
 

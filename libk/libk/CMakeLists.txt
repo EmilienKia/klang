@@ -107,7 +107,6 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/path.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/file.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/file_channel.k
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/async_file_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/local_fs.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/directory_fs.k
     # ── Phase 5: asynchronous network I/O ─────────────────────────────────
@@ -826,6 +825,9 @@ libk_add_test(libk-tests-io-proactor-kernel 120
 libk_add_test(libk-tests-io-foundations-api 120
     tests/test-io-foundations-api.cpp
 )
+libk_add_test(libk-tests-file-channel-fully 120
+    tests/test-io-file-channel-fully.cpp
+)
 # ── libk foundational types & memory tests ───────────────────────────────────
 libk_add_test(libk-tests-types 120
     tests/test-expected.cpp
@@ -963,7 +965,7 @@ libk_add_test_sharded(libk-thread-io-tests 120 2
     # ── Async file I/O ────────────────────────────────────────────────────
     tests/test-io-file.cpp
     tests/test-io-file-channel.cpp
-    tests/test-io-file-stream.cpp
+    tests/test-io-file-stream.cpp # retained channel interruption/close regressions
     # ── Network and socket I/O ────────────────────────────────────────────
     tests/test-io-socket.cpp
     tests/test-io-server-socket.cpp

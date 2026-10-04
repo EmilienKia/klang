@@ -1,5 +1,5 @@
 /*
- * K Language standard library — asynchronous file stream tests (Phase 4)
+ * K Language standard library - retained FileChannel lifecycle regressions
  *
  * Copyright 2023-2026 Emilien Kia
  *
@@ -17,16 +17,10 @@
  */
 
 /**
- * Tests for k::io::AsyncFileInputStream and k::io::AsyncFileOutputStream —
- * the InputStream<byte> / OutputStream<byte> adapters over FileChannel.
- *
- * Coverage:
- *  - single-byte and bulk reads, end of stream
- *  - skip() and available()
- *  - single-byte and bulk writes, flush, truncating and appending modes
- *  - writing to a closed stream raises ClosedChannelException
- *  - a channel operation started on an already-interrupted thread reports
- *    the interruption instead of transferring data
+ * The obsolete async stream adapter cases were removed. Preserve the channel
+ * lifecycle coverage independently of synchronous FileInput/OutputStream tests:
+ *  - a channel operation started on an already-interrupted thread completes
+ *    or reports interruption with the actual drained transfer count
  *  - closing a channel from another thread makes pending users observe
  *    ClosedChannelException
  */
@@ -56,188 +50,10 @@ void write_file(const std::string& path, const std::string& content) {
     out.write(content.data(), static_cast<std::streamsize>(content.size()));
 }
 
-std::string read_file(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    return std::string((std::istreambuf_iterator<char>(in)),
-                       std::istreambuf_iterator<char>());
-}
-
 } // anonymous namespace
 
-TEST_CASE("AsyncFileInputStream: reads bytes and reports end of stream",
-          "[libk][io][async-stream]") {
-    const std::string path = "/tmp/klang_afs_read.bin";
-    write_file(path, "ABCDE");
-    auto jit = jit_k(R"SRC(
-        module __afs_read__;
-        test() : int {
-            p : k::io::file::Path("/tmp/klang_afs_read.bin");
-            res : int = 0;
-            s : k::io::file::AsyncFileInputStream! = new k::io::file::AsyncFileInputStream(p);
-            if (s->isOpen()) { ++res; }
-
-            first : k::Optional<byte> = s->read();
-            if (first.hasValue() && first.get() == (byte) 65) { res += 2; }
-
-            buf : byte[4];
-            n : k::Expected<unsigned int, k::io::StreamOutOfData> = s->read(buf);
-            if (n.hasResult() && n.getResult() == 4u) { res += 4; }
-            if (buf[0] == (byte) 66 && buf[3] == (byte) 69) { res += 8; }
-
-            eos : k::Optional<byte> = s->read();
-            if (eos.hasValue() == false) { res += 16; }
-
-            s->close();
-            if (s->isOpen() == false) { res += 32; }
-            delete s;
-            return res;
-        }
-    )SRC");
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 63);
-    std::filesystem::remove(path);
-}
-
-TEST_CASE("AsyncFileInputStream: skip and available track the position",
-          "[libk][io][async-stream]") {
-    const std::string path = "/tmp/klang_afs_skip.bin";
-    write_file(path, "0123456789");
-    auto jit = jit_k(R"SRC(
-        module __afs_skip__;
-        test() : int {
-            p : k::io::file::Path("/tmp/klang_afs_skip.bin");
-            res : int = 0;
-            s : k::io::file::AsyncFileInputStream! = new k::io::file::AsyncFileInputStream(p);
-
-            a0 : k::Expected<unsigned int, k::io::StreamOutOfData> = s->available();
-            if (a0.hasResult() && a0.getResult() == 10u) { ++res; }
-
-            if (s->skip(4) == 4) { res += 2; }
-            b : k::Optional<byte> = s->read();
-            if (b.hasValue() && b.get() == (byte) 52) { res += 4; }
-
-            // Skipping past the end must clamp to what remains.
-            if (s->skip(1000) == 5) { res += 8; }
-            a1 : k::Expected<unsigned int, k::io::StreamOutOfData> = s->available();
-            if (a1.hasResult() && a1.getResult() == 0u) { res += 16; }
-
-            s->close();
-            delete s;
-            return res;
-        }
-    )SRC");
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 31);
-    std::filesystem::remove(path);
-}
-
-TEST_CASE("AsyncFileOutputStream: writes, flushes and truncates",
-          "[libk][io][async-stream]") {
-    const std::string path = "/tmp/klang_afs_write.bin";
-    write_file(path, "old-content-to-drop");
-    auto jit = jit_k(R"SRC(
-        module __afs_write__;
-        test() : int {
-            p : k::io::file::Path("/tmp/klang_afs_write.bin");
-            res : int = 0;
-            s : k::io::file::AsyncFileOutputStream! = new k::io::file::AsyncFileOutputStream(p);
-            if (s->isOpen()) { ++res; }
-
-            s->write((byte) 75);
-            body : byte[4];
-            body[0] = (byte) 76;
-            body[1] = (byte) 65;
-            body[2] = (byte) 78;
-            body[3] = (byte) 71;
-            s->write(body);
-            s->flush();
-
-            if (s->channel()->size() == 5L) { res += 2; }
-            s->close();
-            if (s->isOpen() == false) { res += 4; }
-            delete s;
-            return res;
-        }
-    )SRC");
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 7);
-    REQUIRE(read_file(path) == "KLANG");
-    std::filesystem::remove(path);
-}
-
-TEST_CASE("AsyncFileOutputStream: append mode keeps existing content",
-          "[libk][io][async-stream]") {
-    const std::string path = "/tmp/klang_afs_append.bin";
-    write_file(path, "head-");
-    auto jit = jit_k(R"SRC(
-        module __afs_append__;
-        test() : int {
-            p : k::io::file::Path("/tmp/klang_afs_append.bin");
-            s : k::io::file::AsyncFileOutputStream! = new k::io::file::AsyncFileOutputStream(p, true);
-            body : byte[4];
-            body[0] = (byte) 116;
-            body[1] = (byte) 97;
-            body[2] = (byte) 105;
-            body[3] = (byte) 108;
-            s->write(body);
-            s->flush();
-            s->close();
-            delete s;
-            return 1;
-        }
-    )SRC");
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 1);
-    REQUIRE(read_file(path) == "head-tail");
-    std::filesystem::remove(path);
-}
-
-TEST_CASE("AsyncFileOutputStream: writing after close raises ClosedChannelException",
-          "[libk][io][async-stream]") {
-    const std::string path = "/tmp/klang_afs_closed.bin";
-    std::filesystem::remove(path);
-    auto jit = jit_k(R"SRC(
-        module __afs_closed__;
-        test() : int {
-            p : k::io::file::Path("/tmp/klang_afs_closed.bin");
-            res : int = 0;
-            s : k::io::file::AsyncFileOutputStream! = new k::io::file::AsyncFileOutputStream(p);
-            s->close();
-            try {
-                s->write((byte) 1);
-            } catch (e: k::io::ClosedChannelException&) {
-                ++res;
-            }
-            buf : byte[2];
-            try {
-                s->write(buf);
-            } catch (e2: k::io::ClosedChannelException&) {
-                res += 2;
-            }
-            // flush() on a closed stream must stay harmless.
-            s->flush();
-            res += 4;
-            delete s;
-            return res;
-        }
-    )SRC");
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 7);
-    std::filesystem::remove(path);
-}
-
 TEST_CASE("FileChannel: an already-interrupted thread reports the interruption",
-          "[libk][io][async-stream][interruption]") {
+          "[libk][io][file-channel][interruption]") {
     const std::string path = "/tmp/klang_afs_interrupt.bin";
     write_file(path, std::string(65536, 'Q'));
     auto jit = jit_k(R"SRC(
@@ -260,12 +76,19 @@ TEST_CASE("FileChannel: an already-interrupted thread reports the interruption",
                 got : int = 0;
                 try {
                     got = c->read(b, 0L);
-                    _res = 1;
+                    _res = got == 65536 && b->position() == 65536u ? 1 : -1;
                 } catch (e: k::ThreadInterruptionException&) {
-                    _res = 2;
+                    _res = b->position() == 0u ? 2 : -2;
+                } catch (e: k::io::InterruptedIOException&) {
+                    transferred : long = e.getBytesTransferred();
+                    _res = transferred > 0L && transferred <= 65536L &&
+                        (long) b->position() == transferred &&
+                        b->get(0u) == (byte) 81 &&
+                        b->get((unsigned int) transferred - 1u) == (byte) 81 ? 4 : -4;
                 } catch (e2: k::io::IOException&) {
                     _res = 3;
                 }
+                if (b->hasLease()) _res = -5;
                 // The flag must be observable and clearable afterwards.
                 k::Thread::interrupted();
                 c->close();
@@ -289,15 +112,15 @@ TEST_CASE("FileChannel: an already-interrupted thread reports the interruption",
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    const int r = fn();
-    // Either the read completed (1) or it reported the interruption (2);
-    // an I/O error (3) would mean the substrate mishandled the flag.
-    REQUIRE((r == 1 || r == 2));
+    int r = 0;
+    REQUIRE_NOTHROW(r = fn());
+    INFO("completion/interruption result=" << r);
+    REQUIRE((r == 1 || r == 2 || r == 4));
     std::filesystem::remove(path);
 }
 
 TEST_CASE("FileChannel: closing from another thread is observed by users",
-          "[libk][io][async-stream][interruption]") {
+          "[libk][io][file-channel][interruption]") {
     const std::string path = "/tmp/klang_afs_closer.bin";
     write_file(path, std::string(4096, 'W'));
     auto jit = jit_k(R"SRC(

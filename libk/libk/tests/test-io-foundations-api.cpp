@@ -460,6 +460,80 @@ TEST_CASE("I/O foundations: shared Future cancel hooks survive until target quie
     REQUIRE(test() == 1);
 }
 
+TEST_CASE("I/O Sync bridge: cancelled Futures drain targets and preserve partial transfers",
+          "[libk][io][proactor][api][future][cancel][sync]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_sync_cancel_drain__;
+        operation : k::io::IoOperation! = null;
+        future : Future<int>! = null;
+        buffer : k::io::ByteBuffer! = null;
+        decode(value: long) : int { return (int) value; }
+        @ffi::Extern("C") private k_io_operation_on_kernel_completion(
+            operation: k::io::NativeIoOperation*, result: int) : void;
+        prepare() : int {
+            executor : DirectExecutor;
+            lease : ExecutorLease! = executor.acquireLease();
+            buffer = k::io::ByteBuffer::allocate(8u);
+            operation = k::io::prepareOperation<int>(1, null,
+                buffer->nativeHandle(), 8, 0L, 0, null, *lease, decode);
+            future = k::io::futureFor<int>(*operation, decode);
+            delete lease;
+            return future->cancel() && !operation->isIoDone() &&
+                buffer->hasLease() ? 1 : 0;
+        }
+        wait() : long {
+            try {
+                k::io::getIoSync<int>(*future, *operation);
+                return -1L;
+            } catch (e: CancellationException&) {
+                return operation->isIoDone() && !buffer->hasLease() ? 0L : -2L;
+            } catch (e: k::io::InterruptedIOException&) {
+                if (!operation->isIoDone() || buffer->hasLease()) return -3L;
+                return e.getBytesTransferred();
+            }
+        }
+        complete(count: int) {
+            k_io_operation_on_kernel_completion(operation->native(), count);
+        }
+        position() : int { return (int) buffer->position(); }
+        cleanup() {
+            delete future;
+            delete operation;
+            delete buffer;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto prepare = jit->lookup_symbol<int (*)()>("prepare");
+    auto wait = jit->lookup_symbol<int64_t (*)()>("wait");
+    auto complete = jit->lookup_symbol<void (*)(int)>("complete");
+    auto position = jit->lookup_symbol<int (*)()>("position");
+    auto cleanup = jit->lookup_symbol<void (*)()>("cleanup");
+    REQUIRE(prepare);
+    REQUIRE(wait);
+    REQUIRE(complete);
+    REQUIRE(position);
+    REQUIRE(cleanup);
+    for (int transferred : {0, 3}) {
+        INFO("transferred=" << transferred);
+        REQUIRE(prepare() == 1);
+        std::promise<void> entered;
+        auto started = entered.get_future();
+        auto result = std::async(std::launch::async, [&] {
+            entered.set_value();
+            return wait();
+        });
+        started.wait();
+        const auto beforeCompletion = result.wait_for(std::chrono::milliseconds(50));
+        // Complete even if the assertion fails, so a waiting thread is drained.
+        complete(transferred);
+        CHECK(beforeCompletion == std::future_status::timeout);
+        REQUIRE(result.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        CHECK(result.get() == transferred);
+        CHECK(position() == transferred);
+        cleanup();
+    }
+}
+
 TEST_CASE("I/O boundaries: inherited Future waits and unavailable system leases fail explicitly",
           "[libk][io][proactor][api][file-primitives][executor-rejection][boundary-errors]") {
     auto jit = gen_jit_with_stdlib(R"SRC(

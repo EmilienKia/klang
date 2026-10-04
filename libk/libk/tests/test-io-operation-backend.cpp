@@ -6,6 +6,7 @@
 #include "../src/runtime/io_backend.h"
 #include "../src/runtime/callable_abi.h"
 #include "../src/runtime/io_file_ffi.h"
+#include "../../klang/tests/helpers.hpp"
 #include <dlfcn.h>
 #include <atomic>
 #include <chrono>
@@ -250,6 +251,68 @@ struct Tracker {
     static void drop(void* ctx) { ++static_cast<Tracker*>(ctx)->drops; }
     static void publish(void* ctx, void*) { ++static_cast<Tracker*>(ctx)->publishes; }
     Callback callback() { return {this, invoke, drop}; }
+};
+struct FullyFile {
+    Runtime& rt = runtime();
+    decltype(&__k_io_prepare_request) prepare =
+        symbol<decltype(prepare)>(rt.library, "__k_io_prepare_request");
+    decltype(&__k_io_submit_prepared) submit =
+        symbol<decltype(submit)>(rt.library, "__k_io_submit_prepared");
+    decltype(&__k_io_op_set_fully) fully =
+        symbol<decltype(fully)>(rt.library, "__k_io_op_set_fully");
+    decltype(&__k_io_op_set_implicit_position) implicit =
+        symbol<decltype(implicit)>(rt.library, "__k_io_op_set_implicit_position");
+    void* (*allocate)(unsigned) = symbol<decltype(allocate)>(rt.library, "__k_io_buffer_allocate");
+    void (*release_buffer)(void*) = symbol<decltype(release_buffer)>(rt.library, "__k_io_buffer_release");
+    unsigned (*leases)(const void*) = symbol<decltype(leases)>(rt.library, "__k_io_buffer_get_lease_count");
+    unsigned (*position)(const void*) = symbol<decltype(position)>(rt.library, "__k_io_buffer_get_position");
+    int (*kind)(const void*) = symbol<decltype(kind)>(rt.library, "__k_io_op_error_kind");
+    int (*error)(const void*) = symbol<decltype(error)>(rt.library, "__k_io_op_error_code");
+    decltype(&__k_io_handle_position) cursor =
+        symbol<decltype(cursor)>(rt.library, "__k_io_handle_position");
+    void (*release_handle)(void*) = symbol<decltype(release_handle)>(rt.library, "__k_io_handle_release");
+    int (*continuation)(void*, const Callback*) =
+        symbol<decltype(continuation)>(rt.library, "k_io_operation_set_continuation");
+    void* handle;
+    FullyFile() {
+        int fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+        REQUIRE(fd >= 0);
+        auto create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+        handle = create(fd, 0);
+        REQUIRE(handle);
+    }
+    ~FullyFile() { release_handle(handle); }
+    void* operation(void* buffer, int count, int opcode = K_IO_OP_READ,
+                    int64_t offset = 0, bool sequential = false,
+                    const Callback* callback = nullptr, ManualExecutor* executor = nullptr) {
+        void* op = prepare(opcode, handle, buffer, count, offset, 0,
+            callback ? callback->context : nullptr,
+            KCallable{callback ? reinterpret_cast<void*>(callback->invoke) : nullptr, nullptr},
+            KCallable{callback ? reinterpret_cast<void*>(callback->drop) : nullptr, nullptr},
+            executor ? &executor->lease : nullptr);
+        REQUIRE(op);
+        if (sequential) REQUIRE(implicit(op) == 0);
+        fully(op); // invalid preparation remains observable at submission
+        return op;
+    }
+};
+struct FullyProbe {
+    std::atomic<int> callbacks{0}, publications{0}, callback_drops{0}, publisher_drops{0};
+    Result result{};
+    static void callback(void* ctx, void* result) {
+        auto& probe = *static_cast<FullyProbe*>(ctx);
+        probe.result = *static_cast<Result*>(result);
+        ++probe.callbacks;
+    }
+    static void publish(void* ctx, void* result) {
+        auto& probe = *static_cast<FullyProbe*>(ctx);
+        probe.result = *static_cast<Result*>(result);
+        ++probe.publications;
+    }
+    static void drop_callback(void* ctx) { ++static_cast<FullyProbe*>(ctx)->callback_drops; }
+    static void drop_publisher(void* ctx) { ++static_cast<FullyProbe*>(ctx)->publisher_drops; }
+    Callback completion() { return {this, callback, drop_callback}; }
+    Callback publisher() { return {this, publish, drop_publisher}; }
 };
 }
 
@@ -1087,5 +1150,801 @@ TEST_CASE("Proactor file: repeated prepared submission cannot manufacture kernel
     rt.release(op);
     release_buffer(buffer);
     release(handle);
+}
+
+TEST_CASE("FileChannel fully native: short children aggregate once without executor progress",
+          "[libk][io][proactor][mock][file-fully][short]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    int opcode = K_IO_OP_READ;
+    SECTION("Short reads") {}
+    SECTION("Short writes") { opcode = K_IO_OP_WRITE; }
+    ManualExecutor executor;
+    FullyProbe probe;
+    auto callback = probe.completion(), publisher = probe.publisher();
+    void* buffer = file.allocate(9);
+    auto set_position = symbol<int (*)(void*, unsigned)>(rt.library, "__k_io_buffer_set_position");
+    REQUIRE(set_position(buffer, 2) == 0);
+    void* parent = file.operation(buffer, 7, opcode, 100, false, &callback, &executor);
+    REQUIRE(file.continuation(parent, &publisher) == 0);
+    const auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parent, -1) == 0);
+    auto first = rt.mock->request_after(count);
+    REQUIRE(first.offset == 100);
+    REQUIRE(first.len == 7);
+    rt.mock->complete(first.tag, 2);
+    auto second = rt.mock->request_after(count + 1);
+    REQUIRE(second.offset == 102);
+    REQUIRE(second.len == 5);
+    REQUIRE(second.buf == static_cast<char*>(first.buf) + 2);
+    REQUIRE(rt.bytes(parent) == 2);
+    REQUIRE(file.position(buffer) == 4);
+    REQUIRE(file.leases(buffer) == 1);
+    REQUIRE(set_position(buffer, 0) == -EBUSY);
+    REQUIRE(probe.publications == 0);
+    rt.mock->complete(second.tag, 1);
+    auto third = rt.mock->request_after(count + 2);
+    REQUIRE(third.offset == 103);
+    REQUIRE(third.len == 4);
+    REQUIRE(file.position(buffer) == 5);
+    rt.mock->complete(third.tag, 4);
+    REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+    Task task = executor.take();
+    REQUIRE(probe.publications == 1);
+    REQUIRE(probe.publisher_drops == 1);
+    REQUIRE(probe.callbacks == 0);
+    REQUIRE(probe.result.bytes == 7);
+    REQUIRE(probe.result.value == 7);
+    REQUIRE(file.position(buffer) == 9);
+    REQUIRE(file.leases(buffer) == 0);
+    REQUIRE(file.cursor(file.handle) == 0);
+    REQUIRE(rt.bytes(parent) == 7);
+    task.run(task.context);
+    task.drop(task.context);
+    executor.wait_released();
+    REQUIRE(probe.callbacks == 1);
+    REQUIRE(probe.callback_drops == 1);
+    REQUIRE_FALSE(rt.cancel(parent));
+    rt.release(parent);
+    file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully native: EOF, no-progress and child errors retain partial bytes",
+          "[libk][io][proactor][mock][file-fully][partial]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    int opcode = K_IO_OP_READ, child_result = 0, expected_kind = 4, expected_error = ENODATA;
+    SECTION("Short read followed by EOF") {}
+    SECTION("Short write followed by zero progress") {
+        opcode = K_IO_OP_WRITE; expected_kind = 0; expected_error = EIO;
+    }
+    SECTION("System error after short transfer") {
+        child_result = -EIO; expected_kind = 0; expected_error = EIO;
+    }
+    SECTION("Interrupted child after short transfer") {
+        child_result = -EINTR; expected_kind = 9; expected_error = EINTR;
+    }
+    SECTION("An impossible oversized child CQE cannot overrun the buffer cursor") {
+        child_result = 5; expected_kind = 0; expected_error = EIO;
+    }
+    ManualExecutor executor;
+    FullyProbe probe;
+    auto callback = probe.completion(), publisher = probe.publisher();
+    void* buffer = file.allocate(6);
+    void* parent = file.operation(buffer, 6, opcode, 0, true, &callback, &executor);
+    REQUIRE(file.continuation(parent, &publisher) == 0);
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parent, -1) == 0);
+    rt.mock->complete(rt.mock->request_after(count).tag, 2);
+    auto second = rt.mock->request_after(count + 1);
+    REQUIRE(second.offset == 2);
+    rt.mock->complete(second.tag, child_result);
+    REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+    Task task = executor.take();
+    REQUIRE(probe.result.kind == expected_kind);
+    REQUIRE(probe.result.error == expected_error);
+    REQUIRE(probe.result.bytes == 2);
+    REQUIRE(probe.publications == 1);
+    REQUIRE(file.kind(parent) == expected_kind);
+    REQUIRE(file.error(parent) == expected_error);
+    REQUIRE(rt.bytes(parent) == 2);
+    REQUIRE(file.position(buffer) == 2);
+    REQUIRE(file.cursor(file.handle) == 2);
+    REQUIRE(file.leases(buffer) == 0);
+    REQUIRE(rt.mock->request_count() == count + 2);
+    task.run(task.context); task.drop(task.context);
+    executor.wait_released();
+    REQUIRE(probe.callbacks == 1);
+    REQUIRE(probe.callback_drops == 1);
+    REQUIRE(probe.publisher_drops == 1);
+    rt.release(parent);
+    file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully native: cancellation at every child boundary suppresses delivery",
+          "[libk][io][proactor][mock][file-fully][cancel]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    ManualExecutor executor;
+    FullyProbe probe;
+    auto callback = probe.completion(), publisher = probe.publisher();
+    void* buffer = file.allocate(6);
+    void* parent = file.operation(buffer, 6, K_IO_OP_READ, 0, true, &callback, &executor);
+    REQUIRE(file.continuation(parent, &publisher) == 0);
+    auto count = rt.mock->request_count();
+    int expected_bytes = 0, expected_requests = 0;
+    bool queued = false;
+    SECTION("Before the first child is registered") {
+        REQUIRE(rt.cancel(parent));
+        REQUIRE(file.submit(parent, -1) == 0);
+    }
+    SECTION("Cancel current child; target and timeout must both drain") {
+        REQUIRE(file.submit(parent, 5000000000LL) == 0);
+        auto first = rt.mock->request_after(count);
+        REQUIRE(rt.cancel(parent));
+        rt.mock->complete(K_TAG_CANCEL_REQUEST_FLAG, 0);
+        REQUIRE(rt.wait(parent, 0) == ETIMEDOUT);
+        rt.mock->complete(first.tag, 2);
+        REQUIRE(rt.wait(parent, 0) == ETIMEDOUT);
+        REQUIRE(file.leases(buffer) == 1);
+        rt.mock->complete(first.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+        expected_bytes = 2; expected_requests = 1;
+    }
+    SECTION("After a short target CQE, before the next child") {
+        REQUIRE(file.submit(parent, 5000000000LL) == 0);
+        auto first = rt.mock->request_after(count);
+        rt.mock->complete(first.tag, 2);
+        rt.mock->wait_processed(first.tag);
+        REQUIRE(rt.cancel(parent));
+        REQUIRE(rt.wait(parent, 0) == ETIMEDOUT);
+        rt.mock->complete(first.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+        expected_bytes = 2; expected_requests = 1;
+    }
+    SECTION("Cancel a replacement child after irreversible first-child bytes") {
+        REQUIRE(file.submit(parent, -1) == 0);
+        rt.mock->complete(rt.mock->request_after(count).tag, 2);
+        auto second = rt.mock->request_after(count + 1);
+        REQUIRE(rt.cancel(parent));
+        rt.mock->complete(second.tag, 1);
+        expected_bytes = 3; expected_requests = 2;
+    }
+    SECTION("Cancel the queued final callback") {
+        REQUIRE(file.submit(parent, -1) == 0);
+        rt.mock->complete(rt.mock->request_after(count).tag, 6);
+        REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+        Task task = executor.take();
+        REQUIRE(rt.cancel(parent));
+        task.run(task.context); task.drop(task.context);
+        expected_bytes = 6; expected_requests = 1; queued = true;
+    }
+    REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+    executor.wait_released();
+    REQUIRE(probe.publications == 1);
+    REQUIRE(probe.result.bytes == expected_bytes);
+    REQUIRE(probe.result.kind == (queued ? 0 : 1));
+    REQUIRE(probe.callbacks == 0);
+    REQUIRE(probe.callback_drops == 1);
+    REQUIRE(probe.publisher_drops == 1);
+    REQUIRE(file.kind(parent) == 1);
+    REQUIRE(rt.stage(parent) == 5);
+    REQUIRE(rt.bytes(parent) == expected_bytes);
+    REQUIRE(file.position(buffer) == static_cast<unsigned>(expected_bytes));
+    REQUIRE(file.cursor(file.handle) == expected_bytes);
+    REQUIRE(file.leases(buffer) == 0);
+    REQUIRE(rt.mock->request_count() == count + expected_requests);
+    REQUIRE_FALSE(rt.cancel(parent));
+    rt.release(parent);
+    file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully native: a single absolute deadline is not renewed by short children",
+          "[libk][io][proactor][mock][file-fully][timeout]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    void* buffer = file.allocate(6);
+    void* parent = file.operation(buffer, 6);
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parent, 5000000000LL) == 0);
+    auto first = rt.mock->request_after(count);
+    rt.mock->complete(first.tag, 2);
+    REQUIRE(rt.wait(parent, 0) == ETIMEDOUT);
+    REQUIRE(file.position(buffer) == 0);
+    REQUIRE(file.leases(buffer) == 1);
+    REQUIRE(rt.mock->request_count() == count + 1);
+    rt.mock->complete(first.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    auto second = rt.mock->request_after(count + 1);
+    REQUIRE(second.timeout_nanos > 0);
+    REQUIRE(second.timeout_nanos < first.timeout_nanos);
+    REQUIRE(second.offset == 2);
+    REQUIRE(file.position(buffer) == 2);
+    rt.mock->complete(second.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ETIME);
+    REQUIRE(rt.wait(parent, 0) == ETIMEDOUT);
+    REQUIRE(file.leases(buffer) == 1);
+    rt.mock->complete(second.tag, -ECANCELED);
+    REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+    REQUIRE(file.kind(parent) == 3);
+    REQUIRE(file.error(parent) == ETIMEDOUT);
+    REQUIRE(rt.bytes(parent) == 2);
+    REQUIRE(file.position(buffer) == 2);
+    REQUIRE(file.leases(buffer) == 0);
+    REQUIRE(rt.mock->request_count() == count + 2);
+    rt.release(parent);
+    file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully native: implicit FIFO reserves the entire composite",
+          "[libk][io][proactor][mock][file-fully][position]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    void* buffers[3] = {file.allocate(6), file.allocate(2), file.allocate(3)};
+    void* first = file.operation(buffers[0], 6, K_IO_OP_WRITE, 0, true);
+    void* middle = file.prepare(K_IO_OP_READ, file.handle, buffers[1], 2, 0, 0,
+                               nullptr, KCallable{}, KCallable{}, nullptr);
+    REQUIRE(file.implicit(middle) == 0);
+    void* last = file.operation(buffers[2], 3, K_IO_OP_WRITE, 0, true);
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(first, -1) == 0);
+    REQUIRE(file.submit(middle, -1) == 0);
+    REQUIRE(file.submit(last, -1) == 0);
+    REQUIRE(rt.mock->request_count() == count + 1);
+    rt.mock->complete(rt.mock->request_after(count).tag, 2);
+    auto child = rt.mock->request_after(count + 1);
+    REQUIRE(child.opcode == K_IO_OP_WRITE);
+    REQUIRE(child.len == 4);
+    REQUIRE(child.offset == 2);
+    REQUIRE(file.cursor(file.handle) == 2);
+    REQUIRE(rt.wait(middle, 0) == ETIMEDOUT);
+    rt.mock->complete(child.tag, 4);
+    auto middle_request = rt.mock->request_after(count + 2);
+    REQUIRE(middle_request.opcode == K_IO_OP_READ);
+    REQUIRE(middle_request.offset == 6);
+    rt.mock->complete(middle_request.tag, 2);
+    auto last_request = rt.mock->request_after(count + 3);
+    REQUIRE(last_request.opcode == K_IO_OP_WRITE);
+    REQUIRE(last_request.offset == 8);
+    rt.mock->complete(last_request.tag, 1);
+    auto last_child = rt.mock->request_after(count + 4);
+    REQUIRE(last_child.offset == 9);
+    rt.mock->complete(last_child.tag, 2);
+    for (void* op : {first, middle, last}) {
+        REQUIRE(rt.wait(op, 5000000000LL) == 0);
+        rt.release(op);
+    }
+    REQUIRE(file.cursor(file.handle) == 11);
+    for (void* buffer : buffers) file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully native: empty and invalid preparations publish observable operations",
+          "[libk][io][proactor][mock][file-fully][prepare]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    ManualExecutor executor;
+    FullyProbe probe;
+    auto callback = probe.completion(), publisher = probe.publisher();
+    unsigned capacity = 0;
+    int length = 0, expected_error = 0, expected_kind = 0;
+    int64_t offset = 0;
+    bool read_only = false, overlapping = false;
+    SECTION("Empty succeeds with zero") {}
+    SECTION("Negative offset is invalid even for an empty buffer") {
+        offset = -1; expected_error = EINVAL; expected_kind = 8;
+    }
+    SECTION("Offset plus remaining overflows") {
+        capacity = 2; length = 2; offset = INT64_MAX - 1;
+        expected_error = EINVAL; expected_kind = 8;
+    }
+    SECTION("Count beyond the signed API range is not a zero success") {
+        length = INT32_MIN; expected_error = EINVAL; expected_kind = 8;
+    }
+    SECTION("Count beyond remaining") {
+        capacity = 1; length = 2; expected_error = EINVAL; expected_kind = 8;
+    }
+    SECTION("Read-only mapped destination") {
+        capacity = 4; length = 4; read_only = true;
+        expected_error = EACCES;
+    }
+    SECTION("Overlapping preparation leases remain failures even after the first observer drops") {
+        capacity = 4; length = 4; overlapping = true;
+        expected_error = EBUSY; expected_kind = 6;
+    }
+    SECTION("Executor rejection does not block publication or leak its carrier") { executor.reject = true; }
+    auto map = symbol<void* (*)(const uint32_t*, int, int64_t, int64_t, int)>(
+        rt.library, "__k_io_buffer_map");
+    void* buffer = read_only ? map(nullptr, -1, 0, capacity, 0) : file.allocate(capacity);
+    REQUIRE(buffer);
+    void* held = overlapping ? file.prepare(K_IO_OP_READ, file.handle, buffer, length, 0, 0,
+        nullptr, KCallable{}, KCallable{}, nullptr) : nullptr;
+    void* parent = file.operation(buffer, length, K_IO_OP_READ, offset, false, &callback, &executor);
+    if (held) rt.release(held);
+    REQUIRE(rt.stage(parent) == 0);
+    REQUIRE(file.leases(buffer) == 1);
+    REQUIRE(probe.publications == 0);
+    REQUIRE(file.continuation(parent, &publisher) == 0);
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parent, -1) == -expected_error);
+    REQUIRE(rt.wait(parent, 0) == 0);
+    REQUIRE(rt.bytes(parent) == 0);
+    REQUIRE(file.leases(buffer) == 0);
+    REQUIRE(probe.publications == 1);
+    REQUIRE(probe.publisher_drops == 1);
+    REQUIRE(probe.result.kind == expected_kind);
+    REQUIRE(probe.result.error == expected_error);
+    REQUIRE(rt.mock->request_count() == count);
+    if (!executor.reject) {
+        Task task = executor.take();
+        task.run(task.context); task.drop(task.context);
+        REQUIRE(probe.callbacks == 1);
+    } else REQUIRE(probe.callbacks == 0);
+    executor.wait_released();
+    REQUIRE(probe.callback_drops == 1);
+    REQUIRE(file.kind(parent) == (executor.reject ? 7 : expected_kind));
+    rt.release(parent);
+    file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully native: Future cancellation waits for the cumulative result",
+          "[libk][io][proactor][mock][file-fully][future][cancel]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    auto create = symbol<void* (*)()>(rt.library, "k_future_state_create");
+    auto destroy = symbol<void (*)(void*)>(rt.library, "k_future_state_destroy");
+    auto state = symbol<int (*)(const void*)>(rt.library, "k_future_state_get");
+    auto cancel = symbol<bool (*)(void*)>(rt.library, "k_future_state_cancel");
+    auto future_wait = symbol<int (*)(void*, int64_t)>(rt.library, "k_future_state_wait_quiescent");
+    auto bind = symbol<void (*)(void*, void*)>(rt.library, "k_io_operation_bind_future");
+    struct Publisher {
+        void* future;
+        bool (*complete)(void*, int);
+        Result result{};
+        int publications = 0, drops = 0;
+        static void publish(void* ctx, void* result) {
+            auto& p = *static_cast<Publisher*>(ctx);
+            p.result = *static_cast<Result*>(result);
+            ++p.publications;
+            p.complete(p.future, p.result.bytes ? 2 : 3);
+        }
+        static void drop(void* ctx) { ++static_cast<Publisher*>(ctx)->drops; }
+    } publisher{create(), symbol<bool (*)(void*, int)>(rt.library, "k_future_state_complete")};
+    REQUIRE(publisher.future);
+    void* buffer = file.allocate(6);
+    void* parent = file.operation(buffer, 6);
+    Callback continuation{&publisher, Publisher::publish, Publisher::drop};
+    REQUIRE(file.continuation(parent, &continuation) == 0);
+    bind(parent, publisher.future);
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parent, 5000000000LL) == 0);
+    auto first = rt.mock->request_after(count);
+    rt.mock->complete(first.tag, 2);
+    rt.mock->complete(first.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    auto second = rt.mock->request_after(count + 1);
+    REQUIRE(cancel(publisher.future));
+    REQUIRE_FALSE(cancel(publisher.future));
+    REQUIRE(state(publisher.future) == 0);
+    REQUIRE(future_wait(publisher.future, 0) == ETIMEDOUT);
+    rt.mock->complete(second.tag, 1);
+    REQUIRE(future_wait(publisher.future, 0) == ETIMEDOUT);
+    rt.mock->complete(second.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    REQUIRE(future_wait(publisher.future, 5000000000LL) == 0);
+    rt.mock->wait_processed(second.tag | K_TAG_LINKED_TIMEOUT_FLAG);
+    REQUIRE(state(publisher.future) == 2);
+    REQUIRE(publisher.result.kind == 1);
+    REQUIRE(publisher.result.error == ECANCELED);
+    REQUIRE(publisher.result.bytes == 3);
+    REQUIRE(publisher.publications == 1);
+    REQUIRE(publisher.drops == 1);
+    REQUIRE(file.position(buffer) == 3);
+    rt.release(parent);
+    destroy(publisher.future);
+    file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully native: mapped wrapper drop keeps its lease through every timeout CQE",
+          "[libk][io][proactor][mock][file-fully][buffer][lifetime]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    {
+        std::lock_guard lock(rt.mock->mutex);
+        rt.mock->registration_enabled = true;
+    }
+    auto map = symbol<void* (*)(const uint32_t*, int, int64_t, int64_t, int)>(
+        rt.library, "__k_io_buffer_map");
+    void* buffer = map(nullptr, -1, 0, 4096, 1);
+    REQUIRE(buffer);
+    void* parent = file.operation(buffer, 4);
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parent, 5000000000LL) == 0);
+    auto first = rt.mock->request_after(count);
+    REQUIRE(first.fixed_index >= 0);
+    file.release_buffer(buffer);
+    rt.mock->complete(first.tag, 2);
+    rt.mock->wait_processed(first.tag);
+    REQUIRE(file.leases(buffer) == 1);
+    rt.mock->complete(first.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    auto second = rt.mock->request_after(count + 1);
+    REQUIRE(second.fixed_index == first.fixed_index);
+    REQUIRE(file.position(buffer) == 2);
+    static_cast<char*>(second.buf)[0] = 'z';
+    rt.mock->complete(second.tag, 2);
+    rt.mock->wait_processed(second.tag);
+    REQUIRE(rt.wait(parent, 0) == ETIMEDOUT);
+    REQUIRE(file.leases(buffer) == 1);
+    {
+        std::lock_guard lock(rt.mock->mutex);
+        REQUIRE(rt.mock->registrations[first.fixed_index]);
+    }
+    rt.mock->complete(second.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+    {
+        std::lock_guard lock(rt.mock->mutex);
+        REQUIRE_FALSE(rt.mock->registrations[first.fixed_index]);
+        rt.mock->registration_enabled = false;
+    }
+    REQUIRE(rt.bytes(parent) == 4);
+    rt.release(parent);
+}
+
+TEST_CASE("FileChannel fully native: close drains parents and cancelled FIFO waiters",
+          "[libk][io][proactor][mock][file-fully][close]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    void* buffers[2] = {file.allocate(6), file.allocate(3)};
+    void* parents[2] = {
+        file.operation(buffers[0], 6, K_IO_OP_WRITE, 0, true),
+        file.operation(buffers[1], 3, K_IO_OP_READ, 0, true)};
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parents[0], -1) == 0);
+    REQUIRE(file.submit(parents[1], -1) == 0);
+    auto target = rt.mock->request_after(count);
+    REQUIRE(rt.cancel(parents[1]));
+    void* close_op = file.prepare(K_IO_OP_CLOSE, file.handle, nullptr, 0, 0, 0,
+                                 nullptr, KCallable{}, KCallable{}, nullptr);
+    REQUIRE(file.submit(close_op, -1) == 0);
+    REQUIRE(rt.wait(close_op, 0) == ETIMEDOUT);
+    REQUIRE(file.leases(buffers[0]) == 1);
+    REQUIRE(file.leases(buffers[1]) == 1);
+    rt.mock->complete(target.tag, 2);
+    auto close_request = rt.mock->request_after(count + 1);
+    REQUIRE(close_request.opcode == K_IO_OP_CLOSE);
+    REQUIRE(file.cursor(file.handle) == 2);
+    for (int i = 0; i < 2; ++i) {
+        REQUIRE(rt.wait(parents[i], 5000000000LL) == 0);
+        REQUIRE(file.leases(buffers[i]) == 0);
+        REQUIRE(file.kind(parents[i]) == 1);
+        rt.release(parents[i]);
+        file.release_buffer(buffers[i]);
+    }
+    REQUIRE(close(close_request.fd) == 0);
+    rt.mock->complete(close_request.tag, 0);
+    REQUIRE(rt.wait(close_op, 5000000000LL) == 0);
+    rt.release(close_op);
+}
+
+TEST_CASE("FileChannel fully native: FIFO and backend admission stay bounded",
+          "[libk][io][proactor][mock][file-fully][resource]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    SECTION("One composite reserves one of the existing 128 FIFO slots") {
+        std::vector<void*> parents;
+        auto count = rt.mock->request_count();
+        for (int i = 0; i < 129; ++i) {
+            void* buffer = file.allocate(i ? 0 : 4);
+            void* parent = file.operation(buffer, i ? 0 : 4, K_IO_OP_WRITE, 0, true);
+            file.release_buffer(buffer);
+            REQUIRE(file.submit(parent, -1) == (i == 128 ? -EBUSY : 0));
+            parents.push_back(parent);
+        }
+        REQUIRE(rt.mock->request_count() == count + 1);
+        REQUIRE(file.kind(parents.back()) == 6);
+        for (int i = 1; i < 128; ++i) REQUIRE(rt.cancel(parents[i]));
+        rt.mock->complete(rt.mock->request_after(count).tag, 4);
+        for (void* parent : parents) {
+            REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+            rt.release(parent);
+        }
+        REQUIRE(rt.mock->request_count() == count + 1);
+    }
+    SECTION("Replacement submission failure reports already transferred bytes") {
+        void* buffer = file.allocate(4);
+        void* parent = file.operation(buffer, 4);
+        auto count = rt.mock->request_count();
+        REQUIRE(file.submit(parent, -1) == 0);
+        auto first = rt.mock->request_after(count);
+        {
+            std::lock_guard lock(rt.mock->mutex);
+            rt.mock->reject = true;
+        }
+        rt.mock->complete(first.tag, 2);
+        REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+        {
+            std::lock_guard lock(rt.mock->mutex);
+            rt.mock->reject = false;
+        }
+        REQUIRE(file.kind(parent) == 6);
+        REQUIRE(rt.bytes(parent) == 2);
+        REQUIRE(file.position(buffer) == 2);
+        REQUIRE(file.leases(buffer) == 0);
+        rt.release(parent);
+        file.release_buffer(buffer);
+    }
+    SECTION("The first child cannot bypass the existing 8192 registry slots") {
+        std::vector<void*> occupied;
+        auto count = rt.mock->request_count();
+        for (int i = 0; i < 8192; ++i) {
+            void* op = rt.create(K_IO_OP_READ, -1, nullptr, 0, 0, 0,
+                                 nullptr, nullptr, nullptr, nullptr);
+            REQUIRE(op);
+            REQUIRE(rt.submit(rt.get(), op, -1) == 0);
+            occupied.push_back(op);
+        }
+        void* buffer = file.allocate(4);
+        void* parent = file.operation(buffer, 4);
+        REQUIRE(file.submit(parent, -1) == 0);
+        REQUIRE(rt.wait(parent, 0) == 0);
+        REQUIRE(file.kind(parent) == 6);
+        REQUIRE(rt.bytes(parent) == 0);
+        REQUIRE(file.leases(buffer) == 0);
+        REQUIRE(rt.mock->request_count() == count + 8192);
+        for (int i = 0; i < 8192; ++i)
+            rt.mock->complete(rt.mock->request_after(count + i).tag, 0);
+        for (void* op : occupied) {
+            REQUIRE(rt.wait(op, 5000000000LL) == 0);
+            rt.release(op);
+        }
+        rt.release(parent);
+        file.release_buffer(buffer);
+    }
+}
+
+TEST_CASE("FileChannel fully native: cancellation inside the final callback is cooperative",
+          "[libk][io][proactor][mock][file-fully][callback]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    ManualExecutor executor;
+    Tracker tracker;
+    tracker.cancel_inside = true;
+    auto callback = tracker.callback();
+    void* buffer = file.allocate(3);
+    void* parent = file.operation(buffer, 3, K_IO_OP_WRITE, 0, false, &callback, &executor);
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parent, -1) == 0);
+    rt.mock->complete(rt.mock->request_after(count).tag, 1);
+    auto child = rt.mock->request_after(count + 1);
+    rt.mock->complete(child.tag, 2);
+    Task task = executor.take();
+    task.run(task.context); task.drop(task.context);
+    executor.wait_released();
+    REQUIRE(tracker.invokes == 1);
+    REQUIRE(tracker.drops == 1);
+    REQUIRE(tracker.saw_cooperative);
+    REQUIRE(rt.stage(parent) == 7);
+    REQUIRE(rt.bytes(parent) == 3);
+    REQUIRE(file.position(buffer) == 3);
+    REQUIRE(file.leases(buffer) == 0);
+    REQUIRE_FALSE(rt.cancel(parent));
+    rt.release(parent);
+    file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully K publisher: Future causes and getIoSync preserve partial counts",
+          "[libk][io][proactor][mock][file-fully][k-api][partial]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __fully_partial_publisher__;
+        @ffi::Extern("C") private __k_io_op_set_fully(operation: k::io::NativeIoOperation*) : int;
+        operation : k::io::IoOperation!;
+        future : Future<int>!;
+        decode(value: long) : int { return (int) value; }
+        start(handle: k::io::NativeIoHandle*, buffer: k::io::NativeByteBuffer*, opcode: int)
+            : k::io::NativeIoOperation* {
+            lease : ExecutorLease! = ExecutorLease::system();
+            operation = k::io::prepareOperation<int>(opcode, handle, buffer, 4,
+                20L, 0, null, *lease, decode);
+            k::io::setOperationError(*operation, __k_io_op_set_fully(operation->native()));
+            future = k::io::futureFor<int>(*operation, decode);
+            k::io::submitOperation(*operation, k::io::IO_NO_TIMEOUT);
+            return operation->native();
+        }
+        requestCancel() : int { return future->cancel() ? 1 : 0; }
+        pending() : int { return future->isDone() ? 0 : 1; }
+        observe(expected: int) : int throws(Throwable) {
+            try { future->get(Duration::ofMillis(0L)); return -1; }
+            catch (e: ExecutionException&) {
+                cause : Throwable* = e.getCause();
+                if (cause == null || cause->getCode() != expected) return -2;
+                if (expected == 203) {
+                    error : k::io::EndOfStreamException* = (k::io::EndOfStreamException*) cause;
+                    if (error == null || error->getBytesTransferred() != 2L) return -3;
+                } else if (expected == 204) {
+                    error : k::io::InterruptedIOException* = (k::io::InterruptedIOException*) cause;
+                    if (error == null || error->getBytesTransferred() != 2L) return -4;
+                } else {
+                    error : k::io::IOException* = (k::io::IOException*) cause;
+                    if (error == null || error->getErrno() != 5) return -5;
+                }
+            }
+            if (operation->bytesTransferred() != 2L) return -6;
+            try { k::io::getIoSync<int>(*future, *operation); return -7; }
+            catch (e: k::io::EndOfStreamException&) {
+                return expected == 203 && e.getBytesTransferred() == 2L ? 1 : -8;
+            } catch (e: k::io::InterruptedIOException&) {
+                return expected == 204 && e.getBytesTransferred() == 2L ? 1 : -9;
+            } catch (e: k::io::IOException&) {
+                return expected == 200 && e.getErrno() == 5 ? 1 : -10;
+            }
+        }
+        cleanup() { delete future; delete operation; }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto start = jit->lookup_symbol<void* (*)(void*, void*, int)>("start");
+    auto cancel = jit->lookup_symbol<int (*)()>("requestCancel");
+    auto pending = jit->lookup_symbol<int (*)()>("pending");
+    auto observe = jit->lookup_symbol<int (*)(int)>("observe");
+    auto cleanup = jit->lookup_symbol<void (*)()>("cleanup");
+    REQUIRE(start); REQUIRE(cancel); REQUIRE(pending); REQUIRE(observe); REQUIRE(cleanup);
+    int opcode = K_IO_OP_READ, final_result = 0, expected = 203;
+    bool cancelled = false;
+    SECTION("Read EOF") {}
+    SECTION("Write no progress") { opcode = K_IO_OP_WRITE; expected = 200; }
+    SECTION("Future cancellation after a short child") {
+        final_result = -ECANCELED; expected = 204; cancelled = true;
+    }
+    void* buffer = file.allocate(4);
+    auto count = rt.mock->request_count();
+    void* parent = nullptr;
+    REQUIRE_NOTHROW(parent = start(file.handle, buffer, opcode));
+    REQUIRE(parent);
+    rt.mock->complete(rt.mock->request_after(count).tag, 2);
+    auto second = rt.mock->request_after(count + 1);
+    if (cancelled) {
+        REQUIRE(cancel() == 1);
+        REQUIRE(pending() == 1);
+    }
+    rt.mock->complete(second.tag, final_result);
+    rt.mock->wait_processed(second.tag);
+    REQUIRE(rt.wait(parent, 0) == 0);
+    int result = 0;
+    REQUIRE_NOTHROW(result = observe(expected));
+    REQUIRE(result == 1);
+    REQUIRE(file.position(buffer) == 2);
+    REQUIRE(file.leases(buffer) == 0);
+    REQUIRE_NOTHROW(cleanup());
+    file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully API: unsigned count limit fails without allocating physical gigabytes",
+          "[libk][io][proactor][mock][file-fully][k-api][count-limit]") {
+    auto& rt = runtime();
+    auto map = symbol<void* (*)(const uint32_t*, int, int64_t, int64_t, int)>(
+        rt.library, "__k_io_buffer_map");
+    void* buffer = map(nullptr, -1, 0, 2147483648LL, 2); // anonymous, untouched virtual storage
+    REQUIRE(buffer);
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __fully_count_limit__;
+        opened : Future<k::io::file::FileChannel>!;
+        class AdoptedBuffer : public k::io::ByteBuffer {
+        public:
+            AdoptedBuffer(native: k::io::NativeByteBuffer*) : ByteBuffer(native) {}
+        }
+        start() {
+            path : k::io::file::Path("mock-count-limit");
+            opened = k::io::file::FileChannel::openAsync(path,
+                k::io::file::OPEN_READ | k::io::file::OPEN_WRITE);
+        }
+        check(native: k::io::NativeByteBuffer*) : int throws(Throwable) {
+            deadline : Duration = Duration::ofSeconds(5L);
+            channel : k::io::file::FileChannel = opened->get(deadline);
+            buffer : AdoptedBuffer! = new AdoptedBuffer(native);
+            if (buffer->remaining() != 2147483648u) return -1;
+            selected : ExecutorLease! = ExecutorLease::system();
+            operation : k::io::IoOperation! = channel.readFully(buffer, 0L, null, *selected);
+            if (!operation->isIoDone() || !operation->isDone() ||
+                operation->error().kind() != k::io::IoErrorKind::InvalidArgument ||
+                operation->bytesTransferred() != 0L || buffer->hasLease()) return -2;
+            future : Future<int>! = channel.writeFullyAsync(buffer, 0L);
+            valid : bool = false;
+            try { future->get(deadline); }
+            catch (e: ExecutionException&) {
+                error : k::io::IOException* = (k::io::IOException*) e.getCause();
+                valid = error != null && error->getErrno() == 22 &&
+                    buffer->position() == 0u && !buffer->hasLease();
+            }
+            delete future; delete operation; delete selected; delete buffer; delete opened;
+            return valid ? 1 : -3;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto start = jit->lookup_symbol<void (*)()>("start");
+    auto check = jit->lookup_symbol<int (*)(void*)>("check");
+    REQUIRE(start); REQUIRE(check);
+    auto count = rt.mock->request_count();
+    REQUIRE_NOTHROW(start());
+    auto request = rt.mock->request_after(count);
+    REQUIRE(request.opcode == K_IO_OP_OPENAT);
+    int fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    rt.mock->complete(request.tag, fd);
+    rt.mock->wait_processed(request.tag);
+    int result = 0;
+    REQUIRE_NOTHROW(result = check(buffer));
+    REQUIRE(result == 1);
+    REQUIRE(rt.mock->request_count() == count + 1);
+    REQUIRE(fcntl(fd, F_GETFD) == -1);
+}
+
+TEST_CASE("FileChannel fully native: registry-side child cancellation suppresses the parent",
+          "[libk][io][proactor][mock][file-fully][cancel][shutdown]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    auto child_observer = symbol<void* (*)(void*)>(
+        rt.library, "k_io_operation_retain_fully_child");
+    ManualExecutor executor;
+    FullyProbe probe;
+    auto callback = probe.completion(), publisher = probe.publisher();
+    void* buffer = file.allocate(6);
+    void* parent = file.operation(buffer, 6, K_IO_OP_READ, 0, false, &callback, &executor);
+    REQUIRE(file.continuation(parent, &publisher) == 0);
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parent, 5000000000LL) == 0);
+    auto first = rt.mock->request_after(count);
+    rt.mock->complete(first.tag, 2);
+    rt.mock->complete(first.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    auto second = rt.mock->request_after(count + 1);
+    void* child = child_observer(parent);
+    REQUIRE(child);
+    REQUIRE(rt.cancel(child)); // exactly the registry-side shutdown path
+    rt.mock->complete(second.tag, 1);
+    rt.mock->wait_processed(second.tag);
+    REQUIRE(rt.wait(parent, 0) == ETIMEDOUT);
+    REQUIRE(file.leases(buffer) == 1);
+    rt.mock->complete(second.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+    executor.wait_released();
+    REQUIRE(file.kind(parent) == 1);
+    REQUIRE(rt.bytes(parent) == 3);
+    REQUIRE(probe.publications == 1);
+    REQUIRE(probe.result.kind == 1);
+    REQUIRE(probe.result.bytes == 3);
+    REQUIRE(probe.callbacks == 0);
+    REQUIRE(probe.callback_drops == 1);
+    REQUIRE(probe.publisher_drops == 1);
+    REQUIRE(child_observer(parent) == nullptr);
+    rt.release(child);
+    rt.release(parent);
+    file.release_buffer(buffer);
+}
+
+TEST_CASE("FileChannel fully native: dropping both wrappers never cancels the child chain",
+          "[libk][io][proactor][mock][file-fully][lifetime]") {
+    FullyFile file;
+    auto& rt = file.rt;
+    ManualExecutor executor;
+    FullyProbe probe;
+    auto callback = probe.completion(), publisher = probe.publisher();
+    void* buffer = file.allocate(6);
+    void* parent = file.operation(buffer, 6, K_IO_OP_WRITE, 0, false, &callback, &executor);
+    REQUIRE(file.continuation(parent, &publisher) == 0);
+    auto count = rt.mock->request_count();
+    REQUIRE(file.submit(parent, -1) == 0);
+    auto first = rt.mock->request_after(count);
+    file.release_buffer(buffer);
+    rt.release(parent);
+    static_cast<char*>(first.buf)[0] = 'a';
+    rt.mock->complete(first.tag, 2);
+    auto second = rt.mock->request_after(count + 1);
+    REQUIRE(second.offset == 2);
+    REQUIRE(second.buf == static_cast<char*>(first.buf) + 2);
+    static_cast<char*>(second.buf)[0] = 'b';
+    rt.mock->complete(second.tag, 4);
+    Task task = executor.take();
+    REQUIRE(probe.publications == 1);
+    REQUIRE(probe.result.kind == 0);
+    REQUIRE(probe.result.bytes == 6);
+    REQUIRE(probe.result.value == 6);
+    task.run(task.context); task.drop(task.context);
+    executor.wait_released();
+    REQUIRE(probe.callbacks == 1);
+    REQUIRE(probe.callback_drops == 1);
+    REQUIRE(probe.publisher_drops == 1);
 }
 

@@ -20,6 +20,18 @@ This guide explains the architecture, provides a decision matrix to help choose
 the right type for every task, and illustrates common workflows with complete K
 examples.
 
+For TCP, UDP or Unix stream/datagram endpoints, use the separate
+[proactive network channel API](../spec/stdlib/io-network.md). Unix listeners
+accept `Path` values but do not unlink existing paths or remove socket names on
+close; the creator is responsible for pathname cleanup. Unix datagram sockets
+instead own only the pathname created by their successful bind and remove it
+on close or final handle release, never before bind or when a remote address
+is released. File and network
+channels share callback/Future/Sync conventions, not synchronous stream adapters.
+Application exit completes their shared I/O/callback shutdown before field
+destruction on normal return or unwind; see the
+[lifecycle contract](../spec/stdlib/application.md#exit-lifecycle).
+
 ---
 
 ## 1. The Three-Tier Architecture
@@ -46,7 +58,7 @@ examples.
 │                                                                         │
 │   Data I/O Handles:                                                     │
 │   - Synchronous:  FileInputStream, FileOutputStream                     │
-│   - Asynchronous: FileChannel, AsyncFileInputStream, AsyncFileOutputStream│
+│   - Proactor: FileChannel callback/Future/Sync and fully transfers       │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -66,8 +78,8 @@ Use this decision table to select the appropriate type:
 | **Inspect a typed filesystem node** | `AnyFileSystemEntry` | `fs.entry(path)`, `entry->exists()`, `entry.index()` |
 | **List or walk directory contents** | `Directory` | `dir.entries()`, `dir.walk()` |
 | **Read/write files synchronously** | `FileInputStream`, `FileOutputStream` | `new FileInputStream(p)`, `stream->read(buf)` |
-| **Seek, force, or do async/cancellable file I/O** | `FileChannel` | `FileChannel::open(p, OPEN_READ)`, `channel->read(buf, pos)` |
-| **Stream file data asynchronously** | `AsyncFileInputStream`, `AsyncFileOutputStream` | `new AsyncFileInputStream(p)` |
+| **Seek, force, or do async/cancellable file I/O** | `FileChannel` | `FileChannel::openAsync(p, OPEN_READ)`, `channel.readAsync(buf, pos)` |
+| **Transfer every remaining byte** | `FileChannel` fully forms | `writeFully`, `writeFullyAsync`, `writeFullySync` |
 
 ---
 
@@ -295,23 +307,28 @@ using k::io::file::FileOutputStream;
 using k::io::file::Path;
 
 // Writing
-out : FileOutputStream! = new FileOutputStream(Path("/tmp/hello.txt"));
-out->write("Hello, K!\n");
+out : FileOutputStream! = new FileOutputStream(Path("hello.bin"));
+message : byte[2];
+message[0] = (byte) 79;
+message[1] = (byte) 75;
+out->write(message);
 out->flush();
 out->close();
 delete out;
 
 // Reading
-in : FileInputStream! = new FileInputStream(Path("/tmp/hello.txt"));
+in : FileInputStream! = new FileInputStream(Path("hello.bin"));
 buf : byte[256];
-n : int = in->read(buf);
+result : Expected<unsigned int, k::io::StreamOutOfData> = in->read(buf);
 in->close();
 delete in;
 ```
 
 A `File` entry also provides direct factory shortcuts:
 ```k
-fileEntry : File* = ...;
+entry : k::io::file::AnyFileSystemEntry =
+    k::io::file::FileSystem::local().entry(Path("hello.bin"));
+fileEntry : k::io::file::File* = entry.as<k::io::file::File>();
 inStream : FileInputStream! = fileEntry->openInput();
 outStream : FileOutputStream! = fileEntry->openOutput(false); // overwrite
 ```
@@ -319,15 +336,19 @@ outStream : FileOutputStream! = fileEntry->openOutput(false); // overwrite
 ### 6.2 Asynchronous Channels (`FileChannel`)
 
 For high-throughput, multi-threaded, or seekable file processing, use `FileChannel`.
-`FileChannel` uses the native asynchronous I/O substrate (such as Linux `io_uring`):
+`FileChannel` uses the Linux io_uring proactor:
 
 - **Seekable & Thread-Safe**: Supports concurrent reads/writes at explicit file
   offsets without mutating shared state.
-- **Interruptible**: Blocked transfers can be cancelled immediately via
-  `Thread::interrupt()`, throwing `ThreadInterruptionException`.
+- **Cancellable**: `IoOperation.cancel()` cancels native work and suppresses
+  undelivered callbacks. Future cancellation forwards to the same operation;
+  it never interrupts a callback worker.
 - **Deadline-Aware**: Read and write operations accept timeouts.
-- **Immediate Resource Release**: Closing a channel from another thread safely
-  aborts pending kernel operations.
+- **Draining Close**: Closing a channel cancels pending work and waits for
+  target/timeout completion before releasing buffers and descriptors.
+- **Fully Transfers**: Native parents chain short transfers, accumulate bytes,
+  retain buffer leases, and reuse one deadline. An implicit fully transfer
+  reserves the entire cursor FIFO operation, with no interleaving children.
 
 Open flags can be combined bitwise:
 
@@ -350,25 +371,52 @@ using k::io::file::OPEN_WRITE;
 using k::io::file::OPEN_CREATE;
 using k::io::file::Path;
 
-chan : FileChannel! = FileChannel::open(Path("/tmp/data.bin"), OPEN_READ | OPEN_WRITE | OPEN_CREATE);
+chan : FileChannel = FileChannel::openSync(Path("/tmp/data.bin"), OPEN_READ | OPEN_WRITE | OPEN_CREATE);
 
 // Positional write (does not alter channel position)
-buf : ByteBuffer! = ByteBuffer::allocate(1024u);
-// ... populate buf ...
-chan->write(buf, 0L); // write at offset 0
+buf : ByteBuffer! = ByteBuffer::allocateDirect(2u);
+buf->put((byte) 79);
+buf->put((byte) 75);
+buf->flip();
+chan.writeFullySync(buf, 0L); // write every remaining byte at offset 0
 
 // Synchronize changes to storage
-chan->force(true);
+chan.forceSync();
 
-chan->close();
-delete chan;
+chan.closeSync();
+delete buf;
 ```
 
-### 6.3 Asynchronous Streams (`AsyncFileInputStream` / `AsyncFileOutputStream`)
+### 6.3 Choosing callback, Future or Sync
 
-When stream semantics (`InputStream<byte>`, `OutputStream<byte>`) are desired
-alongside asynchronous cancellation, wrap channels in `AsyncFileInputStream` or
-`AsyncFileOutputStream`.
+Use `channel.writeFully(buffer, completion, executorLease)` for one final
+Expected result on a selected executor, `writeFullyAsync(buffer)` for a Future
+published independently of callback workers, or `writeFullySync(buffer)` for an
+interruptible blocking bridge. Read fully forms report EndOfStream with the
+partial count when EOF arrives before the buffer is filled; a zero-progress
+nonempty write is an IOException/EIO failure rather than a retry loop.
+
+The obsolete async file stream adapters are removed. For InputStream/OutputStream
+semantics use the unchanged synchronous FileInputStream/FileOutputStream API.
+See [Asynchronous I/O](../spec/stdlib/io-async.md) for full overloads and
+cancellation/deadline/partial-byte semantics.
+
+### 6.4 Mapped buffers and registration
+
+`MappedByteBuffer::map(path, offset, length, MapMode::ReadWrite)` provides
+mapped storage with the same cursor and in-flight lease rules as ByteBuffer.
+It automatically attempts sparse registration; `isRegistered()` reports
+whether that attempt succeeded. Registration failure leaves the mapping valid
+for non-fixed kernel I/O, and does not select a blocking POSIX transport.
+Registered network buffers still use ordinary RECV/SEND or RECVMSG/SENDMSG.
+Do not mutate or unmap leased storage before native drain.
+
+Complete channel examples are available in
+[`file_channel_fully.k`](../../samples/file_channel_fully.k),
+[`stream_channel_loopback.k`](../../samples/stream_channel_loopback.k) and
+[`datagram_loopback.k`](../../samples/datagram_loopback.k).
+The file example writes a fixed temporary pathname; choose a caller-owned path
+before running it where that name could already exist.
 
 ---
 

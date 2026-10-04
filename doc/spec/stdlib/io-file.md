@@ -195,11 +195,24 @@ All file streaming and channel facilities reside in `k::io::file`:
   - `FileOutputStream(path: const char[], append: bool = false)`
   - `FileOutputStream(fp: CFile*)`
 
-### 6.2 Asynchronous File Channels and Streams
+### 6.2 Asynchronous File Channels
 
-- **`FileChannel`**: Seekable, interruptible channel over a regular file backed by the asynchronous substrate.
+- **`FileChannel`**: Copyable descriptor value backed by the Linux proactor, with a synchronized shared cursor and closed state.
   - Open constants: `OPEN_READ`, `OPEN_WRITE`, `OPEN_APPEND`, `OPEN_CREATE`, `OPEN_TRUNCATE`, `OPEN_EXCLUSIVE`.
-  - Factories: `FileChannel::open(path: const Path&, options: int)`, `FileChannel::open(path: const Path&)`.
-  - Transfers: `read(dst)`, `read(dst, pos, timeout)`, `write(src)`, `write(src, pos, timeout)`, `readFully(dst, pos)`, `writeFully(src, pos)`, `position()`, `size()`, `truncate()`, `force()`.
-- **`AsyncFileInputStream`**: Interruptible `InputStream<byte>` backed by a `FileChannel`.
-- **`AsyncFileOutputStream`**: Interruptible `OutputStream<byte>` backed by a `FileChannel`.
+  - Factories: `open(path, options, IoCompletion<FileChannel>, ExecutorLease&)`, `openAsync(path, options) : Future<FileChannel>!`, `openSync(path, options) : FileChannel`.
+  - Primitives: callback/Future/Sync forms of open, implicit and positional read/write, size, truncate, force, and close.
+  - Implicit transfers and truncate use a native FIFO; completion advances the shared cursor by actual bytes before publishing results.
+  - Legacy `open(path) : FileChannel!` and blocking method names explicitly delegate to Sync bridges.
+  - `readFully`/`writeFully` have native parent-operation callback/Future/Sync forms, cumulative partial errors, one absolute deadline, and a continuous buffer lease.
+  - Implicit composites reserve the entire FIFO operation, so other implicit transfers cannot interleave between their children.
+  - The old blocking fully signatures are removed; use `readFullySync`/`writeFullySync`.
+
+The obsolete async file stream adapters are removed. The synchronous
+FileInputStream/FileOutputStream API above is unchanged.
+Mapped channel storage uses `k::io::MappedByteBuffer`; successful mapping does
+not promise fixed-buffer registration or fixed-opcode use. Its registration
+state and non-fixed fallback are observable through the buffer API.
+
+See [Asynchronous I/O](io-async.md) for signatures, ownership, deadlines,
+buffer leases, mapped storage, executor dispatch, cancellation and the
+Application exit barrier.

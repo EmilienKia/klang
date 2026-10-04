@@ -1,444 +1,808 @@
 /*
- * K Language standard library — base module
- *
+ * K Language standard library - proactor file channels
  * Copyright 2026 Emilien Kia
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *         http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Licensed under the Apache License, Version 2.0.
  */
-
 module k;
 
 namespace io::file {
 
-/**
- * Opaque wrapper type representing a native asynchronous I/O handle.
- */
-public struct NativeAsyncHandle {
-}
-
-// ── Open options ─────────────────────────────────────────────────────────
-
-/** Open for reading. */
 public const OPEN_READ : int = 1;
-/** Open for writing. */
 public const OPEN_WRITE : int = 2;
-/** Every write goes to the end of the file. */
 public const OPEN_APPEND : int = 4;
-/** Create the file when it does not exist. */
 public const OPEN_CREATE : int = 8;
-/** Truncate the file to zero length when opening it. */
 public const OPEN_TRUNCATE : int = 16;
-/** Fail when the file already exists; only meaningful with OPEN_CREATE. */
 public const OPEN_EXCLUSIVE : int = 32;
 
 /**
- * FileChannel — a seekable, interruptible byte channel over a regular file.
- *
- * Every operation goes through the asynchronous substrate, which means that
- *
- *  - a blocked read or write can be interrupted (::k::ThreadInterruptionException),
- *  - a blocked read or write can be given a deadline (::k::TimeoutException),
- *  - closing the channel from another thread aborts the pending operation and
- *    raises ::k::io::ClosedChannelException on the blocked thread,
- *
- * and in every one of those cases the kernel has released the caller's buffer
- * before the exception propagates.
- *
- * A channel keeps its own file position, used by the `read`/`write` overloads
- * that do not take one; the positional overloads leave it untouched, so
- * several threads can safely read disjoint regions of the same channel.
+ * Copyable descriptor value. Copies retain the same native handle and share
+ * its synchronized position and closed state. A default value is closed.
+ * Native operations own handles and buffer leases, never this K wrapper.
+ * Implicit transfers and truncate use a bounded native FIFO; positional
+ * transfers do not change its cursor. Completion advances both cursors before
+ * publishing a Future or dispatching a callback, even after cancellation.
  */
 public class FileChannel : public ReadableChannel, public WritableChannel {
-    _native   : NativeAsyncHandle*;
-    _position : long;
-    @ffi::Extern("C") private static __k_async_is_uring() : int;
-    @ffi::Extern("C") private static __k_async_open(path: const char*, flags: int, mode: int) : NativeAsyncHandle*;
-    @ffi::Extern("C") private static __k_async_last_errno() : int;
-    @ffi::Extern("C") private static __k_async_retain(h: NativeAsyncHandle*) : void;
-    @ffi::Extern("C") private static __k_async_release(h: NativeAsyncHandle*) : void;
-    @ffi::Extern("C") private static __k_async_close(h: NativeAsyncHandle*) : int;
-    @ffi::Extern("C") private static __k_async_is_open(h: const NativeAsyncHandle*) : int;
-    @ffi::Extern("C") private static __k_async_fd(h: const NativeAsyncHandle*) : int;
-    @ffi::Extern("C") private static __k_async_read_bytes(h: NativeAsyncHandle*, buf: byte*, len: int, offset: long, timeoutNanos: long) : long;
-    @ffi::Extern("C") private static __k_async_write_bytes(h: NativeAsyncHandle*, buf: const byte*, len: int, offset: long, timeoutNanos: long) : long;
-    @ffi::Extern("C") private static __k_async_fsync(h: NativeAsyncHandle*, timeoutNanos: long) : long;
-    @ffi::Extern("C") private static __k_async_size(h: const NativeAsyncHandle*) : long;
-    @ffi::Extern("C") private static __k_async_truncate(h: NativeAsyncHandle*, size: long) : int;
+private:
+    _native : NativeIoHandle*;
+
+    @ffi::Extern("C") private static __k_io_file_handle_prepare(fd: int) : NativeIoHandle*;
+    @ffi::Extern("C") private static __k_io_file_handle_claim(handle: NativeIoHandle*, result: byte*);
+    @ffi::Extern("C") private static __k_io_handle_retain(handle: NativeIoHandle*);
+    @ffi::Extern("C") private static __k_io_handle_release(handle: NativeIoHandle*);
+    @ffi::Extern("C") private static __k_io_handle_is_open(handle: const NativeIoHandle*) : int;
+    @ffi::Extern("C") private static __k_io_handle_fd(handle: const NativeIoHandle*) : int;
+    @ffi::Extern("C") private static __k_io_handle_position(handle: const NativeIoHandle*) : long;
+    @ffi::Extern("C") private static __k_io_handle_set_position(handle: NativeIoHandle*, position: long) : int;
+    @ffi::Extern("C") private static __k_io_op_set_path(operation: NativeIoOperation*, path: const char*) : int;
+    @ffi::Extern("C") private static __k_io_op_set_file_options(operation: NativeIoOperation*, options: int) : int;
+    @ffi::Extern("C") private static __k_io_op_set_implicit_position(operation: NativeIoOperation*) : int;
+    @ffi::Extern("C") private static __k_io_op_set_fully(operation: NativeIoOperation*) : int;
+    @ffi::Extern("C") private static __k_io_statx_size(value: long) : long;
+
+    FileChannel(handle: NativeIoHandle*) : _native(handle) {}
+
+    static decodeOpen(value: long) : FileChannel {
+        handle : NativeIoHandle* = __k_io_file_handle_prepare((int) value);
+        if (handle == null) throw OutOfMemory();
+        return FileChannel(handle);
+    }
+    static claimOpen(value: FileChannel&, result: byte*) {
+        __k_io_file_handle_claim(value._native, result);
+    }
+    static decodeCount(value: long) : int { return (int) value; }
+    static decodeDone(value: long) : IoDone { return IoDone(); }
+    static defaultExecutor() : ExecutorLease! {
+        return ExecutorLease::system();
+    }
+    static decodeSize(value: long) : long {
+        size : long = __k_io_statx_size(value);
+        if (size < 0L) throw IOException((int) -size);
+        return size;
+    }
+    static prepareOpen(path: const char*, options: int,
+        completion: IoCompletion<FileChannel>, executor: ExecutorLease&) : IoOperation! {
+        operation : IoOperation! = prepareOperation<FileChannel>(10, null, null,
+            0, 438L, 0, completion, executor, FileChannel::decodeOpen, FileChannel::claimOpen);
+        setOperationError(*operation, __k_io_op_set_file_options(operation->native(), options));
+        setOperationError(*operation, __k_io_op_set_path(operation->native(), path));
+        return operation;
+    }
+    prepareTransfer(opcode: int, buffer: ByteBuffer+, offset: long, implicit: bool,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        length : unsigned int = buffer->remaining();
+        count : int = 0;
+        if (length <= 2147483647u) count = (int) length;
+        operation : IoOperation! = prepareOperation<int>(opcode, _native,
+            buffer->nativeHandle(), count, offset, 0, completion, executor, FileChannel::decodeCount);
+        if (length > 2147483647u || (!implicit && offset < 0L) ||
+            (!implicit && offset >= 0L && (long) length > 9223372036854775807L - offset))
+            setOperationError(*operation, 22);
+        if (implicit) setOperationError(*operation, __k_io_op_set_implicit_position(operation->native()));
+        return operation;
+    }
+    transfer(opcode: int, buffer: ByteBuffer+, offset: long, implicit: bool,
+        timeoutNanos: long, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        operation : IoOperation! = prepareTransfer(opcode, buffer, offset, implicit, completion, executor);
+        submitOperation(*operation, timeoutNanos);
+        return operation;
+    }
+    transferAsync(opcode: int, buffer: ByteBuffer+, offset: long, implicit: bool,
+        timeoutNanos: long, executor: ExecutorLease&) : Future<int>! {
+        operation : IoOperation! = prepareTransfer(opcode, buffer, offset, implicit, null, executor);
+        future : Future<int>! = futureFor<int>(*operation, FileChannel::decodeCount);
+        submitOperation(*operation, timeoutNanos);
+        return future;
+    }
+    transferSync(opcode: int, buffer: ByteBuffer+, offset: long, implicit: bool,
+        timeoutNanos: long) : int {
+        checkIoSyncThread();
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        operation : IoOperation! = prepareTransfer(opcode, buffer, offset, implicit, null, *executor);
+        future : Future<int>! = futureFor<int>(*operation, FileChannel::decodeCount);
+        submitOperation(*operation, timeoutNanos);
+        return getIoSync<int>(*future, *operation);
+    }
+    prepareFully(opcode: int, buffer: ByteBuffer+, offset: long, implicit: bool,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        operation : IoOperation! = prepareTransfer(opcode, buffer, offset, implicit, completion, executor);
+        setOperationError(*operation, __k_io_op_set_fully(operation->native()));
+        return operation;
+    }
+    fullyTransfer(opcode: int, buffer: ByteBuffer+, offset: long, implicit: bool,
+        timeoutNanos: long, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        operation : IoOperation! = prepareFully(opcode, buffer, offset, implicit, completion, executor);
+        submitOperation(*operation, timeoutNanos);
+        return operation;
+    }
+    fullyAsync(opcode: int, buffer: ByteBuffer+, offset: long, implicit: bool,
+        timeoutNanos: long, executor: ExecutorLease&) : Future<int>! {
+        operation : IoOperation! = prepareFully(opcode, buffer, offset, implicit, null, executor);
+        future : Future<int>! = futureFor<int>(*operation, FileChannel::decodeCount);
+        submitOperation(*operation, timeoutNanos);
+        return future;
+    }
+    fullySync(opcode: int, buffer: ByteBuffer+, offset: long, implicit: bool,
+        timeoutNanos: long) : int {
+        checkIoSyncThread();
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        operation : IoOperation! = prepareFully(opcode, buffer, offset, implicit, null, *executor);
+        future : Future<int>! = futureFor<int>(*operation, FileChannel::decodeCount);
+        submitOperation(*operation, timeoutNanos);
+        return getIoSync<int>(*future, *operation);
+    }
+    const prepareDone(opcode: int, argument: long, completion: IoCompletion<IoDone>,
+        executor: ExecutorLease&) : IoOperation! {
+        operation : IoOperation! = prepareOperation<IoDone>(opcode, _native, null,
+            0, argument, 0, completion, executor, FileChannel::decodeDone);
+        if (opcode == 13 && argument < 0L) setOperationError(*operation, 22);
+        return operation;
+    }
+    const doneOperation(opcode: int, argument: long, timeoutNanos: long,
+        completion: IoCompletion<IoDone>, executor: ExecutorLease&) : IoOperation! {
+        operation : IoOperation! = prepareDone(opcode, argument, completion, executor);
+        submitOperation(*operation, timeoutNanos);
+        return operation;
+    }
+    const doneAsync(opcode: int, argument: long, timeoutNanos: long) : Future<IoDone>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        operation : IoOperation! = prepareDone(opcode, argument, null, *executor);
+        future : Future<IoDone>! = futureFor<IoDone>(*operation, FileChannel::decodeDone);
+        submitOperation(*operation, timeoutNanos);
+        return future;
+    }
+    const doneSync(opcode: int, argument: long, timeoutNanos: long) {
+        checkIoSyncThread();
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        operation : IoOperation! = prepareDone(opcode, argument, null, *executor);
+        future : Future<IoDone>! = futureFor<IoDone>(*operation, FileChannel::decodeDone);
+        submitOperation(*operation, timeoutNanos);
+        getIoSync<IoDone>(*future, *operation);
+    }
+    const prepareSize(completion: IoCompletion<long>, executor: ExecutorLease&) : IoOperation! {
+        return prepareOperation<long>(11, _native, null, 0, 0L, 0,
+            completion, executor, FileChannel::decodeSize);
+    }
 
 public:
-    /** Construct a closed channel. */
-    FileChannel() : _native(null), _position(0L) {}
-
-    /**
-     * Adopt an already-open native handle.
-     * The channel takes ownership and releases it on close.
-     *
-     * @param handle Native handle produced by the substrate.
-     */
-    FileChannel(handle: NativeAsyncHandle*) : _native(handle), _position(0L) {}
-
-    /**
-     * Open a file channel from a Path.
-     *
-     * @param path Location to open.
-     * @param options Bitwise combination of the OPEN_* constants.
-     * @return A newly allocated open channel.
-     */
-    static open(path: const Path&, options: int) : FileChannel! {
-        h : NativeAsyncHandle* = __k_async_open(path.nativePath(), options, 438);
-        if (h == null) {
-            err : int = __k_async_last_errno();
-            // ENOENT (2) and ENOTDIR (20) both mean "no such file".
-            if (err == 2 || err == 20) {
-                throw FileNotFoundException(err);
-            }
-            throw IOException(err);
-        }
-        return new FileChannel(h);
+    FileChannel() : _native(null) {}
+    FileChannel(other: const FileChannel&) : _native(other._native) {
+        __k_io_handle_retain(_native);
+    }
+    operator =(other: const FileChannel&) : FileChannel& {
+        handle : NativeIoHandle* = other._native;
+        __k_io_handle_retain(handle);
+        __k_io_handle_release(_native);
+        _native = handle;
+        return this;
+    }
+    ~FileChannel() {
+        __k_io_handle_release(_native);
+        _native = null;
     }
 
-    /**
-     * Open a file channel from a character pointer.
-     *
-     * @param path Location to open.
-     * @param options Bitwise combination of the OPEN_* constants.
-     * @return A newly allocated open channel.
-     */
-    static open(path: const char*, options: int) : FileChannel! {
-        h : NativeAsyncHandle* = __k_async_open(path, options, 438);
-        if (h == null) {
-            err : int = __k_async_last_errno();
-            if (err == 2 || err == 20) {
-                throw FileNotFoundException(err);
-            }
-            throw IOException(err);
-        }
-        return new FileChannel(h);
+    static open(path: const char*, options: int, timeoutNanos: long,
+        completion: IoCompletion<FileChannel>, executor: ExecutorLease&) : IoOperation! {
+        operation : IoOperation! = FileChannel::prepareOpen(path, options, completion, executor);
+        submitOperation(*operation, timeoutNanos);
+        return operation;
+    }
+    static open(path: const char*, options: int, completion: IoCompletion<FileChannel>,
+        executor: ExecutorLease&) : IoOperation! {
+        return FileChannel::open(path, options, IO_NO_TIMEOUT, completion, executor);
+    }
+    static open(path: const char*, options: int, completion: IoCompletion<FileChannel>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return FileChannel::open(path, options, completion, *executor);
+    }
+    static open(path: const char*, options: int, timeout: const Duration&,
+        completion: IoCompletion<FileChannel>, executor: ExecutorLease&) : IoOperation! {
+        return FileChannel::open(path, options, timeout.toNanos(), completion, executor);
+    }
+    static open(path: const char*, options: int, timeoutNanos: long,
+        completion: IoCompletion<FileChannel>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return FileChannel::open(path, options, timeoutNanos, completion, *executor);
+    }
+    static open(path: const char*, options: int, timeout: const Duration&,
+        completion: IoCompletion<FileChannel>) : IoOperation! {
+        return FileChannel::open(path, options, timeout.toNanos(), completion);
+    }
+    static open(path: const char*, completion: IoCompletion<FileChannel>, executor: ExecutorLease&) : IoOperation! {
+        return FileChannel::open(path, OPEN_READ, completion, executor);
+    }
+    static open(path: const char*, completion: IoCompletion<FileChannel>) : IoOperation! {
+        return FileChannel::open(path, OPEN_READ, completion);
+    }
+    static open(path: const Path&, options: int, timeoutNanos: long,
+        completion: IoCompletion<FileChannel>, executor: ExecutorLease&) : IoOperation! {
+        return FileChannel::open(path.nativePath(), options, timeoutNanos, completion, executor);
+    }
+    static open(path: const Path&, options: int, completion: IoCompletion<FileChannel>,
+        executor: ExecutorLease&) : IoOperation! {
+        return FileChannel::open(path.nativePath(), options, completion, executor);
+    }
+    static open(path: const Path&, options: int, completion: IoCompletion<FileChannel>) : IoOperation! {
+        return FileChannel::open(path.nativePath(), options, completion);
+    }
+    static open(path: const Path&, options: int, timeout: const Duration&,
+        completion: IoCompletion<FileChannel>, executor: ExecutorLease&) : IoOperation! {
+        return FileChannel::open(path.nativePath(), options, timeout, completion, executor);
+    }
+    static open(path: const Path&, options: int, timeoutNanos: long,
+        completion: IoCompletion<FileChannel>) : IoOperation! {
+        return FileChannel::open(path.nativePath(), options, timeoutNanos, completion);
+    }
+    static open(path: const Path&, options: int, timeout: const Duration&,
+        completion: IoCompletion<FileChannel>) : IoOperation! {
+        return FileChannel::open(path.nativePath(), options, timeout, completion);
+    }
+    static open(path: const Path&, completion: IoCompletion<FileChannel>, executor: ExecutorLease&) : IoOperation! {
+        return FileChannel::open(path.nativePath(), OPEN_READ, completion, executor);
+    }
+    static open(path: const Path&, completion: IoCompletion<FileChannel>) : IoOperation! {
+        return FileChannel::open(path.nativePath(), OPEN_READ, completion);
+    }
+    static openAsync(path: const char*, options: int, timeoutNanos: long,
+        executor: ExecutorLease&) : Future<FileChannel>! {
+        operation : IoOperation! = FileChannel::prepareOpen(path, options, null, executor);
+        future : Future<FileChannel>! = futureFor<FileChannel>(*operation,
+            FileChannel::decodeOpen, FileChannel::claimOpen);
+        submitOperation(*operation, timeoutNanos);
+        return future;
+    }
+    static openAsync(path: const char*, options: int, timeoutNanos: long) : Future<FileChannel>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return FileChannel::openAsync(path, options, timeoutNanos, *executor);
+    }
+    static openAsync(path: const char*, options: int) : Future<FileChannel>! {
+        return FileChannel::openAsync(path, options, IO_NO_TIMEOUT);
+    }
+    static openAsync(path: const char*) : Future<FileChannel>! {
+        return FileChannel::openAsync(path, OPEN_READ);
+    }
+    static openAsync(path: const char*, options: int, timeout: const Duration&) : Future<FileChannel>! {
+        return FileChannel::openAsync(path, options, timeout.toNanos());
+    }
+    static openAsync(path: const Path&, options: int, timeoutNanos: long) : Future<FileChannel>! {
+        return FileChannel::openAsync(path.nativePath(), options, timeoutNanos);
+    }
+    static openAsync(path: const Path&, options: int, timeoutNanos: long,
+        executor: ExecutorLease&) : Future<FileChannel>! {
+        return FileChannel::openAsync(path.nativePath(), options, timeoutNanos, executor);
+    }
+    static openAsync(path: const Path&, options: int) : Future<FileChannel>! {
+        return FileChannel::openAsync(path.nativePath(), options);
+    }
+    static openAsync(path: const Path&) : Future<FileChannel>! {
+        return FileChannel::openAsync(path.nativePath());
+    }
+    static openAsync(path: const Path&, options: int, timeout: const Duration&) : Future<FileChannel>! {
+        return FileChannel::openAsync(path.nativePath(), options, timeout);
+    }
+    static openSync(path: const char*, options: int, timeoutNanos: long) : FileChannel {
+        checkIoSyncThread();
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        operation : IoOperation! = FileChannel::prepareOpen(path, options, null, *executor);
+        future : Future<FileChannel>! = futureFor<FileChannel>(*operation,
+            FileChannel::decodeOpen, FileChannel::claimOpen);
+        submitOperation(*operation, timeoutNanos);
+        return getIoSync<FileChannel>(*future, *operation);
+    }
+    static openSync(path: const char*, options: int) : FileChannel {
+        return FileChannel::openSync(path, options, IO_NO_TIMEOUT);
+    }
+    static openSync(path: const char*) : FileChannel {
+        return FileChannel::openSync(path, OPEN_READ);
+    }
+    static openSync(path: const char*, options: int, timeout: const Duration&) : FileChannel {
+        return FileChannel::openSync(path, options, timeout.toNanos());
+    }
+    static openSync(path: const Path&, options: int, timeoutNanos: long) : FileChannel {
+        return FileChannel::openSync(path.nativePath(), options, timeoutNanos);
+    }
+    static openSync(path: const Path&, options: int) : FileChannel {
+        return FileChannel::openSync(path.nativePath(), options);
+    }
+    static openSync(path: const Path&) : FileChannel { return FileChannel::openSync(path.nativePath()); }
+    static openSync(path: const Path&, options: int, timeout: const Duration&) : FileChannel {
+        return FileChannel::openSync(path.nativePath(), options, timeout);
     }
 
-    /**
-     * Open a file channel for reading from a Path.
-     *
-     * @param path Location to open.
-     * @return A newly allocated open channel.
-     */
-    static open(path: const Path&) : FileChannel! {
-        return FileChannel::open(path, OPEN_READ);
-    }
-
-    /**
-     * Open a file channel for reading from a character pointer.
-     *
-     * @param path Location to open.
-     * @return A newly allocated open channel.
-     */
-    static open(path: const char*) : FileChannel! {
-        return FileChannel::open(path, OPEN_READ);
-    }
-
-    // ── Channel ──────────────────────────────────────────────────────────
-
-    override const isOpen() : bool {
-        if (_native == null) {
-            return false;
-        }
-        return __k_async_is_open(_native) != 0;
-    }
-
-    override close() : void {
-        if (_native != null) {
-            __k_async_close(_native);
-            __k_async_release(_native);
-            _native = null;
-        }
-    }
-
-    /**
-     * Return the native file descriptor backing this channel.
-     *
-     * @return The descriptor, or -1 when the channel is closed.
-     */
-    const nativeDescriptor() : int {
-        if (_native == null) {
-            return -1;
-        }
-        return __k_async_fd(_native);
-    }
-
-    // ── Position ─────────────────────────────────────────────────────────
-
-    /** @return The channel's own file position. */
-    const position() : long {
-        return _position;
-    }
-
-    /**
-     * Move the channel's own file position.
-     *
-     * @param newPosition Byte offset from the start of the file.
-     * @return This channel.
-     */
+    override const isOpen() : bool { return __k_io_handle_is_open(_native) != 0; }
+    const nativeDescriptor() : int { return __k_io_handle_fd(_native); }
+    const position() : long { return __k_io_handle_position(_native); }
+    /** Setting the cursor while implicit requests are queued raises BufferInUseException. */
     position(newPosition: long) : FileChannel& {
-        _position = newPosition;
+        rc : int = __k_io_handle_set_position(_native, newPosition);
+        if (rc == -16) throw BufferInUseException(16);
+        if (rc == -9) throw ClosedChannelException(9);
+        if (rc != 0) throw IllegalArgumentException();
         return this;
     }
 
-    /**
-     * Return the current size of the file.
-     *
-     * @return Size in bytes.
-     */
-    const size() : long {
-        if (_native == null) {
-            throw ClosedChannelException();
-        }
-        n : long = __k_async_size(_native);
-        if (n < 0L) {
-            throw IOException(0);
-        }
-        return n;
+    override close(completion: IoCompletion<IoDone>, executor: ExecutorLease&) : IoOperation! {
+        return doneOperation(7, 0L, IO_NO_TIMEOUT, completion, executor);
     }
+    override close(completion: IoCompletion<IoDone>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return close(completion, *executor);
+    }
+    override closeAsync() : Future<IoDone>! { return doneAsync(7, 0L, IO_NO_TIMEOUT); }
+    override closeSync() { doneSync(7, 0L, IO_NO_TIMEOUT); }
 
-    /**
-     * Truncate or extend the file.
-     *
-     * @param newSize Requested size in bytes.
-     * @return This channel.
-     */
-    truncate(newSize: long) : FileChannel& {
-        if (_native == null) {
-            throw ClosedChannelException();
-        }
-        rc : int = __k_async_truncate(_native, newSize);
-        if (rc != 0) {
-            throw IOException(rc);
-        }
-        if (_position > newSize) {
-            _position = newSize;
-        }
+    const size(timeoutNanos: long, completion: IoCompletion<long>, executor: ExecutorLease&) : IoOperation! {
+        operation : IoOperation! = prepareSize(completion, executor);
+        submitOperation(*operation, timeoutNanos);
+        return operation;
+    }
+    const size(completion: IoCompletion<long>, executor: ExecutorLease&) : IoOperation! {
+        return size(IO_NO_TIMEOUT, completion, executor);
+    }
+    const size(completion: IoCompletion<long>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return size(completion, *executor);
+    }
+    const size(timeout: const Duration&, completion: IoCompletion<long>, executor: ExecutorLease&) : IoOperation! {
+        return size(timeout.toNanos(), completion, executor);
+    }
+    const size(timeoutNanos: long, completion: IoCompletion<long>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return size(timeoutNanos, completion, *executor);
+    }
+    const size(timeout: const Duration&, completion: IoCompletion<long>) : IoOperation! {
+        return size(timeout.toNanos(), completion);
+    }
+    const sizeAsync(timeoutNanos: long) : Future<long>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        operation : IoOperation! = prepareSize(null, *executor);
+        future : Future<long>! = futureFor<long>(*operation, FileChannel::decodeSize);
+        submitOperation(*operation, timeoutNanos);
+        return future;
+    }
+    const sizeAsync() : Future<long>! { return sizeAsync(IO_NO_TIMEOUT); }
+    const sizeAsync(timeout: const Duration&) : Future<long>! { return sizeAsync(timeout.toNanos()); }
+    const sizeSync(timeoutNanos: long) : long {
+        checkIoSyncThread();
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        operation : IoOperation! = prepareSize(null, *executor);
+        future : Future<long>! = futureFor<long>(*operation, FileChannel::decodeSize);
+        submitOperation(*operation, timeoutNanos);
+        return getIoSync<long>(*future, *operation);
+    }
+    const sizeSync() : long { return sizeSync(IO_NO_TIMEOUT); }
+    const sizeSync(timeout: const Duration&) : long { return sizeSync(timeout.toNanos()); }
+
+    truncate(newSize: long, timeoutNanos: long, completion: IoCompletion<IoDone>,
+        executor: ExecutorLease&) : IoOperation! {
+        return doneOperation(13, newSize, timeoutNanos, completion, executor);
+    }
+    truncate(newSize: long, completion: IoCompletion<IoDone>, executor: ExecutorLease&) : IoOperation! {
+        return truncate(newSize, IO_NO_TIMEOUT, completion, executor);
+    }
+    truncate(newSize: long, completion: IoCompletion<IoDone>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return truncate(newSize, completion, *executor);
+    }
+    truncate(newSize: long, timeout: const Duration&, completion: IoCompletion<IoDone>,
+        executor: ExecutorLease&) : IoOperation! {
+        return truncate(newSize, timeout.toNanos(), completion, executor);
+    }
+    truncate(newSize: long, timeoutNanos: long, completion: IoCompletion<IoDone>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return truncate(newSize, timeoutNanos, completion, *executor);
+    }
+    truncate(newSize: long, timeout: const Duration&, completion: IoCompletion<IoDone>) : IoOperation! {
+        return truncate(newSize, timeout.toNanos(), completion);
+    }
+    truncateAsync(newSize: long, timeoutNanos: long) : Future<IoDone>! {
+        return doneAsync(13, newSize, timeoutNanos);
+    }
+    truncateAsync(newSize: long) : Future<IoDone>! { return truncateAsync(newSize, IO_NO_TIMEOUT); }
+    truncateAsync(newSize: long, timeout: const Duration&) : Future<IoDone>! {
+        return truncateAsync(newSize, timeout.toNanos());
+    }
+    truncateSync(newSize: long, timeoutNanos: long) : FileChannel& {
+        doneSync(13, newSize, timeoutNanos);
         return this;
     }
-
-    /**
-     * Flush every pending write to stable storage.
-     * Blocks interruptibly until the platform reports completion.
-     */
-    force() : void {
-        if (_native == null) {
-            throw ClosedChannelException();
-        }
-        rc : long = __k_async_fsync(_native, IO_NO_TIMEOUT);
-        FileChannel::checkResult(rc, 0L);
+    truncateSync(newSize: long) : FileChannel& { return truncateSync(newSize, IO_NO_TIMEOUT); }
+    truncateSync(newSize: long, timeout: const Duration&) : FileChannel& {
+        return truncateSync(newSize, timeout.toNanos());
     }
 
-    // ── Reading ──────────────────────────────────────────────────────────
+    force(timeoutNanos: long, completion: IoCompletion<IoDone>, executor: ExecutorLease&) : IoOperation! {
+        return doneOperation(12, 0L, timeoutNanos, completion, executor);
+    }
+    force(completion: IoCompletion<IoDone>, executor: ExecutorLease&) : IoOperation! {
+        return force(IO_NO_TIMEOUT, completion, executor);
+    }
+    force(completion: IoCompletion<IoDone>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return force(completion, *executor);
+    }
+    force(timeout: const Duration&, completion: IoCompletion<IoDone>, executor: ExecutorLease&) : IoOperation! {
+        return force(timeout.toNanos(), completion, executor);
+    }
+    force(timeoutNanos: long, completion: IoCompletion<IoDone>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return force(timeoutNanos, completion, *executor);
+    }
+    force(timeout: const Duration&, completion: IoCompletion<IoDone>) : IoOperation! {
+        return force(timeout.toNanos(), completion);
+    }
+    forceAsync(timeoutNanos: long) : Future<IoDone>! { return doneAsync(12, 0L, timeoutNanos); }
+    forceAsync() : Future<IoDone>! { return forceAsync(IO_NO_TIMEOUT); }
+    forceAsync(timeout: const Duration&) : Future<IoDone>! { return forceAsync(timeout.toNanos()); }
+    forceSync(timeoutNanos: long) { doneSync(12, 0L, timeoutNanos); }
+    forceSync() { forceSync(IO_NO_TIMEOUT); }
+    forceSync(timeout: const Duration&) { forceSync(timeout.toNanos()); }
 
-    /**
-     * Read into the remaining space of `dst` at an explicit file offset,
-     * without touching the channel position.
-     *
-     * @param dst Destination buffer.
-     * @param position Byte offset to read from.
-     * @param timeoutNanos Deadline in nanoseconds, or IO_NO_TIMEOUT.
-     * @return The number of bytes read; 0 at end of stream.
-     */
-    read(dst: ByteBuffer+, position: long, timeoutNanos: long) : int {
-        if (_native == null) {
-            throw ClosedChannelException();
-        }
-        len : unsigned int = dst->remaining();
-        if (len == 0u) {
-            return 0;
-        }
-        rc : long = __k_async_read_bytes(_native, dst->dataAt(dst->position()),
-                                         (int) len, position, timeoutNanos);
-        FileChannel::checkResult(rc, 0L);
-        n : int = (int) rc;
-        dst->position(dst->position() + (unsigned int) n);
-        return n;
+    read(dst: ByteBuffer+, offset: long, timeoutNanos: long,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return transfer(1, dst, offset, false, timeoutNanos, completion, executor);
+    }
+    read(dst: ByteBuffer+, offset: long, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return read(dst, offset, IO_NO_TIMEOUT, completion, executor);
+    }
+    read(dst: ByteBuffer+, offset: long, completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return read(dst, offset, completion, *executor);
+    }
+    read(dst: ByteBuffer+, offset: long, timeout: const Duration&,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return read(dst, offset, timeout.toNanos(), completion, executor);
+    }
+    read(dst: ByteBuffer+, timeout: const Duration&, completion: IoCompletion<int>,
+        executor: ExecutorLease&) : IoOperation! {
+        return transfer(1, dst, 0L, true, timeout.toNanos(), completion, executor);
+    }
+    read(dst: ByteBuffer+, timeout: const Duration&, completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return read(dst, timeout, completion, *executor);
+    }
+    read(dst: ByteBuffer+, offset: long, timeoutNanos: long, completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return read(dst, offset, timeoutNanos, completion, *executor);
+    }
+    read(dst: ByteBuffer+, offset: long, timeout: const Duration&, completion: IoCompletion<int>) : IoOperation! {
+        return read(dst, offset, timeout.toNanos(), completion);
+    }
+    override read(dst: ByteBuffer+, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return transfer(1, dst, 0L, true, IO_NO_TIMEOUT, completion, executor);
+    }
+    override read(dst: ByteBuffer+, completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return read(dst, completion, *executor);
+    }
+    readAsync(dst: ByteBuffer+, offset: long, timeoutNanos: long, executor: ExecutorLease&) : Future<int>! {
+        return transferAsync(1, dst, offset, false, timeoutNanos, executor);
+    }
+    readAsync(dst: ByteBuffer+, offset: long, timeoutNanos: long) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return readAsync(dst, offset, timeoutNanos, *executor);
+    }
+    readAsync(dst: ByteBuffer+, offset: long) : Future<int>! { return readAsync(dst, offset, IO_NO_TIMEOUT); }
+    readAsync(dst: ByteBuffer+, offset: long, timeout: const Duration&) : Future<int>! {
+        return readAsync(dst, offset, timeout.toNanos());
+    }
+    readAsync(dst: ByteBuffer+, timeout: const Duration&) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return transferAsync(1, dst, 0L, true, timeout.toNanos(), *executor);
+    }
+    override readAsync(dst: ByteBuffer+) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return transferAsync(1, dst, 0L, true, IO_NO_TIMEOUT, *executor);
+    }
+    readSync(dst: ByteBuffer+, offset: long, timeoutNanos: long) : int {
+        return transferSync(1, dst, offset, false, timeoutNanos);
+    }
+    readSync(dst: ByteBuffer+, offset: long) : int { return readSync(dst, offset, IO_NO_TIMEOUT); }
+    readSync(dst: ByteBuffer+, offset: long, timeout: const Duration&) : int {
+        return readSync(dst, offset, timeout.toNanos());
+    }
+    readSync(dst: ByteBuffer+, timeout: const Duration&) : int {
+        return transferSync(1, dst, 0L, true, timeout.toNanos());
+    }
+    override readSync(dst: ByteBuffer+) : int { return transferSync(1, dst, 0L, true, IO_NO_TIMEOUT); }
+
+    write(src: ByteBuffer+, offset: long, timeoutNanos: long,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return transfer(2, src, offset, false, timeoutNanos, completion, executor);
+    }
+    write(src: ByteBuffer+, offset: long, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return write(src, offset, IO_NO_TIMEOUT, completion, executor);
+    }
+    write(src: ByteBuffer+, offset: long, completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return write(src, offset, completion, *executor);
+    }
+    write(src: ByteBuffer+, offset: long, timeout: const Duration&,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return write(src, offset, timeout.toNanos(), completion, executor);
+    }
+    write(src: ByteBuffer+, timeout: const Duration&, completion: IoCompletion<int>,
+        executor: ExecutorLease&) : IoOperation! {
+        return transfer(2, src, 0L, true, timeout.toNanos(), completion, executor);
+    }
+    write(src: ByteBuffer+, timeout: const Duration&, completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return write(src, timeout, completion, *executor);
+    }
+    write(src: ByteBuffer+, offset: long, timeoutNanos: long, completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return write(src, offset, timeoutNanos, completion, *executor);
+    }
+    write(src: ByteBuffer+, offset: long, timeout: const Duration&, completion: IoCompletion<int>) : IoOperation! {
+        return write(src, offset, timeout.toNanos(), completion);
+    }
+    override write(src: ByteBuffer+, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return transfer(2, src, 0L, true, IO_NO_TIMEOUT, completion, executor);
+    }
+    override write(src: ByteBuffer+, completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return write(src, completion, *executor);
+    }
+    writeAsync(src: ByteBuffer+, offset: long, timeoutNanos: long, executor: ExecutorLease&) : Future<int>! {
+        return transferAsync(2, src, offset, false, timeoutNanos, executor);
+    }
+    writeAsync(src: ByteBuffer+, offset: long, timeoutNanos: long) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return writeAsync(src, offset, timeoutNanos, *executor);
+    }
+    writeAsync(src: ByteBuffer+, offset: long) : Future<int>! { return writeAsync(src, offset, IO_NO_TIMEOUT); }
+    writeAsync(src: ByteBuffer+, offset: long, timeout: const Duration&) : Future<int>! {
+        return writeAsync(src, offset, timeout.toNanos());
+    }
+    writeAsync(src: ByteBuffer+, timeout: const Duration&) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return transferAsync(2, src, 0L, true, timeout.toNanos(), *executor);
+    }
+    override writeAsync(src: ByteBuffer+) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return transferAsync(2, src, 0L, true, IO_NO_TIMEOUT, *executor);
+    }
+    writeSync(src: ByteBuffer+, offset: long, timeoutNanos: long) : int {
+        return transferSync(2, src, offset, false, timeoutNanos);
+    }
+    writeSync(src: ByteBuffer+, offset: long) : int { return writeSync(src, offset, IO_NO_TIMEOUT); }
+    writeSync(src: ByteBuffer+, offset: long, timeout: const Duration&) : int {
+        return writeSync(src, offset, timeout.toNanos());
+    }
+    writeSync(src: ByteBuffer+, timeout: const Duration&) : int {
+        return transferSync(2, src, 0L, true, timeout.toNanos());
+    }
+    override writeSync(src: ByteBuffer+) : int { return transferSync(2, src, 0L, true, IO_NO_TIMEOUT); }
+
+    /** Composite transfers retain one native lease and one implicit FIFO slot. */
+    readFully(dst: ByteBuffer+, offset: long, timeoutNanos: long,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return fullyTransfer(1, dst, offset, false, timeoutNanos, completion, executor);
+    }
+    readFully(dst: ByteBuffer+, offset: long, completion: IoCompletion<int>,
+        executor: ExecutorLease&) : IoOperation! {
+        return readFully(dst, offset, IO_NO_TIMEOUT, completion, executor);
+    }
+    readFully(dst: ByteBuffer+, offset: long, timeout: const Duration&,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return readFully(dst, offset, timeout.toNanos(), completion, executor);
+    }
+    readFully(dst: ByteBuffer+, offset: long, timeoutNanos: long,
+        completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return readFully(dst, offset, timeoutNanos, completion, *executor);
+    }
+    readFully(dst: ByteBuffer+, offset: long, completion: IoCompletion<int>) : IoOperation! {
+        return readFully(dst, offset, IO_NO_TIMEOUT, completion);
+    }
+    readFully(dst: ByteBuffer+, offset: long, timeout: const Duration&,
+        completion: IoCompletion<int>) : IoOperation! {
+        return readFully(dst, offset, timeout.toNanos(), completion);
+    }
+    readFully(dst: ByteBuffer+, completion: IoCompletion<int>, timeoutNanos: long,
+        executor: ExecutorLease&) : IoOperation! {
+        return fullyTransfer(1, dst, 0L, true, timeoutNanos, completion, executor);
+    }
+    readFully(dst: ByteBuffer+, completion: IoCompletion<int>, timeoutNanos: long) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return readFully(dst, completion, timeoutNanos, *executor);
+    }
+    readFully(dst: ByteBuffer+, timeout: const Duration&, completion: IoCompletion<int>,
+        executor: ExecutorLease&) : IoOperation! {
+        return readFully(dst, completion, timeout.toNanos(), executor);
+    }
+    readFully(dst: ByteBuffer+, timeout: const Duration&, completion: IoCompletion<int>) : IoOperation! {
+        return readFully(dst, completion, timeout.toNanos());
+    }
+    readFully(dst: ByteBuffer+, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return readFully(dst, completion, IO_NO_TIMEOUT, executor);
+    }
+    readFully(dst: ByteBuffer+, completion: IoCompletion<int>) : IoOperation! {
+        return readFully(dst, completion, IO_NO_TIMEOUT);
+    }
+    readFullyAsync(dst: ByteBuffer+, offset: long, timeoutNanos: long,
+        executor: ExecutorLease&) : Future<int>! {
+        return fullyAsync(1, dst, offset, false, timeoutNanos, executor);
+    }
+    readFullyAsync(dst: ByteBuffer+, offset: long, timeoutNanos: long) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return readFullyAsync(dst, offset, timeoutNanos, *executor);
+    }
+    readFullyAsync(dst: ByteBuffer+, offset: long) : Future<int>! {
+        return readFullyAsync(dst, offset, IO_NO_TIMEOUT);
+    }
+    readFullyAsync(dst: ByteBuffer+, offset: long, executor: ExecutorLease&) : Future<int>! {
+        return readFullyAsync(dst, offset, IO_NO_TIMEOUT, executor);
+    }
+    readFullyAsync(dst: ByteBuffer+, offset: long, timeout: const Duration&,
+        executor: ExecutorLease&) : Future<int>! {
+        return readFullyAsync(dst, offset, timeout.toNanos(), executor);
+    }
+    readFullyAsync(dst: ByteBuffer+, offset: long, timeout: const Duration&) : Future<int>! {
+        return readFullyAsync(dst, offset, timeout.toNanos());
+    }
+    readFullyAsync(dst: ByteBuffer+, executor: ExecutorLease&, timeoutNanos: long) : Future<int>! {
+        return fullyAsync(1, dst, 0L, true, timeoutNanos, executor);
+    }
+    readFullyAsyncWithTimeout(dst: ByteBuffer+, timeoutNanos: long) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return readFullyAsync(dst, *executor, timeoutNanos);
+    }
+    readFullyAsync(dst: ByteBuffer+, timeout: const Duration&, executor: ExecutorLease&) : Future<int>! {
+        return readFullyAsync(dst, executor, timeout.toNanos());
+    }
+    readFullyAsync(dst: ByteBuffer+, timeout: const Duration&) : Future<int>! {
+        return readFullyAsyncWithTimeout(dst, timeout.toNanos());
+    }
+    readFullyAsync(dst: ByteBuffer+, executor: ExecutorLease&) : Future<int>! {
+        return readFullyAsync(dst, executor, IO_NO_TIMEOUT);
+    }
+    readFullyAsync(dst: ByteBuffer+) : Future<int>! {
+        return readFullyAsyncWithTimeout(dst, IO_NO_TIMEOUT);
+    }
+    readFullySync(dst: ByteBuffer+, offset: long, timeoutNanos: long) : int {
+        return fullySync(1, dst, offset, false, timeoutNanos);
+    }
+    readFullySync(dst: ByteBuffer+, offset: long) : int {
+        return readFullySync(dst, offset, IO_NO_TIMEOUT);
+    }
+    readFullySync(dst: ByteBuffer+, offset: long, timeout: const Duration&) : int {
+        return readFullySync(dst, offset, timeout.toNanos());
+    }
+    readFullySyncWithTimeout(dst: ByteBuffer+, timeoutNanos: long) : int {
+        return fullySync(1, dst, 0L, true, timeoutNanos);
+    }
+    readFullySync(dst: ByteBuffer+, timeout: const Duration&) : int {
+        return readFullySyncWithTimeout(dst, timeout.toNanos());
+    }
+    readFullySync(dst: ByteBuffer+) : int {
+        return readFullySyncWithTimeout(dst, IO_NO_TIMEOUT);
     }
 
-    /**
-     * Read into the remaining space of `dst` at an explicit file offset.
-     *
-     * @param dst Destination buffer.
-     * @param position Byte offset to read from.
-     * @return The number of bytes read; 0 at end of stream.
-     */
-    read(dst: ByteBuffer+, position: long) : int {
-        return read(dst, position, IO_NO_TIMEOUT);
+    writeFully(src: ByteBuffer+, offset: long, timeoutNanos: long,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return fullyTransfer(2, src, offset, false, timeoutNanos, completion, executor);
+    }
+    writeFully(src: ByteBuffer+, offset: long, completion: IoCompletion<int>,
+        executor: ExecutorLease&) : IoOperation! {
+        return writeFully(src, offset, IO_NO_TIMEOUT, completion, executor);
+    }
+    writeFully(src: ByteBuffer+, offset: long, timeout: const Duration&,
+        completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return writeFully(src, offset, timeout.toNanos(), completion, executor);
+    }
+    writeFully(src: ByteBuffer+, offset: long, timeoutNanos: long,
+        completion: IoCompletion<int>) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return writeFully(src, offset, timeoutNanos, completion, *executor);
+    }
+    writeFully(src: ByteBuffer+, offset: long, completion: IoCompletion<int>) : IoOperation! {
+        return writeFully(src, offset, IO_NO_TIMEOUT, completion);
+    }
+    writeFully(src: ByteBuffer+, offset: long, timeout: const Duration&,
+        completion: IoCompletion<int>) : IoOperation! {
+        return writeFully(src, offset, timeout.toNanos(), completion);
+    }
+    writeFully(src: ByteBuffer+, completion: IoCompletion<int>, timeoutNanos: long,
+        executor: ExecutorLease&) : IoOperation! {
+        return fullyTransfer(2, src, 0L, true, timeoutNanos, completion, executor);
+    }
+    writeFully(src: ByteBuffer+, completion: IoCompletion<int>, timeoutNanos: long) : IoOperation! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return writeFully(src, completion, timeoutNanos, *executor);
+    }
+    writeFully(src: ByteBuffer+, timeout: const Duration&, completion: IoCompletion<int>,
+        executor: ExecutorLease&) : IoOperation! {
+        return writeFully(src, completion, timeout.toNanos(), executor);
+    }
+    writeFully(src: ByteBuffer+, timeout: const Duration&, completion: IoCompletion<int>) : IoOperation! {
+        return writeFully(src, completion, timeout.toNanos());
+    }
+    writeFully(src: ByteBuffer+, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
+        return writeFully(src, completion, IO_NO_TIMEOUT, executor);
+    }
+    writeFully(src: ByteBuffer+, completion: IoCompletion<int>) : IoOperation! {
+        return writeFully(src, completion, IO_NO_TIMEOUT);
+    }
+    writeFullyAsync(src: ByteBuffer+, offset: long, timeoutNanos: long,
+        executor: ExecutorLease&) : Future<int>! {
+        return fullyAsync(2, src, offset, false, timeoutNanos, executor);
+    }
+    writeFullyAsync(src: ByteBuffer+, offset: long, timeoutNanos: long) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return writeFullyAsync(src, offset, timeoutNanos, *executor);
+    }
+    writeFullyAsync(src: ByteBuffer+, offset: long) : Future<int>! {
+        return writeFullyAsync(src, offset, IO_NO_TIMEOUT);
+    }
+    writeFullyAsync(src: ByteBuffer+, offset: long, executor: ExecutorLease&) : Future<int>! {
+        return writeFullyAsync(src, offset, IO_NO_TIMEOUT, executor);
+    }
+    writeFullyAsync(src: ByteBuffer+, offset: long, timeout: const Duration&,
+        executor: ExecutorLease&) : Future<int>! {
+        return writeFullyAsync(src, offset, timeout.toNanos(), executor);
+    }
+    writeFullyAsync(src: ByteBuffer+, offset: long, timeout: const Duration&) : Future<int>! {
+        return writeFullyAsync(src, offset, timeout.toNanos());
+    }
+    writeFullyAsync(src: ByteBuffer+, executor: ExecutorLease&, timeoutNanos: long) : Future<int>! {
+        return fullyAsync(2, src, 0L, true, timeoutNanos, executor);
+    }
+    writeFullyAsyncWithTimeout(src: ByteBuffer+, timeoutNanos: long) : Future<int>! {
+        executor : ExecutorLease! = FileChannel::defaultExecutor();
+        return writeFullyAsync(src, *executor, timeoutNanos);
+    }
+    writeFullyAsync(src: ByteBuffer+, timeout: const Duration&, executor: ExecutorLease&) : Future<int>! {
+        return writeFullyAsync(src, executor, timeout.toNanos());
+    }
+    writeFullyAsync(src: ByteBuffer+, timeout: const Duration&) : Future<int>! {
+        return writeFullyAsyncWithTimeout(src, timeout.toNanos());
+    }
+    writeFullyAsync(src: ByteBuffer+, executor: ExecutorLease&) : Future<int>! {
+        return writeFullyAsync(src, executor, IO_NO_TIMEOUT);
+    }
+    writeFullyAsync(src: ByteBuffer+) : Future<int>! {
+        return writeFullyAsyncWithTimeout(src, IO_NO_TIMEOUT);
+    }
+    writeFullySync(src: ByteBuffer+, offset: long, timeoutNanos: long) : int {
+        return fullySync(2, src, offset, false, timeoutNanos);
+    }
+    writeFullySync(src: ByteBuffer+, offset: long) : int {
+        return writeFullySync(src, offset, IO_NO_TIMEOUT);
+    }
+    writeFullySync(src: ByteBuffer+, offset: long, timeout: const Duration&) : int {
+        return writeFullySync(src, offset, timeout.toNanos());
+    }
+    writeFullySyncWithTimeout(src: ByteBuffer+, timeoutNanos: long) : int {
+        return fullySync(2, src, 0L, true, timeoutNanos);
+    }
+    writeFullySync(src: ByteBuffer+, timeout: const Duration&) : int {
+        return writeFullySyncWithTimeout(src, timeout.toNanos());
+    }
+    writeFullySync(src: ByteBuffer+) : int {
+        return writeFullySyncWithTimeout(src, IO_NO_TIMEOUT);
     }
 
-    /**
-     * Read into the remaining space of `dst` at the channel position, then
-     * advance that position by the number of bytes read.
-     *
-     * @param dst Destination buffer.
-     * @return The number of bytes read; 0 at end of stream.
-     */
-    override read(dst: ByteBuffer+) : int {
-        n : int = read(dst, _position, IO_NO_TIMEOUT);
-        _position += (long) n;
-        return n;
+    /** Temporary primitive Sync aliases for existing channel migration users. */
+    static open(path: const char*, options: int) : FileChannel! {
+        value : FileChannel = FileChannel::openSync(path, options);
+        return new FileChannel(value);
     }
-
-    /**
-     * Fill the remaining space of `dst` entirely, issuing as many reads as
-     * needed.
-     *
-     * Raises ::k::io::EndOfStreamException when the file ends first, and
-     * ::k::io::InterruptedIOException when the thread is interrupted after
-     * some bytes have already been transferred.
-     *
-     * @param dst Destination buffer.
-     * @param position Byte offset to read from.
-     */
-    readFully(dst: ByteBuffer+, position: long) : void {
-        done : long = 0L;
-        while (dst->hasRemaining()) {
-            n : int = 0;
-            try {
-                n = read(dst, position + done, IO_NO_TIMEOUT);
-            } catch (e: ::k::ThreadInterruptionException&) {
-                if (done > 0L) {
-                    throw InterruptedIOException(done);
-                }
-                throw;
-            }
-            if (n == 0) {
-                throw EndOfStreamException(done);
-            }
-            done += (long) n;
-        }
+    static open(path: const char*) : FileChannel! { return FileChannel::open(path, OPEN_READ); }
+    static open(path: const Path&, options: int) : FileChannel! {
+        return FileChannel::open(path.nativePath(), options);
     }
+    static open(path: const Path&) : FileChannel! { return FileChannel::open(path, OPEN_READ); }
+    override close() { closeSync(); }
+    const size() : long { return sizeSync(); }
+    truncate(newSize: long) : FileChannel& { return truncateSync(newSize); }
+    force() { forceSync(); }
+    read(dst: ByteBuffer+, offset: long, timeoutNanos: long) : int { return readSync(dst, offset, timeoutNanos); }
+    read(dst: ByteBuffer+, offset: long) : int { return readSync(dst, offset); }
+    override read(dst: ByteBuffer+) : int { return readSync(dst); }
+    write(src: ByteBuffer+, offset: long, timeoutNanos: long) : int { return writeSync(src, offset, timeoutNanos); }
+    write(src: ByteBuffer+, offset: long) : int { return writeSync(src, offset); }
+    override write(src: ByteBuffer+) : int { return writeSync(src); }
 
-    // ── Writing ──────────────────────────────────────────────────────────
-
-    /**
-     * Write the remaining bytes of `src` at an explicit file offset, without
-     * touching the channel position.
-     *
-     * @param src Source buffer.
-     * @param position Byte offset to write at.
-     * @param timeoutNanos Deadline in nanoseconds, or IO_NO_TIMEOUT.
-     * @return The number of bytes written.
-     */
-    write(src: ByteBuffer+, position: long, timeoutNanos: long) : int {
-        if (_native == null) {
-            throw ClosedChannelException();
-        }
-        len : unsigned int = src->remaining();
-        if (len == 0u) {
-            return 0;
-        }
-        rc : long = __k_async_write_bytes(_native, src->dataAt(src->position()),
-                                          (int) len, position, timeoutNanos);
-        FileChannel::checkResult(rc, 0L);
-        n : int = (int) rc;
-        src->position(src->position() + (unsigned int) n);
-        return n;
-    }
-
-    /**
-     * Write the remaining bytes of `src` at an explicit file offset.
-     *
-     * @param src Source buffer.
-     * @param position Byte offset to write at.
-     * @return The number of bytes written.
-     */
-    write(src: ByteBuffer+, position: long) : int {
-        return write(src, position, IO_NO_TIMEOUT);
-    }
-
-    /**
-     * Write the remaining bytes of `src` at the channel position, then
-     * advance that position by the number of bytes written.
-     *
-     * @param src Source buffer.
-     * @return The number of bytes written.
-     */
-    override write(src: ByteBuffer+) : int {
-        n : int = write(src, _position, IO_NO_TIMEOUT);
-        _position += (long) n;
-        return n;
-    }
-
-    /**
-     * Write every remaining byte of `src`, issuing as many writes as needed.
-     *
-     * Raises ::k::io::InterruptedIOException when the thread is interrupted
-     * after some bytes have already been transferred.
-     *
-     * @param src Source buffer.
-     * @param position Byte offset to write at.
-     */
-    writeFully(src: ByteBuffer+, position: long) : void {
-        done : long = 0L;
-        while (src->hasRemaining()) {
-            n : int = 0;
-            try {
-                n = write(src, position + done, IO_NO_TIMEOUT);
-            } catch (e: ::k::ThreadInterruptionException&) {
-                if (done > 0L) {
-                    throw InterruptedIOException(done);
-                }
-                throw;
-            }
-            if (n == 0) {
-                throw IOException(0);
-            }
-            done += (long) n;
-        }
-    }
-
-    // ── Result decoding ──────────────────────────────────────────────────
-
-    /**
-     * Translate an encoded substrate result into the matching exception.
-     *
-     * @param rc Encoded result returned by the substrate.
-     * @param transferred Bytes already transferred by the caller, reported
-     *        when an interruption must be turned into an
-     *        ::k::io::InterruptedIOException.
-     */
-    static checkResult(rc: long, transferred: long) : void {
-        if (rc >= 0L) {
-            return;
-        }
-        if (rc == IO_INTERRUPTED) {
-            if (transferred > 0L) {
-                throw InterruptedIOException(transferred);
-            }
-            throw ::k::ThreadInterruptionException();
-        }
-        if (rc == IO_TIMEOUT) {
-            throw ::k::TimeoutException();
-        }
-        if (rc == IO_CLOSED) {
-            throw ClosedChannelException();
-        }
-        throw IOException((int) (IO_ERROR_BASE - rc));
-    }
-
-    /**
-     * Tell whether the asynchronous substrate uses the io_uring backend.
-     * When it does not, operations are neither interruptible nor cancellable.
-     *
-     * @return `true` when io_uring is in use.
-     */
-    static isAsyncBackendActive() : bool {
-        return __k_async_is_uring() != 0;
-    }
 }
-
-} // namespace io::file
+}

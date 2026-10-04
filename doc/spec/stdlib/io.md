@@ -18,8 +18,9 @@ explicit `import` statement is needed.
 For filesystem representation, traversal, manipulation and typed entries, see
 [Filesystem Infrastructure (`k::io::file`)](io-file.md).
 For interruptible, cancellable file I/O built on io_uring, see
-[Asynchronous I/O](io-async.md), which adds `ByteBuffer`, `FileChannel`
-and the `AsyncFileInputStream` / `AsyncFileOutputStream` adapters.
+[Asynchronous I/O](io-async.md), which adds `ByteBuffer` and FileChannel's
+callback/Future/Sync primitives and native fully transfers. Streams remain
+synchronous; the former async file stream adapters are removed.
 For interruptible TCP and Unix-domain networking (`NetworkAddress`,
 `SocketChannel`, `ServerSocket`, `DatagramSocket`), see
 [Asynchronous Network I/O](io-network.md).
@@ -809,4 +810,3 @@ main() : int {
     return 0;
 }
 ```
-
