@@ -23,18 +23,12 @@ find_package(Boost 1.74 REQUIRED
 include_directories(${Boost_INCLUDE_DIRS})
 
 # ── liburing (Linux asynchronous I/O backend for libk) ────────────────────────
-# Optional: when absent, libk's asynchronous I/O layer falls back to a
-# thread-blocking implementation built on plain POSIX syscalls.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    pkg_check_modules(LIBURING liburing)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Klang's I/O proactor currently requires Linux and liburing")
 endif()
-if(LIBURING_FOUND)
-    set(KLANG_HAVE_LIBURING ON)
-    message(STATUS "Found liburing ${LIBURING_VERSION} — libk async I/O uses io_uring")
-else()
-    set(KLANG_HAVE_LIBURING OFF)
-    message(STATUS "liburing not found — libk async I/O uses the POSIX fallback backend")
-endif()
+pkg_check_modules(LIBURING REQUIRED liburing>=2.5)
+set(KLANG_HAVE_LIBURING ON)
+message(STATUS "Found liburing ${LIBURING_VERSION} — libk async I/O uses io_uring")
 
 # ── ICU (Unicode & internationalisation backend for libk time/locale) ────────
 pkg_check_modules(ICU icu-uc icu-i18n)

@@ -360,7 +360,7 @@ add_custom_command(
 
 # ── Compile asynchronous I/O runtime (Phase 4) ───────────────────────────
 if(KLANG_HAVE_LIBURING)
-    set(ASYNC_C_FLAGS -DK_ASYNC_HAVE_URING=1)
+    set(ASYNC_C_FLAGS)
     foreach(_dir ${LIBURING_INCLUDE_DIRS})
         list(APPEND ASYNC_C_FLAGS -I${_dir})
     endforeach()
@@ -371,8 +371,7 @@ if(KLANG_HAVE_LIBURING)
     endforeach()
     list(APPEND LIBK_EXTRA_LINK_ARGS -l uring)
 else()
-    set(ASYNC_C_FLAGS -DK_ASYNC_HAVE_URING=0)
-    set(LIBK_EXTRA_LINK_ARGS)
+    message(FATAL_ERROR "The proactor runtime requires Linux and liburing >= 2.5")
 endif()
 
 set(PARK_LOT_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/park_lot.c)
@@ -390,35 +389,28 @@ add_custom_command(
     VERBATIM
 )
 
-set(ASYNC_IO_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_io.c)
-set(ASYNC_IO_OBJ ${LIBK_OUTPUT_DIR}/async_io.o)
+# ── Compile proactor io_uring substrate (Lot C & Lot E) ──────────────────
+set(IO_URING_BACKEND_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_uring_backend.c)
+set(IO_URING_BACKEND_OBJ ${LIBK_OUTPUT_DIR}/io_uring_backend.o)
 
 add_custom_command(
-    OUTPUT  ${ASYNC_IO_OBJ}
+    OUTPUT  ${IO_URING_BACKEND_OBJ}
     COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${ASYNC_C_FLAGS}
             -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
-            -o ${ASYNC_IO_OBJ} ${ASYNC_IO_C}
-    DEPENDS ${ASYNC_IO_C}
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_io.h
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/park_lot.h
-    COMMENT "Compiling K runtime asynchronous I/O substrate (async_io.c)"
+            -o ${IO_URING_BACKEND_OBJ} ${IO_URING_BACKEND_C}
+    DEPENDS ${IO_URING_BACKEND_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_backend.h
+    COMMENT "Compiling K runtime io_uring backend (io_uring_backend.c)"
     VERBATIM
 )
 
-set(ASYNC_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_ffi.c)
-set(ASYNC_FFI_OBJ ${LIBK_OUTPUT_DIR}/async_ffi.o)
 set(IO_OPERATION_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_operation.c)
 set(IO_OPERATION_OBJ ${LIBK_OUTPUT_DIR}/io_operation.o)
 
 add_custom_command(
-    OUTPUT  ${ASYNC_FFI_OBJ}
     OUTPUT  ${IO_OPERATION_OBJ}
     COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${ASYNC_C_FLAGS}
             -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
-            -o ${ASYNC_FFI_OBJ} ${ASYNC_FFI_C}
-    DEPENDS ${ASYNC_FFI_C}
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/async_io.h
-    COMMENT "Compiling K runtime asynchronous I/O FFI wrappers (async_ffi.c)"
             -o ${IO_OPERATION_OBJ} ${IO_OPERATION_C}
     DEPENDS ${IO_OPERATION_C}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_operation.h
@@ -432,15 +424,64 @@ add_custom_command(
 
 set(NETWORK_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/network_ffi.c)
 set(NETWORK_FFI_OBJ ${LIBK_OUTPUT_DIR}/network_ffi.o)
+set(IO_RESOLVER_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_resolver.c)
+set(IO_RESOLVER_OBJ ${LIBK_OUTPUT_DIR}/io_resolver.o)
 
 add_custom_command(
     OUTPUT  ${NETWORK_FFI_OBJ}
+    OUTPUT  ${IO_RESOLVER_OBJ}
     COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
             -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
             -o ${NETWORK_FFI_OBJ} ${NETWORK_FFI_C}
     DEPENDS ${NETWORK_FFI_C}
+            -o ${IO_RESOLVER_OBJ} ${IO_RESOLVER_C}
+    DEPENDS ${IO_RESOLVER_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_resolver.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_operation.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_runtime.h
+    COMMENT "Compiling K runtime io_resolver (io_resolver.c)"
+    VERBATIM
+)
+
+set(IO_RUNTIME_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_runtime.c)
+set(IO_RUNTIME_OBJ ${LIBK_OUTPUT_DIR}/io_runtime.o)
+
+add_custom_command(
+    OUTPUT  ${IO_RUNTIME_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${ASYNC_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${IO_RUNTIME_OBJ} ${IO_RUNTIME_C}
+    DEPENDS ${IO_RUNTIME_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_runtime.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_datagram_ffi.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_backend.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_operation.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_resolver.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
     COMMENT "Compiling K runtime network I/O FFI wrappers (network_ffi.c)"
+    COMMENT "Compiling K runtime io_runtime (io_runtime.c)"
+    VERBATIM
+)
+
+set(IO_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_ffi.c)
+set(IO_FFI_OBJ ${LIBK_OUTPUT_DIR}/io_ffi.o)
+
+add_custom_command(
+    OUTPUT  ${IO_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${ASYNC_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${IO_FFI_OBJ} ${IO_FFI_C}
+    DEPENDS ${IO_FFI_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_file_ffi.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_stream_ffi.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_datagram_ffi.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_runtime.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_operation.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_resolver.h
+    COMMENT "Compiling K runtime io_ffi wrappers (io_ffi.c)"
+    VERBATIM
+)
+
 set(IO_BUFFER_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_buffer.c)
 set(IO_BUFFER_OBJ ${LIBK_OUTPUT_DIR}/io_buffer.o)
 
@@ -477,6 +518,8 @@ add_custom_command(
     VERBATIM
 )
 # Header changes must rebuild every C object that shares these state layouts.
+foreach(_obj ${IO_URING_BACKEND_OBJ} ${IO_OPERATION_OBJ} ${IO_RESOLVER_OBJ}
+             ${IO_RUNTIME_OBJ} ${IO_FFI_OBJ} ${IO_BUFFER_OBJ})
     add_custom_command(OUTPUT ${_obj} APPEND DEPENDS ${LIBK_PROACTOR_HEADERS})
 endforeach()
 
@@ -632,11 +675,12 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${TIME_OBJ} ${RUNTIME_TLS_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
-                   ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}
                    ${NETWORK_FFI_OBJ}
+                   ${PARK_LOT_OBJ}
+                   ${IO_URING_BACKEND_OBJ} ${IO_OPERATION_OBJ} ${IO_RUNTIME_OBJ}
+                   ${IO_RESOLVER_OBJ} ${IO_FFI_OBJ}
                    ${IO_BUFFER_OBJ}
                    ${EXECUTOR_RUNTIME_OBJ}
-                   ${IO_OPERATION_OBJ}
                    ${APP_FFI_OBJ}
                    ${MODULE_FFI_OBJ}
                    ${UUID_FFI_OBJ}
@@ -775,6 +819,9 @@ libk_add_test(libk-tests-strings 120
 # ── libk proactor io_uring tests (Lot C & Lot E) ─────────────────────────────
 libk_add_test(libk-tests-io-proactor 120
     tests/test-io-operation-backend.cpp
+)
+libk_add_test(libk-tests-io-proactor-kernel 120
+    tests/test-io-proactor-kernel.cpp
 )
 libk_add_test(libk-tests-io-foundations-api 120
     tests/test-io-foundations-api.cpp

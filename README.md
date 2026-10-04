@@ -58,6 +58,7 @@ library builds, imports, linker paths, and external projects.
 
 Building Klang requires:
 
+- Linux and `liburing` 2.5 or newer
 - CMake 3.17 or newer
 - A C++20 compiler and a C/C++ linker toolchain
 - LLVM development files discoverable by CMake
@@ -65,8 +66,22 @@ Building Klang requires:
 - Catch2, nlohmann_json, fmt, and Boost (components: program_options, system,
   filesystem)
 
-On Linux, `liburing` is optional. When available, asynchronous I/O in `libk`
-uses `io_uring`; otherwise it uses the POSIX fallback.
+`liburing` is a required build dependency; configuration fails without it or
+on non-Linux platforms. Proactor initialization also checks the kernel's
+`io_uring` capabilities and reports unavailable required data-plane operations
+explicitly. Channel file and socket transport never falls back to blocking POSIX I/O.
+Optional metadata/control operations (`open`, `statx`, `fsync`, `ftruncate`)
+may instead use a bounded internal worker pool; this is not a transport fallback.
+
+File, TCP/Unix stream and UDP/Unix datagram channels provide callback, Future
+and Sync forms over the same proactor. Generic streams and synchronous file
+streams remain separate. See the [I/O reference](doc/spec/stdlib/io-async.md)
+and [network reference](doc/spec/stdlib/io-network.md), with examples in
+[`file_channel_fully.k`](samples/file_channel_fully.k),
+[`stream_channel_loopback.k`](samples/stream_channel_loopback.k) and
+[`datagram_loopback.k`](samples/datagram_loopback.k). Application exit drains
+I/O and callback cleanup before destroying Application fields on both normal
+return and unwinding.
 
 ## Documentation
 

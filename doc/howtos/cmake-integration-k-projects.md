@@ -12,6 +12,17 @@ For an external CMake project building K sources, assume that the Klang toolchai
 - **KDI inspection tool:** `kditool` is installed in `PATH` (e.g. `/usr/local/bin/kditool`).
 - **Standard runtime library:** `libk.so` and `libk.a` are in system library paths (e.g. `/usr/local/lib` or `/usr/lib`) or specified via `LD_LIBRARY_PATH`.
 - **Standard KDI descriptors:** `libk.kdi` and `k.kdi` are in system KDI paths (e.g. `/usr/local/lib/kdi`, `/usr/lib/kdi`) or discoverable via the `KLANG_LIB_PATH` environment variable.
+- **Proactor dependency:** Linux and `liburing` 2.5 or newer are mandatory.
+  Shared runtime linkage requires the liburing shared library at execution.
+  A consumer linking `libk.a` must also link liburing (`-l uring`) and the
+  other native runtime dependencies; an archive does not carry `DT_NEEDED`.
+
+These external examples assume a populated toolchain prefix, which may also
+be staged by manually copying `klangc`, `kditool`, `libk.so`, `libk.a`,
+`libk.kdi` and `k.kdi` from the build outputs. The repository has no CMake
+install rules; automated installation support is unchanged by the proactor
+migration, and `cmake --install` alone does not populate such a prefix.
+Build-tree paths below remain usable independently of packaging.
 
 If the toolchain is installed in a non-standard location (e.g. `/opt/klang`), ensure your environment points to it:
 ```bash
@@ -307,4 +318,3 @@ add_k_executable(myapp
 2. **Include `.o` files directly:** Use `klangc` to bundle pre-compiled C/C++ objects (`.o`) into K shared/static libraries or executables without separate linker invocations.
 3. **Link directory resolution:** Provide `-I <path_to_kdi>` and `-L <path_to_so_or_a>` so `klangc` can find both the interface metadata (`.kdi`) and the binary object code during import resolution.
 4. **Environment Variables:** In CI or containerized builds, set `KLANG_LIB_PATH` to simplify transitive `.kdi` lookups across submodules.
-

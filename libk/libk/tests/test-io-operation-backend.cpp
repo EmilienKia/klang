@@ -4,6 +4,8 @@
  */
 #include <catch2/catch_all.hpp>
 #include "../src/runtime/io_backend.h"
+#include "../src/runtime/callable_abi.h"
+#include "../src/runtime/io_file_ffi.h"
 #include <dlfcn.h>
 #include <atomic>
 #include <chrono>
@@ -489,6 +491,51 @@ TEST_CASE("Proactor mock: failed linked submission releases every registry CQE r
     rt.release(op);
 }
 
+TEST_CASE("Proactor mock: close returns before pending target CQEs and closes through backend",
+          "[libk][io][proactor][mock][close]") {
+    auto& rt = runtime();
+    auto handle_create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+    auto handle_release = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    auto submit_read = symbol<void* (*)(void*, void*, int, long long, long long,
+                                       void*, const Callback*, void*, void*)>(
+        rt.library, "__k_io_submit_read");
+    auto close_handle = symbol<void* (*)(void*, const Callback*, void*, void*)>(
+        rt.library, "__k_io_handle_close");
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    void* handle = handle_create(fd, 0);
+    char bytes[8];
+    void* read = submit_read(handle, bytes, 8, 0, -1, nullptr, nullptr, nullptr, nullptr);
+    REQUIRE(read);
+    const auto target = rt.mock->last().tag;
+    void* close_op = nullptr;
+    SECTION("Immediate native close") {
+        close_op = close_handle(handle, nullptr, nullptr, nullptr);
+    }
+    SECTION("Prepared close permits installing an internal publisher before submission") {
+        auto prepare = symbol<void* (*)(int, void*, void*, int, long long, int,
+            void*, KCallable, KCallable, void*)>(
+                rt.library, "__k_io_prepare_request");
+        close_op = prepare(K_IO_OP_CLOSE, handle, nullptr, 0, 0, 0,
+                           nullptr, KCallable{}, KCallable{}, nullptr);
+        REQUIRE(close_op);
+        REQUIRE(rt.submit(rt.get(), close_op, -1) == 0);
+    }
+    REQUIRE(close_op);
+    REQUIRE(rt.wait(close_op, 0) == ETIMEDOUT);
+    const auto submitted = rt.mock->request_count();
+    rt.mock->complete(target, -ECANCELED);
+    REQUIRE(rt.wait(read, 5000000000LL) == 0);
+    const auto close_request = rt.mock->request_after(submitted);
+    REQUIRE(close_request.opcode == K_IO_OP_CLOSE);
+    REQUIRE(close(fd) == 0); // the mock executes the fd effect before its CQE
+    rt.mock->complete(close_request.tag, 0);
+    REQUIRE(rt.wait(close_op, 5000000000LL) == 0);
+    rt.release(read);
+    rt.release(close_op);
+    handle_release(handle);
+}
+
 TEST_CASE("Proactor mock: mapped storage remains valid without sparse registration",
           "[libk][io][proactor][mock][mapped]") {
     auto& rt = runtime();
@@ -598,5 +645,447 @@ TEST_CASE("Future native: concurrent cancellation cannot bypass an extracted pro
     REQUIRE(state(future) == 1);
     REQUIRE(hook.drops == 1);
     destroy(future);
+}
+
+TEST_CASE("Proactor file: implicit FIFO advances actual bytes, not reservations",
+          "[libk][io][proactor][mock][file-primitives][position]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto implicit = symbol<decltype(&__k_io_op_set_implicit_position)>(
+        rt.library, "__k_io_op_set_implicit_position");
+    auto create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+    auto release_handle = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    auto position = symbol<decltype(&__k_io_handle_position)>(rt.library, "__k_io_handle_position");
+    auto set_position = symbol<decltype(&__k_io_handle_set_position)>(
+        rt.library, "__k_io_handle_set_position");
+    auto allocate = symbol<void* (*)(unsigned)>(rt.library, "__k_io_buffer_allocate");
+    auto release_buffer = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release");
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    void* handle = create(fd, 0);
+    void* buffers[3] = {allocate(8), allocate(8), allocate(8)};
+    void* operations[3]{};
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(buffers[i]);
+        operations[i] = prepare(K_IO_OP_READ, handle, buffers[i], 8,
+            i == 2 ? 100 : 0, 0, nullptr, KCallable{}, KCallable{}, nullptr);
+        REQUIRE(operations[i]);
+        if (i != 2) REQUIRE(implicit(operations[i]) == 0);
+        release_buffer(buffers[i]); // no K wrapper is retained by the operation
+    }
+    const auto count = rt.mock->request_count();
+    REQUIRE(submit(operations[0], -1) == 0);
+    REQUIRE(submit(operations[1], -1) == 0);
+    REQUIRE(rt.mock->request_count() == count + 1);
+    REQUIRE(set_position(handle, 12) == -EBUSY);
+    REQUIRE(submit(operations[2], -1) == 0);
+    auto first = rt.mock->request_after(count);
+    auto positional = rt.mock->request_after(count + 1);
+    REQUIRE(first.offset == 0);
+    REQUIRE(positional.offset == 100);
+    REQUIRE(rt.cancel(operations[0]));
+    static_cast<char*>(first.buf)[0] = 'a'; // kernel-owned storage survived wrapper destruction
+    rt.mock->complete(first.tag, 2); // cancellation cannot undo these two bytes
+    auto second = rt.mock->request_after(count + 2);
+    REQUIRE(second.offset == 2);
+    REQUIRE(position(handle) == 2);
+    REQUIRE(rt.wait(operations[0], 5000000000LL) == 0);
+    REQUIRE(rt.bytes(operations[0]) == 2);
+    REQUIRE(rt.stage(operations[0]) == 5);
+    rt.mock->complete(positional.tag, 7);
+    REQUIRE(rt.wait(operations[2], 5000000000LL) == 0);
+    REQUIRE(position(handle) == 2);
+    release_handle(handle); // requests, not a borrowed wrapper, own the descriptor
+    REQUIRE(fcntl(fd, F_GETFD) >= 0);
+    static_cast<char*>(second.buf)[0] = 'b';
+    rt.mock->complete(second.tag, 3);
+    REQUIRE(rt.wait(operations[1], 5000000000LL) == 0);
+    for (auto operation : operations) rt.release(operation);
+    REQUIRE(fcntl(fd, F_GETFD) == -1);
+}
+
+TEST_CASE("Proactor file: queued cancellation and truncate preserve FIFO cursor order",
+          "[libk][io][proactor][mock][file-primitives][cancel][truncate]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto implicit = symbol<decltype(&__k_io_op_set_implicit_position)>(
+        rt.library, "__k_io_op_set_implicit_position");
+    auto create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+    auto release = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    auto position = symbol<decltype(&__k_io_handle_position)>(rt.library, "__k_io_handle_position");
+    auto allocate = symbol<void* (*)(unsigned)>(rt.library, "__k_io_buffer_allocate");
+    auto release_buffer = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release");
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    void* handle = create(fd, 0);
+    std::vector<void*> operations;
+    for (int i = 0; i < 2; ++i) {
+        void* buffer = allocate(8);
+        REQUIRE(buffer);
+        void* op = prepare(K_IO_OP_READ, handle, buffer, 8, 0, 0,
+                           nullptr, KCallable{}, KCallable{}, nullptr);
+        REQUIRE(op);
+        REQUIRE(implicit(op) == 0);
+        release_buffer(buffer);
+        operations.push_back(op);
+    }
+    void* truncate = prepare(K_IO_OP_FTRUNCATE, handle, nullptr, 0, 1, 0,
+                            nullptr, KCallable{}, KCallable{}, nullptr);
+    REQUIRE(truncate);
+    const auto count = rt.mock->request_count();
+    REQUIRE(submit(operations[0], -1) == 0);
+    REQUIRE(submit(operations[1], -1) == 0);
+    REQUIRE(submit(truncate, -1) == 0);
+    REQUIRE(rt.cancel(operations[1]));
+    REQUIRE(rt.mock->request_count() == count + 1);
+    rt.mock->complete(rt.mock->request_after(count).tag, 4);
+    auto request = rt.mock->request_after(count + 1);
+    REQUIRE(request.opcode == K_IO_OP_FTRUNCATE); // cancelled waiter never submitted data I/O
+    REQUIRE(position(handle) == 4);
+    REQUIRE(rt.wait(operations[1], 5000000000LL) == 0);
+    REQUIRE(rt.bytes(operations[1]) == 0);
+    rt.mock->complete(request.tag, 0);
+    REQUIRE(rt.wait(truncate, 5000000000LL) == 0);
+    REQUIRE(position(handle) == 1);
+    for (auto op : operations) rt.release(op);
+    rt.release(truncate);
+    release(handle);
+}
+
+TEST_CASE("Proactor file: preparation errors publish only after installing continuation",
+          "[libk][io][proactor][mock][file-primitives][prepare]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto set_path = symbol<decltype(&__k_io_op_set_path)>(rt.library, "__k_io_op_set_path");
+    auto options = symbol<decltype(&__k_io_op_set_file_options)>(rt.library, "__k_io_op_set_file_options");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto continuation = symbol<int (*)(void*, const Callback*)>(
+        rt.library, "k_io_operation_set_continuation");
+    ManualExecutor executor;
+    struct Probe {
+        std::atomic<int> callbacks{0}, publications{0}, drops{0}, error{0};
+        std::thread::id caller = std::this_thread::get_id();
+        bool dropped_off_caller = false;
+        static void callback(void* ctx, void* result) {
+            auto& p = *static_cast<Probe*>(ctx);
+            p.error = static_cast<Result*>(result)->error;
+            ++p.callbacks;
+        }
+        static void publish(void* ctx, void* result) {
+            auto& p = *static_cast<Probe*>(ctx);
+            p.error = static_cast<Result*>(result)->error;
+            ++p.publications;
+        }
+        static void drop(void* ctx) {
+            auto& p = *static_cast<Probe*>(ctx);
+            p.dropped_off_caller = std::this_thread::get_id() != p.caller;
+            ++p.drops;
+        }
+    } probe;
+    int expected_error = EINVAL;
+    void* op = prepare(K_IO_OP_OPENAT, nullptr, nullptr, 0, 438, 0,
+        &probe, KCallable{reinterpret_cast<void*>(Probe::callback), nullptr},
+        KCallable{reinterpret_cast<void*>(Probe::drop), nullptr}, &executor.lease);
+    REQUIRE(op);
+    SECTION("Invalid Unicode") {
+        uint32_t path[] = {0xD800, 0};
+        expected_error = EILSEQ;
+        REQUIRE(set_path(op, path) == -EILSEQ);
+    }
+    SECTION("Null path") { REQUIRE(set_path(op, nullptr) == -EINVAL); }
+    SECTION("Exclusive requires create") { REQUIRE(options(op, 1 | 32) == -EINVAL); }
+    SECTION("Truncate requires write") { REQUIRE(options(op, 1 | 16) == -EINVAL); }
+    SECTION("Rejected executor still drops the callback on a dispatch worker") {
+        REQUIRE(options(op, 1 | 32) == -EINVAL);
+        executor.reject = true;
+    }
+    REQUIRE(probe.publications == 0);
+    REQUIRE(probe.callbacks == 0);
+    const auto count = rt.mock->request_count();
+    Callback publisher{&probe, Probe::publish, nullptr};
+    REQUIRE(continuation(op, &publisher) == 0);
+    REQUIRE(submit(op, -1) == -expected_error);
+    REQUIRE(probe.publications == 1);
+    REQUIRE(probe.error == expected_error);
+    REQUIRE(rt.mock->request_count() == count);
+    if (executor.reject) {
+        executor.wait_released();
+        REQUIRE(probe.callbacks == 0);
+        REQUIRE(probe.drops == 1);
+        REQUIRE(probe.dropped_off_caller);
+        REQUIRE(rt.stage(op) == 8);
+    } else {
+        Task task = executor.take();
+        task.run(task.context);
+        task.drop(task.context);
+        REQUIRE(probe.callbacks == 1);
+        REQUIRE(probe.drops == 1);
+        executor.wait_released();
+    }
+    rt.release(op);
+}
+
+TEST_CASE("Proactor file: bounded FIFO rejects excess and drains without recursive failures",
+          "[libk][io][proactor][mock][file-primitives][resource]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto implicit = symbol<decltype(&__k_io_op_set_implicit_position)>(
+        rt.library, "__k_io_op_set_implicit_position");
+    auto create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+    auto release = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    auto set_position = symbol<decltype(&__k_io_handle_set_position)>(
+        rt.library, "__k_io_handle_set_position");
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    void* handle = create(fd, 0);
+    std::vector<void*> operations;
+    const auto count = rt.mock->request_count();
+    for (int i = 0; i < 129; ++i) {
+        void* op = prepare(K_IO_OP_READ, handle, nullptr, 0, 0, 0,
+                          nullptr, KCallable{}, KCallable{}, nullptr);
+        REQUIRE(op);
+        REQUIRE(implicit(op) == 0);
+        REQUIRE(submit(op, -1) == (i == 128 ? -EBUSY : 0));
+        operations.push_back(op);
+    }
+    REQUIRE(rt.mock->request_count() == count + 1);
+    {
+        std::lock_guard lock(rt.mock->mutex);
+        rt.mock->reject = true;
+    }
+    rt.mock->complete(rt.mock->request_after(count).tag, 0);
+    REQUIRE(rt.wait(operations[127], 5000000000LL) == 0);
+    REQUIRE(set_position(handle, 9) == 0);
+    {
+        std::lock_guard lock(rt.mock->mutex);
+        rt.mock->reject = false;
+    }
+    for (auto op : operations) {
+        REQUIRE(rt.wait(op, 5000000000LL) == 0);
+        rt.release(op);
+    }
+    release(handle);
+}
+
+TEST_CASE("Proactor file: open copies paths and uncommitted values leave rollback ownership intact",
+          "[libk][io][proactor][mock][file-primitives][open][ownership]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto set_path = symbol<decltype(&__k_io_op_set_path)>(rt.library, "__k_io_op_set_path");
+    auto options = symbol<decltype(&__k_io_op_set_file_options)>(rt.library, "__k_io_op_set_file_options");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto create_value = symbol<decltype(&__k_io_file_handle_prepare)>(rt.library, "__k_io_file_handle_prepare");
+    auto release_handle = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    ManualExecutor executor;
+    Tracker tracker;
+    void* op = prepare(K_IO_OP_OPENAT, nullptr, nullptr, 0, 438, 0,
+        &tracker, KCallable{reinterpret_cast<void*>(Tracker::invoke), nullptr},
+        KCallable{reinterpret_cast<void*>(Tracker::drop), nullptr}, &executor.lease);
+    REQUIRE(op);
+    uint32_t path[] = {'f', 0x00E9, 0};
+    REQUIRE(set_path(op, path) == 0);
+    REQUIRE(options(op, 1 | 2 | 8 | 32) == 0);
+    path[0] = 'x'; // storage does not borrow the caller's UTF-32 path
+    REQUIRE(submit(op, -1) == 0);
+    auto request = rt.mock->last();
+    REQUIRE(std::string(static_cast<char*>(request.buf)) == "f\xc3\xa9");
+    REQUIRE((request.flags & O_ACCMODE) == O_RDWR);
+    REQUIRE((request.flags & (O_CREAT | O_EXCL | O_CLOEXEC)) == (O_CREAT | O_EXCL | O_CLOEXEC));
+    REQUIRE(request.offset == 438);
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    void* value = create_value(fd); // model an internal decode whose publication fails
+    REQUIRE(value);
+    release_handle(value);
+    REQUIRE(fcntl(fd, F_GETFD) >= 0);
+    REQUIRE(rt.cancel(op));
+    rt.mock->complete(request.tag, fd);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(fcntl(fd, F_GETFD) == -1); // operation alone rolled it back, exactly once
+    executor.wait_released();
+    REQUIRE(tracker.invokes == 0);
+    REQUIRE(tracker.drops == 1);
+    rt.release(op);
+}
+
+TEST_CASE("Proactor file: close drains queued implicit leases and concurrent close stays observable",
+          "[libk][io][proactor][mock][file-primitives][close]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto implicit = symbol<decltype(&__k_io_op_set_implicit_position)>(
+        rt.library, "__k_io_op_set_implicit_position");
+    auto create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+    auto release = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    auto position = symbol<decltype(&__k_io_handle_position)>(rt.library, "__k_io_handle_position");
+    auto error = symbol<int (*)(const void*)>(rt.library, "__k_io_op_error_code");
+    auto allocate = symbol<void* (*)(unsigned)>(rt.library, "__k_io_buffer_allocate");
+    auto release_buffer = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release");
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    void* handle = create(fd, 0);
+    REQUIRE(handle);
+    std::vector<void*> operations;
+    const auto count = rt.mock->request_count();
+    for (int i = 0; i < 2; ++i) {
+        void* buffer = allocate(4);
+        REQUIRE(buffer);
+        void* op = prepare(K_IO_OP_READ, handle, buffer, 4, 0, 0,
+                          nullptr, KCallable{}, KCallable{}, nullptr);
+        REQUIRE(op);
+        REQUIRE(implicit(op) == 0);
+        release_buffer(buffer);
+        REQUIRE(submit(op, -1) == 0);
+        operations.push_back(op);
+    }
+    void* close_op = prepare(K_IO_OP_CLOSE, handle, nullptr, 0, 0, 0,
+                            nullptr, KCallable{}, KCallable{}, nullptr);
+    REQUIRE(close_op);
+    REQUIRE(submit(close_op, -1) == 0);
+    REQUIRE(rt.wait(close_op, 0) == ETIMEDOUT);
+    void* second_close = prepare(K_IO_OP_CLOSE, handle, nullptr, 0, 0, 0,
+                                nullptr, KCallable{}, KCallable{}, nullptr);
+    REQUIRE(second_close);
+    REQUIRE(submit(second_close, -1) == 0);
+    REQUIRE(rt.wait(second_close, 0) == 0);
+    REQUIRE(error(second_close) == EBUSY);
+    REQUIRE(rt.mock->request_count() == count + 1);
+    rt.mock->complete(rt.mock->request_after(count).tag, 2);
+    auto close_request = rt.mock->request_after(count + 1);
+    REQUIRE(close_request.opcode == K_IO_OP_CLOSE);
+    REQUIRE(rt.wait(operations[1], 5000000000LL) == 0);
+    REQUIRE(position(handle) == 2);
+    REQUIRE(rt.stage(operations[0]) == 5);
+    REQUIRE(rt.stage(operations[1]) == 5);
+    REQUIRE(close(fd) == 0);
+    rt.mock->complete(close_request.tag, 0);
+    REQUIRE(rt.wait(close_op, 5000000000LL) == 0);
+    for (auto operation : operations) rt.release(operation);
+    rt.release(close_op);
+    rt.release(second_close);
+    release(handle);
+}
+
+TEST_CASE("Proactor file: a queued deadline expires without issuing a late data request",
+          "[libk][io][proactor][mock][file-primitives][timeout]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto implicit = symbol<decltype(&__k_io_op_set_implicit_position)>(
+        rt.library, "__k_io_op_set_implicit_position");
+    auto create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+    auto release = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    auto error = symbol<int (*)(const void*)>(rt.library, "__k_io_op_error_kind");
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    void* handle = create(fd, 0);
+    REQUIRE(handle);
+    void* operations[2]{};
+    const auto count = rt.mock->request_count();
+    for (int i = 0; i < 2; ++i) {
+        operations[i] = prepare(K_IO_OP_READ, handle, nullptr, 0, 0, 0,
+            nullptr, KCallable{}, KCallable{}, nullptr);
+        REQUIRE(operations[i]);
+        REQUIRE(implicit(operations[i]) == 0);
+        REQUIRE(submit(operations[i], i == 0 ? -1 : 1000000) == 0);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    rt.mock->complete(rt.mock->request_after(count).tag, 0);
+    REQUIRE(rt.wait(operations[1], 5000000000LL) == 0);
+    REQUIRE(error(operations[1]) == 3);
+    REQUIRE(rt.mock->request_count() == count + 1);
+    for (auto op : operations) rt.release(op);
+    release(handle);
+}
+
+TEST_CASE("Proactor file: prepared buffer failures are terminal operations with balanced leases",
+          "[libk][io][proactor][mock][file-primitives][buffer]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+    auto release = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    auto allocate = symbol<void* (*)(unsigned)>(rt.library, "__k_io_buffer_allocate");
+    auto map = symbol<void* (*)(const uint32_t*, int, int64_t, int64_t, int)>(
+        rt.library, "__k_io_buffer_map");
+    auto release_buffer = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release");
+    auto leases = symbol<unsigned (*)(const void*)>(rt.library, "__k_io_buffer_get_lease_count");
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    void* handle = create(fd, 0);
+    REQUIRE(handle);
+    void* buffer = nullptr;
+    void* held = nullptr;
+    int expected_error = EINVAL;
+    SECTION("Mapped read-only destination") {
+        buffer = map(nullptr, -1, 0, 4096, 0);
+        expected_error = EACCES;
+    }
+    SECTION("Overlapping prepared leases") {
+        buffer = allocate(8);
+        REQUIRE(buffer);
+        held = prepare(K_IO_OP_READ, handle, buffer, 8, 0, 0,
+                       nullptr, KCallable{}, KCallable{}, nullptr);
+        REQUIRE(held);
+        expected_error = EBUSY;
+    }
+    SECTION("Bounds beyond remaining") { buffer = allocate(4); }
+    REQUIRE(buffer);
+    const auto count = rt.mock->request_count();
+    void* op = prepare(K_IO_OP_READ, handle, buffer, 8, 0, 0,
+                      nullptr, KCallable{}, KCallable{}, nullptr);
+    REQUIRE(op);
+    REQUIRE(submit(op, -1) == -expected_error);
+    REQUIRE(rt.wait(op, 0) == 0);
+    REQUIRE(rt.mock->request_count() == count);
+    REQUIRE(leases(buffer) == (held ? 1 : 0));
+    if (held) {
+        REQUIRE(submit(held, -1) == 0);
+        rt.mock->complete(rt.mock->request_after(count).tag, 3);
+        REQUIRE(rt.wait(held, 5000000000LL) == 0);
+        REQUIRE(leases(buffer) == 0);
+        rt.release(held);
+    }
+    rt.release(op);
+    release_buffer(buffer);
+    release(handle);
+}
+
+TEST_CASE("Proactor file: repeated prepared submission cannot manufacture kernel quiescence",
+          "[libk][io][proactor][mock][file-primitives][prepare][lifetime]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+    auto release = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    auto allocate = symbol<void* (*)(unsigned)>(rt.library, "__k_io_buffer_allocate");
+    auto release_buffer = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release");
+    auto leases = symbol<unsigned (*)(const void*)>(rt.library, "__k_io_buffer_get_lease_count");
+    int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    void* handle = create(fd, 0);
+    REQUIRE(handle);
+    void* buffer = allocate(8);
+    REQUIRE(buffer);
+    void* op = prepare(K_IO_OP_READ, handle, buffer, 8, 0, 0,
+                      nullptr, KCallable{}, KCallable{}, nullptr);
+    REQUIRE(op);
+    const auto count = rt.mock->request_count();
+    REQUIRE(submit(op, -1) == 0);
+    auto target = rt.mock->request_after(count);
+    REQUIRE(submit(op, -1) == -EALREADY);
+    REQUIRE(rt.wait(op, 0) == ETIMEDOUT);
+    REQUIRE(leases(buffer) == 1);
+    REQUIRE(rt.mock->request_count() == count + 1);
+    rt.mock->complete(target.tag, 3);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(rt.bytes(op) == 3);
+    REQUIRE(leases(buffer) == 0);
+    rt.release(op);
+    release_buffer(buffer);
+    release(handle);
 }
 

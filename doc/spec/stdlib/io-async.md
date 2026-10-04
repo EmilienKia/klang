@@ -1,11 +1,13 @@
 # Asynchronous I/O — `k::io`
 
 > **Status:** Working Draft — 2026  
-> **Source:** `libk/libk/src/io/byte_buffer.k`, `channel.k`, `path.k`,
-> `file_channel.k`, `file_stream.k`, `io_exceptions.k`  
-> **Runtime:** `libk/libk/src/runtime/async_io.c`, `async_ffi.c`, `park_lot.c`
+> **Source:** `libk/libk/src/io/byte_buffer.k`, `mapped_byte_buffer.k`,
+> `channel.k`, `io_operation.k`, `io_result.k`, `file/file_channel.k`,
+> `socket_channel.k`, `server_socket.k`, `datagram_socket.k`
+> **Runtime:** `libk/libk/src/runtime/io_runtime.c`, `io_operation.c`,
+> `io_uring_backend.c`, `io_ffi.c`
 
-This document describes the asynchronous file I/O layer of the K standard
+This document describes the asynchronous channel I/O layer of the K standard
 library. It builds on the threading and synchronisation layers documented in
 [threading.md](threading.md) and [synchronization.md](synchronization.md), and
 complements the synchronous stream framework described in [io.md](io.md).
@@ -34,16 +36,22 @@ The layer separates native buffers and proactive channels from synchronous strea
 
 ### Platform backend
 
-On Linux the runtime uses a single process-wide **io_uring** instance served by
-a dedicated reaper thread. When `liburing` is not available at build time, the
-exact same API is provided by a synchronous POSIX fallback (`pread`/`pwrite`
-/`fsync`). `FileChannel` behaves identically either way; only latency under
-load differs.
+Building this layer requires Linux and `liburing` 2.5 or newer. A missing
+dependency is a configuration error, not a request to compile a POSIX fallback.
+The proactor uses a process-wide **io_uring** instance served by a dedicated
+completion thread and probes required kernel operations during initialization.
 
-The `FileChannel::isAsyncBackendActive()` helper reports which backend is
-currently active. It is useful for diagnostics only.
+File transfers must use the kernel data plane; there is no blocking POSIX
+read/write or socket transport fallback. Missing required operations fail runtime
+initialization explicitly. If an optional control opcode is unavailable, open,
+statx, fsync and ftruncate may run on a bounded internal control pool, never on
+the caller. This control path does not perform channel data transfers.
+Close cancels and drains target requests before submitting the descriptor close.
 
 
+`IoRuntime::initialize()` probes the required kernel data-plane opcodes.
+The old FileChannel backend-selection helper is removed: this implementation
+does not select a synchronous data-plane fallback.
 
 Interruption and timeout are honoured by submitting an asynchronous cancel and
 then waiting **uninterruptibly** for the real completion, so the kernel never
@@ -354,3 +362,33 @@ copyFile(from: const k::io::file::Path&, to: const k::io::file::Path&) : void {
 - Closing twice is harmless.
 - Interrupting a thread that is not blocked leaves the flag set; the next
   blocking I/O call observes it. Clear it with `Thread::interrupted()`.
+
+## 9. Runtime and Application lifecycle
+
+`IoRuntime` lives in `k::io`:
+
+| Method | Description |
+|--------|-------------|
+| `static initialize()` | Initialize the process proactor and probe required kernel operations; failure raises `IOException`. |
+| `static shutdown()` | Complete the permanent process shutdown barrier; forbidden execution contexts raise `IllegalStateException`. |
+
+The process owns one I/O runtime. `IoRuntime::shutdown()` is an idempotent,
+permanent stop, not a restartable reset. It must reject new submissions and DNS
+work, cancel accepted requests, drain target **and** linked-timeout CQEs, and
+finish already accepted DNS/control jobs. Kernel buffer and handle leases must
+be released before backend destruction; sparse buffer registrations must be
+removed while the backend is still available.
+An unregister failure must be diagnosed; destroying the drained backend must
+then release any remaining kernel registrations before Application destruction.
+
+The runtime drains and joins its
+system workers, resolver/control workers, and completion thread.
+
+Shutdown from the completion thread, a system or resolver/control worker, an I/O callback, or
+callback capture cleanup must fail with `IllegalStateException` rather than
+self-join. This includes running custom-executor callbacks. Concurrent shutdown
+callers must await the same completed barrier, not return merely because another
+caller has requested it. An inherited post-fork runtime is unsupported and must
+be rejected before accessing inherited mutexes or descriptor state.
+Runtime-owned worker TLS finalizers retain the same self-shutdown restriction.
+
