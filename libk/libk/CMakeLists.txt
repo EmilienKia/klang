@@ -96,6 +96,9 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sync/rwlock.k
     # ── Phase 4: asynchronous I/O ─────────────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/io_exceptions.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/io_result.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/execution_context.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/io_operation.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/byte_buffer.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/channel.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/entries.k
@@ -716,6 +719,9 @@ libk_add_test(libk-tests-strings 120
     tests/test-string-builder-mutation.cpp
 )
 
+libk_add_test(libk-tests-io-foundations-api 120
+    tests/test-io-foundations-api.cpp
+)
 # ── libk foundational types & memory tests ───────────────────────────────────
 libk_add_test(libk-tests-types 120
     tests/test-expected.cpp

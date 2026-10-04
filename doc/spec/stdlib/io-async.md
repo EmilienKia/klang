@@ -14,18 +14,18 @@ complements the synchronous stream framework described in [io.md](io.md).
 
 ## 1. Overview
 
-Every blocking operation in this layer is **interruptible**: a thread parked on
-a read, a write or an `fsync` wakes up when another thread calls
-`Thread::interrupt()` on it, when the deadline given to the operation elapses,
-or when the channel is closed by another thread.
+FileChannel, stream socket and datagram primitives use three forms: a proactive callback method returning
+`IoOperation!`, an `Async` method returning `Future<T>!`, and an interruptible
+`Sync` bridge built on the same prepared native operation and Future publisher.
+The callback and Async forms must not block the caller on filesystem I/O.
 
-The layer is organised in three levels:
+The layer separates native buffers and proactive channels from synchronous streams:
 
 | Level | Types | Role |
 |-------|-------|------|
-| Buffer | `ByteBuffer` | Byte container with position/limit/capacity cursors. |
-| Channel | `Channel`, `ReadableChannel`, `WritableChannel` (in `k::io`), `FileChannel` (in `k::io::file`) | Positional, interruptible transfers. |
-| Stream | `AsyncFileInputStream`, `AsyncFileOutputStream` (in `k::io::file`) | `InputStream<byte>` / `OutputStream<byte>` adapters over a channel. |
+| Buffer | `ByteBuffer`, `MappedByteBuffer` | Native byte storage with position/limit/capacity cursors and in-flight leases. |
+| Channel | `Channel`, `ReadableChannel`, `WritableChannel`, `SocketChannel`, `ServerSocket`, `DatagramSocket` (in `k::io`), `FileChannel` (in `k::io::file`) | Proactive primitives, Futures and Sync bridges. |
+| Stream | `FileInputStream`, `FileOutputStream` (in `k::io::file`) | Separate synchronous framework; not proactive adapters. |
 
 `Path` and file-specific facilities live in [`k::io::file`](io-file.md).
 
@@ -40,12 +40,43 @@ load differs.
 The `FileChannel::isAsyncBackendActive()` helper reports which backend is
 currently active. It is useful for diagnostics only.
 
+
+
 Interruption and timeout are honoured by submitting an asynchronous cancel and
 then waiting **uninterruptibly** for the real completion, so the kernel never
 writes into a buffer the caller has already released.
 
 Stress test coverage exercises concurrent positional reads, repeated
 cancellation, and runtime teardown while async channels are active.
+
+### Proactor result types
+
+The foundations expose two transparent template aliases in `k::io`:
+
+```k
+public template<typename T>
+alias IoResult : Expected<T, IoError>;
+
+public template<typename T>
+alias IoCompletion : !(IoResult<T>);
+```
+
+`IoResult<T>` holds either a successful value or an `IoError`.
+`IoError::fromErrno(error, transferred)` uses the same native error-kind table
+as operation completion; immediate setup methods do not maintain another errno
+taxonomy.
+`IoCompletion<T>` is an owning callable receiving that result by value.
+Operations without a result value use `IoDone` rather than `void`.
+For alias declarations, visibility specifiers precede the `template` clause.
+
+### Execution contexts
+
+`ExecutionContext::current()` returns an owning observer of the current I/O
+callback's execution context, or `null` outside a callback. The
+`const isCancellationRequested() : bool` method dispatches to the operation's
+cancellation/interruption state even through a const `ExecutionContext&`.
+Destroying that observer only releases its native reference; it does not cancel
+the operation.
 
 ---
 
@@ -114,20 +145,35 @@ three-tier filesystem architecture, fluent operations, URI mappings, and provide
 ## 4. Channels
 
 ```
-interface Channel                 // isOpen(), close()
-interface ReadableChannel : Channel   // read(dst: ByteBuffer+) : int
-interface WritableChannel : Channel   // write(src: ByteBuffer+) : int
+interface Channel                 // isOpen(), close / closeAsync / closeSync
+interface ReadableChannel : Channel   // read / readAsync / readSync
+interface WritableChannel : Channel   // write / writeAsync / writeSync
 class FileChannel : ReadableChannel, WritableChannel
 ```
+
+Stream channels implement the same readable/writable contracts, and datagram
+sockets implement `Channel` with packet-specific methods. The interface defaults
+report Unsupported for missing proactive implementations; they must not fake
+success. File, stream and datagram implementations provide their own proactive
+methods, with legacy blocking aliases delegating to Sync, not the reverse.
 
 ### Opening
 
 | Signature | Description |
 |-----------|-------------|
-| `static open(path: const file::Path&, options: int) : FileChannel!` | Open with explicit options. |
-| `static open(path: const file::Path&) : FileChannel!` | Open for reading. |
-| `static open(path: const char*, options: int) : FileChannel!` | Open with path string and options. |
-| `static open(path: const char*) : FileChannel!` | Open path string for reading. |
+| `static open(path, options: int, completion: IoCompletion<FileChannel>, executor: ExecutorLease&) : IoOperation!` | Proactive open; callback receives a copyable channel value. |
+| `static open(path, options: int, completion: IoCompletion<FileChannel>) : IoOperation!` | Open with the system callback executor. |
+| `static openAsync(path, options: int) : Future<FileChannel>!` | Open with executor-independent Future publication. |
+| `static openSync(path, options: int) : FileChannel` | Interruptible bridge returning a channel value. |
+| `static openAsync(path) : Future<FileChannel>!` / `static openSync(path) : FileChannel` | Open for reading. |
+| `static open(path, options: int) : FileChannel!` / `static open(path) : FileChannel!` | Temporary legacy aliases calling `openSync` and allocating a wrapper. |
+
+Here `path` may be `const file::Path&` or `const char*`. The path is copied to
+native UTF-8 storage during preparation. Timeout overloads accept `long`
+nanoseconds or `const Duration&`; omitted timeouts use `IO_NO_TIMEOUT`.
+String literals are `const char[]` values, not native pointers: construct a
+`file::Path` from a literal or `String` and pass that path (or its
+`nativePath()` pointer) to these factories.
 
 Options are a bitwise combination of:
 

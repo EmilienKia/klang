@@ -108,6 +108,9 @@ public class ClosedChannelException : public IOException {
 public:
     /** Construct with default error code 202. */
     ClosedChannelException() : IOException(202, 0) {}
+
+    /** Construct with the platform error number that closed the channel. */
+    ClosedChannelException(err: int) : IOException(202, err) {}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -182,6 +185,26 @@ public:
     const getBytesTransferred() : long {
         return _transferred;
     }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BufferInUseException
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * BufferInUseException — thrown when mutating, compacting, or remapping a
+ * buffer that currently has one or more active kernel leases in flight.
+ */
+public class BufferInUseException : public IOException {
+public:
+    /** Construct with default error code 205 and no platform error. */
+    BufferInUseException() : IOException(205, 0) {}
+
+    /**
+     * Construct with a platform error number.
+     * @param err Platform `errno` value (e.g. EBUSY).
+     */
+    BufferInUseException(err: int) : IOException(205, err) {}
 }
 
 } // namespace io
