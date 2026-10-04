@@ -3396,6 +3396,15 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
             : llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
         sec_init.push_back(rtti_slot);
 
+        // Materialization estimates offsets before layouts are complete.
+        // Use the live collector's virtual/transitive subobject, not just a
+        // direct __base_X__ field, for both the thunk and exported metadata.
+        const auto& dl = _context->module().getDataLayout();
+        const size_t resolved_offset = compute_subobject_offset_in(klass, *spec.base_class, dl);
+        const ptrdiff_t offset = resolved_offset == SIZE_MAX
+            ? spec.base_offset : static_cast<ptrdiff_t>(resolved_offset);
+        spec.base_offset = offset;
+
         for (auto& ti : spec.slot_thunks) {
             if (!ti.real_func) {
                 sec_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
@@ -3421,8 +3430,10 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
                 continue;
             }
 
-            // Adjust to the implementation's declaring subobject, which may
-            // be an intermediate base rather than the complete object.
+            // Adjust from this secondary base subobject to the implementation's
+            // declaring subobject (possibly an intermediate base). Persist the
+            // final DataLayout-derived adjustment in exported thunk metadata.
+            ti.this_adjustment = offset;
             std::string thunk_name = real_llvm_func->getName().str()
                 + "_thunk_adj" + std::to_string(offset);
             llvm::Function* thunk = _context->module().getFunction(thunk_name);

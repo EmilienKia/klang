@@ -37,8 +37,72 @@
  */
 
 #include <catch2/catch_all.hpp>
+#include <cstdlib>
 
 #include "helpers.hpp"
+
+TEST_CASE("Virtual diamond: overloaded owner returns preserve this after a class value copy",
+          "[gen][virtual][diamond][class][value-copy][interface-owner-dispatch][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module virtual_diamond_owner_dispatch;
+        struct State { value : int = 73; calls : int = 0; }
+        struct Permit { value : int = 5; }
+        struct Result {
+            value : int;
+            Result(v : int) : value(v) {}
+        }
+        interface Channel {
+            close(completion : !(int)) : Result!;
+            close(completion : !(int), permit : const Permit&) : Result!;
+        }
+        interface Readable : Channel { read() : int; }
+        interface Writable : Channel { write(value : int) : int; }
+        class Middle : Readable, Writable {
+            guard : int = 91;
+            state : State*;
+            Middle(s : State*) : state(s) {}
+            Middle(other : const Middle&) : state(other.state) {}
+            override read() : int { return state->value; }
+            override write(value : int) : int { state->value = value; return guard; }
+            override close(completion : !(int)) : Result! {
+                ++state->calls;
+                completion(guard + state->value);
+                return new Result(state->value);
+            }
+            override close(completion : !(int), permit : const Permit&) : Result! {
+                ++state->calls;
+                completion(guard + state->value + permit.value);
+                return new Result(state->value + permit.value);
+            }
+        }
+        observed : int = 0;
+        test() : int {
+            observed = 0;
+            state : State;
+            original : Middle(&state);
+            copied : Middle(original);
+            readable : Readable& = copied;
+            writable : Writable& = copied;
+            channel : Channel& = copied;
+            permit : Permit;
+            if (readable.read() != 73 || writable.write(80) != 91) return -1;
+            callback : !(int) = [](value : int) { observed = value; };
+            first : Result! = channel.close(callback, permit);
+            if (callback != null || first->value != 85 || observed != 176 ||
+                state.calls != 1) return -2;
+            callback = [](value : int) { observed = value; };
+            second : Result! = channel.close(callback);
+            return callback == null && second->value == 80 && observed == 171 &&
+                state.calls == 2 && original.read() == 80 ? 1 : -3;
+        }
+    )SRC", std::getenv("KLANG_F1_DUMP_IR") != nullptr);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(run);
+    int result = 0;
+    REQUIRE_NOTHROW(result = run());
+    CHECK(result == 1);
+}
 
 //
 // ─── Parser: base clause without 'virtual' keyword ────────────────────────────
@@ -981,4 +1045,3 @@ test_independent() : int {
     // B::x == 11, C::x == 22 → 1122 (independent copies)
     CHECK(test() == 1122);
 }
-
