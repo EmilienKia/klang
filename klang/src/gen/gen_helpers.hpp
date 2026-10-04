@@ -265,9 +265,11 @@ inline void emit_owner_object_destroy(
     auto& llvm_ctx = builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
     llvm::Value* complete_ptr = ptr_value;
+    // Resolved name wrappers still need canonicalisation before destructor dispatch.
+    auto object_type = type::canonical(alloc_type);
 
     // Handle array types: call destructors on each element in reverse order
-    if (auto sized_arr = std::dynamic_pointer_cast<sized_array_type>(alloc_type)) {
+    if (auto sized_arr = std::dynamic_pointer_cast<sized_array_type>(object_type)) {
         // ── Sized (static) array: unrolled destructor loop ──
         auto elem_type = sized_arr->get_subtype();
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
@@ -291,7 +293,7 @@ inline void emit_owner_object_destroy(
                 }
             }
         }
-    } else if (auto unsized_arr = std::dynamic_pointer_cast<array_type>(alloc_type)) {
+    } else if (auto unsized_arr = std::dynamic_pointer_cast<array_type>(object_type)) {
         // ── Unsized (dynamic) array: IR loop for destructors ──
         auto elem_type = unsized_arr->get_subtype();
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
@@ -344,7 +346,7 @@ inline void emit_owner_object_destroy(
                 }
             }
         }
-    } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
+    } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(object_type)) {
         // Call destructor if struct (single object). If the static type has a
         // vtable (class/interface reaching ::k::Object), dispatch virtually so
         // the most-derived override runs even though the owner is statically

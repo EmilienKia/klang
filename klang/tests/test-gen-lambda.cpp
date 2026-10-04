@@ -243,6 +243,40 @@ TEST_CASE("Lambda: nested owned callbacks preserve aggregate arguments after the
     }
 }
 
+TEST_CASE("Lambda: explicit delete destroys a locally owned struct exactly once",
+          "[gen][lambda][owner][lifecycle][nested-owner-delete][regression]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module nested_lambda_owner_delete;
+        drops : int = 0;
+        cleared : bool = false;
+        struct Probe {
+            ~Probe() { ++drops; }
+        }
+        execute(task : !()) { task(); }
+        run() : int {
+            drops = 0; cleared = false;
+            expectedDrops : int = 1;
+            task : !() = [expectedDrops]() {
+                probe : Probe! = new Probe();
+                delete probe;
+                if (probe != null || drops != expectedDrops) return;
+                delete probe;
+                cleared = probe == null && drops == expectedDrops;
+            };
+            execute(task);
+            return task == null && cleared && drops == 1 ? 1 : -1;
+        }
+    )SRC");
+    REQUIRE(comp);
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    int value = 0;
+    REQUIRE_NOTHROW(value = run());
+    CHECK(value == 1);
+}
+
 TEST_CASE("Lambda: capture by value in borrowed callable", "[gen][lambda][capture]") {
     auto jit = gen_jit(R"SRC(
         module gen_lambda_02;

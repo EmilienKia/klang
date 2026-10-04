@@ -86,6 +86,10 @@ delete p;                // ~Foo() called; memory freed; p ← null
 delete p;                // no-op: p is already null
 ```
 
+These rules also apply to owners declared inside a lambda body. A non-captured
+owner deleted there must run its struct destructor exactly once; moving the owner
+into a closure instead defers destruction until that closure is destroyed.
+
 See [Dynamic Allocation — `new` and `delete`](../memory/new-delete.md) for the full specification.
 
 ### Dynamically allocated arrays (`T[N]!`)
