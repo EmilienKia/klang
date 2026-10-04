@@ -20,6 +20,9 @@ This guide explains the architecture, provides a decision matrix to help choose
 the right type for every task, and illustrates common workflows with complete K
 examples.
 
+For a practical comparison of callback, Future and Sync I/O, raw file readers,
+and finite TCP client/server examples, see the [I/O guide](io.md).
+
 For TCP, UDP or Unix stream/datagram endpoints, use the separate
 [proactive network channel API](../spec/stdlib/io-network.md). Unix listeners
 accept `Path` values but do not unlink existing paths or remove socket names on

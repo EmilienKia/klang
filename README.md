@@ -83,11 +83,23 @@ and [network reference](doc/spec/stdlib/io-network.md), with examples in
 I/O and callback cleanup before destroying Application fields on both normal
 return and unwinding.
 
+The [file and network I/O guide](doc/guides/io.md) explains callback, Future
+and Sync usage with [nine runnable examples](samples/io/). Optional compilation:
+
+```sh
+cmake -S . -B cmake-build-debug -DKLANG_BUILD_SAMPLES=ON
+cmake --build cmake-build-debug --target klang-io-samples
+```
+
+Samples are disabled by default. With the master option enabled,
+`-DKLANG_BUILD_IO_SAMPLES=OFF` selects only the existing root samples.
+
 ## Documentation
 
 - [Learn K](doc/tutorial/README.md) — progressive tutorials from a first
   program through modules and templates
 - [Subsystem guides](doc/guides/) — in-depth technical guides (Date and Time, ...)
+- [File and network I/O](doc/guides/io.md) — callback/Future/Sync walkthrough
 - [Language reference](doc/spec/language/index.md) — complete language rules
   and grammar
 - [Standard library reference](doc/spec/stdlib/index.md) — public `libk` APIs

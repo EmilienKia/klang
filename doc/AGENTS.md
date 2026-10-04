@@ -24,6 +24,7 @@ Scope: language spec, KDI spec, stdlib references, and man pages.
 | Compiler debugging guide | `howtos/debug-klangc-compiler.md` |
 | K program debugging guide | `howtos/debug-compiled-k-programs.md` |
 | CMake build integration guide | `howtos/cmake-integration-k-projects.md` |
+| Practical callback/Future/Sync file and TCP examples | `guides/io.md`, `samples/io/` |
 | Proactive file/buffer API | `spec/stdlib/io-async.md`, `io-file.md`, `guides/file-system.md` |
 | TCP/Unix stream and UDP/Unix datagram API | `spec/stdlib/io-network.md` |
 | Executor leases and serial EventLoop | `spec/stdlib/executors.md` |
