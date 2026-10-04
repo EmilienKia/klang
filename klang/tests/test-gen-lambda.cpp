@@ -41,6 +41,161 @@ TEST_CASE("Lambda: capture-free lambda binds to a callable", "[gen][lambda]") {
     REQUIRE(test_fn() == 42);
 }
 
+TEST_CASE("Lambda: capture-free targets use their declaration owner in every lexical scope",
+          "[gen][lambda][owner][aggregate][capture-free-owner][regression]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module capture_free_declaration_owner;
+        observed : int = 0;
+        globalCallback : *(int):int = [](value : int):int { return value; };
+        make() : !(int):int {
+            return [](value : int):int { return value; };
+        }
+        class Factory {
+            static memberCallback : *(int):int = [](value : int):int { return value; };
+            Factory() {
+                {
+                    callback : !(int):int = [](value : int):int { return value; };
+                    observed = callback(42);
+                }
+            }
+            make() : !(int):int {
+                {
+                    {
+                        return [](value : int):int { return value; };
+                    }
+                }
+            }
+        }
+        run() : int {
+            factory : Factory;
+            first : !(int):int = make();
+            second : !(int):int = factory.make();
+            return observed == 42 && globalCallback(42) == 42
+                && Factory::memberCallback(42) == 42 && first(42) == 42
+                && second(42) == 42 ? 42 : -1;
+        }
+    )SRC");
+    REQUIRE(comp);
+    auto check_targets = [](const auto& scope) {
+        size_t count = 0;
+        for (const auto& function : scope->functions()) {
+            if (!function->is_lambda()) continue;
+            ++count;
+            REQUIRE(function->get_this_parameter() == nullptr);
+            CHECK(function->is_static() == (function->get_owner() != nullptr));
+        }
+        return count;
+    };
+    CHECK(check_targets(comp->get_unit()->get_root_namespace()) == 2);
+    auto factory = find_aggregate(comp, "Factory");
+    REQUIRE(factory);
+    CHECK(check_targets(factory) == 3);
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Lambda: nested owned callbacks preserve aggregate arguments after the outer closure drops",
+          "[gen][lambda][owner][capture][lifecycle][exceptions][capture-free-owner][regression]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module nested_capture_free_callback;
+        calls : int = 0;
+        drops : int = 0;
+        struct Probe {
+            value : int = 42;
+            ~Probe() { ++drops; }
+        }
+        struct Done {}
+        struct Pair {
+            first : int = 17;
+            second : int = 25;
+        }
+        alias Result : Expected<Done, int>;
+        completion : !(Result, Pair, bool):int = null;
+        inspect(result : Result&, pair : Pair&, fail : bool):int {
+            ++calls;
+            if (!result.hasResult() || result.hasError()) return -1;
+            if (pair.first != 17 || pair.second != 25) return -2;
+            if (fail) throw Exception(73);
+            return pair.first + pair.second;
+        }
+        execute(task : !():int):int { return task(); }
+        deliver(callback : !(Result, Pair, bool):int,
+                result : Result&, pair : Pair&, fail : bool):int {
+            return callback(result, pair, fail);
+        }
+        run(captured : bool, fail : bool):int {
+            calls = 0; drops = 0;
+            probe : Probe! = new Probe();
+            task : !():int = [probe, captured]():int {
+                if (captured) {
+                    resource : Probe! = new Probe();
+                    completion = [resource](result : Result, pair : Pair, fail : bool):int {
+                        if (resource->value != 42) return -3;
+                        return inspect(result, pair, fail);
+                    };
+                    if (resource != null) return -4;
+                } else {
+                    completion = [](result : Result, pair : Pair, fail : bool):int {
+                        return inspect(result, pair, fail);
+                    };
+                }
+                return probe->value;
+            };
+            if (probe != null) return -5;
+            if (execute(task) != 42 || task != null || drops != 1) return -6;
+            result : Result;
+            done : Done;
+            result.setResult(done);
+            pair : Pair;
+            value : int = 0;
+            caught : int = 0;
+            try { value = deliver(completion, result, pair, fail); }
+            catch (e : Throwable&) { caught = e.getCode(); }
+            if (completion != null || calls != 1 || drops != (captured ? 2 : 1)) return -7;
+            if (caught != (fail ? 73 : 0) || (!fail && value != 42)) return -8;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(comp);
+    size_t free_targets = 0;
+    size_t captured_targets = 0;
+    auto check_targets = [&](const auto& self, const auto& scope) -> void {
+        for (const auto& function : scope->functions()) {
+            if (!function->is_lambda()) continue;
+            if (function->get_short_name() == "__invoke") {
+                ++captured_targets;
+                REQUIRE_FALSE(function->is_static());
+                REQUIRE(function->get_this_parameter() != nullptr);
+            } else {
+                ++free_targets;
+                REQUIRE(function->is_static());
+                REQUIRE(function->get_this_parameter() == nullptr);
+            }
+        }
+        for (const auto& child : scope->get_children()) {
+            if (auto aggregate = std::dynamic_pointer_cast<k::model::aggregate>(child)) {
+                self(self, aggregate);
+            }
+        }
+    };
+    check_targets(check_targets, comp->get_unit()->get_root_namespace());
+    REQUIRE(free_targets == 1);
+    REQUIRE(captured_targets == 2);
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)(bool, bool)>("run");
+    REQUIRE(run);
+    for (bool captured : {false, true}) {
+        for (bool fail : {false, true}) {
+            CAPTURE(captured, fail);
+            CHECK(run(captured, fail) == 42);
+        }
+    }
+}
+
 TEST_CASE("Lambda: capture by value in borrowed callable", "[gen][lambda][capture]") {
     auto jit = gen_jit(R"SRC(
         module gen_lambda_02;

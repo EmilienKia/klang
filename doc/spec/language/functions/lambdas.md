@@ -165,6 +165,11 @@ A lambda that ends up with **no captures** (either an explicit `[]` list or an o
 - The resulting `&(Params):Ret` callable has a null context pointer (`ctx == null`).
 - It is **safe to store indefinitely** — there is no closure to dangle.
 
+These rules apply at any lexical depth, including inside constructors, member
+functions, nested blocks, and capturing lambdas. A capture-free lambda must not
+acquire an implicit `this` parameter from its enclosing class or closure.
+Binding it as an owned callable does not create a closure environment.
+
 ```k
 // Both forms produce an identical, capture-free callable
 add1 : &(int,int):int = [](a:int, b:int):int { return a + b; };

@@ -2848,7 +2848,7 @@ namespace k::model {
             const std::string lambda_name = "__lambda_" + std::to_string(++lambda_synth_counter);
             std::vector<lex::keyword> lambda_specifiers;
             lambda_specifiers.emplace_back("private", lex::keyword::PRIVATE);
-            if (current_context_content<model::aggregate>()) {
+            if (std::dynamic_pointer_cast<model::aggregate>(decl_owner)) {
                 lambda_specifiers.emplace_back("static", lex::keyword::STATIC);
             }
 

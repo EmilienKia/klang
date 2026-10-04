@@ -10,6 +10,12 @@ A *callable* is a **fat pointer** — a pair `{function pointer, context pointer
 | Invocation | `f(args)` — same as an ordinary function call |
 | Context | `null` for free functions and static members; object address for bound methods and functors |
 
+Capture-free lambdas also have a null context, even when nested inside member
+functions or capturing lambdas. A null-context target must accept only its
+declared arguments, without an implicit `this`; a capturing lambda instead uses
+its non-null closure context as that implicit argument. This invariant also
+applies to owned callables.
+
 ---
 
 ## Contents
