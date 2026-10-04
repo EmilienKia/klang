@@ -334,6 +334,11 @@ Rules:
   and qualified declarations, not textual matches in comments or literals.
   References must identify their original target independently of consumer
   declarations and same-named native functions in other namespaces.
+  Private native aliases, including producer declarations and dependency aliases
+  in different definition scopes, may share one C symbol only
+  with matching canonical parameter/return types, CString conversion flags and
+  checked throws contracts. Code generation must reuse that symbol's compatible
+  LLVM declaration, never silently rename an alias or accept an incompatible ABI.
   A consumer must not acquire definition privileges by naming, entering, or
   declaring a template in the generated dependency namespace.
   Dependency collection must retain the definition's original visibility rights;

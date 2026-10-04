@@ -693,8 +693,41 @@ std::string describe_element(const k::model::named_element& elem) {
 } // anonymous namespace
 
 void compiler::verify_mangled_names() {
-    // Keep the first declaration so collisions can distinguish shared C extern symbols.
+    // Preserve the first declaration for detailed collision diagnostics.
     std::unordered_map<std::string, const k::model::named_element*> seen;
+
+    const auto same_native_declaration = [&](const k::model::named_element& first,
+                                            const k::model::named_element& second) {
+        auto left = dynamic_cast<const k::model::function*>(&first);
+        auto right = dynamic_cast<const k::model::function*>(&second);
+        if (!left || !right || !left->is_extern() || !right->is_extern()) return false;
+        const auto is_dependency = [](const k::model::function& fn) {
+            auto owner = fn.parent<const k::model::ns>();
+            return owner && owner->get_short_name().starts_with("__kdi_private_");
+        };
+        if (!is_dependency(*left) && !is_dependency(*right)
+            && (left->get_visibility() != k::model::PRIVATE
+                || right->get_visibility() != k::model::PRIVATE)) return false;
+        const auto return_type = [&](const k::model::function& fn) {
+            return fn.get_return_type() ? std::const_pointer_cast<k::model::type>(fn.get_return_type())
+                : _context->from_string("void");
+        };
+        if (!k::model::type::are_layout_equal(return_type(*left), return_type(*right))
+            || left->parameters().size() != right->parameters().size()
+            || left->get_throws_spec().size() != right->get_throws_spec().size()) return false;
+        for (size_t i = 0; i < left->parameters().size(); ++i) {
+            if (!k::model::type::are_layout_equal(
+                    left->parameters()[i]->get_type(), right->parameters()[i]->get_type())
+                || left->parameters()[i]->is_ffi_cstring()
+                    != right->parameters()[i]->is_ffi_cstring()) return false;
+        }
+        for (size_t i = 0; i < left->get_throws_spec().size(); ++i) {
+            if (!k::model::type::are_layout_equal(
+                    std::const_pointer_cast<k::model::type>(left->get_throws_spec()[i]),
+                    std::const_pointer_cast<k::model::type>(right->get_throws_spec()[i]))) return false;
+        }
+        return true;
+    };
 
     const auto check = [&](const k::model::named_element& elem, const char* kind) {
         const std::string& mangled = elem.get_mangled_name();
@@ -708,11 +741,12 @@ void compiler::verify_mangled_names() {
             throw k::log::compiler_error(std::move(diag));
         }
         auto [it, inserted] = seen.emplace(mangled, &elem);
-        if (!inserted && describe_element(*it->second) != who) {
-            auto* fn = dynamic_cast<const k::model::function*>(&elem);
-            auto* previous_fn = dynamic_cast<const k::model::function*>(it->second);
-            // Extern declarations may share a C symbol; codegen checks their LLVM signatures.
-            if (fn && previous_fn && fn->is_extern() && previous_fn->is_extern()) return;
+        const auto fn = dynamic_cast<const k::model::function*>(&elem);
+        const auto previous_fn = inserted ? nullptr
+            : dynamic_cast<const k::model::function*>(it->second);
+        if (!inserted && (describe_element(*it->second) != who
+                || (fn && previous_fn && fn != previous_fn && fn->is_extern() && previous_fn->is_extern()))
+            && !same_native_declaration(*it->second, elem)) {
             auto diag = k::log::diagnostic::make_fatal(
                 static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME),
                 "Internal error: {0} '{1}' and '{2}' both mangle to '{3}'; "

@@ -1354,6 +1354,121 @@ TEST_CASE("import template native dependencies resolve parent and sibling scopes
     CHECK(result.exit_code == 42);
 }
 
+TEST_CASE("import template native dependency aliases require compatible ABI declarations",
+          "[import][template][ffi][private-dependency][native-abi][regression]") {
+    TmpKdi lib(R"K(
+        module tplnativeabi;
+        @k::ffi::Extern("C", null, "abs") private __private_abs(value: int): int;
+        template<typename T>
+        nativeCall(value: int): int { return __private_abs(value); }
+    )K", true);
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("tplnativeabi", lib.kdi_path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    std::string_view declaration;
+    bool compatible = false;
+    SECTION("compatible aliases reuse the exact native declaration") {
+        declaration = "compatible(value: int): int;";
+        compatible = true;
+    }
+    SECTION("incompatible parameter type is diagnosed") {
+        declaration = "incompatible(value: long): int;";
+    }
+    SECTION("incompatible return type is diagnosed") {
+        declaration = "incompatible(value: int): long;";
+    }
+    try {
+        compiler->parse_source("consumer.k", std::string(R"K(
+            module tplnativeabiconsumer;
+            import tplnativeabi;
+            @k::ffi::Extern("C", null, "abs") private
+        )K") + std::string(declaration) + R"K(
+            main(): int { return nativeCall<int>(-42); }
+        )K");
+    } catch (const k::log::compiler_error& error) {
+        REQUIRE_FALSE(compatible);
+        CHECK(error.get_diagnostic().code
+            == static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME));
+    }
+    if (compatible) {
+        REQUIRE(compiler->verify_gen_code());
+        auto& module = compiler->get_context_for_test()->module();
+        CHECK(module.getFunction("abs") != nullptr);
+        CHECK(module.getFunction("abs.1") == nullptr);
+    } else {
+        CHECK_FALSE(compiler->to_jit());
+    }
+}
+
+TEST_CASE("private producer native aliases share symbols only with compatible declarations",
+          "[import][ffi][private-dependency][native-abi][regression]") {
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    std::string_view aliases;
+    bool compatible = false;
+    SECTION("same-owner and sibling aliases reuse the C declaration") {
+        compatible = true;
+        aliases = R"K(
+            @k::ffi::Extern("C", null, "abs") private second(value: int): int;
+            namespace sibling {
+                @k::ffi::Extern("C", null, "abs") private third(value: int): int;
+                call(): int { return third(-14); }
+            }
+            run(): int { return first(-14) + second(-14) + sibling::call(); }
+        )K";
+    }
+    SECTION("same-owner aliases reject incompatible parameters") {
+        aliases = R"K(
+            @k::ffi::Extern("C", null, "abs") private second(value: long): int;
+        )K";
+    }
+    SECTION("same-name overloads reject incompatible parameters") {
+        aliases = R"K(
+            @k::ffi::Extern("C", null, "abs") private first(value: long): int;
+        )K";
+    }
+    SECTION("same-owner aliases reject incompatible returns") {
+        aliases = R"K(
+            @k::ffi::Extern("C", null, "abs") private second(value: int): long;
+        )K";
+    }
+    const auto source = std::string(R"K(
+        module nativeproduceraliases;
+        @k::ffi::Extern("C", null, "abs") private first(value: int): int;
+    )K") + std::string(aliases);
+    try {
+        compiler->parse_source("nativeproduceraliases.k", source, false, false);
+    } catch (const k::log::compiler_error& error) {
+        REQUIRE_FALSE(compatible);
+        CHECK(error.get_diagnostic().code
+            == static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME));
+    }
+    if (compatible) {
+        REQUIRE(compiler->verify_gen_code());
+        auto root = compiler->get_unit()->get_root_namespace();
+        auto ctx = compiler->get_context_for_test();
+        auto native = ctx->module().getFunction("abs");
+        REQUIRE(native);
+        CHECK(ctx->lookup_llvm_function(root->get_function("first")) == native);
+        CHECK(ctx->lookup_llvm_function(root->get_function("second")) == native);
+        CHECK(ctx->lookup_llvm_function(root->get_child_namespace("sibling")->get_function("third")) == native);
+        CHECK(ctx->module().getFunction("abs.1") == nullptr);
+        auto result = build_exec_with_lib(source, R"K(
+            module nativeproduceraliasconsumer;
+            import nativeproduceraliases;
+            main(): int { return nativeproduceraliases::run(); }
+        )K");
+        INFO(result.err);
+        CHECK(result.exit_code == 42);
+    } else {
+        CHECK_FALSE(compiler->to_jit());
+    }
+}
+
 TEST_CASE("import homonymous template aliases specialize in independent origin namespaces",
           "[import][template][alias][homonym-imports][type-provenance]") {
     std::vector<LibSpec> libraries = {

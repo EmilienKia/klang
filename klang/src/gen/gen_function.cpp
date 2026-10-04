@@ -1037,16 +1037,18 @@ void declaration_generator::visit_function(function &function) {
         }
         llvm::FunctionType* func_type = llvm::FunctionType::get(ret_type, param_types, false);
         // Use the mangled name — for extern functions this is the C symbol name.
-        auto* func = _context->_module->getFunction(function.get_mangled_name());
-        if (func && func->getFunctionType() != func_type) {
-            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME),
-                lex::opt_any_lexeme{},
-                "FFI extern declarations for symbol '{}' have incompatible signatures",
-                {function.get_mangled_name()});
-        }
-        if (!func) {
-            func = llvm::Function::Create(
-                func_type, llvm::Function::ExternalLinkage,
+        llvm::Function* func = nullptr;
+        if (auto existing = _context->_module->getNamedValue(function.get_mangled_name())) {
+            func = llvm::dyn_cast<llvm::Function>(existing);
+            if (!func || func->getFunctionType() != func_type
+                || func->getCallingConv() != llvm::CallingConv::C) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME),
+                    function.get_first_lexeme(),
+                    "Native symbol '{0}' has an incompatible declaration for '{1}'",
+                    {function.get_mangled_name(), function.get_fq_name()});
+            }
+        } else {
+            func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage,
                 function.get_mangled_name(), *_context->_module);
         }
         _context->_functions.insert({function.shared_as<k::model::function>(), func});
@@ -1273,8 +1275,17 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
     }
 
     llvm::FunctionType* late_ft = llvm::FunctionType::get(late_ret_type, late_param_types, false);
-    llvm::Function* late_fn = _context->_module->getFunction(function.get_mangled_name());
-    if (!late_fn) {
+    llvm::Function* late_fn = nullptr;
+    if (auto existing = _context->_module->getNamedValue(function.get_mangled_name())) {
+        late_fn = llvm::dyn_cast<llvm::Function>(existing);
+        if (!late_fn || late_fn->getFunctionType() != late_ft
+            || late_fn->getCallingConv() != llvm::CallingConv::C) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME),
+                function.get_first_lexeme(),
+                "Symbol '{}' has an incompatible LLVM ABI declaration for '{}'",
+                {function.get_mangled_name(), function.get_fq_name()});
+        }
+    } else {
         late_fn = llvm::Function::Create(
             late_ft, llvm::Function::ExternalLinkage,
             function.get_mangled_name(), *_context->_module);
