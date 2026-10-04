@@ -925,6 +925,14 @@ libk_add_test_sharded(libk-tests-io 120 2
     tests/test-io-transform-streams.cpp
     tests/test-io-buffered-streams.cpp
     tests/test-io-data-streams.cpp
+    tests/test-io-stdio.cpp
+    tests/test-io-byte-buffer.cpp
+    tests/test-io-path.cpp
+    tests/test-io-uri.cpp
+)
+
+# ── libk text stream I/O tests ───────────────────────────────────────────────
+libk_add_test(libk-tests-io-text 120
     tests/test-io-print-stream.cpp
     tests/test-io-text-codecs.cpp
     tests/test-io-codecs.cpp
@@ -932,10 +940,6 @@ libk_add_test_sharded(libk-tests-io 120 2
     tests/test-io-text-scanner.cpp
     tests/test-io-text-printer.cpp
     tests/test-io-utf8-pipelines.cpp
-    tests/test-io-stdio.cpp
-    tests/test-io-byte-buffer.cpp
-    tests/test-io-path.cpp
-    tests/test-io-uri.cpp
 )
 
 # ── libk sequential collection tests (List, Vector, Sequences) ───────────────
