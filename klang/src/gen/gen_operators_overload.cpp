@@ -886,7 +886,8 @@ virtual_dispatch_info compute_operator_dispatch_info(
  *
  * @return true if an overload was handled, false if not an overload.
  */
-bool implementation_generator::generate_binary_operator_overload(binary_expression& expr) {
+bool implementation_generator::generate_binary_operator_overload(binary_expression& expr,
+    llvm::Value* evaluated_left, llvm::Value* evaluated_right) {
     if (!expr.has_operator_overload()) return false;
 
     auto op_func = expr.get_operator_func();
@@ -1005,7 +1006,8 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
 
     if (op_func->is_member()) {
         // Member operator: 'this' is the left operand (a reference/pointer to the struct)
-        expr.left()->accept(*this);
+        if (evaluated_left) _value = evaluated_left;
+        else expr.left()->accept(*this);
         if (!_value) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04B), expr.first_lexeme(),
                 "Internal error: left operand for operator overload produced no LLVM value");
@@ -1014,7 +1016,8 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
 
         // Step 1: Evaluate left and right operand expressions
         // Right operand is the argument
-        expr.right()->accept(*this);
+        if (evaluated_right) _value = evaluated_right;
+        else expr.right()->accept(*this);
         if (!_value) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04C), expr.first_lexeme(),
                 "Internal error: right operand for operator overload produced no LLVM value");
@@ -1022,7 +1025,8 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         args.push_back(_value);
     } else {
         // Non-member operator: both operands are arguments
-        expr.left()->accept(*this);
+        if (evaluated_left) _value = evaluated_left;
+        else expr.left()->accept(*this);
         if (!_value) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04D), expr.first_lexeme(),
                 "Internal error: left operand for non-member operator overload produced no LLVM value");
@@ -1030,7 +1034,8 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         args.push_back(_value);
 
         // Step 2: Resolve the operator function (member or non-member)
-        expr.right()->accept(*this);
+        if (evaluated_right) _value = evaluated_right;
+        else expr.right()->accept(*this);
         if (!_value) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04E), expr.first_lexeme(),
                 "Internal error: right operand for non-member operator overload produced no LLVM value");

@@ -119,6 +119,11 @@ v: Value;
 - Alternative 0 is active.
 - Storage is zero-initialized (all bytes = 0).
 
+A zero-filled class alternative has not run a constructor and has no valid
+virtual dispatch state. Assigning a value to that alternative must construct it,
+even when its index is already 0; it must not assign to or destroy the
+unconstructed class payload.
+
 ### Explicit member assignment
 
 ```k
@@ -127,6 +132,16 @@ v.d = 3.14;   // activates alternative 'd', discriminant ← 1
 ```
 
 Assigning to any alternative name updates the discriminant and stores the value.
+For a struct or class alternative that is not active, this assignment must
+construct the payload; it must not call `operator=` on unconstructed storage.
+Switching alternatives must destroy the old live payload exactly once before
+constructing the new one. The new alternative becomes active only after
+construction succeeds. If that construction throws, no payload is active and
+subsequent cleanup must not destroy the failed construction or the old payload
+again. A later member assignment may activate an alternative normally.
+
+Assignment to an already-active struct or class alternative uses its assignment
+operator, when provided, rather than constructing over a live object.
 
 ---
 
@@ -685,4 +700,3 @@ The following are **not** allowed inside a union body:
 ---
 
 *This specification describes the current state of unions as implemented by the K compiler.*
-

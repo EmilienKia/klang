@@ -541,6 +541,10 @@ UnionDecl
     (* A discriminated (tagged) union.  At runtime a hidden uint32 discriminant
        tracks which alternative is active.  Member access performs a runtime
        check; assignment to a different alternative updates the discriminant.
+       Inactive class/struct alternatives are constructed, not assigned through
+       operator=. Replacement destroys the old live payload once and activates
+       the new one only after construction succeeds; a failed construction
+       leaves no live payload for cleanup.
 
        Inheritance & Polymorphic Unions:
        - If the base type is a union, traditional union inheritance applies.

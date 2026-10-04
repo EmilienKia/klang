@@ -3967,6 +3967,7 @@ void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_ty
             _builder->SetInsertPoint(dtor_call_bb);
         }
         auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+        _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
         create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {storage_ptr});
         _builder->CreateBr(merge_bb);
     }
@@ -4024,6 +4025,8 @@ void implementation_generator::emit_union_cleanup_on_reassign(llvm::Value* union
 
         _builder->SetInsertPoint(case_bb);
         auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 1, "union_reassign_storage");
+        // Disarm the old alternative before invoking a destructor that may throw.
+        _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
         if (dtor->is_virtual()) {
             auto* vptr_val = _builder->CreateLoad(llvm::PointerType::get(**_context, 0), storage_ptr, "reassign_vptr");
             auto* is_null = _builder->CreateICmpEQ(

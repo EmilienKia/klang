@@ -627,7 +627,8 @@ public:
      * Generate a function call for a binary operator overload.
      * Returns true if the overload was handled (and _value is set), false if not an overload.
      */
-    bool generate_binary_operator_overload(binary_expression& expr);
+    bool generate_binary_operator_overload(binary_expression& expr,
+        llvm::Value* evaluated_left = nullptr, llvm::Value* evaluated_right = nullptr);
 
     /**
      * Generate code for a comparison expression (==, !=, <, >, <=, >=) whose result is
@@ -858,15 +859,17 @@ public:
      *                                      available, else raise a diagnostic.
      * When `destroy_dest_first` is true (assignment onto an existing object with
      * a destructor), the old contents of `dest` are destroyed before the copy.
-     * Named-result replacement additionally guards self-aliasing and updates
-     * the result's construction flag around unwind-aware copy construction.
+     * Named-result replacement guards self-aliasing and updates its construction flag
+     * around unwind-aware copy construction. Conditional union activation disables
+     * moves so one emitted branch cannot cancel cleanup on another runtime branch.
      */
     void emit_value_copy_or_move(llvm::Value* dest, llvm::Value* src,
                                  const std::shared_ptr<type>& t,
                                  bool destroy_dest_first,
                                  const lex::opt_any_lexeme& lexeme,
                                  const char* copy_context,
-                                 bool named_result_assignment = false);
+                                 bool named_result_assignment = false,
+                                 bool allow_move = true);
 
     /**
      * Emit cleanup (destructor / owner free) for a single condition variable.

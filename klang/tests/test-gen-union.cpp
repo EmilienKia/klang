@@ -70,6 +70,76 @@ TEST_CASE("Aggregate union members destroy only their active alternative",
     CHECK(fn() == 0);
 }
 
+TEST_CASE("Union: class activation uses construction and failed switches leave no live payload",
+          "[gen][union][class][lifecycle][exceptions][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_class_activation;
+        copies : int = 0;
+        assignments : int = 0;
+        drops : int = 0;
+        invalid : int = 0;
+        failCopy : bool = false;
+        class Probe {
+            magic : int = 73;
+            Probe() {}
+            Probe(other : const Probe&) {
+                if (failCopy) throw Exception(922);
+                if (other.magic != 73) ++invalid;
+                ++copies;
+            }
+            operator=(other : const Probe&) : Probe& {
+                if (magic != 73 || other.magic != 73) ++invalid;
+                ++assignments;
+                return this;
+            }
+            ~Probe() {
+                if (magic != 73) ++invalid;
+                magic = 0;
+                ++drops;
+            }
+        }
+        union Storage {
+            empty : byte;
+            result : Probe;
+            error : Probe;
+        }
+        test() : int {
+            copies = 0; assignments = 0; drops = 0; invalid = 0; failCopy = false;
+            valid : bool = true;
+            {
+                source : Probe;
+                {
+                    storage : Storage;
+                    storage.result = source;
+                    valid = valid && copies == 1 && assignments == 0 && drops == 0;
+                    storage.result = source;
+                    valid = valid && copies == 1 && assignments == 1 && drops == 0;
+                    failCopy = true;
+                    code : int = 0;
+                    try { storage.error = source; }
+                    catch (e : Throwable&) { code = e.getCode(); }
+                    valid = valid && code == 922 && drops == 1 && assignments == 1;
+                    valid = valid && storage.index() != Storage::Kind::result;
+                    valid = valid && storage.index() != Storage::Kind::error;
+                    failCopy = false;
+                    storage.result = source;
+                    valid = valid && copies == 2 && drops == 1;
+                    storage.empty = 0;
+                    valid = valid && drops == 2 && storage.index() == Storage::Kind::empty;
+                }
+                valid = valid && drops == 2;
+            }
+            return valid && drops == 3 && invalid == 0 ? 1 : 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    CHECK(result == 1);
+}
+
 // ============================================================
 // Phase 1: Basic union declaration — parsing and type creation
 // ============================================================

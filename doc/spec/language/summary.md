@@ -1279,9 +1279,12 @@ A discriminated (tagged) union holds one active alternative at a time. A hidden
 | Operation | Behaviour |
 |-----------|-----------|
 | Default construction | Constructs alternative 0; storage is zero-initialized. |
-| Explicit member assignment (`u.alt = x`) | Stores value, updates discriminant. |
+| Explicit member assignment (`u.alt = x`) | Constructs an inactive class/struct payload after destroying the old alternative; assigns an already-active payload. Updates discriminant only after successful construction. |
 | Member access (`u.alt`) | Runtime-checks the discriminant; mismatch traps by default. In classic `if-let`, mismatch soft-fails to the false branch. |
 | Destruction | Switch on discriminant; calls destructor of active alternative if non-trivial. |
+
+A failed alternative construction leaves no live payload to destroy. A later
+member assignment may activate a new alternative.
 
 ### 19b.3 Memory Layout
 

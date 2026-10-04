@@ -61,7 +61,8 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
                                                        bool destroy_dest_first,
                                                        const lex::opt_any_lexeme& lexeme,
                                                        const char* copy_context,
-                                                       bool named_result_assignment) {
+                                                       bool named_result_assignment,
+                                                       bool allow_move) {
     auto nt = type::remove_const(t);
     llvm::Type* struct_llvm = _context->get_llvm_type(nt);
     if (!struct_llvm || struct_llvm->isPointerTy()) {
@@ -110,9 +111,9 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
 
     // Is `src` a materialised temporary currently scheduled for destruction?
     // If so, it is a prvalue whose contents we may steal (move).
-    bool src_is_tracked_temp = src_is_return_value;
+    bool src_is_tracked_temp = allow_move && src_is_return_value;
     for (auto& e : _expression_temporaries) {
-        if (e.alloca == src) { src_is_tracked_temp = true; break; }
+        if (allow_move && e.alloca == src) { src_is_tracked_temp = true; break; }
     }
 
     // Destroy the previous contents of the destination first (assignment onto an
@@ -871,6 +872,95 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                 }
             }
         }
+    }
+
+    // A union alternative is an object only while its discriminant is active.
+    // Inactive storage must be copy-constructed, never passed to operator=.
+    if (union_moe && union_def_for_assign && union_alt_for_assign &&
+        type::is_struct(type::remove_const(union_alt_for_assign->resolved_type))) {
+        _skip_union_disc_check = false;
+        union_moe->sub_expr()->accept(*this);
+        auto* union_base = _value;
+        auto* union_llvm_type = union_def_for_assign->get_struct_type()->get_llvm_type();
+        auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_assign_disc");
+        auto* dest = _builder->CreateStructGEP(union_llvm_type, union_base, 1, "union_assign_storage");
+        auto alt_type = type::remove_const(union_alt_for_assign->resolved_type);
+        auto* new_disc = _builder->getInt32(union_alt_for_assign->index);
+
+        auto* saved_sret_destination = _sret_destination;
+        _sret_destination = nullptr;
+        expr.right()->accept(*this);
+        _sret_destination = saved_sret_destination;
+        auto* source = _value;
+        if (!source) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F035),
+                expr.first_lexeme(), "Internal error: union assignment produced no source value");
+        }
+
+        auto* func = _builder->GetInsertBlock()->getParent();
+        auto* active_bb = llvm::BasicBlock::Create(**_context, "union_assign_active", func);
+        auto* construct_bb = llvm::BasicBlock::Create(**_context, "union_assign_construct", func);
+        auto* done_bb = llvm::BasicBlock::Create(**_context, "union_assign_done", func);
+        auto* old_disc = _builder->CreateLoad(_builder->getInt32Ty(), disc_ptr, "union_assign_old_disc");
+        llvm::Value* is_active = _builder->CreateICmpEQ(old_disc, new_disc);
+        auto alt_agg = std::dynamic_pointer_cast<struct_type>(alt_type)->get_struct();
+        if (alt_agg && alt_agg->has_vtable()) {
+            // Default union storage is zero-filled, not a constructed class.
+            // Match the null-vptr lifetime guard used by union destruction.
+            auto* vptr = _builder->CreateLoad(
+                llvm::PointerType::get(**_context, 0), dest, "union_assign_vptr");
+            is_active = _builder->CreateAnd(is_active, _builder->CreateIsNotNull(vptr));
+        }
+        _builder->CreateCondBr(is_active, active_bb, construct_bb);
+
+        auto construct_value = [&]() {
+            if (source->getType()->isPointerTy()) {
+                // Both runtime branches must preserve a reference-bound RHS
+                // temporary's cleanup; only one branch activates new storage.
+                emit_value_copy_or_move(dest, source, alt_type, false, expr.first_lexeme(),
+                    "union activation", false, false);
+            } else {
+                _builder->CreateStore(source, dest);
+            }
+            // A throwing constructor must leave no alternative eligible for cleanup.
+            _builder->CreateStore(new_disc, disc_ptr);
+        };
+
+        _builder->SetInsertPoint(construct_bb);
+        emit_union_cleanup_on_reassign(union_base, *union_def_for_assign, union_alt_for_assign->index);
+        _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
+        construct_value();
+        _builder->CreateBr(done_bb);
+
+        _builder->SetInsertPoint(active_bb);
+        if (!generate_binary_operator_overload(expr, dest, source)) {
+            if (source->getType()->isPointerTy()) {
+                auto* copy_bb = llvm::BasicBlock::Create(**_context, "union_assign_replace", func);
+                // Default self-assignment must not destroy the object being copied.
+                _builder->CreateCondBr(_builder->CreateICmpEQ(dest, source), done_bb, copy_bb);
+                _builder->SetInsertPoint(copy_bb);
+                _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
+                emit_value_copy_or_move(dest, source, alt_type, true, expr.first_lexeme(),
+                    "union assignment", false, false);
+                _builder->CreateStore(new_disc, disc_ptr);
+            } else {
+                // A loaded aggregate already owns its by-value copy.
+                _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
+                auto agg = std::dynamic_pointer_cast<struct_type>(alt_type)->get_struct();
+                if (agg && agg->get_destructor()) {
+                    auto dtor = _context->_functions.find(agg->get_destructor()->shared_as<function>());
+                    if (dtor != _context->_functions.end()) {
+                        create_call_or_invoke(dtor->second->getFunctionType(), dtor->second, {dest});
+                    }
+                }
+                _builder->CreateStore(source, dest);
+                _builder->CreateStore(new_disc, disc_ptr);
+            }
+        }
+        _builder->CreateBr(done_bb);
+        _builder->SetInsertPoint(done_bb);
+        _value = dest;
+        return;
     }
 
     if (generate_binary_operator_overload(expr)) {
