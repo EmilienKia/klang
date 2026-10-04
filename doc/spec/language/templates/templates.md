@@ -567,6 +567,12 @@ Absolute type and expression references remain legal and retain their root
 qualification. A concrete template type in a reconstructed signature must use
 source template arguments (for example, `::producer::Result<int, ::producer::Error>`),
 not an internal instantiated name that has no source declaration.
+
+Concrete template objects obey the same lifecycle rules as ordinary aggregates:
+each embedded value is constructed exactly once per object, including when the
+instantiation is first required from a function body. Declaration catch-up must
+not repeat member initialization or postpone method-body typing until code generation.
+
 ### 8.7 Operator Overloading
 
 Template functions may be operator overloads:

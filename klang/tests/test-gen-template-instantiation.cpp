@@ -34,6 +34,7 @@
 #include <sstream>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
 #include "../src/model/template.hpp"
 #include "../src/model/template_instantiator.hpp"
 
@@ -837,4 +838,208 @@ TEST_CASE("Nested temporary constructor overloads preserve member argument conte
     auto test = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test != nullptr);
     CHECK(test() == 117);
+}
+
+TEST_CASE("Template carrier resolves enum comparisons before body types",
+          "[gen][template][instantiation][enum][symbol-order]") {
+    std::string source = R"SRC(
+        module template_carrier_symbols;
+
+        namespace io {
+            enum IoErrorKind { System; Cancelled; Closed; }
+
+            template<typename T>
+            struct IoCallbackCarrier {
+                static invoke(err: int, kind: IoErrorKind) : int {
+                    if (err == 0 && kind == IoErrorKind::System) return 11;
+                    if (kind == IoErrorKind::Cancelled) return 22;
+                    return 33;
+                }
+            }
+        }
+    )SRC";
+
+    SECTION("Instantiated during aggregate declaration resolution") {
+        source += R"SRC(
+            struct Anchor { carrier: io::IoCallbackCarrier<int>; }
+            run(err: int, code: int) : int {
+                return io::IoCallbackCarrier<int>::invoke(err, (io::IoErrorKind) code);
+            }
+        )SRC";
+    }
+    SECTION("Instantiated on demand by a qualified static call") {
+        source += R"SRC(
+            run(err: int, code: int) : int {
+                return io::IoCallbackCarrier<int>::invoke(err, (io::IoErrorKind) code);
+            }
+        )SRC";
+    }
+    SECTION("Instantiated on demand by a static callback reference") {
+        source += R"SRC(
+            run(err: int, code: int) : int {
+                invokeFn: *(int, io::IoErrorKind):int = io::IoCallbackCarrier<int>::invoke;
+                return invokeFn(err, (io::IoErrorKind) code);
+            }
+        )SRC";
+    }
+
+    auto jit = gen_jit(source);
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)(int, int)>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run(0, 0) == 11);
+    CHECK(run(5, 0) == 33);
+    CHECK(run(0, 1) == 22);
+    CHECK(run(0, 2) == 33);
+}
+
+TEST_CASE("Template lifecycle body symbols preserve synthesized initializers",
+          "[gen][template][instantiation][enum][symbol-order]") {
+    auto jit = gen_jit(R"SRC(
+        module template_lifecycle_symbols;
+        enum State { Pending; Ready; }
+        const FUTURE_FAILED: int = 2;
+        initializations: int = 0;
+        constructions: int = 0;
+        destructions: int = 0;
+        initialize(v: int) : int {
+            initializations += 1;
+            return v;
+        }
+
+        template<typename T>
+        struct Future {
+            value: T;
+            state: State;
+            Future(v: T) : value(initialize(v)) {
+                constructions += 1;
+                state = State::Pending;
+            }
+            ~Future() {
+                if (state == State::Ready) destructions += 1;
+            }
+            complete() { state = State::Ready; }
+            const get() : T {
+                if (state != State::Ready) return (T) FUTURE_FAILED;
+                return this.value;
+            }
+        }
+
+        run() : int {
+            {
+                f: Future<int>(7);
+                if (f.get() != FUTURE_FAILED) return -1;
+                f.complete();
+                if (f.get() != 7) return -2;
+            }
+            return constructions * 100 + destructions * 10 + initializations;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 111);
+}
+
+TEST_CASE("Nested and base template bodies resolve qualified enum symbols",
+          "[gen][template][instantiation][enum][symbol-order]") {
+    auto jit = gen_jit(R"SRC(
+        module template_nested_symbols;
+        enum State { Pending; Ready; }
+
+        template<typename T>
+        struct Base {
+            ready(kind: State) : bool { return kind == State::Ready; }
+        }
+        template<typename T>
+        struct Derived : Base<T> {
+        }
+        template<typename T>
+        struct Outer {
+            static struct Inner {
+                static ready(kind: State) : bool { return kind == State::Ready; }
+            }
+            static invoke() : bool {
+                return Inner::ready(State::Ready);
+            }
+        }
+
+        run() : int {
+            d: Derived<int>;
+            if (!d.ready(State::Ready)) return -1;
+            if (d.ready(State::Pending)) return -2;
+            if (!Outer<int>::invoke()) return -3;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Template union Kind is declared before body symbol catch-up",
+          "[gen][template][instantiation][enum][union][symbol-order]") {
+    std::string source = R"SRC(
+        module template_union_body_symbols;
+        template<typename T>
+        struct Result {
+            union Storage { value: T; error: int; }
+            storage: Storage;
+            const hasValue() : bool {
+                return storage.index() == Storage::Kind::value;
+            }
+            const hasError() : bool {
+                return storage.index() == Storage::Kind::error;
+            }
+            static invoke() : int {
+                r: Result<T>;
+                r.storage.value = (T) 7;
+                if (!r.hasValue() || r.hasError()) return -1;
+                r.storage.error = 9;
+                if (r.hasValue() || !r.hasError()) return -2;
+                return r.storage.error;
+            }
+        }
+    )SRC";
+    SECTION("Eager aggregate instantiation") {
+        source += "struct Anchor { result: Result<int>; }";
+    }
+    SECTION("On-demand aggregate instantiation") {
+    }
+    source += "run() : int { return Result<int>::invoke(); }";
+
+    auto jit = gen_jit(source);
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 9);
+}
+
+TEST_CASE("Invalid enum entry in instantiated body reports a symbol diagnostic",
+          "[gen][template][instantiation][enum][symbol-order]") {
+    const std::string source = R"SRC(
+        module template_invalid_enum_symbol;
+        enum State { Pending; Ready; }
+        template<typename T>
+        struct Carrier {
+            static invoke() : bool { return State::Missing == State::Ready; }
+        }
+    )SRC";
+
+    SECTION("Uninstantiated bodies remain deferred") {
+        REQUIRE(compile_model(source) != nullptr);
+    }
+    SECTION("Instantiation diagnoses the missing entry rather than Error0F003") {
+        try {
+            gen_jit_throws(source + R"SRC(
+                run() : bool { return Carrier<int>::invoke(); }
+            )SRC");
+            FAIL("Expected an enum entry resolution error");
+        } catch (const k::model::gen::resolution_error& error) {
+            CHECK(error.get_diagnostic().code ==
+                  static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ANNOTATION_MISMATCH));
+            CHECK(error.get_diagnostic().message.find("has no entry named") != std::string::npos);
+        }
+    }
 }

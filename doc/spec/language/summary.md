@@ -1575,7 +1575,9 @@ K templates follow a **monomorphization** model: each unique set of template arg
 produces a distinct, fully-independent concrete entity. There is no type erasure or runtime
 dispatch on template parameters.
 Same-named function templates instantiate independently by declaration and retain
-their overload signatures and canonical origin across imports.
+their overload signatures and canonical origin across imports. Late aggregate
+instantiation does not change lifecycle semantics: embedded values are constructed
+exactly once per object.
 
 ### 25.1 Template Declaration
 

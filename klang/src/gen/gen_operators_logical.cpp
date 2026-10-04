@@ -1376,9 +1376,13 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
     }
 
     if(!type::is_primitive(left_type) || !type::is_primitive(right_type)) {
+        auto enclosing = expr.ancestor<function>();
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F00D), expr.first_lexeme(),
-            "Internal error: '==' operator has a non-primitive operand during code generation; "
-            "this should have been rejected during type resolution");
+            "Internal error: '==' operator has non-primitive operand types '{}' and '{}' in '{}'; "
+            "this should have been rejected during type resolution",
+            {left_type ? left_type->to_string() : "<none>",
+             right_type ? right_type->to_string() : "<none>",
+             enclosing ? enclosing->get_fq_name() : "<global>"});
     }
 
     // For primitives, operand types are supposed to be aligned

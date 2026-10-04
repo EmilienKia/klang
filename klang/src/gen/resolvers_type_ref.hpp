@@ -109,6 +109,9 @@ protected:
      */
     std::unordered_set<aggregate*> _resolved_instantiations;
 
+    std::unordered_set<function*> _resolving_functions;
+    std::unordered_set<function*> _resolved_functions;
+
     /**
      * Stack of expected/target type contexts pushed by parent expressions or statements.
      * Used for bidirectional type inference (e.g. return-type template argument deduction,

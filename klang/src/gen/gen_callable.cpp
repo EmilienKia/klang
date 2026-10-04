@@ -165,6 +165,48 @@ void type_reference_resolver::visit_lambda_expression(lambda_expression& expr) {
 
     auto target = bind->get_target();
     if (target) {
+        // Cloning a bind preserves its declaration pointer. Select the lambda
+        // declaration already cloned into this instantiation, without synthesizing
+        // another closure or revisiting its constructor initializers.
+        for (auto owner = target->get_owner(); owner; owner = owner->ancestor<aggregate>()) {
+            if (!owner->is_template()) continue;
+            std::shared_ptr<function> concrete_target;
+            if (expr.is_capture_free()) {
+                concrete_target = scope_lookup::lookup_function(
+                    expr.shared_as<element>(), target->get_short_name());
+            } else {
+                auto closure = scope_lookup::lookup_structure(
+                    expr.shared_as<element>(), target->get_owner()->get_short_name());
+                if (closure && closure->is_instantiation() && closure->get_struct_type()) {
+                    concrete_target = closure->get_function(target->get_short_name());
+                    if (auto context = std::dynamic_pointer_cast<temporary_construction_expression>(
+                            bind->get_context())) {
+                        context->_constructed_type = closure->get_struct_type();
+                        context->set_constructor(nullptr);
+                        context->set_type(closure->get_struct_type()->get_reference());
+                    } else if (auto context = std::dynamic_pointer_cast<new_expression>(
+                                   bind->get_context())) {
+                        context->allocated_type(closure->get_struct_type());
+                        context->set_constructor(nullptr);
+                        context->set_type(closure->get_struct_type()->get_owner());
+                    } else {
+                        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003),
+                            expr.first_lexeme(),
+                            "Internal error: capturing lambda '{}' has no closure construction",
+                            {target->get_short_name()});
+                    }
+                }
+            }
+            if (!concrete_target || concrete_target == target) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003),
+                    expr.first_lexeme(),
+                    "Internal error: lambda '{}' has no declaration in its instantiated scope",
+                    {target->get_short_name()});
+            }
+            bind->set_target(concrete_target);
+            target = concrete_target;
+            break;
+        }
         auto expected = current_expected_type();
         std::shared_ptr<callable_type> dest_ct;
         if (expected) {

@@ -803,6 +803,45 @@ void signature_resolver::visit_function(function& fn) {
     // Do NOT visit the function body — that is the job of type_reference_resolver.
 }
 
+namespace {
+
+// Catch up bodies cloned after Pass A without repeating declaration, layout,
+// or constructor-initializer synthesis. Keep concrete targets installed by cloning.
+class instantiated_body_symbol_resolver : public symbol_resolver {
+public:
+    using symbol_resolver::symbol_resolver;
+
+    void resolve_body(function& fn) {
+        // On-demand clones can still lack the declaration of a nested union's Kind.
+        // Finish that declaration before binding symbols, using the existing pass.
+        for (auto owner = fn.get_owner(); owner; owner = owner->ancestor<aggregate>()) {
+            for (auto& child : owner->get_children()) {
+                if (auto un = std::dynamic_pointer_cast<union_type_def>(child);
+                    un && !un->get_kind_enum()) {
+                    aggregate_type_resolver declarations(*this, _context, _unit);
+                    un->accept(declarations);
+                }
+            }
+        }
+        _function_stack.push_back(fn.shared_as<function>());
+        auto pop_function = llvm::make_scope_exit([this] { _function_stack.pop_back(); });
+        for (auto& param : fn.parameters()) {
+            if (auto expr = param->get_init_expr()) expr->accept(*this);
+            if (auto expr = param->get_default_expr()) expr->accept(*this);
+        }
+        if (auto body = fn.get_existing_block()) body->accept(*this);
+    }
+
+protected:
+    void visit_symbol_expression(symbol_expression& symbol) override {
+        if (!symbol.is_resolved()) {
+            symbol_resolver::visit_symbol_expression(symbol);
+        }
+    }
+};
+
+} // namespace
+
 void type_reference_resolver::visit_function(function& fn) {
     // Skip template definitions — they are not instantiated yet.
     if (fn.is_template()) {
@@ -812,6 +851,10 @@ void type_reference_resolver::visit_function(function& fn) {
     if (auto owner = fn.get_owner(); owner && owner->is_template()) {
         return;
     }
+    if (_resolved_functions.contains(&fn) || !_resolving_functions.insert(&fn).second) return;
+    auto finish_resolution = llvm::make_scope_exit([this, &fn] {
+        _resolving_functions.erase(&fn);
+    });
     trace("[type_reference_resolver::visit_function] '{}'", {fn.get_short_name()});
 
     if (fn.is_member() && !fn.is_static()) {
@@ -834,6 +877,20 @@ void type_reference_resolver::visit_function(function& fn) {
             fn.create_this_parameter();
         }
         fn.get_this_parameter()->accept(*this);
+    }
+
+    // Both free-function and aggregate instantiations reach this entry point.
+    // Nested non-template members also inherit the skipped Pass A from their owner.
+    bool instantiated_body = fn.is_instantiation();
+    for (auto owner = fn.get_owner(); owner; owner = owner->ancestor<aggregate>()) {
+        if (owner->is_instantiation()) {
+            instantiated_body = true;
+            break;
+        }
+    }
+    if (instantiated_body) {
+        instantiated_body_symbol_resolver symbols(*this, _context, _unit);
+        symbols.resolve_body(fn);
     }
 
     for(auto param : fn.parameters()) {
@@ -997,14 +1054,16 @@ void type_reference_resolver::visit_function(function& fn) {
             if (owner && owner->get_short_name().starts_with("__kdi_private_"))
                 check_function_visibility(*target, fn);
         }
+        _resolved_functions.insert(&fn);
         return;
     }
 
     _function_stack.push_back(fn.shared_as<function>());
+    auto pop_function = llvm::make_scope_exit([this] { _function_stack.pop_back(); });
     if (fn._block) {
         visit_block(*fn._block);
     }
-    _function_stack.pop_back();
+    _resolved_functions.insert(&fn);
 }
 
 void declaration_generator::visit_function(function &function) {

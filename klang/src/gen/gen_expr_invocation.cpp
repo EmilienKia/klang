@@ -1444,8 +1444,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                                                      true);
                 auto qualifier_type = _context->from_type_specifier(ast_identified);
                 if (auto unres = std::dynamic_pointer_cast<unresolved_type>(qualifier_type)) {
-                    aggregate_type_resolver helper(_log, _context, _unit);
-                    auto resolved_type = helper.try_instantiate_template_type(unres, expr);
+                    auto resolved_type = try_instantiate_template_type(unres, expr);
                     if (auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_type)) {
                         if (auto owner_struct = st_type->get_struct()) {
                             for (auto& fn : owner_struct->functions()) {

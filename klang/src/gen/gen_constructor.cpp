@@ -337,6 +337,9 @@ void signature_resolver::visit_constructor(constructor& ctor) {
  *   4. Visit the constructor body block.
  */
 void type_reference_resolver::visit_constructor(constructor& ctor) {
+    // On-demand instantiations are also reached by the later namespace walk.
+    // Their synthesized fallback initializers belong to the first body visit only.
+    if (_resolved_functions.contains(&ctor) || _resolving_functions.contains(&ctor)) return;
     auto st = ctor.get_owner();
     if (!st) {
         lex::opt_any_lexeme ctor_lexeme;
