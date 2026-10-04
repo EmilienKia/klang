@@ -63,13 +63,13 @@ Use them as ready-made operating profiles for common tasks (compiler investigati
 
 ```bash
 # Configure
-cmake -S . -B cmake-build-debug -DCMAKE_BUILD_TYPE=Debug
+/usr/bin/cmake -S . -B cmake-build-debug -DCMAKE_BUILD_TYPE=Debug
 
 # Build all (resource-safe)
 cd cmake-build-debug && ninja -j3
 
 # Run all tests (resource-safe)
-cd cmake-build-debug && ctest --output-on-failure
+cd cmake-build-debug && /usr/bin/ctest -j1 --output-on-failure
 ```
 
 ### 3.1 Scoped build/test policy
@@ -77,11 +77,16 @@ cd cmake-build-debug && ctest --output-on-failure
 - If in a working session, only `libk` changes (`.c` and/or `.k`), then only recompile `libk` and run `libk` tests each time. No need to run all project tests (the compiler and kdi tools are unaffected).
 ```bash
 # Build libk tests
-cd cmake-build-debug && ninja -j3 libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-module
+ninja -C cmake-build-debug -j3 libk_stdlib libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-io-text libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-io-proactor libk-tests-module libk-tests-io-proactor-kernel libk-tests-io-foundations-api libk-tests-file-channel-fully libk-tests-stream-channels libk-tests-datagram-channels libk-tests-application-lifecycle libk-tests-executor libk-tests-uuid libk-tests-time
 
 # Run libk tests
-cd cmake-build-debug && ctest -R "libk-tests|libk-thread-io-tests" --output-on-failure
+cd cmake-build-debug && /usr/bin/ctest -j1 -R "^(libk-tests-.*|libk-thread-io-tests)$" --output-on-failure
 ```
+
+Do not run a lifecycle shutdown fixture in a shared test process: its stop is
+permanent. The application-lifecycle target launches fresh child executables.
+Keep byte/file I/O (`libk-tests-io`) and text/codec I/O (`libk-tests-io-text`)
+in the scoped replay; splitting their timeout budgets does not exclude cases.
 
 ---
 

@@ -31,6 +31,32 @@ Scope: compiler implementation (`lex`/`parse`/`model`/`gen`), `klangc`, and comp
 | Template instantiation loses code/symbols | `src/model/template_instantiator.cpp` | `src/gen/gen_expr_invocation.cpp`, `src/gen/gen_expressions.cpp` |
 | Imported symbol/link mismatch | `src/model/tools/kdi_importer.cpp` | `src/compiler_linker.cpp`, `src/model/imported.*` |
 | Mangling collision / link ambiguity | `src/model/mangler.cpp` | `src/compiler.cpp` (`verify_mangled_names`) |
+| Application return/unwind shutdown ordering | `src/gen/gen_unit.cpp` | `libk/libk/src/runtime/application_ffi.c`, `libk/libk/src/runtime/io_runtime.c`, `libk/libk/tests/test-application-lifecycle.cpp` |
+| Private constructor/static helper friend access | `src/gen/resolvers_scope_lookup.cpp` | `src/gen/gen_expr_construct.cpp`, `tests/test-gen-friend.cpp` |
+
+Relative friend targets use the declaring aggregate's lexical scope, not the
+consumer root. Direct friend members include constructor/default member
+initializers and static helpers; inherited and nested members do not acquire
+friendship. Keep private dependency declarations private and preserve negative
+access checks.
+
+The generated standard-library entry point invokes `__k_application_shutdown`
+before the concrete Application destructor on normal return and unwind.
+The FFI owns the completed barrier and must leave an unused runtime virgin.
+Bootstrap entry points without `::k::Application` must not acquire this hook.
+
+KDI export runs after the frontend exception boundary. Its private-dependency
+lookup logger throws structured diagnostics without printing them; `gen_kdi`
+must report these through the compiler logger before propagating the exception.
+Dependency collection is not a semantic pass: never resolve a deferred `this`
+in an uninstantiated template body or latch an error for that speculative probe.
+Native declarations with unavailable LLVM ABI types must diagnose the function,
+symbol and affected parameter/return type instead of silently skipping emission.
+Imported callable signatures are completed after all KDI namespaces have been
+materialised: an aggregate can refer to a union or alias declared in a later
+namespace. Pointer return subtypes also need lexical signature resolution before
+any function body uses them; matching LLVM pointer shapes does not establish K
+type identity.
 
 ---
 
@@ -61,6 +87,44 @@ Scope: compiler implementation (`lex`/`parse`/`model`/`gen`), `klangc`, and comp
    - generate executable/shared/static library or KDI (`compiler_linker.cpp`).
 
 Do not collapse/reorder phases.
+
+Aggregate instantiations created after Pass A receive a body-only symbol-resolution
+catch-up before their parameter expressions and bodies are type-resolved. This uses
+the canonical symbol resolver after completing missing nested union declarations,
+preserves already-bound cloned targets, and must not repeat aggregate layout or
+constructor-initializer synthesis.
+Full body typing is idempotent per concrete function within the type-reference pass.
+Template-qualified static calls use that pass's instantiation path, not a fresh
+declaration-only aggregate resolver. Explicit function template calls instantiate
+every candidate declaration; argument caches are declaration-owned, not name-owned.
+
+Private FFI dependencies of imported templates remain private declarations in a
+definition-scope namespace carried by template source (not exported KDI functions).
+Cloned functions must retain that scope for symbol lookup, overload lookup, and
+visibility checks, including across re-export. Do not widen FFI visibility.
+Unresolved-type declaration origins belong only to re-parsed imported declarations.
+Do not attach them to ordinary local types or substituted caller arguments. Origin
+references use lexical resolver lookup, not a parallel context-registry lookup;
+enum return signatures and cast targets must share their declaration's enum type.
+Private dependency signatures retain rooted type references. Concrete aggregate
+types are emitted with source template arguments, never only their internal
+instantiation-cache names.
+
+Nullable class upcasts must preserve null before adjusting a base-subobject
+address or loading a virtual-base pointer. Owner cleanup must never receive a
+base offset manufactured from null.
+
+Namespace-level lambda declarations synthesized inside free template functions
+must retain the function's template parameters until instantiation. Bind their
+concrete declarations and capture arguments before resolving closure constructors.
+Find the enclosing function through the lexical context stack, not only its top
+entry (normally a block). Original dependent closures must remain unvisited.
+Member overload collection uses `scope_lookup::lookup_member_functions`, whose
+signature comparison must work both before and after callable normalization.
+Hiding must be independent of base traversal order. Same-owner equal-parameter
+redeclarations preserve the first declaration for lookup (including Writer's
+covariant adapters); virtual dispatch still uses the final implementation in
+that slot. Unrelated inherited equal-signature declarations remain ambiguous.
 
 ### 3.2 Architectural layering
 
@@ -186,7 +250,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-core` | general codegen + literals + variable init |
 | `klang-tests-gen-resolution` | symbol resolution, visibility, multi-source |
 | `klang-tests-gen-extern-intrinsics` | extern C, compiler intrinsics, varargs |
-| `klang-tests-gen-functions` | callables/lambda/func-ref |
+| `klang-tests-gen-functions` | callables/lambda/func-ref; CTest shards 0–2 |
 | `klang-tests-gen-control` | statements/control-flow/init-order/static ctor-dtor |
 | `klang-tests-gen-exceptions` | throw/catch/contracts/rethrow/unwinding |
 | `klang-tests-gen-ternary` | ternary expression behavior matrix |
@@ -196,7 +260,8 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-operators` | operator overload/comparison/spaceship/assign |
 | `klang-tests-gen-casts` | scalar casts and indirection casts |
 | `klang-tests-gen-types-enums-unions` | enums, typed enums, and union hierarchies |
-| `klang-tests-gen-types-const-meta` | const, null semantics, annotations, designated init |
+| `klang-tests-gen-types-const-null` | const and null semantics (`test-gen-const.cpp`, `test-gen-null-semantics.cpp`) |
+| `klang-tests-gen-types-meta-designated` | annotations and designated init (`test-gen-annotation-meta.cpp`, `test-gen-designated-init.cpp`) |
 | `klang-tests-gen-aliases` | alias/typedef/callable-alias |
 | `klang-tests-gen-classes` | class basics/inheritance/upcasts |
 | `klang-tests-gen-virtuality` | virtual/interface/override/diamond |
@@ -209,7 +274,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params |
 | `klang-tests-gen-generics` | generic (type-erased) declarations, restrictions, single synthesis |
 | `klang-tests-import-core` | KDI import core, namespaces, enums, transitive |
-| `klang-tests-import-templates` | KDI cross-module template instantiation (2 Catch2 shards: `-shard-0/1`) |
+| `klang-tests-import-templates` | KDI cross-module template instantiation; CTest shards 0–2 |
 | `klang-tests-import-interop` | KDI aliases, typedefs, callables, prod-lib |
 | `klangc-tests` | CLI/integration behavior |
 
@@ -217,6 +282,16 @@ Grouping policy:
 - keep thematic coherence,
 - keep per-executable runtime under timeout budget,
 - register new/redistributed files with `klang_gen_test(<target> 120 ...)`.
+- `SHARD_COUNT 3` keeps heavy-suite executable names and build dependencies
+  unchanged, but replaces their unsharded CTest entry with
+  `<target>-shard-0`, `<target>-shard-1`, and `<target>-shard-2`.
+  All shards use identical lexical ordering and RNG seed, run serially, and
+  retain the 120-second timeout; every normally enabled Catch2 test case runs
+  exactly once. Hidden (`[.]`) cases remain opt-in as before.
+- Use `ctest -R "^klang-tests-gen-functions-shard-" --output-on-failure` or
+  `ctest -R "^klang-tests-import-templates-shard-" --output-on-failure` to run
+  a full heavy suite within the per-entry budget. Direct executable invocation
+  remains available for focused selectors or standalone whole-suite runs.
 
 ---
 

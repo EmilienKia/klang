@@ -25,7 +25,7 @@ Examples are included where they clarify the normative text.
 | [Using Directives](basic/using.md) | `using` declarations: namespace injection, specific element injection, aliasing, namespace aliases |
 | [Aliases and Typedefs](basic/aliases.md) | Exported aliasing: `alias` (soft) and `typedef` (strong); conversions, mangling, export |
 | [Libraries — Export and Import](basic/libraries.md) | Producing libraries, what is exported, importing and using symbols, cross-library inheritance, transitive deps |
-| [Main Function](basic/main.md) | Program entry point |
+| [Main Function](basic/main.md) | Program entry point; completed I/O shutdown before Application destruction on normal return and unwind |
 | [Name Resolution](name-resolution.md) | Lexical lookup and visibility, including direct friend constructor/static-member access |
 
 ### Expressions
@@ -116,6 +116,10 @@ Examples are included where they clarify the normative text.
 | [RTTI Types](../stdlib/rtti.md) | `Visibility`, `TypeInfo`, `AggregateType`, `Class`, `Interface`, `AnnotationType`, `Annotation`, meta-annotation types (`Retention`, `Inherited`, `Target`) |
 | [Math](../stdlib/math.md) | Optional `k::math` module — `abs`, `min`, `max`, `clamp` |
 | [Exception Types](../stdlib/exceptions.md) | `Throwable`, `Exception`, `FatalError`, and derived standard exception classes |
+| [Application](../stdlib/application.md) | Entry-point object, environment and exit lifecycle |
+| [Executors](../stdlib/executors.md) | Strong leases, system/direct delivery and serial EventLoop timers |
+| [Proactive I/O](../stdlib/io-async.md) | Native buffers, file channel callback/Future/Sync and draining shutdown |
+| [Network I/O](../stdlib/io-network.md) | Stream and datagram channels, packet results and address ownership |
 
 ### Compiler Metadata
 

@@ -31,6 +31,13 @@ Use this for large suites such as arithmetic/import/type matrices.
 - Prefer 40-90s target runtime per executable.
 - Keep hard limit at current policy (120s).
 - Do not run multiple heavy test suites concurrently on this VM.
+- Preserve the byte/file (`libk-tests-io`) and text/codec
+  (`libk-tests-io-text`) categories together: their split retains all 141
+  cases / 455 assertions. Measure each against its unchanged 120-second
+  budget. A passing split is not a fix for an unconfirmed allocator diagnostic.
+- Count hidden application/stream shutdown subprocesses separately from the
+  parent executable totals; never run a permanent-stop fixture in a reused
+  process.
 
 ## Deliverable
 - Updated grouping plan + CMake changes + measured impact summary.

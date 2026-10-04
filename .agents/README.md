@@ -43,3 +43,18 @@ This directory stores reusable, project-specific operational definitions:
 - `kdi-change-impact-checklist/SKILL.md`
 - `klangc-compiler-debugging-gdb-lldb/SKILL.md`
 - `k-program-debugging-gdb-lldb/SKILL.md`
+
+## Current I/O routing
+
+Use `libk/AGENTS.md` for the active proactor, buffer, executor and lifecycle
+targets. File channels live in `libk/libk/src/io/file/file_channel.k`; stream
+and datagram APIs live in `io/socket_channel.k`, `io/server_socket.k`,
+`io/datagram_socket.k` and `io/network_address.k`. Their shared native engine
+is `runtime/io_runtime.c` / `io_operation.c` / `io_ffi.c`, with bounded
+resolution in `io_resolver.c`. Do not route new work to retired `socket.k`,
+`network_ffi.c`, `async_io.[ch]`, `async_ffi.c`, Selector or async file streams.
+
+Application exit ordering crosses `klang/src/gen/gen_unit.cpp` and
+`libk/libk/src/runtime/application_ffi.c`; start there for normal/unwind
+shutdown. Keep source-only restrictions scoped to their task and acceptance
+separate from preparation. Runtime shutdown checks require fresh subprocesses.

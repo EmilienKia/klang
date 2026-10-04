@@ -236,18 +236,18 @@ The K compiler synthesises a C-compatible `main(int argc, char** argv)` entry po
    environment map returned by `env()`.
 3. If the resolved entry-point `main` declares a `const String[]` parameter, builds the
    array from `argc`/`argv`.
-4. Publishes the fully constructed object's `::k::Application` base subobject as the
-   active application, then invokes the resolved entry-point `main` (§5, §6) — directly,
-   or through virtual dispatch when required by an application entry-point chain.
-5. Withdraws the active application as soon as `main` returns or throws, then calls the
-   `Application` instance's destructor.
-6. Calls the global destructor function (runs destructors in reverse initialisation order).
-7. Returns the exit code.
+4. Publishes the fully constructed object's `::k::Application` base subobject, then invokes the resolved entry-point `main` (including virtual dispatch). The object remains active while shutdown drains callbacks and finalizers.
+5. Completes process I/O shutdown, if started; queued callbacks are suppressed/dropped and running callbacks return with captures/leases released.
+6. Withdraws the active Application on normal or exceptional exit, then destroys the concrete Application and owned argv; runs main-thread TLS finalizers.
+7. Returns the exit code; process-global destructors run after the shutdown barrier.
+
+The shutdown barrier also runs on unwind and before concrete field destruction. Failed construction does not invoke a full destructor; bootstrap entries without Application retain legacy lowering. See [Application lifecycle](../../stdlib/application.md#exit-lifecycle).
 
 Steps 2 to 5 (and the return of the exit code) run under an exception guard: any exception
 that reaches the wrapper — a `::k::Throwable` or a foreign exception — is intercepted and the
-wrapper calls the C `abort()` function. Before that guard handles an exception from `main`,
-the active application is withdrawn and its destructor runs. The process then terminates
+wrapper calls the C `abort()` function. Before that guard handles an exception from `main`, process I/O shutdown drains while
+the application is still active; the active application is then withdrawn before its
+concrete destructor runs. The process then terminates
 with `SIGABRT` instead of returning an exit code. The stack is unwound up to the wrapper
 before `abort()` is called, so destructors of the intermediate frames run first. Global
 constructors and destructors (steps 1 and 6) are not covered by this guard and always observe

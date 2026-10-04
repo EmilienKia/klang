@@ -232,6 +232,9 @@ aliases over these Sync methods. They do not retain a separate blocking stream
 engine. New code should use the explicit callback/Future/Sync names.
 `InputStream`/`OutputStream` and synchronous file streams remain separate and
 unchanged. [EventLoop](executors.md#9-eventloop) is a serial executor, not a selector.
+The [Application exit barrier](application.md#exit-lifecycle) drains network
+requests, resolver work and callback capture cleanup before fields are destroyed,
+on normal return and unwinding. Kernel drain alone does not complete user delivery.
 
 See [`samples/stream_channel_loopback.k`](../../../samples/stream_channel_loopback.k)
 and [`samples/datagram_loopback.k`](../../../samples/datagram_loopback.k) for

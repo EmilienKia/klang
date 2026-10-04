@@ -20,6 +20,9 @@ module k;
 
 // ── Internal C FFI helpers (not part of the public API) ──────────────────────
 
+/** Compiler entry-point hook; runs before concrete Application destruction. */
+@ffi::Extern("C") private __k_application_shutdown();
+
 /**
  * C helper: return argv[i] as an owned K unsigned-byte array.
  *
@@ -234,6 +237,10 @@ private __k_module_error_from_code(code: int): LoadModuleError {
  *
  * or any other `main` overload declared by an intermediate abstract
  * Application base (see language spec §Application chain).
+ *
+ * The generated entry point drains the process I/O runtime and callback
+ * carriers before destroying this object, including when main unwinds.
+ * This must precede the concrete destructor, not merely this base's cleanup.
  */
 public abstract class Application : public Object {
 

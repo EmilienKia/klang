@@ -503,7 +503,21 @@ removed while the backend is still available.
 An unregister failure must be diagnosed; destroying the drained backend must
 then release any remaining kernel registrations before Application destruction.
 
-The runtime drains and joins its
+Shutdown must also finish **user delivery**, not only kernel quiescence.
+Every queued I/O callback, including file and datagram callbacks, must be
+suppressed and have its owned carrier dropped exactly once. An accepted native
+task may remain on an external executor after shutdown, but it must no longer
+contain a live user capture or invoke that callback. Running callbacks on either
+the system pool or a custom executor must receive cooperative cancellation via
+`ExecutionContext`, return, and finish carrier/lease cleanup before shutdown
+returns. Shutdown must not interrupt the executor's `Thread`.
+Close I/O itself remains non-cancellable; queued or running close callbacks
+must nevertheless be suppressed or cooperatively interrupted like other user
+deliveries.
+
+Callbacks must cooperate with cancellation; shutdown may wait for one that
+does not return. Application code must arrange for its own external workers
+and non-I/O tasks to stop as appropriate. The runtime drains and joins its
 system workers, resolver/control workers, and completion thread.
 
 Shutdown from the completion thread, a system or resolver/control worker, an I/O callback, or
@@ -514,3 +528,11 @@ caller has requested it. An inherited post-fork runtime is unsupported and must
 be rejected before accessing inherited mutexes or descriptor state.
 Runtime-owned worker TLS finalizers retain the same self-shutdown restriction.
 
+The generated [Application entry point](application.md#exit-lifecycle) invokes
+this completed barrier before the concrete Application destructor on normal
+main return and on unwinding. An unused runtime/system executor is left virgin:
+automatic exit must not initialize it or install a permanent-stop marker.
+Explicit `IoRuntime::shutdown()` retains its permanent-stop semantics even when
+called before initialization. `atexit` is only a safety fallback. Application
+destructors and module-global finalizers may release surviving handles, buffers
+and observers, but must not start new asynchronous work after the barrier.

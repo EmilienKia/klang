@@ -240,6 +240,10 @@ VariableDecl (global):
 ```
 Global variables are initialised once before `main` is called (in dependency order, determined by the global constructor function).  
 Their destructors are called after `main` returns (global destructor function).
+In Application mode, active process I/O and callback capture cleanup must finish
+before Application destruction and before these module-global destructors.
+An I/O callback must not outlive a global it captures; see
+[the entry-point lifecycle](../basic/main.md#7-compiler-generated-wrapper).
 **Examples:**
 ```k
 module myapp;

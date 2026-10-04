@@ -21,6 +21,9 @@ For interruptible, cancellable file I/O built on io_uring, see
 [Asynchronous I/O](io-async.md), which adds `ByteBuffer` and FileChannel's
 callback/Future/Sync primitives and native fully transfers. Streams remain
 synchronous; the former async file stream adapters are removed.
+That reference also covers mapped-buffer registration and the
+[Application exit barrier](application.md#exit-lifecycle); the barrier protects
+channel callbacks, not arbitrary work on synchronous streams.
 For interruptible TCP and Unix-domain networking (`NetworkAddress`,
 `SocketChannel`, `ServerSocket`, `DatagramSocket`), see
 [Proactive Network I/O](io-network.md).

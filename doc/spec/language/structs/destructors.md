@@ -64,6 +64,11 @@ The same reverse-declaration-order cleanup also applies when the block is left
 because of exception unwinding.
 ### Global variables
 The destructor of a global struct variable is called by the global destructor function, in reverse initialisation order, **after** `main` returns.
+In Application mode, the entry-point shutdown barrier must already have drained
+process I/O callbacks and their capture/lease cleanup before either concrete
+Application fields or module-global variables are destroyed. Main unwinding
+also runs the barrier before destroying the constructed Application; it does
+not convert an uncaught exception into normal process-global finalization.
 
 ### Owner variables (`T!`)
 

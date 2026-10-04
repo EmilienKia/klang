@@ -42,6 +42,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include "io_runtime.h"
+
+void __k_application_shutdown(void) {
+    int rc = k_io_runtime_shutdown_if_started();
+    if (rc < 0) {
+        fprintf(stderr, "K runtime: Application shutdown failed: %s (%d)\n",
+                strerror(-rc), -rc);
+        abort();
+    }
+}
 
 /* Extern declaration for the C environ array. */
 extern char** environ;

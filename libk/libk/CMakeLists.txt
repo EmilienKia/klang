@@ -526,6 +526,8 @@ add_custom_command(
     COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
             -o ${APP_FFI_OBJ} ${APP_FFI_C}
     DEPENDS ${APP_FFI_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_runtime.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_operation.h
     COMMENT "Compiling K Application entry-point FFI helpers (application_ffi.c)"
     VERBATIM
 )
@@ -828,6 +830,12 @@ libk_add_test(libk-tests-stream-channels 120
 libk_add_test(libk-tests-datagram-channels 120
     tests/test-io-datagram-channels.cpp
 )
+libk_add_test(libk-tests-application-lifecycle 120
+    tests/test-application-lifecycle.cpp
+)
+# The JIT resolves the fixture's C callbacks through the process symbol table.
+target_link_options(libk-tests-application-lifecycle PRIVATE -Wl,--export-dynamic)
+
 # ── libk foundational types & memory tests ───────────────────────────────────
 libk_add_test(libk-tests-types 120
     tests/test-expected.cpp

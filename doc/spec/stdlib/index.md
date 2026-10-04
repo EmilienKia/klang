@@ -24,7 +24,7 @@ Contents:
 | Type / Namespace | Description | Source |
 |------------------|-------------|--------|
 | [`Object`](object.md) | Root base class for all K classes. | `src/object.k` |
-| [`Application`, `EnvironmentMap`](application.md) | Abstract base class for the program entry-point object (`main`), and its read-only `env()` accessor. | `src/application.k` |
+| [`Application`, `EnvironmentMap`](application.md) | Abstract program entry-point object and read-only `env()` accessor; normal/unwind exit drains I/O before field destruction. | `src/application.k` |
 | [`Module`, `LoadModuleError`](module.md) | Dynamic libraries loaded at run time through `Application::loadModule()`. | `src/module.k`, `src/application.k` |
 | [`CharHelpers`](string.md#charhelpers) | Static utility methods for `char[]` buffer operations. | `src/string.k` |
 | [`String`](string.md#string) | Immutable, final string class wrapping a null-terminated `char[]!` buffer. | `src/string.k` |
@@ -43,10 +43,10 @@ Contents:
 | [`k::time Time API`](time.md) | Immutable temporal model: `Duration`, `Instant`, `EpochDay`, `LocalDate`, `LocalTime`, `Period`, `LocalDateTime`, `ZoneOffset`, `Iso`, and checked temporal exceptions. | `src/time/` |
 | [`Futures and Promises`](futures.md) | One-shot asynchronous results: `Future<T>` (read side, interruptible and timed `get()`, cancellation) and `Promise<T>` (write-once producer side). | `src/future.k` |
 | [`Synchronisation Primitives`](synchronization.md) | Mutual exclusion and coordination: `Lock`, `Mutex`, `ReentrantLock`, `Condition`, `Semaphore`, `CountDownLatch`, `CyclicBarrier`, `ReadWriteLock`, plus `IllegalMonitorStateException` / `BrokenBarrierException`. | `src/sync/` |
-| [`Executors and Thread Pools`](executors.md) | Asynchronous task execution and thread pooling: `Executor`, `DirectExecutor`, `ThreadPoolExecutor`, `SingleThreadExecutor`, `RejectedExecutionException`. | `src/executor.k` |
-| [`Asynchronous I/O`](io-async.md) | Interruptible, cancellable file I/O: `ByteBuffer`, `Channel`/`ReadableChannel`/`WritableChannel`, `FileChannel`, `AsyncFileInputStream`/`AsyncFileOutputStream`, and the `IOException` hierarchy. Backed by io_uring with a portable POSIX fallback. | `src/io/` |
+| [`Executors and Thread Pools`](executors.md) | `Executor`, strong `ExecutorLease`, Direct/system/pool delivery, serial `EventLoop` timers and explicit rejection/cleanup. | `src/executor.k`, `src/io/event_loop.k` |
+| [`Asynchronous I/O`](io-async.md) | Linux io_uring proactor: `ByteBuffer`/`MappedByteBuffer`, observable registration fallback, copyable file channels, callback/Future/Sync and native fully composites, completed runtime shutdown. | `src/io/` |
 | [`Filesystem Infrastructure`](io-file.md) | Structured filesystem support in `k::io::file`: immutable `Path`, `FileSystem`/`FileSystemProvider`, local UNIX and sandboxed directory providers, and typed entries (`File`, `Directory`, `Symlink`, `AnyFileSystemEntry`). | `src/io/file/` |
-| [`Asynchronous Network I/O`](io-network.md) | Interruptible TCP networking: `NetworkAddress`, `SocketChannel`, `Socket`, `ServerSocket`, with timeout/interruption semantics aligned with other blocking APIs. | `src/io/` |
+| [`Proactive Network I/O`](io-network.md) | TCP/UDP IPv4 and Unix stream/datagram channels: callback/Future/Sync, packet source/truncation, stream fully operations, draining close, bounded hostname resolution and shared direction gates. | `src/io/socket_channel.k`, `src/io/server_socket.k`, `src/io/datagram_socket.k`, `src/io/network_address.k` |
 | [`k::math::Math`](math.md) | Static utility class for integer and long mathematical operations (`abs`, `min`, `max`, `clamp`, …). | `src/math/math.k` |
 
 *(More types and namespaces will be added as the language evolves.)*

@@ -11,6 +11,40 @@ once at process start-up, and invokes its resolved `main` method.
 See the language reference [Main Function](../language/basic/main.md) for the
 full entry-point mechanism (implicit `main`, user-declared `class
 Application`, and multi-level application entry-point chains).
+
+## Exit lifecycle
+
+On normal return from the selected `main`, or when it unwinds with an exception,
+the generated entry point must complete process I/O shutdown **before** invoking
+the concrete `Application` destructor. It must suppress queued I/O callbacks,
+request cooperative interruption of running I/O callbacks, and await their
+return and completed capture/lease cleanup. Consequently, those callbacks must
+not access Application fields or module globals after their destruction.
+
+Application fields are destroyed next, followed by the generated argv array and
+main-thread TLS finalizers. Module-global finalization at normal process exit
+must occur after this shutdown barrier. The `int` result is preserved; an
+exception must propagate after cleanup, not become a successful exit.
+
+If Application construction fails, only its successfully constructed subobjects
+are unwound by the constructor; the entry point must not invoke the destructor
+of the incomplete Application. Work started by a failing constructor must not
+capture subobjects that its own unwinding destroys before the exit barrier.
+
+An entry point that never started the I/O runtime or system executor must not
+initialize or permanently stop them merely by exiting. After an active runtime
+or executor has been shut down, the stop is permanent and subsequent I/O is
+rejected. `atexit` is only a fallback, not the Application lifetime boundary.
+The process model is one Application invocation; independent invocations that
+use and stop I/O require separate processes.
+
+Shutdown must not run on the completion thread, a system worker, or an I/O
+callback (including a custom executor callback). Explicit
+[`IoRuntime::shutdown()`](io-async.md#9-runtime-and-application-lifecycle) raises
+`IllegalStateException` there. If the generated exit barrier cannot complete,
+it must diagnose the failure and terminate rather than destroy fields while
+callbacks can still access them. An inherited post-fork runtime is unsupported;
+the child must not lock or close inherited runtime state.
 ---
 ## Declaration
 ```k
@@ -150,8 +184,6 @@ UTF-8 strings provided by the OS.
 
 **Example:**
 ```k
-import k;
-
 main() : int {
     e : const EnvironmentMap& = env();
     v : OptionalConstRef<String> = e.get(String("HOME"));
@@ -264,4 +296,4 @@ Look up `key`, returning an empty [`OptionalConstRef`](optional.md) if absent.
 
 ---
 
-*See also:* [Module](module.md) · [Main Function](../language/basic/main.md) · [Object](object.md) · [Optional Types](optional.md) · [Collections](collections.md)
+*See also:* [Module](module.md) · [Main Function](../language/basic/main.md) · [I/O Runtime Lifecycle](io-async.md#9-runtime-and-application-lifecycle) · [Executor Leases](executors.md#8-executorlease) · [Object](object.md) · [Optional Types](optional.md) · [Collections](collections.md)

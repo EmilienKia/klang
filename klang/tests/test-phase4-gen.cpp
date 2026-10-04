@@ -302,3 +302,18 @@ TEST_CASE("[J] Phase4: non-regression — main() wrapper (global_main_function)"
     CHECK(result.exit_code == 42);
 }
 
+TEST_CASE("Main lifecycle: bootstrap legacy proxy has no Application runtime externs",
+          "[gen][main][application-lifecycle][legacy]") {
+    auto compiler = k::compiler::create();
+    compiler->parse_source("legacy-main.k", R"K(
+        module k;
+        main() : int { return 42; }
+    )K", false, false);
+    REQUIRE(compiler->get_unit());
+    auto context = compiler->get_context_for_test();
+    REQUIRE(context);
+    auto& module = context->module();
+    REQUIRE_FALSE(module.getFunction("__k_application_shutdown"));
+    REQUIRE_FALSE(module.getFunction("__k_tls_thread_exit"));
+    REQUIRE_FALSE(module.getFunction("__gxx_personality_v0"));
+}
