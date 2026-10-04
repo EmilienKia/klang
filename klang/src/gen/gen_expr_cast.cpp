@@ -1782,13 +1782,19 @@ void implementation_generator::emit_dynamic_cast(
     }
 
     // ── 2. Find the RTTI global for the target class/annotation ─────────────
-    std::string rtti_name = mangler::mangle_rtti(tgt_st->get_name());
+    auto tgt_vt = tgt_st->get_vtable();
+    std::string rtti_name = tgt_vt && !tgt_vt->rtti_symbol.empty()
+        ? tgt_vt->rtti_symbol : mangler::mangle_rtti(tgt_st->get_name());
     llvm::GlobalVariable* tgt_rtti_gv = _context->module().getNamedGlobal(rtti_name);
+    if (!tgt_rtti_gv && has_external_rtti_definition(tgt_st)) {
+        tgt_rtti_gv = get_or_declare_typeinfo_global(_context->module(), rtti_name, true);
+    }
     if (!tgt_rtti_gv) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F041), expr.first_lexeme(),
             "emit_dynamic_cast: RTTI global '{}' not found in module",
             {rtti_name});
     }
+    if (tgt_vt) tgt_vt->llvm_rtti_global = tgt_rtti_gv;
 
     std::string source_rtti_name = mangler::mangle_rtti(src_st->get_name());
     llvm::GlobalVariable* source_rtti_gv =

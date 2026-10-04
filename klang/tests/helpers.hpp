@@ -143,7 +143,7 @@ k::tools::exec_result build_and_exec(const std::string_view& src, const IgnoredD
  * The caller is responsible for removing the file when done.
  */
 std::string build_shared_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes = {},
-                                  const std::string& file_name = "");
+                                  const std::string& file_name = "", bool with_stdlib = false);
 
 /**
  * Compile the given K source into a static library (.a).
@@ -478,7 +478,7 @@ struct TmpKdi {
     std::string so_path;
     std::string kdi_path;
 
-    explicit TmpKdi(const std::string_view& src);
+    explicit TmpKdi(const std::string_view& src, bool with_stdlib = false);
     ~TmpKdi();
 
     /// Directory that contains the .kdi file.
@@ -516,4 +516,3 @@ struct ScopedLdLibraryPath {
 };
 
 #endif //KLANG_HELPERS_HPP
-

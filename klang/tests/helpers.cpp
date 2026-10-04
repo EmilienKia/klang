@@ -278,7 +278,7 @@ llvm::TargetMachine* make_pic_target_machine() {
 // ---------------------------------------------------------------------------
 
 std::string build_shared_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes,
-                                  const std::string& file_name) {
+                                  const std::string& file_name, bool with_stdlib) {
     char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
     int fd = ::mkstemp(tmp_stem);
     if (fd == -1) {
@@ -290,6 +290,7 @@ std::string build_shared_library(const std::string_view& src, const IgnoredDiagC
 
     auto compiler = k::compiler::create(make_pic_target_machine());
     apply_ignored_diag_codes(*compiler, ignored_diag_codes);
+    if (with_stdlib) compiler->set_file_resolver(make_stdlib_resolver());
     try {
         compiler->parse_source(derive_source_path(src, file_name), src, true, false);
     } catch (const k::log::compiler_error&) {
@@ -1334,8 +1335,8 @@ std::filesystem::path TmpDir::create_file(const std::string& name) const {
 // TmpKdi
 // ═══════════════════════════════════════════════════════════════════════════
 
-TmpKdi::TmpKdi(const std::string_view& src) {
-    so_path = build_shared_library(src);
+TmpKdi::TmpKdi(const std::string_view& src, bool with_stdlib) {
+    so_path = build_shared_library(src, {}, "", with_stdlib);
     kdi_path = [&]() {
         std::filesystem::path p(so_path);
         p.replace_extension(".kdi");
@@ -1398,7 +1399,6 @@ ScopedLdLibraryPath::~ScopedLdLibraryPath() {
     if (had_old) ::setenv("LD_LIBRARY_PATH", old_value.c_str(), 1);
     else         ::unsetenv("LD_LIBRARY_PATH");
 }
-
 
 
 

@@ -32,13 +32,72 @@
 
 #include "helpers.hpp"
 #include "../src/errors.hpp"
+#include "../src/model/imported.hpp"
 
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
 
 namespace fs = std::filesystem;
+
+TEST_CASE("imported exception downcasts declare the defining library RTTI",
+          "[import][rtti][exception][downcast][regression]") {
+    constexpr std::string_view library = R"K(
+        module importeddowncast;
+        class ImportedCause : public Exception {
+            nativeCode: int;
+        public:
+            ImportedCause(code: int) : Exception(921), nativeCode(code) {}
+            const getNativeCode(): int { return nativeCode; }
+        }
+        class OtherCause : public Exception {}
+        makeCause(): Throwable! { return new ImportedCause(42); }
+    )K";
+    constexpr std::string_view consumer = R"K(
+        module importeddowncastconsumer;
+        import importeddowncast;
+        main(): int {
+            cause: Throwable! = importeddowncast::makeCause();
+            wrapper: ExecutionException(cause);
+            observed: Throwable* = wrapper.getCause();
+            error: importeddowncast::ImportedCause* =
+                (importeddowncast::ImportedCause*) observed;
+            other: importeddowncast::OtherCause* =
+                (importeddowncast::OtherCause*) observed;
+            if (error == null || other != null || error->getCode() != 921) return -1;
+            return error->getNativeCode();
+        }
+    )K";
+    TmpKdi lib(library, true);
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("importeddowncast", lib.kdi_path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    compiler->parse_source("importeddowncastconsumer.k", consumer, false, false);
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    REQUIRE(compiler->verify_gen_code());
+    auto origin = compiler->get_unit()->get_root_namespace()->get_child_namespace("importeddowncast");
+    REQUIRE(origin);
+    for (const auto* name : {"ImportedCause", "OtherCause"}) {
+        auto target = std::dynamic_pointer_cast<k::model::imported_aggregate>(origin->get_aggregate(name));
+        REQUIRE(target);
+        auto metadata = target->get_kdi_aggregate();
+        REQUIRE(metadata);
+        REQUIRE(metadata->vtable);
+        REQUIRE(target->get_vtable());
+        auto global = compiler->get_context_for_test()->module().getNamedGlobal(metadata->vtable->rtti_symbol);
+        REQUIRE(global);
+        CHECK(global->hasExternalLinkage());
+        CHECK_FALSE(global->hasInitializer());
+        CHECK(target->get_vtable()->llvm_rtti_global == global);
+    }
+    auto result = build_exec_with_lib(library, consumer);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 4 — kdi_importer: load, validate, store
