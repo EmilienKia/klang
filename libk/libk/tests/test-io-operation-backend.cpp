@@ -489,6 +489,68 @@ TEST_CASE("Proactor mock: failed linked submission releases every registry CQE r
     rt.release(op);
 }
 
+TEST_CASE("Proactor mock: mapped storage remains valid without sparse registration",
+          "[libk][io][proactor][mock][mapped]") {
+    auto& rt = runtime();
+    auto map = symbol<void* (*)(const uint32_t*, int, int64_t, int64_t, int)>(
+        rt.library, "__k_io_buffer_map");
+    auto registered = symbol<int (*)(const void*)>(rt.library, "__k_io_buffer_is_registered");
+    auto put = symbol<int (*)(void*, unsigned, uint8_t)>(rt.library, "__k_io_buffer_put_byte");
+    auto release = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release");
+    void* mapping = map(nullptr, -1, 0, 4096, 1);
+    REQUIRE(mapping);
+    REQUIRE(registered(mapping) == 0); // mock rejects registration by default
+    REQUIRE(put(mapping, 0, 42) == 0);
+    release(mapping);
+    mapping = map(nullptr, -1, 0, 4096, 0);
+    REQUIRE(mapping);
+    REQUIRE(put(mapping, 0, 42) == -EACCES); // never segfault on read-only mmap
+    release(mapping);
+}
+
+TEST_CASE("Proactor mock: sparse unregistration waits for target and preserves failures",
+          "[libk][io][proactor][mock][mapped][registration]") {
+    auto& rt = runtime();
+    auto map = symbol<void* (*)(const uint32_t*, int, int64_t, int64_t, int)>(
+        rt.library, "__k_io_buffer_map");
+    auto registered = symbol<int (*)(const void*)>(rt.library, "__k_io_buffer_is_registered");
+    auto unregister = symbol<int (*)(void*)>(rt.library, "__k_io_buffer_unregister");
+    auto release = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release");
+    {
+        std::lock_guard lock(rt.mock->mutex);
+        rt.mock->registration_enabled = true;
+    }
+    void* mapping = map(nullptr, -1, 0, 4096, 1);
+    REQUIRE(mapping);
+    REQUIRE(registered(mapping) == 1);
+    void* op = rt.create(K_IO_OP_READ, -1, nullptr, 8, 0, 0, mapping, nullptr, nullptr, nullptr);
+    REQUIRE(rt.submit(rt.get(), op, -1) == 0);
+    const auto request = rt.mock->last();
+    REQUIRE(request.fixed_index >= 0);
+    REQUIRE(unregister(mapping) == 1);
+    REQUIRE(registered(mapping) == 1);
+    {
+        std::lock_guard lock(rt.mock->mutex);
+        rt.mock->reject_unregister = true;
+    }
+    rt.mock->complete(request.tag, 4);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(registered(mapping) == 1);
+    REQUIRE(unregister(mapping) == 0);
+    {
+        std::lock_guard lock(rt.mock->mutex);
+        rt.mock->reject_unregister = false;
+    }
+    REQUIRE(unregister(mapping) == 1);
+    REQUIRE(registered(mapping) == 0);
+    rt.release(op);
+    release(mapping);
+    {
+        std::lock_guard lock(rt.mock->mutex);
+        rt.mock->registration_enabled = false;
+    }
+}
+
 TEST_CASE("Future native: concurrent cancellation cannot bypass an extracted producer hook",
           "[libk][future][proactor][mock][race]") {
     auto& rt = runtime();

@@ -145,6 +145,34 @@ TEST_CASE("I/O foundations: result aliases and explicit callable carriers import
     REQUIRE(test() == 42);
 }
 
+TEST_CASE("I/O foundations: native buffer predicates preserve lease protection",
+          "[libk][io][proactor][api][buffer]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_foundation_buffer_predicates__;
+        test() : int {
+            buffer : k::io::ByteBuffer(8u);
+            if (buffer.hasLease() || buffer.isRegistered() ||
+                buffer.leaseCount() != 0u) return -1;
+            buffer.acquireLease();
+            if (!buffer.hasLease() || buffer.leaseCount() != 1u) return -2;
+            blocked : bool = false;
+            try {
+                buffer.position(1u);
+            } catch (e: k::io::BufferInUseException&) {
+                blocked = true;
+            }
+            buffer.releaseLease();
+            if (!blocked || buffer.hasLease() || buffer.leaseCount() != 0u) return -3;
+            buffer.position(1u);
+            return buffer.position() == 1u ? 1 : 0;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    REQUIRE(test() == 1);
+}
+
 TEST_CASE("I/O carriers: empty IoDone survives Future and union subobject cleanup before delivery",
           "[libk][io][proactor][api][io-done-carrier][callback-carrier][regression]") {
     auto jit = gen_jit_with_stdlib(R"SRC(

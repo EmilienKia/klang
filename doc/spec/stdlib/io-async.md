@@ -101,7 +101,11 @@ also waits for user delivery cleanup, as described in [section 9](#9-runtime-and
 
 ## 2. `ByteBuffer`
 
-`ByteBuffer` owns a `byte[]` and exposes the classic three-cursor model.
+`ByteBuffer` owns reference-counted native storage and exposes the classic
+three-cursor model. Preparing an operation snapshots its buffer range and takes
+a native lease. Destroying the K buffer wrapper or channel wrapper after
+submission must not invalidate the native request. Mutating a leased buffer
+raises `BufferInUseException`. A read into a read-only mapped buffer fails.
 
 | Cursor | Meaning |
 |--------|---------|
@@ -118,6 +122,7 @@ Invariant: `0 <= position <= limit <= capacity`.
 | `ByteBuffer()` | Empty buffer of capacity 0. |
 | `ByteBuffer(capacity: unsigned int)` | Buffer with the given capacity, `position = 0`, `limit = capacity`. |
 | `static allocate(capacity: unsigned int) : ByteBuffer!` | Heap-allocated buffer. |
+| `static allocateDirect(capacity: unsigned int) : ByteBuffer!` | Page-aligned native storage; alignment does not promise registration. |
 | `static wrap(array: const byte[]) : ByteBuffer!` | Buffer holding a copy of `array`, ready for reading (`position = 0`, `limit = size`). |
 
 ### Cursor management
@@ -148,7 +153,35 @@ Invariant: `0 <= position <= limit <= capacity`.
 | `toArray() : byte[]!` | Copy of the bytes between position and limit. |
 | `dataAt(index: unsigned int) : byte*` | Raw pointer into the backing array, for channel transfers. |
 
-Relative accesses past the limit raise `IndexOutOfBoundsException`.
+Relative accesses past the limit raise `IndexOutOfBoundsError`.
+
+### Leases and mapped storage
+
+`hasLease()` and `leaseCount()` expose in-flight retention.
+`isRegistered()` reports sparse io_uring registration, not whether a particular
+transfer uses a fixed-buffer opcode. Application code must not access the
+leased range or mutate its cursors while an operation owns it. Native completion
+advances the cursor before releasing the lease and publishing results.
+
+`MappedByteBuffer` extends `ByteBuffer` with deterministic mapping cleanup:
+
+| Signature | Description |
+|-----------|-------------|
+| `static map(fd: int, offset: long, length: long, mode: MapMode) : MappedByteBuffer!` | Map an open descriptor; `fd == -1` requests anonymous storage. Offset need not be page-aligned. |
+| `static map(path, offset: long, length: long, mode: MapMode) : MappedByteBuffer!` | Map a `const file::Path&`, `const char[]` or zero-terminated `const char*` path. |
+| `force() : void` | Flush mapped changes; forbidden while leased. |
+| `load() : void` / `const isLoaded() : bool` | Prefault pages / inspect current residency; `load` is forbidden while leased. |
+| `registerBuffer() : bool` | Attempt sparse registration; `false` leaves a valid non-fixed mapping. |
+| `unregisterBuffer() : bool` | Unregister now, or defer until the final lease drains; `true` includes successful deferral. |
+
+`MapMode` is `ReadOnly`, `ReadWrite` or `Private`. Offset must be nonnegative
+and length must be in `1..4294967295`. Mapped storage attempts registration
+automatically; unavailable fixed opcodes, table exhaustion or memory-lock
+limits must not invalidate a successful mapping. `isRegistered()` makes this
+fallback observable. The registration survives active leases and is released
+before the final unmap. Only file READ/WRITE requests can select fixed-buffer
+opcodes here; stream RECV/SEND and packet RECVMSG/SENDMSG remain ordinary
+kernel operations even when their buffer is registered.
 
 ---
 

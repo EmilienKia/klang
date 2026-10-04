@@ -100,6 +100,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/execution_context.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/io_operation.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/byte_buffer.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/mapped_byte_buffer.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/channel.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/entries.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/file_system.k
@@ -440,6 +441,18 @@ add_custom_command(
     DEPENDS ${NETWORK_FFI_C}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
     COMMENT "Compiling K runtime network I/O FFI wrappers (network_ffi.c)"
+set(IO_BUFFER_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_buffer.c)
+set(IO_BUFFER_OBJ ${LIBK_OUTPUT_DIR}/io_buffer.o)
+
+add_custom_command(
+    OUTPUT  ${IO_BUFFER_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${ASYNC_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${IO_BUFFER_OBJ} ${IO_BUFFER_C}
+    DEPENDS ${IO_BUFFER_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_buffer.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_runtime.h
+    COMMENT "Compiling K runtime native I/O buffer (io_buffer.c)"
     VERBATIM
 )
 
@@ -621,6 +634,7 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
                    ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}
                    ${NETWORK_FFI_OBJ}
+                   ${IO_BUFFER_OBJ}
                    ${EXECUTOR_RUNTIME_OBJ}
                    ${IO_OPERATION_OBJ}
                    ${APP_FFI_OBJ}
