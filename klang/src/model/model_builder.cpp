@@ -2909,6 +2909,8 @@ namespace k::model {
 
             const std::string closure_name = "__lambda_closure_" + std::to_string(++lambda_synth_counter);
             auto closure_agg = agg_holder->define_structure(closure_name);
+            // A closure owns only its explicit captures, never an implicit parent.
+            closure_agg->set_static_nested(true);
             closure_agg->set_visibility(model::PRIVATE);
             auto closure_st = std::make_shared<model::struct_type>(closure_name, closure_agg);
             _context->add_struct(closure_st);

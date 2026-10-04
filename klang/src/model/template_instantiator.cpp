@@ -1751,6 +1751,7 @@ void template_instantiator::clone_nested_aggregate(
     nested->set_final(src.is_final());
     nested->set_abstract(src.is_abstract());
     nested->set_const_struct(src.is_const_struct());
+    nested->set_static_nested(src.is_static_nested());
     nested->set_visibility(src.get_visibility());
     nested->_ast_node = src.get_ast_node();
     nested->_documentation = src.get_documentation();
@@ -1951,6 +1952,7 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     concrete->set_final(tpl_def.is_final());
     concrete->set_abstract(tpl_def.is_abstract());
     concrete->set_const_struct(tpl_def.is_const_struct());
+    concrete->set_static_nested(tpl_def.is_static_nested());
     concrete->set_visibility(tpl_def.get_visibility());
 
     // Copy AST reference (optional, for diagnostics)
@@ -2229,6 +2231,7 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
     concrete->set_final(tpl_def.is_final());
     concrete->set_abstract(tpl_def.is_abstract());
     concrete->set_const_struct(tpl_def.is_const_struct());
+    concrete->set_static_nested(tpl_def.is_static_nested());
     concrete->set_visibility(tpl_def.get_visibility());
     concrete->_ast_node = tpl_def.get_ast_node();
     concrete->_documentation = tpl_def.get_documentation();

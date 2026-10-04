@@ -297,6 +297,11 @@ The lambda expression itself:
 2. For owned callables (`!`), allocates an instance via `new __lambda_closure_<N>` on the heap and writes the synthetic drop function address into `__drop`.
 3. Evaluates to a `{ @__invoke, ctx_ptr }` fat pointer callable value.
 
+Declaring a lambda inside an aggregate does not implicitly capture that
+aggregate's instance. Its closure stores only the explicit captures; a link to
+the enclosing object requires a `this` capture. Each lambda expression has its
+own closure type, including multiple lambdas in the same member body.
+
 For capture-free lambdas, step 1 and 2 are elided entirely: the lambda is compiled as a static function and the resulting callable's context pointer is null (`{ @lambda_fn, null }`).
 
 This lowering is an implementation detail; K programs must not rely on the name or layout of the synthesised struct.

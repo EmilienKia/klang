@@ -288,6 +288,69 @@ TEST_CASE("Lambda: capture multiple values in owned callable", "[gen][lambda][ow
     REQUIRE(test_fn() == 42);
 }
 
+TEST_CASE("Lambda: member closures contain only explicit captures",
+          "[gen][lambda][owner][capture][lifecycle][aggregate]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module member_lambda_captures;
+        destructions: int = 0;
+        struct Resource {
+            value: int;
+            Resource(v: int) : value(v) {}
+            ~Resource() { destructions += 1; }
+        }
+        class Factory {
+            first(v: int) : !():int {
+                resource: Resource! = new Resource(v);
+                return [resource]() : int { return resource.value; };
+            }
+            second(v: int) : !():int {
+                resource: Resource! = new Resource(v);
+                return [resource]() : int { return resource.value; };
+            }
+        }
+        run() : int {
+            destructions = 0;
+            firstTask: !():int = null;
+            secondTask: !():int = null;
+            {
+                factory: Factory;
+                firstTask = factory.first(20);
+                secondTask = factory.second(22);
+            }
+            if (firstTask() + secondTask() != 42) return -1;
+            firstTask = null;
+            if (destructions != 1) return -2;
+            secondTask = null;
+            return destructions;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto factory = find_aggregate(comp, "Factory");
+    REQUIRE(factory != nullptr);
+    size_t closures = 0;
+    for (const auto& child : factory->get_children()) {
+        auto closure = std::dynamic_pointer_cast<k::model::aggregate>(child);
+        if (!closure) continue;
+        ++closures;
+        CHECK(closure->is_static_nested());
+        CHECK_FALSE(closure->is_inner());
+        CHECK(closure->get_parent_field() == nullptr);
+        CHECK(closure->get_variable("__parent__") == nullptr);
+        REQUIRE(closure->constructors().size() == 1);
+        auto ctor = closure->constructors().front();
+        CHECK(ctor->get_parameter_size() == 1);
+        CHECK(ctor->get_parameter("__parent__") == nullptr);
+        REQUIRE(ctor->get_existing_block() != nullptr);
+        CHECK(ctor->get_existing_block()->get_statements().size() == 1);
+    }
+    CHECK(closures == 2);
+    auto jit = comp->to_jit();
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 2);
+}
+
 TEST_CASE("Lambda: explicit generic execute selects owning free and UCS overloads",
           "[gen][lambda][owner][template][ucs][fresh-lambda][regression]") {
     const bool priority_first = GENERATE(false, true);
@@ -357,6 +420,71 @@ TEST_CASE("Lambda: explicit generic execute selects owning free and UCS overload
         CHECK(error.get_diagnostic().code ==
               static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH));
     }
+}
+
+TEST_CASE("Lambda: runnable adapters transfer owned closures with catch handlers",
+          "[gen][lambda][owner][capture][aggregate][exceptions]") {
+    auto jit = gen_jit(R"SRC(
+        module runnable_lambda_adapters;
+        failures: int = 0;
+        reports: int = 0;
+        report(origin: int, code: int) {
+            reports += 1;
+            failures += origin * code;
+        }
+        class Command : public Runnable {
+            override run() : void throws(Exception) { throw Exception(7); }
+        }
+        class Lease {
+            execute(command: Runnable+) {
+                cmd: Runnable* = &(*command);
+                firstTask: !() = [cmd]() {
+                    try { cmd->run(); }
+                    catch (e: Throwable&) { report(1, e.getCode()); }
+                };
+                execute(firstTask);
+                if (firstTask != null) failures = -1000;
+                secondTask: !() = [cmd]() {
+                    try { cmd->run(); }
+                    catch (e: Throwable&) { report(2, e.getCode()); }
+                };
+                execute(secondTask);
+                if (secondTask != null) failures = -1000;
+            }
+            execute(task: !()) { task(); }
+        }
+        interface Executor {
+            default execute(command: Runnable+) {
+                cmd: Runnable* = &(*command);
+                task: !() = [cmd]() {
+                    try { cmd->run(); }
+                    catch (e: Throwable&) { report(3, e.getCode()); }
+                };
+                execute(task);
+                if (task != null) failures = -1000;
+            }
+            const execute(task: !());
+        }
+        class InlineExecutor : public Executor {
+            override const execute(task: !()) { task(); }
+        }
+        run() : int {
+            failures = 0;
+            reports = 0;
+            command: Command;
+            lease: Lease;
+            lease.execute(command);
+            executor: InlineExecutor;
+            view: Executor+ = executor;
+            view->execute(command);
+            if (reports != 3) return -1;
+            return failures;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
 }
 
 TEST_CASE("Lambda: capture owner object in owned lambda runs destructor on cleanup", "[gen][lambda][owner][lifecycle]") {
@@ -712,4 +840,3 @@ TEST_CASE("Lambda: no warning when lambda omits return type", "[gen][lambda][ded
     });
     CHECK_FALSE(has_omitted_ret_warning);
 }
-
