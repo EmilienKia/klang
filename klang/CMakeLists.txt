@@ -182,33 +182,29 @@ endmacro()
 #   - link against klang-test-helpers and Catch2
 #   - export symbols with -rdynamic (needed by test-gen-extern JIT dlsym)
 #   - depend on libk_stdlib (K compilation auto-imports the stdlib)
-# Usage: klang_gen_test(<target> <timeout_s> <source1> [<source2> ...])
+# Usage: klang_gen_test(<target> <timeout_s> [SHARD_COUNT <count>] <source1> [<source2> ...])
 # ---------------------------------------------------------------------------
 macro(klang_gen_test TARGET TIMEOUT)
-    add_executable(${TARGET} ${ARGN})
+    cmake_parse_arguments(KLANG_GEN_TEST "" "SHARD_COUNT" "" ${ARGN})
+    add_executable(${TARGET} ${KLANG_GEN_TEST_UNPARSED_ARGUMENTS})
     target_link_libraries(${TARGET} klang-test-helpers Catch2::Catch2WithMain)
     target_link_options(${TARGET} PRIVATE -rdynamic)
     add_dependencies(${TARGET} libk_stdlib)
-    add_test(NAME ${TARGET} COMMAND ${TARGET})
-    set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
-endmacro()
-
-# ---------------------------------------------------------------------------
-# Helper macro: like klang_gen_test, but registers <SHARDS> CTest entries running
-# disjoint Catch2 shards of the same executable (each with its own timeout).
-# Usage: klang_gen_test_sharded(<target> <timeout_s> <shards> <source1> [<source2> ...])
-# ---------------------------------------------------------------------------
-macro(klang_gen_test_sharded TARGET TIMEOUT SHARDS)
-    add_executable(${TARGET} ${ARGN})
-    target_link_libraries(${TARGET} klang-test-helpers Catch2::Catch2WithMain)
-    target_link_options(${TARGET} PRIVATE -rdynamic)
-    add_dependencies(${TARGET} libk_stdlib)
-    math(EXPR _klang_last_shard "${SHARDS} - 1")
-    foreach(_klang_shard RANGE ${_klang_last_shard})
-        add_test(NAME ${TARGET}-shard-${_klang_shard}
-                 COMMAND ${TARGET} --shard-count ${SHARDS} --shard-index ${_klang_shard})
-        set_tests_properties(${TARGET}-shard-${_klang_shard} PROPERTIES TIMEOUT ${TIMEOUT})
-    endforeach()
+    if(KLANG_GEN_TEST_SHARD_COUNT)
+        math(EXPR KLANG_GEN_TEST_LAST_SHARD "${KLANG_GEN_TEST_SHARD_COUNT} - 1")
+        foreach(KLANG_GEN_TEST_SHARD_INDEX RANGE ${KLANG_GEN_TEST_LAST_SHARD})
+            add_test(NAME ${TARGET}-shard-${KLANG_GEN_TEST_SHARD_INDEX}
+                COMMAND ${TARGET}
+                    --shard-count ${KLANG_GEN_TEST_SHARD_COUNT}
+                    --shard-index ${KLANG_GEN_TEST_SHARD_INDEX}
+                    --order lex --rng-seed 42)
+            set_tests_properties(${TARGET}-shard-${KLANG_GEN_TEST_SHARD_INDEX}
+                PROPERTIES TIMEOUT ${TIMEOUT} RUN_SERIAL TRUE)
+        endforeach()
+    else()
+        add_test(NAME ${TARGET} COMMAND ${TARGET})
+        set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
+    endif()
 endmacro()
 
 # ---------------------------------------------------------------------------
@@ -274,9 +270,9 @@ klang_gen_test(klang-tests-gen-extern-intrinsics 120
 
 # ---------------------------------------------------------------------------
 # Group 3d — Codegen: functions, callables, lambdas, func-refs
-# Estimated wall-clock: ~60s on a low-spec VM.
+# Keep the executable stable; serial execution shards fit the timeout budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-functions 120
+klang_gen_test(klang-tests-gen-functions 120 SHARD_COUNT 3
         tests/test-gen-func-ref.cpp
         tests/test-gen-callable-basic.cpp
         tests/test-gen-callable-member.cpp
@@ -510,7 +506,7 @@ klang_gen_test(klang-tests-gen-generics 120
 klang_gen_test(klang-tests-import-core 120
         tests/test-import-core.cpp
 )
-klang_gen_test_sharded(klang-tests-import-templates 120 2
+klang_gen_test(klang-tests-import-templates 120 SHARD_COUNT 3
         tests/test-import-templates.cpp
         tests/test-import-template-reparse-diagnostic.cpp
 )
