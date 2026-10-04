@@ -645,9 +645,27 @@ TEST_CASE("Callable: nullable arguments are checked before non-null parameters r
             return 42;
         }
     )SRC";
-    auto jit = gen_jit(source);
-    REQUIRE(jit);
-    auto run = jit->lookup_symbol<int(*)()>("run");
-    REQUIRE(run);
-    CHECK(run() == 42);
+    for (int iteration = 0; iteration < 8; ++iteration) {
+        INFO(iteration);
+        {
+            auto jit = gen_jit(source);
+            REQUIRE(jit);
+            auto run = jit->lookup_symbol<int(*)()>("run");
+            REQUIRE(run);
+            for (int call = 0; call < 8; ++call) {
+                INFO(call);
+                CHECK(run() == 42);
+            }
+        }
+
+        // Materialize another module after the throwing JIT has been torn down.
+        auto downstream = gen_jit(R"SRC(
+            module callable_nonnull_downstream;
+            run() : int { return 42; }
+        )SRC");
+        REQUIRE(downstream);
+        auto run = downstream->lookup_symbol<int(*)()>("run");
+        REQUIRE(run);
+        CHECK(run() == 42);
+    }
 }

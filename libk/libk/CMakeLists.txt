@@ -153,7 +153,7 @@ add_custom_command(
     OUTPUT  ${FATAL_OBJ}
     COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
             -o ${FATAL_OBJ} ${FATAL_C}
-    DEPENDS ${FATAL_C}
+    DEPENDS ${FATAL_C} ${CMAKE_CURRENT_SOURCE_DIR}/src/fatal_abi.h
     COMMENT "Compiling K runtime fatal helpers (fatal.c)"
     VERBATIM
 )

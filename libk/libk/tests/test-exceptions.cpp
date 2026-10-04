@@ -26,8 +26,12 @@
  *  - Catch by base class (Throwable catches everything)
  */
 
+#include <catch2/catch_message.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cstddef>
+#include <llvm/IR/DataLayout.h>
 #include "../../klang/tests/helpers.hpp"
+#include "../src/fatal_abi.h"
 
 #ifndef LIBK_KDI_DIR
 #error "LIBK_KDI_DIR not defined — set via CMake target_compile_definitions"
@@ -44,6 +48,40 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 }
 
 } // anonymous namespace
+
+TEST_CASE("Fatal helpers: allocation layouts match imported exception types",
+          "[libk][exception][fatal][abi]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module fatal_exception_allocation_layouts;
+        probe(a: OutOfMemory&, b: IndexOutOfBoundsError&,
+              c: NullDereferenceError&, d: NullAssignationError&, e: NullCastError&) {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto context = comp->get_context_for_test();
+    const auto& layout = context->module().getDataLayout();
+    const struct {
+        const char* name;
+        std::size_t size;
+    } exceptions[] = {
+        {"Throwable", sizeof(k_throwable_layout)},
+        {"FatalError", sizeof(k_fatal_error_layout)},
+        {"NullPointerError", sizeof(k_null_pointer_error_layout)},
+        {"OutOfMemory", sizeof(k_direct_fatal_error_layout)},
+        {"IndexOutOfBoundsError", sizeof(k_direct_fatal_error_layout)},
+        {"NullDereferenceError", sizeof(k_null_fatal_error_layout)},
+        {"NullAssignationError", sizeof(k_null_fatal_error_layout)},
+        {"NullCastError", sizeof(k_null_fatal_error_layout)},
+    };
+    for (const auto& exception : exceptions) {
+        INFO(exception.name);
+        auto aggregate = comp->get_unit()->get_or_create_imported_aggregate(
+            k::name{false, {"k", exception.name}}, context);
+        REQUIRE(aggregate != nullptr);
+        auto* llvm_type = context->get_llvm_type(aggregate->get_struct_type());
+        REQUIRE(llvm_type != nullptr);
+        CHECK(layout.getTypeAllocSize(llvm_type).getFixedValue() == exception.size);
+    }
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  1. Throwable and Exception construction and getCode()

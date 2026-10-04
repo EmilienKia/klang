@@ -29,6 +29,8 @@
 #include <stdlib.h>
 #include <signal.h>
 
+#include "fatal_abi.h"
+
 /* ══════════════════════════════════════════════════════════════════════════════
  * Itanium C++ ABI functions
  * ══════════════════════════════════════════════════════════════════════════════ */
@@ -98,20 +100,21 @@ struct __k_ti_chain_entry {
 /* ══════════════════════════════════════════════════════════════════════════════
  * Object sizes
  *
- * On LP64, each vptr is 8 bytes. The _code field is int (4 bytes) + 4 pad.
+ * On LP64, each vptr is 8 bytes. Throwable also contains _code (4 bytes
+ * plus 4 padding), _cause (8 bytes) and _cause_handle (8 bytes).
  *
  * 4-level hierarchy (OutOfMemory, IndexOutOfBoundsError):
  *   Class -> FatalError -> Throwable -> Object
- *   = 4 vptrs (32) + int _code (4) + pad (4) = 40 bytes
+ *   = 4 vptrs (32) + int _code (4) + pad (4) + cause fields (16) = 56 bytes
  *
  * 5-level hierarchy (NullDereferenceError, NullAssignationError, NullCastError):
  *   Class -> NullPointerError -> FatalError -> Throwable -> Object
- *   = 5 vptrs (40) + int _code (4) + pad (4) = 48 bytes
+ *   = 5 vptrs (40) + int _code (4) + pad (4) + cause fields (16) = 64 bytes
  * ══════════════════════════════════════════════════════════════════════════════ */
 
-#define K_OUT_OF_MEMORY_SIZE           40
-#define K_NULL_POINTER_ERROR_SIZE      48  /* 5-level: via NullPointerError */
-#define K_INDEX_OUT_OF_BOUNDS_SIZE     40  /* 4-level: directly from FatalError */
+#define K_OUT_OF_MEMORY_SIZE           sizeof(struct k_direct_fatal_error_layout)
+#define K_NULL_POINTER_ERROR_SIZE      sizeof(struct k_null_fatal_error_layout)
+#define K_INDEX_OUT_OF_BOUNDS_SIZE     sizeof(struct k_direct_fatal_error_layout)
 
 /* ══════════════════════════════════════════════════════════════════════════════
  * Static typeinfo chains
