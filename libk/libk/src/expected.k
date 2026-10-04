@@ -24,9 +24,10 @@ module k;
  *
  * Inspired by C++23's std::expected and Rust's Result<T, E>.
  *
- * The underlying storage is a nested template union with two alternatives:
- * - `result` (Kind::result = 0): holds the success value of type R
- * - `error`  (Kind::error  = 1): holds the error value of type E
+ * The underlying storage is a nested union with an empty state and two values:
+ * - `undefined`: no result or error has been constructed
+ * - `result`: holds the success value of type R
+ * - `error`: holds the error value of type E
  *
  * The active alternative is tracked by the union's built-in discriminant,
  * queryable via _storage.index().
@@ -63,13 +64,16 @@ struct Expected {
     /**
      * Storage — internal union backing Expected<R, E>.
      *
-     * This union holds either a result value (alternative index 0) or an error
-     * value (alternative index 1). It is not intended for direct use.
+     * The trivial first alternative represents the empty state, so default
+     * construction never pretends that an R or E object already exists.
+     * This storage is not intended for direct use.
      * The Kind enum is automatically generated:
-     *   Storage::Kind::result = 0
-     *   Storage::Kind::error  = 1
+     *   Storage::Kind::undefined = 0
+     *   Storage::Kind::result = 1
+     *   Storage::Kind::error = 2
      */
     union Storage {
+        undefined: byte;
         result: R;
         error: E;
     }
@@ -79,7 +83,7 @@ struct Expected {
     public:
     /**
      * Default constructor. Creates an Expected in an undefined state.
-     * Caller must immediately call setResult() or setError().
+     * No result or error is live until setResult() or setError() succeeds.
      */
     Expected() {
     }
@@ -225,4 +229,3 @@ struct Expected {
         return unexpected(value);
     }
 }
-

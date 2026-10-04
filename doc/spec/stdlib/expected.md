@@ -52,16 +52,27 @@ struct Expected {
 
 | Method | Description |
 |--------|-------------|
-| `Expected()` | Default constructor. Creates an `Expected` in an undefined state. Must be followed immediately by a call to `setResult()` or `setError()`. |
+| `Expected()` | Default constructor. Creates an `Expected` in an undefined state. Call `setResult()` or `setError()` before accessing a value. |
 | `Expected(other : Expected<R,E>&)` | Copy constructor. If `other` holds a result, copies the result value. If `other` holds an error, copies the error value. If `other` is undefined, this is also left undefined. |
 
 ### Value Lifetime
+
+In the undefined state both `hasResult()` and `hasError()` are false, and no
+`R` or `E` object is live. Querying, copying, and destroying that state are safe.
+An empty struct value is not undefined: storing one must activate its selected
+alternative. Copying by value preserves the undefined state, even when both
+alternative types are empty.
 
 The active result or error is destroyed when its `Expected` is destroyed.
 Copy construction and value-returning accessors use the alternative's copy
 semantics. In particular, `Expected<Shared<T>, E>` holds its own strong reference;
 copying it or calling `getResult()` retains the same ownership group, and
 destroying each copy releases that copy's reference.
+
+For class and struct values, first publication constructs a copy. Updating the
+same active alternative uses its assignment operator, when provided. Switching
+between result and error destroys the previous value once and constructs the
+replacement. If replacement construction throws, neither alternative is live.
 
 ---
 
@@ -162,7 +173,9 @@ copy : Expected<int, int>(ok);
 
 ### Storage
 
-`Expected<R, E>` uses a nested `union Storage` with two alternatives:
+`Expected<R, E>` uses inline discriminated storage for its result and error. An
+explicit empty state represents neither alternative; it does not construct or
+destroy an `R` or `E` value. The two live alternatives are:
 
 ```k
 union Storage {

@@ -28,6 +28,7 @@
  */
 
 #include <catch2/catch_all.hpp>
+#include <cstdlib>
 #include "helpers.hpp"
 
 #ifndef LIBK_KDI_DIR
@@ -40,11 +41,249 @@
 namespace {
 
 /// Shorthand: compile K source that uses the base stdlib and JIT it.
-std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
-    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
+std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src, bool dump = false) {
+    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR, dump);
 }
 
 } // anonymous namespace
+
+TEST_CASE("Expected: empty IoDone retains its tag through copy getters and owned completion",
+          "[libk][expected][io-done-result][copy][regression]") {
+    auto j = jit_k(R"SRC(
+        module __expected_io_done_tag__;
+        observed : int = -2;
+        test() : int {
+            empty : Expected<k::io::IoDone, k::io::IoError>;
+            copiedEmpty : Expected<k::io::IoDone, k::io::IoError>(empty);
+            if (empty.hasResult() || empty.hasError() ||
+                copiedEmpty.hasResult() || copiedEmpty.hasError()) return -1;
+            done : k::io::IoDone;
+            empty.setResult(done);
+            if (!empty.hasResult() || empty.hasError()) return -2;
+            copy : Expected<k::io::IoDone, k::io::IoError>(empty);
+            if (!copy.hasResult() || copy.hasError()) return -3;
+            value : k::io::IoDone = copy.getResult();
+            fromGetter : Expected<k::io::IoDone, k::io::IoError>;
+            fromGetter.setResult(value);
+            if (!fromGetter.hasResult() || fromGetter.hasError()) return -4;
+            completion : k::io::IoCompletion<k::io::IoDone> =
+                [](r: k::io::IoResult<k::io::IoDone>) {
+                    observed = r.hasResult() ? 1 : (r.hasError() ? 0 : -1);
+                    if (observed != 1) return;
+                    copied : k::io::IoResult<k::io::IoDone>(r);
+                    if (!copied.hasResult() || copied.hasError()) { observed = -3; return; }
+                    value : k::io::IoDone = copied.getResult();
+                    copied.setResult(value);
+                    if (!copied.hasResult() || copied.hasError()) observed = -4;
+                };
+            completion(fromGetter);
+            if (observed != 1 || !fromGetter.hasResult() || fromGetter.hasError()) return -5;
+            error : k::io::IoError(k::io::IoErrorKind::Closed, 9, 3L);
+            copy.setError(error);
+            if (!copy.hasError() || copy.hasResult()) return -6;
+            copiedError : Expected<k::io::IoDone, k::io::IoError>(copy);
+            if (!copiedError.hasError() || copiedError.hasResult()) return -7;
+            errorValue : k::io::IoError = copiedError.getError();
+            if (errorValue.kind() != k::io::IoErrorKind::Closed ||
+                errorValue.getErrno() != 9 || errorValue.bytesTransferred() != 3L) return -8;
+            copiedError.setResult(value);
+            if (!copiedError.hasResult() || copiedError.hasError()) return -9;
+            copy.setResult(done);
+            copy.setResult(done);
+            if (!copy.hasResult() || copy.hasError()) return -10;
+            bothEmpty : Expected<k::io::IoDone, k::io::IoDone>;
+            bothEmpty.setError(done);
+            if (!bothEmpty.hasError() || bothEmpty.hasResult()) return -11;
+            bothEmpty.setResult(done);
+            return bothEmpty.hasResult() && !bothEmpty.hasError() ? 1 : -12;
+        }
+        callbackState() : int { return observed; }
+    )SRC", std::getenv("KLANG_F1_DUMP_IR") != nullptr);
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int (*)()>("test");
+    auto callbackState = j->lookup_symbol<int (*)()>("callbackState");
+    REQUIRE(test);
+    REQUIRE(callbackState);
+    int result = 0;
+    REQUIRE_NOTHROW(result = test());
+    INFO("Expected IoDone failed boundary=" << result << " callback state=" << callbackState());
+    CHECK(result == 1);
+}
+
+TEST_CASE("Expected: class values construct before assignment and release only live alternatives",
+          "[libk][expected][copy][lifecycle][regression]") {
+    auto j = jit_k(R"SRC(
+        module __expected_class_lifecycle__;
+        copies : int = 0;
+        assignments : int = 0;
+        drops : int = 0;
+        invalid : int = 0;
+        failedStage : int = 0;
+        failedMask : int = 0;
+        failedResultRefs : int = 0;
+        failedErrorRefs : int = 0;
+        failedResultReleases : int = 0;
+        failedErrorReleases : int = 0;
+        failedCopies : int = 0;
+        failedAssignments : int = 0;
+        failedDrops : int = 0;
+        failedInvalid : int = 0;
+        failureStage() : int { return failedStage; }
+        failureMask() : int { return failedMask; }
+        resultRefsAtFailure() : int { return failedResultRefs; }
+        errorRefsAtFailure() : int { return failedErrorRefs; }
+        resultReleasesAtFailure() : int { return failedResultReleases; }
+        errorReleasesAtFailure() : int { return failedErrorReleases; }
+        copiesAtFailure() : int { return failedCopies; }
+        assignmentsAtFailure() : int { return failedAssignments; }
+        dropsAtFailure() : int { return failedDrops; }
+        invalidAtFailure() : int { return failedInvalid; }
+        struct State {
+            refs : int = 0;
+            releases : int = 0;
+        }
+        record(stage : int, valid : bool, result : State&, error : State&) {
+            if (valid) return;
+            failedMask |= 1 << (stage - 1);
+            if (failedStage != 0) return;
+            failedStage = stage;
+            failedResultRefs = result.refs;
+            failedErrorRefs = error.refs;
+            failedResultReleases = result.releases;
+            failedErrorReleases = error.releases;
+            failedCopies = copies;
+            failedAssignments = assignments;
+            failedDrops = drops;
+            failedInvalid = invalid;
+        }
+        class Resource {
+            state : State* = null;
+            magic : int = 73;
+            Resource(value : State*) : state(value) { ++state->refs; }
+            Resource(other : const Resource&) : state(other.state) {
+                if (other.magic != 73) ++invalid;
+                ++copies;
+                ++state->refs;
+            }
+            operator=(other : const Resource&) : Resource& {
+                if (magic != 73 || other.magic != 73) {
+                    ++invalid;
+                    return this;
+                }
+                ++assignments;
+                next : State* = other.state;
+                ++next->refs;
+                --state->refs;
+                ++state->releases;
+                state = next;
+                return this;
+            }
+            ~Resource() {
+                if (magic != 73) { ++invalid; return; }
+                --state->refs;
+                ++state->releases;
+                magic = 0;
+                ++drops;
+            }
+            const valid() : bool { return magic == 73 && state->refs > 0; }
+        }
+        test() : int {
+            copies = 0; assignments = 0; drops = 0; invalid = 0; failedStage = 0;
+            failedMask = 0;
+            resultState : State;
+            errorState : State;
+            valid : bool = true;
+            {
+                result : Resource(&resultState);
+                error : Resource(&errorState);
+                {
+                    empty : Expected<Resource, Resource>;
+                    copiedEmpty : Expected<Resource, Resource>(empty);
+                    valid = valid && !empty.hasResult() && !empty.hasError();
+                    valid = valid && !copiedEmpty.hasResult() && !copiedEmpty.hasError();
+                    record(1, !empty.hasResult() && !empty.hasError() &&
+                        !copiedEmpty.hasResult() && !copiedEmpty.hasError(), resultState, errorState);
+                }
+                valid = valid && drops == 0 && copies == 0 && assignments == 0;
+                record(1, drops == 0 && copies == 0 && assignments == 0, resultState, errorState);
+                {
+                    expected : Expected<Resource, Resource>;
+                    expected.setResult(result);
+                    valid = valid && expected.hasResult() && !expected.hasError();
+                    valid = valid && resultState.refs == 2 && copies == 1 && assignments == 0;
+                    record(2, expected.hasResult() && !expected.hasError() &&
+                        resultState.refs == 2 && copies == 1 && assignments == 0, resultState, errorState);
+                    expected.setResult(error);
+                    valid = valid && resultState.refs == 1 && errorState.refs == 2;
+                    valid = valid && resultState.releases == 1 && assignments == 1 && drops == 0;
+                    record(3, resultState.refs == 1 && errorState.refs == 2 &&
+                        resultState.releases == 1 && assignments == 1 && drops == 0, resultState, errorState);
+                    expected.setError(result);
+                    valid = valid && expected.hasError() && !expected.hasResult();
+                    valid = valid && resultState.refs == 2 && errorState.refs == 1;
+                    valid = valid && errorState.releases == 1 && drops == 1 && copies == 2;
+                    record(4, expected.hasError() && !expected.hasResult() &&
+                        resultState.refs == 2 && errorState.refs == 1 &&
+                        errorState.releases == 1 && drops == 1 && copies == 2, resultState, errorState);
+                    expected.setError(error);
+                    valid = valid && resultState.refs == 1 && errorState.refs == 2 && assignments == 2;
+                    record(5, resultState.refs == 1 && errorState.refs == 2 && assignments == 2,
+                        resultState, errorState);
+                    expected.setResult(result);
+                    valid = valid && resultState.refs == 2 && errorState.refs == 1;
+                    valid = valid && errorState.releases == 2 && drops == 2 && copies == 3;
+                    record(6, resultState.refs == 2 && errorState.refs == 1 &&
+                        errorState.releases == 2 && drops == 2 && copies == 3, resultState, errorState);
+                    {
+                        value : Resource = expected.getResult();
+                        valid = valid && value.valid() && resultState.refs == 3;
+                        record(7, value.valid() && resultState.refs == 3, resultState, errorState);
+                    }
+                    valid = valid && resultState.refs == 2;
+                    record(8, resultState.refs == 2, resultState, errorState);
+                    {
+                        copy : Expected<Resource, Resource>(expected);
+                        valid = valid && copy.hasResult() && !copy.hasError() && resultState.refs == 3;
+                        record(9, copy.hasResult() && !copy.hasError() && resultState.refs == 3,
+                            resultState, errorState);
+                        value : Resource = copy.getResult();
+                        valid = valid && value.valid() && resultState.refs == 4;
+                        record(10, value.valid() && resultState.refs == 4, resultState, errorState);
+                    }
+                    valid = valid && resultState.refs == 2 && errorState.refs == 1;
+                    record(11, resultState.refs == 2 && errorState.refs == 1, resultState, errorState);
+                }
+                valid = valid && resultState.refs == 1 && errorState.refs == 1;
+                record(12, resultState.refs == 1 && errorState.refs == 1, resultState, errorState);
+            }
+            record(13, resultState.refs == 0 && errorState.refs == 0 && invalid == 0,
+                resultState, errorState);
+            return valid && resultState.refs == 0 && errorState.refs == 0 && invalid == 0 ? 1 : 0;
+        }
+    )SRC", std::getenv("KLANG_F1_DUMP_IR") != nullptr);
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    auto diagnostic = [&](const char* name) {
+        auto getter = j->lookup_symbol<int (*)()>(name);
+        REQUIRE(getter);
+        return getter();
+    };
+    INFO("Expected first failing stage=" << diagnostic("failureStage")
+         << " failure mask=" << diagnostic("failureMask")
+         << " refs(result/error)=" << diagnostic("resultRefsAtFailure") << "/"
+         << diagnostic("errorRefsAtFailure")
+         << " releases(result/error)=" << diagnostic("resultReleasesAtFailure") << "/"
+         << diagnostic("errorReleasesAtFailure")
+         << " copies=" << diagnostic("copiesAtFailure")
+         << " assignments=" << diagnostic("assignmentsAtFailure")
+         << " drops=" << diagnostic("dropsAtFailure")
+         << " invalid=" << diagnostic("invalidAtFailure"));
+    CHECK(result == 1);
+}
+
 
 TEST_CASE("Expected<Shared<T>> — body-local specialization releases its active result",
           "[libk][expected][shared][late-instantiation][regression]") {
