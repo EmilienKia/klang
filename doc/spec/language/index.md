@@ -26,6 +26,7 @@ Examples are included where they clarify the normative text.
 | [Aliases and Typedefs](basic/aliases.md) | Exported aliasing: `alias` (soft) and `typedef` (strong); conversions, mangling, export |
 | [Libraries — Export and Import](basic/libraries.md) | Producing libraries, what is exported, importing and using symbols, cross-library inheritance, transitive deps |
 | [Main Function](basic/main.md) | Program entry point |
+| [Name Resolution](name-resolution.md) | Lexical lookup and visibility, including direct friend constructor/static-member access |
 
 ### Expressions
 

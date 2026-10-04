@@ -230,7 +230,9 @@ public:
 
     /**
      * Check whether the current access site (described by function_stack) is
-     * a friend of the given aggregate.
+     * a friend of the given aggregate, for private or protected member access.
+     * Relative targets resolve in the declaring aggregate's lexical scope;
+     * root-qualified targets resolve from the module root.
      *
      * Friendship rules:
      *  - If the friend target is an aggregate, any direct member function (not

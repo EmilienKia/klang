@@ -260,48 +260,43 @@ bool scope_lookup::is_friend_of(
     if (directives.empty()) return false;
 
     const auto& current_fn = function_stack.back();
+    auto find_target = [](const std::shared_ptr<const element>& from,
+                          const k::name& name) -> std::shared_ptr<const element> {
+        auto scope = navigate_scope(from, name);
+        if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(scope)) {
+            if (auto agg = ah->get_aggregate(name.back())) return agg;
+        }
+        if (auto fh = std::dynamic_pointer_cast<const function_holder>(scope)) {
+            if (auto fn = fh->get_function(name.back())) return fn;
+        }
+        return {};
+    };
 
     for (const auto& dir : directives) {
-        auto root = unit.get_root_namespace();
-        if (!root) continue;
+        auto name = dir.target_name.without_root_prefix();
+        if (name.empty()) continue;
 
-        std::shared_ptr<const element> current = root;
-        bool resolved = true;
-        for (size_t i = 0; i < dir.target_name.size(); ++i) {
-            const auto& part = dir.target_name[i];
-            bool stepped = false;
-
-            if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
-                if (auto child = nspc->get_child_namespace(part)) {
-                    current = child;
-                    stepped = true;
-                }
+        std::shared_ptr<const element> target;
+        if (!dir.target_name.has_root_prefix()) {
+            for (auto scope = owner_agg.shared_as<const element>(); scope;
+                 scope = scope->parent<const element>()) {
+                if ((target = find_target(scope, name))) break;
+                if (is_definition_namespace_boundary(*scope)) break;
             }
-            if (!stepped) {
-                if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
-                    if (auto agg = ah->get_aggregate(part)) {
-                        current = std::dynamic_pointer_cast<const element>(agg);
-                        stepped = true;
-                    }
-                }
-            }
-            if (!stepped && i == dir.target_name.size() - 1) {
-                if (auto fh = std::dynamic_pointer_cast<const function_holder>(current)) {
-                    if (auto fn = fh->get_function(part)) {
-                        current = std::dynamic_pointer_cast<const element>(fn);
-                        stepped = true;
-                    }
-                }
-            }
-            if (!stepped) {
-                resolved = false;
-                break;
+        }
+        if (!target) {
+            auto root = unit.get_root_namespace();
+            if (!root) continue;
+            const auto module = root->get_name().without_root_prefix();
+            if (name.size() > module.size() && name.start_with(module)) {
+                name = name.without_front(module.size());
+                target = find_target(root, name);
+            } else if (dir.target_name.has_root_prefix()) {
+                target = find_target(root, name);
             }
         }
 
-        if (!resolved || !current) continue;
-
-        auto target = current;
+        if (!target) continue;
 
         if (auto target_agg = std::dynamic_pointer_cast<const aggregate>(target)) {
             if (dir.filter != friend_directive::filter_t::NONE) {

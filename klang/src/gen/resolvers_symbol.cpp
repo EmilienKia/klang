@@ -663,7 +663,7 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
         auto vis = mv->get_visibility();
         if (vis == PUBLIC) return;
         if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
-        if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
+        if (scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
         lex::opt_any_lexeme agg_lexeme = access_lexeme;
         if (!agg_lexeme) {
             if (auto ast_ad = owner_agg->get_ast_aggregate_decl()) agg_lexeme = lex::any_lexeme{ast_ad->name};
@@ -673,7 +673,7 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
             "it can only be accessed from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
              mv->get_short_name(), owner_agg->get_short_name(), owner_agg->get_short_name(),
-             vis == PROTECTED ? " or its subclasses or friends" : ""});
+             vis == PROTECTED ? " or its subclasses or friends" : " or its friends"});
     }
 
     // Step 2: Global variable: check namespace visibility (protected = same module, private = same ns)

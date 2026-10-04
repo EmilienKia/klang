@@ -172,6 +172,263 @@ TEST_CASE("Friend aggregate — access protected constructor", "[gen][friend]") 
     REQUIRE(test() == 42);
 }
 
+TEST_CASE("Base module friend aggregate can call a private constructor without imports",
+          "[gen][friend][private][regression]") {
+    auto comp = k::compiler::create();
+    REQUIRE_NOTHROW(comp->parse_source("friend-private-ctor.k", R"SRC(
+        module k;
+        struct Secret {
+        private:
+            _value : int;
+            Secret(value : int) : _value(value) {}
+            friend Builder;
+        public:
+            get() : int { return _value; }
+        }
+        struct Builder {
+            static build() : int {
+                value : Secret(42);
+                return value.get();
+            }
+        }
+        test() : int { return Builder::build(); }
+    )SRC", false));
+    REQUIRE(comp->get_unit());
+    REQUIRE(comp->get_unit()->get_imports().empty());
+}
+
+TEST_CASE("Later namespace friends decode private native constructors across sources",
+          "[gen][friend][private][regression]") {
+    auto jit = gen_jit_multi({
+        {"address.k", R"SRC(
+            module gen_friend_native_decode;
+            namespace io {
+                struct NativeValue { value : int; }
+                class Address {
+                private:
+                    _value : int;
+                    Address(native : NativeValue*) : _value(native->value) {}
+                    friend Packet;
+                    friend Socket;
+                public:
+                    Address() : _value(0) {}
+                    Address(other : const Address&) : _value(other._value) {}
+                    const value() : int { return _value; }
+                }
+            }
+        )SRC"},
+        {"packet.k", R"SRC(
+            module gen_friend_native_decode;
+            namespace io {
+                class Packet {
+                private:
+                    _source : Address;
+                    Packet(source : const Address&) : _source(source) {}
+                    static decode(native : NativeValue*) : Packet {
+                        source : Address(native);
+                        return Packet(source);
+                    }
+                    friend Socket;
+                public:
+                    Packet() : _source() {}
+                    Packet(other : const Packet&) : _source(other._source) {}
+                    const value() : int { return _source.value(); }
+                }
+                class Socket {
+                public:
+                    static receive(native : NativeValue*) : Packet {
+                        return Packet::decode(native);
+                    }
+                    static receiveCallback(native : NativeValue*) : Packet {
+                        decoder : *(NativeValue*):Packet = Packet::decode;
+                        return decoder(native);
+                    }
+                    static bound(native : NativeValue*) : Address {
+                        return Address(native);
+                    }
+                }
+            }
+            test() : int {
+                native : io::NativeValue;
+                native.value = 42;
+                packet : io::Packet = io::Socket::receive(&native);
+                callbackPacket : io::Packet = io::Socket::receiveCallback(&native);
+                address : io::Address = io::Socket::bound(&native);
+                return packet.value() + callbackPacket.value() + address.value();
+            }
+        )SRC"}
+    });
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 126);
+}
+
+TEST_CASE("Later namespace friend initializes private constructors in member defaults",
+          "[gen][friend][private][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_friend_member_defaults;
+        namespace io {
+            struct Secret {
+            private:
+                _value : int;
+                Secret(value : int) : _value(value) {}
+                friend Builder;
+            public:
+                get() : int { return _value; }
+            }
+            struct Builder {
+                value : Secret(42);
+                Builder() {}
+                Builder(v : int) : value(v) {}
+                static make() : Secret { return Secret(21); }
+            }
+        }
+        test() : int {
+            defaultValue : io::Builder;
+            explicitValue : io::Builder(7);
+            returnedValue : io::Secret = io::Builder::make();
+            return defaultValue.value.get() + explicitValue.value.get() + returnedValue.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 70);
+}
+
+TEST_CASE("Qualified constructor friends resolve from lexical and module roots",
+          "[gen][friend][private][regression]") {
+    const auto target = GENERATE(
+        "helpers::Builder",
+        "::gen_friend_qualified_ctor::nested::io::helpers::Builder",
+        "gen_friend_qualified_ctor::nested::io::helpers::Builder");
+    CAPTURE(target);
+    const std::string source = R"SRC(
+        module gen_friend_qualified_ctor::nested;
+        namespace io {
+            struct Secret {
+            private:
+                _value : int;
+                Secret(value : int) : _value(value) {}
+                friend )SRC" + std::string(target) + R"SRC(;
+            public:
+                get() : int { return _value; }
+            }
+            namespace helpers {
+                struct Builder {
+                    static build() : int {
+                        value : Secret(42);
+                        return value.get();
+                    }
+                }
+            }
+        }
+        test() : int { return io::helpers::Builder::build(); }
+    )SRC";
+    auto jit = gen_jit(source);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Later namespace free friend calls private constructors and static functions",
+          "[gen][friend][private][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_friend_free_decode;
+        namespace io {
+            struct Secret {
+            private:
+                _value : int;
+                Secret(value : int) : _value(value) {}
+                static decodedValue() : int { return 42; }
+                friend decode;
+            public:
+                get() : int { return _value; }
+            }
+            decode() : Secret { return Secret(Secret::decodedValue()); }
+        }
+        test() : int {
+            value : io::Secret = io::decode();
+            return value.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Private constructors remain restricted to matching direct friends",
+          "[gen][friend][private][error][regression]") {
+    const auto declarations = GENERATE(
+        R"SRC(
+            struct Buddy {}
+            struct Outsider {
+                static steal() : Secret { return Secret(42); }
+            }
+        )SRC",
+        R"SRC(
+            struct Buddy {}
+            struct Derived : public Buddy {
+                static steal() : Secret { return Secret(42); }
+            }
+        )SRC",
+        R"SRC(
+            struct Buddy {
+                struct Nested {
+                    static steal() : Secret { return Secret(42); }
+                }
+            }
+        )SRC",
+        R"SRC(
+            class Buddy {
+            public:
+                static steal() : Secret { return Secret(42); }
+            }
+        )SRC");
+    CAPTURE(declarations);
+    const std::string source = R"SRC(
+        module gen_friend_ctor_denied;
+        namespace io {
+            struct Secret {
+            private:
+                Secret(value : int) {}
+                friend struct Buddy;
+            }
+    )SRC" + std::string(declarations) + R"SRC(
+        }
+    )SRC";
+    REQUIRE_THROWS_MATCHES(gen_jit_throws(source), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const k::log::compiler_error& error) {
+                return error.get_diagnostic().code == 0x080Cu;
+            }, "private constructor visibility diagnostic"));
+}
+
+TEST_CASE("Namespace constructor friend does not grant access to same-named root aggregate",
+          "[gen][friend][private][error][regression]") {
+    REQUIRE_THROWS_MATCHES(gen_jit_throws(R"SRC(
+        module gen_friend_ctor_shadow;
+        namespace io {
+            struct Secret {
+            private:
+                Secret(value : int) {}
+                friend Buddy;
+            }
+            struct Buddy {}
+        }
+        struct Buddy {
+            static steal() : io::Secret { return io::Secret(42); }
+        }
+    )SRC"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const k::log::compiler_error& error) {
+                return error.get_diagnostic().code == 0x080Cu;
+            }, "private constructor visibility diagnostic"));
+}
+
 // ── Friend free function — access protected members ─────────────────────────
 
 TEST_CASE("Friend free function — access protected member variable", "[gen][friend]") {

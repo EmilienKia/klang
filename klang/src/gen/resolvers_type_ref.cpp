@@ -148,7 +148,7 @@ std::shared_ptr<type> build_model_type_from_kdi_signature(const kdi::kdi_type& s
  * Check function visibility from access site.
  * - Namespace-level functions: public = open, protected = same module, private = same ns.
  * - Struct member functions: private = declaring struct (or nested) and friends;
- *   protected additionally permits derived structs.
+ *   protected additionally permits derived structs and friends.
  * Static constructors and destructors inherit the struct's own visibility — they are not
  * individually checked (their owner struct visibility gates them).
  */

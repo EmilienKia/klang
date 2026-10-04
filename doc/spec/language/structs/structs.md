@@ -210,8 +210,8 @@ Every field and member function inside a struct has a *visibility* that determin
 | Keyword     | Accessible from …                                                                              |
 |-------------|-----------------------------------------------------------------------------------------------|
 | `public`    | Everywhere. This is the **default**.                                                           |
-| `protected` | Member functions of this struct, of any struct that **derives** from it, and of its nested structs. |
-| `private`   | Member functions of **this struct only** (and its nested structs). Subclasses are excluded.   |
+| `protected` | Member functions of this struct, of any struct that **derives** from it, of its nested structs, and declared friends. |
+| `private`   | Member functions of **this struct** (and its nested structs), and declared friends. Subclasses are excluded. |
 
 ### Ways to specify visibility
 
@@ -249,7 +249,11 @@ Without any specifier the default visibility is **public**.
 A member is accessible from a member function when:
 - It is `public` (accessible from anywhere), **or**
 - It is `protected` and the function belongs to the owning struct **or any struct that transitively derives from it**, **or**
-- It is `private` and the function belongs to **the exact owning struct** (or a struct nested inside it).
+- It is `private` and the function belongs to **the exact owning struct** (or a struct nested inside it), **or**
+- The function is a declared friend, or a direct member of a declared friend aggregate.
+
+Friend access applies to constructors and static member functions as well as fields
+and instance methods. See [friendship](../name-resolution.md#133-friendship).
 
 When calling another member function of the same struct from within a method, use explicit `this.`:
 

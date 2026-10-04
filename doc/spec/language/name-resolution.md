@@ -909,8 +909,8 @@ api() : void { helperFunc(); }  // ok: within same module
 
 A `friend` declaration inside an aggregate grants a named external entity access to
 the aggregate's **private and protected** members, including constructors and
-member functions accessed through either `.` or `->`. This does not change
-their visibility for non-friends.
+static or instance member functions accessed through either `.` or `->`. This
+does not change their visibility for non-friends.
 
 ```k
 class Safe {
@@ -924,6 +924,12 @@ class Safe {
 - If the friend target is an **aggregate**, all direct member functions of that
   aggregate (not inherited, not in nested types) are friends.
 - If the friend target is a **function**, only that specific function is a friend.
+- Relative friend targets must resolve in the declaring aggregate's lexical scope,
+  climbing enclosing aggregates and namespaces. Root-qualified targets must resolve
+  from the module root; the complete local module-name prefix is accepted.
+- A friend may be defined later, including in another source file of the same module.
+- A direct friend member's access includes its constructor member initializers and
+  default member initializers evaluated as part of that constructor.
 - Friendship is **not inherited**: subclasses of `Inspector` are not friends of `Safe`.
 - Friendship is **not transitive**: friends of `Inspector` are not friends of `Safe`.
 - Friendship is **not symmetric**: `Safe` being a friend of `X` does not make `X` a
@@ -932,7 +938,9 @@ class Safe {
 ```
 IS_FRIEND(owner_aggregate, access_site_function):
   for each friend_directive F in owner_aggregate:
-    target = RESOLVE_FROM_ROOT(F.target_name)
+    target = F.target_name is root-qualified
+             ? RESOLVE_FROM_ROOT(F.target_name)
+             : RESOLVE_IN_SCOPE_CHAIN(owner_aggregate, F.target_name)
     if target is an aggregate:
       if access_site_function.owner == target: return IS_FRIEND
     if target is a function:

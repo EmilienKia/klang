@@ -1148,6 +1148,12 @@ accepted as a friend:
 - Friendship does **not propagate**: a friend of `X` cannot access members of `X`'s
   base classes through that friendship (it can access only what belongs to `X`).
 - Friendship applies to both **private and protected** members.
+- This includes constructors and static member functions. A direct friend's
+  constructor member initializers and default member initializers retain that access.
+- Relative friend names resolve in the declaring aggregate's lexical scope;
+  root-qualified names resolve from the module root, accepting the complete local
+  module-name prefix. Friend definitions may occur later or in another source file
+  of the same module.
 - A `friend struct Foo<T>;` filter verifies that the named entity is indeed a `struct`.
 - The `TemplateArgList` in a friend declaration inside a template aggregate may
   reference the enclosing template's type parameters (e.g. `friend Bar<T>;`).
