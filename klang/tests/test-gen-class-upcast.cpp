@@ -637,3 +637,87 @@ TEST_CASE("Class upcast: lien<Base class> initialised from owner<Derived class>"
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 88);
 }
+
+TEST_CASE("Class upcast: nullable owners and observers preserve null and destruction",
+          "[gen][upcast][class][owner][null-preserving-upcast]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_class_nullable_upcast;
+        destroyed : int = 0;
+        class Base {
+        public:
+            Base() -> default;
+            ~Base() {}
+            const value() : int { return 0; }
+        }
+        class Derived : public Base {
+        public:
+            Derived() : Base() {}
+            ~Derived() { ++destroyed; }
+            override const value() : int { return 42; }
+        }
+        class Leaf : public Derived {}
+
+        makeDerived(present : bool) : Derived! {
+            if (!present) return null;
+            return new Derived();
+        }
+        makeBase(present : bool) : Base! {
+            return makeDerived(present);
+        }
+        makeLeaf() : Leaf! { return null; }
+        makeTransitiveBase() : Base! { return makeLeaf(); }
+
+        test() : int {
+            destroyed = 0;
+            {
+                pointer : Derived* = null;
+                basePointer : Base* = pointer;
+                view : Derived? = null;
+                baseView : Base? = view;
+                owner : Derived! = makeDerived(false);
+                borrowed : Base* = owner;
+                baseOwner : Base! = makeBase(false);
+                transitive : Base! = makeTransitiveBase();
+                if (basePointer != null || baseView != null || borrowed != null ||
+                    baseOwner != null || transitive != null) return -1;
+            }
+            if (destroyed != 0) return -2;
+            {
+                baseOwner : Base! = makeBase(true);
+                if (baseOwner == null || baseOwner->value() != 42) return -3;
+            }
+            return destroyed;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    REQUIRE(test() == 1);
+}
+
+TEST_CASE("Class upcast: null bypasses virtual-base pointer loads",
+          "[gen][upcast][class][owner][diamond][null-preserving-upcast]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_class_nullable_virtual_upcast;
+        class Root {}
+        class Left : public Root {}
+        class Right : public Root {}
+        class Diamond : public Left, public Right {}
+
+        makeDiamond() : Diamond! { return null; }
+        makeRoot() : Root! { return makeDiamond(); }
+        test() : int {
+            pointer : Diamond* = null;
+            rootPointer : Root* = pointer;
+            view : Diamond? = null;
+            rootView : Root? = view;
+            rootOwner : Root! = makeRoot();
+            if (rootPointer != null || rootView != null || rootOwner != null) return -1;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    REQUIRE(test() == 42);
+}

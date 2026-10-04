@@ -174,6 +174,10 @@ All observer indirection types share the same memory size (one pointer) and call
 
 Address comparison `==`/`!=` with any indirection (including `T+`, `T?`). `null == null` → `true`.
 
+Static derived-to-base conversions between nullable addressers (`*`, `?`, `!`)
+preserve `null`, including when a nonzero subobject offset or a virtual-base
+pointer lookup is required. A null upcast must not inspect object storage.
+
 ### 3.4 Array Types
 
 Internal representation: `{ uint32 count; T[N] data; }`.

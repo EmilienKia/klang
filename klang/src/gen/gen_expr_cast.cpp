@@ -30,6 +30,7 @@
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 #include "llvm/Support/raw_os_ostream.h"
+#include <llvm/ADT/ScopeExit.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -1230,6 +1231,37 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 _value = _builder->CreateLoad(
                     _context->get_llvm_type(effective_source), _value, "indir_upcast_load");
             }
+
+            llvm::BasicBlock* null_predecessor = nullptr;
+            llvm::BasicBlock* upcast_merge = nullptr;
+            const bool nullable_source = type::is_pointer(effective_source)
+                || type::is_view(effective_source) || type::is_owner(effective_source);
+            const bool nullable_target = type::is_pointer(target_type)
+                || type::is_view(target_type) || type::is_owner(target_type);
+            if (nullable_source && nullable_target) {
+                null_predecessor = _builder->GetInsertBlock();
+                auto* nonnull = llvm::BasicBlock::Create(
+                    _context->llvm_context(), "upcast_nonnull", null_predecessor->getParent());
+                upcast_merge = llvm::BasicBlock::Create(
+                    _context->llvm_context(), "upcast_merge", null_predecessor->getParent());
+                _builder->CreateCondBr(_builder->CreateIsNull(_value), upcast_merge, nonnull);
+                _builder->SetInsertPoint(nonnull);
+            }
+
+            // Virtual-base adjustment can load a vbptr, so a select after
+            // adjustment is insufficient: the null path must bypass all loads.
+            auto finish_nullable_upcast = llvm::make_scope_exit([&]() {
+                if (!upcast_merge) return;
+                auto* adjusted = _value;
+                auto* nonnull_predecessor = _builder->GetInsertBlock();
+                _builder->CreateBr(upcast_merge);
+                _builder->SetInsertPoint(upcast_merge);
+                auto* result = _builder->CreatePHI(adjusted->getType(), 2, "nullable_upcast");
+                result->addIncoming(llvm::ConstantPointerNull::get(
+                    llvm::cast<llvm::PointerType>(adjusted->getType())), null_predecessor);
+                result->addIncoming(adjusted, nonnull_predecessor);
+                _value = result;
+            });
 
             // Same GEP strategy as ref<Derived>→ref<Base>: vbptr for a direct virtual
             // base; the top-level __vbase shortcut is applied only as a fallback after
