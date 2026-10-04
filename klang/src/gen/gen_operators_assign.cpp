@@ -154,11 +154,7 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
         if (auto cc = agg->get_copy_constructor()) {
             auto cc_it = _context->_functions.find(cc->shared_as<k::model::function>());
             if (cc_it != _context->_functions.end()) {
-                if (named_result_assignment) {
-                    create_call_or_invoke(cc_it->second, {dest, src});
-                } else {
-                    _builder->CreateCall(cc_it->second, {dest, src});
-                }
+                create_call_or_invoke(cc_it->second->getFunctionType(), cc_it->second, {dest, src});
                 return;
             }
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), lexeme,

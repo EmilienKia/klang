@@ -1224,7 +1224,8 @@ void implementation_generator::emit_callable_invocation(
     llvm::Value* callable_val,
     const std::vector<llvm::Value*>& args,
     const std::shared_ptr<type>& result_type,
-    const std::optional<k::lex::any_lexeme>& where)
+    const std::optional<k::lex::any_lexeme>& where,
+    call_argument_cleanup_scope* argument_cleanup)
 {
     if (!ct || !callable_val) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05D), where,
@@ -1298,6 +1299,7 @@ void implementation_generator::emit_callable_invocation(
 
     llvm::Value* is_free = _builder->CreateICmpEQ(
         ctx_ptr, llvm::ConstantPointerNull::get(ptr_ty), "callable.isfree");
+    if (argument_cleanup) argument_cleanup->transfer();
     _builder->CreateCondBr(is_free, free_bb, bound_bb);
 
     // ── free branch: fn([sret], args…) ────────────────────────────────────────

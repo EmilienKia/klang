@@ -73,6 +73,15 @@ The default expression is evaluated at each call site that omits the argument.
 - A parameter of type `T` receives a copy of the argument.
 - A parameter of type `T&` receives a reference to the argument (the caller's variable is affected).
 - A parameter of type `T*` receives a pointer; the callee may modify `*ptr`.
+
+Copy construction of a by-value argument takes place in the caller's exception
+context. If it throws, the callee must not be entered and the exception must
+reach the enclosing matching handler. Any earlier arguments whose ownership
+has already been acquired (including moved owners and completed value copies)
+must be destroyed exactly once. An argument whose construction failed must not
+be destroyed as a completed object. After callee entry, by-value parameters are
+the callee's cleanup responsibility.
+
 ```k
 assign(var: int&, val: int) : int {
     var = val;    // modifies the caller's variable

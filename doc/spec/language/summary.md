@@ -663,6 +663,9 @@ ParameterSpec:
 - Name is optional (anonymous if omitted).
 - Default values only for trailing parameters.
 - Pass by value (`T`): copy. If struct with destructor: destructor called on exit from the callee.
+- A throwing argument copy is caught in the caller's exception context before
+  callee entry; earlier acquired arguments are cleaned once, and failed
+  constructions are not destroyed as live objects.
 - Pass by reference (`T&`): lvalue required as argument.
 - Pass by pointer (`T*`), link (`T+`), etc.
 
@@ -2131,6 +2134,8 @@ adoption and FFI interop.
 When an exception propagates through a stack frame:
 - All local variables with destructors are destroyed in reverse declaration order.
 - Owner variables (`T!`) are auto-deleted.
+- If construction of a by-value argument fails, the callee is not entered and
+  earlier completed arguments are cleaned up exactly once.
 - The cleanup is implemented via LLVM landing pads with cleanup clauses.
 - Nested try-catch blocks within the same function use direct CFG branching
   (resume to outer handler if innerhandlers don't match).

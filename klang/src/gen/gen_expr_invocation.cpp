@@ -19,6 +19,7 @@
 #include "generators.hpp"
 #include "gen_helpers.hpp"
 #include "gen_callable_helpers.hpp"
+#include <exception>
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
 #include "../model/operators.hpp"
@@ -2250,17 +2251,150 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     }
 }
 
+implementation_generator::call_argument_cleanup_scope::call_argument_cleanup_scope(
+    implementation_generator& gen, bool enabled)
+    : _gen(gen), _enabled(enabled), _uncaught_exceptions(std::uncaught_exceptions()) {
+    if (!_enabled) return;
+    auto& llvm_ctx = gen._context->llvm_context();
+    auto* func = gen._builder->GetInsertBlock()->getParent();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    if (!func->hasPersonalityFn()) {
+        auto personality = gen.get_module().getOrInsertFunction("__gxx_personality_v0",
+            llvm::FunctionType::get(i32_ty, true));
+        func->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+    }
+    if (!gen._exc_ptr_slot) {
+        llvm::IRBuilder<> entry_builder(&func->getEntryBlock(), func->getEntryBlock().begin());
+        gen._exc_ptr_slot = entry_builder.CreateAlloca(ptr_ty, nullptr, "arg_exc_ptr");
+        gen._exc_sel_slot = entry_builder.CreateAlloca(i32_ty, nullptr, "arg_exc_sel");
+    }
+    _context.lpad_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_lpad", func);
+    _context.cleanup_code_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_unwind", func);
+    const unsigned cleanup_depth = gen._cleanup_lpad_stack.empty() ? 0 : gen._cleanup_lpad_stack.top().depth;
+    const unsigned catch_depth = gen._landing_pad_stack.empty() ? 0 : gen._landing_pad_stack.top().depth;
+    _has_local_catch = catch_depth != 0;
+    if (cleanup_depth > catch_depth) {
+        _context.continuation = cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP;
+        _context.chain_target_bb = gen._cleanup_lpad_stack.top().cleanup_code_bb;
+    } else if (catch_depth) {
+        _context.continuation = cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH;
+        const auto& outer = gen._landing_pad_stack.top();
+        _context.chain_target_bb = outer.dispatch_bb;
+        _context.catch_exc_alloca = outer.exc_ptr_alloca;
+        _context.catch_exc_sel_alloca = outer.exc_sel_alloca;
+    } else {
+        _context.continuation = cleanup_lpad_context::RESUME;
+    }
+    _context.depth = ++gen._lpad_depth_counter;
+    gen._cleanup_lpad_stack.push(_context);
+}
+
+llvm::Value* implementation_generator::call_argument_cleanup_scope::track(
+    const std::shared_ptr<type>& value_type, llvm::Value* value) {
+    if (!_enabled || !value_type || !value) return value;
+    auto bare_type = type::canonical(type::remove_const(value_type));
+    bool needs_cleanup = type::is_owner(bare_type);
+    if (auto st = std::dynamic_pointer_cast<struct_type>(bare_type)) {
+        needs_cleanup = st->get_struct() && st->get_struct()->get_destructor();
+    }
+    if (auto ct = std::dynamic_pointer_cast<callable_type>(bare_type)) {
+        needs_cleanup = ct->is_owner();
+    }
+    if (!needs_cleanup) return value;
+    auto* func = _gen._builder->GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entry_builder(&func->getEntryBlock(), func->getEntryBlock().begin());
+    auto* llvm_type = _gen._context->get_llvm_type(bare_type);
+    auto* storage = entry_builder.CreateAlloca(llvm_type, nullptr, "argument_storage");
+    auto* live = entry_builder.CreateAlloca(entry_builder.getInt1Ty(), nullptr, "argument_live");
+    entry_builder.CreateStore(entry_builder.getFalse(), live);
+    if (type::is_struct(bare_type) && value->getType()->isPointerTy()) {
+        auto* source = value;
+        value = _gen._builder->CreateLoad(llvm_type, source, "argument_value");
+        _gen.cancel_temporary_cleanup(source);
+    } else if (type::is_fat_callable(bare_type) && value->getType()->isPointerTy()) {
+        value = _gen._builder->CreateLoad(llvm_type, value, "argument_callable");
+    }
+    _gen._builder->CreateStore(value, storage);
+    _gen._builder->CreateStore(_gen._builder->getTrue(), live);
+    _entries.push_back({storage, live, bare_type});
+    return value;
+}
+
+void implementation_generator::call_argument_cleanup_scope::transfer() {
+    // The callee owns by-value arguments from entry, including when its body throws.
+    for (const auto& entry : _entries) {
+        _gen._builder->CreateStore(_gen._builder->getFalse(), entry.live);
+    }
+}
+
+implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_scope() noexcept(false) {
+    if (!_enabled) return;
+    _gen._cleanup_lpad_stack.pop();
+    if (std::uncaught_exceptions() > _uncaught_exceptions) return;
+    auto* normal_bb = _gen._builder->GetInsertBlock();
+    auto* result = _gen._value;
+    const auto debug_loc = _gen._builder->getCurrentDebugLocation();
+    auto& llvm_ctx = _gen._context->llvm_context();
+    auto* func = normal_bb->getParent();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+    _gen._builder->SetInsertPoint(_context.lpad_bb);
+    auto* lpad = _gen._builder->CreateLandingPad(lpad_type, _has_local_catch ? 1 : 0, "argument_exception");
+    lpad->setCleanup(true);
+    if (_has_local_catch) lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+    _gen._builder->CreateStore(_gen._builder->CreateExtractValue(lpad, 0), _gen._exc_ptr_slot);
+    _gen._builder->CreateStore(_gen._builder->CreateExtractValue(lpad, 1), _gen._exc_sel_slot);
+    _gen._builder->CreateBr(_context.cleanup_code_bb);
+    _gen._builder->SetInsertPoint(_context.cleanup_code_bb);
+    for (auto it = _entries.rbegin(); it != _entries.rend(); ++it) {
+        auto* destroy_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_destroy", func);
+        auto* next_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_destroy_done", func);
+        auto* live = _gen._builder->CreateLoad(_gen._builder->getInt1Ty(), it->live);
+        _gen._builder->CreateCondBr(live, destroy_bb, next_bb);
+        _gen._builder->SetInsertPoint(destroy_bb);
+        _gen._builder->CreateStore(_gen._builder->getFalse(), it->live);
+        if (auto own = std::dynamic_pointer_cast<owner_type>(it->value_type)) {
+            emit_owner_cleanup_if_nonnull(_gen._builder.get(), _gen.get_module(), _gen._context->_functions,
+                it->storage, own->get_owned_type(), "argument_owner", _gen.make_virtual_call_emitter());
+        } else if (auto ct = std::dynamic_pointer_cast<callable_type>(it->value_type)) {
+            emit_owned_callable_cleanup_if_nonnull(_gen._builder.get(), _gen.get_module(), it->storage,
+                _gen._context->get_or_create_callable_llvm_type(), "argument_callable",
+                _gen.make_virtual_call_emitter());
+        } else if (auto st = std::dynamic_pointer_cast<struct_type>(it->value_type)) {
+            auto agg = st->get_struct();
+            auto dtor = _gen._context->_functions.find(agg->get_destructor()->shared_as<function>());
+            if (dtor != _gen._context->_functions.end()) {
+                _gen.create_call_or_invoke(dtor->second->getFunctionType(), dtor->second, {it->storage});
+            }
+        }
+        _gen._builder->CreateBr(next_bb);
+        _gen._builder->SetInsertPoint(next_bb);
+    }
+    if (_context.continuation == cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP) {
+        _gen._builder->CreateBr(_context.chain_target_bb);
+    } else {
+        auto* exc_ptr = _gen._builder->CreateLoad(ptr_ty, _gen._exc_ptr_slot);
+        auto* exc_sel = _gen._builder->CreateLoad(i32_ty, _gen._exc_sel_slot);
+        if (_context.continuation == cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH) {
+            _gen._builder->CreateStore(exc_ptr, _context.catch_exc_alloca);
+            _gen._builder->CreateStore(exc_sel, _context.catch_exc_sel_alloca);
+            _gen._builder->CreateBr(_context.chain_target_bb);
+        } else {
+            auto* resume = _gen._builder->CreateInsertValue(llvm::UndefValue::get(lpad_type), exc_ptr, 0);
+            resume = _gen._builder->CreateInsertValue(resume, exc_sel, 1);
+            _gen._builder->CreateResume(resume);
+        }
+    }
+    _gen._builder->SetInsertPoint(normal_bb);
+    _gen._builder->SetCurrentDebugLocation(debug_loc);
+    _gen._value = result;
+}
+
 /**
- * Generate LLVM IR for a function invocation expression.
- *
- * Steps:
- *   1. Evaluate all argument expressions.
- *   2. If virtual dispatch: load vptr, GEP to vtable slot, indirect call.
- *   3. If direct call: resolve LLVM function, emit direct call instruction.
- *   4. If sret return: allocate temp or use _sret_destination, pass as first arg.
- *   5. Handle function pointer calls (indirect call through loaded pointer).
- *   6. Handle member function pointer calls (.* / ->*).
- *   7. Set _value to the call result.
+ * Generate a call, including argument construction, ownership transfer,
+ * virtual/indirect dispatch and the sret destination.
  */
 void implementation_generator::visit_function_invocation_expression(function_invocation_expression &expr) {
     // ── Union index() intrinsic ─────────────────────────────────────────────
@@ -2287,6 +2421,19 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
         return;
     }
+
+    bool needs_argument_cleanup = false;
+    for (const auto& arg : expr.arguments()) {
+        auto arg_type = arg->get_type() ? type::canonical(type::remove_const(arg->get_type())) : nullptr;
+        if (type::is_owner(arg_type)) needs_argument_cleanup = true;
+        if (auto st = std::dynamic_pointer_cast<struct_type>(arg_type)) {
+            if (st->get_struct() && st->get_struct()->get_destructor()) needs_argument_cleanup = true;
+        }
+        if (auto ct = std::dynamic_pointer_cast<callable_type>(arg_type)) {
+            if (ct->is_owner()) needs_argument_cleanup = true;
+        }
+    }
+    call_argument_cleanup_scope argument_cleanup(*this, needs_argument_cleanup);
 
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
@@ -2377,10 +2524,12 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             auto* sret_fn_type = llvm::FunctionType::get(
                 llvm::Type::getVoidTy(**_context), param_types, false);
 
+            argument_cleanup.transfer();
             create_call_or_invoke(sret_fn_type, callee_val, call_args);
             return sret_ptr;
         }
         // Non-sret call
+        argument_cleanup.transfer();
         _value = create_call_or_invoke(fn_type, callee_val, call_args,
             fn_type->getReturnType()->isVoidTy() ? "" : name);
         return nullptr;
@@ -2459,7 +2608,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         for (auto& arg : expr.arguments()) {
             _value = nullptr;
             arg->accept(*this);
-            if (_value) call_args.push_back(_value);
+            if (_value) call_args.push_back(argument_cleanup.track(arg->get_type(), _value));
         }
 
         auto* sret_result = emit_sret_call(llvm_fn_type, fn_ptr, call_args, "mfp_call");
@@ -2508,12 +2657,12 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05F), expr.first_lexeme(),
                     "Internal error: an argument for an indirect call produced no LLVM value");
             }
-            call_args.push_back(_value);
+            call_args.push_back(argument_cleanup.track(arg->get_type(), _value));
         }
 
         _sret_destination = saved_sret_dest;
         emit_callable_invocation(ct, callable_val, call_args,
-                                 ct->get_return_type(), expr.first_lexeme());
+                                 ct->get_return_type(), expr.first_lexeme(), &argument_cleanup);
         // When we allocated the sret slot ourselves it is a temporary and may need
         // destruction; when the caller supplied one, the destination owns the value.
         if (_value && !saved_sret_dest && needs_sret_return(ct->get_return_type())) {
@@ -2627,12 +2776,13 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 auto st_type_nc = type::remove_const(arg->get_type());
                 llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
                 _value = _builder->CreateLoad(llvm_st, alloca, "struct_arg_load");
+                cancel_temporary_cleanup(alloca);
             }
         } else if (arg->get_type() && type::is_fat_callable(arg->get_type()) && _value->getType()->isPointerTy()) {
             auto* callable_llvm_type = _context->get_or_create_callable_llvm_type();
             _value = _builder->CreateLoad(callable_llvm_type, _value, "callable_arg_load");
         }
-        args.push_back(_value);
+        args.push_back(argument_cleanup.track(arg->get_type(), _value));
     }
 
     // Restore outer _sret_destination for the call result
@@ -2867,10 +3017,12 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             if (call_uses_sret) {
                 llvm::Value* sret_alloca = get_sret_ptr_for_call();
                 args.insert(args.begin(), sret_alloca);
+                argument_cleanup.transfer();
                 _value = emit_virtual_dispatch_call(*_builder, *kl, args[1], di.slot_index, fn_type, args, _context, "",
                     make_virtual_call_emitter());
                 handle_sret_result(sret_alloca);
             } else {
+                argument_cleanup.transfer();
                 _value = emit_virtual_dispatch_call(*_builder, *kl, args[0], di.slot_index, fn_type, args, _context, "",
                     make_virtual_call_emitter());
             }
@@ -2956,9 +3108,11 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 llvm::Value* sret_alloca = get_sret_ptr_for_call();
                 // Step 4: If sret return: allocate temp or use _sret_destination, pass as first arg
                 args.insert(args.begin(), sret_alloca);
+                argument_cleanup.transfer();
                 create_call_or_invoke(fn_type, fn_ptr, args);
                 handle_sret_result(sret_alloca);
             } else {
+                argument_cleanup.transfer();
                 _value = create_call_or_invoke(fn_type, fn_ptr, args,
                     fn_type->getReturnType()->isVoidTy() ? "" : "imp_vcall");
             }
@@ -2971,9 +3125,11 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     if (call_uses_sret) {
         llvm::Value* sret_alloca = get_sret_ptr_for_call();
         args.insert(args.begin(), sret_alloca);
+        argument_cleanup.transfer();
         create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
         handle_sret_result(sret_alloca);
     } else {
+        argument_cleanup.transfer();
         _value = create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
     }
 }

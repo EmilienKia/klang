@@ -316,10 +316,9 @@ void implementation_generator::visit_load_value_expression(load_value_expression
                     emit_value_copy_or_move(staging, src_ptr, st_type_nc,
                         /*destroy_dest_first=*/false, expr.first_lexeme(), "by-value copy");
                     // Load the struct value from staging so it can be passed by value.
-                    // Note: staging is intentionally NOT registered as an expression
-                    // temporary — the callee takes sole ownership of the copy via its
-                    // own stack slot and destructor call. A TODO remains to also emit a
-                    // cleanup for staging in the caller for owner-holding structs.
+                    // A call's argument cleanup scope owns successful copies until
+                    // entry into the callee. A failed constructor never registers
+                    // this staging storage as a live argument.
                     _value = _builder->CreateLoad(llvm_st, staging, "lval_copy_load");
                     return;
                 }

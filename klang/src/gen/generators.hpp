@@ -307,6 +307,25 @@ protected:
      *  with destructible variables. */
     std::stack<cleanup_lpad_context> _cleanup_lpad_stack;
 
+    class call_argument_cleanup_scope {
+        implementation_generator& _gen;
+        struct entry {
+            llvm::AllocaInst* storage;
+            llvm::AllocaInst* live;
+            std::shared_ptr<type> value_type;
+        };
+        std::vector<entry> _entries;
+        cleanup_lpad_context _context{};
+        bool _enabled;
+        bool _has_local_catch = false;
+        int _uncaught_exceptions;
+    public:
+        call_argument_cleanup_scope(implementation_generator& gen, bool enabled);
+        ~call_argument_cleanup_scope() noexcept(false);
+        llvm::Value* track(const std::shared_ptr<type>& value_type, llvm::Value* value);
+        void transfer();
+    };
+
     /** Shared depth counter for landing pad nesting.
      *  Incremented each time a landing pad or cleanup lpad is pushed.
      *  Used by create_call_or_invoke to determine the innermost handler. */
@@ -769,7 +788,8 @@ public:
                                   llvm::Value* callable_val,
                                   const std::vector<llvm::Value*>& args,
                                   const std::shared_ptr<type>& result_type,
-                                  const std::optional<k::lex::any_lexeme>& where);
+                                  const std::optional<k::lex::any_lexeme>& where,
+                                  call_argument_cleanup_scope* argument_cleanup = nullptr);
 
     /**
      * Emit the runtime null-check required when a *nullable* callable (`*` / `?`)

@@ -156,6 +156,10 @@ After `consume` returns, the parameter copy has already been destroyed inside `c
 If the parameter copy's destructor throws, its lifetime has already ended.
 Exception cleanup must not destroy the same copy again.
 
+Argument copies are constructed before entry into the callee. If a later
+argument copy throws, the callee must not execute; earlier completed argument
+copies and transferred owner arguments must be cleaned up exactly once.
+
 ---
 
 ## 4. Return values and expression temporaries

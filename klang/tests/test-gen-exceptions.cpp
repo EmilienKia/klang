@@ -26,6 +26,131 @@
 
 #include "helpers.hpp"
 
+TEST_CASE("Exception: by-value argument copies unwind before callee entry and clean earlier arguments once",
+          "[gen][exceptions][copy-arguments][owner][lifecycle][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module throwing_argument_copies;
+        entered : int = 0;
+        attempts : int = 0;
+        copyDrops : int = 0;
+        tokenDrops : int = 0;
+        liveTokens : int = 0;
+        caughtCode : int = 0;
+        unwindPayloadDrops : int = 0;
+        unwindTokenDrops : int = 0;
+        unwindLiveTokens : int = 0;
+        failCopy : bool = false;
+        struct Token {
+            Token() { ++liveTokens; }
+            ~Token() { --liveTokens; ++tokenDrops; }
+        }
+        struct Payload {
+            id : int;
+            token : Token! = null;
+            Payload(value : int) : id(value) { token = new Token(); }
+            Payload(other : const Payload&) : id(other.id) {
+                ++attempts;
+                if (failCopy && id == 2) throw Exception(922);
+                token = new Token();
+            }
+            ~Payload() { ++copyDrops; delete token; }
+        }
+        consumeSingle(value : Payload) { ++entered; }
+        consume(owner : Token!, first : Payload, last : Payload) { ++entered; }
+        reset() {
+            entered = 0; attempts = 0; copyDrops = 0;
+            tokenDrops = 0; liveTokens = 0; failCopy = true;
+        }
+        enteredCount() : int { return entered; }
+        attemptCount() : int { return attempts; }
+        payloadDropCount() : int { return copyDrops; }
+        tokenDropCount() : int { return tokenDrops; }
+        liveTokenCount() : int { return liveTokens; }
+        catchCode() : int { return caughtCode; }
+        unwindPayloadDropCount() : int { return unwindPayloadDrops; }
+        unwindTokenDropCount() : int { return unwindTokenDrops; }
+        unwindLiveTokenCount() : int { return unwindLiveTokens; }
+        recordUnwind(code : int) {
+            caughtCode = code;
+            unwindPayloadDrops = copyDrops;
+            unwindTokenDrops = tokenDrops;
+            unwindLiveTokens = liveTokens;
+        }
+        single() : int {
+            reset();
+            valid : bool = true;
+            {
+                source : Payload(2);
+                code : int = 0;
+                try { consumeSingle(source); }
+                catch (e : Throwable&) { code = e.getCode(); }
+                recordUnwind(code);
+                valid = valid && code == 922 && entered == 0 && attempts == 1;
+                valid = valid && copyDrops == 0 && tokenDrops == 0 && liveTokens == 1;
+            }
+            return valid && copyDrops == 1 && tokenDrops == 1 && liveTokens == 0 ? 1 : 0;
+        }
+        earlierArguments() : int {
+            reset();
+            valid : bool = true;
+            {
+                first : Payload(1);
+                last : Payload(2);
+                owner : Token! = new Token();
+                code : int = 0;
+                try { consume(owner, first, last); }
+                catch (e : Throwable&) { code = e.getCode(); }
+                recordUnwind(code);
+                valid = valid && code == 922 && entered == 0 && owner == null && attempts == 2;
+                valid = valid && copyDrops == 1 && tokenDrops == 2 && liveTokens == 2;
+                delete owner;
+                valid = valid && tokenDrops == 2;
+                failCopy = false;
+                consume(new Token(), first, last);
+                valid = valid && entered == 1 && attempts == 4 && copyDrops == 3;
+                valid = valid && tokenDrops == 5 && liveTokens == 2;
+            }
+            return valid && copyDrops == 5 && tokenDrops == 7 && liveTokens == 0 ? 1 : 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto entered = jit->lookup_symbol<int (*)()>("enteredCount");
+    auto attempts = jit->lookup_symbol<int (*)()>("attemptCount");
+    auto payloadDrops = jit->lookup_symbol<int (*)()>("payloadDropCount");
+    auto tokenDrops = jit->lookup_symbol<int (*)()>("tokenDropCount");
+    auto liveTokens = jit->lookup_symbol<int (*)()>("liveTokenCount");
+    auto caughtCode = jit->lookup_symbol<int (*)()>("catchCode");
+    auto unwindPayloadDrops = jit->lookup_symbol<int (*)()>("unwindPayloadDropCount");
+    auto unwindTokenDrops = jit->lookup_symbol<int (*)()>("unwindTokenDropCount");
+    auto unwindLiveTokens = jit->lookup_symbol<int (*)()>("unwindLiveTokenCount");
+    REQUIRE(entered);
+    REQUIRE(attempts);
+    REQUIRE(payloadDrops);
+    REQUIRE(tokenDrops);
+    REQUIRE(liveTokens);
+    REQUIRE(caughtCode);
+    REQUIRE(unwindPayloadDrops);
+    REQUIRE(unwindTokenDrops);
+    REQUIRE(unwindLiveTokens);
+    for (const auto* name : {"single", "earlierArguments"}) {
+        INFO(name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        for (int iteration = 0; iteration < 2; ++iteration) {
+            INFO(iteration);
+            int result = 0;
+            REQUIRE_NOTHROW(result = run());
+            INFO("entered=" << entered() << " attempts=" << attempts()
+                 << " payloadDrops=" << payloadDrops() << " tokenDrops=" << tokenDrops()
+                 << " liveTokens=" << liveTokens());
+            INFO("caught=" << caughtCode() << " unwindPayloadDrops=" << unwindPayloadDrops()
+                 << " unwindTokenDrops=" << unwindTokenDrops()
+                 << " unwindLiveTokens=" << unwindLiveTokens());
+            CHECK(result == 1);
+        }
+    }
+}
+
 TEST_CASE("Exception: throwing destruction clears moved owners and reaches the local handler",
           "[gen][exceptions][owner][lambda][destructor-throw][regression]") {
     auto jit = gen_jit(R"SRC(
