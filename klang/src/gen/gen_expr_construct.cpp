@@ -1110,7 +1110,8 @@ void implementation_generator::visit_temporary_construction_expression(temporary
         return;
     }
 
-    auto st_type = std::dynamic_pointer_cast<struct_type>(expr.constructed_type());
+    auto st_type = std::dynamic_pointer_cast<struct_type>(
+        type::remove_const(type::canonical(expr.constructed_type())));
     if (!st_type) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
             "Internal error: temporary construction expression has no resolved struct type");

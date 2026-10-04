@@ -31,6 +31,128 @@
 
 #include "helpers.hpp"
 
+TEST_CASE("Return prvalue: adopting resources preserve one destination lifetime",
+          "[gen][temporary_ctor][return-prvalue][rvo][lifecycle][regression]") {
+    const bool is_class = GENERATE(false, true);
+    const bool templated = GENERATE(false, true);
+    const bool optimize = GENERATE(false, true);
+    INFO("class=" << is_class << " template=" << templated << " optimize=" << optimize);
+    std::string source = R"K(
+        module return_prvalue_resource;
+        struct State {
+            refs : int = 1;
+            adoptions : int = 0;
+            copies : int = 0;
+            drops : int = 0;
+            invalid : int = 0;
+        }
+        @DECL@ Resource {
+        private:
+            state : State*;
+        public:
+            Resource(value : State*) : state(value) { ++state->adoptions; }
+            Resource(other : const @SELF@&) : state(other.state) {
+                ++state->refs;
+                ++state->copies;
+            }
+            ~Resource() {
+                if (state->refs <= 0) ++state->invalid;
+                --state->refs;
+                ++state->drops;
+            }
+            const refs() : int { return state->refs; }
+            static decodeOpen(value : State*) : @SELF@ {
+                return @SELF@(value);
+            }
+        }
+        make(value : State*) : @RESOURCE@ { return @RESOURCE@(value); }
+        forward(value : State*) : @RESOURCE@ { return make(value); }
+        consume(value : @RESOURCE@) : int { return value.refs(); }
+        struct Carrier {
+            stored : @RESOURCE@;
+            Carrier(value : const @RESOURCE@&) : stored(value) {}
+            get() : @RESOURCE@ { return stored; }
+        }
+        counts(state : const State&) : int {
+            if (state.refs != 0 || state.adoptions != 1 || state.invalid != 0) return -10;
+            return state.refs * 10000 + state.copies * 1000 + state.drops * 100
+                + state.adoptions * 10 + state.invalid;
+        }
+        direct() : int {
+            state : State;
+            {
+                value : @RESOURCE@ = make(&state);
+                if (state.refs != 1 || state.copies != 0 || state.drops != 0) return -1;
+            }
+            return counts(state);
+        }
+        decoder() : int {
+            state : State;
+            {
+                value : @RESOURCE@ = @RESOURCE@::decodeOpen(&state);
+                if (state.refs != 1 || state.copies != 0 || state.drops != 0) return -2;
+            }
+            return counts(state);
+        }
+        forwarded() : int {
+            state : State;
+            {
+                value : @RESOURCE@ = forward(&state);
+                if (state.refs != 1 || state.copies != 0 || state.drops != 0) return -3;
+            }
+            return counts(state);
+        }
+        copied() : int {
+            state : State;
+            {
+                value : @RESOURCE@ = make(&state);
+                if (consume(value) != 2 || state.refs != 1 || state.copies != 1) return -4;
+                {
+                    carrier : Carrier(value);
+                    if (state.refs != 2 || state.copies != 2) return -5;
+                    {
+                        later : @RESOURCE@ = carrier.get();
+                        if (later.refs() != 3 || state.copies != 3) return -6;
+                    }
+                    if (state.refs != 2) return -7;
+                }
+                if (state.refs != 1) return -8;
+            }
+            return counts(state);
+        }
+        intermediate() : int {
+            state : State;
+            {
+                value : @RESOURCE@ = Carrier(make(&state)).get();
+                if (state.refs != 1 || state.copies != 2 || state.drops != 2) return -9;
+            }
+            return counts(state);
+        }
+    )K";
+    const auto replace = [&](const std::string& token, const std::string& value) {
+        size_t pos = 0;
+        while ((pos = source.find(token, pos)) != std::string::npos) {
+            source.replace(pos, token.size(), value);
+            pos += value.size();
+        }
+    };
+    replace("@DECL@", std::string(templated ? "template<typename T> " : "")
+        + (is_class ? "class" : "struct"));
+    replace("@SELF@", templated ? "Resource<T>" : "Resource");
+    replace("@RESOURCE@", templated ? "Resource<int>" : "Resource");
+    auto jit = gen_jit(source, false, optimize);
+    REQUIRE(jit);
+    for (const auto* name : {"direct", "decoder", "forwarded", "copied", "intermediate"}) {
+        INFO(name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        int result = -100;
+        REQUIRE_NOTHROW(result = run());
+        CHECK(result == (std::string_view(name) == "copied" ? 3410
+            : std::string_view(name) == "intermediate" ? 2310 : 110));
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Basic: temporary struct as function argument
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,4 +321,3 @@ test() : int {
 }
 )SRC"));
 }
-

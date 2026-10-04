@@ -2464,7 +2464,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
 
         // Track for temporary cleanup if the struct has a destructor
         if (!expr.get_type()) return;
-        auto ret_type_nc = type::remove_const(expr.get_type());
+        auto ret_type_nc = type::remove_const(type::canonical(expr.get_type()));
         auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
         if (!ret_st) return;
         auto st = ret_st->get_struct();

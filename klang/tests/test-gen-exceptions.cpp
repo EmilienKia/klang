@@ -26,6 +26,113 @@
 
 #include "helpers.hpp"
 
+TEST_CASE("Return prvalue: elision and failed construction preserve exception cleanup guards",
+          "[gen][exceptions][return-prvalue][copy-arguments][constructor-members][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module return_prvalue_exceptions;
+        entered : int = 0;
+        struct State {
+            refs : int = 0;
+            copies : int = 0;
+            drops : int = 0;
+            memberLive : int = 0;
+            memberDrops : int = 0;
+            failCtor : bool = false;
+            failCopy : bool = false;
+        }
+        struct Member {
+            state : State*;
+            Member(value : State*) : state(value) { ++state->memberLive; }
+            ~Member() { --state->memberLive; ++state->memberDrops; }
+        }
+        class Resource {
+        private:
+            state : State*;
+            member : Member;
+            Resource(value : State*) : state(value), member(value) {
+                if (state->failCtor) throw Exception(924);
+                ++state->refs;
+            }
+        public:
+            Resource(other : const Resource&) : state(other.state), member(other.state) {
+                ++state->copies;
+                if (state->failCopy) throw Exception(925);
+                ++state->refs;
+            }
+            ~Resource() { --state->refs; ++state->drops; }
+            static make(value : State*) : Resource { return Resource(value); }
+        }
+        struct Carrier {
+            stored : Resource;
+            Carrier(value : const Resource&) : stored(value) {}
+            get() : Resource { return stored; }
+        }
+        consume(first : Resource, last : Resource) { ++entered; }
+        construction() : int {
+            state : State;
+            state.failCopy = true;
+            {
+                value : Resource = Resource::make(&state);
+                if (state.refs != 1 || state.copies != 0 || state.memberLive != 1) return -1;
+            }
+            if (state.refs != 0 || state.drops != 1 || state.memberDrops != 1) return -2;
+            state.failCtor = true;
+            code : int = 0;
+            try { failed : Resource = Resource::make(&state); }
+            catch (e : Throwable&) { code = e.getCode(); }
+            return code == 924 && state.refs == 0 && state.drops == 1 &&
+                state.memberLive == 0 && state.memberDrops == 2 && state.copies == 0 ? 1 : -3;
+        }
+        returnedCopy() : int {
+            state : State;
+            {
+                source : Resource = Resource::make(&state);
+                {
+                    carrier : Carrier(source);
+                    state.failCopy = true;
+                    code : int = 0;
+                    try { failed : Resource = carrier.get(); }
+                    catch (e : Throwable&) { code = e.getCode(); }
+                    if (code != 925 || state.refs != 2 || state.copies != 2) return -4;
+                    if (state.drops != 0 || state.memberLive != 2 || state.memberDrops != 1) return -5;
+                }
+                if (state.refs != 1 || state.drops != 1) return -6;
+            }
+            return state.refs == 0 && state.drops == 2 && state.memberLive == 0 &&
+                state.memberDrops == 3 ? 1 : -7;
+        }
+        earlierArgument() : int {
+            entered = 0;
+            firstState : State;
+            lastState : State;
+            lastState.failCtor = true;
+            {
+                source : Resource = Resource::make(&firstState);
+                code : int = 0;
+                try { consume(source, Resource::make(&lastState)); }
+                catch (e : Throwable&) { code = e.getCode(); }
+                if (code != 924 || entered != 0 || firstState.refs != 1) return -8;
+                if (firstState.copies != 1 || firstState.drops != 1 ||
+                    firstState.memberLive != 1 || firstState.memberDrops != 1) return -9;
+                if (lastState.refs != 0 || lastState.drops != 0 ||
+                    lastState.memberLive != 0 || lastState.memberDrops != 1) return -10;
+            }
+            return firstState.refs == 0 && firstState.drops == 2 &&
+                firstState.memberLive == 0 && firstState.memberDrops == 2 ? 1 : -11;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    for (const auto* name : {"construction", "returnedCopy", "earlierArgument"}) {
+        INFO("optimize=" << optimize << " function=" << name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        int result = -100;
+        REQUIRE_NOTHROW(result = run());
+        CHECK(result == 1);
+    }
+}
+
 TEST_CASE("Exception: by-value argument copies unwind before callee entry and clean earlier arguments once",
           "[gen][exceptions][copy-arguments][owner][lifecycle][regression]") {
     auto jit = gen_jit(R"SRC(

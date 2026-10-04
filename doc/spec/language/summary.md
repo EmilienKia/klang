@@ -529,6 +529,9 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 - Lifetime: until the end of the full statement (`;`).
 - Destruction in reverse order of construction.
 - Usable as a function argument, for method chaining, or in a `return`.
+- Direct `return T(args…)` may construct a struct or class in the caller's result storage,
+  with one destination lifetime and no extra copy. Failed construction unwinds completed
+  subobjects, not the incomplete whole object.
 - Constructors `→ delete` produce an error if selected.
 - Static constructors do not participate in resolution.
 - Array temporary form is supported: `T[]{init...}` (including in `return` expressions).

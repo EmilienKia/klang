@@ -277,6 +277,7 @@ void implementation_generator::visit_load_value_expression(load_value_expression
         }
     }
 
+    auto* construction_destination = _sret_destination;
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     // Use the expression's own type if set; fall back to the sub-expression's referenced type.
@@ -298,12 +299,17 @@ void implementation_generator::visit_load_value_expression(load_value_expression
         //    of a non-trivially copyable struct type with a copy constructor, call
         //    the copy constructor into a staging alloca so the callee receives a
         //    proper copy (not a bitwise alias of the original object).
-        auto st_type_nc = std::dynamic_pointer_cast<struct_type>(type::remove_const(load_type));
+        auto st_type_nc = std::dynamic_pointer_cast<struct_type>(
+            type::remove_const(type::canonical(load_type)));
         if (st_type_nc) {
             auto sub_type = expr.sub_expr()->get_type();
             bool src_is_lvalue_ref = type::is_reference(sub_type);
+            // A prvalue constructed directly into its destination is deliberately
+            // untracked: the destination owns it, and copying it would strand the
+            // original object's resources when that same destination is overwritten.
             bool src_is_prvalue_temp = std::dynamic_pointer_cast<temporary_construction_expression>(expr.sub_expr())
-                                       && is_expression_temporary(src_ptr);
+                                       && (is_expression_temporary(src_ptr)
+                                           || (construction_destination && src_ptr == construction_destination));
             if (src_is_lvalue_ref && !src_is_prvalue_temp) {
                 auto agg = st_type_nc->get_struct();
                 if (agg && agg->get_copy_constructor()) {

@@ -43,6 +43,145 @@ include "../src/model/tools/kdi_exporter.hpp"
 
 namespace fs = std::filesystem;
 
+TEST_CASE("import template return prvalues adopt resources and clean intermediate getters",
+          "[import][template][return-prvalue][lifecycle][regression]") {
+    const bool is_class = GENERATE(false, true);
+    const bool optimize = GENERATE(false, true);
+    INFO("class=" << is_class << " optimize=" << optimize);
+    struct Artifacts {
+        fs::path path;
+        ~Artifacts() {
+            if (path.empty()) return;
+            std::error_code error;
+            fs::remove_all(path, error);
+        }
+    } artifacts;
+    static std::atomic<unsigned> sequence{0};
+    while (artifacts.path.empty()) {
+        auto candidate = fs::current_path() /
+            (".klang-return-prvalue-kdi-" + std::to_string(++sequence));
+        if (fs::exists(candidate)) continue;
+        if (fs::create_directory(candidate)) artifacts.path = std::move(candidate);
+    }
+    std::string library = R"K(
+        module imported_prvalue_resource;
+        template<typename T>
+        @KIND@ Resource {
+        private:
+            state : T*;
+            Resource(value : T*) : state(value) { ++state->adoptions; }
+        public:
+            Resource(other : const Resource<T>&) : state(other.state) {
+                ++state->refs;
+                ++state->copies;
+            }
+            ~Resource() {
+                if (state->refs <= 0) ++state->invalid;
+                --state->refs;
+                ++state->drops;
+            }
+            static decodeOpen(value : T*) : Resource<T> { return Resource<T>(value); }
+            const refs() : int { return state->refs; }
+        }
+        template<typename T>
+        struct Carrier {
+            stored : Resource<T>;
+            Carrier(value : const Resource<T>&) : stored(value) {}
+            get() : Resource<T> { return stored; }
+        }
+        template<typename T>
+        forward(value : T*) : Resource<T> { return Resource<T>::decodeOpen(value); }
+    )K";
+    library.replace(library.find("@KIND@"), 6, is_class ? "class" : "struct");
+    auto producer = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    resolver->add_search_dir(artifacts.path.string());
+    producer->set_file_resolver(resolver);
+    producer->parse_source("imported-prvalue-resource.k", library, false, false);
+    REQUIRE_FALSE(producer->has_compilation_error());
+    REQUIRE(producer->gen_kdi((artifacts.path / "imported_prvalue_resource.so").string()));
+
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    consumer->parse_source("imported-prvalue-consumer.k", R"K(
+        module imported_prvalue_consumer;
+        import imported_prvalue_resource;
+        struct State {
+            refs : int = 1;
+            adoptions : int = 0;
+            copies : int = 0;
+            drops : int = 0;
+            invalid : int = 0;
+        }
+        direct() : int {
+            state : State;
+            {
+                value : imported_prvalue_resource::Resource<State> =
+                    imported_prvalue_resource::Resource<State>::decodeOpen(&state);
+                if (state.refs != 1 || state.copies != 0 || state.drops != 0) return -1;
+            }
+            return state.refs == 0 && state.adoptions == 1 &&
+                state.copies == 0 && state.drops == 1 && state.invalid == 0 ? 1 : -2;
+        }
+        forwarded() : int {
+            state : State;
+            {
+                value : imported_prvalue_resource::Resource<State> =
+                    imported_prvalue_resource::forward<State>(&state);
+                if (state.refs != 1 || state.copies != 0 || state.drops != 0) return -3;
+            }
+            return state.refs == 0 && state.adoptions == 1 &&
+                state.copies == 0 && state.drops == 1 && state.invalid == 0 ? 1 : -4;
+        }
+        laterGet() : int {
+            state : State;
+            {
+                value : imported_prvalue_resource::Resource<State> =
+                    imported_prvalue_resource::Resource<State>::decodeOpen(&state);
+                {
+                    carrier : imported_prvalue_resource::Carrier<State>(value);
+                    {
+                        later : imported_prvalue_resource::Resource<State> = carrier.get();
+                        if (later.refs() != 3 || state.copies != 2 || state.drops != 0) return -5;
+                    }
+                    if (state.refs != 2 || state.drops != 1) return -6;
+                }
+                if (state.refs != 1 || state.drops != 2) return -7;
+            }
+            return state.refs == 0 && state.adoptions == 1 &&
+                state.copies == 2 && state.drops == 3 && state.invalid == 0 ? 1 : -8;
+        }
+        intermediate() : int {
+            state : State;
+            {
+                value : imported_prvalue_resource::Resource<State> =
+                    imported_prvalue_resource::Carrier<State>(
+                        imported_prvalue_resource::Resource<State>::decodeOpen(&state)).get();
+                if (state.refs != 1 || state.copies != 2 || state.drops != 2) return -9;
+            }
+            return state.refs == 0 && state.adoptions == 1 &&
+                state.copies == 2 && state.drops == 3 && state.invalid == 0 ? 1 : -10;
+        }
+    )K", optimize, false);
+    REQUIRE_FALSE(consumer->has_compilation_error());
+    std::string load_error;
+    REQUIRE_FALSE(llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+        (std::string(KLANG_STDLIB_LIB_DIR) + "/libk.so").c_str(), &load_error));
+    INFO(load_error);
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    for (const auto* name : {"direct", "forwarded", "laterGet", "intermediate"}) {
+        INFO(name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        int result = -100;
+        REQUIRE_NOTHROW(result = run());
+        CHECK(result == 1);
+    }
+}
+
+
 xtern "C" int __k_test_import_template_count(const int* count) {
     return *count;
 }

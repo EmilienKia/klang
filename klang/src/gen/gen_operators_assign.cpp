@@ -63,7 +63,7 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
                                                        const char* copy_context,
                                                        bool named_result_assignment,
                                                        bool allow_move) {
-    auto nt = type::remove_const(t);
+    auto nt = type::remove_const(type::canonical(t));
     llvm::Type* struct_llvm = _context->get_llvm_type(nt);
     if (!struct_llvm || struct_llvm->isPointerTy()) {
         // Not a real struct payload — fall back to a scalar store.

@@ -225,6 +225,13 @@ The compiler applies the standard sret (struct-return) optimisation: when the so
 expression is a temporary construction, the object may be constructed directly into the
 caller's return-value storage, avoiding an extra copy.
 
+This applies to both structs and classes, including template instantiations. Direct
+construction creates only the destination object: the implicit conversion from `T&` to
+the returned value must not copy that object back over its own storage. Its destructor
+runs once when the destination's lifetime ends. If construction throws, no complete-object
+destructor runs for that destination; already constructed members and bases are unwound.
+Returning an existing lvalue instead still produces an independent value copy.
+
 When a `return` statement contains a temporary construction as part of a larger expression,
 standard destruction rules apply — other temporaries in the expression are destroyed before
 the function returns:
