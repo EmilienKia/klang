@@ -337,6 +337,9 @@ protected:
      */
     void resolve_instantiated_aggregate(aggregate& agg);
 
+    /** Complete implicit value-member/base destructors skipped by late instantiation. */
+    void finalize_aggregate_destructor(aggregate& agg);
+
     /** Return captured generic usage bindings for a declaration site, if any. */
     const tpl_info::generic_usage_descriptor* find_generic_usage_for_site(const variable_definition* site) const;
 

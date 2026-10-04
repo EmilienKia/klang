@@ -1043,3 +1043,57 @@ TEST_CASE("Invalid enum entry in instantiated body reports a symbol diagnostic",
         }
     }
 }
+
+TEST_CASE("Template value members are constructed and destroyed exactly once",
+          "[gen][template][instantiation][lifecycle][regression]") {
+    const bool explicitDestructor = GENERATE(false, true);
+    const bool eagerInstantiation = GENERATE(false, true);
+    INFO("explicit destructor: " << explicitDestructor
+         << ", eager instantiation: " << eagerInstantiation);
+    std::string source = R"SRC(
+        module template_value_member_lifecycle;
+        constructions: int = 0;
+        drops: int = 0;
+        bodyDrops: int = 0;
+        returned: int = 0;
+        struct Payload {
+            tag: int;
+            Payload(): tag(37) { ++constructions; }
+            ~Payload() { drops += tag == 37 ? 1 : 100; }
+        }
+        template<typename T>
+        struct Box {
+            value: T;
+            Box() {}
+    )SRC";
+    if (explicitDestructor) source += "~Box() { ++bodyDrops; }";
+    source += "}";
+    if (eagerInstantiation) source += "struct Anchor { box: Box<Payload>; }";
+    source += R"SRC(
+        run(): int {
+            {
+                local: Box<Payload>;
+                if (local.value.tag != 37) return -1;
+            }
+            owner: Box<Payload>! = new Box<Payload>();
+            if (owner->value.tag != 37) return -2;
+            delete owner;
+            if (owner != null) return -3;
+            delete owner;
+            returned = 1;
+            return constructions * 100 + drops * 10 + bodyDrops;
+        }
+        didReturn(): int { return returned; }
+    )SRC";
+
+    auto jit = gen_jit(source);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    auto didReturn = jit->lookup_symbol<int (*)()>("didReturn");
+    REQUIRE(run);
+    REQUIRE(didReturn);
+    int result = -999;
+    REQUIRE_NOTHROW(result = run());
+    REQUIRE(result == (explicitDestructor ? 222 : 220));
+    REQUIRE(didReturn() == 1);
+}

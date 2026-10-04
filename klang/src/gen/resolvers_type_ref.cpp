@@ -2120,6 +2120,48 @@ std::shared_ptr<type> type_reference_resolver::rewrap_like(
     return model;
 }
 
+void type_reference_resolver::finalize_aggregate_destructor(aggregate& agg) {
+    std::unordered_set<aggregate*> visited;
+    std::function<void(aggregate&)> finalize = [&](aggregate& current) {
+        if (current.is_template()
+            || std::dynamic_pointer_cast<imported_aggregate>(current.shared_as<aggregate>())
+            || !visited.insert(&current).second) {
+            return;
+        }
+
+        bool needs_dtor = false;
+        auto inspect_subobject = [&](const std::shared_ptr<aggregate>& subobject) {
+            if (!subobject) return;
+            finalize(*subobject);
+            if (subobject->get_destructor()) needs_dtor = true;
+        };
+        for (const auto& base : current.get_bases()) {
+            inspect_subobject(base.base);
+        }
+        for (const auto& base : current.get_all_virtual_base_structs()) {
+            inspect_subobject(base);
+        }
+        for (const auto& [name, var] : current.variables()) {
+            auto member = std::dynamic_pointer_cast<member_variable_definition>(var);
+            if (!member || name.rfind("__", 0) == 0) continue;
+            // Only embedded values participate here, not borrowed or owner fields.
+            if (auto member_type = std::dynamic_pointer_cast<struct_type>(
+                    type::canonical(type::remove_const(member->get_type())))) {
+                if (auto member_aggregate = member_type->get_struct()) {
+                    inspect_subobject(member_aggregate);
+                }
+            }
+        }
+
+        if (needs_dtor && !current.get_destructor()) {
+            auto dtor = current.create_destructor();
+            dtor->set_compiler_generated(true);
+            dtor->create_this_parameter();
+        }
+    };
+    finalize(agg);
+}
+
 void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     // Idempotency / recursion guard: each instantiated aggregate is resolved once.
     if (!_resolved_instantiations.insert(&agg).second) return;

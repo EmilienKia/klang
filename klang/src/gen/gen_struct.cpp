@@ -926,6 +926,19 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
         }
     }
 
+    // Instantiations created after Pass A missed implicit destructor synthesis.
+    // Resolve their value fields and finish that skeleton before visiting bodies.
+    for (auto& [name, var] : st.variables()) {
+        auto member = std::dynamic_pointer_cast<member_variable_definition>(var);
+        if (!member || !member->get_type() || type::is_resolved(member->get_type())) continue;
+        auto resolved = resolve_type_chain(member->get_type(), member.get());
+        if (resolved && (type::is_resolved(resolved)
+                         || std::dynamic_pointer_cast<struct_type>(resolved))) {
+            member->set_type(resolved);
+        }
+    }
+    finalize_aggregate_destructor(st);
+
     // Visit all other children (functions, constructors, destructors), skip nested aggregates and unions.
     for(auto& child : st.get_children()) {
         if(std::dynamic_pointer_cast<aggregate>(child)) continue;

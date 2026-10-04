@@ -33,6 +33,11 @@ struct counter {
 ```
 A struct may have at most one instance destructor.
 If no destructor is defined, no destructor code runs when the struct is destroyed (fields of struct type will have their own destructors called, but no user code executes for the outer struct).
+
+Value members with destructors must be destroyed in reverse declaration order
+after the enclosing destructor body. This rule also applies to instantiated
+template structs: the compiler must generate an implicit destructor when a
+concrete value member requires one, even if the template declares no destructor.
 ---
 ## 2. When destructors are called
 ### Local variables

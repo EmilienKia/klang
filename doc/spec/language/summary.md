@@ -1081,6 +1081,8 @@ static StructName() { /* called at program startup */ }
 - **Owner variables (`T!`)**: on explicit `delete` or on scope exit.
 - **Dynamic arrays**: destructors in reverse order (last → first), then `free`.
 - **By-value parameters**: destructor at end of the callee.
+- **Value members**: after the enclosing destructor body, in reverse declaration order;
+  concrete template members also require implicit destructor generation when needed.
 - **Expression temporaries**: destroyed at end of statement (`;`) in reverse creation order.
 - **Temporaries in conditions** (`if`, `while`, `for`): destroyed after condition evaluation, before the body.
 
