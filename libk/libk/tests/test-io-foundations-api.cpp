@@ -427,6 +427,35 @@ TEST_CASE("I/O carriers: KDI aliases move owned completions through null decoder
     CHECK(result.resourceClaimed == 0);
 }
 
+TEST_CASE("I/O foundations: native Future publication does not wait for EventLoop",
+          "[libk][io][proactor][api][future]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_foundation_future__;
+        decode(value: long) : int { return (int) value; }
+        @ffi::Extern("C") private k_io_operation_on_kernel_completion(
+            operation: k::io::NativeIoOperation*, result: int) : void;
+        test() : int throws(Throwable) {
+            loop : k::io::EventLoop;
+            lease : ExecutorLease! = loop.acquireLease();
+            operation : k::io::IoOperation! = k::io::prepareOperation<int>(
+                1, null, null, 0, 0L, 0, null, *lease, decode);
+            future : Future<int>! = k::io::futureFor<int>(*operation, decode);
+            shared : Future<int>! = future->share();
+            k_io_operation_on_kernel_completion(operation->native(), 17);
+            result : int = shared->get();
+            delete shared;
+            delete future;
+            delete operation;
+            delete lease;
+            return result;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    REQUIRE(test() == 17);
+}
+
 TEST_CASE("I/O foundations: shared Future cancel hooks survive until target quiescence",
           "[libk][io][proactor][api][future][cancel]") {
     auto jit = gen_jit_with_stdlib(R"SRC(
@@ -681,6 +710,30 @@ TEST_CASE("I/O carriers: resource adoption precedes Future publication and rejec
             CHECK(output.empty());
         }
     }
+}
+
+TEST_CASE("EventLoop: lease stays valid and rejects after wrapper destruction",
+          "[libk][io][event-loop][lease]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __eventloop_strong_endpoint__;
+        test() : int {
+            loop : k::io::EventLoop! = new k::io::EventLoop();
+            lease : ExecutorLease! = loop->acquireLease();
+            delete loop;
+            rejected : bool = false;
+            try {
+                lease->execute([]() {});
+            } catch (e: RejectedExecutionException&) {
+                rejected = true;
+            }
+            delete lease;
+            return rejected ? 1 : 0;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    REQUIRE(test() == 1);
 }
 
 TEST_CASE("I/O boundaries: inherited Future waits and unavailable system leases fail explicitly",

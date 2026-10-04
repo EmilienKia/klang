@@ -2,7 +2,8 @@
 
 > **Status:** Working Draft — 2026
 > **Module:** `k` (base standard library, auto-imported)
-> **Sources:** `libk/libk/src/executor.k`, `libk/libk/src/thread_exceptions.k`
+> **Sources:** `libk/libk/src/executor.k`, `libk/libk/src/thread_exceptions.k`,
+> `libk/libk/src/io/event_loop.k`
 
 This document describes the **Executor framework** in the K standard library.
 Executors decouple task submission from the mechanics of how and when each task will be run,
@@ -25,6 +26,7 @@ Related documents: [Threading and Time](threading.md), [Synchronisation Primitiv
 | [`SingleThreadExecutor`](#5-singlethreadexecutor) | `class` | Manages a single worker thread executing tasks sequentially in priority/FIFO order. |
 | [`RejectedExecutionException`](#6-rejectedexecutionexception) | `class` | Thrown when a task cannot be accepted for execution. |
 | [`ExecutorLease`](#8-executorlease) | `class` | Strong, shareable endpoint for task and I/O callback delivery. |
+| [`EventLoop`](#9-eventloop) | `class` | Serial FIFO executor with monotonic timers and blocking wakeup. |
 
 ---
 
@@ -185,8 +187,41 @@ which need not be the original I/O caller. System leases use the callback pool;
 EventLoop leases enqueue serial delivery. None performs the channel's transport
 or DNS work. A callback must not block the native completion thread.
 
+## 9. `EventLoop`
+
+`k::io::EventLoop` is also available as the root alias `k::EventLoop`.
+`EventLoopLease` extends `ExecutorLease` and has the corresponding root alias.
+An EventLoop is an executor, not a readiness selector or a second I/O backend.
+
+| Method | Description |
+|--------|-------------|
+| `acquireLease() : ExecutorLease!` | Retain the serial delivery endpoint. |
+| `execute(task: !())` / `execute(task: !(), priority: int)` | Enqueue FIFO work; this executor ignores priority. |
+| `execute(command: Runnable+)` / `execute(command: Runnable*)` / `submit(command: Runnable*)` | Enqueue a borrowed command. |
+| `execute(command: Runnable*, cleanup: !())` | Enqueue a borrowed command with owned cleanup, including on drop. |
+| `scheduleAfter(delay: const Duration&, task: !())` | Enqueue an owned timer task using a monotonic deadline. |
+| `scheduleAfter(delay, command)` / `scheduleAfter(delay, command, cleanup)` | Timer equivalents for borrowed Runnable commands. |
+| `runOnce() : bool` | Wait for and execute at most one ready task; return whether a task ran. |
+| `runOnce(timeout: const Duration&) : bool` | Limit the wait; negative durations become zero. |
+| `run()` | Run serially until stopped, waiting without active polling when idle. |
+| `stop()` / `shutdown()` | Permanently close the endpoint, drop queued work and wake its waiter. |
+| `const isRunning() : bool` / `const isShutdown() : bool` | Inspect execution and terminal shutdown state. |
+
+Borrowed commands must outlive execution or their cleanup. Stop is not a reset:
+surviving leases stay valid but reject further work. Task and cleanup failures
+are contained and diagnosed like other native lease delivery.
+
+I/O Futures can publish while an EventLoop task waits for them, because the
+proactor does not need that loop to run a callback first. Such a wait still
+blocks other tasks on the loop. [Application exit](application.md#exit-lifecycle)
+suppresses queued I/O callbacks and awaits running callback cleanup; application
+code remains responsible for unrelated tasks and external workers.
+
+---
+
 ## See Also
 
 - [Threading and Time](threading.md)
 - [Synchronisation Primitives](synchronization.md)
+- [Proactive I/O and Runtime Lifecycle](io-async.md)
 - [Standard Library Index](index.md)

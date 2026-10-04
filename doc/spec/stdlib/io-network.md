@@ -231,7 +231,7 @@ main() : int throws(Throwable) {
 aliases over these Sync methods. They do not retain a separate blocking stream
 engine. New code should use the explicit callback/Future/Sync names.
 `InputStream`/`OutputStream` and synchronous file streams remain separate and
-unchanged.
+unchanged. [EventLoop](executors.md#9-eventloop) is a serial executor, not a selector.
 
 See [`samples/stream_channel_loopback.k`](../../../samples/stream_channel_loopback.k)
 and [`samples/datagram_loopback.k`](../../../samples/datagram_loopback.k) for

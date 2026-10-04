@@ -111,11 +111,10 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/directory_fs.k
     # ── Phase 5: asynchronous network I/O ─────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/network_address.k
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/selector.k
-    # ── Phase 6: event loop / reactor foundation ──────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/socket_channel.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/server_socket.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/datagram_socket.k
+    # ── Phase 6: serial executor / monotonic timers ───────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/event_loop.k
     # ── Phase 7: functional programming ───────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/functional.k
@@ -974,7 +973,6 @@ libk_add_test_sharded(libk-thread-io-tests 120 2
     tests/test-io-datagram.cpp
     tests/test-io-unix-socket-native.cpp
     tests/test-io-event-loop.cpp
-    tests/test-io-selector.cpp
 )
 
 # ── libk executor and thread pool tests ─────────────────────────────────────
