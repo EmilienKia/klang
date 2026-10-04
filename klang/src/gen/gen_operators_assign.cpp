@@ -124,7 +124,7 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
             if (constructed_flag) {
                 _builder->CreateStore(llvm::ConstantInt::getFalse(_builder->getContext()), constructed_flag);
             }
-            _builder->CreateCall(dtor_it->second, {dest});
+            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {dest});
         }
     }
 
@@ -1048,10 +1048,10 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
         // Step 3: For owner assignment: emit owner_move + null the source
-        // If non-null, destroy + free the existing object (don't null-out, we're about to store the new value)
+        // Disarm the old owner before destruction, which can throw.
         auto own_type = std::dynamic_pointer_cast<owner_type>(target_type);
         emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-            left, own_type->get_owned_type(), "owner_asgn", /*null_out=*/false);
+            left, own_type->get_owned_type(), "owner_asgn", make_virtual_call_emitter());
 
         // Determine the new pointer value to store:
         // - right may be null (from null literal → visit_value_expression returns nullptr LLVM val)
@@ -1074,7 +1074,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             auto* callable_llvm_type = _context->get_or_create_callable_llvm_type();
             if (ct->is_owner()) {
                 emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
-                    left, callable_llvm_type, "owned_callable_asgn", /*null_out=*/false);
+                    left, callable_llvm_type, "owned_callable_asgn", make_virtual_call_emitter());
             }
             llvm::Value* new_callable = right;
             if (!new_callable) {

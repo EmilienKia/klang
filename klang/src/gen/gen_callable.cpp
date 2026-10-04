@@ -964,11 +964,22 @@ llvm::Function* implementation_generator::get_or_create_closure_drop_function(
     auto* drop_fn = llvm::Function::Create(
         drop_fn_type, llvm::Function::InternalLinkage, drop_name, mod);
 
-    auto* saved_bb = _builder->GetInsertBlock();
-    auto saved_ip = _builder->saveIP();
-
     auto* entry_bb = llvm::BasicBlock::Create(llvm_ctx, "entry", drop_fn);
-    _builder->SetInsertPoint(entry_bb);
+    auto* unwind_bb = llvm::BasicBlock::Create(llvm_ctx, "drop_unwind", drop_fn);
+    llvm::IRBuilder<> drop_builder(entry_bb);
+    auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(llvm_ctx), true));
+    drop_fn->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+    // This helper is a separate frame: never use the enclosing function's EH stacks.
+    virtual_call_emitter emit_drop_call = [&](llvm::FunctionType* ft, llvm::Value* callee,
+                                              const std::vector<llvm::Value*>& args,
+                                              const std::string& name) -> llvm::Value* {
+        auto* normal = llvm::BasicBlock::Create(llvm_ctx, "drop_cont", drop_fn);
+        auto* call = drop_builder.CreateInvoke(ft, callee, normal, unwind_bb, args);
+        if (!ft->getReturnType()->isVoidTy() && !name.empty()) call->setName(name);
+        drop_builder.SetInsertPoint(normal);
+        return call;
+    };
 
     llvm::Value* ctx_arg = &*drop_fn->arg_begin();
     ctx_arg->setName("ctx");
@@ -987,24 +998,25 @@ llvm::Function* implementation_generator::get_or_create_closure_drop_function(
             auto member_info = st_type->get_member(var->get_short_name());
             if (!member_info) continue;
 
-            auto* field_ptr = _builder->CreateStructGEP(
+            auto* field_ptr = drop_builder.CreateStructGEP(
                 struct_llvm, ctx_arg, (unsigned)member_info->index, var->get_short_name() + "_ptr");
 
             if (type::is_owner(field_type)) {
                 auto own = std::dynamic_pointer_cast<owner_type>(field_type);
-                emit_owner_cleanup_if_nonnull(_builder.get(), mod, _context->_functions,
-                    field_ptr, own->get_owned_type(), "drop_field_owner");
+                emit_owner_cleanup_if_nonnull(&drop_builder, mod, _context->_functions,
+                    field_ptr, own->get_owned_type(), "drop_field_owner", emit_drop_call);
             } else if (auto ct = std::dynamic_pointer_cast<callable_type>(field_type)) {
                 if (ct->is_owner()) {
-                    emit_owned_callable_cleanup_if_nonnull(_builder.get(), mod,
-                        field_ptr, _context->get_or_create_callable_llvm_type(), "drop_field_call");
+                    emit_owned_callable_cleanup_if_nonnull(&drop_builder, mod,
+                        field_ptr, _context->get_or_create_callable_llvm_type(), "drop_field_call", emit_drop_call);
                 }
             } else if (auto st = std::dynamic_pointer_cast<struct_type>(field_type)) {
                 if (auto agg = st->get_struct()) {
                     if (auto dtor = agg->get_destructor()) {
                         auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
                         if (dtor_it != _context->_functions.end()) {
-                            _builder->CreateCall(dtor_it->second, {field_ptr});
+                            emit_drop_call(dtor_it->second->getFunctionType(),
+                                dtor_it->second, {field_ptr}, "");
                         }
                     }
                 }
@@ -1020,10 +1032,14 @@ llvm::Function* implementation_generator::get_or_create_closure_drop_function(
         free_fn = llvm::Function::Create(
             free_type, llvm::Function::ExternalLinkage, "free", mod);
     }
-    _builder->CreateCall(free_fn, {ctx_arg});
-    _builder->CreateRetVoid();
-
-    _builder->restoreIP(saved_ip);
+    drop_builder.CreateCall(free_fn, {ctx_arg});
+    drop_builder.CreateRetVoid();
+    drop_builder.SetInsertPoint(unwind_bb);
+    auto* exception = drop_builder.CreateLandingPad(
+        llvm::StructType::get(llvm_ctx, {ptr_ty, llvm::Type::getInt32Ty(llvm_ctx)}), 0);
+    exception->setCleanup(true);
+    drop_builder.CreateCall(free_fn, {ctx_arg});
+    drop_builder.CreateResume(exception);
     return drop_fn;
 }
 

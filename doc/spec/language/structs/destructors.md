@@ -78,7 +78,7 @@ declaration-order cleanup as other locals.
 }   // ~Foo() called on q first, then on p
 ```
 
-An explicit `delete` calls the destructor immediately and sets the owner to `null`:
+An explicit `delete` clears the owner to `null` before calling the destructor:
 
 ```k
 p : Foo! = new Foo(42);
@@ -117,6 +117,11 @@ are cleaned up in reverse declaration order.
 
 This unwinding cleanup is the RAII mechanism used by the compiler to preserve
 scope-based lifetime semantics across exceptions.
+
+A destructor that throws during normal cleanup must reach the enclosing `try`
+handler. An owner or owning-callable slot is cleared before its destructor or
+drop function is invoked, so propagating that failure must not retry destruction
+through the same slot.
 ---
 
 ## 3. By-value parameters
@@ -147,6 +152,9 @@ test() : int {
 ```
 
 After `consume` returns, the parameter copy has already been destroyed inside `consume`.
+
+If the parameter copy's destructor throws, its lifetime has already ended.
+Exception cleanup must not destroy the same copy again.
 
 ---
 

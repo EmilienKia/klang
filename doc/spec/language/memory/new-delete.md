@@ -277,8 +277,8 @@ delete dynItems;                       // 5 destructors called in reverse order
 
 ## 3. `delete` expression
 
-The `delete` expression explicitly destroys and frees the object held by an owner, then sets
-the owner to `null`.
+The `delete` expression clears the owner to `null`, then explicitly destroys and
+frees the object previously held by it.
 
 **Syntax:**
 
@@ -293,25 +293,29 @@ Passing a non-owner indirection to `delete` is a **compile-time error** (**Error
 
 ### 3.1 Single-object delete
 
-1. The destructor of the **dynamic type** of the owned object is called:
+1. The object address is saved and the owner variable is set to `null`.
+2. The destructor of the **dynamic type** of the owned object is called:
    - For `class` and `interface` types: virtual dispatch — the most-derived destructor is
      called first, then each base destructor in reverse construction order.
    - For `struct` and primitive types: direct call to the declared destructor (if any).
-2. `free(ptr)` is called to release the memory block.
-3. The owner variable is set to `null`.
+3. `free(ptr)` is called to release the memory block.
 
 The destructor always runs before `free`, and this two-phase cleanup is also the
 mechanism used by exception unwinding when a non-null owner goes out of scope.
+Destruction must use the enclosing exception handler when it throws. The already
+cleared slot prevents another destruction attempt during unwinding or later
+scope cleanup. For a non-virtual struct, the allocation is released on both the
+normal and exceptional destructor exits, before a failure is propagated.
 
 ### 3.2 Array delete
 
 When the owner holds a dynamically allocated array (`T[N]!` or `T[]!`):
 
-1. Destructors are called on each element **in reverse order** (last element first, down to
+1. The array address is saved and the owner variable is set to `null`.
+2. Destructors are called on each element **in reverse order** (last element first, down to
    index 0).  For static arrays, the loop is unrolled at compile time; for dynamic arrays,
    an IR loop is emitted.  For primitive element types, no destructor call is needed.
-2. `free(ptr)` is called to release the entire array allocation (header + data).
-3. The owner variable is set to `null`.
+3. `free(ptr)` is called to release the entire array allocation (header + data).
 
 The reverse destruction order mirrors the forward construction order used by `new`.
 
@@ -592,4 +596,3 @@ TypeSuffix:
 ---
 
 *See also:* [Types — Owner (`!`)](../basic/types.md#7-owner-) · [Array Types](../basic/types.md#9-array-types) · [Unary Operators](../expressions/unary.md) · [Assignment Operators](../expressions/assignment.md) · [Destructors](../structs/destructors.md) · [Exception Types](../../stdlib/exceptions.md)
-

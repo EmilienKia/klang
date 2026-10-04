@@ -26,6 +26,89 @@
 
 #include "helpers.hpp"
 
+TEST_CASE("Exception: throwing destruction clears moved owners and reaches the local handler",
+          "[gen][exceptions][owner][lambda][destructor-throw][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module throwing_owner_cleanup;
+        drops: int = 0;
+        struct Probe {
+            ~Probe() { ++drops; throw Exception(918); }
+        }
+        struct Carrier { probe: Probe; }
+        struct ParameterProbe {
+            fails: bool;
+            ParameterProbe(): fails(false) {}
+            ParameterProbe(other: const ParameterProbe&): fails(true) {}
+            ~ParameterProbe() { ++drops; if (fails) throw Exception(918); }
+        }
+        consume(probe: ParameterProbe): int { return 0; }
+        deleteOwner(): int {
+            drops = 0;
+            owner: Probe! = new Probe();
+            code: int = 0;
+            try { delete owner; }
+            catch (e: Throwable&) { code = e.getCode(); }
+            if (owner != null) return -1;
+            delete owner;
+            return code == 918 && drops == 1 ? 42 : -2;
+        }
+        replaceOwner(): int {
+            drops = 0;
+            source: Probe! = new Probe();
+            owner: Probe! = source;
+            if (source != null) return -1;
+            code: int = 0;
+            try { owner = null; }
+            catch (e: Throwable&) { code = e.getCode(); }
+            return owner == null && code == 918 && drops == 1 ? 42 : -2;
+        }
+        replaceCallable(): int {
+            drops = 0;
+            probe: Probe! = new Probe();
+            task: !() = [probe]() {};
+            moved: !() = task;
+            if (probe != null || task != null) return -1;
+            code: int = 0;
+            try { moved = null; }
+            catch (e: Throwable&) { code = e.getCode(); }
+            return moved == null && code == 918 && drops == 1 ? 42 : -2;
+        }
+        deleteCarrier(): int {
+            drops = 0;
+            owner: Carrier! = new Carrier();
+            code: int = 0;
+            try { delete owner; }
+            catch (e: Throwable&) { code = e.getCode(); }
+            return owner == null && code == 918 && drops == 1 ? 42 : -1;
+        }
+        destroyLocal(): int {
+            drops = 0;
+            code: int = 0;
+            try { probe: Probe; }
+            catch (e: Throwable&) { code = e.getCode(); }
+            return code == 918 && drops == 1 ? 42 : -1;
+        }
+        destroyParameter(): int {
+            drops = 0;
+            probe: ParameterProbe;
+            code: int = 0;
+            try { consume(probe); }
+            catch (e: Throwable&) { code = e.getCode(); }
+            return code == 918 && drops == 1 ? 42 : -1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    for (const auto* name : {"deleteOwner", "replaceOwner", "replaceCallable",
+                             "deleteCarrier", "destroyLocal", "destroyParameter"}) {
+        INFO(name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        int result = 0;
+        REQUIRE_NOTHROW(result = run());
+        CHECK(result == 42);
+    }
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 //  1. Basic try-catch syntax acceptance

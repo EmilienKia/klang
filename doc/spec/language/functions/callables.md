@@ -223,6 +223,11 @@ own2 : !(int) : int = own;   // MOVE: own ← null; own2 owns the closure
   slot, not a borrowed-to-owned conversion, and must not depend on overload
   declaration order.
 - **Destruction:** When an owned callable goes out of scope while non-null, its closure drop function is called (destroying captured fields in reverse order and freeing heap memory).
+- **Throwing destruction:** The callable slot must be cleared before invoking its
+  drop function. A capture destructor failure follows the enclosing `try` handler,
+  rather than bypassing it or dropping the same closure again during unwinding.
+  The generated closure drop frame releases its environment on its exceptional
+  exit before propagating the failure.
 - **Conversion directionality:** An owned callable (`!`) can be converted (borrowed) into any non-owning callable (`&`, `+`, `*`, `?`). A stored borrowed callable cannot be converted into an owned callable (`ERR_CALLABLE_OWNER_FROM_BORROW`).
 
 A fresh lambda expression may bind directly to an owning assignment, parameter,

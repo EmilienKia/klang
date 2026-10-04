@@ -214,9 +214,9 @@ void implementation_generator::emit_expression_temporaries_cleanup(const lex::op
     for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it) {
         if (it->array_type) {
             emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
-                it->alloca, it->array_type);
+                it->alloca, it->array_type, make_virtual_call_emitter());
         } else if (it->destructor) {
-            _builder->CreateCall(it->destructor, {it->alloca});
+            create_call_or_invoke(it->destructor->getFunctionType(), it->destructor, {it->alloca});
         }
     }
     _expression_temporaries.clear();
@@ -265,10 +265,11 @@ void implementation_generator::emit_scope_variable_cleanup(
                         auto* skip_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "cleanup_skip_dtor", func);
                         _builder->CreateCondBr(flag_val, do_dtor_bb, skip_dtor_bb);
                         _builder->SetInsertPoint(do_dtor_bb);
+                        _builder->CreateStore(llvm::ConstantInt::getFalse(llvm_ctx), flag_it->second);
                         if (virtual_dtor) {
-                            emit_virtual_destructor_call(_builder.get(), *agg, alloca);
+                            emit_virtual_destructor_call(_builder.get(), *agg, alloca, make_virtual_call_emitter());
                         } else {
-                            _builder->CreateCall(dtor_it->second, {alloca});
+                            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {alloca});
                         }
                         _builder->CreateBr(skip_dtor_bb);
                         _builder->SetInsertPoint(skip_dtor_bb);
@@ -276,10 +277,13 @@ void implementation_generator::emit_scope_variable_cleanup(
                     }
                 }
 
+                if (auto flag_it = _dtor_flags.find(var_stmt); flag_it != _dtor_flags.end()) {
+                    _builder->CreateStore(llvm::ConstantInt::getFalse(llvm_ctx), flag_it->second);
+                }
                 if (virtual_dtor) {
-                    emit_virtual_destructor_call(_builder.get(), *agg, alloca);
+                    emit_virtual_destructor_call(_builder.get(), *agg, alloca, make_virtual_call_emitter());
                 } else {
-                    _builder->CreateCall(dtor_it->second, {alloca});
+                    create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {alloca});
                 }
             } else {
                 auto udef = find_union_for_struct_type(_unit, st_type);
@@ -287,14 +291,15 @@ void implementation_generator::emit_scope_variable_cleanup(
             }
         } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
             emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                alloca, own_type->get_owned_type(), owner_cleanup_name);
+                alloca, own_type->get_owned_type(), owner_cleanup_name, make_virtual_call_emitter());
         } else if (auto call_type = std::dynamic_pointer_cast<callable_type>(vt)) {
             if (call_type->is_owner()) {
                 emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
-                    alloca, _context->get_or_create_callable_llvm_type(), owner_cleanup_name);
+                    alloca, _context->get_or_create_callable_llvm_type(), owner_cleanup_name, make_virtual_call_emitter());
             }
         } else if (auto arr_type = std::dynamic_pointer_cast<sized_array_type>(vt)) {
-            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions, alloca, arr_type);
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                alloca, arr_type, make_virtual_call_emitter());
         }
     }
 }
@@ -324,11 +329,12 @@ void implementation_generator::emit_active_parameter_cleanup(const std::string& 
             if (param_it == _context->_parameter_variables.end()) continue;
             if (auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type())) {
                 emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                    param_it->second, own_type->get_owned_type(), owner_cleanup_name);
+                    param_it->second, own_type->get_owned_type(), owner_cleanup_name, make_virtual_call_emitter());
             } else if (auto call_type = std::dynamic_pointer_cast<callable_type>(param->get_type())) {
                 if (call_type->is_owner()) {
                     emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
-                        param_it->second, _context->get_or_create_callable_llvm_type(), owner_cleanup_name);
+                        param_it->second, _context->get_or_create_callable_llvm_type(),
+                        owner_cleanup_name, make_virtual_call_emitter());
                 }
             }
         }
@@ -345,7 +351,21 @@ void implementation_generator::emit_active_parameter_cleanup(const std::string& 
             if (dtor_it == _context->_functions.end()) continue;
             auto param_it = _context->_parameter_variables.find(param);
             if (param_it == _context->_parameter_variables.end()) continue;
-            _builder->CreateCall(dtor_it->second, {param_it->second});
+            auto* fn = _builder->GetInsertBlock()->getParent();
+            auto* done = llvm::BasicBlock::Create(_context->llvm_context(), "param_destroyed", fn);
+            auto flag_it = _struct_param_dtor_flags.find(param);
+            if (flag_it != _struct_param_dtor_flags.end()) {
+                auto* destroy = llvm::BasicBlock::Create(_context->llvm_context(), "param_destroy", fn);
+                auto* live = _builder->CreateLoad(
+                    llvm::Type::getInt1Ty(_context->llvm_context()), flag_it->second);
+                _builder->CreateCondBr(live, destroy, done);
+                _builder->SetInsertPoint(destroy);
+                _builder->CreateStore(
+                    llvm::ConstantInt::getFalse(_context->llvm_context()), flag_it->second);
+            }
+            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {param_it->second});
+            _builder->CreateBr(done);
+            _builder->SetInsertPoint(done);
         }
     }
 }
@@ -2091,93 +2111,8 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     } else {
         // Top-level try-catch: emit cleanup for all outer scope variables, then resume.
         // This ensures destructors and owner cleanup run during exception propagation.
-        if (!_cleanup_vars_stack.empty() || !_owner_params_stack.empty() || !_struct_params_stack.empty()) {
-            // Emit cleanup for all active outer scopes (same logic as visit_return_statement)
-            std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
-            std::vector<std::vector<std::shared_ptr<variable_statement>>> all_scopes;
-            while (!tmp.empty()) {
-                all_scopes.push_back(tmp.top());
-                tmp.pop();
-            }
-            for (auto& scope_vars : all_scopes) {
-                for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
-                    auto& var_stmt = *it;
-                    if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
-                    auto vt = var_stmt->get_type();
-                    auto var_it = _context->_variables.find(var_stmt);
-                    if (var_it == _context->_variables.end()) continue;
-                    llvm::AllocaInst* alloca_var = var_it->second;
-
-                    if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                        if (st_type->get_struct()) {
-                            auto dtor = st_type->get_struct()->get_destructor();
-                            if (!dtor) continue;
-                            auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                            if (dtor_it == _context->_functions.end()) continue;
-                            // Check construction flag if available
-                            auto flag_it = _dtor_flags.find(var_stmt);
-                            if (flag_it != _dtor_flags.end()) {
-                                auto* flag_val = _builder->CreateLoad(
-                                    llvm::Type::getInt1Ty(llvm_ctx), flag_it->second, "fallthru_dtor_flag");
-                                auto* do_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "fallthru_dtor", func);
-                                auto* skip_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "fallthru_skip", func);
-                                _builder->CreateCondBr(flag_val, do_dtor_bb, skip_dtor_bb);
-                                _builder->SetInsertPoint(do_dtor_bb);
-                                _builder->CreateCall(dtor_it->second, {alloca_var});
-                                _builder->CreateBr(skip_dtor_bb);
-                                _builder->SetInsertPoint(skip_dtor_bb);
-                            } else {
-                                _builder->CreateCall(dtor_it->second, {alloca_var});
-                            }
-                        } else {
-                            auto udef = find_union_for_struct_type(_unit, st_type);
-                            if (udef) emit_union_cleanup(alloca_var, *udef);
-                        }
-                    } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
-                        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                            alloca_var, own_type->get_owned_type(), "fallthru_owner");
-                    } else if (auto call_type = std::dynamic_pointer_cast<callable_type>(vt)) {
-                        if (call_type->is_owner()) {
-                            emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
-                                alloca_var, _context->get_or_create_callable_llvm_type(), "fallthru_owner");
-                        }
-                    }
-                }
-            }
-            // Also clean up owner-typed parameters
-            if (!_owner_params_stack.empty()) {
-                auto params_copy = _owner_params_stack.top();
-                for (auto it = params_copy.rbegin(); it != params_copy.rend(); ++it) {
-                    auto& param = *it;
-                    auto param_it = _context->_parameter_variables.find(param);
-                    if (param_it == _context->_parameter_variables.end()) continue;
-                    if (auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type())) {
-                        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                            param_it->second, own_type->get_owned_type(), "fallthru_param");
-                    } else if (auto call_type = std::dynamic_pointer_cast<callable_type>(param->get_type())) {
-                        if (call_type->is_owner()) {
-                            emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(),
-                                param_it->second, _context->get_or_create_callable_llvm_type(), "fallthru_param");
-                        }
-                    }
-                }
-            }
-            // Also clean up struct-typed by-value parameters
-            if (!_struct_params_stack.empty()) {
-                auto params_copy = _struct_params_stack.top();
-                for (auto it = params_copy.rbegin(); it != params_copy.rend(); ++it) {
-                    auto& param = *it;
-                    auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
-                    if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
-                    auto dtor = st_type->get_struct()->get_destructor();
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it == _context->_functions.end()) continue;
-                    auto param_it = _context->_parameter_variables.find(param);
-                    if (param_it == _context->_parameter_variables.end()) continue;
-                    _builder->CreateCall(dtor_it->second, {param_it->second});
-                }
-            }
-        }
+        emit_active_scope_cleanup(_cleanup_vars_stack.size(), "fallthru_owner", true);
+        emit_active_parameter_cleanup("fallthru_param");
 
         // Resume unwinding with original exception pointer and selector
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_resume");
@@ -2542,7 +2477,7 @@ void implementation_generator::emit_cond_var_cleanup(
             if (!dtor) return;
             auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
             if (dtor_it == _context->_functions.end()) return;
-            _builder->CreateCall(dtor_it->second, {alloca});
+            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {alloca});
         } else {
             // Union with non-trivial alternatives
             auto udef = find_union_for_struct_type(_unit, st_type);
@@ -2550,7 +2485,7 @@ void implementation_generator::emit_cond_var_cleanup(
         }
     } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
         emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-            alloca, own_type->get_owned_type(), "if_cond_var_cleanup");
+            alloca, own_type->get_owned_type(), "if_cond_var_cleanup", make_virtual_call_emitter());
     }
 }
 
@@ -3729,7 +3664,7 @@ void implementation_generator::visit_expression_statement(expression_statement& 
             if (own_type) {
                 auto alloc_type = own_type->get_owned_type();
                 emit_owner_object_destroy(_builder.get(), get_module(),
-                    _context->_functions, _value, alloc_type);
+                    _context->_functions, _value, alloc_type, make_virtual_call_emitter());
                 _value = nullptr;
             }
         }
@@ -4032,7 +3967,7 @@ void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_ty
             _builder->SetInsertPoint(dtor_call_bb);
         }
         auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-        _builder->CreateCall(dtor_it->second, {storage_ptr});
+        create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {storage_ptr});
         _builder->CreateBr(merge_bb);
     }
 
@@ -4100,7 +4035,7 @@ void implementation_generator::emit_union_cleanup_on_reassign(llvm::Value* union
             _builder->SetInsertPoint(dtor_call_bb);
         }
         auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-        _builder->CreateCall(dtor_it->second, {storage_ptr});
+        create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {storage_ptr});
         _builder->CreateBr(merge_bb);
     }
 

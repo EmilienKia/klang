@@ -324,6 +324,8 @@ protected:
      *  Maps variable_statement → i1 alloca (false = not constructed, true = constructed).
      *  Used by cleanup landing pads to avoid calling destructors on unconstructed objects. */
     std::map<std::shared_ptr<variable_statement>, llvm::AllocaInst*> _dtor_flags;
+    /** Cleared before destroying a by-value parameter, including on the normal path. */
+    std::map<std::shared_ptr<parameter>, llvm::AllocaInst*> _struct_param_dtor_flags;
 
     /** Context for a finally block that must be emitted on early exit (return/break/continue). */
     struct finally_context {

@@ -1743,7 +1743,7 @@ void implementation_generator::visit_delete_expression(delete_expression& expr) 
     if (!owner_alloca) { _value = nullptr; return; }
 
     emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-        owner_alloca, alloc_type, "delete");
+        owner_alloca, alloc_type, "delete", make_virtual_call_emitter());
     _value = nullptr;
 }
 

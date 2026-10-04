@@ -1097,3 +1097,100 @@ TEST_CASE("Template value members are constructed and destroyed exactly once",
     REQUIRE(result == (explicitDestructor ? 222 : 220));
     REQUIRE(didReturn() == 1);
 }
+
+TEST_CASE("Nested template value destruction propagates after releasing owned state",
+          "[gen][template][instantiation][lifecycle][exceptions][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module template_throwing_value_cleanup;
+        constructions: int = 0;
+        drops: int = 0;
+        boxDrops: int = 0;
+        errorDrops: int = 0;
+        stateDrops: int = 0;
+        returned: int = 0;
+        struct Payload {
+            tag: int;
+            Payload(): tag(37) { ++constructions; }
+            ~Payload() {
+                drops += tag == 37 ? 1 : 100;
+                throw Exception(919);
+            }
+        }
+        class Failure : Exception {
+            ~Failure() { ++errorDrops; }
+        }
+        struct NativeState {
+            ~NativeState() { ++stateDrops; }
+        }
+        template<typename T>
+        struct Box {
+            value: T;
+            error: Throwable!;
+            Box() { error = new Failure(); }
+            ~Box() { ++boxDrops; delete error; }
+        }
+        template<typename T>
+        struct Shared {
+            native: NativeState*;
+            box: Box<T>*;
+            Shared() {
+                native = new NativeState();
+                box = new Box<T>();
+            }
+            releaseNative() {
+                state: NativeState! = (NativeState!) native;
+                native = null;
+                box = null;
+                delete state;
+            }
+            ~Shared() {
+                payload: Box<T>! = (Box<T>!) box;
+                try {
+                    delete payload;
+                } catch (e: Throwable&) {
+                    releaseNative();
+                    throw;
+                }
+                releaseNative();
+            }
+        }
+        template<typename T>
+        struct Carrier {
+            shared: Shared<T>;
+            static drop(context: byte*): int {
+                carrier: Carrier<T>! = (Carrier<T>!) context;
+                code: int = 0;
+                try { delete carrier; }
+                catch (e: Throwable&) { code = e.getCode(); }
+                if (carrier != null) return -1;
+                delete carrier;
+                return code;
+            }
+        }
+        run(): int {
+            carrier: Carrier<Payload>* = new Carrier<Payload>();
+            code: int = Carrier<Payload>::drop((byte*) carrier);
+            returned = 1;
+            return code;
+        }
+        didReturn(): int { return returned; }
+        constructionCount(): int { return constructions; }
+        dropCount(): int { return drops; }
+        boxDropCount(): int { return boxDrops; }
+        errorDropCount(): int { return errorDrops; }
+        stateDropCount(): int { return stateDrops; }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    int result = -999;
+    REQUIRE_NOTHROW(result = run());
+    REQUIRE(result == 919);
+    for (const auto* name : {"didReturn", "constructionCount", "dropCount",
+                             "boxDropCount", "errorDropCount", "stateDropCount"}) {
+        INFO(name);
+        auto count = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(count);
+        REQUIRE(count() == 1);
+    }
+}

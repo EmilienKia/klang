@@ -30,6 +30,7 @@
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <vector>
@@ -85,6 +86,13 @@ llvm::Constant* materialize_annotation_array(
     unit& owner,
     const std::string& symbol_prefix,
     aggregate* parent_aggregate = nullptr);
+
+/**
+ * Emitter for calls that must follow the active cleanup/catch context.
+ * Code generated inside a function supplies create_call_or_invoke.
+ */
+using virtual_call_emitter = std::function<llvm::Value*(llvm::FunctionType*, llvm::Value*,
+    const std::vector<llvm::Value*>&, const std::string&)>;
 
 /**
  * Return true if the given aggregate is ::k::Object (the root base class).
@@ -195,7 +203,8 @@ inline bool should_merge_aggregate_symbols(const k::model::aggregate& agg)
 inline llvm::Value* emit_virtual_destructor_call(
     llvm::IRBuilder<>* builder,
     aggregate& st,
-    llvm::Value* this_ptr)
+    llvm::Value* this_ptr,
+    const virtual_call_emitter& emit_call = {})
 {
     if (!st.has_vtable()) return this_ptr;
 
@@ -236,7 +245,39 @@ inline llvm::Value* emit_virtual_destructor_call(
     llvm::Value* fn_ptr = builder->CreateLoad(ptr_ty, fn_ptr_addr, "dtor_fn_ptr");
 
     auto* fn_type = llvm::FunctionType::get(ptr_ty, {ptr_ty}, false);
+    if (emit_call) return emit_call(fn_type, fn_ptr, {this_ptr}, "");
     return builder->CreateCall(fn_type, fn_ptr, {this_ptr});
+}
+
+inline llvm::Function* get_or_create_destroy_and_free_function(
+    llvm::Module& mod, llvm::Function* destructor_fn)
+{
+    const std::string name = destructor_fn->getName().str() + "_destroy_and_free";
+    if (auto* existing = mod.getFunction(name)) return existing;
+    auto& ctx = mod.getContext();
+    auto* ptr_ty = llvm::PointerType::get(ctx, 0);
+    auto* fn_ty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {ptr_ty}, false);
+    auto* fn = llvm::Function::Create(fn_ty, llvm::Function::InternalLinkage, name, mod);
+    auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), true));
+    fn->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+    auto free_fn = mod.getOrInsertFunction("free", fn_ty);
+    auto* entry = llvm::BasicBlock::Create(ctx, "entry", fn);
+    auto* normal = llvm::BasicBlock::Create(ctx, "destroyed", fn);
+    auto* unwind = llvm::BasicBlock::Create(ctx, "destroy_unwind", fn);
+    llvm::IRBuilder<> builder(entry);
+    auto* ptr = fn->getArg(0);
+    builder.CreateInvoke(destructor_fn, normal, unwind, {ptr});
+    builder.SetInsertPoint(normal);
+    builder.CreateCall(free_fn, {ptr});
+    builder.CreateRetVoid();
+    builder.SetInsertPoint(unwind);
+    auto* exception = builder.CreateLandingPad(
+        llvm::StructType::get(ctx, {ptr_ty, llvm::Type::getInt32Ty(ctx)}), 0);
+    exception->setCleanup(true);
+    builder.CreateCall(free_fn, {ptr});
+    builder.CreateResume(exception);
+    return fn;
 }
 
 /**
@@ -260,7 +301,8 @@ inline void emit_owner_object_destroy(
     llvm::Module& mod,
     const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
     llvm::Value* ptr_value,
-    const std::shared_ptr<type>& alloc_type)
+    const std::shared_ptr<type>& alloc_type,
+    const virtual_call_emitter& emit_call = {})
 {
     auto& llvm_ctx = builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
@@ -288,7 +330,9 @@ inline void emit_owner_object_destroy(
                         size_t i = ri - 1;
                         llvm::Value* elem_ptr = builder->CreateConstInBoundsGEP2_32(
                             llvm_arr_type, data_ptr, 0, i, "arr_dtor_elem_" + std::to_string(i));
-                        builder->CreateCall(dtor_it->second, {elem_ptr});
+                        if (emit_call) emit_call(dtor_it->second->getFunctionType(),
+                            dtor_it->second, {elem_ptr}, "");
+                        else builder->CreateCall(dtor_it->second, {elem_ptr});
                     }
                 }
             }
@@ -338,8 +382,10 @@ inline void emit_owner_object_destroy(
                     llvm::Value* indices[] = {llvm::ConstantInt::get(i32_ty, 0), idx};
                     llvm::Value* elem_ptr = builder->CreateGEP(
                         llvm_arr_type, data_ptr, indices, "dynarr_dtor_elem");
-                    builder->CreateCall(dtor_it->second, {elem_ptr});
-                    ri_phi->addIncoming(idx, loop_body);
+                    if (emit_call) emit_call(dtor_it->second->getFunctionType(),
+                        dtor_it->second, {elem_ptr}, "");
+                    else builder->CreateCall(dtor_it->second, {elem_ptr});
+                    ri_phi->addIncoming(idx, builder->GetInsertBlock());
                     builder->CreateBr(loop_header);
 
                     builder->SetInsertPoint(loop_end);
@@ -353,13 +399,18 @@ inline void emit_owner_object_destroy(
         // typed as a base (e.g. deleting/releasing through an interface owner).
         auto st = st_type->get_struct();
         if (st && st->has_vtable()) {
-            complete_ptr = emit_virtual_destructor_call(builder, *st, ptr_value);
+            complete_ptr = emit_virtual_destructor_call(builder, *st, ptr_value, emit_call);
         } else {
             auto dtor = st ? st->get_destructor() : nullptr;
             if (dtor) {
                 auto dtor_it = functions.find(dtor->shared_as<function>());
                 if (dtor_it != functions.end()) {
-                    builder->CreateCall(dtor_it->second, {ptr_value});
+                    // A non-virtual struct's receiver is the allocation address.
+                    // Release it on both exits, before propagating a destructor failure.
+                    auto* destroy_fn = get_or_create_destroy_and_free_function(mod, dtor_it->second);
+                    if (emit_call) emit_call(destroy_fn->getFunctionType(), destroy_fn, {ptr_value}, "");
+                    else builder->CreateCall(destroy_fn, {ptr_value});
+                    return;
                 }
             }
         }
@@ -378,7 +429,7 @@ inline void emit_owner_object_destroy(
 
 /**
  * Emit the full conditional owner cleanup sequence:
- *   if (owner_ptr != null) { destroy+free; owner_slot = null; }
+ *   if (owner_ptr != null) { owner_slot = null; destroy+free; }
  *
  * This eliminates the repeated null-check + emit_owner_object_destroy + null-out
  * pattern used at scope exit, return, assignment, and delete sites.
@@ -389,7 +440,6 @@ inline void emit_owner_object_destroy(
  * @param owner_alloca  The alloca (address of the owner variable slot).
  * @param alloc_type    The K model type of the pointed-to object.
  * @param label_prefix  A label prefix for the generated basic blocks (e.g. "owner_cleanup").
- * @param null_out      If true (default), writes null to the owner alloca after destroy.
  */
 inline void emit_owner_cleanup_if_nonnull(
     llvm::IRBuilder<>* builder,
@@ -398,7 +448,7 @@ inline void emit_owner_cleanup_if_nonnull(
     llvm::Value* owner_alloca,
     const std::shared_ptr<type>& alloc_type,
     const std::string& label_prefix = "owner_cleanup",
-    bool null_out = true)
+    const virtual_call_emitter& emit_call = {})
 {
     auto& llvm_ctx = builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
@@ -410,29 +460,26 @@ inline void emit_owner_cleanup_if_nonnull(
         cur_ptr, llvm::ConstantPointerNull::get(ptr_ty), label_prefix + "_null");
     builder->CreateCondBr(is_null, done_bb, nonnull_bb);
     builder->SetInsertPoint(nonnull_bb);
-    emit_owner_object_destroy(builder, mod, functions, cur_ptr, alloc_type);
-    if (null_out) {
-        builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), owner_alloca);
-    }
+    builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), owner_alloca);
+    emit_owner_object_destroy(builder, mod, functions, cur_ptr, alloc_type, emit_call);
     builder->CreateBr(done_bb);
     builder->SetInsertPoint(done_bb);
 }
 
 /**
  * Emit the full conditional cleanup sequence for an owned callable (`!(...)`):
- *   if (callable_slot.ctx != null) { drop(callable_slot.ctx); }
- *   if (null_out) { callable_slot = { null, null }; }
+ *   ctx = callable_slot.ctx; callable_slot = { null, null };
+ *   if (ctx != null) { drop(ctx); }
  *
  * An owned callable fat pointer has type `%__k.callable = { ptr fn, ptr ctx }`.
  * When ctx is non-null, ctx points to a heap closure whose first field is
- * `void (*drop)(void* ctx) noexcept`.
+ * `void (*drop)(void* ctx)`. Capture destruction can throw.
  *
  * @param builder              The IRBuilder positioned at the insertion point.
  * @param mod                  The LLVM module.
  * @param callable_alloca      The alloca holding the %__k.callable value.
  * @param callable_llvm_type   The %__k.callable llvm::StructType*.
  * @param label_prefix         A label prefix for the generated basic blocks.
- * @param null_out             If true (default), zeroes the callable slot after destroy.
  */
 inline void emit_owned_callable_cleanup_if_nonnull(
     llvm::IRBuilder<>* builder,
@@ -440,7 +487,7 @@ inline void emit_owned_callable_cleanup_if_nonnull(
     llvm::Value* callable_alloca,
     llvm::StructType* callable_llvm_type,
     const std::string& label_prefix = "owned_callable_cleanup",
-    bool null_out = true)
+    const virtual_call_emitter& emit_call = {})
 {
     auto& llvm_ctx = builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
@@ -448,6 +495,7 @@ inline void emit_owned_callable_cleanup_if_nonnull(
     auto* ctx_addr = builder->CreateStructGEP(
         callable_llvm_type, callable_alloca, 1, label_prefix + "_ctx_addr");
     llvm::Value* ctx_ptr = builder->CreateLoad(ptr_ty, ctx_addr, label_prefix + "_ctx");
+    builder->CreateStore(llvm::ConstantAggregateZero::get(callable_llvm_type), callable_alloca);
 
     auto* fn = builder->GetInsertBlock()->getParent();
     auto* nonnull_bb = llvm::BasicBlock::Create(llvm_ctx, label_prefix + "_nonnull", fn);
@@ -461,13 +509,11 @@ inline void emit_owned_callable_cleanup_if_nonnull(
     // ctx_ptr holds __k_owned_callable_header at offset 0: void (*drop)(void* ctx)
     llvm::Value* drop_fn_ptr = builder->CreateLoad(ptr_ty, ctx_ptr, label_prefix + "_drop_fn");
     auto* drop_fn_type = llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
-    builder->CreateCall(drop_fn_type, drop_fn_ptr, {ctx_ptr});
+    if (emit_call) emit_call(drop_fn_type, drop_fn_ptr, {ctx_ptr}, "");
+    else builder->CreateCall(drop_fn_type, drop_fn_ptr, {ctx_ptr});
     builder->CreateBr(done_bb);
 
     builder->SetInsertPoint(done_bb);
-    if (null_out) {
-        builder->CreateStore(llvm::ConstantAggregateZero::get(callable_llvm_type), callable_alloca);
-    }
 }
 
 /**
@@ -476,7 +522,7 @@ inline void emit_owned_callable_cleanup_if_nonnull(
  * For struct elements with a destructor: calls the destructor on each element
  * in reverse order.
  * For owner elements: calls emit_owner_cleanup_if_nonnull on each element
- * in reverse order (conditional destroy+free, then null out the slot).
+ * in reverse order (clear the slot, then conditional destroy+free).
  *
  * @param builder     The IRBuilder positioned at the insertion point.
  * @param mod         The LLVM module.
@@ -489,7 +535,8 @@ inline void emit_sized_array_elements_cleanup(
     llvm::Module& mod,
     const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
     llvm::Value* arr_alloca,
-    const std::shared_ptr<sized_array_type>& arr_type)
+    const std::shared_ptr<sized_array_type>& arr_type,
+    const virtual_call_emitter& emit_call = {})
 {
     auto elem_type = arr_type->get_subtype();
     auto* struct_llvm = arr_type->get_llvm_struct_type();
@@ -511,7 +558,9 @@ inline void emit_sized_array_elements_cleanup(
             size_t i = ri - 1;
             llvm::Value* elem_ptr = builder->CreateConstInBoundsGEP2_32(
                 llvm_arr_type, data_ptr, 0, i, "arr_dtor_" + std::to_string(i));
-            builder->CreateCall(dtor_it->second, {elem_ptr});
+            if (emit_call) emit_call(dtor_it->second->getFunctionType(),
+                dtor_it->second, {elem_ptr}, "");
+            else builder->CreateCall(dtor_it->second, {elem_ptr});
         }
     } else if (auto own_elem = std::dynamic_pointer_cast<owner_type>(elem_type)) {
         // Owner elements: conditional destroy+free each in reverse order
@@ -521,7 +570,7 @@ inline void emit_sized_array_elements_cleanup(
                 llvm_arr_type, data_ptr, 0, i, "arr_own_" + std::to_string(i));
             emit_owner_cleanup_if_nonnull(builder, mod, functions,
                 elem_ptr, own_elem->get_owned_type(),
-                "arr_own_cleanup_" + std::to_string(i));
+                "arr_own_cleanup_" + std::to_string(i), emit_call);
         }
     }
 }
@@ -628,16 +677,6 @@ namespace k::model::gen {
 
 /** Emit vptr store (defined in gen_class.cpp). */
 void emit_vptr_store(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr, std::shared_ptr<context> ctx);
-
-/**
- * Emitter used to materialise the actual call instruction of a virtual dispatch.
- * Callers that generate code inside a function with an active exception context
- * must supply implementation_generator::create_call_or_invoke so that the
- * indirect call becomes an `invoke` and exceptions thrown by the callee can be
- * caught by the enclosing try block.
- */
-using virtual_call_emitter = std::function<llvm::Value*(llvm::FunctionType*, llvm::Value*,
-    const std::vector<llvm::Value*>&, const std::string&)>;
 
 /** Emit virtual dispatch call (defined in gen_class.cpp). */
 llvm::Value* emit_virtual_dispatch_call(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr,

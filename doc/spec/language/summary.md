@@ -155,7 +155,9 @@ All observer indirection types share the same memory size (one pointer) and call
 - Move-only, nullable, exclusive ownership.
 - `b = a`: move (a ← null, b takes ownership). The previous object in b is destroyed first.
 - Auto-delete on scope exit if non-null.
-- `delete owner`: destruction + free + owner ← null. No-op if already null.
+- `delete owner`: owner ← null before destruction + free. No-op if already null.
+  Destructor failures follow the enclosing exception handler without retrying
+  destruction through the cleared owner.
 - Only valid sources for `T!`: another `T!` (move), `new T(…)`, or `null`.
 - An explicit owner-to-owner cast transfers ownership: the source owner slot becomes null, including when the cast adjusts the pointer to a base subobject. Passing the result to an owning parameter must not leave a second owner in the caller.
 - Observer assignment (`T!` → `T*`, `T+`, `T?`, `T&`) copies the address without ownership transfer.
@@ -764,6 +766,8 @@ implementation of the selected slot.
 - Move-only semantics apply to `!(Params):Ret`. Stored borrowed callables cannot be converted to owned callables.
   A fresh lambda may bind directly to an owned assignment, argument, or return destination;
   its closure is heap-materialized for that destination, rather than promoted from a borrowed slot.
+  Owning callable slots are cleared before dropping their closures; a capture
+  destructor failure must reach the enclosing exception handler without a second drop.
 - `null` is accepted for nullable callable parameters (`*`, `?`, `!`), including constructors and transparent aliases, but not for `+` or `&`. Passing an owning callable variable by value moves it and clears the source.
 
 ### 10.7 Operator Overloading
@@ -1472,7 +1476,9 @@ namespace lang {
 
 - `OwnerExpr` = modifiable lvalue of type `T!`, `T[N]!`, or `T[]!`.
 - `delete` on non-owner = error (`0x091A`).
-- If null: no-op. Otherwise: destructor (virtual dispatch for classes) + `free` + owner ← null.
+- If null: no-op. Otherwise: owner ← null, then destructor (virtual dispatch for classes) + `free`.
+  A throwing destructor must not bypass an enclosing `try` or leave the owner
+  armed for another destruction attempt.
 - Arrays: destructors in reverse order (last → first), then `free`.
 - Result type: `void`.
 

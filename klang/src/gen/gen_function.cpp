@@ -1493,6 +1493,7 @@ void implementation_generator::visit_function(function &function) {
     _exc_ptr_slot = nullptr;
     _exc_sel_slot = nullptr;
     _dtor_flags.clear();
+    _struct_param_dtor_flags.clear();
     _lpad_depth_counter = 0;
     while (!_cleanup_blocks.empty()) _cleanup_blocks.pop();
     while (!_cleanup_vars_stack.empty()) _cleanup_vars_stack.pop();
@@ -1661,6 +1662,11 @@ void implementation_generator::visit_function(function &function) {
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(pt)) {
                 if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
                     struct_params.push_back(param);
+                    auto* flag = _builder->CreateAlloca(
+                        llvm::Type::getInt1Ty(_context->llvm_context()), nullptr,
+                        param->get_short_name() + ".destructible");
+                    _builder->CreateStore(llvm::ConstantInt::getTrue(_context->llvm_context()), flag);
+                    _struct_param_dtor_flags.emplace(param, flag);
                 }
             }
         }
@@ -2277,7 +2283,7 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
             auto m_dtor = member_agg->get_destructor();
             auto m_dtor_it = _context->_functions.find(m_dtor->shared_as<k::model::function>());
             if (m_dtor_it != _context->_functions.end()) {
-                _builder->CreateCall(m_dtor_it->second, {member_ptr});
+                create_call_or_invoke(m_dtor_it->second->getFunctionType(), m_dtor_it->second, {member_ptr});
             }
         } else if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), m_st_type)) {
             emit_union_cleanup(member_ptr, *un);
@@ -2329,7 +2335,7 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
                 (unsigned)base_field->index,
                 "base_" + bs.sanitised_name() + "_ptr"
             );
-            _builder->CreateCall(dtor_it->second, {base_ptr});
+            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {base_ptr});
         }
 
         // Step 3: Call base class destructors (reverse base-declaration order)
@@ -2355,7 +2361,7 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
                 (unsigned)vbase_field->index,
                 "vbase_" + vbase->get_short_name() + "_ptr"
             );
-            _builder->CreateCall(dtor_it->second, {vbase_ptr});
+            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {vbase_ptr});
         }
         // NOTE: Classes with only __vbptr_X__ (not __vbase_X__) do NOT call virtual
         // base destructors — that is the responsibility of the most-derived class (the
