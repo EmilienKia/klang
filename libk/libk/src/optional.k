@@ -276,10 +276,10 @@ public:
 
     /**
      * Construct from an OptionalRef — mutable reference widens to read-only view.
-     * Direct pointer copy is possible because OptionalConstRef<T> is a friend of OptionalRef<T>.
+     * An empty source remains empty.
      */
     OptionalConstRef(other : const OptionalRef<T>&) {
-        _ptr = other._ptr;
+        _ptr = other.hasValue() ? &other.get() : null;
     }
 
     /**
@@ -324,6 +324,4 @@ public:
         return defaultValue;
     }
 }
-
-
 
