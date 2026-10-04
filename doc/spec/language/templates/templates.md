@@ -539,6 +539,14 @@ member template retains its interface context; importing it does not permit
 Reconstructed templates retain their original lexical namespace, even though
 their model nodes live in the consumer's compilation unit. Import lookup exposes
 definitions without changing their canonical names or declaration scope.
+Function definitions with the same name form an overload set. Importing one
+definition must not suppress another with a different parameter list; this also
+applies to explicit template calls through unified call syntax, such as
+`executor.execute<int>([]():int { return 42; })`.
+Explicit template arguments apply independently to each matching template
+declaration before overload selection. Reusing an instantiation must preserve
+its declaration's parameter signature and canonical origin, irrespective of
+declaration order or the module that imports it.
 Homonymous definitions from different modules remain distinct and can be selected
 by qualification. Non-parameter names in signatures, nested callable types, bodies,
 and alias targets resolve in the definition scope, not against consumer shadows.

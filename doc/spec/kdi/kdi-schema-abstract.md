@@ -318,6 +318,9 @@ Rules:
   `aggregate_signature`; free functions and generic member methods use
   `function_signature`. A generic member method also sets `host_fq_name` and is
   imported as a method of that host.
+* Same-named function template definitions must all be retained when their
+  parameter lists differ. Deduplication must identify a definition, not only
+  its name.
 * Union templates are always classic (no signature payload exists for unions);
   they only ever export `source`.
 KdiAggregate {

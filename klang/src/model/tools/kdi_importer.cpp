@@ -24,10 +24,12 @@
 #include "../model_builder.hpp"
 #include "kdi_type_converter.hpp"
 #include "../../parse/parser.hpp"
+#include "../../gen/resolvers_scope_lookup.hpp"
 
 #include <kdi.hpp>  // kdi_read_cbor_file, kdi_file, kdi_namespace, kdi_aggregate, …
 
 #include <sstream>
+#include <algorithm>
 #include <stdexcept>
 #include <functional>
 #include <unordered_map>
@@ -1277,8 +1279,22 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                 populate_template_signature_aggregate(*tpl_agg, *tdef.aggregate_signature, _unit, ctx);
             }
         } else if (tdef.function_signature) {
-            if (auto existing = target_ns->get_function(tdef.name)) {
-                if (existing->is_template()) {
+            const auto& signature = *tdef.function_signature;
+            for (const auto& existing : target_ns->get_functions(tdef.name)) {
+                auto existing_ti = existing->get_tpl_info();
+                if (!existing_ti || existing_ti->params.size() != ti->params.size()
+                    || existing->is_static() != signature.is_static
+                    || existing->get_parameter_size() != signature.params.size()) continue;
+                bool same = true;
+                for (size_t i = 0; i < signature.params.size(); ++i) {
+                    if (!gen::scope_lookup::same_signature_type(
+                            existing->parameters()[i]->get_type(),
+                            kdi_type_to_model_type(signature.params[i].type, _unit, ctx))) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) {
                     ctx->pop_template_param_scope();
                     return;
                 }
@@ -1307,9 +1323,6 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
     if (!template_host) {
         if (auto existing = target_ns->get_aggregate(tdef.name)) {
             if (existing->is_template()) return;
-        }
-        if (auto existing_fn = target_ns->get_function(tdef.name)) {
-            if (existing_fn->is_template()) return;
         }
         if (auto existing_un = target_ns->get_union(tdef.name)) {
             if (existing_un->is_template()) return;
@@ -1351,6 +1364,16 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                 tdef.visibility == "protected" ? PROTECTED : PUBLIC, target_ns);
         } else {
             // Build declarations without changing the consumer unit or its AST.
+            // Keep overloads while suppressing only an already imported identical definition.
+            std::erase_if(ast_unit->declarations, [&](const auto& declaration) {
+                auto fn = std::dynamic_pointer_cast<parse::ast::function_decl>(declaration);
+                if (!fn || fn->template_source_text.empty()) return false;
+                for (const auto& existing : target_ns->get_functions(std::string(fn->name.content))) {
+                    auto ti = existing->get_tpl_info();
+                    if (ti && ti->source_text == fn->template_source_text) return true;
+                }
+                return false;
+            });
             k::model::model_builder::visit_imported_declarations(
                 _logger, ctx, *ast_unit, _unit, target_ns);
         }

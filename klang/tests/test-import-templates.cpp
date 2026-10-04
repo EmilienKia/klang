@@ -1103,6 +1103,63 @@ TEST_CASE("import homonymous template aliases specialize in independent origin n
     CHECK(result.exit_code == 42);
 }
 
+#include <llvm/Support/DynamicLibrary.h> // Temporary overload-regression prerequisite.
+
+TEST_CASE("import template execute preserves every same-named overload",
+          "[import][template][lambda][owner][overload][regression]") {
+    const bool priority_first = GENERATE(false, true);
+    INFO("priority overload declared first: " << priority_first);
+    const std::string priority_definition = R"K(
+        template<typename R>
+        execute(endpoint: int, task: !():R, priority: int): R { return task(); }
+    )K";
+    const std::string ordinary_definition = R"K(
+        template<typename R>
+        execute(endpoint: int, task: !():R): R { return execute<R>(endpoint, task, 0); }
+    )K";
+    TmpKdi lib("module tploverloadedexecute;\n"
+        + (priority_first ? priority_definition + ordinary_definition
+                          : ordinary_definition + priority_definition), true);
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("tploverloadedexecute", lib.kdi_path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    compiler->parse_source("overloadconsumer.k", R"K(
+        module overloadconsumer;
+        import tploverloadedexecute;
+        run(): int {
+            first: int = tploverloadedexecute::execute<int>(0, []():int { return 20; });
+            return first + tploverloadedexecute::execute<int>(0, []():int { return 22; }, 7);
+        }
+    )K");
+    REQUIRE(compiler->verify_gen_code());
+    auto origin = compiler->get_unit()->get_root_namespace()->get_child_namespace("tploverloadedexecute");
+    REQUIRE(origin);
+    CHECK(origin->get_functions("execute").size() == 2);
+    auto concrete = origin->get_functions("execute__int");
+    REQUIRE(concrete.size() == 2);
+    CHECK(concrete[0]->get_parameter_size() != concrete[1]->get_parameter_size());
+    CHECK_FALSE(concrete[0]->get_mangled_name().empty());
+    CHECK_FALSE(concrete[1]->get_mangled_name().empty());
+    CHECK(concrete[0]->get_mangled_name() != concrete[1]->get_mangled_name());
+    for (const auto& instance : concrete) {
+        CHECK(instance->get_fq_name() == "::tploverloadedexecute::execute__int");
+    }
+    std::string load_error;
+    const auto load_failed = llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+        (std::string(KLANG_STDLIB_LIB_DIR) + "/libk.so").c_str(), &load_error);
+    INFO(load_error);
+    REQUIRE_FALSE(load_failed);
+    auto jit = compiler->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    int result = 0;
+    REQUIRE_NOTHROW(result = run());
+    CHECK(result == 42);
+}
+
 TEST_CASE("import generic — signature-only template_def is materialised into model",
           "[import][template][generic][model]") {
     TmpKdi lib(R"K(

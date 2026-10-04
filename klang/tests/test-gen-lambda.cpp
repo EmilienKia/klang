@@ -133,6 +133,77 @@ TEST_CASE("Lambda: capture multiple values in owned callable", "[gen][lambda][ow
     REQUIRE(test_fn() == 42);
 }
 
+TEST_CASE("Lambda: explicit generic execute selects owning free and UCS overloads",
+          "[gen][lambda][owner][template][ucs][fresh-lambda][regression]") {
+    const bool priority_first = GENERATE(false, true);
+    INFO("priority overload declared first: " << priority_first);
+    std::string source = R"SRC(
+        module generic_executor_literals;
+        drops: int = 0;
+        struct Probe {
+            value: int;
+            Probe(v: int): value(v) {}
+            ~Probe() { ++drops; }
+        }
+        struct InlineExecutor {
+            const execute(task: !()) { task(); }
+        }
+    )SRC";
+    const std::string priority_definition = R"SRC(
+        template<typename R>
+        execute(executor: const InlineExecutor&, task: !():R, priority: int): R {
+            return task();
+        }
+    )SRC";
+    const std::string ordinary_definition = R"SRC(
+        template<typename R>
+        execute(executor: const InlineExecutor&, task: !():R): R {
+            return execute<R>(executor, task, 0);
+        }
+    )SRC";
+    source += priority_first ? priority_definition + ordinary_definition
+                             : ordinary_definition + priority_definition;
+    source += R"SRC(
+        run(): int {
+            drops = 0;
+            executor: InlineExecutor;
+            if (execute<int>(executor, []():int { return 42; }) != 42) return -1;
+            if (executor.execute<int>([]():int { return 42; }) != 42) return -2;
+            probe: Probe! = new Probe(42);
+            result: int = executor.execute<int>([probe]():int { return probe->value; }, 7);
+            if (probe != null || drops != 1) return -3;
+            task: !():int = []():int { return 42; };
+            result += executor.execute<int>(task);
+            return task == null ? result : -4;
+        }
+    )SRC";
+    auto jit = gen_jit(source);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    int result = 0;
+    REQUIRE_NOTHROW(result = run());
+    CHECK(result == 84);
+
+    try {
+        gen_jit_throws(R"SRC(
+            module generic_executor_borrowed;
+            struct InlineExecutor {}
+            template<typename R>
+            execute(executor: const InlineExecutor&, task: !():R): R { return task(); }
+            run(): int {
+                executor: InlineExecutor;
+                borrowed: &():int = []():int { return 42; };
+                return executor.execute<int>(borrowed);
+            }
+        )SRC");
+        FAIL("Expected borrowed callable ownership rejection");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH));
+    }
+}
+
 TEST_CASE("Lambda: capture owner object in owned lambda runs destructor on cleanup", "[gen][lambda][owner][lifecycle]") {
     auto jit = gen_jit(R"SRC(
         module gen_lambda_08;
