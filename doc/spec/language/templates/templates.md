@@ -481,6 +481,10 @@ struct Cage : Container<T> {
 ### 8.2 Virtual Dispatch
 
 Template classes support virtual dispatch. Each instantiation has its own vtable.
+This also applies to classes first instantiated inside a function body and to
+calls through their base-class methods. An ordinary member named `main` retains
+its declared return type and participates in dispatch like any other method;
+the name alone does not make it an application entry point.
 
 ### 8.3 Annotations
 

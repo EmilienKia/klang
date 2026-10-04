@@ -3415,6 +3415,33 @@ TEST_CASE("cross-module template — canonical stream signatures retain overload
     REQUIRE(result.exit_code == 42);
 }
 
+TEST_CASE("cross-module template — typed member main dispatches through a template base",
+          "[import][e2e][template][cross-tpl][consumer-inst][member-main]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module member_main_lib;
+            template<typename T>
+            class MethodBase {
+                public result() : T { return (T) 1; }
+                public relay() : T { return result(); }
+            }
+        )K",
+        R"K(
+            module member_main_exe;
+            import member_main_lib;
+            class Worker : MethodBase<int> {
+                public override result() : int { return 42; }
+                public main() : int { return relay(); }
+            }
+            main() : int {
+                worker: Worker;
+                return worker.main();
+            }
+        )K");
+    INFO(result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // [cross-tpl-default-params] Template with default type parameter.
 // Consumer uses `<>` syntax to rely on the default.

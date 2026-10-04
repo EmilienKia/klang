@@ -2207,8 +2207,8 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     }
 
     // Step 2: Visit the aggregate with type_reference_resolver to resolve
-    //         all expressions and statements in method bodies.
-    visit_aggregate(agg);
+    //         method bodies and class-specific vtable types.
+    agg.accept(*this);
 }
 
 std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
