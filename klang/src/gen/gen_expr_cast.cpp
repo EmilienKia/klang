@@ -42,6 +42,16 @@ namespace k::model::gen {
 
 void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
     auto target_type = expr.get_cast_type();
+    if (target_type && !type::is_resolved(target_type)) {
+        const element* scope_elem = !_function_stack.empty()
+            ? static_cast<const element*>(_function_stack.back().get())
+            : static_cast<const element*>(_unit.get_root_namespace().get());
+        auto resolved = resolve_type_chain(target_type, scope_elem);
+        if (resolved && !type::contains_unresolved(resolved)) {
+            target_type = resolved;
+            expr.set_cast_type(target_type);
+        }
+    }
 
     // Step 1: Resolve the target type first so it can be passed as expected type to sub_expr
     // ── Resolve the target type if it is not yet resolved ────────────────────

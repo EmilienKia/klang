@@ -1871,6 +1871,12 @@ void aggregate_type_resolver::visit_function(function& fn) {
     // Step 3: Resolve return type (including function pointer return types)
     // Resolve return type
     if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
+        auto resolved = resolve_one_type(fn.get_return_type(), *this, fn, _context);
+        if (resolved && !type::contains_unresolved(resolved)) {
+            fn.set_return_type(_context->collapse_callable_addresser(resolved));
+        }
+    }
+    if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
         // Handle unresolved_callable_type (function pointer return type)
         if (auto ufrt = std::dynamic_pointer_cast<unresolved_callable_type>(fn.get_return_type())) {
             callable_type_builder builder(_context);

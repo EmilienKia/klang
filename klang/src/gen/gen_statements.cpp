@@ -817,8 +817,25 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
 
         auto cast = keep_temp_array_ref ? expr : adapt_type(expr, ret_type);
         if(!cast) {
+            const auto render_type = [](const std::shared_ptr<type>& value) {
+                if (!value) return std::string{"void"};
+                auto nominal = type::canonical(value);
+                while (auto subtype = nominal->get_subtype()) nominal = type::canonical(subtype);
+                std::string qualified;
+                if (auto en = std::dynamic_pointer_cast<enum_type>(nominal)) {
+                    if (auto declaration = en->get_enumeration()) qualified = declaration->get_fq_name();
+                }
+                if (auto aggregate = std::dynamic_pointer_cast<struct_type>(nominal)) {
+                    if (auto declaration = aggregate->get_struct()) qualified = declaration->get_fq_name();
+                }
+                if (!qualified.empty()) {
+                    return nominal == value ? qualified : value->to_string() + " [" + qualified + "]";
+                }
+                return value->to_string();
+            };
             throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH), lex::any_lexeme(stmt.get_ast_return_statement()->ret),
-                        "Return expression type must be compatible to the expected function return type");
+                        "Return expression type '{}' must be compatible with expected return type '{}' of function '{}'",
+                        {render_type(expr->get_type()), render_type(ret_type), func->get_fq_name()});
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_expression(cast);

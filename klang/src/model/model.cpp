@@ -479,8 +479,7 @@ std::shared_ptr<enumeration> enumeration::make_shared(std::shared_ptr<element> p
 }
 
 void enumeration::update_mangled_name() {
-    // Use the same mangling convention as struct types
-    _mangled_name = std::to_string(_short_name.size()) + _short_name;
+    _mangled_name = mangler::mangle_fq_name(_name, true);
 }
 
 void enumeration::accept(model_visitor& visitor) {

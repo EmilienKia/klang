@@ -7,6 +7,12 @@ named integer constants.  Each constant is called an **entry**.  The compiler
 automatically selects the smallest primitive integer type capable of holding
 all declared values as the *underlying type*.
 
+An enum's identity includes its fully qualified declaration name. Enums with
+the same short name in different namespaces must remain distinct. Unqualified
+enum names in function return signatures and casts resolve in their lexical
+declaration scope; qualification selects the named declaration explicitly.
+Return-type mismatch diagnostics must identify the qualified nominal types.
+
 ---
 
 ## 1. Declaration syntax
@@ -248,4 +254,3 @@ for future versions:
 ---
 
 *See also:* [Keywords](../basic/keywords.md) · [Types](../basic/types.md) · [Statements](../statements/statements.md)
-

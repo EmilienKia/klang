@@ -753,6 +753,14 @@ void signature_resolver::visit_function(function& fn) {
                         }
                     }
                 }
+                if ((!fn.get_return_type() || !type::is_resolved(fn.get_return_type()))
+                    && !unres->type_id().has_root_prefix()
+                    && !unres->get_definition_namespace()
+                    && !scope_lookup::lookup_alias(fn.shared_as<const element>(), unres->type_id())) {
+                    if (auto en = scope_lookup::lookup_enumeration(fn.shared_as<element>(), short_name)) {
+                        fn.set_return_type(en->get_enum_type());
+                    }
+                }
                 if (!fn.get_return_type() || !type::is_resolved(fn.get_return_type())) {
                     auto resolved = _context->resolve_type(fn.get_return_type());
                     if (resolved && type::is_resolved(resolved)) {
@@ -840,6 +848,12 @@ void type_reference_resolver::visit_function(function& fn) {
     }
 
     // Resolve return type if still unresolved (e.g. member functions returning StructType&)
+    if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
+        auto resolved = resolve_type_chain(fn.get_return_type(), &fn);
+        if (resolved && !type::contains_unresolved(resolved)) {
+            fn.set_return_type(_context->collapse_callable_addresser(resolved));
+        }
+    }
     if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
         // Explicit "void" return type: normalize to null (same as omitting the return type)
         if (auto unres = std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())) {

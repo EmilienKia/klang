@@ -1202,6 +1202,11 @@ Like every block declaration, an enum has no trailing `;`. A stray `;` after
 the closing brace is tolerated as an empty declaration (reported with a
 warning) by the enclosing declaration list.
 
+Enums are nominal types identified by their fully qualified declaration names.
+Same-named enums in different namespaces remain distinct, and an unqualified
+enum name in a return signature or cast resolves in the declaration's lexical
+scope. Return-type mismatch diagnostics identify the qualified nominal types.
+
 ### 19.1 Entries
 
 `Identifier [ '=' ( IntegerLiteral | Identifier ) | BraceInitList | '(' [ ExpressionList ] ')' ] [ 'default' ] ';'`

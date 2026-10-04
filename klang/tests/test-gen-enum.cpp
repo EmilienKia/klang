@@ -21,6 +21,7 @@
 #include <llvm/IR/DerivedTypes.h>
 
 #include "../src/errors.hpp"
+#include "../src/model/mangler.hpp"
 #include "helpers.hpp"
 
 using namespace k::parse;
@@ -527,6 +528,164 @@ TEST_CASE("Enum — return enum from function returning int", "[gen][enum]") {
     )");
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("get")() == 2);
+}
+
+TEST_CASE("Enum return casts retain the nominal type in module k",
+          "[gen][enum][return-cast][type-provenance][regression]") {
+    auto compiler = compile_model(R"K(
+        module k;
+        enum Visibility {
+            PUBLIC = 0;
+            PROTECTED = 1;
+            PRIVATE = 2;
+        }
+        final const class Function {
+            flags: unsigned int;
+            const getVisibility(): Visibility {
+                return (Visibility) (flags & 3u);
+            }
+            static decodeVisibility(flags: unsigned int): Visibility {
+                return (Visibility) (flags & 3u);
+            }
+            static globalVisibility(flags: unsigned int): ::k::Visibility {
+                return (::k::Visibility) (flags & 3u);
+            }
+        }
+    )K");
+    REQUIRE(compiler);
+    CHECK(compiler->get_unit()->get_imports().empty());
+    auto root = compiler->get_unit()->get_root_namespace();
+    CHECK(root->get_fq_name() == "::k");
+    auto visibility = root->get_enum("Visibility");
+    auto descriptor = root->get_aggregate("Function");
+    REQUIRE(visibility);
+    REQUIRE(descriptor);
+    for (const auto* name : {"getVisibility", "decodeVisibility", "globalVisibility"}) {
+        auto function = descriptor->get_function(name);
+        REQUIRE(function);
+        CHECK(function->get_return_type() == visibility->get_enum_type());
+        auto body = function->get_existing_block();
+        REQUIRE(body);
+        REQUIRE(body->get_statements().size() == 1);
+        auto statement = std::dynamic_pointer_cast<k::model::return_statement>(
+            body->get_statements().front());
+        REQUIRE(statement);
+        REQUIRE(statement->get_expression());
+        CHECK(statement->get_expression()->get_type() == visibility->get_enum_type());
+    }
+}
+
+TEST_CASE("Enum return casts resolve lexical homonyms instead of a global Visibility",
+          "[gen][enum][return-cast][type-provenance][shadow][regression]") {
+    auto compiler = compile_model(R"K(
+        module k;
+        enum Visibility: long { GLOBAL = 17; }
+        namespace reflection {
+            namespace nested {
+                enum Visibility: unsigned int { PUBLIC = 0; PROTECTED = 1; PRIVATE = 2; }
+                final const class Function {
+                    flags: unsigned int;
+                    const getVisibility(): Visibility {
+                        return (Visibility) (flags & 3u);
+                    }
+                    static decodeVisibility(flags: unsigned int): Visibility {
+                        return (Visibility) (flags & 3u);
+                    }
+                    static globalVisibility(flags: unsigned int): ::k::Visibility {
+                        return (::k::Visibility) (flags & 3u);
+                    }
+                }
+            }
+        }
+        namespace other {
+            namespace nested {
+                enum Visibility: unsigned short { PUBLIC = 0; PROTECTED = 1; PRIVATE = 2; }
+                final const class Function {
+                    flags: unsigned int;
+                    const getVisibility(): Visibility {
+                        return (Visibility) (flags & 3u);
+                    }
+                    static decodeVisibility(flags: unsigned int): Visibility {
+                        return (Visibility) (flags & 3u);
+                    }
+                    static globalVisibility(flags: unsigned int): ::k::Visibility {
+                        return (::k::Visibility) (flags & 3u);
+                    }
+                }
+            }
+        }
+    )K");
+    REQUIRE(compiler);
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto global = root->get_enum("Visibility");
+    REQUIRE(global);
+    CHECK(global->get_mangled_name() == k::model::mangler::mangle_fq_name(global->get_name(), true));
+    std::shared_ptr<k::model::enum_type> previous;
+    for (const auto* name : {"reflection", "other"}) {
+        auto scope = root->get_child_namespace(name)->get_child_namespace("nested");
+        auto visibility = scope->get_enum("Visibility");
+        auto descriptor = scope->get_aggregate("Function");
+        REQUIRE(visibility);
+        REQUIRE(descriptor);
+        CHECK(visibility->get_enum_type() != global->get_enum_type());
+        CHECK(visibility->get_enum_type() != previous);
+        CHECK(visibility->get_mangled_name()
+              == k::model::mangler::mangle_fq_name(visibility->get_name(), true));
+        CHECK(visibility->get_mangled_name() != global->get_mangled_name());
+        if (previous) {
+            CHECK(visibility->get_mangled_name() != previous->get_enumeration()->get_mangled_name());
+        }
+        for (const auto* method : {"getVisibility", "decodeVisibility"}) {
+            auto function = descriptor->get_function(method);
+            REQUIRE(function);
+            CHECK(function->get_return_type() == visibility->get_enum_type());
+            auto body = function->get_existing_block();
+            REQUIRE(body);
+            REQUIRE(body->get_statements().size() == 1);
+            auto statement = std::dynamic_pointer_cast<k::model::return_statement>(
+                body->get_statements().front());
+            REQUIRE(statement);
+            REQUIRE(statement->get_expression());
+            CHECK(statement->get_expression()->get_type() == visibility->get_enum_type());
+        }
+        auto global_function = descriptor->get_function("globalVisibility");
+        REQUIRE(global_function);
+        CHECK(global_function->get_return_type() == global->get_enum_type());
+        auto global_body = global_function->get_existing_block();
+        REQUIRE(global_body);
+        REQUIRE(global_body->get_statements().size() == 1);
+        auto global_return = std::dynamic_pointer_cast<k::model::return_statement>(
+            global_body->get_statements().front());
+        REQUIRE(global_return);
+        REQUIRE(global_return->get_expression());
+        CHECK(global_return->get_expression()->get_type() == global->get_enum_type());
+        previous = visibility->get_enum_type();
+    }
+}
+
+TEST_CASE("Enum return mismatch diagnostics include qualified nominal types",
+          "[gen][enum][return-cast][diagnostics][regression]") {
+    auto compiler = k::compiler::create();
+    try {
+        compiler->parse_source("enum-return-mismatch.k", R"K(
+            module k;
+            enum Visibility { PUBLIC = 0; }
+            struct Wrong {}
+            wrongVisibility(): Visibility {
+                value: Wrong;
+                return value;
+            }
+        )K", true, false);
+        FAIL("Expected a return type mismatch diagnostic");
+    } catch (const k::log::compiler_error& error) {
+        const auto& diagnostic = error.get_diagnostic();
+        const auto message = k::log::format_diagnostic_message(diagnostic);
+        CHECK(diagnostic.code ==
+              static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH));
+        CHECK(message.find("::k::Wrong") != std::string::npos);
+        CHECK(message.find("::k::Visibility") != std::string::npos);
+        CHECK(message.find("::k::wrongVisibility") != std::string::npos);
+    }
 }
 
 // ============================================================
@@ -1446,5 +1605,3 @@ TEST_CASE("Enum explicit underlying type rejects out-of-range entry values",
         enum TooSmall : byte { A = 1000; }
     )"));
 }
-
-
