@@ -46,6 +46,7 @@ TEST_CASE("callable alias — bare prototype re-addressed at the use site",
             return 1;
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -66,6 +67,7 @@ TEST_CASE("callable alias — every addresser can be applied to a bare prototype
             return a(1) + b(2) + c(3) + d(10) + e(5);
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -83,6 +85,7 @@ TEST_CASE("callable alias — alias of an already addressed callable",
             return apply(p, 14);
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -98,6 +101,7 @@ TEST_CASE("callable alias — const alias of a callable", "[gen][callable][alias
             return f(21);
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -117,8 +121,44 @@ TEST_CASE("callable alias — alias over a callable returning a callable",
             return g(21);
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("callable alias — re-addressing is canonical in functions constructors and returns",
+          "[gen][callable][alias][template][param][return][owner][borrow][regression]") {
+    const std::string suffix = GENERATE("&", "*", "+", "?", "!");
+    const bool owned = suffix == "!";
+    const std::string declared = (suffix == "&" ? "const " : "") + std::string("F") + suffix;
+    CAPTURE(declared);
+    const std::string source = std::string(R"SRC(
+        module gen_callable_alias_signatures;
+        namespace callbacks {
+            alias Value : int;
+            template<typename T = Value, typename R = Value>
+            alias Fn : (const T&):R;
+        }
+        alias F : callbacks::Fn<>;
+        addOne(x: const int&) : int { return x + 1; }
+        borrow(f: &(const int&):int, x: int) : int { return f(x); }
+    )SRC")
+        + "forward(f: " + declared + ") : " + declared + " { return f; }\n"
+        + "struct Carrier { value: int; Carrier(f: " + declared
+        + ", x: int) : value(f(x)) {} }\n"
+        + "run() : int { x: int = 41; first: " + declared + " = addOne;\n"
+        + "if (borrow(first, x) != 42 || first == null) return -1;\n"
+        + "second: " + declared + " = forward(first);\n"
+        + "if (second(x) != 42) return -2;\n"
+        + "if (first " + (owned ? "!=" : "==") + " null) return -3;\n"
+        + "carrier: Carrier(second, x);\n"
+        + "if (second " + (owned ? "!=" : "==") + " null) return -4;\n"
+        + "return carrier.value; }\n";
+    auto jit = gen_jit(source);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run);
     CHECK(run() == 42);
 }
 
@@ -139,6 +179,7 @@ TEST_CASE("callable typedef — usable like the renamed callable",
             return 1;
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -156,6 +197,7 @@ TEST_CASE("callable typedef — explicit cast from the underlying callable",
             return takes((G) f) ? 42 : 1;
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -177,6 +219,7 @@ TEST_CASE("callable typedef — a soft alias still flows into a typedef paramete
             return takes(f) ? 42 : 1;
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -214,6 +257,7 @@ TEST_CASE("callable template alias — Fn<T,R> renames a callable family",
             return 1;
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -233,6 +277,7 @@ TEST_CASE("callable template alias — chaining Predicate<T> = Fn<T,bool>",
             return 1;
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -252,6 +297,7 @@ TEST_CASE("callable template alias — substituted parameter inside a nested typ
             return acc;
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -270,6 +316,7 @@ TEST_CASE("callable template alias — addressed target keeps its addresser",
             return f(21);
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -290,6 +337,7 @@ TEST_CASE("callable template alias — a member method behind a template alias",
             return f(2);
         }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);
@@ -385,6 +433,7 @@ TEST_CASE("callable throws clause in a parameter list with trailing parameters",
         call(f: *(int):int throws(Boom), v: int) : int throws(Boom) { return f(v); }
         run() : int throws(Boom) { return call(twice, 21); }
     )SRC");
+    REQUIRE(jit);
     auto run = jit->lookup_symbol<int(*)()>("run");
     REQUIRE(run != nullptr);
     CHECK(run() == 42);

@@ -851,7 +851,7 @@ type_reference_resolver::resolve_callable_type(
                  scope_lookup::enclosing_namespace(context_elem)
                      ? scope_lookup::enclosing_namespace(context_elem)->get_fq_name() : "<none>"});
         }
-        return resolved;
+        return _context->collapse_callable_addresser(resolved);
     };
 
     std::vector<std::shared_ptr<type>> resolved_params;
@@ -2053,7 +2053,7 @@ std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
     const std::shared_ptr<type>& t,
     const element* scope_elem)
 {
-    if (!t || type::is_resolved(t)) return t;
+    if (!t || type::is_resolved(t)) return _context->collapse_callable_addresser(t);
     // A struct_type is semantically resolved even before its LLVM type is materialized.
     if (std::dynamic_pointer_cast<struct_type>(t)) return t;
 
@@ -3610,11 +3610,8 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         bool has_impossible = false;
         std::vector<size_t> failed_indices;
         for (size_t i = 0; i < arg_count; ++i) {
+            resolve_parameter_type(*params[i]);
             auto param_type = params[i]->get_type();
-            if (param_type && !type::is_resolved(param_type)) {
-                visit_parameter(*params[i]);
-                param_type = params[i]->get_type();
-            }
             cast_weight w = compute_cast_weight(args[i], param_type);
             if (w == CAST_IMPOSSIBLE) {
                 has_impossible = true;
@@ -4078,7 +4075,11 @@ type_reference_resolver::get_best_matching_function(
             if (concrete_param_types && index < concrete_param_types->size() && (*concrete_param_types)[index]) {
                 return (*concrete_param_types)[index];
             }
-            return params[index] ? params[index]->get_type() : nullptr;
+            if (!params[index]) return nullptr;
+            // Callable signatures are deferred by the signature pre-pass. Resolve
+            // the declaration before scoring, without visiting its body/defaults.
+            resolve_parameter_type(*params[index]);
+            return params[index]->get_type();
         };
 
         const size_t n_params = params.size() - offset;
@@ -4265,6 +4266,7 @@ type_reference_resolver::get_best_matching_function(
 
         if ((!func->is_member() || func->is_static()) && this_expr && !params.empty()
             && (args.size() <= params.size() - 1 || func_has_varargs)) {
+            resolve_parameter_type(*params[0]);
             auto first_param_type = params[0]->get_type();
             if (first_param_type) {
                 auto w_this = compute_cast_weight(this_expr, first_param_type);

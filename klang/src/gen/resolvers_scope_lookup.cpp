@@ -703,6 +703,9 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
     if (alias->is_template()) return {};
 
     if (alias->_resolved) {
+        if (ctx && !alias->is_strong()) {
+            alias->_target_type = ctx->collapse_callable_addresser(alias->_target_type);
+        }
         return alias->get_declared_type();
     }
     if (alias->_resolving) {
@@ -760,6 +763,7 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
         return {};
     }
 
+    if (ctx) target = ctx->collapse_callable_addresser(target);
     alias->_target_type = target;
     alias->_target_kind = alias_definition::target_kind_t::TYPE;
 
@@ -944,6 +948,8 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
                      "The renamed type '{}' of parameterised {} '{}' could not be resolved in its declaration scope",
                      {substituted ? substituted->to_string() : "<none>", kind, alias->get_fq_name()});
     }
+
+    substituted = ctx->collapse_callable_addresser(substituted);
 
     // A soft alias is transparent: the substituted type is the answer. A strong
     // one keeps a nominal identity, distinct for every argument list.

@@ -364,6 +364,19 @@ std::shared_ptr<type> context::collapse_callable_addresser(const std::shared_ptr
 {
     if (!t) return t;
 
+    // Resolved placeholders still carry the source name/prototype. Follow their
+    // cached target before examining wrappers, without erasing typedef identity.
+    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (auto resolved = unres->get_resolved()) {
+            return collapse_callable_addresser(resolved);
+        }
+    }
+    if (auto unres = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (auto resolved = unres->get_resolved()) {
+            return collapse_callable_addresser(resolved);
+        }
+    }
+
     auto sub = t->get_subtype();
     if (!sub) return t;
 

@@ -269,8 +269,9 @@ public:
      * indirection, so the suffix must re-address it exactly like the inline
      * form `&(int):bool` does.
      *
-     * Applies recursively so that `const F&` is normalised too, and leaves
-     * every other type untouched.
+     * Follows resolved name/prototype caches without stripping nominal aliases.
+     * Applies recursively so that `const F&` is normalised too. This is declared
+     * type normalisation, not conversion of callable values or lvalue references.
      *
      * @throws context_resolution_error when the addresser is applied to a
      *         strong alias (typedef) naming a *bare prototype*: the nominal

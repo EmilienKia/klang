@@ -507,6 +507,12 @@ h : const IntMapper& = add_one;
 
 Because a callable is already an indirection, an addresser applied to a name denoting a
 callable *re-addresses* it: `IntMapper*` is `*(int):int`, never "a pointer to a callable".
+This normalization must be identical for variable declarations, function and
+constructor parameters, and return types, including `const` bindings and
+parameterised alias chains. It changes the declared addresser, not the ownership
+of an existing value: a borrowed callable variable must not become an owner
+merely because its destination is spelled `IntMapper!`. Passing or returning an
+owned callable lvalue still moves it and clears its source slot.
 The alias may also be declared with its addresser, in which case it is used bare:
 
 ```k

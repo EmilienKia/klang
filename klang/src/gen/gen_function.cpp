@@ -286,11 +286,12 @@ void signature_resolver::visit_parameter(parameter& param) {
         // If still unresolved, silently leave it — the full type_reference_resolver
         // pass will either resolve it or emit the proper error.
     }
+    param.set_type(_context->collapse_callable_addresser(param.get_type()));
     // Do NOT process init/default expressions — those need expression visitors
     // which are only available in the full type_reference_resolver pass.
 }
 
-void type_reference_resolver::visit_parameter(parameter& param) {
+void type_reference_resolver::resolve_parameter_type(parameter& param) {
     if (!param.get_type()) return;
 
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
@@ -374,6 +375,12 @@ void type_reference_resolver::visit_parameter(parameter& param) {
         param.set_type(_context->collapse_callable_addresser(res_type));
         } // end else (not unresolved_callable_type)
     }
+    param.set_type(_context->collapse_callable_addresser(param.get_type()));
+}
+
+void type_reference_resolver::visit_parameter(parameter& param) {
+    if (!param.get_type()) return;
+    resolve_parameter_type(param);
 
     if(auto expr = param.get_init_expr()) {
         expr->accept(*this);
@@ -763,6 +770,10 @@ void signature_resolver::visit_function(function& fn) {
         }
     }
 
+    if (fn.get_return_type()) {
+        fn.set_return_type(_context->collapse_callable_addresser(fn.get_return_type()));
+    }
+
     // Recompute the mangled name now that parameter and return types are resolved.
     // The name is first cached at name-assignment time (named_element::update_names),
     // before parameter types are resolved. At that point an addresser-to-class type
@@ -871,6 +882,10 @@ void type_reference_resolver::visit_function(function& fn) {
                 }
             }
         }
+    }
+
+    if (fn.get_return_type()) {
+        fn.set_return_type(_context->collapse_callable_addresser(fn.get_return_type()));
     }
 
     // Resolve throws spec types from raw names

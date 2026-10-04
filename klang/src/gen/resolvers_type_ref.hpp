@@ -675,6 +675,8 @@ protected:
      */
     cast_weight compute_cast_weight(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type);
 
+    void resolve_parameter_type(parameter& param);
+
     /**
      * Choose the best-matching constructor among a list of candidates given a set of arguments.
      * Scoring: score of a candidate = max cast_weight over all its parameters.

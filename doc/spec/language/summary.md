@@ -751,6 +751,11 @@ Callables are fat pointers `{fn_ptr, ctx_ptr}` supporting uniform invocation acr
 - Invocations: `fp(args)`.
 - Return type is required (omitted = void).
 - Move-only semantics apply to `!(Params):Ret`. Borrowed callables cannot be converted to owned callables.
+- A suffix on a transparent callable alias re-addresses its signature identically
+  in variables, function/constructor parameters, and return types (`F&` is
+  `&(Params):Ret`, not a reference to a prototype). Alias chains and `const`
+  bindings preserve this rule; re-addressing does not promote borrowed values
+  to owners.
 
 ### 10.7 Operator Overloading
 

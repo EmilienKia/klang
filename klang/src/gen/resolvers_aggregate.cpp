@@ -1348,7 +1348,7 @@ resolve_one_type(const std::shared_ptr<type>& t,
                  aggregate_type_resolver& resolver,
                  const element& context_elem,
                  std::shared_ptr<context> ctx) {
-    if (type::is_resolved(t)) return t;
+    if (type::is_resolved(t)) return ctx->collapse_callable_addresser(t);
 
     // A callable prototype ('(int):bool') is a leaf of its own: its components
     // are resolved individually, never by name lookup on the whole thing.
@@ -1768,7 +1768,7 @@ std::shared_ptr<type> aggregate_type_resolver::resolve_unresolved_callable_type(
     // resolved with the very same routine as any other Phase 1.a type reference.
     auto resolve_component = [&](const std::shared_ptr<type>& t) -> std::shared_ptr<type> {
         if (!t) return nullptr;
-        if (type::is_resolved(t)) return t;
+        if (type::is_resolved(t)) return _context->collapse_callable_addresser(t);
         if (auto nested = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
             return resolve_unresolved_callable_type(nested, scope);
         }
@@ -1842,7 +1842,7 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
         : static_cast<const element&>(param);
     auto resolved = resolve_one_type(param.get_type(), *this, scope, _context);
     if (resolved && (type::is_resolved(resolved) || !type::contains_unresolved(resolved))) {
-        param.set_type(resolved);
+        param.set_type(_context->collapse_callable_addresser(resolved));
     }
 }
 
@@ -1943,6 +1943,10 @@ void aggregate_type_resolver::visit_function(function& fn) {
         }
         } // end else (placeholder return type)
         } // end else (not unresolved_callable_type)
+    }
+
+    if (fn.get_return_type()) {
+        fn.set_return_type(_context->collapse_callable_addresser(fn.get_return_type()));
     }
 
     // NOTE: the block / body is NOT visited here.
