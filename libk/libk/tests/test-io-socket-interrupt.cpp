@@ -87,7 +87,9 @@ TEST_CASE("SocketChannel: read timeout is reported", "[libk][io][socket][interru
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
 
 TEST_CASE("SocketChannel: connect to closed localhost port fails cleanly",
@@ -116,6 +118,7 @@ TEST_CASE("SocketChannel: connect to closed localhost port fails cleanly",
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
-

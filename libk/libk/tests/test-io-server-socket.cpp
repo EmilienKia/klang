@@ -59,7 +59,9 @@ TEST_CASE("ServerSocket: localPort is available after bind", "[libk][io][server-
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 15);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 15);
 }
 
 TEST_CASE("ServerSocket: connect then accept succeeds", "[libk][io][server-socket]") {
@@ -112,7 +114,9 @@ TEST_CASE("ServerSocket: connect then accept succeeds", "[libk][io][server-socke
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
 
 TEST_CASE("ServerSocket: close from another thread aborts blocking accept",
@@ -132,6 +136,8 @@ TEST_CASE("ServerSocket: close from another thread aborts blocking accept",
                     delete c;
                     _res = 0;
                 } catch (e: k::io::ClosedChannelException&) {
+                    _res = 1;
+                } catch (e: k::CancellationException&) {
                     _res = 1;
                 } catch (e2: Exception&) {
                     _res = 2;
@@ -176,5 +182,7 @@ TEST_CASE("ServerSocket: close from another thread aborts blocking accept",
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }

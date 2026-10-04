@@ -105,7 +105,9 @@ TEST_CASE("Socket: loopback connect/send/recv round-trip", "[libk][io][socket]")
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 15);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 15);
 }
 
 TEST_CASE("ServerSocket: accept timeout raises TimeoutException", "[libk][io][socket]") {
@@ -131,7 +133,9 @@ TEST_CASE("ServerSocket: accept timeout raises TimeoutException", "[libk][io][so
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
 
 TEST_CASE("ServerSocket: accept is interruptible", "[libk][io][socket][interruption]") {
@@ -177,7 +181,9 @@ TEST_CASE("ServerSocket: accept is interruptible", "[libk][io][socket][interrupt
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
 
 TEST_CASE("SocketChannel: peer close is reported as EOF", "[libk][io][socket]") {
@@ -226,7 +232,9 @@ TEST_CASE("SocketChannel: peer close is reported as EOF", "[libk][io][socket]") 
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
 
 TEST_CASE("SocketChannel: blocking read is interruptible", "[libk][io][socket][interruption]") {
@@ -297,7 +305,9 @@ TEST_CASE("SocketChannel: blocking read is interruptible", "[libk][io][socket][i
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
 
 TEST_CASE("SocketChannel: close from another thread aborts blocked read",
@@ -328,6 +338,8 @@ TEST_CASE("SocketChannel: close from another thread aborts blocked read",
                     _sock->read(b);
                     _res = 0;
                 } catch (e: k::io::ClosedChannelException&) {
+                    _res = 1;
+                } catch (e: k::CancellationException&) {
                     _res = 1;
                 } catch (e2: Exception&) {
                     _res = 2;
@@ -383,7 +395,9 @@ TEST_CASE("SocketChannel: close from another thread aborts blocked read",
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }
 
 TEST_CASE("Socket: resolves localhost hostnames", "[libk][io][socket]") {
@@ -448,7 +462,9 @@ TEST_CASE("Socket: resolves localhost hostnames", "[libk][io][socket]") {
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 7);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 7);
 }
 
 TEST_CASE("SocketChannel: writing after close raises ClosedChannelException",
@@ -501,5 +517,7 @@ TEST_CASE("SocketChannel: writing after close raises ClosedChannelException",
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    int result = 0;
+    REQUIRE_NOTHROW(result = fn());
+    REQUIRE(result == 1);
 }

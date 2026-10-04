@@ -50,6 +50,10 @@ Close cancels and drains target requests before submitting the descriptor close.
 
 FileChannel includes native parent-operation fully transfers. The obsolete
 async file stream adapters and their separate file backend are removed.
+TCP/IPv4 and Unix stream channels use the same prepared operations and native
+fully parents, with whole-direction rather than file-cursor reservations.
+Hostname connects compose bounded resolver work with kernel connect under one
+deadline.
 
 `IoRuntime::initialize()` probes the required kernel data-plane opcodes.
 The old FileChannel backend-selection helper is removed: this implementation

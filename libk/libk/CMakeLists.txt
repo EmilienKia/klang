@@ -111,9 +111,10 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file/directory_fs.k
     # ── Phase 5: asynchronous network I/O ─────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/network_address.k
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/socket.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/selector.k
     # ── Phase 6: event loop / reactor foundation ──────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/socket_channel.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/server_socket.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/event_loop.k
     # ── Phase 7: functional programming ───────────────────────────────────
     ${CMAKE_CURRENT_SOURCE_DIR}/src/functional.k
@@ -827,6 +828,9 @@ libk_add_test(libk-tests-io-foundations-api 120
 )
 libk_add_test(libk-tests-file-channel-fully 120
     tests/test-io-file-channel-fully.cpp
+)
+libk_add_test(libk-tests-stream-channels 120
+    tests/test-io-stream-channels.cpp
 )
 # ── libk foundational types & memory tests ───────────────────────────────────
 libk_add_test(libk-tests-types 120

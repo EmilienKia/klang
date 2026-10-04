@@ -534,6 +534,155 @@ TEST_CASE("I/O Sync bridge: cancelled Futures drain targets and preserve partial
     }
 }
 
+TEST_CASE("I/O carriers: resource adoption precedes Future publication and rejected values close once",
+          "[libk][io][proactor][api][future][ownership][file-primitives]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_resource_publication_order__;
+        mode : int = 0;
+        claims : int = 0;
+        claimSawPending : bool = false;
+        failAssignment : bool = false;
+        failCopy : bool = false;
+        watched : NativeFuture* = null;
+        @ffi::Extern("C") private __k_io_file_handle_prepare(fd: int) : k::io::NativeIoHandle*;
+        @ffi::Extern("C") private __k_io_file_handle_claim(
+            handle: k::io::NativeIoHandle*, result: byte*);
+        @ffi::Extern("C") private __k_io_handle_retain(handle: k::io::NativeIoHandle*);
+        @ffi::Extern("C") private __k_io_handle_release(handle: k::io::NativeIoHandle*);
+        @ffi::Extern("C") private __k_io_handle_fd(handle: k::io::NativeIoHandle*) : int;
+        @ffi::Extern("C") private k_io_operation_on_kernel_completion(
+            operation: k::io::NativeIoOperation*, result: int);
+        struct Payload {
+            handle : k::io::NativeIoHandle* = null;
+            Payload() {}
+            Payload(other: const Payload&) {
+                if (failCopy) throw Exception(922);
+                handle = other.handle;
+                __k_io_handle_retain(handle);
+            }
+            operator=(other: const Payload&) : Payload& {
+                if (failAssignment) throw Exception(921);
+                __k_io_handle_retain(other.handle);
+                __k_io_handle_release(handle);
+                handle = other.handle;
+                return this;
+            }
+            ~Payload() { __k_io_handle_release(handle); }
+        }
+        operation : k::io::IoOperation! = null;
+        future : Future<Payload>! = null;
+        decode(value: long) : Payload {
+            if (mode == 3) throw Exception(920);
+            payload : Payload;
+            payload.handle = __k_io_file_handle_prepare((int) value);
+            if (payload.handle == null) throw OutOfMemory();
+            return payload;
+        }
+        claim(value: Payload&, result: byte*) {
+            claimSawPending = __k_future_state(watched) == FUTURE_PENDING;
+            __k_io_file_handle_claim(value.handle, result);
+            ++claims;
+            failAssignment = mode == 2;
+            failCopy = mode == 4;
+            if (mode == 1) __k_future_complete(watched, FUTURE_CANCELLED);
+        }
+        test(fd: int, selectedMode: int) : int throws(ThreadInterruptionException,
+            CancellationException, ExecutionException, IllegalStateException) {
+            mode = selectedMode;
+            claims = 0;
+            claimSawPending = false;
+            failAssignment = false;
+            failCopy = false;
+            executor : DirectExecutor;
+            lease : ExecutorLease! = executor.acquireLease();
+            operation = k::io::prepareOperation<Payload>(
+                10, null, null, 0, 438L, 0, null, *lease, decode, claim);
+            future = k::io::futureFor<Payload>(*operation, decode, claim);
+            watched = future->native();
+            k_io_operation_on_kernel_completion(operation->native(), fd);
+            valid : bool = true;
+            if (mode == 3) {
+                valid = valid && claims == 0;
+            } else {
+                valid = valid && claims == 1 && claimSawPending;
+            }
+            if (mode == 0) {
+                payload : Payload = future->get();
+                valid = valid && future->isSuccess() && __k_io_handle_fd(payload.handle) == fd;
+            } else if (mode == 1) {
+                valid = valid && future->isCancelled();
+                try {
+                    future->get();
+                    valid = false;
+                } catch (e: CancellationException&) {
+                    valid = valid && future->isCancelled();
+                }
+            } else {
+                valid = valid && future->isFailed() && !future->isCancelled();
+                try {
+                    future->get();
+                    valid = false;
+                } catch (e: ExecutionException&) {
+                    cause : Throwable* = e.getCause();
+                    expected : int = 922;
+                    if (mode == 2) expected = 921;
+                    else if (mode == 3) expected = 920;
+                    valid = valid && cause != null && cause->getCode() == expected;
+                }
+            }
+            delete lease;
+            return valid ? 1 : 0;
+        }
+        cleanup() {
+            delete future;
+            delete operation;
+            watched = null;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(int, int)>("test");
+    auto cleanup = jit->lookup_symbol<void (*)()>("cleanup");
+    REQUIRE(test);
+    REQUIRE(cleanup);
+    for (int mode : {0, 1, 2, 3, 4}) {
+        INFO("mode=" << mode);
+        NativeStderrCapture capture;
+        const int fd = dup(STDERR_FILENO);
+        REQUIRE(fd >= 0);
+        int result = 0;
+        REQUIRE_NOTHROW(result = test(fd, mode));
+        errno = 0;
+        const int publicationDescriptorState = fcntl(fd, F_GETFD);
+        const int publicationDescriptorError = errno;
+        // Reuse the released fd before operation destruction to detect double-close.
+        const int reused = mode == 0 ? -1 : dup2(STDERR_FILENO, fd);
+        REQUIRE_NOTHROW(cleanup());
+        errno = 0;
+        const int descriptorState = fcntl(fd, F_GETFD);
+        const int descriptorError = errno;
+        if (descriptorState >= 0) close(fd);
+        const auto output = capture.finish();
+        CHECK(result == 1);
+        if (mode == 0) {
+            CHECK(publicationDescriptorState >= 0);
+            CHECK(descriptorState == -1);
+            CHECK(descriptorError == EBADF);
+        } else {
+            CHECK(publicationDescriptorState == -1);
+            CHECK(publicationDescriptorError == EBADF);
+            CHECK(reused == fd);
+            CHECK(descriptorState >= 0);
+        }
+        if (mode >= 2) {
+            const int code = mode == 2 ? 921 : mode == 3 ? 920 : 922;
+            CHECK(output.find("origin=io.promise.publish code=" + std::to_string(code))
+                  != std::string::npos);
+        } else {
+            CHECK(output.empty());
+        }
+    }
+}
+
 TEST_CASE("I/O boundaries: inherited Future waits and unavailable system leases fail explicitly",
           "[libk][io][proactor][api][file-primitives][executor-rejection][boundary-errors]") {
     auto jit = gen_jit_with_stdlib(R"SRC(

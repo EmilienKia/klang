@@ -1,73 +1,93 @@
 /*
- * K Language standard library — base module
- *
- * Copyright 2026 Emilien Kia
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *         http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Shared immutable network addresses. Copyright 2026 Emilien Kia.
+ * Licensed under the Apache License, Version 2.0.
  */
-
 module k;
-
 namespace io {
+public struct NativeNetworkAddress {}
 
-/**
- * NetworkAddress — immutable TCP endpoint address.
- *
- * Phase 5 currently supports IPv4 numeric hosts and "localhost".
- */
+/** IPv4 endpoint, unresolved hostname, or Unix pathname. Copies share storage. */
 public class NetworkAddress {
-    _host : char[]!;
-    _port : int;
-
+private:
+    _native : NativeNetworkAddress*;
+    @ffi::Extern("C") private static __k_io_address_create(endpoint: const char*,
+        port: int, unixSocket: int) : NativeNetworkAddress*;
+    @ffi::Extern("C") private static __k_io_address_retain(address: NativeNetworkAddress*);
+    @ffi::Extern("C") private static __k_io_address_release(address: NativeNetworkAddress*);
+    @ffi::Extern("C") private static __k_io_address_host(address: const NativeNetworkAddress*) : const char*;
+    @ffi::Extern("C") private static __k_io_address_host_length(address: const NativeNetworkAddress*) : int;
+    @ffi::Extern("C") private static __k_io_address_copy_host(address: const NativeNetworkAddress*,
+        destination: char*, capacity: int) : int;
+    @ffi::Extern("C") private static __k_io_address_port(address: const NativeNetworkAddress*) : int;
+    @ffi::Extern("C") private static __k_io_address_family(address: const NativeNetworkAddress*) : int;
+    @ffi::Extern("C") private static __k_io_address_resolved(address: const NativeNetworkAddress*) : int;
+    @ffi::Extern("C") private static __k_io_setup_errno() : int;
+    NetworkAddress(native: NativeNetworkAddress*) : _native(native) {
+        if (_native == null) {
+            error : IoError = IoError::fromErrno(__k_io_setup_errno(), 0L);
+            error.raiseSync();
+        }
+    }
+    friend DatagramSocket;
+    friend DatagramReceive;
 public:
-    NetworkAddress(host: const char[], port: int) : _host(null), _port(port) {
-        n : int = host.size;
-        if (n > 0 && host[n - 1] == (char) 0) {
-            --n;
-        }
-        _host = new char[n + 1];
+    NetworkAddress() : _native(null) {}
+    NetworkAddress(host: const char[], port: int) : _native(null) {
+        length : int = host.size;
+        if (length > 0 && host[length - 1] == (char) 0) --length;
+        text : char[]! = new char[length + 1];
         i : int = 0;
-        while (i < n) {
-            _host[i] = host[i];
-            ++i;
+        while (i < length) {
+            if (host[i] == (char) 0) {
+                error : IoError = IoError::fromErrno(22, 0L); error.raiseSync();
+            }
+            text[i] = host[i]; ++i;
         }
-        _host[n] = (char) 0;
+        text[length] = (char) 0;
+        _native = __k_io_address_create(&text[0], port, 0);
+        if (_native == null) {
+            error : IoError = IoError::fromErrno(__k_io_setup_errno(), 0L);
+            error.raiseSync();
+        }
     }
-
-    static of(host: const char[], port: int) : NetworkAddress! {
-        return new NetworkAddress(host, port);
+    NetworkAddress(other: const NetworkAddress&) : _native(other._native) {
+        __k_io_address_retain(_native);
     }
-
-    static loopback(port: int) : NetworkAddress! {
-        return new NetworkAddress("127.0.0.1", port);
+    operator =(other: const NetworkAddress&) : NetworkAddress& {
+        address : NativeNetworkAddress* = other._native;
+        __k_io_address_retain(address);
+        __k_io_address_release(_native);
+        _native = address;
+        return this;
     }
-
-    static any(port: int) : NetworkAddress! {
-        return new NetworkAddress("*", port);
+    ~NetworkAddress() { __k_io_address_release(_native); _native = null; }
+    static of(host: const char[], port: int) : NetworkAddress! { return new NetworkAddress(host, port); }
+    static ofName(host: const char[], port: int) : NetworkAddress! { return NetworkAddress::of(host, port); }
+    static loopback(port: int) : NetworkAddress! { return new NetworkAddress("127.0.0.1", port); }
+    static any(port: int) : NetworkAddress! { return new NetworkAddress("*", port); }
+    static unix(path: const file::Path&) : NetworkAddress {
+        return NetworkAddress(__k_io_address_create(path.nativePath(), 0, 1));
     }
-
-    const host() : const char[]? {
-        return _host;
+    static unix(path: const char[]) : NetworkAddress {
+        endpoint : file::Path(path);
+        return NetworkAddress::unix(endpoint);
     }
-
-    const port() : int {
-        return _port;
-    }
-
-    const nativeHost() : const char* {
-        return &_host[0];
+    const native() : NativeNetworkAddress* { return _native; }
+    const nativeHost() : const char* { return __k_io_address_host(_native); }
+    const port() : int { return __k_io_address_port(_native); }
+    /** 4 for IPv4, 1 for Unix, 0 for an empty value. */
+    const family() : int { return __k_io_address_family(_native); }
+    const isResolved() : bool { return __k_io_address_resolved(_native) != 0; }
+    const host() : char[]! {
+        length : int = __k_io_address_host_length(_native);
+        text : char[]! = new char[length + 1];
+        copied : int = __k_io_address_copy_host(_native, &text[0], length + 1);
+        if (copied < 0) {
+            delete text;
+            error : IoError = IoError::fromErrno(-copied, 0L);
+            error.raiseSync();
+        }
+        return text;
     }
 }
-
-} // namespace io
-
+}

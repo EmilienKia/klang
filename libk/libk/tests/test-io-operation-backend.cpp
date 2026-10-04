@@ -6,6 +6,7 @@
 #include "../src/runtime/io_backend.h"
 #include "../src/runtime/callable_abi.h"
 #include "../src/runtime/io_file_ffi.h"
+#include "../src/runtime/io_stream_ffi.h"
 #include "../../klang/tests/helpers.hpp"
 #include <dlfcn.h>
 #include <atomic>
@@ -1946,5 +1947,687 @@ TEST_CASE("FileChannel fully native: dropping both wrappers never cancels the ch
     REQUIRE(probe.callbacks == 1);
     REQUIRE(probe.callback_drops == 1);
     REQUIRE(probe.publisher_drops == 1);
+}
+
+namespace {
+struct StreamNative : FullyFile {
+    int peer = -1;
+    StreamNative() {
+        release_handle(handle);
+        int pair[2];
+        REQUIRE(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, pair) == 0);
+        auto create = symbol<void* (*)(int, int)>(rt.library, "__k_io_handle_create");
+        handle = create(pair[0], 1);
+        REQUIRE(handle);
+        peer = pair[1];
+    }
+    ~StreamNative() { if (peer >= 0) close(peer); }
+    void* primitive(void* buffer, int count, int opcode) {
+        auto op = prepare(opcode, handle, buffer, count, 0, 0, nullptr, {}, {}, nullptr);
+        REQUIRE(op);
+        return op;
+    }
+};
+struct LookupBarrier {
+    static inline LookupBarrier* active = nullptr;
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool entered = false, released = false;
+    int failure = 0;
+    int socket_type = 0, protocol = 0;
+    LookupBarrier() { active = this; }
+    ~LookupBarrier() { unblock(); active = nullptr; }
+    static int lookup(const char* node, const char* service, const addrinfo* hints, addrinfo** result) {
+        auto& barrier = *active;
+        std::unique_lock lock(barrier.mutex);
+        barrier.entered = true;
+        barrier.socket_type = hints->ai_socktype;
+        barrier.protocol = hints->ai_protocol;
+        barrier.changed.notify_all();
+        barrier.changed.wait(lock, [&] { return barrier.released; });
+        int failure = barrier.failure;
+        lock.unlock();
+        return failure ? failure : getaddrinfo(node, service, hints, result);
+    }
+    void await() {
+        std::unique_lock lock(mutex);
+        REQUIRE(changed.wait_for(lock, std::chrono::seconds(5), [&] { return entered; }));
+    }
+    void unblock() {
+        std::lock_guard lock(mutex);
+        released = true;
+        changed.notify_all();
+    }
+};
+std::vector<uint32_t> native_text(const char* text) {
+    std::vector<uint32_t> result;
+    while (*text) result.push_back(static_cast<unsigned char>(*text++));
+    result.push_back(0);
+    return result;
+}
+void* prepared_connect(const char* endpoint, bool unix_socket, const Callback* callback = nullptr,
+                       ManualExecutor* executor = nullptr) {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto address = symbol<decltype(&__k_io_op_set_stream_endpoint)>(rt.library,
+        "__k_io_op_set_stream_endpoint");
+    void* op = prepare(K_IO_OP_CONNECT, nullptr, nullptr, 0, 0, 0,
+        callback ? callback->context : nullptr,
+        KCallable{callback ? reinterpret_cast<void*>(callback->invoke) : nullptr, nullptr},
+        KCallable{callback ? reinterpret_cast<void*>(callback->drop) : nullptr, nullptr},
+        executor ? &executor->lease : nullptr);
+    REQUIRE(op);
+    auto text = native_text(endpoint);
+    REQUIRE(address(op, text.data(), 0, unix_socket ? 1 : 0) == 0);
+    std::fill(text.begin(), text.end(), 0); // no request may borrow this storage
+    return op;
+}
+}
+
+TEST_CASE("Stream native: fully parents reserve one whole direction across short CQEs",
+          "[libk][io][proactor][mock][stream-channel][fully][direction]") {
+    StreamNative stream;
+    auto& rt = stream.rt;
+    bool sending = false;
+    SECTION("RECV") {}
+    SECTION("SEND") { sending = true; }
+    int opcode = sending ? K_IO_OP_SEND : K_IO_OP_RECV;
+    void* buffer = stream.allocate(6);
+    void* other = stream.allocate(1);
+    void* opposite = stream.allocate(1);
+    void* parent = stream.operation(buffer, 6, opcode);
+    auto count = rt.mock->request_count();
+    REQUIRE(stream.submit(parent, 5000000000LL) == 0);
+    auto first = rt.mock->request_after(count);
+    REQUIRE(first.opcode == opcode);
+    REQUIRE(first.offset == 0);
+    REQUIRE(first.fixed_index == -1);
+    if (sending) REQUIRE((first.flags & MSG_NOSIGNAL) != 0);
+    void* blocked = stream.primitive(other, 1, opcode);
+    REQUIRE(stream.submit(blocked, -1) == -EBUSY);
+    REQUIRE(stream.kind(blocked) == 6);
+    REQUIRE(stream.leases(other) == 0);
+    void* parallel = stream.primitive(opposite, 1, sending ? K_IO_OP_RECV : K_IO_OP_SEND);
+    REQUIRE(stream.submit(parallel, -1) == 0);
+    auto parallel_request = rt.mock->request_after(count + 1);
+    rt.mock->complete(parallel_request.tag, 1);
+    REQUIRE(rt.wait(parallel, 5000000000LL) == 0);
+    rt.mock->complete(first.tag, 2);
+    rt.mock->wait_processed(first.tag);
+    REQUIRE(stream.position(buffer) == 0);
+    REQUIRE(stream.leases(buffer) == 1);
+    REQUIRE(rt.mock->request_count() == count + 2);
+    rt.mock->complete(first.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    auto second = rt.mock->request_after(count + 2);
+    REQUIRE(second.buf == static_cast<char*>(first.buf) + 2);
+    REQUIRE(second.len == 4);
+    REQUIRE(second.offset == 0);
+    REQUIRE(second.timeout_nanos < first.timeout_nanos);
+    REQUIRE(stream.position(buffer) == 2);
+    void* still_blocked = stream.primitive(other, 1, opcode);
+    REQUIRE(stream.submit(still_blocked, -1) == -EBUSY);
+    rt.mock->complete(second.tag, 4);
+    rt.mock->complete(second.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+    REQUIRE(rt.bytes(parent) == 6);
+    REQUIRE(stream.position(buffer) == 6);
+    REQUIRE(stream.leases(buffer) == 0);
+    REQUIRE(stream.cursor(stream.handle) == 0);
+    void* next = stream.primitive(other, 1, opcode);
+    REQUIRE(stream.submit(next, -1) == 0);
+    auto next_request = rt.mock->request_after(count + 3);
+    rt.mock->complete(next_request.tag, 1);
+    REQUIRE(rt.wait(next, 5000000000LL) == 0);
+    for (void* op : {parent, blocked, parallel, still_blocked, next}) rt.release(op);
+    for (void* value : {buffer, other, opposite}) stream.release_buffer(value);
+}
+
+TEST_CASE("Stream native: primitive EOF, fully EOF and zero-progress SEND retain partial counts",
+          "[libk][io][proactor][mock][stream-channel][eof]") {
+    StreamNative stream;
+    auto& rt = stream.rt;
+    int opcode = K_IO_OP_RECV;
+    bool fully = true;
+    SECTION("Primitive EOF") { fully = false; }
+    SECTION("Fully EOF") {}
+    SECTION("Zero-progress SEND") { opcode = K_IO_OP_SEND; }
+    SECTION("Primitive zero-progress SEND") { opcode = K_IO_OP_SEND; fully = false; }
+    void* buffer = stream.allocate(4);
+    void* op = fully ? stream.operation(buffer, 4, opcode) : stream.primitive(buffer, 4, opcode);
+    auto count = rt.mock->request_count();
+    REQUIRE(stream.submit(op, -1) == 0);
+    auto request = rt.mock->request_after(count);
+    if (fully) {
+        rt.mock->complete(request.tag, 2);
+        request = rt.mock->request_after(count + 1);
+    }
+    rt.mock->complete(request.tag, 0);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(stream.kind(op) == (fully && opcode == K_IO_OP_RECV ? 4 : 0));
+    REQUIRE(stream.error(op) == (opcode == K_IO_OP_SEND ? EIO : fully ? ENODATA : 0));
+    REQUIRE(rt.bytes(op) == (fully ? 2 : 0));
+    REQUIRE(stream.position(buffer) == (fully ? 2 : 0));
+    REQUIRE(stream.leases(buffer) == 0);
+    rt.release(op);
+    stream.release_buffer(buffer);
+}
+
+TEST_CASE("Stream native: close cancels both fully directions and waits for target and timeout drain",
+          "[libk][io][proactor][mock][stream-channel][close]") {
+    StreamNative stream;
+    auto& rt = stream.rt;
+    void* read_buffer = stream.allocate(4);
+    void* write_buffer = stream.allocate(4);
+    void* read = stream.operation(read_buffer, 4, K_IO_OP_RECV);
+    void* write = stream.operation(write_buffer, 4, K_IO_OP_SEND);
+    auto count = rt.mock->request_count();
+    REQUIRE(stream.submit(read, 5000000000LL) == 0);
+    REQUIRE(stream.submit(write, 5000000000LL) == 0);
+    auto first = rt.mock->request_after(count), second = rt.mock->request_after(count + 1);
+    void* closing = stream.prepare(K_IO_OP_CLOSE, stream.handle, nullptr, 0, 0, 0, nullptr, {}, {}, nullptr);
+    REQUIRE(closing);
+    REQUIRE(stream.submit(closing, -1) == 0);
+    REQUIRE(rt.wait(closing, 0) == ETIMEDOUT);
+    rt.mock->complete(first.tag, 2);
+    rt.mock->complete(second.tag, -ECANCELED);
+    rt.mock->wait_processed(second.tag);
+    REQUIRE(rt.mock->request_count() == count + 2);
+    REQUIRE(stream.leases(read_buffer) == 1);
+    REQUIRE(stream.leases(write_buffer) == 1);
+    rt.mock->complete(first.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    REQUIRE(rt.wait(read, 5000000000LL) == 0);
+    REQUIRE(rt.bytes(read) == 2);
+    REQUIRE(rt.wait(closing, 0) == ETIMEDOUT);
+    rt.mock->complete(second.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    auto close_request = rt.mock->request_after(count + 2);
+    REQUIRE(close_request.opcode == K_IO_OP_CLOSE);
+    REQUIRE(stream.leases(read_buffer) == 0);
+    REQUIRE(stream.leases(write_buffer) == 0);
+    REQUIRE(close(close_request.fd) == 0); // injected backend models successful close
+    rt.mock->complete(close_request.tag, 0);
+    REQUIRE(rt.wait(closing, 5000000000LL) == 0);
+    REQUIRE(rt.stage(read) == 5);
+    REQUIRE(rt.stage(write) == 5);
+    for (void* op : {read, write, closing}) rt.release(op);
+    stream.release_buffer(read_buffer);
+    stream.release_buffer(write_buffer);
+}
+
+TEST_CASE("Stream native: numeric and Unix connect storage outlives target CQE and undelivered fd rolls back",
+          "[libk][io][proactor][mock][stream-channel][connect][resource]") {
+    auto& rt = runtime();
+    bool unix_socket = false;
+    int mode = 0;
+    SECTION("IPv4") {}
+    SECTION("AF_UNIX") { unix_socket = true; }
+    SECTION("Executor rejection") { mode = 1; }
+    SECTION("Executor abandonment") { mode = 2; }
+    ManualExecutor executor;
+    executor.reject = mode == 1;
+    Tracker tracker;
+    auto callback = tracker.callback();
+    void* op = prepared_connect(unix_socket ? "/tmp/klang-mock-no-filesystem-operation" : "127.0.0.1",
+                                unix_socket, &callback, &executor);
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto count = rt.mock->request_count();
+    REQUIRE(submit(op, 5000000000LL) == 0);
+    auto request = rt.mock->request_after(count);
+    REQUIRE(request.opcode == K_IO_OP_CONNECT);
+    REQUIRE(request.addr->sa_family == (unix_socket ? AF_UNIX : AF_INET));
+    REQUIRE((fcntl(request.fd, F_GETFL) & O_NONBLOCK) != 0);
+    REQUIRE((fcntl(request.fd, F_GETFD) & FD_CLOEXEC) != 0);
+    rt.mock->complete(request.tag, 0);
+    rt.mock->wait_processed(request.tag);
+    REQUIRE(rt.wait(op, 0) == ETIMEDOUT);
+    REQUIRE(request.addr->sa_family == (unix_socket ? AF_UNIX : AF_INET));
+    if (!mode) REQUIRE(rt.cancel(op));
+    REQUIRE(fcntl(request.fd, F_GETFD) >= 0);
+    rt.mock->complete(request.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    if (mode != 1) {
+        Task task = executor.take();
+        if (!mode) task.run(task.context);
+        task.drop(task.context);
+    }
+    executor.wait_released();
+    REQUIRE(tracker.invokes == 0);
+    REQUIRE(tracker.drops == 1);
+    REQUIRE(fcntl(request.fd, F_GETFD) == -1);
+    REQUIRE(errno == EBADF);
+    rt.release(op);
+}
+
+TEST_CASE("Stream native: accepted descriptors rollback on suppression rejection and task abandonment",
+          "[libk][io][proactor][mock][stream-channel][accept][resource]") {
+    StreamNative stream;
+    auto& rt = stream.rt;
+    int mode = 0;
+    SECTION("Suppressed before callback") {}
+    SECTION("Rejected executor") { mode = 1; }
+    SECTION("Accepted executor drops task") { mode = 2; }
+    ManualExecutor executor;
+    executor.reject = mode == 1;
+    Tracker tracker;
+    auto callback = tracker.callback();
+    void* op = stream.prepare(K_IO_OP_ACCEPT, stream.handle, nullptr, 0, 0, 0,
+        callback.context, KCallable{reinterpret_cast<void*>(callback.invoke), nullptr},
+        KCallable{reinterpret_cast<void*>(callback.drop), nullptr}, &executor.lease);
+    REQUIRE(op);
+    auto count = rt.mock->request_count();
+    REQUIRE(stream.submit(op, -1) == 0);
+    auto request = rt.mock->request_after(count);
+    REQUIRE((request.flags & (SOCK_NONBLOCK | SOCK_CLOEXEC)) == (SOCK_NONBLOCK | SOCK_CLOEXEC));
+    int accepted = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    REQUIRE(accepted >= 0);
+    rt.mock->complete(request.tag, accepted);
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    if (mode != 1) {
+        Task task = executor.take();
+        if (mode == 0) REQUIRE(rt.cancel(op));
+        if (mode == 0) task.run(task.context);
+        task.drop(task.context);
+    }
+    executor.wait_released();
+    REQUIRE(tracker.invokes == 0);
+    REQUIRE(tracker.drops == 1);
+    REQUIRE(fcntl(accepted, F_GETFD) == -1);
+    REQUIRE(errno == EBADF);
+    REQUIRE(rt.stage(op) == (mode == 0 ? 5 : 8));
+    rt.release(op);
+}
+
+TEST_CASE("Stream native: DNS cancellation awaits the accepted lookup and submits no connect",
+          "[libk][io][proactor][mock][stream-channel][dns][cancel]") {
+    auto& rt = runtime();
+    LookupBarrier barrier;
+    auto install = symbol<int (*)(void*)>(rt.library, "k_io_runtime_set_test_resolver_lookup");
+    REQUIRE(install(reinterpret_cast<void*>(LookupBarrier::lookup)) == 0);
+    void* op = prepared_connect("localhost", false);
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto count = rt.mock->request_count();
+    REQUIRE(submit(op, 5000000000LL) == 0);
+    barrier.await();
+    REQUIRE(rt.cancel(op));
+    REQUIRE(rt.wait(op, 0) == ETIMEDOUT);
+    REQUIRE(rt.mock->request_count() == count);
+    barrier.unblock();
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    REQUIRE(rt.stage(op) == 5);
+    REQUIRE(rt.mock->request_count() == count);
+    REQUIRE(install(nullptr) == 0);
+    rt.release(op);
+}
+
+TEST_CASE("Stream native: DNS and connect consume one deadline and resolver errors remain observable",
+          "[libk][io][proactor][mock][stream-channel][dns][timeout]") {
+    auto& rt = runtime();
+    int mode = 0;
+    SECTION("Remaining deadline") {}
+    SECTION("Expires during DNS") { mode = 1; }
+    SECTION("DNS temporary failure") { mode = 2; }
+    LookupBarrier barrier;
+    barrier.failure = mode == 2 ? EAI_AGAIN : 0;
+    auto install = symbol<int (*)(void*)>(rt.library, "k_io_runtime_set_test_resolver_lookup");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto error = symbol<int (*)(const void*)>(rt.library, "__k_io_op_error_code");
+    REQUIRE(install(reinterpret_cast<void*>(LookupBarrier::lookup)) == 0);
+    void* op = prepared_connect("localhost", false);
+    auto count = rt.mock->request_count();
+    REQUIRE(submit(op, mode == 1 ? 1 : 5000000000LL) == 0);
+    if (mode != 1) barrier.await();
+    barrier.unblock();
+    if (!mode) {
+        auto request = rt.mock->request_after(count);
+        REQUIRE(request.opcode == K_IO_OP_CONNECT);
+        REQUIRE(request.addr->sa_family == AF_INET);
+        REQUIRE(request.timeout_nanos > 0);
+        REQUIRE(request.timeout_nanos < 5000000000LL);
+        REQUIRE(rt.cancel(op));
+        rt.mock->complete(request.tag, -ECANCELED);
+        rt.mock->complete(request.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    }
+    REQUIRE(rt.wait(op, 5000000000LL) == 0);
+    if (mode) {
+        REQUIRE(rt.mock->request_count() == count);
+        REQUIRE(error(op) == (mode == 1 ? ETIMEDOUT : EAGAIN));
+    }
+    REQUIRE(install(nullptr) == 0);
+    rt.release(op);
+}
+
+TEST_CASE("Stream native: bounded resolver rejects queue overflow and shutdown but drains accepted jobs",
+          "[libk][io][proactor][mock][stream-channel][dns][capacity]") {
+    auto& rt = runtime();
+    LookupBarrier barrier;
+    auto create = symbol<void* (*)(unsigned, unsigned)>(rt.library, "k_io_resolver_create");
+    auto lookup = symbol<void (*)(void*, decltype(&LookupBarrier::lookup))>(rt.library,
+        "k_io_resolver_set_test_lookup");
+    auto submit = symbol<int (*)(void*, void*, const char*, const char*, const addrinfo*)>(rt.library,
+        "k_io_resolver_submit_resolve");
+    auto stop = symbol<void (*)(void*)>(rt.library, "k_io_resolver_stop_accepting");
+    auto destroy = symbol<void (*)(void*)>(rt.library, "k_io_resolver_destroy");
+    void* pool = create(1, 1);
+    REQUIRE(pool);
+    lookup(pool, LookupBarrier::lookup);
+    addrinfo hints{};
+    hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
+    void* first = rt.create(K_IO_OP_NONE, -1, nullptr, 0, 0, 0, nullptr, nullptr, nullptr, nullptr);
+    void* queued = rt.create(K_IO_OP_NONE, -1, nullptr, 0, 0, 0, nullptr, nullptr, nullptr, nullptr);
+    void* rejected = rt.create(K_IO_OP_NONE, -1, nullptr, 0, 0, 0, nullptr, nullptr, nullptr, nullptr);
+    REQUIRE(first); REQUIRE(queued); REQUIRE(rejected);
+    REQUIRE(submit(pool, first, "localhost", "0", &hints) == 0);
+    barrier.await();
+    REQUIRE(submit(pool, queued, "localhost", "0", &hints) == 0);
+    REQUIRE(submit(pool, rejected, "localhost", "0", &hints) == -EBUSY);
+    stop(pool);
+    REQUIRE(submit(pool, rejected, "localhost", "0", &hints) == -ESHUTDOWN);
+    REQUIRE_FALSE(rt.cancel(first)); REQUIRE_FALSE(rt.cancel(queued));
+    REQUIRE(rt.wait(first, 0) == ETIMEDOUT);
+    barrier.unblock();
+    destroy(pool);
+    REQUIRE(rt.wait(first, 0) == 0);
+    REQUIRE(rt.wait(queued, 0) == 0);
+    rt.complete(rejected, -ESHUTDOWN);
+    rt.release(first); rt.release(queued); rt.release(rejected);
+}
+
+TEST_CASE("Stream native: accept claims a pending handle before publication and never double-closes a reused fd",
+          "[libk][io][proactor][mock][stream-channel][accept][claim]") {
+    StreamNative stream;
+    auto& rt = stream.rt;
+    struct Publication {
+        decltype(&__k_io_stream_handle_prepare) prepare;
+        decltype(&__k_io_file_handle_claim) claim;
+        void (*release)(void*);
+        void* handle = nullptr;
+        int fd = -1;
+        int replacement = -1;
+        bool reject = false;
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool published = false;
+        int drops = 0;
+        static void invoke(void* context, void* result) {
+            auto& self = *static_cast<Publication*>(context);
+            self.fd = static_cast<int>(static_cast<Result*>(result)->value);
+            self.handle = self.prepare(self.fd);
+            if (self.handle) {
+                self.claim(self.handle, result);
+                if (self.reject) {
+                    self.release(self.handle);
+                    self.handle = nullptr;
+                    self.replacement = open("/dev/null", O_RDWR | O_CLOEXEC);
+                    if (self.replacement >= 0 && self.replacement != self.fd) {
+                        if (dup2(self.replacement, self.fd) >= 0) {
+                            close(self.replacement);
+                            self.replacement = self.fd;
+                        }
+                    }
+                }
+            }
+            std::lock_guard lock(self.mutex);
+            self.published = true;
+            self.changed.notify_all();
+        }
+        static void drop(void* context) {
+            auto& self = *static_cast<Publication*>(context);
+            std::lock_guard lock(self.mutex);
+            ++self.drops;
+            self.changed.notify_all();
+        }
+    } publication{
+        symbol<decltype(&__k_io_stream_handle_prepare)>(rt.library, "__k_io_stream_handle_prepare"),
+        symbol<decltype(&__k_io_file_handle_claim)>(rt.library, "__k_io_file_handle_claim"),
+        stream.release_handle
+    };
+    SECTION("Delivered resource") {}
+    SECTION("Rejected publication and descriptor reuse") { publication.reject = true; }
+    auto publisher = Callback{&publication, Publication::invoke, Publication::drop};
+    void* op = stream.prepare(K_IO_OP_ACCEPT, stream.handle, nullptr, 0, 0, 0, nullptr, {}, {}, nullptr);
+    REQUIRE(op);
+    REQUIRE(stream.continuation(op, &publisher) == 0);
+    auto count = rt.mock->request_count();
+    REQUIRE(stream.submit(op, -1) == 0);
+    auto request = rt.mock->request_after(count);
+    int accepted = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    REQUIRE(accepted >= 0);
+    rt.mock->complete(request.tag, accepted);
+    {
+        std::unique_lock lock(publication.mutex);
+        REQUIRE(publication.changed.wait_for(lock, std::chrono::seconds(5),
+            [&] { return publication.published && publication.drops == 1; }));
+    }
+    REQUIRE(publication.fd == accepted);
+    REQUIRE_FALSE(rt.cancel(op)); // immutable Future-like terminal publication
+    rt.mock->wait_processed(request.tag);
+    // A stale generation cannot publish or reclaim the adopted/reused fd.
+    rt.mock->complete(request.tag, accepted);
+    rt.mock->wait_processed_count(request.tag, 2);
+    rt.release(op);
+    if (publication.reject) {
+        REQUIRE(publication.replacement == accepted);
+        REQUIRE(fcntl(accepted, F_GETFD) >= 0);
+        REQUIRE(close(accepted) == 0);
+    } else {
+        REQUIRE(publication.handle);
+        REQUIRE(fcntl(accepted, F_GETFD) >= 0);
+        stream.release_handle(publication.handle);
+        REQUIRE(fcntl(accepted, F_GETFD) == -1);
+        REQUIRE(errno == EBADF);
+    }
+}
+
+TEST_CASE("Stream native: post-fork preparation rejects inherited runtime before descriptor creation",
+          "[libk][io][proactor][mock][stream-channel][fork]") {
+    auto& rt = runtime();
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto endpoint = symbol<decltype(&__k_io_op_set_stream_endpoint)>(rt.library,
+        "__k_io_op_set_stream_endpoint");
+    auto text = native_text("127.0.0.1");
+    pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (!child) {
+        void* op = prepare(K_IO_OP_CONNECT, nullptr, nullptr, 0, 0, 0, nullptr, {}, {}, nullptr);
+        if (!op) _exit(1);
+        int result = endpoint(op, text.data(), 0, 0);
+        rt.release(op);
+        _exit(result == -ENOTSUP ? 0 : 2);
+    }
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    REQUIRE(WIFEXITED(status));
+    REQUIRE(WEXITSTATUS(status) == 0);
+}
+
+TEST_CASE("Stream shutdown fixture: queued accept and connect resources are suppressed",
+          "[.stream-shutdown-only]") {
+    StreamNative stream;
+    auto& rt = stream.rt;
+    ManualExecutor executor;
+    Tracker accept_tracker, connect_tracker;
+    auto accept_callback = accept_tracker.callback(), connect_callback = connect_tracker.callback();
+    void* accepting = stream.prepare(K_IO_OP_ACCEPT, stream.handle, nullptr, 0, 0, 0,
+        accept_callback.context, KCallable{reinterpret_cast<void*>(accept_callback.invoke), nullptr},
+        KCallable{reinterpret_cast<void*>(accept_callback.drop), nullptr}, &executor.lease);
+    REQUIRE(accepting);
+    void* connecting = prepared_connect("127.0.0.1", false, &connect_callback, &executor);
+    auto count = rt.mock->request_count();
+    REQUIRE(stream.submit(accepting, -1) == 0);
+    REQUIRE(stream.submit(connecting, -1) == 0);
+    auto accept_request = rt.mock->request_after(count), connect_request = rt.mock->request_after(count + 1);
+    int accepted_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    REQUIRE(accepted_fd >= 0);
+    rt.mock->complete(accept_request.tag, accepted_fd);
+    rt.mock->complete(connect_request.tag, 0);
+    rt.mock->wait_processed(accept_request.tag);
+    rt.mock->wait_processed(connect_request.tag);
+    Task first = executor.take(), second = executor.take();
+    auto shutdown = symbol<int (*)()>(rt.library, "k_io_runtime_request_shutdown");
+    REQUIRE(shutdown() == 0);
+    REQUIRE(fcntl(accepted_fd, F_GETFD) == -1);
+    REQUIRE(errno == EBADF);
+    REQUIRE(fcntl(connect_request.fd, F_GETFD) == -1);
+    REQUIRE(errno == EBADF);
+    REQUIRE(accept_tracker.invokes == 0);
+    REQUIRE(connect_tracker.invokes == 0);
+    REQUIRE(accept_tracker.drops == 1);
+    REQUIRE(connect_tracker.drops == 1);
+    REQUIRE(rt.stage(accepting) == 5);
+    REQUIRE(rt.stage(connecting) == 5);
+    executor.wait_released();
+    first.run(first.context); first.drop(first.context);
+    second.run(second.context); second.drop(second.context);
+    REQUIRE(accept_tracker.invokes == 0);
+    REQUIRE(connect_tracker.invokes == 0);
+    REQUIRE(accept_tracker.drops == 1);
+    REQUIRE(connect_tracker.drops == 1);
+    rt.release(accepting); rt.release(connecting);
+}
+
+TEST_CASE("Stream native: global shutdown rolls back resources already queued on a live executor",
+          "[libk][io][proactor][mock][stream-channel][shutdown]") {
+    // A fresh executable isolates the one-way runtime shutdown from other cases.
+    pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (!child) {
+        execl("/proc/self/exe", "/proc/self/exe",
+              "Stream shutdown fixture: queued accept and connect resources are suppressed",
+              static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    REQUIRE(WIFEXITED(status));
+    REQUIRE(WEXITSTATUS(status) == 0);
+}
+
+TEST_CASE("Stream native: K fully Future cancellation publishes the final partial count after child drain",
+          "[libk][io][proactor][mock][stream-channel][k-api][partial]") {
+    auto& rt = runtime();
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __stream_mock_partial_future__;
+        channel : k::io::SocketChannel;
+        buffer : k::io::ByteBuffer!;
+        future : Future<int>!;
+        closed : Future<k::io::IoDone>!;
+        start(fd: int) : void throws(Throwable) {
+            channel = k::io::SocketChannel(fd);
+            buffer = k::io::ByteBuffer::allocate(4u);
+            future = channel.readFullyAsync(buffer, 5000000000L);
+        }
+        cancel() : bool { return future->cancel(); }
+        pending() : bool { return !future->isDone() && buffer->hasLease(); }
+        verify() : int throws(Throwable) {
+            deadline : Duration = Duration::ofSeconds(5L);
+            partial : bool = false;
+            try { future->get(deadline); }
+            catch (e: ExecutionException&) {
+                cause : k::io::InterruptedIOException* = (k::io::InterruptedIOException*) e.getCause();
+                if (cause != null) partial = cause->getBytesTransferred() == 2L;
+            }
+            return partial && buffer->position() == 2u && !buffer->hasLease() ? 1 : -1;
+        }
+        close() : void throws(Throwable) { closed = channel.closeAsync(); }
+        finish() : bool throws(Throwable) {
+            deadline : Duration = Duration::ofSeconds(5L);
+            closed->get(deadline);
+            valid : bool = !channel.isOpen();
+            delete future; delete closed; delete buffer;
+            return valid;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto start = jit->lookup_symbol<void (*)(int)>("start");
+    auto cancel = jit->lookup_symbol<bool (*)()>("cancel");
+    auto pending = jit->lookup_symbol<bool (*)()>("pending");
+    auto verify = jit->lookup_symbol<int (*)()>("verify");
+    auto closing = jit->lookup_symbol<void (*)()>("close");
+    auto finish = jit->lookup_symbol<bool (*)()>("finish");
+    REQUIRE(start); REQUIRE(cancel); REQUIRE(pending); REQUIRE(verify); REQUIRE(closing); REQUIRE(finish);
+    int pair[2];
+    REQUIRE(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, pair) == 0);
+    struct Peer {
+        int fd;
+        ~Peer() { ::close(fd); }
+    } peer{pair[1]};
+    auto count = rt.mock->request_count();
+    REQUIRE_NOTHROW(start(pair[0]));
+    auto first = rt.mock->request_after(count);
+    REQUIRE(first.opcode == K_IO_OP_RECV);
+    rt.mock->complete(first.tag, 2);
+    rt.mock->complete(first.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    auto second = rt.mock->request_after(count + 1);
+    bool cancelled = false, waiting = false;
+    REQUIRE_NOTHROW(cancelled = cancel());
+    REQUIRE(cancelled);
+    REQUIRE_NOTHROW(waiting = pending());
+    REQUIRE(waiting);
+    rt.mock->complete(second.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    rt.mock->wait_processed(second.tag | K_TAG_LINKED_TIMEOUT_FLAG);
+    REQUIRE_NOTHROW(waiting = pending());
+    REQUIRE(waiting);
+    rt.mock->complete(second.tag, -ECANCELED);
+    rt.mock->wait_processed(second.tag);
+    int result = 0;
+    REQUIRE_NOTHROW(result = verify());
+    REQUIRE(result == 1);
+    REQUIRE_NOTHROW(closing());
+    auto close_request = rt.mock->request_after(count + 2);
+    REQUIRE(close_request.opcode == K_IO_OP_CLOSE);
+    REQUIRE(::close(close_request.fd) == 0);
+    rt.mock->complete(close_request.tag, 0);
+    bool released = false;
+    REQUIRE_NOTHROW(released = finish());
+    REQUIRE(released);
+}
+
+TEST_CASE("Stream native: close observes DNS and connect parents and owns the descriptor close exactly once",
+          "[libk][io][proactor][mock][stream-channel][connect][dns][close]") {
+    auto& rt = runtime();
+    bool resolving = false;
+    SECTION("Kernel connect success races close") {}
+    SECTION("Accepted DNS job drains before close") { resolving = true; }
+    LookupBarrier barrier;
+    auto install = symbol<int (*)(void*)>(rt.library, "k_io_runtime_set_test_resolver_lookup");
+    auto prepare = symbol<decltype(&__k_io_prepare_request)>(rt.library, "__k_io_prepare_request");
+    auto submit = symbol<decltype(&__k_io_submit_prepared)>(rt.library, "__k_io_submit_prepared");
+    auto handle_of = symbol<void* (*)(void*)>(rt.library, "k_io_operation_retain_handle");
+    auto descriptor = symbol<int (*)(void*)>(rt.library, "__k_io_handle_fd");
+    auto release_handle = symbol<void (*)(void*)>(rt.library, "__k_io_handle_release");
+    auto error = symbol<int (*)(void*)>(rt.library, "__k_io_op_error_code");
+    if (resolving) REQUIRE(install(reinterpret_cast<void*>(LookupBarrier::lookup)) == 0);
+    void* parent = prepared_connect(resolving ? "localhost" : "127.0.0.1", false);
+    void* handle = handle_of(parent);
+    REQUIRE(handle);
+    int fd = descriptor(handle);
+    REQUIRE(fd >= 0);
+    auto count = rt.mock->request_count();
+    REQUIRE(submit(parent, 5000000000LL) == 0);
+    KIoBackendRequest connect{};
+    if (resolving) barrier.await();
+    else connect = rt.mock->request_after(count);
+    void* closing = prepare(K_IO_OP_CLOSE, handle, nullptr, 0, 0, 0, nullptr, {}, {}, nullptr);
+    REQUIRE(closing);
+    REQUIRE(submit(closing, -1) == 0);
+    REQUIRE(rt.wait(closing, 0) == ETIMEDOUT);
+    REQUIRE(fcntl(fd, F_GETFD) >= 0);
+    if (resolving) barrier.unblock();
+    else {
+        rt.mock->complete(connect.tag, 0);
+        rt.mock->complete(connect.tag | K_TAG_LINKED_TIMEOUT_FLAG, -ECANCELED);
+    }
+    auto close_request = rt.mock->request_after(count + (resolving ? 0 : 1));
+    REQUIRE(close_request.opcode == K_IO_OP_CLOSE);
+    REQUIRE(close_request.fd == fd);
+    REQUIRE(fcntl(fd, F_GETFD) >= 0);
+    REQUIRE(::close(fd) == 0);
+    rt.mock->complete(close_request.tag, 0);
+    REQUIRE(rt.wait(closing, 5000000000LL) == 0);
+    REQUIRE(rt.wait(parent, 5000000000LL) == 0);
+    REQUIRE(rt.stage(parent) == 5);
+    REQUIRE(error(closing) == 0);
+    REQUIRE(descriptor(handle) == -1);
+    rt.release(parent); rt.release(closing); release_handle(handle);
+    if (resolving) REQUIRE(install(nullptr) == 0);
 }
 
