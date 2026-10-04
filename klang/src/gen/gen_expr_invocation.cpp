@@ -1625,21 +1625,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             if (type::is_reference(first_arg_type)) {
                 if (auto first_struct = std::dynamic_pointer_cast<struct_type>(first_arg_type->get_subtype())) {
                     auto st = first_struct->get_struct();
-                    // Collect member functions from the aggregate and all its bases (recursively)
+                    // Scope lookup already includes bases and hides overridden signatures.
                     size_t before_count = all_candidates.size();
-                    std::function<void(const std::shared_ptr<aggregate>&)> collect_member_fns;
-                    collect_member_fns = [&](const std::shared_ptr<aggregate>& s) {
-                        if (!s) return;
-                        for (auto& f : scope_lookup::lookup_functions(s, func_name)) {
-                            if (std::find(all_candidates.begin(), all_candidates.end(), f) == all_candidates.end()) {
-                                all_candidates.push_back(f);
-                            }
+                    for (auto& f : scope_lookup::lookup_functions(st, func_name)) {
+                        if (std::find(all_candidates.begin(), all_candidates.end(), f) == all_candidates.end()) {
+                            all_candidates.push_back(f);
                         }
-                        for (auto& bs : s->get_bases()) {
-                            if (bs.base) collect_member_fns(bs.base);
-                        }
-                    };
-                    collect_member_fns(st);
+                    }
                     // Only activate unified-call-syntax if we actually found new member candidates
                     if (all_candidates.size() > before_count) {
                         this_candidate = args[0];

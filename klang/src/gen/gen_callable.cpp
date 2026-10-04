@@ -314,19 +314,7 @@ void type_reference_resolver::check_callable_conversion(
 std::vector<std::shared_ptr<function>> type_reference_resolver::collect_member_overloads(
     const std::shared_ptr<aggregate>& agg, const std::string& name)
 {
-    std::vector<std::shared_ptr<function>> out;
-    std::unordered_set<const aggregate*> visited;
-    std::function<void(const std::shared_ptr<aggregate>&)> walk =
-        [&](const std::shared_ptr<aggregate>& a) {
-            if (!a || !visited.insert(a.get()).second) return;
-            for (const auto& fn : a->get_functions(name)) {
-                if (!fn) continue;
-                if (std::find(out.begin(), out.end(), fn) == out.end()) out.push_back(fn);
-            }
-            for (const auto& bs : a->get_bases()) walk(bs.base);
-        };
-    walk(agg);
-    return out;
+    return scope_lookup::lookup_member_functions(agg, name);
 }
 
 std::shared_ptr<callable_type> type_reference_resolver::build_member_callable_marker(

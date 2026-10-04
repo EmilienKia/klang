@@ -142,6 +142,12 @@ bool have_same_virtual_signature(const function& a, const function& b) {
                          const function& owner_x, const function& owner_y) -> bool {
         auto nx = type::canonical(x);
         auto ny = type::canonical(y);
+        // Vtables are built before all callable placeholders are normalized.
+        if (scope_lookup::same_signature_type(nx, ny)) return true;
+        if (std::dynamic_pointer_cast<unresolved_callable_type>(nx)
+            || std::dynamic_pointer_cast<unresolved_callable_type>(ny)
+            || std::dynamic_pointer_cast<callable_type>(nx)
+            || std::dynamic_pointer_cast<callable_type>(ny)) return false;
         if (type::are_equal(nx, ny)) return true;
 
         // In pass A, a local override can still carry unresolved types while the

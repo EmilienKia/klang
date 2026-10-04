@@ -185,14 +185,10 @@ void ensure_klass_vtable_built(klass& kl) {
         if (a.get_short_name() != b.get_short_name()) return false;
         if (a.is_const_member() != b.is_const_member()) return false;
         if (a.get_parameter_size() != b.get_parameter_size()) return false;
-        auto type_match = [](const std::shared_ptr<type>& x, const std::shared_ptr<type>& y) -> bool {
-            if (type::are_equal(x, y)) return true;
-            return x && y && x->to_string() == y->to_string();
-        };
         for (size_t i = 0; i < a.get_parameter_size(); ++i) {
             auto ta = std::const_pointer_cast<type>(a.get_parameter(i)->get_type());
             auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
-            if (!type_match(ta, tb)) return false;
+            if (!scope_lookup::same_signature_type(ta, tb)) return false;
         }
         // Note: return type is deliberately NOT compared here. Self-referencing
         // return types (e.g. `OutputStream<T>&` returned from a method of

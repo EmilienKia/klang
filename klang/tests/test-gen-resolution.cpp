@@ -17,8 +17,199 @@
  */
 
 #include <catch2/catch_all.hpp>
+#include <algorithm>
 
 #include "helpers.hpp"
+#include "../src/gen/gen_callable_helpers.hpp"
+#include "../src/gen/resolvers_scope_lookup.hpp"
+#include "../src/gen/resolvers_common.hpp"
+
+TEST_CASE("Member lookup: deferred callable signatures retain the derived override",
+          "[gen][name_lookup][override][callable][deferred-signature]") {
+    auto comp = compile_model(R"SRC(
+        module deferred_override_lookup;
+        class Derived : Base {
+            override const execute(task: !()) { task(); }
+        }
+        class Base {
+            const execute(task: !()) { task(); }
+            const execute(task: !(), priority: int) { task(); }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto derived = find_klass(comp, "Derived");
+    auto base = find_klass(comp, "Base");
+    REQUIRE(derived != nullptr);
+    REQUIRE(base != nullptr);
+    auto implementation = derived->get_function("execute");
+    auto contract = base->get_functions("execute").front();
+    REQUIRE(implementation != nullptr);
+    REQUIRE(contract->get_parameter_size() == 1);
+    auto normalized = implementation->get_parameter(0)->get_type();
+    auto deferred = k::model::unresolved_callable_type::make_shared(
+        {}, k::model::callable_type::addresser::owner, {}, nullptr, {});
+
+    SECTION("Only the base signature remains deferred") {
+        contract->get_parameter(0)->set_type(deferred);
+    }
+    SECTION("Only the derived signature remains deferred") {
+        implementation->get_parameter(0)->set_type(deferred);
+    }
+    using k::model::gen::scope_lookup;
+    CHECK(scope_lookup::same_signature_type(deferred, normalized));
+    CHECK(scope_lookup::same_signature_type(normalized, deferred));
+    auto candidates = scope_lookup::lookup_member_functions(derived, "execute");
+    REQUIRE(candidates.size() == 2);
+    CHECK(candidates.front() == implementation);
+    CHECK(candidates.back()->get_parameter_size() == 2);
+
+    derived->set_vtable(nullptr);
+    k::model::gen::ensure_klass_vtable_built(*derived);
+    REQUIRE(derived->has_vtable());
+    CHECK(implementation->get_overrides() == contract);
+    CHECK(implementation->get_vtable_slot() == contract->get_vtable_slot());
+    CHECK(derived->get_vtable()->slot_count() == base->get_vtable()->slot_count());
+
+    auto integer = comp->get_context_for_test()->from_type(k::model::primitive_type::INT);
+    auto returning = k::model::unresolved_callable_type::make_shared(
+        {}, k::model::callable_type::addresser::owner, {}, integer, {});
+    CHECK_FALSE(scope_lookup::same_signature_type(deferred, returning));
+    auto throwing = k::model::unresolved_callable_type::make_shared(
+        {}, k::model::callable_type::addresser::owner, {}, nullptr, {base->get_struct_type()});
+    CHECK_FALSE(scope_lookup::same_signature_type(deferred, throwing));
+}
+
+TEST_CASE("Member lookup: generic Writer redeclarations bind the first signature and dispatch a derived override",
+          "[gen][name_lookup][override][template][callable][writer-overrides]") {
+    auto comp = compile_model(R"SRC(
+        module writer_override_lookup;
+        total: int = 0;
+        template<typename T>
+        interface OutputStream {
+            write(c: T) : OutputStream<T>&;
+            write(buf: const T[]) : OutputStream<T>&;
+        }
+        interface Writer : OutputStream<char> {
+            write(str: const char[]) : Writer&;
+        }
+        class FilterWriter : Writer {
+            override write(c: char) : OutputStream<char>& {
+                total += 1;
+                return this;
+            }
+            override write(buf: const char[]) : OutputStream<char>& {
+                total += 100;
+                return this;
+            }
+            override write(str: const char[]) : Writer& {
+                total += 10;
+                return this;
+            }
+            writeLine(str: const char[]) : OutputStream<char>& {
+                return write(str);
+            }
+        }
+        class FinalWriter : FilterWriter {
+            override write(buf: const char[]) : OutputStream<char>& {
+                total += 10;
+                return this;
+            }
+        }
+        run() : int {
+            total = 0;
+            concrete: FinalWriter;
+            writer: FilterWriter& = concrete;
+            text: char[2] {(char) 1, (char) 2};
+            writer.write((char) 1);
+            writer.write(text);
+            writer.writeLine(text);
+            bound: &(const char[]&):OutputStream<char>& = writer.write;
+            secondBound: &(const char[]&):OutputStream<char>& = writer.write;
+            bound(text);
+            secondBound(text);
+            writer.write((char) 2);
+            return total;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto writer = find_klass(comp, "FilterWriter");
+    REQUIRE(writer != nullptr);
+    auto declarations = writer->get_functions("write");
+    REQUIRE(declarations.size() == 3);
+    auto wide = declarations[1];
+    auto narrow = declarations[2];
+    auto contract = find_klass(comp, "Writer");
+    REQUIRE(contract != nullptr);
+    REQUIRE(narrow->get_overrides() == contract->get_function("write"));
+    REQUIRE(wide->get_overrides() != nullptr);
+    REQUIRE(wide->get_overrides()->get_owner() != nullptr);
+    CHECK(wide->get_overrides()->get_owner()->get_tpl_base_name() == "OutputStream");
+    CHECK(narrow->get_vtable_slot() != wide->get_vtable_slot());
+    auto candidates = k::model::gen::scope_lookup::lookup_member_functions(writer, "write");
+    REQUIRE(candidates.size() == 2);
+    CHECK(candidates[0] == declarations[0]);
+    CHECK(candidates[1] == wide);
+    REQUIRE(writer->has_vtable());
+    CHECK(writer->get_vtable()->entries.at(narrow->get_vtable_slot()).func == narrow);
+    CHECK(writer->get_vtable()->entries.at(wide->get_vtable_slot()).func == wide);
+    auto final_writer = find_klass(comp, "FinalWriter");
+    REQUIRE(final_writer != nullptr);
+    auto final_write = final_writer->get_function("write");
+    REQUIRE(final_write != nullptr);
+    REQUIRE(final_write->get_overrides() == wide);
+    CHECK(final_write->get_vtable_slot() == wide->get_vtable_slot());
+    REQUIRE(final_writer->has_vtable());
+    CHECK(final_writer->get_vtable()->entries.at(wide->get_vtable_slot()).func == final_write);
+    auto broad_prototype = k::model::gen::callable_signature_view::of(*wide);
+    auto compatibility = k::model::gen::callable_signature_compatible(
+        k::model::gen::callable_signature_view::of(*narrow), broad_prototype);
+    CHECK(compatibility.result == k::model::gen::callable_compat::status::needs_adjustment);
+    auto jit = comp->to_jit();
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Member lookup: inherited hiding is independent of base traversal order",
+          "[gen][name_lookup][override][callable][base-order]") {
+    std::string source = R"SRC(
+        module base_order_lookup;
+        class Base {
+            execute(task: !()) : int { return 1; }
+            execute(priority: int) : int { return priority; }
+        }
+        class Inherited : Base {}
+        class Overridden : Base {
+            override execute(task: !()) : int { return 2; }
+        }
+        class Unrelated {
+            execute(task: !()) : int { return 3; }
+        }
+    )SRC";
+    SECTION("The ancestor is collected first") {
+        source += "class Joined : Inherited, Overridden, Unrelated {}";
+    }
+    SECTION("The override is collected first") {
+        source += "class Joined : Overridden, Inherited, Unrelated {}";
+    }
+    auto comp = compile_model(source);
+    REQUIRE(comp != nullptr);
+    auto joined = find_klass(comp, "Joined");
+    auto base = find_klass(comp, "Base");
+    auto overridden = find_klass(comp, "Overridden");
+    auto unrelated = find_klass(comp, "Unrelated");
+    REQUIRE(joined != nullptr);
+    REQUIRE(base != nullptr);
+    REQUIRE(overridden != nullptr);
+    REQUIRE(unrelated != nullptr);
+    auto candidates = k::model::gen::scope_lookup::lookup_member_functions(joined, "execute");
+    REQUIRE(candidates.size() == 3);
+    CHECK(std::find(candidates.begin(), candidates.end(), overridden->get_function("execute")) != candidates.end());
+    CHECK(std::find(candidates.begin(), candidates.end(), unrelated->get_function("execute")) != candidates.end());
+    CHECK(std::find(candidates.begin(), candidates.end(), base->get_functions("execute")[0]) == candidates.end());
+    CHECK(std::find(candidates.begin(), candidates.end(), base->get_functions("execute")[1]) != candidates.end());
+}
 
 // =============================================================================
 // Name lookup — model-level (compiler::find_elements / get_element_mangled_name)
@@ -1815,4 +2006,3 @@ TEST_CASE("Defaulted constructor (-> default) behaves like compiler-generated", 
     REQUIRE( test != nullptr );
     REQUIRE( test() == 7 );
 }
-

@@ -31,6 +31,7 @@ namespace k::model::gen {
  *   - lookup_variable  : find a variable definition by name, walking up the scope chain.
  *   - lookup_function  : find the first function matching a name, walking up the scope chain.
  *   - lookup_functions : collect ALL overloads matching a name across the full scope chain.
+ *   - lookup_member_functions : collect visible overloads across an aggregate's bases.
  *   - lookup_structure : find a structure by name, walking up the scope chain.
  *
  * Each function accepts a std::shared_ptr<element> as the starting point and climbs the parent tree.
@@ -68,6 +69,15 @@ public:
      */
     static std::vector<std::shared_ptr<function>>
     lookup_functions(std::shared_ptr<element> elem, const std::string& name);
+
+    /** Collect member overloads, retaining distinct base signatures but hiding overrides. */
+    static std::vector<std::shared_ptr<function>>
+    lookup_member_functions(const std::shared_ptr<aggregate>& agg, const std::string& name);
+
+    /** Compare signature types before or after deferred callable normalization. */
+    static bool same_signature_type(const std::shared_ptr<type>& a, const std::shared_ptr<type>& b);
+
+    static bool same_parameter_signature(const function& a, const function& b);
 
     /**
      * Look up an aggregate (structure or class) by name, starting from elem and walking up the scope chain.

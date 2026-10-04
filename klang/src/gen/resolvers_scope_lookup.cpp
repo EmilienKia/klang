@@ -21,6 +21,8 @@
 #include "../model/template.hpp"
 #include "../errors.hpp"
 
+#include <typeinfo>
+
 namespace k::model::gen {
 
 std::shared_ptr<aggregate> scope_lookup::lookup_imported_lexical_aggregate(
@@ -391,92 +393,145 @@ scope_lookup::lookup_function(std::shared_ptr<element> elem, const std::string& 
     return {};
 }
 
+bool scope_lookup::same_signature_type(const std::shared_ptr<type>& a, const std::shared_ptr<type>& b) {
+    auto ta = type::canonical(a);
+    auto tb = type::canonical(b);
+    auto is_void = [](const std::shared_ptr<type>& t) {
+        auto u = std::dynamic_pointer_cast<unresolved_type>(t);
+        return !t || (u && u->type_id().to_string() == "void");
+    };
+    if (is_void(ta) || is_void(tb)) return is_void(ta) == is_void(tb);
+
+    auto ua = std::dynamic_pointer_cast<unresolved_callable_type>(ta);
+    auto ub = std::dynamic_pointer_cast<unresolved_callable_type>(tb);
+    auto ca = std::dynamic_pointer_cast<callable_type>(ta);
+    auto cb = std::dynamic_pointer_cast<callable_type>(tb);
+    if (ua || ub || ca || cb) {
+        if ((!ua && !ca) || (!ub && !cb)) return false;
+        if ((ua ? ua->get_addresser() : ca->get_addresser())
+            != (ub ? ub->get_addresser() : cb->get_addresser())) return false;
+        auto owner_name = [](const auto& unresolved, const auto& callable) {
+            if (unresolved) return unresolved->owner_name();
+            auto member = std::dynamic_pointer_cast<member_function_reference_type>(callable);
+            return member && member->get_member_of() ? member->get_member_of()->get_name() : k::name{};
+        };
+        if (owner_name(ua, ca) != owner_name(ub, cb)) return false;
+        const auto& pa = ua ? ua->parameter_types() : ca->get_parameter_types();
+        const auto& pb = ub ? ub->parameter_types() : cb->get_parameter_types();
+        if (pa.size() != pb.size()) return false;
+        for (size_t i = 0; i < pa.size(); ++i) {
+            if (!same_signature_type(pa[i], pb[i])) return false;
+        }
+        if (!same_signature_type(ua ? ua->get_return_type() : ca->get_return_type(),
+                                 ub ? ub->get_return_type() : cb->get_return_type())) return false;
+        const auto& ea = ua ? ua->get_throws() : ca->get_throws();
+        const auto& eb = ub ? ub->get_throws() : cb->get_throws();
+        if (ea.size() != eb.size()) return false;
+        std::vector<bool> matched(eb.size(), false);
+        for (const auto& exception : ea) {
+            size_t i = 0;
+            for (; i < eb.size(); ++i) {
+                if (!matched[i] && same_signature_type(exception, eb[i])) {
+                    matched[i] = true;
+                    break;
+                }
+            }
+            if (i == eb.size()) return false;
+        }
+        return true;
+    }
+    if (type::are_equal(ta, tb)) return true;
+    if (ta->get_subtype() && tb->get_subtype() && typeid(*ta) == typeid(*tb)) {
+        if (auto array = std::dynamic_pointer_cast<sized_array_type>(ta)) {
+            if (array->get_size() != std::dynamic_pointer_cast<sized_array_type>(tb)->get_size()) return false;
+        }
+        return same_signature_type(ta->get_subtype(), tb->get_subtype());
+    }
+    return ta->to_string() == tb->to_string();
+}
+
+bool scope_lookup::same_parameter_signature(const function& a, const function& b) {
+    if (a.is_static() != b.is_static() || a.is_const_member() != b.is_const_member()) return false;
+    if (a.get_parameter_size() != b.get_parameter_size()) return false;
+    for (size_t i = 0; i < a.get_parameter_size(); ++i) {
+        if (!same_signature_type(std::const_pointer_cast<type>(a.get_parameter(i)->get_type()),
+                                 std::const_pointer_cast<type>(b.get_parameter(i)->get_type()))) return false;
+    }
+    return true;
+}
+
+std::vector<std::shared_ptr<function>>
+scope_lookup::lookup_member_functions(const std::shared_ptr<aggregate>& agg, const std::string& name) {
+    std::vector<std::shared_ptr<function>> result;
+    std::unordered_set<const function*> seen_functions;
+    std::unordered_set<const aggregate*> seen_aggregates;
+    auto overrides = [](const std::shared_ptr<function>& derived, const std::shared_ptr<function>& base) {
+        for (auto overridden = derived->get_overrides(); overridden; overridden = overridden->get_overrides()) {
+            if (overridden == base) return true;
+        }
+        return false;
+    };
+    std::function<void(const std::shared_ptr<aggregate>&)> collect;
+    collect = [&](const std::shared_ptr<aggregate>& current) {
+        if (!current || !seen_aggregates.insert(current.get()).second) return;
+        for (const auto& fn : current->get_functions(name)) {
+            if (!fn || !seen_functions.insert(fn.get()).second) continue;
+            bool hidden = false;
+            for (auto it = result.begin(); it != result.end();) {
+                const auto& existing = *it;
+                if (!same_parameter_signature(*existing, *fn)) {
+                    ++it;
+                    continue;
+                }
+                auto owner = existing->get_owner();
+                // Preserve declaration-order selection for same-owner signatures,
+                // including the stdlib's covariant Writer adapters.
+                if (owner == current) {
+                    hidden = true;
+                    break;
+                }
+                if (owner && ((owner != current && owner->is_derived_from(current))
+                              || overrides(existing, fn))) {
+                    hidden = true;
+                    break;
+                }
+                // A more-derived base can also be visited after its ancestor;
+                // keep the final overrider already selected by the vtable.
+                if (owner && ((owner != current && current->is_derived_from(owner))
+                              || overrides(fn, existing))) {
+                    it = result.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            if (!hidden) result.push_back(fn);
+        }
+        for (const auto& base : current->get_bases()) collect(base.base);
+    };
+    collect(agg);
+    return result;
+}
+
 std::vector<std::shared_ptr<function>>
 scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string& name) {
     std::vector<std::shared_ptr<function>> result;
     std::unordered_set<const function*> seen_functions;
-    std::unordered_set<const aggregate*> seen_aggregates;
-
-    // True if two candidate functions share the same parameter-type signature
-    // (same short name already guaranteed by construction here, since every
-    // candidate comes from a get_functions(name) lookup). Used below to detect
-    // when a base-class overload is truly shadowed/overridden by an
-    // already-collected (more-derived) function, as opposed to being a
-    // distinct overload with a different arity/parameter list (e.g. a getter
-    // declared in a base interface and a setter of the same name declared in
-    // a derived interface).
-    auto same_param_signature = [](const function& a, const function& b) {
-        if (a.is_const_member() != b.is_const_member()) return false;
-        if (a.get_parameter_size() != b.get_parameter_size()) return false;
-        for (size_t i = 0; i < a.get_parameter_size(); ++i) {
-            auto ta = std::const_pointer_cast<type>(a.get_parameter(i)->get_type());
-            auto tb = std::const_pointer_cast<type>(b.get_parameter(i)->get_type());
-            bool eq = type::are_equal(ta, tb);
-            if (!eq) eq = ta && tb && ta->to_string() == tb->to_string();
-            if (!eq) return false;
-        }
-        return true;
-    };
-
-    // Plain identity-based append: used for candidates collected at the same
-    // scope level (e.g. several free-function overloads in a namespace, or
-    // successive enclosing scopes). Duplicate signatures here are genuine
-    // ambiguities and must both be kept so overload resolution can report them.
-    auto append_unique_simple = [&](const std::shared_ptr<function>& fn) {
-        if (!fn) return;
-        if (!seen_functions.insert(fn.get()).second) return;
-        result.push_back(fn);
-    };
-
-    // Append a candidate coming from an aggregate's own member list, skipping
-    // it only if shadowed by an already-collected, more-derived function with
-    // the identical parameter signature (a true override/shadow) — the
-    // more-derived version already in `result` must win. A same-named but
-    // differently-shaped overload from a base is kept. This shadow check must
-    // NOT apply across unrelated same-level candidates (e.g. free-function
-    // overloads), only across the derived-to-base aggregate hierarchy, since
-    // `collect_aggregate_functions` recurses most-derived first.
-    auto append_unique_member = [&](const std::shared_ptr<function>& fn) {
-        if (!fn) return;
-        if (!seen_functions.insert(fn.get()).second) return;
-        for (auto& existing : result) {
-            if (same_param_signature(*existing, *fn)) return;
-        }
-        result.push_back(fn);
-    };
-
-    std::function<void(const std::shared_ptr<aggregate>&)> collect_aggregate_functions;
-    collect_aggregate_functions = [&](const std::shared_ptr<aggregate>& agg) {
-        if (!agg) return;
-        if (!seen_aggregates.insert(agg.get()).second) return;
-
-        auto local = agg->get_functions(name);
-        for (auto& fn : local) {
-            append_unique_member(fn);
-        }
-        // Always continue into bases: append_unique_member() already skips any
-        // base overload whose parameter signature is identical to an
-        // already-collected (more-derived) one, so a true override still hides
-        // its base slot, while a distinct overload (different arity/params)
-        // declared in a base — e.g. Entry<K,V>::value() (getter) vs
-        // MutableEntry<K,V>::value(v) (setter) — remains part of the candidate
-        // set instead of being unconditionally hidden just because the derived
-        // type also declares a same-named member.
-        for (const auto& bs : agg->get_bases()) {
-            if (bs.base) collect_aggregate_functions(bs.base);
-        }
+    auto append = [&](const std::shared_ptr<function>& fn) {
+        if (fn && seen_functions.insert(fn.get()).second) result.push_back(fn);
     };
 
     for (auto current = elem; current; current = current->parent<element>()) {
         if (auto agg = std::dynamic_pointer_cast<aggregate>(current)) {
             // Member call lookup includes inherited member functions so unqualified
             // calls inside member/default-method bodies can resolve base methods.
-            collect_aggregate_functions(agg);
+            for (const auto& fn : lookup_member_functions(agg, name)) append(fn);
             continue;
         }
         if (auto fh = std::dynamic_pointer_cast<function_holder>(current)) {
             for (auto& fn : fh->get_functions(name)) {
-                append_unique_simple(fn);
+                append(fn);
+            }
+        }
             }
         }
         if (auto uh = std::dynamic_pointer_cast<using_holder>(current)) {
@@ -487,7 +542,7 @@ scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string&
                     if (!directive.is_namespace() || directive.has_alias()) continue;
                     auto target = resolve_using_target(directive.target_name, *owner);
                     if (auto holder = std::dynamic_pointer_cast<const function_holder>(target)) {
-                        for (const auto& fn : holder->get_functions(name)) append_unique_simple(fn);
+                        for (const auto& fn : holder->get_functions(name)) append(fn);
                     }
                 }
             }

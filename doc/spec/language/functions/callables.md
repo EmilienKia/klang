@@ -583,6 +583,14 @@ result : int = fp_i(41);    // → 42
 
 If the declared type is ambiguous (e.g. only the return type differs between overloads), the assignment is a compile-time error.
 
+Member lookup retains the first same-owner declaration with an equal parameter
+signature, including covariant return adapters. A callable's expected return
+type must be compatible with that declaration; it must not select a later
+same-owner declaration merely to obtain a narrower return type. Virtual calls
+and bound callables dispatch through the selected declaration's slot to its
+most-derived implementation. Distinct inherited return contracts must not be
+treated as a same-owner override chain merely because their parameters match.
+
 ---
 
 ## 12. Breaking changes from function references
