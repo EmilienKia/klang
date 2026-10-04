@@ -2331,6 +2331,9 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     // 1. Create a new concrete function in the parent namespace
     auto concrete = parent_ns->define_function(inst_name, tpl_def.is_static());
     if (!concrete) return nullptr;
+    concrete->assign_name(ti->origin_module_ns_fq.empty()
+        ? parent_ns->get_name().with_back(inst_name)
+        : k::model::unit::make_origin_absolute_name(ti->origin_module_ns_fq, inst_name));
 
     // Copy flags
     concrete->set_visibility(tpl_def.get_visibility());

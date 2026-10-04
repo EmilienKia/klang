@@ -369,6 +369,10 @@ applyTwice(f : &(T):T, x : T) : T {
 
 The closure struct synthesised for the lambda body of a particular instantiation of `applyTwice` is private to that instantiation. Two different instantiations (e.g. `applyTwice<int>` and `applyTwice<double>`) each have their own closure type, even if the lambda text is identical.
 
+The same rule applies to template aggregate member bodies: captures and the
+lambda body bind to the corresponding instantiated scope. Resolving that body
+must not repeat capture initialization or closure construction.
+
 ---
 
 ## 11. Examples

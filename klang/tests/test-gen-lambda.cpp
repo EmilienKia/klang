@@ -604,6 +604,287 @@ TEST_CASE("Lambda: runnable adapters transfer owned closures with catch handlers
     CHECK(run() == 42);
 }
 
+TEST_CASE("Lambda: template member closures use their instantiated scope exactly once",
+          "[gen][lambda][owner][capture][template][symbol-order][exceptions]") {
+    std::string source = R"SRC(
+        module template_lambda_captures;
+        total: int = 0;
+        reports: int = 0;
+        constructions: int = 0;
+        destructions: int = 0;
+        initializations: int = 0;
+        initialize() : int { initializations += 1; return 0; }
+        report(code: int) { total += code; reports += 1; }
+        class Command {
+            run(code: int) : void throws(Exception) { throw Exception(code); }
+        }
+        template<typename T>
+        struct Adapter {
+            marker: int;
+            Adapter() : marker(initialize()) { constructions += 1; }
+            ~Adapter() { destructions += 1; }
+            static consume(task: !()) { task(); }
+            static execute(command: Command+, value: T) {
+                cmd: Command* = &(*command);
+                firstTask: !() = [cmd, value]() {
+                    try { cmd->run((int) value); }
+                    catch (e: Throwable&) { report(e.getCode()); }
+                };
+                consume(firstTask);
+                local: T = value + (T) 1;
+                secondTask: !() = [cmd, local]() {
+                    try { cmd->run((int) local); }
+                    catch (e: Throwable&) { report(e.getCode()); }
+                };
+                consume(secondTask);
+                reportTask: !() = []() { reports += 1; };
+                consume(reportTask);
+            }
+        }
+    )SRC";
+    SECTION("Eager instantiation through a member declaration") {
+        source += R"SRC(
+            struct Anchor {
+                first: Adapter<int>;
+                second: Adapter<long>;
+            }
+            run() : int {
+                total = 0; reports = 0;
+                constructions = 0; destructions = 0; initializations = 0;
+                command: Command;
+                {
+                    anchor: Anchor;
+                    Adapter<int>::execute(command, 9);
+                    Adapter<long>::execute(command, (long) 11);
+                }
+                if (reports != 6) return -1;
+                if (constructions != 2 || destructions != 2 || initializations != 2) return -2;
+                return total;
+            }
+        )SRC";
+    }
+    SECTION("On-demand instantiation through a static member call") {
+        source += R"SRC(
+            run() : int {
+                total = 0; reports = 0;
+                command: Command;
+                Adapter<int>::execute(command, 9);
+                Adapter<long>::execute(command, (long) 11);
+                if (reports != 6) return -1;
+                return total;
+            }
+        )SRC";
+    }
+    auto comp = compile_model_with_stdlib(source);
+    REQUIRE(comp != nullptr);
+    size_t adapters = 0;
+    for (const auto& child : comp->get_unit()->get_root_namespace()->get_children()) {
+        auto adapter = std::dynamic_pointer_cast<k::model::aggregate>(child);
+        if (!adapter || !adapter->is_instantiation()
+            || adapter->get_short_name().rfind("Adapter__", 0) != 0) continue;
+        ++adapters;
+        size_t closures = 0;
+        for (const auto& nested : adapter->get_children()) {
+            auto closure = std::dynamic_pointer_cast<k::model::aggregate>(nested);
+            if (!closure) continue;
+            ++closures;
+            CHECK(closure->is_static_nested());
+            CHECK_FALSE(closure->is_inner());
+            CHECK(closure->get_variable("__parent__") == nullptr);
+            REQUIRE(closure->constructors().size() == 1);
+            auto ctor = closure->constructors().front();
+            CHECK(ctor->get_parameter_size() == 2);
+            REQUIRE(ctor->get_existing_block() != nullptr);
+            CHECK(ctor->get_existing_block()->get_statements().size() == 2);
+        }
+        CHECK(closures == 2);
+    }
+    CHECK(adapters == 2);
+    auto jit = comp->to_jit();
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Lambda: unused free template closures retain their lexical template parameters",
+          "[gen][lambda][template][owner][capture][free-template-capture]") {
+    auto comp = compile_model(R"SRC(
+        module unused_template_capture;
+        template<typename T>
+        struct Runner { run() {} }
+        template<typename T>
+        makeTask(runner: Runner<T>!) : !() {
+            {
+                task: !() = [runner]() { runner->run(); };
+                return task;
+            }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    size_t closures = 0;
+    for (const auto& child : comp->get_unit()->get_root_namespace()->get_children()) {
+        auto closure = std::dynamic_pointer_cast<k::model::aggregate>(child);
+        if (!closure || !closure->get_variable("runner")) continue;
+        ++closures;
+        REQUIRE(closure->is_template());
+        REQUIRE(closure->get_tpl_info()->params.size() == 1);
+        CHECK(closure->get_tpl_info()->params[0].name == "T");
+        CHECK_FALSE(closure->is_instantiation());
+        CHECK(closure->is_static_nested());
+        REQUIRE(closure->get_struct_type() != nullptr);
+        CHECK_FALSE(closure->get_struct_type()->is_resolved());
+        REQUIRE(closure->constructors().size() == 1);
+        auto parameter = closure->constructors().front()->get_parameter("runner_p");
+        REQUIRE(parameter != nullptr);
+        CHECK(k::model::type::contains_unresolved(parameter->get_type()));
+        REQUIRE(parameter->get_ast_parameter_spec() != nullptr);
+        REQUIRE(parameter->get_ast_parameter_spec()->name.has_value());
+        CHECK(parameter->get_ast_parameter_spec()->name->content == "runner");
+    }
+    CHECK(closures == 1);
+}
+
+TEST_CASE("Lambda: free template owner captures use concrete closure constructor types",
+          "[gen][lambda][template][owner][capture][lifecycle][free-template-capture]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module free_template_owner_capture;
+        destructions: int = 0;
+        total: int = 0;
+        template<typename R>
+        struct TaskPromiseRunner {
+            _task: !():R;
+            TaskPromiseRunner(task: !():R) { _task = task; }
+            ~TaskPromiseRunner() { destructions += 1; }
+            run() { total += (int) _task(); }
+        }
+        template<typename R>
+        execute(task: !():R) : !() {
+            runner: TaskPromiseRunner<R>! = new TaskPromiseRunner<R>(task);
+            taskWrapper: !() = [runner]() { runner->run(); };
+            if (runner != null || task != null) return null;
+            return taskWrapper;
+        }
+        template<typename R>
+        captureParameter(runner: TaskPromiseRunner<R>!) : !() {
+            taskWrapper: !() = [runner]() { runner->run(); };
+            if (runner != null) return null;
+            return taskWrapper;
+        }
+        template<typename R>
+        constantTask() : !():R {
+            return []() : R { return (R) 1; };
+        }
+        run() : int {
+            destructions = 0; total = 0;
+            first: !() = execute<int>([]() : int { return 20; });
+            second: !() = execute<long>([]() : long { return (long) 22; });
+            if (first == null || second == null) return -1;
+            first(); second();
+            if (total != 42 || destructions != 0) return -2;
+            first = null;
+            if (destructions != 1) return -3;
+            second = null;
+            if (destructions != 2) return -4;
+            runner: TaskPromiseRunner<int>! = new TaskPromiseRunner<int>(
+                []() : int { return 1; });
+            third: !() = captureParameter<int>(runner);
+            if (runner != null || third == null) return -5;
+            third();
+            third = null;
+            if (destructions != 3 || total != 43) return -6;
+            fourth: !():int = constantTask<int>();
+            if (fourth() != 1) return -7;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    size_t closures = 0;
+    size_t free_targets = 0;
+    for (const auto& child : comp->get_unit()->get_root_namespace()->get_children()) {
+        if (auto target = std::dynamic_pointer_cast<k::model::function>(child);
+            target && target->is_instantiation() && target->is_lambda()) {
+            ++free_targets;
+            CHECK(target->get_name().has_root_prefix());
+            CHECK_FALSE(target->get_mangled_name().empty());
+        }
+        auto closure = std::dynamic_pointer_cast<k::model::aggregate>(child);
+        if (!closure || !closure->is_instantiation() || !closure->get_variable("runner")) continue;
+        ++closures;
+        CHECK(closure->is_static_nested());
+        CHECK_FALSE(closure->is_inner());
+        CHECK(closure->get_parent_field() == nullptr);
+        REQUIRE(closure->constructors().size() == 1);
+        auto ctor = closure->constructors().front();
+        REQUIRE(ctor->get_parameter_size() == 1);
+        auto parameter = ctor->get_parameter("runner_p");
+        REQUIRE(parameter != nullptr);
+        auto captured = parameter->get_type();
+        REQUIRE(k::model::type::is_owner(captured));
+        CHECK_FALSE(k::model::type::contains_unresolved(captured));
+        CHECK(k::model::type::are_equal(captured, closure->get_variable("runner")->get_type()));
+        REQUIRE(ctor->get_existing_block() != nullptr);
+        CHECK(ctor->get_existing_block()->get_statements().size() == 1);
+    }
+    CHECK(closures == 3);
+    CHECK(free_targets == 1);
+    auto jit = comp->to_jit();
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Lambda: imported free template owner captures construct and invoke concrete closures",
+          "[gen][lambda][template][import][owner][lifecycle][free-template-capture]") {
+    auto result = build_exec_with_lib(
+        R"SRC(
+            module free_template_capture_lib;
+            drops: int = 0;
+            total: int = 0;
+            recordDrop() { drops += 1; }
+            recordValue(value: int) { total += value; }
+            dropCount() : int { return drops; }
+            valueTotal() : int { return total; }
+            template<typename R>
+            struct TaskPromiseRunner {
+                _task: !():R;
+                TaskPromiseRunner(task: !():R) { _task = task; }
+                ~TaskPromiseRunner() { recordDrop(); }
+                run() { recordValue((int) _task()); }
+            }
+            template<typename R>
+            execute(task: !():R) : !() {
+                runner: TaskPromiseRunner<R>! = new TaskPromiseRunner<R>(task);
+                taskWrapper: !() = [runner]() { runner->run(); };
+                if (runner != null || task != null) return null;
+                return taskWrapper;
+            }
+        )SRC",
+        R"SRC(
+            module free_template_capture_consumer;
+            import free_template_capture_lib;
+            main() : int {
+                firstTask: !():int = []() : int { return 20; };
+                secondTask: !():long = []() : long { return (long) 22; };
+                first: !() = execute<int>(firstTask);
+                second: !() = execute<long>(secondTask);
+                if (firstTask != null || secondTask != null) return 1;
+                if (first == null || second == null) return 2;
+                first(); second();
+                if (valueTotal() != 42 || dropCount() != 0) return 3;
+                first = null;
+                if (dropCount() != 1) return 4;
+                second = null;
+                if (dropCount() != 2) return 5;
+                return 42;
+            }
+        )SRC");
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    CHECK(result.exit_code == 42);
+}
+
 TEST_CASE("Lambda: capture owner object in owned lambda runs destructor on cleanup", "[gen][lambda][owner][lifecycle]") {
     auto jit = gen_jit(R"SRC(
         module gen_lambda_08;

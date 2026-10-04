@@ -1080,6 +1080,14 @@ is_enclosing_template_param_name(const element& context_elem, const std::string&
                     }
                 }
             }
+        } else if (auto fn = std::dynamic_pointer_cast<const function>(current)) {
+            if (fn->is_template()) {
+                if (auto* ti = fn->get_tpl_info()) {
+                    for (auto& param : ti->params) {
+                        if (param.name == arg_name) return true;
+                    }
+                }
+            }
         }
     }
     return false;

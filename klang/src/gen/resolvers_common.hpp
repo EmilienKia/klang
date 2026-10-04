@@ -44,7 +44,7 @@ resolve_using_target(const k::name& target_name, const unit& unit);
 
 /**
  * Returns true if `arg_name` matches a template parameter name of the nearest
- * enclosing template aggregate/union of `context_elem`. Unlike
+ * enclosing template aggregate/union/function of `context_elem`. Unlike
  * unresolved_type::is_template_param_placeholder() (which is only set at AST
  * parse time, while the pushed template-param scope is active), this check
  * works during later resolution passes (aggregate_type_resolver,

@@ -834,6 +834,30 @@ public:
 
 protected:
     void visit_symbol_expression(symbol_expression& symbol) override {
+        if (symbol.is_variable_def()) {
+            auto variable = symbol.get_variable_def();
+            auto variable_element = std::dynamic_pointer_cast<element>(variable);
+            for (auto owner = variable_element ? variable_element->parent<element>() : nullptr; owner;
+                 owner = owner->parent<element>()) {
+                auto aggregate_owner = std::dynamic_pointer_cast<aggregate>(owner);
+                auto function_owner = std::dynamic_pointer_cast<function>(owner);
+                if ((aggregate_owner && aggregate_owner->is_template())
+                    || (function_owner && function_owner->is_template())) {
+                    // Model-built capture arguments can still point to the
+                    // template's parameter/local rather than its concrete clone.
+                    auto target = resolve_symbol(symbol, name(variable->get_short_name()));
+                    if (auto var = std::get_if<std::shared_ptr<variable_definition>>(&target)) {
+                        symbol.set_target(*var);
+                        check_variable_visibility(**var, symbol);
+                        return;
+                    }
+                    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003),
+                        symbol.first_lexeme(),
+                        "Internal error: cloned variable '{}' has no binding in its instantiated scope",
+                        {variable->get_short_name()});
+                }
+            }
+        }
         if (!symbol.is_resolved()) {
             symbol_resolver::visit_symbol_expression(symbol);
         }

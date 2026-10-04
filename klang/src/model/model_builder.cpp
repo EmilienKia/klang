@@ -2822,6 +2822,19 @@ namespace k::model {
     }
 
     void model_builder::visit_lambda_expression(parse::ast::lambda_expression &expr) {
+        std::shared_ptr<model::function> enclosing_function;
+        for (auto it = _contexts.rbegin(); it != _contexts.rend(); ++it) {
+            if (*it && (enclosing_function = (*it)->content_as<model::function>())) break;
+        }
+        auto lambda_template_info = [&]() -> std::unique_ptr<tpl_info> {
+            if (!enclosing_function || !enclosing_function->is_template()
+                || enclosing_function->get_owner()) return nullptr;
+            // Namespace-level synthetic declarations must remain dependent on
+            // their free template function until its arguments are substituted.
+            auto info = std::make_unique<tpl_info>();
+            info->params = enclosing_function->get_tpl_info()->params;
+            return info;
+        };
         std::shared_ptr<model::element> decl_owner;
         for (auto it = _contexts.rbegin(); it != _contexts.rend(); ++it) {
             if (*it) {
@@ -2880,6 +2893,7 @@ namespace k::model {
             }
             target->set_lambda(true);
             target->set_has_explicit_return_type(expr.return_type != nullptr);
+            if (auto info = lambda_template_info()) target->set_tpl_info(std::move(info));
             auto bind = model::callable_bind_expression::make_shared(
                 model::callable_bind_expression::kind::lambda,
                 target,
@@ -2912,8 +2926,9 @@ namespace k::model {
             // A closure owns only its explicit captures, never an implicit parent.
             closure_agg->set_static_nested(true);
             closure_agg->set_visibility(model::PRIVATE);
+            if (auto info = lambda_template_info()) closure_agg->set_tpl_info(std::move(info));
             auto closure_st = std::make_shared<model::struct_type>(closure_name, closure_agg);
-            _context->add_struct(closure_st);
+            if (!closure_agg->is_template()) _context->add_struct(closure_st);
             closure_agg->set_struct_type(closure_st);
 
             auto byte_ptr_type = _context->from_type(primitive_type::BYTE)->get_pointer();
@@ -3003,6 +3018,9 @@ namespace k::model {
 
                     if (ctor) {
                         auto param = ctor->append_parameter(cap_name + "_p", field_type);
+                        param->set_ast_parameter_spec(std::make_shared<parse::ast::parameter_spec>(
+                            parse::ast::annotation_def_list{}, std::vector<lex::keyword>{}, cap.name,
+                            std::shared_ptr<parse::ast::type_specifier>{}));
                         std::vector<std::shared_ptr<model::expression>> minit_args{
                             model::symbol_expression::from_variable(param)};
                         ctor->add_member_init(cap_name, minit_args);

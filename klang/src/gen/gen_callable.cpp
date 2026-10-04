@@ -32,6 +32,7 @@
 
 #include "../model/expressions.hpp"
 #include "../model/imported.hpp"
+#include "../model/template_instantiator.hpp"
 #include "../errors.hpp"
 
 namespace k::model::gen {
@@ -165,6 +166,17 @@ void type_reference_resolver::visit_lambda_expression(lambda_expression& expr) {
 
     auto target = bind->get_target();
     if (target) {
+        auto enclosing = expr.ancestor<function>();
+        if (enclosing && enclosing->has_tpl_args() && expr.is_capture_free() && target->is_template()) {
+            target = template_instantiator::instantiate_function(
+                *target, enclosing->get_tpl_args(), scope_lookup::enclosing_namespace(*target),
+                _unit, _context, *this);
+            if (!target) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003),
+                    expr.first_lexeme(), "Internal error: cannot instantiate free template lambda");
+            }
+            bind->set_target(target);
+        }
         // Cloning a bind preserves its declaration pointer. Select the lambda
         // declaration already cloned into this instantiation, without synthesizing
         // another closure or revisiting its constructor initializers.
@@ -175,8 +187,15 @@ void type_reference_resolver::visit_lambda_expression(lambda_expression& expr) {
                 concrete_target = scope_lookup::lookup_function(
                     expr.shared_as<element>(), target->get_short_name());
             } else {
-                auto closure = scope_lookup::lookup_structure(
-                    expr.shared_as<element>(), target->get_owner()->get_short_name());
+                std::shared_ptr<aggregate> closure;
+                if (!owner->ancestor<aggregate>() && enclosing && enclosing->has_tpl_args()) {
+                    auto concrete_type = std::dynamic_pointer_cast<struct_type>(
+                        instantiate_template_aggregate(owner, enclosing->get_tpl_args(), expr));
+                    if (concrete_type) closure = concrete_type->get_struct();
+                } else {
+                    closure = scope_lookup::lookup_structure(
+                        expr.shared_as<element>(), target->get_owner()->get_short_name());
+                }
                 if (closure && closure->is_instantiation() && closure->get_struct_type()) {
                     concrete_target = closure->get_function(target->get_short_name());
                     if (auto context = std::dynamic_pointer_cast<temporary_construction_expression>(
