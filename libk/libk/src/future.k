@@ -36,6 +36,8 @@ public struct NativeFuture {
 @ffi::Extern("C") __k_future_is_done(native: const NativeFuture*) : bool;
 @ffi::Extern("C") __k_future_complete(native: NativeFuture*, completion: int) : bool;
 @ffi::Extern("C") __k_future_wait(native: NativeFuture*, timeout_nanos: long) : int;
+@ffi::Extern("C") private __k_future_cancel(native: NativeFuture*) : bool;
+@ffi::Extern("C") private __k_future_wait_quiescent(native: NativeFuture*, timeout_nanos: long) : int;
 
 // ── Completion states (mirror KFutureCompletion in future_state.h) ───────────
 
@@ -56,6 +58,8 @@ public const FUTURE_WAIT_DONE : int = 0;
 public const FUTURE_WAIT_INTERRUPTED : int = 1;
 /** Wait outcome: the deadline expired while the future was still pending. */
 public const FUTURE_WAIT_TIMEOUT : int = 2;
+/** An inherited Future cannot be waited on after fork. */
+public const FUTURE_WAIT_UNSUPPORTED : int = 3;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // FutureBox — payload shared by a Promise and its Futures.
@@ -85,7 +89,8 @@ public final struct FutureBox {
     }
 
     /**
-     * Destroy the box and the failure cause it owns.
+     * Destroy the failure cause it owns. The compiler then destroys the
+     * default-constructed value, even if no result was published.
      * Explicit, because the compiler does not auto-delete owner fields of a
      * template struct.
      */
@@ -162,7 +167,14 @@ public final struct Future {
         if (_native != null) {
             if (__k_future_release(_native) == 0) {
                 o : FutureBox<T>! = (FutureBox<T>!) _box;
-                delete o;
+                try {
+                    delete o;
+                } catch (e: Throwable&) {
+                    __k_future_destroy(_native);
+                    _native = null;
+                    _box = null;
+                    throw;
+                }
                 __k_future_destroy(_native);
             }
             _native = null;
@@ -202,15 +214,46 @@ public final struct Future {
     /**
      * Cancel the future if it has not completed yet.
      *
-     * Cancellation only marks the shared state; it does not interrupt the
-     * thread computing the value. Every waiter blocked in get() is released
-     * and throws CancellationException.
+     * Invokes the producer's cancellation hook if registered. If accepted,
+     * ordinary futures release waiters with CancellationException. Composite
+     * I/O producers defer publication until kernel drain and may instead fail
+     * with InterruptedIOException carrying the final partial byte count.
      *
-     * @return true when this call performed the cancellation, false when the
-     *         future had already reached a terminal state.
+     * @return true when cancellation was accepted, not necessarily published.
+     *         False when already terminal, already requested or rejected.
      */
     cancel() : bool {
-        return __k_future_complete(_native, FUTURE_CANCELLED);
+        return __k_future_cancel(_native);
+    }
+
+    /**
+     * Wait for quiescence on the underlying asynchronous operation.
+     *
+     * @param timeout Maximum duration to wait.
+     * @return 0 on success, or non-zero error/timeout code.
+     */
+    waitQuiescent(timeout: Duration&) : int {
+        nanos : long = timeout.toNanos();
+        if (nanos < 0L) {
+            nanos = 0L;
+        }
+        return __k_future_wait_quiescent(_native, nanos);
+    }
+
+    /**
+     * Wait indefinitely for quiescence on the underlying asynchronous operation.
+     *
+     * @return 0 on success.
+     */
+    waitQuiescent() : int {
+        return __k_future_wait_quiescent(_native, -1L);
+    }
+
+    /**
+     * Return the native handle pointer.
+     */
+    const native() : NativeFuture* {
+        return _native;
     }
 
     /**
@@ -221,10 +264,15 @@ public final struct Future {
      *         while waiting.
      * @throws CancellationException The future was cancelled.
      * @throws ExecutionException The computation terminated with a throwable;
-     *         the original throwable is the cause.
+     *         the original throwable is the cause when available. A native
+     *         I/O publisher unable to allocate a cause diagnoses the failure
+     *         and publishes FAILED with no cause instead of leaving it pending.
+     * @throws IllegalStateException Waiting from the I/O completion thread is
+     *         forbidden because it would prevent completion progress.
      */
-    get() : T throws(ThreadInterruptionException, CancellationException, ExecutionException) {
+    get() : T throws(ThreadInterruptionException, CancellationException, ExecutionException, IllegalStateException) {
         r : int = __k_future_wait(_native, -1L);
+        if (r == FUTURE_WAIT_UNSUPPORTED) throw IllegalStateException();
         if (r == FUTURE_WAIT_INTERRUPTED) {
             throw ThreadInterruptionException();
         }
@@ -249,14 +297,17 @@ public final struct Future {
      * @throws TimeoutException The deadline expired before completion.
      * @throws CancellationException The future was cancelled.
      * @throws ExecutionException The computation terminated with a throwable;
-     *         the original throwable is the cause.
+     *         the original throwable is the cause when available.
+     * @throws IllegalStateException Waiting from the I/O completion thread is
+     *         forbidden because it would prevent completion progress.
      */
-    get(timeout: Duration&) : T throws(ThreadInterruptionException, TimeoutException, CancellationException, ExecutionException) {
+    get(timeout: Duration&) : T throws(ThreadInterruptionException, TimeoutException, CancellationException, ExecutionException, IllegalStateException) {
         nanos : long = timeout.toNanos();
         if (nanos < 0L) {
             nanos = 0L;
         }
         r : int = __k_future_wait(_native, nanos);
+        if (r == FUTURE_WAIT_UNSUPPORTED) throw IllegalStateException();
         if (r == FUTURE_WAIT_INTERRUPTED) {
             throw ThreadInterruptionException();
         }
@@ -316,7 +367,14 @@ public final struct Promise {
         if (_native != null) {
             if (__k_future_release(_native) == 0) {
                 o : FutureBox<T>! = (FutureBox<T>!) _box;
-                delete o;
+                try {
+                    delete o;
+                } catch (e: Throwable&) {
+                    __k_future_destroy(_native);
+                    _native = null;
+                    _box = null;
+                    throw;
+                }
                 __k_future_destroy(_native);
             }
             _native = null;
@@ -353,7 +411,13 @@ public final struct Promise {
             __k_future_unlock(_native);
             return false;
         }
-        _box->_value = value;
+        try {
+            _box->_value = value;
+        } catch (e: Throwable&) {
+            // A throwing payload assignment must not deadlock failure publication.
+            __k_future_unlock(_native);
+            throw;
+        }
         done : bool = __k_future_complete(_native, FUTURE_SUCCESS);
         __k_future_unlock(_native);
         return done;
@@ -389,5 +453,12 @@ public final struct Promise {
      */
     tryCancel() : bool {
         return __k_future_complete(_native, FUTURE_CANCELLED);
+    }
+
+    /**
+     * Return the native handle pointer.
+     */
+    const native() : NativeFuture* {
+        return _native;
     }
 }

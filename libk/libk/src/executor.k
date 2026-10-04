@@ -30,6 +30,10 @@ struct TaskPromiseRunner {
     TaskPromiseRunner(task: !():R) {
         _task = task;
     }
+    ~TaskPromiseRunner() {
+        _promise.tryCancel();
+        _task = null;
+    }
 
     future() : Future<R>! {
         return _promise.future();
@@ -49,6 +53,134 @@ struct TaskPromiseRunner {
         runner : TaskPromiseRunner<R>! = (TaskPromiseRunner<R>!) ptr;
         runner.run();
         delete runner;
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Native FFI declarations for ExecutorLease and Task Queue
+// ═════════════════════════════════════════════════════════════════════════════
+
+public struct NativeExecutorLease {
+}
+
+struct NativeTaskQueue {
+}
+
+@ffi::Extern("C") private __k_executor_lease_retain(lease: NativeExecutorLease*) : void;
+@ffi::Extern("C") private __k_executor_lease_release(lease: NativeExecutorLease*) : void;
+@ffi::Extern("C") private __k_executor_lease_create_direct() : NativeExecutorLease*;
+@ffi::Extern("C") private __k_executor_lease_submit(lease: NativeExecutorLease*, run: *(byte*), drop: *(byte*), arg: byte*) : int;
+@ffi::Extern("C") private __k_io_system_lease() : NativeExecutorLease*;
+/**
+ * Non-throwing native stderr diagnostic for failures contained at a C boundary.
+ * Origins: 1 task run, 2 task drop, 3 I/O decode, 4 I/O callback,
+ * 5 callback drop, 6 Future publication, 7 Future drop, 8 worker dispatch.
+ */
+@ffi::Extern("C") private __k_executor_report_failure(origin: int, code: int) : void;
+
+@ffi::Extern("C") private __k_native_queue_create() : NativeTaskQueue*;
+@ffi::Extern("C") private __k_native_queue_retain(q: NativeTaskQueue*) : void;
+@ffi::Extern("C") private __k_native_queue_release(q: NativeTaskQueue*) : void;
+@ffi::Extern("C") private __k_native_queue_enqueue(q: NativeTaskQueue*, run: *(byte*), drop: *(byte*), arg: byte*, priority: int) : int;
+@ffi::Extern("C") private __k_native_queue_dequeue_and_run(q: NativeTaskQueue*) : int;
+@ffi::Extern("C") private __k_native_queue_clear(q: NativeTaskQueue*) : void;
+@ffi::Extern("C") private __k_native_queue_close(q: NativeTaskQueue*) : void;
+@ffi::Extern("C") private __k_native_queue_size(q: NativeTaskQueue*) : int;
+@ffi::Extern("C") private __k_native_queue_is_closed(q: NativeTaskQueue*) : int;
+@ffi::Extern("C") private __k_native_queue_get_lease(q: NativeTaskQueue*) : NativeExecutorLease*;
+
+struct KTaskCarrier {
+    _task : !();
+
+    KTaskCarrier(task: !()) {
+        _task = task;
+    }
+    ~KTaskCarrier() { _task = null; }
+
+    static runAndDestroy(ptr: byte*) {
+        carrier : KTaskCarrier* = (KTaskCarrier*) ptr;
+        try {
+            if (carrier->_task != null) carrier->_task();
+        } catch (e: Throwable&) {
+            __k_executor_report_failure(1, e.getCode());
+        }
+    }
+
+    static dropAndDestroy(ptr: byte*) {
+        carrier : KTaskCarrier! = (KTaskCarrier!) ptr;
+        try {
+            delete carrier;
+        } catch (e: Throwable&) {
+            __k_executor_report_failure(2, e.getCode());
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ExecutorLease — refcounted lease to an executor
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * ExecutorLease — encapsulates a refcounted native handle to an executor
+ * endpoint that remains valid even if the originating K wrapper is destroyed.
+ * Task and cleanup failures cannot unwind through C: they are diagnosed on
+ * native stderr with their boundary origin and Throwable code.
+ */
+public class ExecutorLease {
+private:
+    _native : NativeExecutorLease*;
+
+public:
+    ExecutorLease() {
+        _native = null;
+    }
+
+    ExecutorLease(native: NativeExecutorLease*) {
+        _native = native;
+    }
+
+    ~ExecutorLease() {
+        if (_native != null) {
+            __k_executor_lease_release(_native);
+            _native = null;
+        }
+    }
+
+    const native() : NativeExecutorLease* {
+        return _native;
+    }
+
+    share() : ExecutorLease! {
+        if (_native != null) {
+            __k_executor_lease_retain(_native);
+        }
+        return new ExecutorLease(_native);
+    }
+
+    static system() : ExecutorLease! {
+        n : NativeExecutorLease* = __k_io_system_lease();
+        if (n == null) throw RejectedExecutionException();
+        return new ExecutorLease(n);
+    }
+
+    execute(command: Runnable+) : void throws(RejectedExecutionException) {
+        cmd : Runnable* = &(*command);
+        task : !() = [cmd]() {
+            try {
+                cmd->run();
+            } catch (e: Throwable&) {
+                __k_executor_report_failure(1, e.getCode());
+            }
+        };
+        execute(task);
+    }
+
+    execute(task: !()) : void throws(RejectedExecutionException) {
+        carrier : KTaskCarrier* = new KTaskCarrier(task);
+        runFn : *(byte*) = KTaskCarrier::runAndDestroy;
+        dropFn : *(byte*) = KTaskCarrier::dropAndDestroy;
+        if (__k_executor_lease_submit(_native, runFn, dropFn, (byte*) carrier) != 0)
+            throw RejectedExecutionException();
     }
 }
 
@@ -82,6 +214,31 @@ public interface Executor {
     default const execute(task: !(), priority: int) : void throws(RejectedExecutionException) {
         execute(task);
     }
+
+    /**
+     * Executes the given Runnable command.
+     *
+     * @param command The Runnable command to execute.
+     * @throws RejectedExecutionException if the executor cannot accept the task.
+     */
+    default execute(command: Runnable+) : void throws(RejectedExecutionException) {
+        cmd : Runnable* = &(*command);
+        task : !() = [cmd]() {
+            try {
+                cmd->run();
+            } catch (e: Throwable&) {
+                __k_executor_report_failure(1, e.getCode());
+            }
+        };
+        execute(task);
+    }
+
+    /**
+     * Acquires a lease to this executor.
+     *
+     * @return A valid ExecutorLease.
+     */
+    acquireLease() : ExecutorLease! throws(RejectedExecutionException);
 }
 
 /**
@@ -96,13 +253,10 @@ public interface Executor {
  */
 template<typename R>
 execute(executor: const Executor&, task: !():R, priority: int) : Future<R>! throws(RejectedExecutionException) {
-    runnerPtr : TaskPromiseRunner<R>* = new TaskPromiseRunner<R>(task);
-    fut : Future<R>! = runnerPtr->future();
-    ptr : byte* = (byte*) runnerPtr;
-    invoker : *(byte*) = TaskPromiseRunner<R>::invokeAndDestroy;
-
-    taskWrapper : !() = [invoker, ptr]() {
-        invoker(ptr);
+    runner : TaskPromiseRunner<R>! = new TaskPromiseRunner<R>(task);
+    fut : Future<R>! = runner->future();
+    taskWrapper : !() = [runner]() {
+        runner->run();
     };
 
     executor.execute(taskWrapper, priority);
@@ -148,6 +302,10 @@ public:
      */
     override const execute(task: !(), priority: int) : void throws(RejectedExecutionException) {
         execute(task);
+    }
+
+    override acquireLease() : ExecutorLease! throws(RejectedExecutionException) {
+        return new ExecutorLease(__k_executor_lease_create_direct());
     }
 }
 
@@ -264,8 +422,15 @@ public:
 
     clear() : void {
         locker : MutexLocker(_mutex);
+        curr : TaskNode! = _head;
         _head = null;
         _count = 0;
+        while (curr != null) {
+            next : TaskNode! = curr._next;
+            curr._next = null;
+            delete curr;
+            curr = next;
+        }
     }
 
     size() : unsigned int {
@@ -290,14 +455,14 @@ public:
 
 class WorkerRunnable : public Runnable {
 private:
-    _queue       : PriorityTaskQueue*;
+    _queue       : NativeTaskQueue*;
     _lock        : Mutex*;
     _termCond    : Condition*;
     _activeCount : unsigned int*;
     _running     : bool;
 
 public:
-    WorkerRunnable(queue: PriorityTaskQueue*, lock: Mutex*, termCond: Condition*, activeCount: unsigned int*) {
+    WorkerRunnable(queue: NativeTaskQueue*, lock: Mutex*, termCond: Condition*, activeCount: unsigned int*) {
         _queue = queue;
         _lock = lock;
         _termCond = termCond;
@@ -307,14 +472,12 @@ public:
 
     override run() : void throws(Throwable) {
         while (_running) {
-            task : !() = _queue->dequeue();
-            if (task == null) {
-                break;
-            }
             try {
-                task();
+                if (__k_native_queue_dequeue_and_run(_queue) == 0) {
+                    break;
+                }
             } catch (e: Throwable&) {
-                // Task exceptions are isolated to keep the worker thread alive
+                __k_executor_report_failure(8, e.getCode());
             }
         }
 
@@ -364,7 +527,7 @@ struct WorkerNode {
  */
 public class ThreadPoolExecutor : public Executor {
 protected:
-    _queue         : PriorityTaskQueue;
+    _queue         : NativeTaskQueue*;
     _workersHead   : WorkerNode! = null;
     _lock          : Mutex;
     _termCond      : Condition!;
@@ -384,10 +547,11 @@ public:
         _poolSize = poolSize;
         _activeThreads = poolSize;
         _termCond = _lock.newCondition();
+        _queue = __k_native_queue_create();
 
         i : unsigned int = 0;
         while (i < poolSize) {
-            worker : WorkerRunnable! = new WorkerRunnable(&_queue, &_lock, _termCond, &_activeThreads);
+            worker : WorkerRunnable! = new WorkerRunnable(_queue, &_lock, _termCond, &_activeThreads);
             wPtr : WorkerRunnable* = worker;
             thread : Thread! = new Thread(wPtr);
             tPtr : Thread* = thread;
@@ -414,6 +578,10 @@ public:
             curr = curr->_next;
         }
         _workersHead = null;
+        if (_queue != null) {
+            __k_native_queue_release(_queue);
+            _queue = null;
+        }
         if (_termCond != null) {
             delete _termCond;
             _termCond = null;
@@ -442,9 +610,27 @@ public:
         if (isShutdown()) {
             throw RejectedExecutionException();
         }
-        if (!_queue.enqueue(task, priority)) {
+        carrier : KTaskCarrier* = new KTaskCarrier(task);
+        ptr : byte* = (byte*) carrier;
+        runFn : *(byte*) = KTaskCarrier::runAndDestroy;
+        dropFn : *(byte*) = KTaskCarrier::dropAndDestroy;
+        if (__k_native_queue_enqueue(_queue, runFn, dropFn, ptr, priority) != 0) {
             throw RejectedExecutionException();
         }
+    }
+
+    /**
+     * Acquires a lease to this executor.
+     */
+    override acquireLease() : ExecutorLease! throws(RejectedExecutionException) {
+        if (isShutdown()) {
+            throw RejectedExecutionException();
+        }
+        n : NativeExecutorLease* = __k_native_queue_get_lease(_queue);
+        if (n == null) {
+            throw RejectedExecutionException();
+        }
+        return new ExecutorLease(n);
     }
 
     /**
@@ -452,7 +638,9 @@ public:
      * executed, but no new tasks will be accepted.
      */
     shutdown() : void {
-        _queue.close();
+        if (_queue != null) {
+            __k_native_queue_close(_queue);
+        }
     }
 
     /**
@@ -460,12 +648,13 @@ public:
      * of waiting tasks.
      */
     shutdownNow() : void {
-        _queue.close();
-        _queue.clear();
+        if (_queue != null) {
+            __k_native_queue_close(_queue);
+            __k_native_queue_clear(_queue);
+        }
         curr : WorkerNode* = _workersHead;
         while (curr != null) {
             curr->_worker->stop();
-            curr->_thread->interrupt();
             curr = curr->_next;
         }
     }
@@ -474,7 +663,8 @@ public:
      * Return true if this executor has been shut down.
      */
     isShutdown() : bool {
-        return _queue.isClosed();
+        if (_queue == null) return true;
+        return __k_native_queue_is_closed(_queue) != 0;
     }
 
     /**
@@ -482,7 +672,7 @@ public:
      */
     isTerminated() : bool {
         locker : MutexLocker(_lock);
-        return _queue.isClosed() && _activeThreads == 0;
+        return isShutdown() && _activeThreads == 0;
     }
 
     /**
@@ -518,7 +708,8 @@ public:
      * Return the number of pending tasks currently in the priority queue.
      */
     getQueueSize() : unsigned int {
-        return _queue.size();
+        if (_queue == null) return 0;
+        return (unsigned int) __k_native_queue_size(_queue);
     }
 }
 

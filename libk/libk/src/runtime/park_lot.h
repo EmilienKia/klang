@@ -27,7 +27,7 @@
  * therefore not interruptible.
  *
  * This module is shared by the synchronisation primitives (sync_primitives.c)
- * and by the asynchronous I/O substrate (async_io.c).
+ * and by Future/Sync observation; native I/O itself never parks its caller.
  */
 
 #ifndef KLANG_PARK_LOT_H
@@ -50,6 +50,7 @@ extern "C" {
 
 typedef struct {
     pthread_mutex_t  lock;
+    pthread_cond_t   changed; /* tokenless threads park without polling */
     KRuntimeThread** waiters;
     unsigned         count;
     unsigned         capacity;

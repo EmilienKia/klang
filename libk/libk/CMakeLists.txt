@@ -306,6 +306,7 @@ add_custom_command(
             -o ${FUTURE_STATE_OBJ} ${FUTURE_STATE_C}
     DEPENDS ${FUTURE_STATE_C}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/future_state.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/park_lot.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
     COMMENT "Compiling K runtime future substrate (future_state.c)"
     VERBATIM
@@ -336,6 +337,7 @@ add_custom_command(
             -o ${SYNC_PRIMITIVES_OBJ} ${SYNC_PRIMITIVES_C}
     DEPENDS ${SYNC_PRIMITIVES_C}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/sync_primitives.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/park_lot.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
     COMMENT "Compiling K runtime synchronisation substrate (sync_primitives.c)"
     VERBATIM
@@ -430,6 +432,27 @@ add_custom_command(
     VERBATIM
 )
 
+set(EXECUTOR_RUNTIME_C ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/executor_runtime.c)
+set(EXECUTOR_RUNTIME_OBJ ${LIBK_OUTPUT_DIR}/executor_runtime.o)
+file(GLOB LIBK_PROACTOR_HEADERS CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/io_*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/executor_runtime.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/callable_abi.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/future_state.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/park_lot.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/sync_primitives.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_thread.h
+)
+add_custom_command(
+    OUTPUT ${EXECUTOR_RUNTIME_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -I${CMAKE_CURRENT_SOURCE_DIR}/src/runtime
+            -o ${EXECUTOR_RUNTIME_OBJ} ${EXECUTOR_RUNTIME_C}
+    DEPENDS ${EXECUTOR_RUNTIME_C} ${LIBK_PROACTOR_HEADERS}
+    COMMENT "Compiling strong executor endpoints and EventLoop timers"
+    VERBATIM
+)
+# Header changes must rebuild every C object that shares these state layouts.
 # ── Compile Application entry-point FFI helpers ───────────────────────────
 set(APP_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/application_ffi.c)
 set(APP_FFI_OBJ ${LIBK_OUTPUT_DIR}/application_ffi.o)
@@ -584,6 +607,7 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
                    ${PARK_LOT_OBJ} ${ASYNC_IO_OBJ} ${ASYNC_FFI_OBJ}
                    ${NETWORK_FFI_OBJ}
+                   ${EXECUTOR_RUNTIME_OBJ}
                    ${APP_FFI_OBJ}
                    ${MODULE_FFI_OBJ}
                    ${UUID_FFI_OBJ}

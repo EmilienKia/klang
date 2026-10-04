@@ -61,21 +61,30 @@ int64_t k_monotonic_nanos(void) {
  * Waiters park on the futex word of their own KInterruptToken — the very word
  * k_thread_interrupt() bumps — which is what makes every wait in this file
  * interruptible without any dedicated wake-up channel.  A thread without a
- * runtime token (e.g. the process main thread) polls instead, and is therefore
- * not interruptible.
+ * runtime token (e.g. the process main thread) waits on the shared monotonic
+ * condition and is therefore not interruptible.
  */
 
-/* Longest single park for a thread that has no interrupt token. */
-#define K_PARK_TOKENLESS_POLL_NANOS (500000LL) /* 0.5 ms */
+/* Retry delay only when allocating a registered-thread waiter fails. */
+#define K_PARK_REGISTRATION_RETRY_NANOS (500000LL) /* 0.5 ms */
 
 int k_park_lot_init(KParkLot* lot) {
     lot->waiters  = NULL;
     lot->count    = 0u;
     lot->capacity = 0u;
-    return pthread_mutex_init(&lot->lock, NULL);
+    int rc = pthread_mutex_init(&lot->lock, NULL);
+    if (rc) return rc;
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    rc = pthread_cond_init(&lot->changed, &attr);
+    pthread_condattr_destroy(&attr);
+    if (rc) pthread_mutex_destroy(&lot->lock);
+    return rc;
 }
 
 void k_park_lot_destroy(KParkLot* lot) {
+    pthread_cond_destroy(&lot->changed);
     pthread_mutex_destroy(&lot->lock);
     free(lot->waiters);
     lot->waiters  = NULL;
@@ -116,6 +125,7 @@ static void k_park_lot_remove(KParkLot* lot, KRuntimeThread* t) {
  * generation while holding the same lock.
  */
 void k_park_lot_wake_all(KParkLot* lot) {
+    pthread_cond_broadcast(&lot->changed);
     for (unsigned i = 0; i < lot->count; ++i) {
         KRuntimeThread* w = lot->waiters[i];
         atomic_fetch_add_explicit(&w->interrupt.futex_word, 1u,
@@ -174,17 +184,14 @@ int k_park_until(KParkLot* lot,
         }
 
         if (self == NULL) {
-            /* No interrupt token: poll in short slices. */
-            int64_t slice = K_PARK_TOKENLESS_POLL_NANOS;
-            if (remaining >= 0 && remaining < slice) {
-                slice = remaining;
+            if (remaining < 0) pthread_cond_wait(&lot->changed, &lot->lock);
+            else {
+                struct timespec ts = {
+                    .tv_sec = (time_t)(deadline / 1000000000LL),
+                    .tv_nsec = (long)(deadline % 1000000000LL)
+                };
+                pthread_cond_timedwait(&lot->changed, &lot->lock, &ts);
             }
-            pthread_mutex_unlock(&lot->lock);
-            struct timespec ts;
-            ts.tv_sec  = (time_t)(slice / 1000000000LL);
-            ts.tv_nsec = (long)(slice % 1000000000LL);
-            nanosleep(&ts, NULL);
-            pthread_mutex_lock(&lot->lock);
             continue;
         }
 
@@ -194,7 +201,7 @@ int k_park_until(KParkLot* lot,
             pthread_mutex_unlock(&lot->lock);
             struct timespec ts;
             ts.tv_sec  = 0;
-            ts.tv_nsec = (long)K_PARK_TOKENLESS_POLL_NANOS;
+            ts.tv_nsec = (long)K_PARK_REGISTRATION_RETRY_NANOS;
             nanosleep(&ts, NULL);
             pthread_mutex_lock(&lot->lock);
             continue;
@@ -225,4 +232,3 @@ int k_park_until(KParkLot* lot,
     pthread_mutex_unlock(&lot->lock);
     return result;
 }
-

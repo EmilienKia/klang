@@ -73,7 +73,7 @@ public final struct Future { … }
 |--------|-------------|
 | `Future()` | Creates a detached future that is permanently pending. Useful as a placeholder. |
 | `~Future()` | Releases this handle's share of the state. The last handle destroys the shared payload. |
-| `share() : Future<T>` | Returns an additional, independent handle on the same shared state. |
+| `share() : Future<T>!` | Returns an owning observer of the same shared state. |
 
 `Future<T>` is *not* implicitly copyable in a meaningful way: always obtain
 additional handles through `share()`, and destroy each of them exactly once.
@@ -102,6 +102,7 @@ additional handles through `share()`, and destroy each of them exactly once.
 | `TimeoutException` | *(timed overload only)* `timeout` expired before completion. |
 | `CancellationException` | The future was cancelled. |
 | `ExecutionException` | The future failed. The original throwable is the exception's cause. |
+| `IllegalStateException` | Waiting from the I/O completion thread is forbidden; blocking it would prevent completion progress. |
 
 A non-positive `timeout` polls: it either returns immediately or throws
 `TimeoutException`.
@@ -112,10 +113,21 @@ A non-positive `timeout` polls: it either returns immediately or throws
 |--------|-------------|
 | `cancel() : bool` | Attempts to move a pending future to the cancelled state. Returns `false` if it was already done. |
 
-Cancellation is a *completion*, not an abort: it wakes every waiter and makes
-them throw `CancellationException`, but it does not interrupt the producer.
-Producers that want to react to cancellation should poll `isCancelled()` on
-their `Promise<T>` through `isDone()`.
+Ordinary cancellation publishes `CancellationException` and does not interrupt
+a producer thread. Native I/O producers register cancellation and quiescence
+hooks, so Future cancellation also requests cancellation of the operation.
+FileChannel and stream fully producers defer terminal publication until their current
+child has drained: the accepted request may leave the Future pending briefly.
+No-byte cancellation publishes CancellationException; a partial transfer fails
+with an ExecutionException whose InterruptedIOException cause contains the
+final cumulative byte count. `waitQuiescent()` remains available to drain
+kernel storage. See [Asynchronous I/O](io-async.md).
+
+Primitive and datagram cancellation may publish before target drain; a terminal
+Future alone does not establish that its buffer is reusable. The Sync bridge
+drains native activity before returning or propagating interruption/cancellation.
+Channel and datagram result values are retained copies, so repeated `get()` and
+shared observers do not move an owner out of the Future's payload.
 
 ---
 

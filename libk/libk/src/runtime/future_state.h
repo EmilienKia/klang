@@ -40,7 +40,8 @@ typedef enum {
 typedef enum {
     K_FUTURE_WAIT_DONE        = 0,  /* the future reached a terminal state    */
     K_FUTURE_WAIT_INTERRUPTED = 1,  /* the calling thread has been interrupted*/
-    K_FUTURE_WAIT_TIMEOUT     = 2   /* the deadline expired while pending     */
+    K_FUTURE_WAIT_TIMEOUT     = 2,  /* the deadline expired while pending     */
+    K_FUTURE_WAIT_UNSUPPORTED = 3   /* inherited state after fork             */
 } KFutureWaitResult;
 
 /*
@@ -130,6 +131,62 @@ bool k_future_state_complete(KFutureState* st, int completion);
  *         is never lost; the interrupted flag itself is left untouched.
  */
 int k_future_state_wait(KFutureState* st, int64_t timeout_nanos);
+
+/* ── Cancellation & Quiescence Hooks ────────────────────────────────────── */
+
+typedef struct {
+    void* context;
+    bool  (*cancel)(void* context);
+    void  (*drop)(void* context);
+} KFutureCancelHook;
+
+typedef struct {
+    void* context;
+    int   (*wait_quiescent)(void* context, int64_t timeout_nanos);
+    void  (*drop)(void* context);
+} KFutureQuiescentHook;
+
+/**
+ * Register an optional cancellation hook on the state. May be called at most
+ * once while pending. On terminal publication its carrier is atomically
+ * extracted and dropped, or is extracted exactly once by cancel().
+ */
+void k_future_state_set_cancel_hook(KFutureState* st, void* context,
+                                    bool (*cancel)(void* context),
+                                    void (*drop)(void* context));
+/* Opt in before submission: the producer publishes cancellation after drain,
+ * so composite failures can carry the final irreversible byte count. */
+void k_future_state_defer_cancellation(KFutureState* st);
+
+/**
+ * Register an optional quiescence hook on the state. May be called at most
+ * once. It remains available after terminal publication because a cancelled
+ * Future can become terminal before its producer is quiescent. Its carrier is
+ * dropped with the shared state, after the last Future/Promise handle.
+ */
+void k_future_state_set_quiescent_hook(KFutureState* st, void* context,
+                                       int (*wait_quiescent)(void* context, int64_t timeout_nanos),
+                                       void (*drop)(void* context));
+
+/**
+ * Request cancellation of the future.
+ *
+ * If a cancel hook is registered, it is extracted and invoked. If the hook
+ * returns true (or if no hook was registered), the state transitions to
+ * K_FUTURE_CANCELLED and blocked waiters are woken, unless the producer opted
+ * into deferred cancellation. In that case true acknowledges the request;
+ * the producer must publish its final result after quiescence.
+ *
+ * @return true when cancellation was accepted, not necessarily published.
+ *         False when already terminal, already claimed or rejected.
+ */
+bool k_future_state_cancel(KFutureState* st);
+
+/**
+ * Wait for quiescence via the registered quiescent hook, or return 0
+ * immediately if no hook is registered.
+ */
+int k_future_state_wait_quiescent(KFutureState* st, int64_t timeout_nanos);
 
 #ifdef __cplusplus
 }
