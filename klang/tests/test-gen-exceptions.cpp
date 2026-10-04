@@ -234,6 +234,80 @@ TEST_CASE("Exception: throwing destruction clears moved owners and reaches the l
     }
 }
 
+TEST_CASE("Exception: failed constructors unwind only completed members in reverse order",
+          "[gen][exceptions][copy-arguments][constructor-members][lifecycle][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module failed_constructor_members;
+        live : int = 0;
+        drops : int = 0;
+        order : int = 0;
+        wholeDrops : int = 0;
+        failMember : bool = false;
+        struct Token {
+            Token() { ++live; }
+            ~Token() { --live; ++drops; }
+        }
+        struct Member {
+            id : int;
+            token : Token! = null;
+            Member(value : int) : id(value) {
+                if (failMember && id == 2) throw Exception(923);
+                token = new Token();
+            }
+            ~Member() { order = order * 10 + id; delete token; }
+        }
+        struct Payload {
+            first : Member;
+            second : Member;
+            Payload() : first(1), second(2) {}
+            Payload(other : const Payload&) : first(1), second(2) {
+                throw Exception(922);
+            }
+            ~Payload() { ++wholeDrops; }
+        }
+        consume(value : Payload) { wholeDrops = -100; }
+        test() : int {
+            live = 0; drops = 0; order = 0; wholeDrops = 0; failMember = false;
+            valid : bool = true;
+            {
+                source : Payload;
+                code : int = 0;
+                try { consume(source); }
+                catch (e : Throwable&) { code = e.getCode(); }
+                valid = valid && code == 922 && live == 2 && drops == 2;
+                valid = valid && order == 21 && wholeDrops == 0;
+            }
+            valid = valid && live == 0 && drops == 4 && order == 2121 && wholeDrops == 1;
+            order = 0; failMember = true;
+            code : int = 0;
+            try { failed : Payload; }
+            catch (e : Throwable&) { code = e.getCode(); }
+            return valid && code == 923 && live == 0 && drops == 5 &&
+                order == 1 && wholeDrops == 1 ? 1 : 0;
+        }
+        liveCount() : int { return live; }
+        dropCount() : int { return drops; }
+        destructionOrder() : int { return order; }
+        payloadDropCount() : int { return wholeDrops; }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("test");
+    auto live = jit->lookup_symbol<int (*)()>("liveCount");
+    auto drops = jit->lookup_symbol<int (*)()>("dropCount");
+    auto order = jit->lookup_symbol<int (*)()>("destructionOrder");
+    auto wholeDrops = jit->lookup_symbol<int (*)()>("payloadDropCount");
+    REQUIRE(run);
+    REQUIRE(live);
+    REQUIRE(drops);
+    REQUIRE(order);
+    REQUIRE(wholeDrops);
+    int result = 0;
+    REQUIRE_NOTHROW(result = run());
+    INFO("live=" << live() << " drops=" << drops() << " order=" << order()
+         << " wholeDrops=" << wholeDrops());
+    CHECK(result == 1);
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 //  1. Basic try-catch syntax acceptance

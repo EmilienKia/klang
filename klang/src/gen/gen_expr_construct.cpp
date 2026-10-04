@@ -34,6 +34,9 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Intrinsics.h>
+#include <llvm/ADT/ScopeExit.h>
+#include <algorithm>
+#include <exception>
 #include <unordered_set>
 #include "../errors.hpp"
 namespace k::model::gen {
@@ -446,6 +449,18 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             "Internal error: constructor invocation expression does not refer to a variable definition; "
             "this indicates a compiler bug — the constructed symbol must be a variable");
     }
+    const int uncaught = std::uncaught_exceptions();
+    auto mark_member_constructed = llvm::make_scope_exit([&]() {
+        if (std::uncaught_exceptions() != uncaught) return;
+        auto flag = _constructor_member_dtor_flags.find(var_def);
+        if (flag == _constructor_member_dtor_flags.end()) return;
+        _builder->CreateStore(_builder->getTrue(), flag->second);
+        if (std::find(_constructor_initialized_members.begin(),
+                      _constructor_initialized_members.end(), var_def)
+            == _constructor_initialized_members.end()) {
+            _constructor_initialized_members.push_back(var_def);
+        }
+    });
 
     // Aliases have no representation of their own: construct on the canonical type.
     auto var_type = type::canonical(var_def->get_type());

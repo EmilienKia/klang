@@ -345,6 +345,9 @@ protected:
     std::map<std::shared_ptr<variable_statement>, llvm::AllocaInst*> _dtor_flags;
     /** Cleared before destroying a by-value parameter, including on the normal path. */
     std::map<std::shared_ptr<parameter>, llvm::AllocaInst*> _struct_param_dtor_flags;
+    /** Failed constructors unwind completed subobjects, never the enclosing object. */
+    std::map<std::shared_ptr<variable_definition>, llvm::AllocaInst*> _constructor_member_dtor_flags;
+    std::vector<std::shared_ptr<variable_definition>> _constructor_initialized_members;
 
     /** Context for a finally block that must be emitted on early exit (return/break/continue). */
     struct finally_context {
@@ -566,6 +569,7 @@ public:
      * destructor calls (most-derived class only).
      */
     void emit_destructor_cleanup(function& function);
+    void emit_constructor_unwind_cleanup(function& function);
 
     /**
      * Emit intrinsic body for UniSlot::construct — placement constructor call on _slot.

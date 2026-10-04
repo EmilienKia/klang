@@ -119,6 +119,13 @@ are cleaned up in reverse declaration order.
 - Sized arrays destroy their elements in reverse element order.
 - Only fully constructed objects are destroyed.
 
+If a constructor throws, the enclosing object's destructor must not run.
+Its completed base and member subobjects must nevertheless be destroyed in
+reverse initialization order. A subobject whose own constructor failed is not
+destroyed by the enclosing constructor; it must unwind its completed subobjects
+in turn. Owned member resources already acquired by the failed constructor are
+released without calling the enclosing object's destructor.
+
 This unwinding cleanup is the RAII mechanism used by the compiler to preserve
 scope-based lifetime semantics across exceptions.
 

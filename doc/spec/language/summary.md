@@ -2139,6 +2139,8 @@ adoption and FFI interop.
 When an exception propagates through a stack frame:
 - All local variables with destructors are destroyed in reverse declaration order.
 - Owner variables (`T!`) are auto-deleted.
+- A failed constructor destroys its completed base/member subobjects in reverse
+  initialization order, but not the enclosing object or a failed subobject.
 - If construction of a by-value argument fails, the callee is not entered and
   earlier completed arguments are cleaned up exactly once.
 - The cleanup is implemented via LLVM landing pads with cleanup clauses.

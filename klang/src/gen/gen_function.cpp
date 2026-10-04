@@ -1494,6 +1494,8 @@ void implementation_generator::visit_function(function &function) {
     _exc_sel_slot = nullptr;
     _dtor_flags.clear();
     _struct_param_dtor_flags.clear();
+    _constructor_member_dtor_flags.clear();
+    _constructor_initialized_members.clear();
     _lpad_depth_counter = 0;
     while (!_cleanup_blocks.empty()) _cleanup_blocks.pop();
     while (!_cleanup_vars_stack.empty()) _cleanup_vars_stack.pop();
@@ -1675,6 +1677,27 @@ void implementation_generator::visit_function(function &function) {
         }
     }
 
+    if (auto ctor = function.shared_as<constructor>();
+        ctor && !get_intrinsic_name(function).has_value()
+        && !(ctor->is_copy_constructor() && ctor->is_compiler_generated())) {
+        for (const auto& [name, definition] : ctor->get_owner()->variables()) {
+            auto member = std::dynamic_pointer_cast<member_variable_definition>(definition);
+            if (!member) continue;
+            auto member_type = type::canonical(type::remove_const(member->get_type()));
+            bool needs_cleanup = type::is_owner(member_type) || type::is_sized_array(member_type);
+            if (auto st = std::dynamic_pointer_cast<struct_type>(member_type)) {
+                needs_cleanup = !st->get_struct() || st->get_struct()->get_destructor();
+            } else if (auto ct = std::dynamic_pointer_cast<callable_type>(member_type)) {
+                needs_cleanup = ct->is_owner();
+            }
+            if (!needs_cleanup) continue;
+            auto* flag = _builder->CreateAlloca(_builder->getInt1Ty(), nullptr,
+                name + ".member_constructed");
+            _builder->CreateStore(_builder->getFalse(), flag);
+            _constructor_member_dtor_flags.emplace(member, flag);
+        }
+    }
+
     // Step 6: For constructors: emit pre-block IR (zero-init, parent ptr, copy ctor)
     // Constructor pre-block: zero-init, parent pointer, copy ctor, standalone vbase init
     if (emit_constructor_pre_block(function, func)) {
@@ -1732,7 +1755,8 @@ void implementation_generator::visit_function(function &function) {
     // Step 6b: Set up function-level cleanup landing pad for owner/struct params.
     // This ensures that if the function body throws, owned parameters are freed
     // and struct-by-value parameters are destroyed during unwinding.
-    bool has_func_level_cleanup = (!_owner_params_stack.empty() || !_struct_params_stack.empty());
+    bool has_func_level_cleanup = (!_owner_params_stack.empty() || !_struct_params_stack.empty()
+        || !_constructor_member_dtor_flags.empty());
     if (has_func_level_cleanup) {
         auto& llvm_ctx = _context->llvm_context();
         auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
@@ -1810,6 +1834,7 @@ void implementation_generator::visit_function(function &function) {
         func->insert(func->end(), func_ctx.cleanup_code_bb);
         _builder->SetInsertPoint(func_ctx.cleanup_code_bb);
 
+        emit_constructor_unwind_cleanup(function);
         emit_active_parameter_cleanup("func_unwind_param");
 
         // Resume unwinding
@@ -2212,6 +2237,57 @@ void implementation_generator::emit_constructor_post_block(function& function) {
                 "vbase_" + other_vbase->get_short_name() + "_live_ptr");
             set_vbptrs(*other_vbase, ov_ptr);
         }
+    }
+}
+
+// A failed constructor owns its completed subobjects, not a complete instance.
+void implementation_generator::emit_constructor_unwind_cleanup(function& function) {
+    auto ctor = function.shared_as<constructor>();
+    if (!ctor || _constructor_initialized_members.empty()) return;
+    auto owner = ctor->get_owner();
+    auto this_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+    if (this_it == _context->_function_this_variables.end()) return;
+    auto* this_ptr = _builder->CreateLoad(
+        owner->get_struct_type()->get_reference()->get_llvm_type(), this_it->second);
+    auto* func = _builder->GetInsertBlock()->getParent();
+    for (auto it = _constructor_initialized_members.rbegin();
+         it != _constructor_initialized_members.rend(); ++it) {
+        auto flag = _constructor_member_dtor_flags.find(*it);
+        auto field = owner->get_struct_type()->get_member((*it)->get_short_name());
+        if (flag == _constructor_member_dtor_flags.end() || !field) continue;
+        auto* destroy_bb = llvm::BasicBlock::Create(**_context, "member_unwind_destroy", func);
+        auto* done_bb = llvm::BasicBlock::Create(**_context, "member_unwind_done", func);
+        auto* live = _builder->CreateLoad(_builder->getInt1Ty(), flag->second);
+        _builder->CreateCondBr(live, destroy_bb, done_bb);
+        _builder->SetInsertPoint(destroy_bb);
+        _builder->CreateStore(_builder->getFalse(), flag->second);
+        auto* storage = _builder->CreateStructGEP(
+            owner->get_struct_type()->get_llvm_type(), this_ptr, field->index);
+        auto member_type = type::canonical(type::remove_const((*it)->get_type()));
+        if (auto own = std::dynamic_pointer_cast<owner_type>(member_type)) {
+            emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                storage, own->get_owned_type(), "member_unwind_owner", make_virtual_call_emitter());
+        } else if (auto ct = std::dynamic_pointer_cast<callable_type>(member_type)) {
+            emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(), storage,
+                _context->get_or_create_callable_llvm_type(), "member_unwind_callable",
+                make_virtual_call_emitter());
+        } else if (auto array = std::dynamic_pointer_cast<sized_array_type>(member_type)) {
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                storage, array, make_virtual_call_emitter());
+        } else if (auto st = std::dynamic_pointer_cast<struct_type>(member_type)) {
+            if (auto agg = st->get_struct()) {
+                if (auto dtor = agg->get_destructor()) {
+                    auto* llvm_dtor = _context->lookup_llvm_function(dtor);
+                    if (llvm_dtor) {
+                        create_call_or_invoke(llvm_dtor->getFunctionType(), llvm_dtor, {storage});
+                    }
+                }
+            } else if (auto udef = find_union_by_struct_type(_unit.get_root_namespace(), st)) {
+                emit_union_cleanup(storage, *udef);
+            }
+        }
+        _builder->CreateBr(done_bb);
+        _builder->SetInsertPoint(done_bb);
     }
 }
 
