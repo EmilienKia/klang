@@ -146,6 +146,7 @@ private:
     /// cycle-path reporting).  Paired with _loading_set for O(1) membership test.
     std::vector<std::string> _loading_stack;
     std::unordered_set<std::string> _loading_set;
+    std::unordered_set<std::string> _template_private_declarations;
 
     /// Set of root-namespace components already claimed by a loaded import.
     std::unordered_map<std::string, std::string> _root_ns_owners;
@@ -256,4 +257,3 @@ private:
 } // namespace k::model
 
 #endif // KLANG_KDI_IMPORTER_HPP
-

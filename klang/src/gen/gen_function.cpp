@@ -975,6 +975,11 @@ void type_reference_resolver::visit_function(function& fn) {
 
     // Redirected functions have no body to visit
     if (fn.is_redirected()) {
+        if (auto target = fn.get_redirect_target()) {
+            auto owner = scope_lookup::enclosing_namespace(*target);
+            if (owner && owner->get_short_name().starts_with("__kdi_private_"))
+                check_function_visibility(*target, fn);
+        }
         return;
     }
 

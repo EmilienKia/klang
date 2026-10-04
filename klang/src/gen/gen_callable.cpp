@@ -150,6 +150,11 @@ void symbol_resolver::visit_lambda_expression(lambda_expression& expr) {
 
 void type_reference_resolver::visit_callable_bind_expression(callable_bind_expression& expr) {
     if (expr.get_context()) expr.get_context()->accept(*this);
+    if (auto target = expr.get_target()) {
+        auto owner = scope_lookup::enclosing_namespace(*target);
+        if (owner && owner->get_short_name().starts_with("__kdi_private_"))
+            check_function_visibility(*target, expr);
+    }
     // The bind type is installed by whoever created the node (adapt_callable_type),
     // because only the target declaration knows the requested addresser.
 }

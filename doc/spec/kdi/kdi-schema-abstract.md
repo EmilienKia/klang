@@ -321,6 +321,41 @@ Rules:
 * Same-named function template definitions must all be retained when their
   parameter lists differ. Deduplication must identify a definition, not only
   its name.
+* Template `source` may include a private FFI declaration prelude in a
+  compiler-generated namespace whose name begins with `__kdi_private_`.
+  Such declarations are lexical dependencies of the originating template,
+  not namespace-level exported API. Importers must preserve their native
+  symbol names and private visibility, share identical declarations across
+  templates from the same origin, and retain the definition scope when
+  cloning template bodies. Consumer declarations must not replace these
+  dependencies. This uses the existing `source` field; the schema remains `0.1`.
+  Exporters must collect dependencies from actual symbol expressions using
+  definition-site lexical lookup, including accessible enclosing namespaces
+  and qualified declarations, not textual matches in comments or literals.
+  References must identify their original target independently of consumer
+  declarations and same-named native functions in other namespaces.
+  A consumer must not acquire definition privileges by naming, entering, or
+  declaring a template in the generated dependency namespace.
+  Dependency collection must retain the definition's original visibility rights;
+  resolving a qualified name must not make an otherwise inaccessible private
+  declaration available to that template.
+  The prelude must use canonical K callable syntax (e.g. `*(byte*, byte*)`
+  for a void-returning callback and `!(int):int` for an owned callback),
+  preserving addressers, member owners, return types and checked `throws`
+  contracts. FFI annotations must be fully qualified (`@k::ffi::Extern`,
+  `@k::ffi::CString`); callback types must not be replaced with raw pointers.
+  Required private namespace-level aggregate definitions, including typed native
+  handles used within nested callback/result types, are source dependencies too.
+  Namespace declarations in those fragments must use legal K syntax (no leading
+  `::`); import places the fragment at its fully qualified definition scope.
+  Root-qualified expression references remain legal and must not be truncated.
+  They retain declaration-scope type names and private visibility, are shared
+  across templates from one origin, and do not become public aggregate DTOs.
+  Private type preludes may use fully qualified namespace fragments to retain their
+  original lexical ownership rather than relocating into the template namespace.
+  Re-export must preserve the already-normalized template declaration and emit
+  each dependency prelude once; consumer import exposure must not cause the
+  declaration to be reconstructed with unrelated consumer `using` directives.
 * Union templates are always classic (no signature payload exists for unions);
   they only ever export `source`.
 KdiAggregate {

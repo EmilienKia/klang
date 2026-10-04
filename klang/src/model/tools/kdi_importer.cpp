@@ -30,6 +30,7 @@
 
 #include <sstream>
 #include <algorithm>
+#include <utility>
 #include <stdexcept>
 #include <functional>
 #include <unordered_map>
@@ -1359,12 +1360,96 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             if (!fn_decl || !fn_decl->is_template()) {
                 throw std::runtime_error("stored member template source is not a function template");
             }
+        // Multiple templates can depend on the same private native declaration.
+        // Keep a single definition-namespace declaration, including on re-export.
+        auto private_origin = tdef.origin_module.empty()
+            ? parent_kdi_ns.fq_name : tdef.origin_module;
+        if (private_origin.starts_with("::")) private_origin.erase(0, 2);
+        const auto private_scope_name = template_private_scope_name(private_origin);
+        // Namespace declarations cannot start with '::'. Fully qualified private
+        // type fragments are explicitly rebuilt at the unit root, not target_ns.
+        for (auto it = ast_unit->declarations.begin(); it != ast_unit->declarations.end();) {
+            auto types = std::dynamic_pointer_cast<parse::ast::namespace_decl>(*it);
+            if (!types || !types->name || types->declarations.empty()
+                || types->name->to_name().to_string() == private_scope_name
+                || !std::all_of(types->declarations.begin(), types->declarations.end(),
+                    [](const auto& declaration) {
+                        auto agg = std::dynamic_pointer_cast<parse::ast::aggregate_decl>(declaration);
+                        return agg && !agg->is_template()
+                            && std::any_of(agg->specifiers.begin(), agg->specifiers.end(),
+                                [](const auto& specifier) { return specifier.type == lex::keyword::PRIVATE; });
+                    })) {
+                ++it;
+                continue;
+            }
+            auto type_scope = imported_namespace(_unit, types->name->to_name().to_string());
+            parse::ast::unit private_unit;
+            for (const auto& declaration : types->declarations) {
+                auto agg = std::dynamic_pointer_cast<parse::ast::aggregate_decl>(declaration);
+                if (!agg || agg->is_template()
+                    || std::none_of(agg->specifiers.begin(), agg->specifiers.end(),
+                        [](const auto& specifier) { return specifier.type == lex::keyword::PRIVATE; })) {
+                    throw std::runtime_error("Invalid private template type dependency");
+                }
+                auto first = agg->get_first_lexeme();
+                auto last = agg->get_last_lexeme();
+                if (!first || !last) throw std::runtime_error("Private template type dependency has no source range");
+                auto begin = std::visit([](const auto& token) { return token.content.data(); }, *first);
+                auto end = std::visit([](const auto& token) {
+                    return token.content.data() + token.content.size();
+                }, *last);
+                if (_template_private_declarations.insert(
+                        type_scope->get_fq_name() + ":type:" + std::string(begin, end)).second) {
+                    private_unit.declarations.push_back(declaration);
+                }
+            }
+            model_builder::visit_imported_declarations(
+                _logger, ctx, private_unit, _unit, type_scope);
+            it = ast_unit->declarations.erase(it);
+        }
+        std::erase_if(ast_unit->declarations, [&](const auto& declaration) {
+            auto agg = std::dynamic_pointer_cast<parse::ast::aggregate_decl>(declaration);
+            if (!agg || agg->is_template()
+                || std::none_of(agg->specifiers.begin(), agg->specifiers.end(),
+                    [](const auto& specifier) { return specifier.type == lex::keyword::PRIVATE; })) return false;
+            auto first = agg->get_first_lexeme();
+            auto last = agg->get_last_lexeme();
+            if (!first || !last) return false;
+            auto begin = std::visit([](const auto& token) { return token.content.data(); }, *first);
+            auto end = std::visit([](const auto& token) {
+                return token.content.data() + token.content.size();
+            }, *last);
+            return !_template_private_declarations.insert(
+                private_origin + ":type:" + std::string(begin, end)).second;
+        });
+        for (auto& declaration : ast_unit->declarations) {
+            auto dependencies = std::dynamic_pointer_cast<parse::ast::namespace_decl>(declaration);
+            if (!dependencies || !dependencies->name
+                || dependencies->name->to_name().to_string() != private_scope_name) continue;
+            std::erase_if(dependencies->declarations, [&](const auto& dependency) {
+                auto fn = std::dynamic_pointer_cast<parse::ast::function_decl>(dependency);
+                if (!fn) return false;
+                auto first = fn->annotations.empty()
+                    ? fn->get_first_lexeme() : fn->annotations.front()->get_first_lexeme();
+                auto last = fn->get_last_lexeme();
+                if (!first || !last) return false;
+                auto begin = std::visit([](const auto& token) { return token.content.data(); }, *first);
+                auto end = std::visit([](const auto& token) {
+                    return token.content.data() + token.content.size();
+                }, *last);
+                return !_template_private_declarations.insert(
+                    private_scope_name + ":" + std::string(begin, end)).second;
+            });
+        }
+
+        // ── 4. Build declarations without changing the consumer unit or its AST ──
+        if (template_host) {
             k::model::model_builder::visit_member(
-                _logger, ctx, *fn_decl, _unit, template_host,
-                tdef.visibility == "protected" ? PROTECTED : PUBLIC, target_ns);
+                _logger, ctx, *std::dynamic_pointer_cast<k::parse::ast::function_decl>(ast_unit->declarations.front()),
+                _unit, template_host, tdef.visibility == "protected" ? PROTECTED : PUBLIC, target_ns);
         } else {
-            // Build declarations without changing the consumer unit or its AST.
-            // Keep overloads while suppressing only an already imported identical definition.
+            // Keep same-named overloads, but avoid materializing the exact same
+            // source definition twice during repeated or re-exported imports.
             std::erase_if(ast_unit->declarations, [&](const auto& declaration) {
                 auto fn = std::dynamic_pointer_cast<parse::ast::function_decl>(declaration);
                 if (!fn || fn->template_source_text.empty()) return false;
@@ -1396,13 +1481,18 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             auto tag = [&origin](tpl_info* ti) {
                 if (ti && ti->origin_module_ns_fq.empty()) ti->origin_module_ns_fq = origin;
             };
+            auto private_scope = std::as_const(*target_ns).get_child_namespace(private_scope_name);
+            auto tag_definition = [&](tpl_info* ti) {
+                tag(ti);
+                if (ti && private_scope) ti->private_definition_scope = std::const_pointer_cast<ns>(private_scope);
+            };
             if (template_host) {
-                for (auto& fn : template_host->get_functions(tdef.name)) tag(fn->get_tpl_info());
+                for (auto& fn : template_host->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
             } else {
-                if (auto agg = target_ns->get_aggregate(tdef.name)) tag(agg->get_tpl_info());
-                for (auto& fn : target_ns->get_functions(tdef.name)) tag(fn->get_tpl_info());
-                if (auto un = target_ns->get_union(tdef.name)) tag(un->get_tpl_info());
-                if (auto al = target_ns->get_alias(tdef.name)) tag(al->get_tpl_info());
+                if (auto agg = target_ns->get_aggregate(tdef.name)) tag_definition(agg->get_tpl_info());
+                for (auto& fn : target_ns->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
+                if (auto un = target_ns->get_union(tdef.name)) tag_definition(un->get_tpl_info());
+                if (auto al = target_ns->get_alias(tdef.name)) tag_definition(al->get_tpl_info());
             }
         }
 

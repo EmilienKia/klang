@@ -55,6 +55,7 @@ class statement;
 class block;
 class parameter;
 class member_variable_definition;
+class symbol_expression;
 struct tpl_info;
 
 /**
@@ -83,6 +84,10 @@ public:
         _alias_map = std::move(map);
     }
 
+    void set_symbol_names(std::unordered_map<const symbol_expression*, std::string> names) {
+        _symbol_names = std::move(names);
+    }
+
     /**
      * Return the fully-qualified name of a type suitable for K source,
      * stripping the leading "::" prefix.
@@ -90,8 +95,8 @@ public:
     static std::string fq_name_for_source(const std::string& fq);
 
     /**
-     * Emit a complete template aggregate definition as K source.
-     * Includes the `template<...>` clause, the aggregate keyword + name,
+     * Emit a complete aggregate definition as K source.
+     * Includes the `template<...>` clause when present, the aggregate keyword + name,
      * bases, body (members, methods, constructors, destructor), and closing brace.
      *
      * @param agg  The template aggregate to emit.
@@ -108,11 +113,16 @@ public:
      */
     std::string emit_template_function(const function& fn);
 
+    /** Emit a private FFI dependency's declaration, preserving its native symbol. */
+    std::string emit_extern_function_declaration(const function& fn,
+                                                const std::string& name = {});
+
 private:
     std::ostringstream _os;
 
     /** Map from using-alias names to fully-qualified type names. */
     std::unordered_map<std::string, std::string> _alias_map;
+    std::unordered_map<const symbol_expression*, std::string> _symbol_names;
 
     /** Reset the internal stream. */
     void reset();
@@ -145,7 +155,7 @@ private:
     void emit_destructor(const destructor& dtor);
 
     /** Emit parameter list "(name : type, ...)". */
-    void emit_parameter_list(const function& fn);
+    void emit_parameter_list(const function& fn, bool ffi_annotations = false);
 
     // ── Statement emission ───────────────────────────────────────────────────
 
@@ -173,10 +183,6 @@ private:
 } // namespace k::model
 
 #endif // KLANG_K_SOURCE_EMITTER_HPP
-
-
-
-
 
 
 

@@ -39,6 +39,17 @@ class type;
 class aggregate;
 class function;
 class union_type_def;
+class ns;
+
+inline std::string template_private_scope_name(const std::string& origin) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string result = "__kdi_private_";
+    for (unsigned char ch : origin) {
+        result += hex[ch >> 4];
+        result += hex[ch & 15];
+    }
+    return result;
+}
 
 /**
  * Describes the kind of a template parameter.
@@ -239,6 +250,9 @@ struct tpl_info {
      * namespaces from colliding to a single struct_type in the registry.
      */
     std::string origin_module_ns_fq;
+
+    /** Private declarations carried by imported template source, outside consumer lookup. */
+    std::shared_ptr<ns> private_definition_scope;
 
     /** True if this template was declared with the 'generic' keyword.
      *

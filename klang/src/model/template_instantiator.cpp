@@ -1495,6 +1495,20 @@ void template_instantiator::populate_function_from_template(
     const pack_substitution_map& pack_subst,
     bool signature_only)
 {
+    auto definition_scope = src.get_template_definition_scope();
+    if (auto ti = src.get_tpl_info(); ti && ti->private_definition_scope) {
+        definition_scope = ti->private_definition_scope;
+    }
+    if (!definition_scope) {
+        for (auto owner = src.get_owner(); owner; owner = owner->ancestor<aggregate>()) {
+            if (auto ti = owner->get_tpl_info(); ti && ti->private_definition_scope) {
+                definition_scope = ti->private_definition_scope;
+                break;
+            }
+        }
+    }
+    dst->set_template_definition_scope(std::move(definition_scope));
+
     // Set return type
     dst->set_has_explicit_return_type(src.has_explicit_return_type());
     dst->set_lambda(src.is_lambda());

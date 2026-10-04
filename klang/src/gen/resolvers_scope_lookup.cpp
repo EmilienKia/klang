@@ -532,6 +532,13 @@ scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string&
                 append(fn);
             }
         }
+        if (auto fn = std::dynamic_pointer_cast<function>(current)) {
+            if (auto scope = fn->get_template_definition_scope()) {
+                auto dependencies = scope->get_functions(name);
+                if (!dependencies.empty()) {
+                    for (const auto& dependency : dependencies) append(dependency);
+                    return result;
+                }
             }
         }
         if (auto uh = std::dynamic_pointer_cast<using_holder>(current)) {

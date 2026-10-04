@@ -539,11 +539,26 @@ Rules:
   fields/constructors/methods the same way as a regular (non-template)
   aggregate/function — with template-parameter-dependent types tagged as
   `template_param` / `generic_ref` — instead of only a raw source dump.
-* Generic **aggregate** templates set `is_generic = true`, serialize an empty `source`,
+ Generic **aggregate** templates set `is_generic = true`, serialize an empty `source`,
   and provide `aggregate_signature`; the single erased synthesis of the aggregate is exported
   as a regular aggregate whose types use `erased_param`. Generic **function** templates set
   `is_generic = true` and keep their `source` (`function_signature` is a fallback when no
   source is available).
+* `source` may include private FFI declarations in a compiler-generated
+  `__kdi_private_...` namespace. These are definition-scope dependencies,
+  not exported functions; importers must retain their privacy and native
+  symbols across instantiation and re-export, deduplicating shared
+  declarations. No additional CBOR fields or visibility values are needed.
+  Prelude callable types must use canonical K syntax (`*(byte*, byte*)`,
+  `!(int):int`), retain their addressers and exception contracts, and omit
+  the return-type suffix for void. FFI annotations must be fully qualified;
+  callable transport must not be reduced to raw C function pointers.
+  Private namespace-level aggregate definitions required by those signatures,
+  including typed native handles inside nested callable/result types, are carried
+  as private source dependencies rather than public aggregate DTOs.
+  Re-parsed templates and dependencies retain their lexical origin namespace;
+  import lookup must not flatten them into the consumer root or replace their
+  types with same-named consumer declarations.
 * Union templates are always classic (no `union_signature` payload exists);
   they only ever serialize `source`.
 

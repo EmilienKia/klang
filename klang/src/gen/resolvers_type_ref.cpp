@@ -152,7 +152,7 @@ std::shared_ptr<type> build_model_type_from_kdi_signature(const kdi::kdi_type& s
  * Static constructors and destructors inherit the struct's own visibility — they are not
  * individually checked (their owner struct visibility gates them).
  */
-void type_reference_resolver::check_function_visibility(const function& func, const element& /*access_site*/) {
+void type_reference_resolver::check_function_visibility(const function& func, const element& access_site) {
     auto vis = func.get_visibility();
     if (vis == PUBLIC) return;
 
@@ -171,9 +171,28 @@ void type_reference_resolver::check_function_visibility(const function& func, co
         auto owner_ns = scope_lookup::enclosing_namespace(func);
         if (!owner_ns) return;
 
-        // Use the innermost function on the stack as access site, or fall back to the func itself
-        const element* site = &func;
+        const element* site = &access_site;
         if (!_function_stack.empty()) site = _function_stack.back().get();
+
+        auto caller = dynamic_cast<const function*>(site);
+        if (vis == PRIVATE && caller
+            && caller->get_template_definition_scope() == owner_ns) {
+            return;
+        }
+        if (vis == PRIVATE && owner_ns->get_short_name().starts_with("__kdi_private_")) {
+            for (auto declaration = access_site.shared_as<const element>(); declaration;
+                 declaration = declaration->parent<element>()) {
+                if (auto fn = std::dynamic_pointer_cast<const function>(declaration)) {
+                    auto info = fn->get_tpl_info();
+                    if (fn->get_template_definition_scope() == owner_ns
+                        || (info && info->private_definition_scope == owner_ns)) return;
+                }
+                if (auto agg = std::dynamic_pointer_cast<const aggregate>(declaration)) {
+                    auto info = agg->get_tpl_info();
+                    if (info && info->private_definition_scope == owner_ns) return;
+                }
+            }
+        }
 
         if (vis == PROTECTED) {
             auto owner_root = scope_lookup::root_namespace(*owner_ns);
@@ -183,7 +202,8 @@ void type_reference_resolver::check_function_visibility(const function& func, co
                 "it is declared in module '{}' but accessed from outside",
                 {func.get_short_name(), owner_root->get_short_name()});
         } else {
-            if (scope_lookup::is_in_same_namespace(*site, *owner_ns)) return;
+            if (!owner_ns->get_short_name().starts_with("__kdi_private_")
+                && scope_lookup::is_in_same_namespace(*site, *owner_ns)) return;
             throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED), func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
                 "private function '{}' is only accessible within namespace '{}'; "
                 "it cannot be called from outside that namespace",

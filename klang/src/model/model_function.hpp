@@ -251,13 +251,14 @@ protected:
      */
     bool _is_instantiation = false;
 
-    /**
+   /**
      * For a per-argument-set *facade* of a generic function or method: the single
      * type-erased synthesis that actually implements it. A facade carries the
      * concrete (call-site) signature, has no body and is never emitted; calls to
      * it are emitted as calls to the erased synthesis.
      */
     std::shared_ptr<function> _erased_target;
+    std::shared_ptr<ns> _template_definition_scope;
 
      /**
       * Type substitution map used when this function was instantiated from a template
@@ -438,6 +439,14 @@ public:
      * from an external library; no body, no K mangling).
      */
     bool is_extern() const { return _is_extern; }
+
+    const std::shared_ptr<ns>& get_template_definition_scope() const {
+        return _template_definition_scope;
+    }
+
+    void set_template_definition_scope(std::shared_ptr<ns> scope) {
+        _template_definition_scope = std::move(scope);
+    }
 
     /**
      * Returns the C symbol name for this extern function.

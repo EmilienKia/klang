@@ -556,8 +556,17 @@ declaration site.
 Parameterised aliases are exported as alias declarations with their source and
 optional original namespace metadata. They specialize by substituting their target,
 not by generating duplicate aggregates or callables. These declaration and type
-identities are retained on re-export.
+dentities are retained on re-export.
 
+identities are retained on re-export. Private FFI dependencies carried in template
+source likewise retain their native symbols, typed handles, and lexical visibility.
+Private type dependency fragments use grammar-valid namespace declarations
+without a leading `::`, and the importer places them in their recorded
+definition namespace rather than nesting them under the template's namespace.
+Absolute type and expression references remain legal and retain their root
+qualification. A concrete template type in a reconstructed signature must use
+source template arguments (for example, `::producer::Result<int, ::producer::Error>`),
+not an internal instantiated name that has no source declaration.
 ### 8.7 Operator Overloading
 
 Template functions may be operator overloads:

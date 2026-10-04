@@ -24,9 +24,12 @@
 #include "../aggregate_value.hpp"
 
 #include <unordered_map>
+#include <unordered_set>
 #include "../template.hpp"
 #include "../mangler.hpp"
 #include "../context.hpp"
+#include "../../gen/resolvers_scope_lookup.hpp"
+#include "../../gen/resolvers_symbol.hpp"
 
 #include "../../compiler.hpp"
 
@@ -39,6 +42,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <memory>
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -60,6 +64,161 @@ static int64_t integer_literal_to_i64(const lex::integer& lit) {
         return 0;
     }, lit.value());
 }
+
+class definition_lookup_logger : public log::logger {
+public:
+    void report(const log::diagnostic&) override {}
+};
+
+class definition_symbol_lookup : public gen::symbol_resolver {
+public:
+    using gen::symbol_resolver::symbol_resolver;
+    using gen::symbol_resolver::resolve_symbol;
+};
+
+// Template bodies have not necessarily passed symbol resolution. Walk their
+// model expressions without mutating them, using the normal lexical resolver.
+class private_dependency_collector : public default_model_visitor {
+    definition_lookup_logger _lookup_logger;
+    definition_symbol_lookup _lookup;
+    std::unordered_set<const element*> _visited;
+    std::unordered_set<const function*> _seen_functions;
+
+    void walk(const std::shared_ptr<element>& node) {
+        if (node && _visited.insert(node.get()).second) node->accept(*this);
+    }
+    void arguments(const std::vector<std::shared_ptr<expression>>& args) {
+        for (const auto& arg : args) walk(arg);
+    }
+    void add(const std::shared_ptr<function>& fn, expression* symbol = nullptr) {
+        if (!fn || fn->is_template() || !fn->is_extern() || fn->is_member()
+            || fn->get_visibility() != PRIVATE) return;
+        if (symbol) {
+            auto owner = gen::scope_lookup::enclosing_namespace(*fn);
+            bool accessible = owner && gen::scope_lookup::is_in_same_namespace(*symbol, *owner);
+            for (auto current = symbol->parent<element>(); current && !accessible;
+                 current = current->parent<element>()) {
+                if (auto fn = std::dynamic_pointer_cast<function>(current)) {
+                    auto info = fn->get_tpl_info();
+                    accessible = fn->get_template_definition_scope() == owner
+                        || (info && info->private_definition_scope == owner);
+                } else if (auto agg = std::dynamic_pointer_cast<aggregate>(current)) {
+                    auto info = agg->get_tpl_info();
+                    accessible = info && info->private_definition_scope == owner;
+                }
+            }
+            if (!accessible) return;
+        }
+        if (_seen_functions.insert(fn.get()).second) functions.push_back(fn);
+        if (symbol) references.emplace_back(symbol, fn);
+    }
+
+public:
+    std::vector<std::shared_ptr<function>> functions;
+    std::vector<std::pair<expression*, std::shared_ptr<function>>> references;
+
+    explicit private_dependency_collector(element& entity, const std::string& template_name)
+        : _lookup(_lookup_logger, entity.get_context(), *entity.ancestor<unit>()) {
+        walk(entity.shared_as<element>());
+    }
+
+    void visit_aggregate(aggregate& agg) override {
+        for (const auto& child : agg.get_children()) walk(child);
+    }
+    void visit_function(function& fn) override {
+        for (const auto& param : fn.parameters()) walk(param);
+        walk(fn.get_existing_block());
+    }
+    void visit_constructor(constructor& ctor) override {
+        for (const auto& init : ctor.member_inits()) arguments(init.args);
+        visit_function(ctor);
+    }
+    void visit_parameter(parameter& param) override { walk(param.get_default_expr()); }
+    void visit_member_variable_definition(member_variable_definition& var) override { walk(var.get_init_expr()); }
+    void visit_global_variable_definition(global_variable_definition& var) override { walk(var.get_init_expr()); }
+    void visit_variable_statement(variable_statement& var) override { walk(var.get_init_expr()); }
+    void visit_block(block& blk) override {
+        for (const auto& stmt : blk.get_statements()) walk(stmt);
+    }
+    void visit_return_statement(return_statement& stmt) override { walk(stmt.get_expression()); }
+    void visit_throw_statement(throw_statement& stmt) override { walk(stmt.get_expression()); }
+    void visit_expression_statement(expression_statement& stmt) override { walk(stmt.get_expression()); }
+    void visit_if_else_statement(if_else_statement& stmt) override {
+        for (const auto& var : stmt.get_cond_vars()) walk(var);
+        walk(stmt.get_test_expr()); walk(stmt.get_then_stmt()); walk(stmt.get_else_stmt());
+    }
+    void visit_while_statement(while_statement& stmt) override {
+        walk(stmt.get_test_expr()); walk(stmt.get_nested_stmt());
+    }
+    void visit_for_statement(for_statement& stmt) override {
+        walk(stmt.get_decl_stmt()); walk(stmt.get_test_expr());
+        walk(stmt.get_step_expr()); walk(stmt.get_nested_stmt());
+    }
+    void visit_foreach_statement(foreach_statement& stmt) override {
+        walk(stmt.get_source_expr()); walk(stmt.get_nested_stmt());
+    }
+    void visit_try_catch_statement(try_catch_statement& stmt) override {
+        walk(stmt.get_try_body());
+        for (const auto& clause : stmt.get_catch_clauses()) walk(clause);
+    }
+    void visit_catch_clause(catch_clause& clause) override { walk(clause.get_body()); }
+    void visit_symbol_expression(symbol_expression& symbol) override {
+        if (symbol.is_resolved()) {
+            add(symbol.get_function(), &symbol);
+            return;
+        }
+        auto target = _lookup.resolve_symbol(symbol, symbol.get_name());
+        if (auto fn = std::get_if<std::shared_ptr<function>>(&target)) {
+            add(*fn, &symbol);
+            // A dependent call has not selected an overload yet.
+            if (_seen_functions.contains(fn->get())) {
+                auto owner = (*fn)->parent<ns>();
+                if (!owner) return;
+                for (const auto& overload : owner->get_functions((*fn)->get_short_name())) add(overload);
+            }
+        }
+    }
+    void visit_unary_expression(unary_expression& expr) override { walk(expr.sub_expr()); }
+    void visit_binary_expression(binary_expression& expr) override { walk(expr.left()); walk(expr.right()); }
+    void visit_conditional_expression(conditional_expression& expr) override {
+        walk(expr.lexpr()); walk(expr.mexpr()); walk(expr.rexpr());
+    }
+    void visit_function_invocation_expression(function_invocation_expression& expr) override {
+        walk(expr.callee_expr()); arguments(expr.arguments());
+    }
+    void visit_constructor_invocation_expression(constructor_invocation_expression& expr) override {
+        arguments(expr.arguments());
+    }
+    void visit_temporary_construction_expression(temporary_construction_expression& expr) override {
+        arguments(expr.arguments());
+    }
+    void visit_new_expression(new_expression& expr) override {
+        arguments(expr.arguments()); walk(expr.array_size_expr());
+        arguments(expr.array_init_elements()); arguments(expr.uniform_ctor_args());
+    }
+    void visit_callable_bind_expression(callable_bind_expression& expr) override {
+        add(expr.get_target(), &expr); walk(expr.get_context());
+    }
+    void visit_callable_invocation_expression(callable_invocation_expression& expr) override {
+        walk(expr.get_callee()); arguments(expr.arguments());
+    }
+    void visit_lambda_expression(lambda_expression& expr) override {
+        arguments(expr.captures());
+        if (expr.bind()) {
+            walk(expr.bind());
+            walk(expr.bind()->get_target());
+        }
+    }
+    void visit_array_init_expression(array_init_expression& expr) override {
+        arguments(expr.elements()); arguments(expr.uniform_ctor_args());
+    }
+    void visit_designated_struct_init_expression(designated_struct_init_expression& expr) override {
+        for (const auto& member : expr.members()) {
+            walk(member.value); arguments(member.args);
+        }
+    }
+    void visit_pack_expansion_expression(pack_expansion_expression& expr) override { walk(expr.inner()); }
+};
 
 /**
  * True for compiler-synthesized field names that are purely an internal ABI
@@ -1088,6 +1247,7 @@ void kdi_builder::export_aliases(const alias_holder& holder, std::vector<kdi::kd
 }
 
 void kdi_builder::visit_namespace(ns& n) {
+    if (n.get_short_name().starts_with("__kdi_private_")) return;
     kdi::kdi_namespace kns;
     kns.name    = n.get_short_name();
     kns.fq_name = n.get_fq_name();
@@ -1915,6 +2075,35 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     }
     def.is_generic = is_generic;
 
+    auto definition_ns = entity ? gen::scope_lookup::enclosing_namespace(*entity) : nullptr;
+    auto origin = ti.origin_module_ns_fq.empty() && definition_ns
+        ? definition_ns->get_fq_name() : ti.origin_module_ns_fq;
+    if (origin.starts_with("::")) origin.erase(0, 2);
+    const auto private_scope_name = template_private_scope_name(origin);
+    std::unique_ptr<private_dependency_collector> private_dependencies;
+    std::unordered_map<const function*, std::string> dependency_names;
+    std::unordered_map<const symbol_expression*, std::string> reference_names;
+    std::unordered_map<const expression*, std::string> source_reference_names;
+    if (entity && !ti.source_text.empty()) {
+        private_dependencies = std::make_unique<private_dependency_collector>(
+            const_cast<element&>(*entity), def.fq_name);
+        for (const auto& fn : private_dependencies->functions) {
+            auto owner = gen::scope_lookup::enclosing_namespace(*fn);
+            auto dependency_name = fn->get_short_name();
+            if (owner != definition_ns && owner != ti.private_definition_scope) {
+                dependency_name = template_private_scope_name(
+                    k_source_emitter::fq_name_for_source(owner->get_fq_name()))
+                    + "_" + dependency_name;
+            }
+            dependency_names.emplace(fn.get(), std::move(dependency_name));
+        }
+        for (const auto& [symbol, fn] : private_dependencies->references) {
+            auto name = "::" + origin + "::" + private_scope_name + "::" + dependency_names.at(fn.get());
+            source_reference_names.emplace(symbol, name);
+            if (auto sym = dynamic_cast<symbol_expression*>(symbol)) reference_names.emplace(sym, name);
+        }
+    }
+
     if (!is_generic) {
         // Determine if using-alias resolution is needed (emitter resolves aliases
         // to their canonical names so the consumer can find the types).
@@ -1934,6 +2123,7 @@ kdi::kdi_template_def kdi_builder::build_template_def(
             std::string emitted;
             if (entity) {
                 k_source_emitter emitter;
+                emitter.set_symbol_names(reference_names);
                 if (!alias_map.empty()) {
                     emitter.set_alias_map(std::move(alias_map));
                 }
@@ -1960,6 +2150,7 @@ kdi::kdi_template_def kdi_builder::build_template_def(
             std::string emitted;
             if (entity) {
                 k_source_emitter emitter;
+                emitter.set_symbol_names(reference_names);
                 auto alias_map = build_using_alias_map(entity);
                 if (!alias_map.empty()) {
                     emitter.set_alias_map(std::move(alias_map));
@@ -1978,6 +2169,102 @@ kdi::kdi_template_def kdi_builder::build_template_def(
             }
         } else {
             def.source.clear();
+        }
+    }
+
+    // Private FFI declarations are definition dependencies, not exported API.
+    // Carry them in source, where K already expresses both privacy and the exact
+    // native symbol, instead of changing KDI's public/protected function DTO.
+    if (entity && !def.source.empty()) {
+        if (def.source == ti.source_text && !source_reference_names.empty()) {
+            // Parser capture ends at the declaration's last token. Rewrite only
+            // actual symbol-expression spans, never comments or string literals.
+            auto last = entity->get_last_lexeme();
+            if (!last) throw std::runtime_error("Template dependency has no declaration source range");
+            const char* end = std::visit([](const auto& token) {
+                return token.content.data() + token.content.size();
+            }, *last);
+            const char* begin = end - ti.source_text.size();
+            struct replacement { size_t offset; size_t length; std::string name; };
+            std::vector<replacement> replacements;
+            for (const auto& [symbol, name] : source_reference_names) {
+                auto ast = symbol->get_ast_node_as<parse::ast::identifier_expr>();
+                if (!ast) continue;
+                auto first = ast->qident.get_first_lexeme();
+                auto last = ast->qident.get_last_lexeme();
+                if (!first || !last) continue;
+                auto symbol_begin = std::visit([](const auto& token) { return token.content.data(); }, *first);
+                auto symbol_end = std::visit([](const auto& token) {
+                    return token.content.data() + token.content.size();
+                }, *last);
+                if (std::less<const char*>{}(symbol_begin, begin)
+                    || std::less<const char*>{}(end, symbol_end)) continue;
+                replacements.push_back({static_cast<size_t>(symbol_begin - begin),
+                    static_cast<size_t>(symbol_end - symbol_begin), name});
+            }
+            std::sort(replacements.begin(), replacements.end(),
+                [](const auto& left, const auto& right) { return left.offset > right.offset; });
+            replacements.erase(std::unique(replacements.begin(), replacements.end(),
+                [](const auto& left, const auto& right) {
+                    return left.offset == right.offset && left.length == right.length && left.name == right.name;
+                }), replacements.end());
+            size_t next_offset = ti.source_text.size();
+            for (const auto& replacement : replacements) {
+                if (replacement.offset + replacement.length > next_offset)
+                    throw std::runtime_error("Overlapping template dependency source references");
+                def.source.replace(replacement.offset, replacement.length, replacement.name);
+                next_offset = replacement.offset;
+            }
+        }
+        std::string dependencies;
+        std::string private_types;
+        std::unordered_set<const aggregate*> seen_private_types;
+        std::unordered_set<const type*> seen_dependency_types;
+        std::function<void(const std::shared_ptr<type>&)> collect_private_types =
+            [&](const std::shared_ptr<type>& dependency_type) {
+                if (!dependency_type || !seen_dependency_types.insert(dependency_type.get()).second) return;
+                auto canonical = type::canonical(dependency_type);
+                if (canonical != dependency_type) {
+                    collect_private_types(canonical);
+                    return;
+                }
+                if (auto ct = std::dynamic_pointer_cast<callable_type>(canonical)) {
+                    collect_private_types(ct->get_return_type());
+                    for (const auto& pt : ct->get_parameter_types()) collect_private_types(pt);
+                    for (const auto& th : ct->get_throws()) collect_private_types(th);
+                }
+                if (auto st = std::dynamic_pointer_cast<struct_type>(canonical)) {
+                    auto agg = st->get_struct();
+                    if (agg) {
+                        for (const auto& arg : agg->get_tpl_args()) collect_private_types(arg.type_arg);
+                    }
+                    if (agg && agg->get_visibility() == PRIVATE && !agg->is_template()
+                        && !agg->parent<aggregate>() && seen_private_types.insert(agg.get()).second) {
+                        for (const auto& [name, variable] : agg->variables()) {
+                            collect_private_types(variable->get_type());
+                        }
+                        k_source_emitter emitter;
+                        auto owner = gen::scope_lookup::enclosing_namespace(*agg);
+                        private_types += "namespace "
+                            + k_source_emitter::fq_name_for_source(owner->get_fq_name()) + " {\nprivate "
+                            + emitter.emit_template_aggregate(*agg) + "}\n";
+                    }
+                }
+                collect_private_types(dependency_type->get_subtype());
+            };
+        if (private_dependencies) {
+            for (const auto& fn : private_dependencies->functions) {
+                k_source_emitter emitter;
+                dependencies += emitter.emit_extern_function_declaration(*fn, dependency_names.at(fn.get()));
+                collect_private_types(std::const_pointer_cast<type>(fn->get_return_type()));
+                for (const auto& parameter : fn->parameters()) collect_private_types(parameter->get_type());
+                for (const auto& thrown : fn->get_throws_spec())
+                    collect_private_types(std::const_pointer_cast<type>(thrown));
+            }
+        }
+        if (!dependencies.empty()) {
+            def.source = private_types + "namespace " + private_scope_name + " {\n"
+                + dependencies + "}\n" + def.source;
         }
     }
 

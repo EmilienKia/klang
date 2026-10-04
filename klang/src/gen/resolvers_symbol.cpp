@@ -18,6 +18,7 @@
 #include "resolvers_symbol.hpp"
 #include "gen_helpers.hpp"
 #include "../model/imported.hpp"
+#include "../model/template.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
 #include "../errors.hpp"
@@ -251,6 +252,22 @@ std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_p
  */
 symbol_resolver::resolve_symbol(const element& elem, const name& name) {
     debug("[symbol_resolver::resolve_symbol] resolving '{}'", {name.to_string()});
+
+    // Consumer namespace declarations must not replace a template's private
+    // definition dependencies. Locals, parameters and members are checked first
+    // while walking outward to this namespace boundary.
+    if ((dynamic_cast<const ns*>(&elem) || name.has_root_prefix()) && !_function_stack.empty()) {
+        if (auto scope = _function_stack.back()->get_template_definition_scope()) {
+            auto dependency_name = name;
+            if (name.size() > 1
+                && template_private_scope_name(name.without_back().without_root_prefix().to_string())
+                    == scope->get_short_name()) {
+                dependency_name = k::name(name.back());
+            }
+            auto target = resolve_qualified_from(*scope, dependency_name);
+            if (target.index() != 0) return target;
+        }
+    }
 
     // Step 1: Handle 'this' keyword: find nearest non-static member function's this parameter
     // Specifically look at the "this" symbol (non-static function specific parameter)

@@ -23,17 +23,27 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
-#include "../src/model/tools/kdi_exporter.hpp"
+include "../src/model/tools/kdi_exporter.hpp"
 #include "../src/model/template.hpp"
+#include "../src/model/imported.hpp"
+#include "../src/model/template.hpp"
+#include "../src/model/expressions.hpp"
+#include "../src/model/tools/k_source_emitter.hpp"
+#include "../src/model/tools/kdi_exporter.hpp"
+#include "../src/model/type.hpp"
+#include "../src/errors.hpp"
+#include "../../libk/libk/src/runtime/callable_abi.h"
 
 #include <llvm/IR/Module.h>
+#include <llvm/Support/DynamicLibrary.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
-extern "C" int __k_test_import_template_count(const int* count) {
+xtern "C" int __k_test_import_template_count(const int* count) {
     return *count;
 }
 
@@ -642,6 +652,47 @@ TEST_CASE("import template — private helper API remains inaccessible to non-fr
             }
         )K", lib.resolver));
     }
+namespace {
+int private_handle_calls;
+int private_callback_calls;
+int private_operation_calls;
+int private_submit_calls;
+int private_native_errors;
+int private_native_storage;
+}
+
+extern "C" void* __k_private_native_handle(void* handle) {
+    ++private_handle_calls;
+    if (handle) ++private_native_errors;
+    return &private_native_storage;
+}
+
+extern "C" void __k_private_native_callback(void* handle, KCallable callback) {
+    ++private_callback_calls;
+    if (handle != &private_native_storage || callback.fn || callback.ctx) ++private_native_errors;
+}
+
+extern "C" void* __k_native_operation() {
+    ++private_operation_calls;
+    return &private_native_storage;
+}
+
+extern "C" int __k_native_submit(void* operation) {
+    ++private_submit_calls;
+    if (operation && operation != &private_native_storage) ++private_native_errors;
+    return 0;
+}
+
+extern "C" int __k_private_callback_import(KCallable invoke, KCallable drop,
+                                           KCallable borrowed, KCallable owned,
+                                           const char* text) {
+    // The runtime fixture uses free functions only; no owned context crosses FFI.
+    if (!invoke.fn || !drop.fn || !borrowed.fn || !owned.fn
+        || invoke.ctx || drop.ctx || borrowed.ctx || owned.ctx || text) return -2;
+    reinterpret_cast<void (*)(void*, void*)>(invoke.fn)(nullptr, nullptr);
+    reinterpret_cast<void (*)(void*)>(drop.fn)(nullptr);
+    return reinterpret_cast<int (*)(int)>(borrowed.fn)(40)
+        + reinterpret_cast<int (*)(int)>(owned.fn)(2);
 }
 
 // Template struct / function import tests
@@ -948,8 +999,157 @@ TEST_CASE("import generic — template_def exported as signature-only metadata",
     REQUIRE(found_def);
 }
 
-#include "../src/model/tools/kdi_exporter.hpp" // Temporary alias-regression prerequisite.
-#include <sstream> // Temporary alias-regression prerequisite.
+TEST_CASE("import template — private FFI dependencies keep their definition scope",
+          "[import][template][ffi][private-dependency]") {
+    constexpr std::string_view library = R"K(
+        module tplprivateffi;
+        @k::ffi::Extern("C", null, "abs") private __private_abs(x : int) : int;
+
+        template<typename T>
+        struct PrivateFfiFuture {
+            cancel() : bool { return __private_abs(-1) == 1; }
+            waitQuiescent() : int { return tplprivateffi::__private_abs(-42); }
+        }
+
+        template<typename T>
+        struct PrivateFfiExecutor {
+            execute() : int { return __private_abs(-42); }
+        }
+
+        template<typename T>
+        privateFfiCall(x : int) : int { return __private_abs(x); }
+    )K";
+
+    SECTION("the KDI carries declarations in source, never in the public API") {
+        TmpKdi lib(library, true);
+        auto file = kdi::kdi_read_cbor_file(lib.kdi_path);
+        const auto& root = file.unit.root_ns;
+        REQUIRE(std::none_of(root.functions.begin(), root.functions.end(),
+            [](const auto& fn) { return fn.name == "__private_abs"; }));
+        size_t dependency_templates = 0;
+        for (const auto& definition : root.template_defs) {
+            if (definition.name != "PrivateFfiFuture"
+                && definition.name != "PrivateFfiExecutor"
+                && definition.name != "privateFfiCall") continue;
+            ++dependency_templates;
+            REQUIRE(definition.source.find("namespace __kdi_private_") != std::string::npos);
+            REQUIRE(definition.source.find("private __private_abs") != std::string::npos);
+            REQUIRE(definition.source.find(".symbol = \"abs\"") != std::string::npos);
+        }
+        REQUIRE(dependency_templates == 3);
+    }
+
+    SECTION("late aggregate and function clones use private FFI, not consumer declarations") {
+        auto result = build_exec_with_lib(library, R"K(
+            module tplprivatefficonsumer;
+            import tplprivateffi;
+
+            __private_abs(x : int) : int { return -100; }
+            main() : int {
+                future : PrivateFfiFuture<int>;
+                executor : PrivateFfiExecutor<long>;
+                if (!future.cancel()) return -1;
+                if (future.waitQuiescent() != 42) return -2;
+                if (executor.execute() != 42) return -3;
+                return privateFfiCall<int>(-42);
+            }
+        )K");
+        INFO(result.err);
+        REQUIRE(result.exit_code == 42);
+    }
+
+    SECTION("consumer code cannot call the private dependency") {
+        TmpKdi lib(library, true);
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        resolver->add_explicit_path("tplprivateffi", lib.kdi_path);
+        compiler->set_file_resolver(resolver);
+        try {
+            compiler->parse_source("consumer.k", R"K(
+            module tplprivateffirejected;
+            import tplprivateffi;
+            main() : int { return __private_abs(-42); }
+        )K");
+        } catch (const k::log::compiler_error& error) {
+            CHECK(error.get_diagnostic().code
+                == static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_AMBIGUOUS_OVERLOAD));
+        }
+        CHECK_FALSE(compiler->to_jit());
+    }
+
+    SECTION("knowing the synthetic namespace does not grant definition privileges") {
+        TmpKdi lib(library, true);
+        auto scope = k::model::template_private_scope_name("tplprivateffi");
+        for (bool in_namespace : {false, true}) {
+            auto compiler = k::compiler::create();
+            auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+            resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+            resolver->add_explicit_path("tplprivateffi", lib.kdi_path);
+            compiler->set_file_resolver(resolver);
+            auto call = in_namespace ? "__private_abs(-42)"
+                : "tplprivateffi::" + scope + "::__private_abs(-42)";
+            auto body = "template<typename T> forbidden(): int { return " + call + "; }\n"
+                + "probe(): int { return forbidden<int>(); }\n";
+            auto source = "module tplprivateffirejected; import tplprivateffi;\n"
+                + (in_namespace ? "namespace tplprivateffi::" + scope + " {\n" + body
+                    + "}\nmain(): int { return tplprivateffi::" + scope + "::probe(); }\n"
+                    : body + "main(): int { return probe(); }\n");
+            try {
+                compiler->parse_source("consumer.k", source);
+            } catch (const k::log::compiler_error& error) {
+                CHECK(error.get_diagnostic().code
+                    == static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED));
+            }
+        }
+    }
+
+    SECTION("private dependencies cannot escape through addresses or redirectors") {
+        TmpKdi lib(library, true);
+        auto qualified = "tplprivateffi::" + k::model::template_private_scope_name("tplprivateffi")
+            + "::__private_abs";
+        for (const auto& body : {
+                "main(): int { callback: *(int):int = " + qualified + "; return callback(-42); }",
+                "redirect(value: int): int -> " + qualified + "; main(): int { return redirect(-42); }",
+                "callback: *(int):int = " + qualified + "; main(): int { return callback(-42); }"}) {
+            auto compiler = k::compiler::create();
+            auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+            resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+            resolver->add_explicit_path("tplprivateffi", lib.kdi_path);
+            compiler->set_file_resolver(resolver);
+            try {
+                compiler->parse_source("consumer.k",
+                    "module tplprivateffirejected; import tplprivateffi;\n" + body);
+            } catch (const k::log::compiler_error& error) {
+                CHECK(error.get_diagnostic().code
+                    == static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED));
+            }
+        }
+    }
+
+    SECTION("re-export preserves private declarations and their native symbols") {
+        std::vector<LibSpec> libraries = {
+            {library},
+            {R"K(
+                module tplprivateffifacade;
+                import tplprivateffi;
+                exported() : int { return 0; }
+            )K"}
+        };
+        auto result = build_exec_with_libs(libraries, R"K(
+            module tplprivateffitransitive;
+            import tplprivateffifacade;
+            __private_abs(x : int) : int { return -100; }
+            main() : int {
+                future : PrivateFfiFuture<long>;
+                if (!future.cancel()) return -1;
+                return future.waitQuiescent();
+            }
+        )K");
+        INFO(result.err);
+        REQUIRE(result.exit_code == 42);
+    }
+}
 
 TEST_CASE("import template aliases retain canonical declaration types under consumer shadows",
           "[import][template][alias][declaration-scope][type-provenance]") {
@@ -1055,6 +1255,105 @@ TEST_CASE("import template aliases retain canonical declaration types under cons
     CHECK(transitive.exit_code == 42);
 }
 
+TEST_CASE("import template native dependencies resolve parent and sibling scopes exactly",
+          "[import][template][ffi][private-dependency][root-dependency][regression]") {
+    constexpr std::string_view library = R"K(
+        module tplnativedependencies;
+        @k::ffi::Extern("C", null, "abs")
+        private __native_value(value: int): int;
+        @k::ffi::Extern("C", null, "__unreferenced_native")
+        private __comment_only(value: int): int;
+        template<typename T>
+        struct RootModuleCarrier {
+            apply(value: int): int { return __native_value(value); }
+        }
+        namespace detail {
+            @k::ffi::Extern("C", null, "labs")
+            private __native_value(value: long): long;
+            template<typename T>
+            struct SiblingCarrier {
+                apply(value: long): long { return __native_value(value); }
+            }
+        }
+        namespace io {
+            template<typename T>
+            struct RootCarrier {
+                apply(value: int): int {
+                    // __comment_only(value) is not a dependency.
+                    label: const char[] = "__comment_only";
+                    return __native_value(value)
+                        + tplnativedependencies::__native_value(-1)
+                        + ::tplnativedependencies::__native_value(-1);
+                }
+            }
+            template<typename T>
+            rootCall(value: int): int { return __native_value(value); }
+            template<typename T>
+            shadowed(__comment_only: *(int):int): int { return __comment_only(1); }
+        }
+    )K";
+    TmpKdi lib(library, true);
+    auto file = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto io = std::find_if(file.unit.root_ns.namespaces.begin(), file.unit.root_ns.namespaces.end(),
+        [](const auto& ns) { return ns.name == "io"; });
+    REQUIRE(io != file.unit.root_ns.namespaces.end());
+    size_t checked = 0;
+    for (const auto& definition : io->template_defs) {
+        if (definition.name == "shadowed") {
+            CHECK(definition.source.find("__kdi_private_") == std::string::npos);
+            continue;
+        }
+        if (definition.name != "RootCarrier" && definition.name != "rootCall") continue;
+        ++checked;
+        INFO(definition.source);
+        REQUIRE(definition.source.find(".symbol = \"abs\"") != std::string::npos);
+        CHECK(definition.source.find("__unreferenced_native") == std::string::npos);
+        if (definition.name == "RootCarrier") {
+            CHECK(definition.source.find(".symbol = \"labs\"") == std::string::npos);
+            CHECK(definition.source.find("// __comment_only(value)") != std::string::npos);
+            CHECK(definition.source.find("\"__comment_only\"") != std::string::npos);
+            CHECK(definition.source.find("tplnativedependencies::__native_value") == std::string::npos);
+        }
+        test_logger logger;
+        k::source source{definition.source};
+        k::parse::parser parser(logger, source);
+        auto ast = parser.parse_unit();
+        REQUIRE(ast);
+        REQUIRE_FALSE(logger.has_error());
+        CHECK(ast->declarations.size() == 2);
+    }
+    REQUIRE(checked == 2);
+    auto detail = std::find_if(file.unit.root_ns.namespaces.begin(), file.unit.root_ns.namespaces.end(),
+        [](const auto& ns) { return ns.name == "detail"; });
+    REQUIRE(detail != file.unit.root_ns.namespaces.end());
+    auto sibling = std::find_if(detail->template_defs.begin(), detail->template_defs.end(),
+        [](const auto& definition) { return definition.name == "SiblingCarrier"; });
+    REQUIRE(sibling != detail->template_defs.end());
+    CHECK(sibling->source.find(".symbol = \"labs\"") != std::string::npos);
+    CHECK(sibling->source.find(".symbol = \"abs\"") == std::string::npos);
+    std::vector<LibSpec> libraries = {{library}, {R"K(
+        module tplnativedependenciesfacade;
+        import tplnativedependencies;
+        exported(): int { return 0; }
+    )K"}};
+    auto result = build_exec_with_libs(libraries, R"K(
+        module tplnativedependenciesconsumer;
+        import tplnativedependenciesfacade;
+        __native_value(value: int): int { return -100; }
+        main(): int {
+            root: tplnativedependencies::RootModuleCarrier<int>;
+            carrier: tplnativedependencies::io::RootCarrier<int>;
+            sibling: tplnativedependencies::detail::SiblingCarrier<long>;
+            if (root.apply(-42) != 42) return -3;
+            if (sibling.apply(-42L) != 42L) return -2;
+            if (tplnativedependencies::io::rootCall<int>(-42) != 42) return -1;
+            return carrier.apply(-40);
+        }
+    )K");
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
 TEST_CASE("import homonymous template aliases specialize in independent origin namespaces",
           "[import][template][alias][homonym-imports][type-provenance]") {
     std::vector<LibSpec> libraries = {
@@ -1103,7 +1402,186 @@ TEST_CASE("import homonymous template aliases specialize in independent origin n
     CHECK(result.exit_code == 42);
 }
 
-#include <llvm/Support/DynamicLibrary.h> // Temporary overload-regression prerequisite.
+TEST_CASE("import template private native handles and nested result callables use lexical types",
+          "[import][template][ffi][private-dependency][type-provenance]") {
+    TmpKdi lib(R"K(
+        module tplnativeorigin;
+        namespace io {
+            public struct NativeIoHandle {}
+            public struct NativeIoOperation {}
+            private struct NativePrivateHandle {}
+            struct NativeAliasIoError { code: int; }
+            template<typename T, typename E>
+            struct Result { value: T; error: E; }
+            public template<typename T> alias IoResult : Result<T, NativeAliasIoError>;
+            public template<typename T> alias IoCompletion : !(IoResult<T>);
+            @k::ffi::Extern("C", null, "__k_private_native_handle")
+            private __private_handle(handle: NativePrivateHandle*): NativePrivateHandle*;
+            @k::ffi::Extern("C", null, "__k_private_native_callback")
+            private __private_callback(handle: NativePrivateHandle*, callback: *(IoResult<int>));
+            @k::ffi::Extern("C", null, "__k_native_operation")
+            private __private_operation(): NativeIoOperation*;
+            @k::ffi::Extern("C", null, "__k_native_operation")
+            private __private_operation_alias(): NativeIoOperation*;
+            @k::ffi::Extern("C", null, "__k_native_submit")
+            private __private_submit(operation: NativeIoOperation*): int;
+            template<typename T>
+            prepare(handle: NativeIoHandle*, completion: IoCompletion<T>): IoResult<T> {
+                native: NativePrivateHandle* = __private_handle(null);
+                __private_callback(native, null);
+                operation: NativeIoOperation* = __private_operation();
+                same: NativeIoOperation* = __private_operation_alias();
+                __private_submit(operation);
+                result: IoResult<T>;
+                return result;
+            }
+            template<typename T>
+            prepareAgain(handle: NativeIoHandle*): IoResult<T> {
+                __private_handle(null);
+                result: IoResult<T>;
+                return result;
+            }
+        }
+    )K", true);
+    auto file = kdi::kdi_read_cbor_file(lib.kdi_path);
+    const auto io_it = std::find_if(file.unit.root_ns.namespaces.begin(), file.unit.root_ns.namespaces.end(),
+        [](const auto& ns) { return ns.name == "io"; });
+    REQUIRE(io_it != file.unit.root_ns.namespaces.end());
+    const auto& io = *io_it;
+    REQUIRE(std::none_of(io.functions.begin(), io.functions.end(),
+        [](const auto& fn) { return fn.name.starts_with("__private_"); }));
+    REQUIRE(std::none_of(io.aggregates.begin(), io.aggregates.end(),
+        [](const auto& agg) { return agg.name == "NativePrivateHandle"; }));
+    size_t templates = 0;
+    for (const auto& definition : io.template_defs) {
+        if (definition.name != "prepare" && definition.name != "prepareAgain") continue;
+        ++templates;
+        INFO(definition.source);
+        CHECK(definition.source.find("namespace ::") == std::string::npos);
+        test_logger logger;
+        k::source source{definition.source};
+        k::parse::parser parser(logger, source);
+        REQUIRE(parser.parse_unit());
+        REQUIRE_FALSE(logger.has_error());
+        CHECK(definition.source.find("private struct NativePrivateHandle") != std::string::npos);
+        CHECK(definition.source.find("tplnativeorigin::io::NativePrivateHandle*") != std::string::npos);
+        if (definition.name == "prepare") {
+            CHECK(definition.source.find("callback : *(") != std::string::npos);
+            CHECK(definition.source.find("::tplnativeorigin::io::Result<int, ::tplnativeorigin::io::NativeAliasIoError>")
+                  != std::string::npos);
+            CHECK(definition.source.find("Result__") == std::string::npos);
+        }
+    }
+    REQUIRE(templates == 2);
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("tplnativeorigin", lib.kdi_path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    compiler->parse_source("nativeconsumer.k", R"K(
+        module tplnativeconsumer;
+        import tplnativeorigin;
+        namespace consumer {
+        struct NativeIoHandle { wrong: long; }
+        struct NativeIoOperation { wrong: long; }
+        struct NativePrivateHandle { wrong: long; }
+        struct NativeAliasIoError { wrong: long; }
+        @k::ffi::Extern("C", null, "__k_native_submit")
+        private submit(operation: tplnativeorigin::io::NativeIoOperation*): int;
+        test(handle: tplnativeorigin::io::NativeIoHandle*): int {
+            result: tplnativeorigin::io::IoResult<int> = tplnativeorigin::io::prepare<int>(
+                handle, [](result: tplnativeorigin::io::IoResult<int>) {});
+            again: tplnativeorigin::io::IoResult<long> = tplnativeorigin::io::prepareAgain<long>(handle);
+            submit(null);
+            return 0;
+        }
+        }
+        runNativeConsumer(): int { return consumer::test(null); }
+    )K");
+    REQUIRE(compiler->verify_gen_code());
+    auto origin = compiler->get_unit()->get_root_namespace()->get_child_namespace("tplnativeorigin")->get_child_namespace("io");
+    auto ctx = compiler->get_context_for_test();
+    size_t checked = 0;
+    for (const auto& child : origin->get_children()) {
+        auto fn = std::dynamic_pointer_cast<k::model::function>(child);
+        if (!fn || !fn->is_instantiation() || !fn->get_short_name().starts_with("prepare")) continue;
+        ++checked;
+        CHECK(fn->parameters().front()->get_type()->get_subtype() == origin->get_aggregate("NativeIoHandle")->get_struct_type());
+        REQUIRE(fn->get_template_definition_scope());
+        auto native = fn->get_template_definition_scope()->get_function("__private_handle");
+        REQUIRE(native);
+        REQUIRE(native->get_return_type());
+        CHECK(native->parameters().front()->get_type()->get_subtype() == origin->get_aggregate("NativePrivateHandle")->get_struct_type());
+        CHECK(native->get_return_type()->get_subtype() == origin->get_aggregate("NativePrivateHandle")->get_struct_type());
+        if (fn->get_tpl_args().front().type_arg == ctx->from_string("int")) {
+            REQUIRE(fn->get_existing_block());
+            auto local_native = fn->get_existing_block()->get_variable("native");
+            REQUIRE(local_native);
+            CHECK(local_native->get_type()->get_subtype()
+                  == origin->get_aggregate("NativePrivateHandle")->get_struct_type());
+            auto scope = fn->get_template_definition_scope();
+            auto operation = scope->get_function("__private_operation");
+            auto alias = scope->get_function("__private_operation_alias");
+            REQUIRE(operation);
+            REQUIRE(alias);
+            auto submit = scope->get_function("__private_submit");
+            REQUIRE(submit);
+            REQUIRE(operation->get_return_type());
+            REQUIRE(alias->get_return_type());
+            auto expected = origin->get_aggregate("NativeIoOperation")->get_struct_type();
+            CHECK(operation->get_return_type()->get_subtype() == expected);
+            CHECK(alias->get_return_type()->get_subtype() == expected);
+            REQUIRE(submit->parameters().front()->get_type());
+            CHECK(submit->parameters().front()->get_type()->get_subtype() == expected);
+            auto native_llvm = ctx->lookup_llvm_function(operation);
+            REQUIRE(native_llvm);
+            CHECK(ctx->lookup_llvm_function(alias) == native_llvm);
+            CHECK(native_llvm == ctx->module().getFunction("__k_native_operation"));
+            CHECK(ctx->module().getFunction("__k_native_operation.1") == nullptr);
+            auto consumer = compiler->get_unit()->get_root_namespace()->get_child_namespace("consumer");
+            REQUIRE(consumer);
+            auto consumer_submit = consumer->get_function("submit");
+            REQUIRE(consumer_submit);
+            auto submit_llvm = ctx->lookup_llvm_function(submit);
+            REQUIRE(submit_llvm);
+            CHECK(ctx->lookup_llvm_function(consumer_submit) == submit_llvm);
+            CHECK(ctx->module().getFunction("__k_native_submit.1") == nullptr);
+        }
+    }
+    CHECK(checked == 2);
+    private_handle_calls = private_callback_calls = private_operation_calls = private_submit_calls = 0;
+    private_native_errors = 0;
+    llvm::sys::DynamicLibrary::AddSymbol("__k_private_native_handle",
+        reinterpret_cast<void*>(&__k_private_native_handle));
+    llvm::sys::DynamicLibrary::AddSymbol("__k_private_native_callback",
+        reinterpret_cast<void*>(&__k_private_native_callback));
+    llvm::sys::DynamicLibrary::AddSymbol("__k_native_operation",
+        reinterpret_cast<void*>(&__k_native_operation));
+    llvm::sys::DynamicLibrary::AddSymbol("__k_native_submit",
+        reinterpret_cast<void*>(&__k_native_submit));
+    std::string load_error;
+    const auto load_failed = llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+        (std::string(KLANG_STDLIB_LIB_DIR) + "/libk.so").c_str(), &load_error);
+    INFO(load_error);
+    REQUIRE_FALSE(load_failed);
+    // Imported non-template constructors belong to the producer, not the consumer JIT.
+    const auto producer_load_failed = llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+        lib.so_path.c_str(), &load_error);
+    INFO(load_error);
+    REQUIRE_FALSE(producer_load_failed);
+    auto jit = compiler->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("runNativeConsumer");
+    REQUIRE(run);
+    int result = -1;
+    REQUIRE_NOTHROW(result = run());
+    CHECK(result == 0);
+    CHECK(private_handle_calls == 2);
+    CHECK(private_callback_calls == 1);
+    CHECK(private_operation_calls == 2);
+    CHECK(private_submit_calls == 2);
+    CHECK(private_native_errors == 0);
+}
 
 TEST_CASE("import template execute preserves every same-named overload",
           "[import][template][lambda][owner][overload][regression]") {
@@ -1158,6 +1636,174 @@ TEST_CASE("import template execute preserves every same-named overload",
     int result = 0;
     REQUIRE_NOTHROW(result = run());
     CHECK(result == 42);
+}
+
+TEST_CASE("import template — private callback preludes preserve native ABI and privacy",
+          "[import][template][ffi][private-dependency][callable][cstring][throws]") {
+    TmpKdi lib(R"K(
+        module tplprivatecallbacks;
+        @k::ffi::Extern("C", null, "__k_private_callback_import")
+        private __private_callbacks(
+            invoke : *(byte*, byte*), drop : *(byte*),
+            borrowed : &(int):int throws(k::Exception), owned : !(int):int,
+            @k::ffi::CString text : const char*) : int throws(k::Exception);
+
+        template<typename T>
+        privateCallbacks(invoke : *(byte*, byte*), drop : *(byte*),
+                         borrowed : &(int):int throws(k::Exception), owned : !(int):int,
+                         text : const char*) : int throws(k::Exception) {
+            return __private_callbacks(invoke, drop, borrowed, owned, text);
+        }
+        template<typename T>
+        privateCallbacksAgain(invoke : *(byte*, byte*), drop : *(byte*),
+                              borrowed : &(int):int throws(k::Exception), owned : !(int):int,
+                              text : const char*) : int throws(k::Exception) {
+            return __private_callbacks(invoke, drop, borrowed, owned, text);
+        }
+    )K", true);
+    auto file = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto check_export = [](const kdi::kdi_namespace& root) {
+        size_t count = 0;
+        std::function<void(const kdi::kdi_namespace&)> check = [&](const auto& ns) {
+            REQUIRE(std::none_of(ns.functions.begin(), ns.functions.end(),
+                [](const auto& fn) { return fn.name == "__private_callbacks"; }));
+            for (const auto& definition : ns.template_defs) {
+                if (definition.name != "privateCallbacks"
+                    && definition.name != "privateCallbacksAgain") continue;
+                ++count;
+                INFO(definition.source);
+                test_logger logger;
+                k::source source{definition.source};
+                k::parse::parser parser(logger, source);
+                auto ast = parser.parse_unit();
+                REQUIRE(ast);
+                REQUIRE_FALSE(logger.has_error());
+                REQUIRE(ast->declarations.size() == 2);
+                REQUIRE(definition.source.find("invoke : *(byte*, byte*)") != std::string::npos);
+                REQUIRE(definition.source.find("drop : *(byte*)") != std::string::npos);
+                REQUIRE(definition.source.find("borrowed : &(int) : int throws(::k::Exception)")
+                        != std::string::npos);
+                REQUIRE(definition.source.find("owned : !(int) : int") != std::string::npos);
+                REQUIRE(definition.source.find("@k::ffi::CString text : const char*")
+                        != std::string::npos);
+                REQUIRE(definition.source.find(".symbol = \"__k_private_callback_import\"")
+                        != std::string::npos);
+                REQUIRE(definition.function_signature);
+                REQUIRE(definition.function_signature->name == definition.name);
+                REQUIRE(definition.function_signature->params.size() == 5);
+                const auto& owned = definition.function_signature->params[3].type.value;
+                REQUIRE(std::holds_alternative<kdi::kdi_callable_type>(owned));
+                REQUIRE(std::get<kdi::kdi_callable_type>(owned).addresser
+                        == kdi::kdi_callable_addresser::owner);
+            }
+            for (const auto& child : ns.namespaces) check(child);
+        };
+        check(root);
+        REQUIRE(count == 2);
+    };
+    check_export(file.unit.root_ns);
+
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("tplprivatecallbacks", lib.kdi_path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(compiler->parse_source("consumer.k", R"K(
+        module tplprivatecallbackconsumer;
+        import tplprivatecallbacks;
+        invokeCalls: int = 0;
+        dropCalls: int = 0;
+        invoke(context : byte*, result : byte*) { ++invokeCalls; }
+        drop(context : byte*) { ++dropCalls; }
+        identity(x: int): int { return x; }
+        instantiate() : int throws(k::Exception) {
+            base : int = 40;
+            borrowed : &(int):int throws(k::Exception) =
+                [base](x : int) : int { return base + x; };
+            owned : !(int):int = [base](x : int) : int { return base + x; };
+            return privateCallbacks<int>(invoke, drop, borrowed, owned, null);
+        }
+        runCallbacks(): int throws(k::Exception) {
+            invokeCalls = 0;
+            dropCalls = 0;
+            borrowed: &(int):int throws(k::Exception) = identity;
+            owned: !(int):int = identity;
+            result: int = privateCallbacks<int>(invoke, drop, borrowed, owned, null);
+            againBorrowed: &(int):int throws(k::Exception) = identity;
+            againOwned: !(int):int = identity;
+            again: int = privateCallbacksAgain<long>(
+                invoke, drop, againBorrowed, againOwned, null);
+            return result == 42 && again == 42 && invokeCalls == 2 && dropCalls == 2 ? 42 : -1;
+        }
+    )K"));
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto origin = root->get_child_namespace("tplprivatecallbacks");
+    REQUIRE(origin);
+    auto definition = origin->get_function("privateCallbacks");
+    auto second = origin->get_function("privateCallbacksAgain");
+    REQUIRE(definition);
+    REQUIRE(second);
+    CHECK_FALSE(root->get_function("privateCallbacks"));
+    CHECK_FALSE(root->get_function("__private_callbacks"));
+    REQUIRE(definition->get_tpl_info());
+    REQUIRE(second->get_tpl_info());
+    auto scope = definition->get_tpl_info()->private_definition_scope;
+    REQUIRE(scope);
+    REQUIRE(scope == second->get_tpl_info()->private_definition_scope);
+    auto dependencies = scope->get_functions("__private_callbacks");
+    REQUIRE(dependencies.size() == 1);
+    auto dependency = dependencies.front();
+    REQUIRE(dependency->get_visibility() == k::model::PRIVATE);
+    REQUIRE(dependency->get_extern_c_symbol().has_value());
+    REQUIRE(dependency->get_extern_c_symbol().value() == "__k_private_callback_import");
+    size_t bound = 0;
+    for (const auto& child : origin->get_children()) {
+        auto fn = std::dynamic_pointer_cast<k::model::function>(child);
+        if (!fn || !fn->is_instantiation() || !fn->get_short_name().starts_with("privateCallbacks")) continue;
+        CHECK(fn->get_template_definition_scope() == scope);
+        std::vector<k::model::function_invocation_expression*> calls;
+        collect_in_stmt(fn->get_existing_block().get(), calls);
+        REQUIRE(calls.size() == 1);
+        auto symbol = std::dynamic_pointer_cast<k::model::symbol_expression>(calls.front()->callee_expr());
+        REQUIRE(symbol);
+        CHECK(symbol->get_function() == dependency);
+        ++bound;
+    }
+    CHECK(bound == 2);
+    REQUIRE(dependency->get_throws_spec().size() == 1);
+    REQUIRE(dependency->parameters().size() == 5);
+    REQUIRE(dependency->parameters()[4]->is_ffi_cstring());
+    const auto addressers = {k::model::callable_type::addresser::pointer,
+                            k::model::callable_type::addresser::pointer,
+                            k::model::callable_type::addresser::reference,
+                            k::model::callable_type::addresser::owner};
+    size_t index = 0;
+    for (auto addresser : addressers) {
+        auto callable = std::dynamic_pointer_cast<k::model::callable_type>(
+            dependency->parameters()[index++]->get_type());
+        REQUIRE(callable);
+        REQUIRE(callable->get_addresser() == addresser);
+        if (index == 3) REQUIRE(callable->get_throws().size() == 1);
+        auto layout = llvm::dyn_cast<llvm::StructType>(callable->get_llvm_type());
+        REQUIRE(layout);
+        REQUIRE(layout->getNumElements() == 2);
+    }
+
+    k::model::kdi_builder exporter(*compiler->get_context_for_test());
+    compiler->get_unit()->accept(exporter);
+    auto reexported = exporter.take();
+    check_export(reexported.unit.root_ns);
+
+    REQUIRE(compiler->verify_gen_code());
+    std::string load_error;
+    const auto load_failed = llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+    INFO(load_error);
+    REQUIRE_FALSE(load_failed);
+    auto jit = compiler->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("runCallbacks");
+    REQUIRE(run);
+    CHECK(run() == 42);
 }
 
 TEST_CASE("import generic — signature-only template_def is materialised into model",

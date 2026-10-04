@@ -494,6 +494,10 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
                 }
             }
 
+            auto namespace_owner = scope_lookup::enclosing_namespace(*func);
+            if (namespace_owner && namespace_owner->get_short_name().starts_with("__kdi_private_"))
+                check_function_visibility(*func, symbol);
+
             // Build the callable_type for this function.
             callable_type_builder builder(_context);
             builder.addresser(callable_type::addresser::link);

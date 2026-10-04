@@ -27,6 +27,7 @@
 #include "../statements.hpp"
 
 #include <cassert>
+#include <algorithm>
 #include <variant>
 
 namespace k::model {
@@ -64,6 +65,10 @@ const char* k_source_emitter::aggregate_keyword(const aggregate& agg) {
 void k_source_emitter::emit_type(const std::shared_ptr<type>& t) {
     if (!t) {
         _os << "void";
+        return;
+    }
+    if (auto canonical = type::canonical(t); canonical != t) {
+        emit_type(canonical);
         return;
     }
 
@@ -162,7 +167,38 @@ void k_source_emitter::emit_type(const std::shared_ptr<type>& t) {
     // Struct type — use FQ name of the underlying aggregate
     if (auto st = std::dynamic_pointer_cast<struct_type>(t)) {
         if (auto agg = st->get_struct()) {
-            _os << fq_name_for_source(agg->get_fq_name());
+            if (agg->has_tpl_args()) {
+                // Concrete model names are cache identifiers, not source declarations.
+                _os << agg->get_name().without_back().with_back(agg->get_tpl_base_name()).to_string();
+                _os << "<";
+                bool first = true;
+                auto separator = [&] {
+                    if (!first) _os << ", ";
+                    first = false;
+                };
+                for (const auto& arg : agg->get_tpl_args()) {
+                    if (arg.is_type()) {
+                        separator();
+                        emit_type(arg.type_arg);
+                    } else if (arg.is_value()) {
+                        separator();
+                        if (arg.value_type && type::is_enum(arg.value_type)) {
+                            _os << "(";
+                            emit_type(arg.value_type);
+                            _os << ") ";
+                        }
+                        emit_value(*arg.value_arg);
+                    } else {
+                        for (const auto& pack_type : arg.pack_types) {
+                            separator();
+                            emit_type(pack_type);
+                        }
+                    }
+                }
+                _os << ">";
+            } else {
+                _os << agg->get_fq_name();
+            }
         } else {
             _os << st->name();
         }
@@ -172,23 +208,19 @@ void k_source_emitter::emit_type(const std::shared_ptr<type>& t) {
     // Enum type — use FQ name of the underlying enumeration
     if (auto et = std::dynamic_pointer_cast<enum_type>(t)) {
         if (auto en = et->get_enumeration()) {
-            _os << fq_name_for_source(en->get_fq_name());
+            _os << en->get_fq_name();
         } else {
             _os << et->to_string();
         }
         return;
     }
 
-    // Function reference type
-    if (auto frt = std::dynamic_pointer_cast<callable_type>(t)) {
-        _os << "(";
-        auto& params = frt->get_parameter_types();
-        for (size_t i = 0; i < params.size(); ++i) {
-            if (i > 0) _os << ", ";
-            emit_type(params[i]);
-        }
-        _os << ")";
-        switch (frt->get_addresser()) {
+    auto emit_callable = [&](const std::string& owner, callable_type::addresser addresser,
+                             const std::vector<std::shared_ptr<type>>& params,
+                             const std::shared_ptr<type>& return_type,
+                             const std::vector<std::shared_ptr<type>>& throws_spec) {
+        if (!owner.empty()) _os << owner << "::";
+        switch (addresser) {
             case callable_type::addresser::pointer:   _os << "*"; break;
             case callable_type::addresser::view:      _os << "?"; break;
             case callable_type::addresser::link:      _os << "+"; break;
@@ -196,8 +228,44 @@ void k_source_emitter::emit_type(const std::shared_ptr<type>& t) {
             case callable_type::addresser::owner:     _os << "!"; break;
             case callable_type::addresser::none:      break;
         }
-        _os << " -> ";
-        emit_type(frt->get_return_type());
+        _os << "(";
+        for (size_t i = 0; i < params.size(); ++i) {
+            if (i > 0) _os << ", ";
+            emit_type(params[i]);
+        }
+        _os << ")";
+        // K's void return is an omitted suffix, not an emitted type name.
+        if (return_type) {
+            _os << " : ";
+            emit_type(return_type);
+        }
+        if (!throws_spec.empty()) {
+            _os << " throws(";
+            for (size_t i = 0; i < throws_spec.size(); ++i) {
+                if (i > 0) _os << ", ";
+                emit_type(throws_spec[i]);
+            }
+            _os << ")";
+        }
+    };
+
+    if (auto frt = std::dynamic_pointer_cast<callable_type>(t)) {
+        std::string owner;
+        if (auto member = std::dynamic_pointer_cast<member_function_reference_type>(frt)) {
+            if (auto agg = member->get_member_of()) owner = agg->get_fq_name();
+        }
+        emit_callable(owner, frt->get_addresser(), frt->get_parameter_types(),
+                      frt->get_return_type(), frt->get_throws());
+        return;
+    }
+
+    if (auto frt = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (frt->is_resolved()) {
+            emit_type(frt->get_resolved());
+        } else {
+            emit_callable(frt->owner_name().empty() ? std::string{} : frt->owner_name().to_string(), frt->get_addresser(),
+                          frt->parameter_types(), frt->get_return_type(), frt->get_throws());
+        }
         return;
     }
 
@@ -327,6 +395,10 @@ void k_source_emitter::emit_expression(const std::shared_ptr<expression>& expr) 
 
     // Symbol expression
     if (auto se = std::dynamic_pointer_cast<symbol_expression>(expr)) {
+        if (auto it = _symbol_names.find(se.get()); it != _symbol_names.end()) {
+            _os << it->second;
+            return;
+        }
         if (se->is_variable_def()) {
             auto var = se->get_variable_def();
             _os << var->get_short_name();
@@ -781,7 +853,7 @@ void k_source_emitter::emit_block(const block& blk, int ind) {
 // Parameter list emission
 // ═════════════════════════════════════════════════════════════════════════════
 
-void k_source_emitter::emit_parameter_list(const function& fn) {
+void k_source_emitter::emit_parameter_list(const function& fn, bool ffi_annotations) {
     _os << "(";
     bool first = true;
     for (auto& param : fn.parameters()) {
@@ -790,6 +862,13 @@ void k_source_emitter::emit_parameter_list(const function& fn) {
             continue;
         if (!first) _os << ", ";
         first = false;
+        if (ffi_annotations && (param->is_ffi_cstring()
+            || std::any_of(param->get_annotations().begin(), param->get_annotations().end(),
+                [](const auto& annotation) {
+                    if (!annotation.resolved_type) return false;
+                    auto name = annotation.resolved_type->get_fq_name();
+                    return name == "::k::ffi::CString" || name == "k::ffi::CString";
+                }))) _os << "@k::ffi::CString ";
         _os << param->get_short_name();
         if (param->is_varargs()) _os << "...";
         _os << " : ";
@@ -968,10 +1047,9 @@ std::string k_source_emitter::emit_template_aggregate(const aggregate& agg) {
     reset();
 
     auto* ti = agg.get_tpl_info();
-    if (!ti) return {};
 
     // Template clause
-    emit_template_clause(*ti);
+    if (ti) emit_template_clause(*ti);
 
     // Aggregate keyword + name
     _os << aggregate_keyword(agg) << " " << agg.get_short_name();
@@ -1049,6 +1127,36 @@ std::string k_source_emitter::emit_template_aggregate(const aggregate& agg) {
     return _os.str();
 }
 
+std::string k_source_emitter::emit_extern_function_declaration(const function& fn,
+                                                             const std::string& name) {
+    reset();
+    if (!fn.is_extern() || fn.is_member() || fn.get_visibility() != PRIVATE) return {};
+    auto symbol = fn.get_extern_c_symbol().value_or(fn.get_short_name());
+    _os << "@k::ffi::Extern{.language = \"C\", .symbol = \"";
+    for (char ch : symbol) {
+        if (ch == '\\' || ch == '"') _os << '\\';
+        _os << ch;
+    }
+    _os << "\"} private " << (name.empty() ? fn.get_short_name() : name);
+    emit_parameter_list(fn, true);
+    if (fn.has_return_type()) {
+        _os << " : ";
+        emit_type(std::const_pointer_cast<type>(fn.get_return_type()));
+    }
+    if (!fn.get_throws_spec().empty()) {
+        _os << " throws(";
+        bool first = true;
+        for (const auto& thrown : fn.get_throws_spec()) {
+            if (!first) _os << ", ";
+            first = false;
+            emit_type(std::const_pointer_cast<type>(thrown));
+        }
+        _os << ")";
+    }
+    _os << ";\n";
+    return _os.str();
+}
+
 std::string k_source_emitter::emit_template_function(const function& fn) {
     reset();
 
@@ -1122,16 +1230,6 @@ void k_source_emitter::emit_bases(const aggregate& agg) {
 }
 
 } // namespace k::model
-
-
-
-
-
-
-
-
-
-
 
 
 
