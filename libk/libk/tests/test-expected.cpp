@@ -46,6 +46,127 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 
 } // anonymous namespace
 
+TEST_CASE("Expected<Shared<T>> — body-local specialization releases its active result",
+          "[libk][expected][shared][late-instantiation][regression]") {
+    auto j = jit_k(R"SRC(
+        module __expected_shared_body_local__;
+        class Payload {}
+        test() : int {
+            owner : Shared<Payload>(new Payload());
+            if (owner.useCount() != 1) return 1;
+            {
+                result : Expected<Shared<Payload>, int>;
+                result.setResult(owner);
+                if (owner.useCount() != 2) return 10 + owner.useCount();
+                {
+                    copy : Shared<Payload> = result.getResult();
+                    if (owner.useCount() != 3) return 20 + owner.useCount();
+                }
+                if (owner.useCount() != 2) return 30 + owner.useCount();
+            }
+            if (owner.useCount() != 1) return 40 + owner.useCount();
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Expected<Shared<T>> — copies retain and union members release ownership",
+          "[libk][expected][shared][regression]") {
+    auto j = jit_k(R"SRC(
+        module __expected_shared_lifetime__;
+        destroyed : int = 0;
+        class Payload {
+            ~Payload() { ++destroyed; }
+        }
+        wrap(owner : Shared<Payload>&, success : bool) : Expected<Shared<Payload>, int> {
+            if (!success) {
+                failure : Expected<Shared<Payload>, int>;
+                code : int = 7;
+                failure.setError(code);
+                return failure;
+            }
+            result : Expected<Shared<Payload>, int>;
+            result.setResult(owner);
+            return result;
+        }
+        test() : int {
+            destroyed = 0;
+            weak : Weak<Payload>;
+            {
+                owner : Shared<Payload>(new Payload());
+                weak = Weak<Payload>(owner);
+                if (owner.useCount() != 1) return 1;
+                {
+                    result : Expected<Shared<Payload>, int>;
+                    result.setResult(owner);
+                    if (owner.useCount() != 2) return 2;
+                    {
+                        copy : Shared<Payload> = result.getResult();
+                        if (owner.useCount() != 3) return 3;
+                    }
+                    if (owner.useCount() != 2) return 4;
+                    {
+                        copy : Expected<Shared<Payload>, int>(result);
+                        if (owner.useCount() != 3) return 5;
+                    }
+                    if (owner.useCount() != 2) return 6;
+                }
+                if (owner.useCount() != 1) return 7;
+                {
+                    result : Expected<Shared<Payload>, int> = wrap(owner, true);
+                    if (!result.hasResult()) return 8;
+                    if (owner.useCount() != 2) return 9;
+                }
+                if (owner.useCount() != 1) return 10;
+                {
+                    result : Expected<Shared<Payload>, int> = wrap(owner, false);
+                    if (!result.hasError() || result.getError() != 7) return 11;
+                }
+                if (owner.useCount() != 1 || destroyed != 0) return 12;
+            }
+            if (destroyed != 1 || !weak.expired()) return 13;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Expected<Shared<T>> — returned results and comparison temporaries have distinct lifetimes",
+          "[libk][expected][shared][return-count][regression]") {
+    auto j = jit_k(R"SRC(
+        module __expected_shared_return_count__;
+        class Payload {}
+        wrap(owner : Shared<Payload>&) : Expected<Shared<Payload>, int> {
+            result : Expected<Shared<Payload>, int>;
+            result.setResult(owner);
+            return result;
+        }
+        test() : int {
+            owner : Shared<Payload>(new Payload());
+            before : int = owner.useCount();
+            {
+                result : Expected<Shared<Payload>, int> = wrap(owner);
+                if (owner.useCount() != before + 1) return 100 + owner.useCount();
+                if (result.getResult() != owner) return 2;
+                if (owner.useCount() != before + 1) return 200 + owner.useCount();
+            }
+            if (owner.useCount() != before) return 40 + owner.useCount();
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Static factory methods — direct call syntax
 // ═══════════════════════════════════════════════════════════════════════════════

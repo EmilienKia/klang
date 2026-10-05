@@ -55,6 +55,14 @@ struct Expected {
 | `Expected()` | Default constructor. Creates an `Expected` in an undefined state. Must be followed immediately by a call to `setResult()` or `setError()`. |
 | `Expected(other : Expected<R,E>&)` | Copy constructor. If `other` holds a result, copies the result value. If `other` holds an error, copies the error value. If `other` is undefined, this is also left undefined. |
 
+### Value Lifetime
+
+The active result or error is destroyed when its `Expected` is destroyed.
+Copy construction and value-returning accessors use the alternative's copy
+semantics. In particular, `Expected<Shared<T>, E>` holds its own strong reference;
+copying it or calling `getResult()` retains the same ownership group, and
+destroying each copy releases that copy's reference.
+
 ---
 
 ## Static Factory Methods

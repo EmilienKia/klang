@@ -25,6 +25,51 @@ using namespace k::model::gen;
 using namespace k::parse;
 using namespace k::parse::ast;
 
+TEST_CASE("Aggregate union members destroy only their active alternative",
+          "[gen][union][lifecycle][regression]") {
+    auto jit = gen_jit(R"(
+        module gen_union_member_lifetime;
+        destroyed : int = 0;
+        struct Tracked {
+            Tracked() {}
+            Tracked(other : Tracked&) {}
+            ~Tracked() { ++destroyed; }
+        }
+        template<typename T>
+        struct Holder {
+            union Storage {
+                value : T;
+                error : int;
+            }
+            storage : Storage;
+            Holder(value : T&) {
+                storage.value = value;
+            }
+        }
+        test() : int {
+            destroyed = 0;
+            source : Tracked;
+            before : int = 0;
+            {
+                holder : Holder<Tracked>(source);
+                before = destroyed;
+            }
+            if (destroyed != before + 1) return 1;
+            {
+                holder : Holder<Tracked>(source);
+                holder.storage.error = 7;
+                before = destroyed;
+            }
+            if (destroyed != before) return 2;
+            return 0;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
 // ============================================================
 // Phase 1: Basic union declaration — parsing and type creation
 // ============================================================

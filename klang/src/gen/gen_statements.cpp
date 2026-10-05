@@ -3961,10 +3961,10 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
 
 }
 
-void implementation_generator::emit_union_cleanup(llvm::AllocaInst* alloca, union_type_def& udef) {
+void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_type_def& udef) {
     // Layout: { i32 discriminant, [N x i8] storage }
     auto* union_llvm_type = udef.get_struct_type()->get_llvm_type();
-    auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, alloca, 0, "union_dtor_disc_ptr");
+    auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, storage, 0, "union_dtor_disc_ptr");
     auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(**_context), disc_ptr, "union_dtor_disc");
 
     auto* cur_fn = _builder->GetInsertBlock()->getParent();
@@ -4003,7 +4003,7 @@ void implementation_generator::emit_union_cleanup(llvm::AllocaInst* alloca, unio
 
         _builder->SetInsertPoint(case_bb);
         // GEP to storage, bitcast to alternative struct pointer, call destructor
-        auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, alloca, 1, "union_dtor_storage");
+        auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, storage, 1, "union_dtor_storage");
         if (dtor->is_virtual()) {
             auto* vptr_val = _builder->CreateLoad(llvm::PointerType::get(**_context, 0), storage_ptr, "union_dtor_vptr");
             auto* is_null = _builder->CreateICmpEQ(
