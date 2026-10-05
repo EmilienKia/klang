@@ -37,6 +37,10 @@
 #include "helpers.hpp"
 
 #include <cstring>
+#include <string>
+
+#include <llvm/IR/Constants.h>
+
 
 // Compile-time paths injected by CMake (see libk/libk/CMakeLists.txt).
 #ifndef LIBK_KDI_DIR
@@ -47,6 +51,16 @@
 #endif
 
 namespace {
+
+uint64_t k_array_size(const llvm::Constant* value) {
+    if (llvm::isa<llvm::ConstantPointerNull>(value)) return 0;
+    auto* global = llvm::dyn_cast<llvm::GlobalVariable>(value->stripPointerCasts());
+    if (!global || !global->hasInitializer()) return 0;
+    auto* array = llvm::dyn_cast<llvm::ConstantStruct>(global->getInitializer());
+    if (!array) return 0;
+    auto* count = llvm::dyn_cast<llvm::ConstantInt>(array->getOperand(0));
+    return count ? count->getZExtValue() : 0;
+}
 
 /// Shorthand: compile K source that uses the base stdlib and JIT it.
 std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
@@ -3345,6 +3359,140 @@ TEST_CASE("Unit RTTI: class methods and free functions coexist", "[libk][rtti][u
     REQUIRE(test_free_fn);
     CHECK(test_class_name() == 42);
     CHECK(test_free_fn() == 2);
+}
+
+TEST_CASE("Unit RTTI inventories direct namespace declarations", "[libk][rtti][unit][namespace]") {
+    constexpr std::string_view source = R"SRC(
+        module __rtti_namespace_inventory__;
+
+        public class RootType {
+            public RootType() {}
+        }
+
+        public rootFunction() : int { return 1; }
+
+        namespace nested {
+            public class NestedType {
+                public NestedType() {}
+            }
+            public nestedFunction() : int { return 2; }
+        }
+
+        test() : int { return rootFunction() + nested::nestedFunction(); }
+    )SRC";
+
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(LIBK_KDI_DIR);
+    resolver->add_search_dir(LIBK_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    compiler->parse_source("", source, true, false);
+
+    const std::string moduleName = "__rtti_namespace_inventory__";
+    const std::string symbol = "_KTRUN" + std::to_string(moduleName.size())
+                             + moduleName + "E";
+    auto* unit = compiler->get_context_for_test()->module().getNamedGlobal(symbol);
+    REQUIRE(unit);
+    REQUIRE(unit->hasInitializer());
+    auto* unit_initializer = llvm::dyn_cast<llvm::ConstantStruct>(unit->getInitializer());
+    REQUIRE(unit_initializer);
+    CHECK(k_array_size(unit_initializer->getOperand(4)) == 5);
+    CHECK(k_array_size(unit_initializer->getOperand(6)) == 1);
+
+    auto* root = llvm::dyn_cast<llvm::GlobalVariable>(
+        unit_initializer->getOperand(5)->stripPointerCasts());
+    REQUIRE(root);
+    auto* root_initializer = llvm::dyn_cast<llvm::ConstantStruct>(root->getInitializer());
+    REQUIRE(root_initializer);
+    CHECK(k_array_size(root_initializer->getOperand(6)) == 1);
+    CHECK(k_array_size(root_initializer->getOperand(7)) == 1);
+    CHECK(k_array_size(root_initializer->getOperand(8)) == 4);
+
+    auto* children = llvm::dyn_cast<llvm::GlobalVariable>(
+        root_initializer->getOperand(6)->stripPointerCasts());
+    REQUIRE(children);
+    auto* children_initializer = llvm::dyn_cast<llvm::ConstantStruct>(children->getInitializer());
+    REQUIRE(children_initializer);
+    auto* child_data = llvm::dyn_cast<llvm::ConstantArray>(children_initializer->getOperand(1));
+    REQUIRE(child_data);
+    auto* nested = llvm::dyn_cast<llvm::GlobalVariable>(
+        child_data->getOperand(0)->stripPointerCasts());
+    REQUIRE(nested);
+    auto* nested_initializer = llvm::dyn_cast<llvm::ConstantStruct>(nested->getInitializer());
+    REQUIRE(nested_initializer);
+    CHECK(k_array_size(nested_initializer->getOperand(6)) == 0);
+    CHECK(k_array_size(nested_initializer->getOperand(7)) == 1);
+    CHECK(k_array_size(nested_initializer->getOperand(8)) == 1);
+}
+
+TEST_CASE("Unit RTTI emits a non-null root with empty type and namespace inventories",
+          "[libk][rtti][unit][namespace]") {
+    constexpr std::string_view source = R"SRC(
+        module __rtti_empty_namespace_inventory__;
+    )SRC";
+
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(LIBK_KDI_DIR);
+    resolver->add_search_dir(LIBK_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    compiler->parse_source("", source, true, false);
+
+    const std::string moduleName = "__rtti_empty_namespace_inventory__";
+    const std::string symbol = "_KTRUN" + std::to_string(moduleName.size())
+                             + moduleName + "E";
+    auto* unit = compiler->get_context_for_test()->module().getNamedGlobal(symbol);
+    REQUIRE(unit);
+    REQUIRE(unit->hasInitializer());
+    auto* unit_initializer = llvm::dyn_cast<llvm::ConstantStruct>(unit->getInitializer());
+    REQUIRE(unit_initializer);
+    CHECK(k_array_size(unit_initializer->getOperand(4)) >= 1);
+    CHECK(k_array_size(unit_initializer->getOperand(6)) == 0);
+
+    auto* root = llvm::dyn_cast<llvm::GlobalVariable>(
+        unit_initializer->getOperand(5)->stripPointerCasts());
+    REQUIRE(root);
+    auto* root_initializer = llvm::dyn_cast<llvm::ConstantStruct>(root->getInitializer());
+    REQUIRE(root_initializer);
+    CHECK(llvm::isa<llvm::ConstantPointerNull>(root_initializer->getOperand(6)));
+    CHECK(llvm::isa<llvm::ConstantPointerNull>(root_initializer->getOperand(7)));
+    CHECK(k_array_size(root_initializer->getOperand(8)) >= 1);
+}
+
+TEST_CASE("Unit RTTI merges multiple source inputs into one direct inventory",
+          "[libk][rtti][unit][namespace]") {
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(LIBK_KDI_DIR);
+    resolver->add_search_dir(LIBK_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    compiler->parse_sources({
+        {"first.k", R"SRC(
+            module __rtti_merged_inputs__;
+            public class FirstType { public FirstType() {} }
+        )SRC"},
+        {"second.k", R"SRC(
+            module __rtti_merged_inputs__;
+            public class SecondType { public SecondType() {} }
+        )SRC"}
+    }, true, false);
+
+    const std::string moduleName = "__rtti_merged_inputs__";
+    const std::string symbol = "_KTRUN" + std::to_string(moduleName.size())
+                             + moduleName + "E";
+    auto* unit = compiler->get_context_for_test()->module().getNamedGlobal(symbol);
+    REQUIRE(unit);
+    REQUIRE(unit->hasInitializer());
+    auto* unit_initializer = llvm::dyn_cast<llvm::ConstantStruct>(unit->getInitializer());
+    REQUIRE(unit_initializer);
+    CHECK(k_array_size(unit_initializer->getOperand(6)) == 2);
+
+    auto* root = llvm::dyn_cast<llvm::GlobalVariable>(
+        unit_initializer->getOperand(5)->stripPointerCasts());
+    REQUIRE(root);
+    auto* root_initializer = llvm::dyn_cast<llvm::ConstantStruct>(root->getInitializer());
+    REQUIRE(root_initializer);
+    CHECK(k_array_size(root_initializer->getOperand(7)) == 2);
 }
 
 

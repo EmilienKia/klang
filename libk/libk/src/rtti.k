@@ -560,13 +560,68 @@ final const class AnnotationType : public AggregateType {
 }
 
 /**
+ * RTTI descriptor for a namespace.
+ *
+ * Namespace descriptors enumerate only declarations owned directly by that
+ * namespace. Nested aggregate types remain owned by their aggregate, and
+ * imported declarations are never added to the local inventory.
+ */
+final const class Namespace {
+    name : const char[]?;
+    fullName : const char[]?;
+    parent : const Namespace?;
+    unit : const Unit?;
+    namespaces : const Namespace?[]?;
+    types : const TypeInfo?[]?;
+    functions : const Function?[]?;
+
+    /** Return the local namespace name; the unit root has an empty name. */
+    const getName() : const char[]? {
+        return name;
+    }
+
+    /** Return the fully-qualified namespace name; the unit root is empty. */
+    const getFullName() : const char[]? {
+        return fullName;
+    }
+
+    /** Return the parent namespace, or null for the unit root. */
+    const getParent() : const Namespace? {
+        return parent;
+    }
+
+    /** Return the owning compilation unit. */
+    const getUnit() : const Unit? {
+        return unit;
+    }
+
+    /** Return this namespace's direct child namespaces. */
+    const getNamespaces() : const Namespace?[]? {
+        return namespaces;
+    }
+
+    /** Return this namespace's direct class, interface, and annotation types. */
+    const getTypes() : const TypeInfo?[]? {
+        return types;
+    }
+
+    /** Return this namespace's direct public free functions. */
+    const getFunctions() : const Function?[]? {
+        return functions;
+    }
+}
+
+/**
  * RTTI unit (module) descriptor.
- * This class describes a compilation unit (module) at runtime.
+ * This class describes the compiler model unit at runtime. A unit can contain
+ * declarations merged from multiple source files.
  */
 final const class Unit {
     name : const char[]?;
     fullName : const char[]?;
     functions : const Function?[]?;
+    rootNamespace : const Namespace?;
+    types : const TypeInfo?[]?;
 
     /**
      * Return the short name of the unit (module name).
@@ -588,6 +643,16 @@ final const class Unit {
      */
     const getFunctions() : const Function?[]? {
         return functions;
+    }
+
+    /** Return the non-null root namespace owned by this unit. */
+    const getRootNamespace() : const Namespace? {
+        return rootNamespace;
+    }
+
+    /** Return the direct types owned by the unit's root namespace. */
+    const getTypes() : const TypeInfo?[]? {
+        return types;
     }
 }
 

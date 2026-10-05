@@ -46,7 +46,13 @@ The RTTI system supports:
 - **Visibility and modifiers** — query visibility, static-ness.
 - **Annotation introspection** — enumerate annotations attached to a type.
 - **Function introspection** — enumerate public member functions of a class or interface.
-- **Unit introspection** — enumerate public free functions of a compilation unit.
+- **Namespace introspection** — enumerate locally owned child namespaces, types,
+  and public free functions.
+- **Unit introspection** — enumerate declarations owned by a compiler unit,
+  including the root namespace and its direct types.
+- **Image-owned unit views** — retrieve unit descriptors through
+  `Module.units()` without assigning independent ownership to compiler-emitted
+  RTTI globals.
 
 ---
 
@@ -362,20 +368,62 @@ Interfaces do not expose constructors.
 ## 11. Unit
 
 ```k
-final const class Unit {
-    name      : const char[]?;
-    fullName  : const char[]?;
-    functions : const Function?[]?;
+final const class Namespace {
+    name       : const char[]?;
+    fullName   : const char[]?;
+    parent     : const Namespace?;
+    unit       : const Unit?;
+    namespaces : const Namespace?[]?;
+    types      : const TypeInfo?[]?;
+    functions  : const Function?[]?;
 
     const getName()       : const char[]?;
     const getFullName()   : const char[]?;
+    const getParent()     : const Namespace?;
+    const getUnit()       : const Unit?;
+    const getNamespaces() : const Namespace?[]?;
+    const getTypes()      : const TypeInfo?[]?;
     const getFunctions()  : const Function?[]?;
+}
+
+final const class Unit {
+    name          : const char[]?;
+    fullName      : const char[]?;
+    functions     : const Function?[]?;
+    rootNamespace : const Namespace?;
+    types         : const TypeInfo?[]?;
+
+    const getName()        : const char[]?;
+    const getFullName()    : const char[]?;
+    const getFunctions()   : const Function?[]?;
+    const getRootNamespace() : const Namespace?;
+    const getTypes()       : const TypeInfo?[]?;
 }
 ```
 
-RTTI descriptor for a compilation unit (module). The compiler synthesizes
-one `Unit` instance per module (when the module imports `k`). It collects
-the public free (non-member) functions defined in that module.
+`Unit` describes one compiler model unit, not one source file. When several K
+source inputs are merged into the same compiler unit, they share one unit
+descriptor. Its root namespace is always present, including when the unit has
+no user declarations.
+
+`Namespace` describes a namespace owned by that unit. Its root namespace has
+an empty local name and empty full name; nested namespace names are relative
+and fully qualified respectively. Namespace inventories contain only direct
+declarations: imported declarations are excluded, and nested aggregate types
+remain owned by their enclosing aggregate rather than being repeated in a
+namespace's type list. A namespace in one unit is distinct from a namespace
+with the same qualified name in another unit.
+
+Empty inventories are represented by a null array pointer. These arrays are
+immutable compiler-emitted metadata; navigation does not transfer ownership
+of the descriptor storage. A unit discovered from a native image is exposed
+through `UnitView`, which retains the owning `Module`. `getDescriptor()` and
+all namespace, type, and function references reached through that descriptor
+are borrowed; keep the `UnitView` alive while using them. The current runtime
+keeps images process-resident and has no unload operation, but clients must
+observe this lease rule so navigation remains safe if releasable residency is
+introduced later. Imported declarations are not part of a unit's direct
+inventory and must not be treated as owned by that unit's image.
 
 ### Fields (private)
 
@@ -384,6 +432,8 @@ the public free (non-member) functions defined in that module.
 | `name` | `const char[]?` | Short module name (e.g. `"mymod"`). |
 | `fullName` | `const char[]?` | Fully qualified module name (e.g. `"::mymod"`). |
 | `functions` | `const Function?[]?` | Array of public free function descriptors, or `null`. |
+| `rootNamespace` | `const Namespace?` | Non-null root namespace descriptor for the unit. |
+| `types` | `const TypeInfo?[]?` | Direct types in the root namespace, or `null`. |
 
 ### Methods
 
@@ -392,10 +442,34 @@ the public free (non-member) functions defined in that module.
 | `getName()` | `const char[]?` | Short module name. |
 | `getFullName()` | `const char[]?` | Fully qualified module name. |
 | `getFunctions()` | `const Function?[]?` | Array of public non-member function descriptors, or `null` if none. |
+| `getRootNamespace()` | `const Namespace?` | The unit's root namespace. |
+| `getTypes()` | `const TypeInfo?[]?` | Direct type descriptors in the root namespace. |
+
+### Namespace fields and methods
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `const char[]?` | Local name; empty for the root namespace. |
+| `fullName` | `const char[]?` | Fully qualified name; empty for the root namespace. |
+| `parent` | `const Namespace?` | Parent namespace, or `null` for the root. |
+| `unit` | `const Unit?` | Unit that owns this namespace. |
+| `namespaces` | `const Namespace?[]?` | Direct child namespaces, or `null` if none. |
+| `types` | `const TypeInfo?[]?` | Direct class, interface, and annotation types, or `null` if none. |
+| `functions` | `const Function?[]?` | Direct public free functions, or `null` if none. |
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getName()` | `const char[]?` | Local namespace name. |
+| `getFullName()` | `const char[]?` | Fully qualified namespace name. |
+| `getParent()` | `const Namespace?` | Parent namespace, or `null` for the root. |
+| `getUnit()` | `const Unit?` | Owning compiler unit. |
+| `getNamespaces()` | `const Namespace?[]?` | Direct child namespaces. |
+| `getTypes()` | `const TypeInfo?[]?` | Direct types. |
+| `getFunctions()` | `const Function?[]?` | Direct public free functions. |
 
 ### Compiler synthesis
 
-The compiler emits one `Unit` RTTI global per module. The mangled symbol
+The compiler emits one `Unit` RTTI global per compiler unit. The mangled symbol
 name follows the pattern `_KTRUN<module_name>E`.
 
 ---
@@ -414,6 +488,8 @@ Annotation (const class)
 
 Function (final const class)
 
+Namespace (final const class)
+
 Unit (final const class)
 ```
 
@@ -423,9 +499,9 @@ implement `AggregateType` and therefore `TypeInfo`.
 `Annotation` is a separate hierarchy: it is the base for user-defined
 annotation instances (not for type descriptors).
 
-`Function` and `Unit` are standalone classes — they do not implement
-`TypeInfo` and are not part of the type descriptor hierarchy. They describe
-functions and compilation units, respectively.
+`Function`, `Namespace`, and `Unit` are standalone classes — they do not
+implement `TypeInfo` and are not part of the type descriptor hierarchy. They
+describe functions, namespaces, and compiler units, respectively.
 
 ---
 
