@@ -874,7 +874,14 @@ public:
      * the shared struct_type must point to it (rather than the signature-only
      * imported aggregate) for code generation to emit those bodies.
      */
-    void reassign_aggregate(std::weak_ptr<k::model::aggregate> st) { _struct = std::move(st); }
+    void reassign_aggregate(std::weak_ptr<k::model::aggregate> st) {
+        if (_struct.lock() != st.lock()) {
+            // KDI layouts omit private member names. Rebuild the field map
+            // from the concrete template body while retaining its ABI type.
+            _fields.clear();
+        }
+        _struct = std::move(st);
+    }
 
     inline fields_t::size_type fields_size()const {return _fields.size();}
     inline fields_t::const_iterator fields_begin()const {return _fields.begin();}

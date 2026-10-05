@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 #include "resolvers_aggregate.hpp"
+#include "resolvers_symbol.hpp"
 #include "resolvers_scope_lookup.hpp"
 #include "resolvers_constexpr.hpp"
 #include "gen_helpers.hpp"
@@ -612,6 +613,15 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
             if (!arg_type || !type::is_resolved(arg_type)) {
                 if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
+                    // Resolve nested AST arguments before looking up their bare
+                    // template name, so enclosing aggregate layouts are ready
+                    // during declaration resolution rather than only in bodies.
+                    if (unres_arg->has_template_args()) {
+                        auto nested = try_instantiate_template_type(unres_arg, context_elem);
+                        if (nested && type::is_resolved(nested)) {
+                            arg_type = nested;
+                        }
+                    }
                     // A bare template-parameter placeholder (e.g. 'I'/'O'/'T' used
                     // inside the defining template's own body, such as
                     // `buffer : Vector<I>;` in `ManyToOneTransformInputStream<I,O>`)
@@ -620,7 +630,8 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     // (e.g. `interface I { ... }`) would be spuriously matched.
                     // Only the substitution-map recovery paths below (enclosing
                     // concrete function/aggregate) may legitimately resolve it.
-                    if (!unres_arg->is_template_param_placeholder()
+                    if (!type::is_resolved(arg_type)
+                        && !unres_arg->is_template_param_placeholder()
                         && !is_enclosing_template_param_name(context_elem, unres_arg->type_id().to_string())) {
                         auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
                         if (resolved && type::is_resolved(resolved)) {

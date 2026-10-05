@@ -734,3 +734,39 @@ TEST_CASE("Late template instantiation does not reinject resolved base construct
     REQUIRE(test != nullptr);
     CHECK(test() == 2);
 }
+
+TEST_CASE("Nested template member arguments are resolved before class layout",
+          "[gen][template][instantiation][nested-member-layout]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_member_layout;
+        calls : int = 0;
+
+        class Root {
+            Root() { calls += 1; }
+        }
+
+        template<typename T>
+        struct Inner {
+            value : T;
+        }
+
+        template<typename T>
+        struct Outer {
+            value : T;
+        }
+
+        class Holder : public Root {
+            data : Outer<Inner<int>>!;
+        }
+
+        test() : int {
+            calls = 0;
+            holder : Holder;
+            return calls;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 1);
+}

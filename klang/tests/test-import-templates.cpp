@@ -224,6 +224,28 @@ TEST_CASE("import template — private constructor and helper methods remain acc
     REQUIRE(fn() == 42);
 }
 
+TEST_CASE("import template — imported instantiation restores private fields when synthesized",
+          "[import][template][cross-tpl][consumer-inst][private-template-layout][regression]") {
+    PrivateFriendTemplateImport lib("private_friend_template_layout");
+    REQUIRE(ensure_libk_loaded());
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(lib.resolver);
+    comp->parse_source("private_friend_tpl_layout.k", R"K(
+        module private_friend_tpl_layout;
+        import private_friend_tpl_lib;
+        test() : int {
+            owner : Owner<int>;
+            return owner.read(21);
+        }
+    )K", false, false);
+
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
 TEST_CASE("import template — private helper API remains inaccessible to non-friends",
           "[import][template][cross-tpl][private-template-friend][error]") {
     PrivateFriendTemplateImport lib("private_friend_template_negative");

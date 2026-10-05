@@ -2061,6 +2061,12 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     // Idempotency / recursion guard: each instantiated aggregate is resolved once.
     if (!_resolved_instantiations.insert(&agg).second) return;
 
+    // Body-local specializations are created after the declaration pass. Run
+    // its aggregate work before resolving bodies, including nested union
+    // alternatives and synthesis of their containing aggregate's destructor.
+    aggregate_type_resolver declarations(*this, _context, _unit);
+    agg.accept(declarations);
+
     // Resolve instantiated base classes first, so this aggregate's own method
     // resolution and its base-constructor calls see fully-resolved base signatures
     // (return/param types, constructors). Without this, a transitively-instantiated
