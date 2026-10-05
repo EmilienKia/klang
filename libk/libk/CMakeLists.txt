@@ -741,6 +741,8 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${MODFX_DIR}
     COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/modreg.k
     COMMAND ${CMAKE_COMMAND} -E create_symlink libmodreg.kdi modreg.kdi
+    COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/visitor_fixture.k
+    COMMAND ${CMAKE_COMMAND} -E create_symlink libvisitor_fixture.kdi visitor_fixture.kdi
     COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/plugin_a.k
     COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/plugin_b.k
     COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodmissing_target.so ${MODFX_SRC}/missing_target.c
@@ -765,7 +767,8 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy ${MODFX_SRC}/not_a_library.txt ${MODFX_DIR}/not_a_library.txt
     COMMAND ${CMAKE_COMMAND} -E touch ${MODFX_DIR}/.fixtures.stamp
     DEPENDS klangc libk_stdlib
-            ${MODFX_SRC}/modreg.k ${MODFX_SRC}/plugin_a.k ${MODFX_SRC}/plugin_b.k
+            ${MODFX_SRC}/modreg.k ${MODFX_SRC}/visitor_fixture.k
+            ${MODFX_SRC}/plugin_a.k ${MODFX_SRC}/plugin_b.k
             ${MODFX_SRC}/missing_target.c ${MODFX_SRC}/missing_user.c
             ${MODFX_SRC}/undefined_symbol.c ${MODFX_SRC}/native_dependency.c
             ${MODFX_SRC}/incompatible_manifest.c ${MODFX_SRC}/malformed_manifest.c

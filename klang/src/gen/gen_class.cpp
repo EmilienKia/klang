@@ -259,7 +259,20 @@ bool have_same_virtual_signature(const function& a, const function& b) {
                 if (!st->has_tpl_args()) {
                     auto u_str = u->type_id().without_root_prefix().to_string();
                     auto s_str = st->get_name().without_root_prefix().to_string();
-                    return u_str == s_str;
+                    if (u_str == s_str) return true;
+
+                    // A locally declared override can still have an unresolved
+                    // unqualified parameter type during this pass while the
+                    // imported base method already has its fully qualified
+                    // aggregate type. Match those only when the local spelling
+                    // is unqualified; qualified names remain exact.
+                    if (u_str.find("::") == std::string::npos) {
+                        const auto struct_pos = s_str.rfind("::");
+                        const std::string struct_short_name = struct_pos == std::string::npos
+                            ? s_str : s_str.substr(struct_pos + 2);
+                        return u_str == struct_short_name;
+                    }
+                    return false;
                 }
 
                 std::string unresolved_name = u->type_id().to_string();
@@ -495,6 +508,7 @@ build_vtable_layout(aggregate& st,
 
         if (vis == PRIVATE) {
             for (auto& entry : vt->entries) {
+                if (!entry.introducing_func) continue;
                 if (have_same_virtual_signature(*func, *entry.introducing_func)) {
                     error_private_overrides.push_back(func);
                 }
@@ -506,9 +520,10 @@ build_vtable_layout(aggregate& st,
 
         bool found_override = false;
         for (auto& entry : vt->entries) {
+            if (!entry.introducing_func) continue;
             if (have_same_virtual_signature(*func, *entry.introducing_func)) {
                 // Check if the current slot occupant (entry.func) is declared 'final'.
-                if (entry.func->is_final_func()) {
+                if (entry.func && entry.func->is_final_func()) {
                     warning_override_final.push_back(func);
                     // If user explicitly wrote 'override' on a final slot, it's an error
                     if (func->is_override_specifier()) {

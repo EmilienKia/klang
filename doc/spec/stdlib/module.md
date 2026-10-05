@@ -54,6 +54,7 @@ public final class UnitView {
     public const owner() : Shared<Module>;
     public const isNull() : bool;
     public const getDescriptor() : const Unit&;
+    public const accept(visitor : RttiVisitor&) : void;
     public const rootNamespace() : NamespaceView;
 }
 
@@ -61,6 +62,7 @@ public final class NamespaceView {
     public const owner() : Shared<Module>;
     public const isNull() : bool;
     public const getDescriptor() : const Namespace&;
+    public const accept(visitor : RttiVisitor&) : void;
     public const children() : Vector<NamespaceView>;
     public const parent() : NamespaceView;
 }
@@ -147,15 +149,36 @@ view. Empty default-constructed views report `isNull()`; descriptor access on
 an empty view throws `NullDereferenceError`. Descriptors are never wrapped in
 independent `Shared` ownership.
 
-The Linux v1 image-manifest ABI is an immutable array of
-`KRTTIManifestEntryV1` records in the ELF section `k_rtti_units`. Each record
+`UnitView.accept(visitor)` and `NamespaceView.accept(visitor)` synchronously
+dispatch to the descriptor callback while the view keeps its owning module
+alive. The callback receives a borrowed descriptor; retain the view or a
+`Shared<Module>` owner when the descriptor must outlive the callback.
+
+`RecursiveRttiVisitor.walkModule(module)` traverses one retained module.
+`walkModules(modules)` snapshots and identity-deduplicates the supplied root
+handles before invoking callbacks, and `walkLinkedModules(application)` uses
+the application's fixed startup-linked snapshot. These operations do not
+follow dependency or linked-module edges during recursion, and module-registry
+locks are not held while callbacks run. Empty handles are rejected with
+`NullDereferenceError`. `currentModule()` returns a strong owner for the
+descriptor currently being visited, including during nested walks. See
+[RTTI Visitor API](rtti.md#16-visitor-api) for callback order, pruning, and
+borrowed-descriptor rules.
+
+The Linux image-manifest record ABI is version 2. It is an immutable array of
+`KRTTIManifestEntryV2` records in the ELF section `k_rtti_units`. Each record
 contains an ABI version, record size, and pointer to a compiler-emitted `Unit`
-descriptor. The image-local `__k_rtti_manifest_v1` accessor returns the
+descriptor. The image-local `__k_rtti_manifest_v1` discovery accessor retains
+its historical symbol name and returns the
 section's entry range. Compiler objects contribute records independently;
 archives retain contributions with their object members, so ordinary static
 link extraction rules remain unchanged: extracted members are discoverable,
 unextracted members are not. The runtime validates record ownership, image-section bounds, alignment, ABI,
-and the exact v1 record size before exposing descriptors. This ABI is versioned
+and the exact v2 record size before exposing descriptors. Version 1 records are
+rejected as incompatible because the Unit and Namespace descriptor layouts
+changed; v2 also includes the runtime annotation and RTTI visitor vtable
+contracts. Adding visitor callbacks did not change the manifest record shape,
+so it does not introduce another record-version increment. This ABI is versioned
 separately from the KDI format. Constructing `Application` fails with an
 unchecked `ModuleManifestError` whose code is `INVALID_MANIFEST` or
 `INCOMPATIBLE_MANIFEST` if any startup image has such a manifest.

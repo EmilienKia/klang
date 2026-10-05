@@ -38,6 +38,8 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include <kdi.hpp>
+#include <functional>
 
 #include <dlfcn.h>
 #include <sys/stat.h>
@@ -326,6 +328,363 @@ TEST_CASE("Module views retain namespace owners and reject empty descriptor acce
         "    catch (e: NullDereferenceError&) {}\n"
         "    return 0;\n"
         "}\n");
+    REQUIRE(jit);
+    CHECK(run_main(*jit) == 0);
+}
+
+TEST_CASE("Module manifest exposes unit and namespace annotations",
+          "[libk][module][rtti][annotation]") {
+    const std::string reg = fs::canonical(fs::path(FIXTURES) / "libmodreg.so").string();
+    auto exported = kdi::kdi_read_cbor_file((fs::path(FIXTURES) / "modreg.kdi").string());
+    REQUIRE(exported.unit.annotations.size() == 1);
+    CHECK(exported.unit.annotations[0].name == "ManifestTag");
+    CHECK(exported.unit.annotations[0].source == "@ManifestTag(17)");
+    CHECK(exported.unit.root_ns.annotations.empty());
+    std::function<const kdi::kdi_namespace*(const kdi::kdi_namespace&)> find_annotated_namespace;
+    find_annotated_namespace = [&](const kdi::kdi_namespace& ns) -> const kdi::kdi_namespace* {
+        if (ns.name == "child") return &ns;
+        for (const auto& child : ns.namespaces) {
+            if (auto found = find_annotated_namespace(child)) return found;
+        }
+        return nullptr;
+    };
+    const auto* exported_namespace = find_annotated_namespace(exported.unit.root_ns);
+    REQUIRE(exported_namespace != nullptr);
+    REQUIRE(exported_namespace->annotations.size() == 1);
+    CHECK(exported_namespace->annotations[0].source == "@ManifestTag(23)");
+
+    auto jit = jit_module(
+        "module __module_annotation_view__;\n"
+        "import modreg;\n"
+        "main() : int {\n"
+        "    module_handle : Shared<Module> = loadModule(String(\"" + reg + "\")).getResult();\n"
+        "    units : Vector<UnitView> = module_handle.get()->units();\n"
+        "    if (units.size() == 0u) { return 1; }\n"
+        "    unit : UnitView = units.get(0);\n"
+        "    unit_annotations : const k::Annotation?[]? = unit.getDescriptor().getAnnotations();\n"
+        "    if (unit_annotations == null || unit_annotations->size != 1u) { return 2; }\n"
+        "    unit_annotation : const k::Annotation? = unit_annotations[0];\n"
+        "    if (unit_annotation == null) { return 3; }\n"
+        "    unit_type_name : String = String(unit_annotation->getAnnotationType().getName());\n"
+        "    if (unit_type_name != String(\"ManifestTag\")) { return 4; }\n"
+        "    functions : const k::Function?[]? = unit.getDescriptor().getFunctions();\n"
+        "    if (functions == null) { return 12; }\n"
+        "    found_probe : bool = false;\n"
+        "    i : unsigned int = 0;\n"
+        "    while (i < functions->size) {\n"
+        "        function : const k::Function? = functions[i];\n"
+        "        if (function != null && String(function->getName()) == String(\"annotatedProbe\")) {\n"
+        "            function_annotations : const k::Annotation?[]? = function->getAnnotations();\n"
+        "            if (function_annotations == null || function_annotations->size != 1u) { return 13; }\n"
+        "            function_annotation : const k::Annotation? = function_annotations[0];\n"
+        "            if (function_annotation == null) { return 14; }\n"
+        "            if (String(function_annotation->getAnnotationType().getName()) != String(\"ManifestTag\")) { return 15; }\n"
+        "            parameters : const k::Parameter?[]? = function->getParameters();\n"
+        "            if (parameters == null || parameters->size != 1u) { return 16; }\n"
+        "            parameter : const k::Parameter? = parameters[0];\n"
+        "            if (parameter == null) { return 17; }\n"
+        "            parameter_annotations : const k::Annotation?[]? = parameter->getAnnotations();\n"
+        "            if (parameter_annotations == null || parameter_annotations->size != 1u) { return 18; }\n"
+        "            parameter_annotation : const k::Annotation? = parameter_annotations[0];\n"
+        "            if (parameter_annotation == null) { return 19; }\n"
+        "            if (String(parameter_annotation->getAnnotationType().getName()) != String(\"ManifestTag\")) { return 20; }\n"
+        "            found_probe = true;\n"
+        "        }\n"
+        "        ++i;\n"
+        "    }\n"
+        "    if (!found_probe) { return 21; }\n"
+        "    root : NamespaceView = unit.rootNamespace();\n"
+        "    root_children : Vector<NamespaceView> = root.children();\n"
+        "    if (root_children.size() == 0u) { return 5; }\n"
+        "    fixture_children : Vector<NamespaceView> = root_children.get(0).children();\n"
+        "    if (fixture_children.size() == 0u) { return 6; }\n"
+        "    leaf : NamespaceView = fixture_children.get(0);\n"
+        "    namespace_annotations : const k::Annotation?[]? = leaf.getDescriptor().getAnnotations();\n"
+        "    if (namespace_annotations == null || namespace_annotations->size != 1u) { return 7; }\n"
+        "    namespace_annotation : const k::Annotation? = namespace_annotations[0];\n"
+        "    if (namespace_annotation == null) { return 8; }\n"
+        "    namespace_type_name : String = String(namespace_annotation->getAnnotationType().getName());\n"
+        "    if (namespace_type_name != String(\"ManifestTag\")) { return 9; }\n"
+        "    return 0;\n"
+        "}\n");
+    REQUIRE(jit);
+    CHECK(run_main(*jit) == 0);
+}
+
+TEST_CASE("RTTI visitor dispatches, traverses, prunes, and retains module owners",
+          "[libk][module][rtti][visitor]") {
+    const std::string fixture = fs::canonical(
+        fs::path(FIXTURES) / "libvisitor_fixture.so").string();
+    const std::string plugin = fs::canonical(
+        fs::path(FIXTURES) / "libmodplugin_a.so").string();
+
+    std::string source = R"SRC(
+        module __rtti_visitor__;
+        import visitor_fixture;
+
+        class TraceVisitor : public RecursiveRttiVisitor {
+            private:
+                _events : Vector<int>;
+                _expectedOwner : Shared<Module>;
+                _ownerOkay : bool = true;
+
+                _record(event : int) { _events.append(event); }
+
+            protected:
+                override enterLibraryModule(image : const LibraryModule&) : bool {
+                    _record(1);
+                    if (currentModule() != _expectedOwner) { _ownerOkay = false; }
+                    return true;
+                }
+                override leaveLibraryModule(image : const LibraryModule&) { _record(101); }
+                override enterUnit(unitDescriptor : const Unit&) : bool { _record(2); return true; }
+                override leaveUnit(unitDescriptor : const Unit&) { _record(102); }
+                override enterNamespace(scope : const Namespace&) : bool { _record(3); return true; }
+                override leaveNamespace(scope : const Namespace&) { _record(103); }
+                override enterInterface(typeDescriptor : const Interface&) : bool { _record(4); return true; }
+                override leaveInterface(typeDescriptor : const Interface&) { _record(104); }
+                override enterFunction(functionDescriptor : const Function&) : bool { _record(5); return true; }
+                override leaveFunction(functionDescriptor : const Function&) { _record(105); }
+                override enterParameter(parameterDescriptor : const Parameter&) : bool { _record(6); return true; }
+                override leaveParameter(parameterDescriptor : const Parameter&) { _record(106); }
+                override enterAnnotationType(typeDescriptor : const AnnotationType&) : bool { _record(7); return true; }
+                override leaveAnnotationType(typeDescriptor : const AnnotationType&) { _record(107); }
+                override enterClass(typeDescriptor : const Class&) : bool { _record(8); return true; }
+                override leaveClass(typeDescriptor : const Class&) { _record(108); }
+                override enterConstructor(constructorDescriptor : const Constructor&) : bool { _record(9); return true; }
+                override leaveConstructor(constructorDescriptor : const Constructor&) { _record(109); }
+                override annotationObserved(annotationDescriptor : const Annotation&) { _record(50); }
+
+            public:
+                setExpectedOwner(owner : Shared<Module>) { _expectedOwner = owner; }
+                const ownerIsValid() : bool { return _ownerOkay; }
+                const currentIsEmpty() : bool { return !currentModule(); }
+                const matches() : bool {
+                    expected : int[] = int[]{
+                        1, 2, 50, 3, 3, 50,
+                        4, 50, 5, 50, 6, 106, 105, 104,
+                        7, 50, 107,
+                        8, 50, 8, 108,
+                        5, 50, 6, 50, 106, 105,
+                        9, 50, 6, 50, 106, 109, 108,
+                        5, 50, 6, 50, 106, 105,
+                        103, 7, 107,
+                        5, 6, 106, 6, 106, 6, 106, 105,
+                        5, 6, 106, 6, 106, 105,
+                        103, 102, 101
+                    };
+                    if (_events.size() != expected.size) { return false; }
+                    i : unsigned int = 0;
+                    while (i < expected.size) {
+                        if (_events.get(i) != expected[i]) { return false; }
+                        ++i;
+                    }
+                    return true;
+                }
+        }
+
+        class PruningVisitor : public RecursiveRttiVisitor {
+            private:
+                _events : Vector<int>;
+            protected:
+                override enterLibraryModule(image : const LibraryModule&) : bool { _events.append(1); return true; }
+                override leaveLibraryModule(image : const LibraryModule&) { _events.append(101); }
+                override enterUnit(unitDescriptor : const Unit&) : bool { _events.append(2); return false; }
+                override leaveUnit(unitDescriptor : const Unit&) { _events.append(102); }
+                override enterNamespace(scope : const Namespace&) : bool { _events.append(3); return true; }
+            public:
+                const skippedChildrenAndLeft() : bool {
+                    return _events.size() == 4u
+                        && _events.get(0) == 1
+                        && _events.get(1) == 2
+                        && _events.get(2) == 102
+                        && _events.get(3) == 101;
+                }
+        }
+
+        class DirectVisitor : public RecursiveRttiVisitor {
+            private:
+                _units : int = 0;
+                _namespaces : int = 0;
+            public:
+                override visitUnit(unitDescriptor : const Unit&) { ++_units; }
+                override visitNamespace(scope : const Namespace&) { ++_namespaces; }
+                const unitCount() : int { return _units; }
+                const namespaceCount() : int { return _namespaces; }
+        }
+
+        class ReentrantVisitor : public RecursiveRttiVisitor {
+            private:
+                _nested : Shared<Module>;
+                _insideNested : bool = false;
+                _restored : bool = true;
+            protected:
+                override enterUnit(unitDescriptor : const Unit&) : bool {
+                    if (!_insideNested) {
+                        outer : Shared<Module> = currentModule();
+                        _insideNested = true;
+                        walkModule(_nested);
+                        if (currentModule() != outer) { _restored = false; }
+                    }
+                    return false;
+                }
+            public:
+                setNested(image : Shared<Module>) { _nested = image; }
+                const restored() : bool { return _restored && !currentModule(); }
+        }
+
+        class ThrowingVisitor : public RecursiveRttiVisitor {
+            protected:
+                override enterUnit(unitDescriptor : const Unit&) : bool {
+                    throw FatalError();
+                }
+        }
+
+        class SnapshotVisitor : public RecursiveRttiVisitor {
+            private:
+                _application : Application&;
+                _libraries : int = 0;
+                _loaded : bool = false;
+                _okay : bool = true;
+            protected:
+                override enterLibraryModule(image : const LibraryModule&) : bool {
+                    ++_libraries;
+                    if (!_loaded) {
+                        _loaded = true;
+                        loaded : Expected<Shared<Module>, LoadModuleError> =
+                            _application.loadModule(String("@PLUGIN_PATH@"));
+                        if (!loaded.hasResult()) { _okay = false; }
+                    }
+                    return false;
+                }
+            public:
+                SnapshotVisitor(application : Application&) : _application(application) {}
+                const valid() : bool { return _okay && _loaded && _libraries == 1; }
+        }
+
+        class NativeOnlyVisitor : public RecursiveRttiVisitor {
+            private:
+                _native : int = 0;
+                _units : int = 0;
+                _left : int = 0;
+            protected:
+                override enterNativeLibraryModule(image : const NativeLibraryModule&) : bool {
+                    ++_native;
+                    return true;
+                }
+                override leaveNativeLibraryModule(image : const NativeLibraryModule&) {
+                    ++_left;
+                }
+                override enterUnit(unitDescriptor : const Unit&) : bool {
+                    ++_units;
+                    return true;
+                }
+            public:
+                const valid() : bool { return _native == 1 && _left == 1 && _units == 0; }
+        }
+
+        class LinkedModuleCounter : public RecursiveRttiVisitor {
+            private:
+                _modules : int = 0;
+            protected:
+                override enterApplicationModule(image : const ApplicationModule&) : bool {
+                    ++_modules;
+                    return false;
+                }
+                override enterLibraryModule(image : const LibraryModule&) : bool {
+                    ++_modules;
+                    return false;
+                }
+                override enterNativeLibraryModule(image : const NativeLibraryModule&) : bool {
+                    ++_modules;
+                    return false;
+                }
+            public:
+                const count() : int { return _modules; }
+        }
+
+        main() : int {
+            loaded : Expected<Shared<Module>, LoadModuleError> =
+                loadModule(String("@FIXTURE_PATH@"));
+            if (!loaded.hasResult()) { return 1; }
+            image : Shared<Module> = loaded.getResult();
+
+            trace : TraceVisitor;
+            trace.setExpectedOwner(image);
+            trace.walkModule(image);
+            if (!trace.matches()) { return 2; }
+            if (!trace.ownerIsValid() || !trace.currentIsEmpty()) { return 3; }
+            emptyVisitor : RecursiveRttiVisitor;
+            emptyVisitor.walkModule(image);
+            if (emptyVisitor.currentModule()) { return 14; }
+            pruner : PruningVisitor;
+            pruner.walkModule(image);
+            if (!pruner.skippedChildrenAndLeft()) { return 4; }
+
+            units : Vector<UnitView> = image.get()->units();
+            if (units.size() != 1u) { return 5; }
+            direct : DirectVisitor;
+            units.get(0).accept(direct);
+            if (direct.unitCount() != 1 || direct.namespaceCount() != 0) { return 6; }
+            root : NamespaceView = units.get(0).rootNamespace();
+            root.accept(direct);
+            if (direct.unitCount() != 1 || direct.namespaceCount() != 1) { return 7; }
+            reentrant : ReentrantVisitor;
+            reentrant.setNested(image);
+            reentrant.walkModule(image);
+            if (!reentrant.restored()) { return 8; }
+
+            throwing : ThrowingVisitor;
+            didThrow : bool = false;
+            try {
+                throwing.walkModule(image);
+            } catch (error : FatalError&) {
+                didThrow = true;
+            }
+            if (!didThrow || throwing.currentModule()) { return 9; }
+
+            roots : Vector<Shared<Module>>;
+            roots.append(image);
+            roots.append(image);
+            snapshot : SnapshotVisitor(this);
+            snapshot.walkModules(roots);
+            if (!snapshot.valid()) { return 10; }
+
+            nativeResult : Expected<Shared<Module>, LoadModuleError> =
+                loadModule(String("@NATIVE_PATH@"));
+            if (!nativeResult.hasResult()) { return 11; }
+            nativeVisitor : NativeOnlyVisitor;
+            nativeVisitor.walkModule(nativeResult.getResult());
+            if (!nativeVisitor.valid()) { return 12; }
+
+            app : Shared<ApplicationModule> = applicationModule();
+            linked : Vector<Shared<Module>> = app.get()->linkedModules();
+            distinct : Vector<Shared<Module>>;
+            i : unsigned int = 0;
+            while (i < linked.size()) {
+                candidate : Shared<Module> = linked.get(i);
+                found : bool = false;
+                j : unsigned int = 0;
+                while (j < distinct.size()) {
+                    if (distinct.get(j) == candidate) { found = true; break; }
+                    ++j;
+                }
+                if (!found) { distinct.append(candidate); }
+                ++i;
+            }
+            expectedModules : unsigned int = distinct.size();
+            linkedCounter : LinkedModuleCounter;
+            linkedCounter.walkLinkedModules(app);
+            if ((unsigned int) linkedCounter.count() != expectedModules) { return 13; }
+            return 0;
+        }
+    )SRC";
+    source.replace(source.find("@FIXTURE_PATH@"), std::string("@FIXTURE_PATH@").size(), fixture);
+    source.replace(source.find("@PLUGIN_PATH@"), std::string("@PLUGIN_PATH@").size(), plugin);
+    const std::string native = fs::canonical(
+        fs::path(FIXTURES) / "libmodnative_dep.so").string();
+    source.replace(source.find("@NATIVE_PATH@"), std::string("@NATIVE_PATH@").size(), native);
+    auto jit = jit_module(source);
     REQUIRE(jit);
     CHECK(run_main(*jit) == 0);
 }

@@ -114,6 +114,18 @@ public:
         return __k_rtti_unit_ref(_descriptor);
     }
 
+    /** Visit this descriptor while keeping its image resident for the call. */
+    public const accept(visitor : RttiVisitor&) : void {
+        if (_descriptor == null) {
+            throw NullDereferenceError();
+        }
+        owner : Shared<Module> = _owner;
+        if (!owner) {
+            throw NullDereferenceError();
+        }
+        getDescriptor().accept(visitor);
+    }
+
     /** Return an owner-retaining view of this unit's root namespace. */
     public const rootNamespace() : NamespaceView {
         if (_descriptor == null) {
@@ -163,6 +175,18 @@ public:
             throw NullDereferenceError();
         }
         return __k_rtti_namespace_ref(_descriptor);
+    }
+
+    /** Visit this descriptor while keeping its image resident for the call. */
+    public const accept(visitor : RttiVisitor&) : void {
+        if (_descriptor == null) {
+            throw NullDereferenceError();
+        }
+        owner : Shared<Module> = _owner;
+        if (!owner) {
+            throw NullDereferenceError();
+        }
+        getDescriptor().accept(visitor);
     }
 
     public const children() : Vector<NamespaceView> {
@@ -253,6 +277,9 @@ public:
     /** Return the concrete kind of this native image. */
     public abstract const kind() : ModuleKind;
 
+    /** Dispatch to the callback for this concrete module kind. */
+    public abstract const accept(visitor : RttiVisitor&) : void;
+
     public const residency() : ModuleResidency {
         return _residency;
     }
@@ -323,6 +350,10 @@ public:
 
     override const kind() : ModuleKind { return ModuleKind::APPLICATION; }
 
+    override const accept(visitor : RttiVisitor&) : void {
+        visitor.visitApplicationModule(this);
+    }
+
     public const linkedModules() : Vector<Shared<Module>> {
         result : Vector<Shared<Module>>;
         self : Shared<Module> = _self.lock();
@@ -368,6 +399,10 @@ private:
 
 public:
     override const kind() : ModuleKind { return ModuleKind::LIBRARY; }
+
+    override const accept(visitor : RttiVisitor&) : void {
+        visitor.visitLibraryModule(this);
+    }
 }
 
 /**
@@ -383,6 +418,10 @@ private:
 
 public:
     override const kind() : ModuleKind { return ModuleKind::NATIVE_LIBRARY; }
+
+    override const accept(visitor : RttiVisitor&) : void {
+        visitor.visitNativeLibraryModule(this);
+    }
 }
 
 public final class ModuleManifestError : public FatalError {

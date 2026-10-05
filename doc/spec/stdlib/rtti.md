@@ -27,6 +27,7 @@ allowing programs to inspect type metadata at runtime.
 11. [Type hierarchy](#11-type-hierarchy)
 12. [Usage examples](#12-usage-examples)
 13. [Meta-annotation types](#13-meta-annotation-types)
+14. [Visitor API](#16-visitor-api)
 
 ---
 
@@ -376,6 +377,7 @@ final const class Namespace {
     namespaces : const Namespace?[]?;
     types      : const TypeInfo?[]?;
     functions  : const Function?[]?;
+    annotations : const Annotation?[]?;
 
     const getName()       : const char[]?;
     const getFullName()   : const char[]?;
@@ -384,6 +386,7 @@ final const class Namespace {
     const getNamespaces() : const Namespace?[]?;
     const getTypes()      : const TypeInfo?[]?;
     const getFunctions()  : const Function?[]?;
+    const getAnnotations() : const Annotation?[]?;
 }
 
 final const class Unit {
@@ -392,12 +395,14 @@ final const class Unit {
     functions     : const Function?[]?;
     rootNamespace : const Namespace?;
     types         : const TypeInfo?[]?;
+    annotations   : const Annotation?[]?;
 
     const getName()        : const char[]?;
     const getFullName()    : const char[]?;
     const getFunctions()   : const Function?[]?;
     const getRootNamespace() : const Namespace?;
     const getTypes()       : const TypeInfo?[]?;
+    const getAnnotations() : const Annotation?[]?;
 }
 ```
 
@@ -434,6 +439,7 @@ inventory and must not be treated as owned by that unit's image.
 | `functions` | `const Function?[]?` | Array of public free function descriptors, or `null`. |
 | `rootNamespace` | `const Namespace?` | Non-null root namespace descriptor for the unit. |
 | `types` | `const TypeInfo?[]?` | Direct types in the root namespace, or `null`. |
+| `annotations` | `const Annotation?[]?` | Runtime-retained module annotations, or `null`. |
 
 ### Methods
 
@@ -444,6 +450,7 @@ inventory and must not be treated as owned by that unit's image.
 | `getFunctions()` | `const Function?[]?` | Array of public non-member function descriptors, or `null` if none. |
 | `getRootNamespace()` | `const Namespace?` | The unit's root namespace. |
 | `getTypes()` | `const TypeInfo?[]?` | Direct type descriptors in the root namespace. |
+| `getAnnotations()` | `const Annotation?[]?` | Runtime-retained module annotations, or `null`. |
 
 ### Namespace fields and methods
 
@@ -456,6 +463,7 @@ inventory and must not be treated as owned by that unit's image.
 | `namespaces` | `const Namespace?[]?` | Direct child namespaces, or `null` if none. |
 | `types` | `const TypeInfo?[]?` | Direct class, interface, and annotation types, or `null` if none. |
 | `functions` | `const Function?[]?` | Direct public free functions, or `null` if none. |
+| `annotations` | `const Annotation?[]?` | Runtime-retained named namespace annotations, or `null`. |
 
 | Method | Returns | Description |
 |--------|---------|-------------|
@@ -466,6 +474,7 @@ inventory and must not be treated as owned by that unit's image.
 | `getNamespaces()` | `const Namespace?[]?` | Direct child namespaces. |
 | `getTypes()` | `const TypeInfo?[]?` | Direct types. |
 | `getFunctions()` | `const Function?[]?` | Direct public free functions. |
+| `getAnnotations()` | `const Annotation?[]?` | Runtime-retained namespace annotations, or `null`. |
 
 ### Compiler synthesis
 
@@ -908,6 +917,74 @@ error `0x0609` on violations.
 If `@Target` is absent from an annotation type, the annotation can be applied
 to any supported element type. If present with an empty array, the annotation
 cannot be applied anywhere.
+
+---
+
+## 16. Visitor API
+
+`RttiVisitor` has one callback for each concrete module and RTTI descriptor
+kind: application, K library, and native library modules; units; namespaces;
+classes; interfaces; annotation types; functions; constructors; parameters;
+and annotation instances. Each descriptor's `accept(visitor)` dispatches only
+to its matching callback. `TypeInfo::accept()` preserves concrete dispatch
+through a `TypeInfo&`; `Annotation::accept()` is a direct, non-virtual call,
+consistent with annotation member functions not being virtual.
+
+`RecursiveRttiVisitor` is a ready-to-subclass implementation. Its default
+callbacks walk containment depth-first in this order:
+
+- module units;
+- each unit's annotations, then its root namespace;
+- namespace annotations, child namespaces, direct types, then free functions;
+- class annotations, nested types, functions, then constructors;
+- interface annotations, nested types, then functions;
+- annotation-type meta-annotations, then nested types;
+- function/constructor annotations, then parameters;
+- parameter annotations.
+
+Annotations are reported as leaves. Traversal does not follow module
+dependencies or linked-module edges, namespace parents/units, type bases or
+enclosing types, callable owners, or an annotation's type descriptor. Unit
+root types and unit functions are not separately enumerated because they are
+already represented by the root namespace.
+
+Override a protected `enterX(descriptor)` hook to return `false` and prune that
+node's children. The matching `leaveX(descriptor)` hook still runs; leave hooks
+are not guaranteed if a callback throws. The visitor does not catch callback
+exceptions.
+
+`walkModule(Shared<Module>)`, `walkModules(const Vector<Shared<Module>>&)`, and
+`walkLinkedModules(Shared<ApplicationModule>)` retain the root module handles
+for the complete walk. `walkModules` snapshots and identity-deduplicates its
+root list before callbacks begin; `walkLinkedModules` uses the application's
+fixed startup snapshot. Neither entry point follows dependencies implicitly.
+Empty module handles are rejected with `NullDereferenceError`.
+`currentModule()` returns a strong handle for the module owning the descriptor
+currently being visited, including correctly restored context during nested
+walks. Descriptor references passed to callbacks remain borrowed: retain
+`currentModule()` (or the corresponding `UnitView`/`NamespaceView` owner) if a
+descriptor must outlive the callback.
+
+### Example: observe annotations and prune a class subtree
+
+```k
+class AnnotationCollector : public k::RecursiveRttiVisitor {
+protected:
+    override annotationObserved(annotationDescriptor : const k::Annotation&) : void {
+        typeName : k::String(annotationDescriptor.getAnnotationType().getName());
+        // Store typeName while currentModule() retains the owning image.
+    }
+
+    override enterClass(typeDescriptor : const k::Class&) : bool {
+        return k::String(typeDescriptor.getName()) != k::String("Internal");
+    }
+}
+
+collect(moduleHandle : k::Shared<k::Module>) {
+    visitor : AnnotationCollector;
+    visitor.walkModule(moduleHandle);
+}
+```
 
 ---
 
