@@ -707,3 +707,30 @@ TEST_CASE("Template method body preserves throw / try / catch statements",
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 2);
 }
+
+TEST_CASE("Late template instantiation does not reinject resolved base constructors",
+          "[gen][template][instantiation][constructor-reinjection]") {
+    auto jit = gen_jit(R"SRC(
+        module constructor_reinjection;
+        calls : int = 0;
+
+        class Root {
+            Root() { calls += 1; }
+        }
+        class Control : public Root {}
+
+        template<typename T>
+        class Block : public Control {}
+
+        test() : int {
+            calls = 0;
+            first : Block<int>;
+            second : Block<long>;
+            return calls;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 2);
+}

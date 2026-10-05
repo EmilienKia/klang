@@ -2903,8 +2903,9 @@ void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggr
             // type_reference_resolver::visit_constructor) must be skipped.
             if (!ctor || ctor->is_deleted()) continue;
             if (ctor->is_copy_constructor() && ctor->is_compiler_generated()) continue;
-            // Idempotency guard: see constructor::_base_inits_injected's doc comment.
-            if (ctor->are_base_inits_injected()) continue;
+            // Resolved non-template bases already received their initializers
+            // from symbol_resolver; do not mutate their bodies during instantiation.
+            if (ctor->inits_injected() || ctor->are_base_inits_injected()) continue;
             ctor->set_base_inits_injected(true);
 
             auto blck = ctor->get_block();

@@ -606,7 +606,7 @@ public:
     bool inits_injected() const { return _inits_injected; }
     void set_inits_injected(bool v) { _inits_injected = v; }
 
-    /** True once template_instantiator::inject_constructor_member_inits() has run for this constructor. */
+    /** Guards template injection together with inits_injected(), which covers symbol resolution. */
     bool are_base_inits_injected() const { return _base_inits_injected; }
     void set_base_inits_injected(bool v) { _base_inits_injected = v; }
 };
