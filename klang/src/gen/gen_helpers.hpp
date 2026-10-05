@@ -79,6 +79,13 @@ inline bool is_annotation_aggregate(const std::shared_ptr<aggregate>& agg) {
         || std::dynamic_pointer_cast<imported_annotation_type>(agg) != nullptr;
 }
 
+llvm::Constant* materialize_annotation_array(
+    annotation_holder& holder,
+    const std::shared_ptr<context>& ctx,
+    unit& owner,
+    const std::string& symbol_prefix,
+    aggregate* parent_aggregate = nullptr);
+
 /**
  * Return true if the given aggregate is ::k::Object (the root base class).
  * The root namespace is named after the module (e.g. "k" for module k),

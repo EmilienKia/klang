@@ -38,6 +38,18 @@ namespace k::model {
             return doc.has_value() && !doc->empty();
         }
 
+        void add_annotations(annotation_holder& holder, const parse::ast::annotation_def_list& annotations) {
+            for (const auto& ast_ann : annotations) {
+                if (!ast_ann || !ast_ann->name) continue;
+                std::string raw_name;
+                for (size_t i = 0; i < ast_ann->name->names.size(); ++i) {
+                    if (i > 0) raw_name += "::";
+                    raw_name += std::string{ast_ann->name->names[i].content};
+                }
+                holder.add_annotation(annotation_instance{std::move(raw_name), ast_ann});
+            }
+        }
+
         unsigned long long lambda_synth_counter = 0;
     } // anonymous namespace
 
@@ -85,6 +97,7 @@ namespace k::model {
         if(name.qname) {
             _unit.set_unit_name(name.qname->to_name());
         }
+        add_annotations(_unit, name.annotations);
         if (has_doc(name.doc)) {
             auto unit_ptr = _unit.shared_as<model::unit>();
             if (unit_ptr) {
@@ -172,6 +185,9 @@ namespace k::model {
         std::string ns_display_name = ns.name ? ns.name->to_name().to_string() : innermost_ns->get_short_name();
         trace("[model_builder::visit_namespace_decl] namespace '{}'", {ns_display_name});
         innermost_ns->set_ast_namespace_decl(ns.shared_as<parse::ast::namespace_decl>());
+        if (ns.name && !ns.name->names.empty()) {
+            add_annotations(*innermost_ns, ns.annotations);
+        }
 
         if (has_doc(ns.doc) && !innermost_ns->get_documentation()) {
             innermost_ns->set_documentation(doc::build_typed_doc<doc::namespace_doc>(innermost_ns, *ns.doc));

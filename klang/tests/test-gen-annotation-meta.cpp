@@ -1106,6 +1106,16 @@ TEST_CASE("Function annotation: annotation on free function (namespace level)", 
     CHECK(fn->get_annotations()[0].resolved_type->get_short_name() == "Tag");
 }
 
+TEST_CASE("Module annotation: @Target(CLASS) rejects module annotation", "[annotation][module][target]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        @ClassOnly
+        module gen_module_annotation_target;
+        @annotations::Target({ElementType::CLASS})
+        annotation ClassOnly {}
+    )SRC"), k::model::gen::resolution_error);
+}
+
+
 TEST_CASE("Function annotation: @Target(FUNCTION) allows annotation on function", "[annotation][function][target]") {
     auto comp = compile_model_with_stdlib(R"SRC(
         module gen_annotation_meta_45;
@@ -1764,6 +1774,5 @@ TEST_CASE("Namespace collision: user-defined 'Target' in local module triggers t
     // as the @Target meta-annotation and rejects the annotation on an interface.
     CHECK(comp == nullptr);
 }
-
 
 

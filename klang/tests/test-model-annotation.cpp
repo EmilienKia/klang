@@ -117,6 +117,75 @@ TEST_CASE("Model: annotation type appears in aggregate map", "[model][annotation
     CHECK_FALSE(foo->is_annotation());
 }
 
+TEST_CASE("Model: module annotations attach to the logical unit", "[model][annotation][module]") {
+    auto comp = compile_model(R"SRC(
+        @First @Second
+        module model_annotation_module;
+        annotation First {}
+        annotation Second {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    REQUIRE(unit->get_annotations().size() == 2);
+    CHECK(unit->get_annotations()[0].raw_name == "First");
+    CHECK(unit->get_annotations()[1].raw_name == "Second");
+    REQUIRE(unit->get_root_namespace() != nullptr);
+    CHECK(unit->get_root_namespace()->get_annotations().empty());
+}
+
+TEST_CASE("Model: reopened namespace annotations accumulate in source order", "[model][annotation][namespace]") {
+    auto comp = compile_model(R"SRC(
+        module model_annotation_namespace;
+        annotation First {}
+        annotation Second {}
+        @First namespace reopened {}
+        @Second namespace reopened {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto root = comp->get_unit()->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto ns = root->get_child_namespace("reopened");
+    REQUIRE(ns != nullptr);
+    REQUIRE(ns->get_annotations().size() == 2);
+    CHECK(ns->get_annotations()[0].raw_name == "First");
+    CHECK(ns->get_annotations()[1].raw_name == "Second");
+    CHECK(root->get_annotations().empty());
+}
+
+TEST_CASE("Model: annotations from source files merge in input order", "[model][annotation][module][namespace]") {
+    auto comp = k::compiler::create();
+    REQUIRE_NOTHROW(comp->parse_sources({
+        {"first.k", R"SRC(
+            @First module model_annotation_multi_source;
+            annotation First {}
+            @First namespace reopened {}
+        )SRC"},
+        {"second.k", R"SRC(
+            @Second module model_annotation_multi_source;
+            annotation Second {}
+            @Second namespace reopened {}
+        )SRC"}
+    }));
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    REQUIRE(unit->get_annotations().size() == 2);
+    CHECK(unit->get_annotations()[0].raw_name == "First");
+    CHECK(unit->get_annotations()[1].raw_name == "Second");
+
+    auto root = unit->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto ns = root->get_child_namespace("reopened");
+    REQUIRE(ns != nullptr);
+    REQUIRE(ns->get_annotations().size() == 2);
+    CHECK(ns->get_annotations()[0].raw_name == "First");
+    CHECK(ns->get_annotations()[1].raw_name == "Second");
+    CHECK(root->get_annotations().empty());
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Annotation instances on aggregates
@@ -579,6 +648,4 @@ TEST_CASE("Model: is_source_retention() on annotation with unrelated meta-annota
     // @Unrelated is not @Retention → default RUNTIME
     CHECK_FALSE(ann->is_source_retention());
 }
-
-
 

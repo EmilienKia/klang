@@ -53,7 +53,7 @@ typedef struct {
     char* path;
     void* handle;
     struct link_map* identity;
-    const KRTTIManifestEntryV1* entries;
+    const KRTTIManifestEntryV2* entries;
     uint32_t entry_count;
     int manifest_status;
 } KModuleImage;
@@ -302,33 +302,33 @@ static void k_module_probe_manifest(KModuleImage* image) {
         return;
     }
 
-    const KRTTIManifestEntryV1* entries = NULL;
+    const KRTTIManifestEntryV2* entries = NULL;
     uint32_t count = 0;
-    int result = ((KRTTIManifestAccessorV1) symbol)(&entries, &count);
+    int result = ((KRTTIManifestAccessor) symbol)(&entries, &count);
     if (result != 0 || (count && !entries) || count > 1000000u) {
         image->manifest_status = K_MANIFEST_MALFORMED;
         return;
     }
-    if (count && (((uintptr_t) entries % _Alignof(KRTTIManifestEntryV1)) != 0
-                  || (size_t) count > SIZE_MAX / sizeof(KRTTIManifestEntryV1)
+    if (count && (((uintptr_t) entries % _Alignof(KRTTIManifestEntryV2)) != 0
+                  || (size_t) count > SIZE_MAX / sizeof(KRTTIManifestEntryV2)
                   || !k_module_range_in_image(
-                      entries, (size_t) count * sizeof(KRTTIManifestEntryV1),
+                      entries, (size_t) count * sizeof(KRTTIManifestEntryV2),
                       image->identity))) {
         image->manifest_status = K_MANIFEST_MALFORMED;
         return;
     }
     for (uint32_t i = 0; i < count; ++i) {
-        const KRTTIManifestEntryV1* entry = &entries[i];
+        const KRTTIManifestEntryV2* entry = &entries[i];
         if (!k_module_same_image((void*) entry, image->identity)
             || !k_module_same_image((void*) entry->unit_descriptor, image->identity)) {
             image->manifest_status = K_MANIFEST_MALFORMED;
             return;
         }
-        if (entry->abi_version != K_RTTI_MANIFEST_ABI_V1) {
+        if (entry->abi_version != K_RTTI_MANIFEST_ABI_VERSION) {
             image->manifest_status = K_MANIFEST_INCOMPATIBLE;
             return;
         }
-        if (entry->entry_size != sizeof(KRTTIManifestEntryV1)) {
+        if (entry->entry_size != sizeof(KRTTIManifestEntryV2)) {
             image->manifest_status = K_MANIFEST_MALFORMED;
             return;
         }

@@ -1317,7 +1317,7 @@ Rules:
 
 Three forms: default (`@Ann`), positional (`@Ann(args…)`), designated (`@Ann{.f=v, …}`).
 
-Supported targets: `class`, `interface`, `annotation`, `struct`, functions, constructors/destructors, parameters, and variable fields (`FIELD`).
+Supported targets: modules (`module` declarations), named namespaces, `class`, `interface`, `annotation`, `struct`, functions, constructors/destructors, parameters, and variable fields (`FIELD`). Module annotations precede the module declaration (`@Version(2) module app;`); namespace annotations precede a named namespace block (`@Stable namespace api {}`). Reopened namespaces in one compilation unit accumulate annotations in source order. Module annotations belong to the merged compiler unit, so annotations from each source file are concatenated in compiler input order. Anonymous source files do not acquire a synthetic module annotation target.
 
 ### 20.4 Construction Rules
 
@@ -1336,7 +1336,7 @@ Defined in `k::annotations` (module `k`).
 | `@Inherited` | The annotation propagates to subclasses (not to interface implementations). Explicit override possible. |
 | `@Target({ElementType::…})` | Restricts the target element types. Absent = everything allowed. |
 
-`Target.ElementType`: `CLASS`, `STRUCT`, `INTERFACE`, `ANNOTATION`, `FUNCTION`, `CONSTRUCTOR`, `PARAMETER`, `FIELD`.
+`Target.ElementType`: `MODULE`, `NAMESPACE`, `CLASS`, `STRUCT`, `INTERFACE`, `ANNOTATION`, `FUNCTION`, `CONSTRUCTOR`, `PARAMETER`, `FIELD`.
 
 ### 20.6 Runtime Reading
 
@@ -1344,7 +1344,7 @@ Via `getClass().getAnnotations()` → `const Annotation?[]?`. Each annotation ha
 
 ### 20.7 Export
 
-Annotation types are exported via `.kdi`. Instances attached to classes/interfaces are serialized in RTTI metadata.
+Annotation types are exported via `.kdi`. Instances attached to runtime-reflected declarations, including modules and namespaces, are serialized in RTTI metadata.
 
 ### 20.8 Structural Generation Annotations (`k::lang`)
 

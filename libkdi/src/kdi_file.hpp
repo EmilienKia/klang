@@ -84,10 +84,17 @@ struct kdi_type_table {
 // KdiNamespace
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** An applied annotation preserved as canonical K source for cross-module import. */
+struct kdi_annotation {
+    std::string name;
+    std::string source;
+};
+
 struct kdi_namespace {
     std::string                  name;          ///< short name ("" for root)
     std::string                  fq_name;
     std::optional<kdi_doc_block> doc;
+    std::vector<kdi_annotation>  annotations;
     std::vector<kdi_namespace>   namespaces;    ///< nested namespaces
     std::vector<kdi_aggregate>   aggregates;    ///< struct / class / interface
     std::vector<kdi_enum>        enums;         ///< enumerations
@@ -104,6 +111,7 @@ struct kdi_namespace {
 
 struct kdi_unit {
     std::string   name;            ///< module name (same as header.module_name)
+    std::vector<kdi_annotation> annotations;
     kdi_namespace root_ns;         ///< root namespace (name = "")
 };
 

@@ -141,9 +141,10 @@ Methods serve as computed accessors and can be called on annotation instances.
 
 ## 4. Applying annotations
 
-An annotation is applied to an aggregate declaration by prefixing it with
-`@AnnotationName`. The annotation definition appears **before** any specifiers
-and the aggregate keyword.
+An annotation is applied to a declaration by prefixing it with
+`@AnnotationName`. The annotation definition appears before the declaration.
+For modules it precedes the `module` declaration; for namespaces it precedes
+the namespace block.
 
 ### Syntax
 
@@ -159,12 +160,28 @@ Three initialization forms are supported:
 | **Positional** | `@Name(args…)` | `@Version(2, 1)` | Constructor-style initialization matching fields by position. |
 | **Designated** | `@Name{.f = v, …}` | `@Author{.name="Alice", .year=2026}` | Named-field initialization, unmentioned fields get defaults. |
 
+```k
+@Version(2) module app;
+
+@Stable namespace api {
+    // declarations
+}
+```
+
+All source files merged into one compiler unit contribute their module
+annotations in compiler input order. A reopened named namespace accumulates
+annotations in source order. A source without a `module` declaration has no
+module annotation target; the compiler does not attach annotations to an
+artificial root namespace.
+
 ### Applicable targets
 
 Annotations can be applied to:
 
 | Target | Supported |
 |--------|-----------|
+| Module declaration | ✓ (`MODULE`) |
+| Named namespace | ✓ (`NAMESPACE`) |
 | `class` | ✓ |
 | `interface` | ✓ |
 | `annotation` | ✓ |
@@ -486,7 +503,10 @@ Inner enums with array fields:
 
 ```k
 annotation Target {
-    enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
+    enum ElementType {
+        CLASS; STRUCT; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR;
+        PARAMETER; FIELD; MODULE; NAMESPACE;
+    };
     value : ElementType[];
 }
 
@@ -670,7 +690,10 @@ applied. The compiler enforces this constraint at compile time.
 @Retention(Policy::RUNTIME)
 @Target({ElementType::ANNOTATION})
 annotation Target {
-    enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
+    enum ElementType {
+        CLASS; STRUCT; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR;
+        PARAMETER; FIELD; MODULE; NAMESPACE;
+    };
     value : ElementType[];
 }
 ```
@@ -680,10 +703,15 @@ annotation Target {
 | Entry | Value | Description |
 |-------|-------|-------------|
 | `CLASS` | 0 | A `class` declaration. |
-| `INTERFACE` | 1 | An `interface` declaration. |
-| `ANNOTATION` | 2 | An `annotation` type declaration. |
-| `FUNCTION` | 3 | A function declaration (member or free). |
-| `CONSTRUCTOR` | 4 | A constructor declaration. |
+| `STRUCT` | 1 | A `struct` declaration (reserved as a target category). |
+| `INTERFACE` | 2 | An `interface` declaration. |
+| `ANNOTATION` | 3 | An `annotation` type declaration. |
+| `FUNCTION` | 4 | A function declaration (member or free). |
+| `CONSTRUCTOR` | 5 | A constructor declaration. |
+| `PARAMETER` | 6 | A function or constructor parameter. |
+| `FIELD` | 7 | A variable field. |
+| `MODULE` | 8 | A source module declaration. |
+| `NAMESPACE` | 9 | A named namespace declaration. |
 
 #### Rules
 

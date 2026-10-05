@@ -39,6 +39,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 
@@ -191,6 +192,105 @@ std::optional<kdi::kdi_doc_function> to_kdi_doc_function(const function& fn) {
     kdi::kdi_doc_function out;
     out.brief = base->brief;
     out.description = base->description;
+    return out;
+}
+
+std::string annotation_identifier_source(const parse::ast::qualified_identifier& name) {
+    std::string out = name.has_root_prefix() ? "::" : "";
+    for (size_t i = 0; i < name.names.size(); ++i) {
+        if (i) out += "::";
+        out += std::string{name.names[i].content};
+    }
+    return out;
+}
+
+std::string annotation_expr_source(const parse::ast::expr_ptr& expr);
+
+std::string annotation_brace_source(const std::shared_ptr<parse::ast::brace_init_list>& brace) {
+    if (!brace) return "{}";
+    std::string out = "{";
+    for (size_t i = 0; i < brace->elements.size(); ++i) {
+        if (i) out += ", ";
+        out += annotation_expr_source(brace->elements[i]);
+    }
+    return out + "}";
+}
+
+std::string annotation_def_source(const parse::ast::annotation_def& annotation) {
+    if (!annotation.name) return {};
+    std::string out = "@" + annotation_identifier_source(*annotation.name);
+    if (annotation.has_parens) {
+        out += "(";
+        for (size_t i = 0; i < annotation.args.size(); ++i) {
+            if (i) out += ", ";
+            out += annotation_expr_source(annotation.args[i]);
+        }
+        out += ")";
+    } else if (annotation.brace_init) {
+        out += annotation_brace_source(annotation.brace_init);
+    }
+    return out;
+}
+
+std::string annotation_expr_source(const parse::ast::expr_ptr& expr) {
+    if (!expr) return {};
+    if (auto lit = std::dynamic_pointer_cast<parse::ast::literal_expr>(expr)) {
+        return std::string{lit->literal.value().content};
+    }
+    if (auto ident = std::dynamic_pointer_cast<parse::ast::identifier_expr>(expr)) {
+        return annotation_identifier_source(ident->qident);
+    }
+    if (auto nested = std::dynamic_pointer_cast<parse::ast::annotation_init_expr>(expr)) {
+        return nested->annotation ? annotation_def_source(*nested->annotation) : std::string{};
+    }
+    if (auto brace = std::dynamic_pointer_cast<parse::ast::brace_init_list>(expr)) {
+        return annotation_brace_source(brace);
+    }
+    if (auto designated = std::dynamic_pointer_cast<parse::ast::designated_init_element>(expr)) {
+        std::string out = ".";
+        for (const auto& part : designated->qualifier)
+            out += std::string{part.content} + "::";
+        out += std::string{designated->member_name.content};
+        if (designated->is_call_form) {
+            out += "(";
+            for (size_t i = 0; i < designated->args.size(); ++i) {
+                if (i) out += ", ";
+                out += annotation_expr_source(designated->args[i]);
+            }
+            out += ")";
+        } else {
+            out += " = " + annotation_expr_source(designated->value);
+        }
+        return out;
+    }
+    if (auto unary = std::dynamic_pointer_cast<parse::ast::unary_prefix_expr>(expr)) {
+        return std::string{unary->op.content} + annotation_expr_source(unary->expr());
+    }
+    if (auto unary = std::dynamic_pointer_cast<parse::ast::unary_postfix_expr>(expr)) {
+        return annotation_expr_source(unary->expr()) + std::string{unary->op.content};
+    }
+    if (auto binary = std::dynamic_pointer_cast<parse::ast::binary_operator_expr>(expr)) {
+        return annotation_expr_source(binary->lexpr()) + std::string{binary->op.content}
+            + annotation_expr_source(binary->rexpr());
+    }
+    if (auto list = std::dynamic_pointer_cast<parse::ast::expr_list_expr>(expr)) {
+        std::string out;
+        for (size_t i = 0; i < list->size(); ++i) {
+            if (i) out += ", ";
+            out += annotation_expr_source((*list)[i]);
+        }
+        return out;
+    }
+    return {};
+}
+
+kdi::kdi_annotation to_kdi_annotation(const annotation_instance& instance) {
+    kdi::kdi_annotation out;
+    out.name = instance.raw_name;
+    if (instance.ast_node) out.source = annotation_def_source(*instance.ast_node);
+    if (out.source.empty()) {
+        throw std::runtime_error("cannot serialize applied annotation '" + out.name + "' to KDI");
+    }
     return out;
 }
 
@@ -916,6 +1016,8 @@ void kdi_builder::visit_unit(unit& u) {
     _file.header.lib_path     = _lib_path;
     _file.header.compiler_ver = _compiler_ver;
     _file.unit.name           = _file.header.module_name;
+    for (const auto& annotation : u.get_annotations())
+        _file.unit.annotations.push_back(to_kdi_annotation(annotation));
 
     // Record the direct imports as dependencies so that consumers can
     // perform transitive KDI loading.
@@ -989,6 +1091,10 @@ void kdi_builder::visit_namespace(ns& n) {
     kns.name    = n.get_short_name();
     kns.fq_name = n.get_fq_name();
     kns.doc     = to_kdi_doc_block(n);
+    for (const auto& annotation : n.get_annotations()) {
+        if (!annotation.imported)
+            kns.annotations.push_back(to_kdi_annotation(annotation));
+    }
 
     // Push the new namespace as the current output target
     _ns_stack.push_back(&kns);

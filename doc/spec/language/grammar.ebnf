@@ -299,7 +299,7 @@ Unit
     ;
 
 ModuleDeclaration
-    = 'module' , QualifiedIdentifier , ';'
+    = { AnnotationDef } , 'module' , QualifiedIdentifier , ';'
     ;
 
 ImportDeclaration
@@ -410,7 +410,7 @@ VisibilityDecl
     ;
 
 NamespaceDecl
-    = 'namespace' , [ NamespaceIdentifier ] , '{' , { Declaration } , '}'
+    = { AnnotationDef } , 'namespace' , [ NamespaceIdentifier ] , '{' , { Declaration } , '}'
     ;
 
 NamespaceIdentifier

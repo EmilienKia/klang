@@ -87,6 +87,8 @@ annotation Target {
         CONSTRUCTOR;
         PARAMETER;
         FIELD;
+        MODULE;
+        NAMESPACE;
     }
 
     /**
@@ -187,4 +189,3 @@ annotation Setter {
 }
 
 } // namespace lang
-

@@ -574,6 +574,7 @@ final const class Namespace {
     namespaces : const Namespace?[]?;
     types : const TypeInfo?[]?;
     functions : const Function?[]?;
+    annotations : const Annotation?[]?;
 
     /** Return the local namespace name; the unit root has an empty name. */
     const getName() : const char[]? {
@@ -609,6 +610,11 @@ final const class Namespace {
     const getFunctions() : const Function?[]? {
         return functions;
     }
+
+    /** Return annotations attached to this namespace. */
+    const getAnnotations() : const Annotation?[]? {
+        return annotations;
+    }
 }
 
 /**
@@ -622,6 +628,7 @@ final const class Unit {
     functions : const Function?[]?;
     rootNamespace : const Namespace?;
     types : const TypeInfo?[]?;
+    annotations : const Annotation?[]?;
 
     /**
      * Return the short name of the unit (module name).
@@ -653,6 +660,11 @@ final const class Unit {
     /** Return the direct types owned by the unit's root namespace. */
     const getTypes() : const TypeInfo?[]? {
         return types;
+    }
+
+    /** Return annotations attached to this compiler unit. */
+    const getAnnotations() : const Annotation?[]? {
+        return annotations;
     }
 }
 

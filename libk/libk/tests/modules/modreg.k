@@ -1,4 +1,9 @@
+@ManifestTag(17)
 module modreg;
+
+public annotation ManifestTag {
+    value : int;
+}
 
 /** A plugin that registers itself in the global registry. */
 public class Plugin : public Object {
@@ -51,7 +56,13 @@ public registerPlugin(plugin : Plugin&) {
     registry.add(plugin);
 }
 
+@ManifestTag(31)
+public annotatedProbe(@ManifestTag(37) value : int) : int {
+    return value;
+}
+
 namespace view_fixture {
+    @ManifestTag(23)
     namespace child {
         public const marker() : int {
             return 7;

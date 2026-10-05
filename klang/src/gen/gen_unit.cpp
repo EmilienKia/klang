@@ -656,6 +656,15 @@ void symbol_resolver::visit_unit(unit& unit)
     // Step 2: Visit the root namespace (recursively resolves all symbols)
     visit_namespace(*_unit.get_root_namespace());
 
+    if (!_unit.get_annotations().empty()) {
+        const auto& first = _unit.get_annotations().front();
+        lex::opt_any_lexeme annotation_lexeme =
+            first.ast_node ? first.ast_node->get_interest_lexeme() : std::nullopt;
+        resolve_and_validate_annotations(
+            _unit, *_unit.get_root_namespace(), _unit.get_unit_name().to_string(),
+            annotation_lexeme, "MODULE");
+    }
+
     // Step 3: Visit global constructor, destructor, and main functions
     visit_global_constructor_function(_unit.get_global_constructor_function());
     visit_global_destructor_function(_unit.get_global_destructor_function());
@@ -809,7 +818,7 @@ void declaration_generator::visit_unit(unit &unit) {
     // ── Emit Unit RTTI global (::k::Unit instance) ──────────────────────────
     // Only emit when libk is available (Unit is a class from module k).
     // Layout: { ptr __vptr__, ptr __vptr_Object__, ptr name, ptr fullName,
-    //           ptr functions, ptr rootNamespace, ptr types }
+    //           ptr functions, ptr rootNamespace, ptr types, ptr annotations }
     // K implicitly adds Object as a base class for all classes, so Unit
     // has an Object sub-object at field 1.
     // All fields except name and fullName are null placeholders; patched in
@@ -836,7 +845,8 @@ void declaration_generator::visit_unit(unit &unit) {
             ptr_ty,     // fullName
             ptr_ty,     // functions
             ptr_ty,     // rootNamespace
-            ptr_ty      // types
+            ptr_ty,     // types
+            ptr_ty      // annotations
         };
         llvm::StructType* unit_rtti_llvm_type = llvm::StructType::create(
             llvm_ctx, unit_rtti_fields, unit_rtti_struct_name);
@@ -879,7 +889,8 @@ void declaration_generator::visit_unit(unit &unit) {
             fullname_cstr,  // field 3: fullName
             null_ptr,       // field 4: functions        → patched later
             null_ptr,       // field 5: rootNamespace    → patched later
-            null_ptr        // field 6: types            → patched later
+            null_ptr,       // field 6: types            → patched later
+            null_ptr        // field 7: annotations      → patched later
         };
         llvm::Constant* unit_rtti_const = llvm::ConstantStruct::get(unit_rtti_llvm_type, unit_rtti_init);
         new llvm::GlobalVariable(
@@ -1061,7 +1072,10 @@ void implementation_generator::visit_unit(unit &unit) {
                     param_vt_or_null,  // __vptr__ (Parameter primary vtable)
                     null_ptr,          // __vptr_Object__ (null)
                     name_gv,           // name
-                    null_ptr           // annotations (TODO: materialize when build_annotation_instance_constant is a shared utility)
+                    materialize_annotation_array(
+                        *param, _context, _unit,
+                        prefix + "_param" + std::to_string(idx),
+                        nullptr)
                 };
                 llvm::Constant* param_const = llvm::ConstantStruct::get(param_rtti_type, param_init);
                 auto* param_gv = new llvm::GlobalVariable(
@@ -1135,8 +1149,6 @@ void implementation_generator::visit_unit(unit &unit) {
                 // Build the Function struct: { ptr vptr, ptr vptr_Object, ptr name, ptr fullName, ptr owner, i32 flags, ptr annotations, ptr parameters }
                 // K implicitly adds Object as a base class for all classes, so Function
                 // has an Object sub-object at field 1 (containing the Object vptr).
-                // Note: annotation materialization for free functions will be added when
-                // build_annotation_instance_constant is refactored into a shared utility.
                 llvm::StructType* fn_rtti_type = llvm::StructType::get(
                     llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
                 std::vector<llvm::Constant*> fn_init = {
@@ -1146,7 +1158,7 @@ void implementation_generator::visit_unit(unit &unit) {
                     fn_fullname_gv,                        // fullName
                     null_ptr,                              // owner (null for free functions)
                     llvm::ConstantInt::get(i32_ty, fn_flags),  // flags
-                    null_ptr,                              // annotations (TODO: materialize for free functions)
+                    materialize_annotation_array(*fn, _context, _unit, fn_rtti_name),
                     fn_params_gv                           // parameters
                 };
                 llvm::Constant* fn_const = llvm::ConstantStruct::get(fn_rtti_type, fn_init);
@@ -1265,7 +1277,7 @@ void implementation_generator::visit_unit(unit &unit) {
 
             llvm::StructType* namespace_type = llvm::StructType::get(
                 llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty,
-                           ptr_ty, ptr_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
+                           ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
             std::unordered_map<const k::model::ns*, llvm::GlobalVariable*> namespace_globals;
             std::unordered_map<const k::model::ns*, std::vector<const k::model::ns*>> child_namespaces;
             std::unordered_map<const k::model::ns*, std::vector<llvm::Constant*>> namespace_types;
@@ -1289,7 +1301,7 @@ void implementation_generator::visit_unit(unit &unit) {
                     make_namespace_name(full_name, namespace_symbol(nspc) + "_fullname");
                 llvm::Constant* initializer = llvm::ConstantStruct::get(namespace_type, {
                     namespace_vtable, null_ptr, name_global, full_name_global, parent,
-                    unit_rtti_gv, null_ptr, null_ptr, null_ptr
+                    unit_rtti_gv, null_ptr, null_ptr, null_ptr, null_ptr
                 });
                 auto* global = new llvm::GlobalVariable(
                     _context->module(), namespace_type, false,
@@ -1355,7 +1367,9 @@ void implementation_generator::visit_unit(unit &unit) {
                     old_namespace->getOperand(0), old_namespace->getOperand(1),
                     old_namespace->getOperand(2), old_namespace->getOperand(3),
                     old_namespace->getOperand(4), old_namespace->getOperand(5),
-                    child_array, type_array, function_array
+                    child_array, type_array, function_array,
+                    materialize_annotation_array(
+                        *const_cast<k::model::ns*>(&nspc), _context, _unit, symbol)
                 }));
                 global->setConstant(true);
                 for (const auto* child : child_namespaces.at(&nspc)) patch_namespace(*child);
@@ -1381,7 +1395,8 @@ void implementation_generator::visit_unit(unit &unit) {
                 old_struct->getOperand(3),     // field 3: fullName (keep as-is)
                 functions_gv,                  // field 4: functions
                 root_descriptor,               // field 5: rootNamespace
-                root_type_array                // field 6: direct root types
+                root_type_array,               // field 6: direct root types
+                materialize_annotation_array(_unit, _context, _unit, unit_rtti_name)
             };
 
             unit_rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_unit_rtti_init));
@@ -1421,6 +1436,14 @@ void symbol_resolver::visit_namespace(ns& ns)
 
     for (size_t i = 0; i < ns.get_children().size(); ++i) {
         ns.get_children()[i]->accept(*this);
+    }
+
+    if (!ns.get_annotations().empty()) {
+        const auto& first = ns.get_annotations().front();
+        lex::opt_any_lexeme annotation_lexeme =
+            first.ast_node ? first.ast_node->get_interest_lexeme() : std::nullopt;
+        resolve_and_validate_annotations(
+            ns, ns, ns.get_fq_name(), annotation_lexeme, "NAMESPACE");
     }
 
 }

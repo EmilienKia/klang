@@ -620,6 +620,49 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
         if (auto doc = to_namespace_doc(ns.doc)) {
             model_ns->set_documentation(std::move(doc));
         }
+        for (const auto& annotation : ns.annotations) {
+            if (ns.name.empty()) continue;
+            if (annotation.source.empty()) {
+                throw std::runtime_error(
+                    "KDI namespace annotation '" + annotation.name + "' has no source representation");
+            }
+            std::string wrapped_source = "module kdi_annotation_metadata; "
+                + annotation.source + " namespace __kdi_annotation_target {}";
+            auto source_text = std::make_unique<std::string>(std::move(wrapped_source));
+            auto source = std::make_unique<k::source>(
+                std::string_view("kdi-annotation.k"), std::string_view(*source_text));
+            k::parse::parser parser(_logger);
+            parser.parse(*source);
+            auto ast_unit = parser.parse_unit();
+            std::shared_ptr<k::parse::ast::namespace_decl> target_decl;
+            for (const auto& declaration : ast_unit->declarations) {
+                if (auto ns_decl = std::dynamic_pointer_cast<k::parse::ast::namespace_decl>(declaration)) {
+                    target_decl = std::move(ns_decl);
+                    break;
+                }
+            }
+            if (!target_decl || target_decl->annotations.size() != 1) {
+                throw std::runtime_error(
+                    "KDI namespace annotation '" + annotation.name + "' is not a valid annotation declaration");
+            }
+            for (const auto& ast_annotation : target_decl->annotations) {
+                if (!ast_annotation || !ast_annotation->name) continue;
+                std::string raw_name;
+                for (size_t i = 0; i < ast_annotation->name->names.size(); ++i) {
+                    if (i) raw_name += "::";
+                    raw_name += std::string{ast_annotation->name->names[i].content};
+                }
+                if (raw_name != annotation.name) {
+                    throw std::runtime_error(
+                        "KDI namespace annotation source does not match its declared type name");
+                }
+                annotation_instance instance{std::move(raw_name), ast_annotation};
+                instance.imported = true;
+                model_ns->add_annotation(std::move(instance));
+            }
+            _unit._imported_template_source_texts.push_back(std::move(source_text));
+            _unit._imported_template_sources.push_back(std::move(source));
+        }
     }
 
     // Pass 0 — unions in this namespace (materialised first so aggregate methods returning unions find them)
@@ -876,8 +919,11 @@ void kdi_importer::materialise_template_alias(const kdi::kdi_alias& al,
                                                 : ("module " + ns_fq + ";\n" + al.source);
 
         // Keep the source alive: lexemes hold string_views into this buffer.
-        auto ksrc_ptr = std::make_unique<k::source>(std::string_view("lib.k"), std::string_view(wrapped_src));
+        auto source_text = std::make_unique<std::string>(std::move(wrapped_src));
+        auto ksrc_ptr = std::make_unique<k::source>(
+            std::string_view("lib.k"), std::string_view(*source_text));
         auto& ksrc = *ksrc_ptr;
+        _unit._imported_template_source_texts.push_back(std::move(source_text));
         _unit._imported_template_sources.push_back(std::move(ksrc_ptr));
 
         k::parse::parser parser(_logger, ksrc);
@@ -1327,8 +1373,11 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
 
         // Store the source in the unit so lexer tokens (string_views into the
         // source buffer) remain valid throughout compilation.
-        auto ksrc_ptr = std::make_unique<k::source>(std::string_view("lib.k"), std::string_view(wrapped_src));
+        auto source_text = std::make_unique<std::string>(std::move(wrapped_src));
+        auto ksrc_ptr = std::make_unique<k::source>(
+            std::string_view("lib.k"), std::string_view(*source_text));
         auto& ksrc = *ksrc_ptr;
+        _unit._imported_template_source_texts.push_back(std::move(source_text));
         _unit._imported_template_sources.push_back(std::move(ksrc_ptr));
 
         k::parse::parser parser(_logger, ksrc);

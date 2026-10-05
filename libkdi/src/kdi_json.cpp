@@ -1044,6 +1044,17 @@ static kdi_enum from_json_enum(const json& j) {
 // kdi_namespace
 // ─────────────────────────────────────────────────────────────────────────────
 
+static json to_json(const kdi_annotation& annotation) {
+    return {{"name", annotation.name}, {"source", annotation.source}};
+}
+
+static kdi_annotation from_json_annotation(const json& j) {
+    return {
+        .name = j.value("name", ""),
+        .source = j.value("source", "")
+    };
+}
+
 static json to_json(const kdi_namespace& ns) {
     json sub = json::array();
     for (auto& n : ns.namespaces) sub.push_back(to_json(n));
@@ -1061,12 +1072,15 @@ static json to_json(const kdi_namespace& ns) {
     for (auto& td : ns.template_defs) tdefs.push_back(to_json(td));
     json als = json::array();
     for (auto& al : ns.aliases) als.push_back(to_json(al));
+    json annotations = json::array();
+    for (auto& annotation : ns.annotations) annotations.push_back(to_json(annotation));
     json obj = {{"name",ns.name},{"fq_name",ns.fq_name},
             {"namespaces",sub},{"aggregates",aggs},{"enums",enums},
             {"functions",fns},{"variables",vars}};
     if (!uns.empty()) obj["unions"] = uns;
     if (!tdefs.empty()) obj["template_defs"] = tdefs;
     if (!als.empty()) obj["aliases"] = als;
+    if (!annotations.empty()) obj["annotations"] = annotations;
     if (ns.doc) obj["doc"] = to_json(*ns.doc);
     return obj;
 }
@@ -1075,6 +1089,8 @@ static kdi_namespace from_json_namespace(const json& j) {
     ns.name    = j.value("name", "");
     ns.fq_name = j.value("fq_name", "");
     if (j.contains("doc")) ns.doc = from_json_doc_block(j.at("doc"));
+    for (const auto& annotation : j.value("annotations", json::array()))
+        ns.annotations.push_back(from_json_annotation(annotation));
     for (auto& n : j.value("namespaces", json::array()))
         ns.namespaces.push_back(from_json_namespace(n));
     for (auto& a : j.value("aggregates", json::array()))
@@ -1164,10 +1180,16 @@ static kdi_type_table from_json_type_table(const json& j) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static json to_json(const kdi_file& f) {
+    json unit = {{"name", f.unit.name}, {"root_ns", to_json(f.unit.root_ns)}};
+    if (!f.unit.annotations.empty()) {
+        unit["annotations"] = json::array();
+        for (const auto& annotation : f.unit.annotations)
+            unit["annotations"].push_back(to_json(annotation));
+    }
     return {
         {"header",   to_json(f.header)},
         {"types",    to_json(f.types)},
-        {"unit",     {{"name", f.unit.name}, {"root_ns", to_json(f.unit.root_ns)}}},
+        {"unit",     unit},
     };
 }
 
@@ -1179,6 +1201,8 @@ static kdi_file from_json_file(const json& j) {
         auto& u = j.at("unit");
         f.unit.name    = u.value("name", "");
         f.unit.root_ns = from_json_namespace(u.at("root_ns"));
+        for (const auto& annotation : u.value("annotations", json::array()))
+            f.unit.annotations.push_back(from_json_annotation(annotation));
     }
     return f;
 }

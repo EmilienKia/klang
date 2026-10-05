@@ -130,8 +130,9 @@ KdiType = one of:
 
 ```
 KdiUnit {
-  name       : string              -- same as header.module_name
-  root_ns    : KdiNamespace
+  name        : string              -- same as header.module_name
+  annotations : [KdiAnnotation]     -- optional; omitted when empty
+  root_ns     : KdiNamespace
 }
 ```
 
@@ -144,6 +145,7 @@ KdiNamespace {
   name       : string              -- short name ("" for root)
   fq_name    : string
   doc        : KdiDocBlock?        -- optional brief/description
+  annotations : [KdiAnnotation]   -- optional; omitted when empty
   namespaces : [KdiNamespace]      -- nested namespaces
   aggregates : [KdiAggregate]      -- struct / class / interface
   enums      : [KdiEnum]
@@ -153,6 +155,21 @@ KdiNamespace {
   template_defs : [KdiTemplateDef] -- optional; omitted when empty
 }
 ```
+
+```
+KdiAnnotation {
+  name   : string                  -- resolved annotation type name as written
+  source : string                  -- canonical applied annotation syntax (`@Name(...)`)
+}
+```
+
+KDI annotation fields are additive within schema version 0.1. Older readers
+that omit them load empty annotation lists; absent arrays decode as empty.
+Producers must preserve declaration and source order. Imported namespace
+annotations describe the imported declaration and must not become part of the
+consuming unit's locally owned RTTI inventory. The anonymous unit root
+namespace has no declaration annotations; module annotations belong only to
+`KdiUnit.annotations`.
 
 ---
 

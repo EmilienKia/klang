@@ -248,6 +248,7 @@ struct annotation_instance {
 
     /// The AST annotation_def node for later resolution and initializer access.
     std::shared_ptr<k::parse::ast::annotation_def> ast_node;
+    bool imported = false;
 
     /// Resolved annotation type (set during symbol resolution phase).
     /// Points to any aggregate with is_annotation() == true (can be

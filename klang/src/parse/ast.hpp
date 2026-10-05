@@ -1537,30 +1537,34 @@ namespace k::parse {
             lex::punctuator open_par, close_par;
             std::optional<lex::punctuator> open_brace, close_brace;
             std::shared_ptr<ast::qualified_identifier> name;
+            annotation_def_list annotations;
             std::vector <decl_ptr> declarations;
 
             namespace_decl(const lex::keyword& ns,
                            const std::shared_ptr<ast::qualified_identifier> &name,
-                           const std::vector <decl_ptr> &declarations) :
+                           const std::vector <decl_ptr> &declarations,
+                           const annotation_def_list& annotations = {}) :
                     ns(ns),
                     open_par(lex::punctuator{std::string_view("{"), lex::punctuator::BRACE_OPEN}),
                     close_par(lex::punctuator{std::string_view("}"), lex::punctuator::BRACE_CLOSE}),
                     open_brace(open_par), close_brace(close_par),
-                    name(name), declarations(declarations) {}
+                    name(name), annotations(annotations), declarations(declarations) {}
 
             namespace_decl(const lex::keyword& ns,
                            const lex::punctuator& open_par,
                            const lex::punctuator& close_par,
                            const std::shared_ptr<ast::qualified_identifier> &name,
-                           const std::vector <decl_ptr> &declarations) :
-                    ns(ns), open_par(open_par), close_par(close_par), open_brace(open_par), close_brace(close_par), name(name), declarations(declarations) {}
+                           const std::vector <decl_ptr> &declarations,
+                           const annotation_def_list& annotations = {}) :
+                    ns(ns), open_par(open_par), close_par(close_par), open_brace(open_par), close_brace(close_par), name(name), annotations(annotations), declarations(declarations) {}
 
             namespace_decl(lex::keyword&& ns,
                            lex::punctuator&& open_par,
                            lex::punctuator&& close_par,
                            std::shared_ptr<ast::qualified_identifier> &&name,
-                           std::vector <decl_ptr> &&declarations) :
-                    ns(ns), open_par(open_par), close_par(close_par), open_brace(open_par), close_brace(close_par), name(std::move(name)), declarations(std::move(declarations)) {}
+                           std::vector <decl_ptr> &&declarations,
+                           annotation_def_list&& annotations = {}) :
+                    ns(ns), open_par(open_par), close_par(close_par), open_brace(open_par), close_brace(close_par), name(std::move(name)), annotations(std::move(annotations)), declarations(std::move(declarations)) {}
 
             void set_open_brace(const lex::punctuator& ob) { open_brace = ob; open_par = ob; }
             void set_close_brace(const lex::punctuator& cb) { close_brace = cb; close_par = cb; }
@@ -2450,12 +2454,15 @@ namespace k::parse {
         struct module_name : ast_node {
             lex::keyword module;
             std::shared_ptr<qualified_identifier> qname;
+            annotation_def_list annotations;
             std::optional<lex::punctuator> semicolon;
 
-            module_name(const lex::keyword& module, const std::shared_ptr<ast::qualified_identifier>& qname):
-                module(module), qname(qname) {};
-            module_name(lex::keyword&& module, std::shared_ptr<ast::qualified_identifier>&& qname):
-                    module(module), qname(qname) {};
+            module_name(const lex::keyword& module, const std::shared_ptr<ast::qualified_identifier>& qname,
+                        const annotation_def_list& annotations = {}):
+                module(module), qname(qname), annotations(annotations) {};
+            module_name(lex::keyword&& module, std::shared_ptr<ast::qualified_identifier>&& qname,
+                        annotation_def_list&& annotations = {}):
+                    module(module), qname(qname), annotations(std::move(annotations)) {};
 
             void set_semicolon(const lex::punctuator& sc) { semicolon = sc; }
 

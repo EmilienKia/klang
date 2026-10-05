@@ -48,7 +48,7 @@ public:
 };
 
 
-class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder, public alias_holder {
+class ns : public element, public named_element, public annotation_holder, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder, public alias_holder {
 protected:
 
     friend class unit;
@@ -132,7 +132,7 @@ public:
 
 
 
-class unit : public element {
+class unit : public element, public annotation_holder {
 protected:
     friend class element;
     /** Analysis context */
@@ -247,11 +247,12 @@ protected:
 
 
     /**
-     * Source objects for re-parsed template definitions imported from KDI.
-     * Lexer tokens in template model elements hold string_views into these
-     * buffers, so they must stay alive for the unit's lifetime.
+     * Source objects and backing strings for re-parsed declarations imported
+     * from KDI. Lexer tokens hold string_views into the backing text, so both
+     * the source objects and their text must stay alive for the unit's lifetime.
      */
     std::vector<std::unique_ptr<k::source>> _imported_template_sources;
+    std::vector<std::unique_ptr<std::string>> _imported_template_source_texts;
 
     friend class k::model::gen::symbol_resolver;
     friend class k::model::gen::aggregate_type_resolver;

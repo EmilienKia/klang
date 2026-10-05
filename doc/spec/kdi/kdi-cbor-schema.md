@@ -75,8 +75,9 @@ EnumTypeEntry = {
 
 ```
 Unit = {
-  "name"    : text,
-  "root_ns" : Namespace
+  "name"          : text,
+  ?"annotations"  : array[Annotation],
+  "root_ns"       : Namespace
 }
 ```
 
@@ -89,6 +90,7 @@ Namespace = {
   "name"       : text,
   "fq_name"    : text,
   ?"doc"       : DocBlock,
+  ?"annotations" : array[Annotation],
   "aggregates" : array[Aggregate],
   "enums"      : array[Enum],
   ?"aliases"   : array[Alias],
@@ -98,6 +100,20 @@ Namespace = {
   ?"template_defs" : array[TemplateDef]
 }
 ```
+
+```
+Annotation = {
+  "name"   : text,  -- resolved annotation type name
+  "source" : text   -- canonical applied K annotation syntax
+}
+```
+
+Annotation arrays are omitted when empty and decode as empty when absent,
+preserving compatibility with existing 0.1 files. Their order is declaration
+order. Namespace annotation metadata describes the exported namespace only;
+it does not transfer ownership of declarations or RTTI inventory to an importer.
+The anonymous unit root namespace has no declaration annotations; module
+annotations belong only to `Unit.annotations`.
 
 ---
 
@@ -575,4 +591,3 @@ UnionAlternative = {
   ?"is_const" : bool
 }
 ```
-

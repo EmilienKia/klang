@@ -122,6 +122,37 @@ TEST_CASE("CBOR: minimal file round-trips", "[cbor]") {
     REQUIRE(restored.unit.root_ns.functions[0].mangled_name == "_KFN4test3mod6answerEv");
 }
 
+TEST_CASE("CBOR: unit and namespace annotations round-trip; absent fields default empty", "[cbor][annotations]") {
+    auto original = make_minimal_file();
+    original.unit.annotations.push_back({"Version", "@Version(3)"});
+    kdi_namespace child;
+    child.name = "v2";
+    child.fq_name = "test::mod::v2";
+    child.annotations.push_back({"Stable", "@Stable(\"yes\")"});
+    original.unit.root_ns.namespaces.push_back(child);
+
+    std::ostringstream out(std::ios::binary);
+    kdi_write_cbor(original, out);
+    std::istringstream in(out.str(), std::ios::binary);
+    auto restored = kdi_read_cbor(in);
+
+    REQUIRE(restored.unit.annotations.size() == 1);
+    CHECK(restored.unit.annotations[0].name == "Version");
+    CHECK(restored.unit.annotations[0].source == "@Version(3)");
+    CHECK(restored.unit.root_ns.annotations.empty());
+    REQUIRE(restored.unit.root_ns.namespaces.size() == 1);
+    REQUIRE(restored.unit.root_ns.namespaces[0].annotations.size() == 1);
+    CHECK(restored.unit.root_ns.namespaces[0].annotations[0].source == "@Stable(\"yes\")");
+
+    auto legacy = make_minimal_file();
+    std::ostringstream legacy_out(std::ios::binary);
+    kdi_write_cbor(legacy, legacy_out);
+    std::istringstream legacy_in(legacy_out.str(), std::ios::binary);
+    auto decoded_legacy = kdi_read_cbor(legacy_in);
+    CHECK(decoded_legacy.unit.annotations.empty());
+    CHECK(decoded_legacy.unit.root_ns.annotations.empty());
+}
+
 TEST_CASE("CBOR: global variable round-trips", "[cbor][variable]") {
     kdi_file f = make_minimal_file();
     kdi_variable v;
@@ -753,5 +784,3 @@ TEST_CASE("CBOR: polymorphic union round-trips", "[cbor][union][polymorphic]") {
     REQUIRE(run.alternatives[0].name == "dog");
     REQUIRE(run.alternatives[1].name == "cat");
 }
-
-

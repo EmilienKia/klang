@@ -1,26 +1,26 @@
 /*
- * K Language RTTI image manifest ABI, version 1.
+ * K Language RTTI image manifest record ABI, version 2.
  *
  * K compiler objects contribute immutable records of this shape to the ELF
  * section "k_rtti_units". Each record points to one compiler Unit descriptor.
- * The exported __k_rtti_manifest_v1 accessor returns the image-local section
- * range; consumers must validate every record before dereferencing its unit.
+ * The exported __k_rtti_manifest_v1 accessor retains its historical discovery
+ * symbol name; consumers reject records using the incompatible version 1 layout.
  */
 #ifndef KLANG_RTTI_MANIFEST_H
 #define KLANG_RTTI_MANIFEST_H
 
 #include <stdint.h>
 
-#define K_RTTI_MANIFEST_ABI_V1 1u
+#define K_RTTI_MANIFEST_ABI_VERSION 2u
 
-typedef struct KRTTIManifestEntryV1 {
+typedef struct KRTTIManifestEntryV2 {
     uint32_t abi_version;
     uint32_t entry_size;
     const void* unit_descriptor;
-} KRTTIManifestEntryV1;
+} KRTTIManifestEntryV2;
 
-typedef int (*KRTTIManifestAccessorV1)(
-    const KRTTIManifestEntryV1** entries,
+typedef int (*KRTTIManifestAccessor)(
+    const KRTTIManifestEntryV2** entries,
     uint32_t* entry_count);
 
 #endif

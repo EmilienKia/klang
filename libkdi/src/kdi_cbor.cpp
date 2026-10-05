@@ -1541,6 +1541,20 @@ kdi_union decode_union(cbor_item_t* item, const std::string& path) {
 // Namespace
 // ─────────────────────────────────────────────────────────────────────────────
 
+static cbor_item_t* encode_annotation(const kdi_annotation& annotation) {
+    cbor_item_t* map = cbor_new_indefinite_map();
+    map_push(map, "name", cbor_str(annotation.name));
+    map_push(map, "source", cbor_str(annotation.source));
+    return map;
+}
+
+static kdi_annotation decode_annotation(cbor_item_t* item) {
+    return {
+        .name = opt_string(item, "name"),
+        .source = opt_string(item, "source")
+    };
+}
+
 cbor_item_t* encode_namespace(const kdi_namespace& ns);
 kdi_namespace decode_namespace(cbor_item_t* item, const std::string& path);
 
@@ -1549,6 +1563,12 @@ cbor_item_t* encode_namespace(const kdi_namespace& ns) {
     map_push(m, "name",    cbor_str(ns.name));
     map_push(m, "fq_name", cbor_str(ns.fq_name));
     if (ns.doc) map_push(m, "doc", encode_doc_block(*ns.doc));
+    if (!ns.annotations.empty()) {
+        cbor_item_t* annotations = cbor_new_indefinite_array();
+        for (const auto& annotation : ns.annotations)
+            cbor_array_push(annotations, cbor_move(encode_annotation(annotation)));
+        map_push(m, "annotations", annotations);
+    }
 
     cbor_item_t* aggs = cbor_new_indefinite_array();
     for (auto& a : ns.aggregates) cbor_array_push(aggs, cbor_move(encode_aggregate(a)));
@@ -1595,6 +1615,11 @@ kdi_namespace decode_namespace(cbor_item_t* item, const std::string& path) {
     ns.name    = opt_string(item, "name");
     ns.fq_name = opt_string(item, "fq_name");
     if (auto* doc = map_get(item, "doc")) ns.doc = decode_doc_block(doc, path + ".doc");
+    if (auto* annotations = map_get(item, "annotations"); annotations && cbor_isa_array(annotations)) {
+        size_t count = cbor_array_size(annotations);
+        for (size_t i = 0; i < count; ++i)
+            ns.annotations.push_back(decode_annotation(cbor_array_get(annotations, i)));
+    }
 
     auto* aa = map_get(item, "aggregates");
     if (aa && cbor_isa_array(aa)) {
@@ -1772,6 +1797,12 @@ cbor_item_t* encode_file(const kdi_file& file) {
     cbor_item_t* unit = cbor_new_indefinite_map();
     map_push(unit, "name",    cbor_str(file.unit.name));
     map_push(unit, "root_ns", encode_namespace(file.unit.root_ns));
+    if (!file.unit.annotations.empty()) {
+        cbor_item_t* annotations = cbor_new_indefinite_array();
+        for (const auto& annotation : file.unit.annotations)
+            cbor_array_push(annotations, cbor_move(encode_annotation(annotation)));
+        map_push(unit, "annotations", annotations);
+    }
     map_push(root, "unit", unit);
 
     return root;
@@ -1796,6 +1827,11 @@ kdi_file decode_file(cbor_item_t* item) {
     auto* rni = map_get(ui, "root_ns");
     if (!rni) throw kdi_parse_error("missing 'unit.root_ns'");
     f.unit.root_ns = decode_namespace(rni, "unit.root_ns");
+    if (auto* annotations = map_get(ui, "annotations"); annotations && cbor_isa_array(annotations)) {
+        size_t count = cbor_array_size(annotations);
+        for (size_t i = 0; i < count; ++i)
+            f.unit.annotations.push_back(decode_annotation(cbor_array_get(annotations, i)));
+    }
 
     return f;
 }

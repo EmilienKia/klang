@@ -291,6 +291,7 @@ std::shared_ptr<ast::unit> parser::parse_unit()
 std::shared_ptr<ast::module_name> parser::parse_module_declaration()
 {
     lex::lex_holder holder(_lexer);
+    auto annotations = parse_annotation_defs();
 
     // Not a "module" keyword, skip module declaration
     auto lmod = _lexer.get();
@@ -310,7 +311,7 @@ std::shared_ptr<ast::module_name> parser::parse_module_declaration()
     if(lsemicolon!=lex::punctuator::SEMICOLON) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_MISSING_SEMICOLON_MODULE), _lexer.pick_previous(), "Semicolon is missing after module name at end of module declaration");
     }
-    auto mod = std::make_shared<ast::module_name>(lex::as<lex::keyword>(lmod), ident);
+    auto mod = std::make_shared<ast::module_name>(lex::as<lex::keyword>(lmod), ident, annotations);
     mod->set_semicolon(lex::as<lex::punctuator>(lsemicolon));
     return mod;
 }
@@ -452,6 +453,7 @@ std::shared_ptr<ast::visibility_decl> parser::parse_visibility_decl()
 std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
 {
     lex::lex_holder holder(_lexer);
+    auto annotations = parse_annotation_defs();
 
     std::optional<lex::keyword> ns;
     std::optional<lex::punctuator> open_par, close_par;
@@ -506,7 +508,8 @@ std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_MISSING_NS_CLOSE_BRACE), _lexer.pick_current(), "Namespace closing brace is expected");
     }
 
-    auto ns_decl = std::make_shared<ast::namespace_decl>(*ns, *open_par, *close_par, name, declarations);
+    auto ns_decl = std::make_shared<ast::namespace_decl>(
+        *ns, *open_par, *close_par, name, declarations, annotations);
     ns_decl->set_open_brace(*open_par);
     ns_decl->set_close_brace(*close_par);
     return ns_decl;

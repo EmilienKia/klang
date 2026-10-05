@@ -95,6 +95,47 @@ TEST_CASE("import — qualified module name", "[import][phase4]") {
     REQUIRE( imports[0].kdi != nullptr );
 }
 
+TEST_CASE("import — KDI annotations remain on imported metadata, not local RTTI ownership",
+          "[import][phase4][annotation]") {
+    TmpKdi lib(R"K(
+        @Tag(5)
+        module metadata_lib;
+        annotation Tag { value : int; }
+        @Tag(7)
+        namespace api {}
+    )K");
+
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("metadata_lib", lib.kdi_path);
+    comp->set_file_resolver(resolver);
+
+    REQUIRE_NOTHROW(comp->parse_source("consumer.k", R"K(
+        module metadata_consumer;
+        import metadata_lib;
+    )K"));
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    CHECK(unit->get_annotations().empty());
+    REQUIRE(unit->get_imports().size() == 1);
+    const auto& imported = unit->get_imports()[0];
+    REQUIRE(imported.kdi != nullptr);
+    REQUIRE(imported.kdi->unit.annotations.size() == 1);
+    CHECK(imported.kdi->unit.annotations[0].source == "@Tag(5)");
+
+    auto root = unit->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto imported_module_ns = root->get_child_namespace("metadata_lib");
+    REQUIRE(imported_module_ns != nullptr);
+    auto api_ns = imported_module_ns->get_child_namespace("api");
+    REQUIRE(api_ns != nullptr);
+    REQUIRE(api_ns->get_annotations().size() == 1);
+    CHECK(api_ns->get_annotations()[0].raw_name == "Tag");
+    CHECK(api_ns->get_annotations()[0].imported);
+    CHECK(root->get_annotations().empty());
+}
+
 TEST_CASE("import — module not found is a fatal error", "[import][phase4][error]") {
     auto comp = k::compiler::create();
     // Empty resolver — nothing will be found

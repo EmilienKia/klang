@@ -1325,6 +1325,90 @@ static size_t compute_subobject_offset_in(const aggregate& containing,
 
 } // anonymous namespace
 
+llvm::Constant* materialize_annotation_array(
+    annotation_holder& holder,
+    const std::shared_ptr<context>& ctx,
+    unit& owner,
+    const std::string& symbol_prefix,
+    aggregate* parent_aggregate)
+{
+    llvm::LLVMContext& llvm_ctx = **ctx;
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* null_ptr = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+    std::vector<llvm::Constant*> annotation_ptrs;
+    size_t index = 0;
+    for (auto& instance : holder.get_annotations_mutable()) {
+        if (instance.imported) {
+            ++index;
+            continue;
+        }
+        if (!instance.resolved_type) {
+            ++index;
+            continue;
+        }
+        auto& annotation_type = *instance.resolved_type;
+        if (annotation_type.is_source_retention()) {
+            ++index;
+            continue;
+        }
+
+        auto vtable = annotation_type.get_vtable();
+        if (!ensure_vtable_llvm_global(vtable, ctx)) {
+            ++index;
+            continue;
+        }
+        auto annotation_struct = annotation_type.get_struct_type();
+        if (!annotation_struct) {
+            ++index;
+            continue;
+        }
+        auto* llvm_struct = ctx->get_llvm_type(annotation_struct);
+        if (!llvm_struct) {
+            ++index;
+            continue;
+        }
+        llvm::Constant* initializer = build_annotation_instance_constant(
+            instance, annotation_type, ctx, &owner, parent_aggregate);
+        if (!initializer) {
+            ++index;
+            continue;
+        }
+
+        auto* global = new llvm::GlobalVariable(
+            ctx->module(), llvm_struct, true, llvm::GlobalValue::PrivateLinkage,
+            initializer, symbol_prefix + "_annotation_" + std::to_string(index));
+        global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+        auto base_field = find_annotation_base_field(annotation_struct, annotation_type);
+        if (base_field) {
+            auto* zero = llvm::ConstantInt::get(i32_ty, 0);
+            auto* field = llvm::ConstantInt::get(i32_ty, base_field->index);
+            annotation_ptrs.push_back(llvm::ConstantExpr::getInBoundsGetElementPtr(
+                llvm_struct, global, llvm::ArrayRef<llvm::Constant*>{zero, field}));
+        } else {
+            annotation_ptrs.push_back(global);
+        }
+        ++index;
+    }
+
+    if (annotation_ptrs.empty()) return null_ptr;
+
+    auto count = static_cast<uint32_t>(annotation_ptrs.size());
+    auto* array_type = llvm::ArrayType::get(ptr_ty, count);
+    auto* value_type = llvm::StructType::get(llvm_ctx, {i32_ty, array_type}, false);
+    auto* data = llvm::ConstantArray::get(array_type, annotation_ptrs);
+    auto* value = llvm::ConstantStruct::get(value_type, {
+        llvm::ConstantInt::get(i32_ty, count), data
+    });
+    auto* global = new llvm::GlobalVariable(
+        ctx->module(), value_type, true, llvm::GlobalValue::PrivateLinkage,
+        value, symbol_prefix + "_annotations");
+    global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    return global;
+}
+
 
 llvm::Value* emit_virtual_dispatch_call(
     llvm::IRBuilder<>& builder,
@@ -2892,7 +2976,8 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                     fn_fullname_gv,                        // fullName
                     owner_rtti,                            // owner
                     llvm::ConstantInt::get(i32_ty, fn_flags),  // flags
-                    null_ptr,                              // annotations (TODO: materialize for member functions)
+                    materialize_annotation_array(
+                        *fn, _context, _unit, fn_rtti_name, &klass),
                     params_gv                              // parameters
                 };
                 llvm::Constant* fn_const = llvm::ConstantStruct::get(fn_rtti_type, fn_init);

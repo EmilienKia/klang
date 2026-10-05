@@ -308,6 +308,8 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
 }
 
 void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth) {
+    for (const auto& annotation : ns.annotations)
+        out << indent(depth) << annotation.source << "\n";
     if (!ns.name.empty()) {
         out << indent(depth) << "namespace " << ns.name << " {\n";
     }
@@ -421,9 +423,11 @@ void kdi_dump(const kdi_file& file, std::ostream& out) {
         }
     }
 
-    out << "\nmodule " << file.unit.name << ";\n\n";
+    out << "\n";
+    for (const auto& annotation : file.unit.annotations)
+        out << annotation.source << "\n";
+    out << "module " << file.unit.name << ";\n\n";
     dump_namespace(file.unit.root_ns, out, 0);
 }
 
 } // namespace kdi
-

@@ -321,7 +321,6 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         trace("[compiler::parse_sources] Phase 1 — module name discovery");
         k::name resolved_unit_name;
         bool found_module_decl = false;
-        size_t module_decl_file_idx = 0; // index of (first) file with module decl
 
         if (!forced_module_name.empty()) {
             // CLI --module-name overrides everything
@@ -340,7 +339,6 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
                     if (!found_module_decl) {
                         resolved_unit_name = mod_name->name;
                         found_module_decl = true;
-                        module_decl_file_idx = i;
                     } else if (!(mod_name->name == resolved_unit_name)) {
                         // Conflicting module declarations
                         auto diag = k::log::diagnostic::make_error(
@@ -370,23 +368,13 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
 
         // ── Phase 2 — Full parse of each source, merge into single AST ─────
         trace("[compiler::parse_sources] Phase 2 — parsing and AST merge");
-        // Parse files that declare the module first so the unit name / root
-        // namespace is established before other files are processed.
-        // Build a parsing order: file with module decl first (if any), then the rest.
+        // Preserve compiler input order. The unit name was already discovered
+        // in Phase 1, and module declarations are merged separately from the
+        // declaration stream.
         std::vector<size_t> parse_order;
         parse_order.reserve(_sources.size());
-        if (found_module_decl && !forced_module_name.empty()) {
-            // CLI override: no specific ordering needed
-            for (size_t i = 0; i < _sources.size(); ++i)
-                parse_order.push_back(i);
-        } else if (found_module_decl) {
-            parse_order.push_back(module_decl_file_idx);
-            for (size_t i = 0; i < _sources.size(); ++i)
-                if (i != module_decl_file_idx) parse_order.push_back(i);
-        } else {
-            for (size_t i = 0; i < _sources.size(); ++i)
-                parse_order.push_back(i);
-        }
+        for (size_t i = 0; i < _sources.size(); ++i)
+            parse_order.push_back(i);
 
         _ast_unit = std::make_shared<k::parse::ast::unit>();
 
@@ -404,6 +392,11 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
             // Merge module_name
             if (file_ast->module_name && !_ast_unit->module_name) {
                 _ast_unit->module_name = file_ast->module_name;
+            } else if (file_ast->module_name) {
+                auto& merged_annotations = _ast_unit->module_name->annotations;
+                merged_annotations.insert(merged_annotations.end(),
+                                          file_ast->module_name->annotations.begin(),
+                                          file_ast->module_name->annotations.end());
             }
             // Merge imports
             for (auto& imp : file_ast->imports) {
@@ -430,11 +423,13 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         // If we have a forced module name from the CLI, strip the module_name
         // from the merged AST so that model_builder::visit_module_name() does
         // not overwrite it, then pre-set the unit name.
-        if (!forced_module_name.empty()) {
+        if (!forced_module_name.empty())
             _ast_unit->module_name.reset();
+        if (found_module_decl)
             _model_unit->set_unit_name(resolved_unit_name);
-        }
-        // Otherwise model_builder::visit_module_name will pick it up from the AST.
+        // Otherwise model_builder::visit_module_name will confirm the discovered
+        // name from the AST. Pre-setting it keeps earlier module-less source files
+        // in the same logical unit from being named under an anonymous unit.
 
         k::model::model_builder::visit(*this, _context, *_ast_unit, *_model_unit);
 
@@ -857,7 +852,7 @@ bool compiler::emit_object_file(const std::string& output_file, bool position_in
             auto* i32 = llvm::Type::getInt32Ty(llvm_context);
             auto* ptr = llvm::PointerType::get(llvm_context, 0);
             auto* entry_type = llvm::StructType::get(llvm_context, {i32, i32, ptr});
-            constexpr uint32_t abi_version = 1;
+            constexpr uint32_t abi_version = 2;
             const uint32_t entry_size = static_cast<uint32_t>(
                 module.getDataLayout().getTypeAllocSize(entry_type).getFixedValue());
             auto* entry_value = llvm::ConstantStruct::get(entry_type, {
@@ -867,7 +862,7 @@ bool compiler::emit_object_file(const std::string& output_file, bool position_in
             });
             auto* entry = new llvm::GlobalVariable(
                 module, entry_type, true, llvm::GlobalValue::PrivateLinkage,
-                entry_value, unit_rtti_name + "_manifest_entry_v1");
+                entry_value, unit_rtti_name + "_manifest_entry_v2");
             entry->setSection("k_rtti_units");
             entry->setAlignment(module.getDataLayout().getABITypeAlign(entry_type));
             llvm::appendToUsed(module, {entry});

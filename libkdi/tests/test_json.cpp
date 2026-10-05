@@ -62,6 +62,29 @@ TEST_CASE("JSON: minimal file round-trips correctly", "[json][roundtrip]") {
     REQUIRE( f2.header.compiler_ver  == f.header.compiler_ver );
 }
 
+TEST_CASE("JSON: unit and namespace annotations round-trip; absent fields default empty", "[json][annotations]") {
+    auto f = make_minimal_file();
+    f.unit.annotations.push_back({"Version", "@Version(3)"});
+    kdi_namespace child;
+    child.name = "v2";
+    child.fq_name = "test::json::v2";
+    child.annotations.push_back({"Stable", "@Stable(\"yes\")"});
+    f.unit.root_ns.namespaces.push_back(child);
+
+    auto restored = json_round_trip(f);
+    REQUIRE(restored.unit.annotations.size() == 1);
+    CHECK(restored.unit.annotations[0].name == "Version");
+    CHECK(restored.unit.annotations[0].source == "@Version(3)");
+    CHECK(restored.unit.root_ns.annotations.empty());
+    REQUIRE(restored.unit.root_ns.namespaces.size() == 1);
+    REQUIRE(restored.unit.root_ns.namespaces[0].annotations.size() == 1);
+    CHECK(restored.unit.root_ns.namespaces[0].annotations[0].source == "@Stable(\"yes\")");
+
+    auto legacy = json_round_trip(make_minimal_file());
+    CHECK(legacy.unit.annotations.empty());
+    CHECK(legacy.unit.root_ns.annotations.empty());
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Type round-trips
 // ─────────────────────────────────────────────────────────────────────────────
@@ -703,5 +726,3 @@ TEST_CASE("JSON: polymorphic union round-trips", "[json][union][polymorphic]") {
     REQUIRE(run.alternatives[0].name == "dog");
     REQUIRE(run.alternatives[1].name == "cat");
 }
-
-
