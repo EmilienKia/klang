@@ -29,6 +29,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <llvm/IR/Verifier.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
@@ -37,6 +38,7 @@
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/GVN.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <llvm/ExecutionEngine/Orc/CompileUtils.h>
 #include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
@@ -56,6 +58,7 @@
 #include "model/model_builder.hpp"
 #include "model/context.hpp"
 #include "model/model_dump.hpp"
+#include "model/mangler.hpp"
 #include "model/tools/kdi_exporter.hpp"
 #include "model/tools/kdi_importer.hpp"
 #include "common/path_lookup_file_resolver.hpp"
@@ -821,6 +824,64 @@ std::unique_ptr<k::model::gen::jit> compiler::to_jit(bool init_runtime) {
 }
 
 bool compiler::gen_object_file(const std::string& output_file) {
+    // Each linked K unit contributes its Unit descriptor to an ELF section.
+    // The accessor is emitted into this object (rather than into JIT modules)
+    // so the final image can discover all contributions retained by the linker.
+    auto& module = _context->module();
+    const std::string unit_rtti_name =
+        k::model::mangler::mangle_rtti_unit(_model_unit->get_unit_name());
+    if (!module.getFunction("__k_rtti_manifest_v1")) {
+        if (auto* unit_descriptor = module.getNamedGlobal(unit_rtti_name)) {
+            llvm::LLVMContext& llvm_context = **_context;
+            auto* i32 = llvm::Type::getInt32Ty(llvm_context);
+            auto* ptr = llvm::PointerType::get(llvm_context, 0);
+            auto* entry_type = llvm::StructType::get(llvm_context, {i32, i32, ptr});
+            constexpr uint32_t abi_version = 1;
+            const uint32_t entry_size = static_cast<uint32_t>(
+                module.getDataLayout().getTypeAllocSize(entry_type).getFixedValue());
+            auto* entry_value = llvm::ConstantStruct::get(entry_type, {
+                llvm::ConstantInt::get(i32, abi_version),
+                llvm::ConstantInt::get(i32, entry_size),
+                unit_descriptor
+            });
+            auto* entry = new llvm::GlobalVariable(
+                module, entry_type, true, llvm::GlobalValue::PrivateLinkage,
+                entry_value, unit_rtti_name + "_manifest_entry_v1");
+            entry->setSection("k_rtti_units");
+            entry->setAlignment(module.getDataLayout().getABITypeAlign(entry_type));
+            llvm::appendToUsed(module, {entry});
+
+            auto* accessor_type = llvm::FunctionType::get(i32, {ptr, ptr}, false);
+            auto* accessor = llvm::Function::Create(
+                accessor_type, llvm::GlobalValue::WeakAnyLinkage,
+                "__k_rtti_manifest_v1", module);
+            accessor->setVisibility(llvm::GlobalValue::ProtectedVisibility);
+            accessor->setDSOLocal(true);
+            auto* start = new llvm::GlobalVariable(
+                module, ptr, false, llvm::GlobalValue::ExternalLinkage,
+                nullptr, "__start_k_rtti_units");
+            auto* stop = new llvm::GlobalVariable(
+                module, ptr, false, llvm::GlobalValue::ExternalLinkage,
+                nullptr, "__stop_k_rtti_units");
+            start->setVisibility(llvm::GlobalValue::HiddenVisibility);
+            stop->setVisibility(llvm::GlobalValue::HiddenVisibility);
+            start->setDSOLocal(true);
+            stop->setDSOLocal(true);
+
+            auto* block = llvm::BasicBlock::Create(llvm_context, "entry", accessor);
+            llvm::IRBuilder<> builder(block);
+            auto* intptr = module.getDataLayout().getIntPtrType(llvm_context);
+            auto* start_address = builder.CreatePtrToInt(start, intptr);
+            auto* stop_address = builder.CreatePtrToInt(stop, intptr);
+            auto* byte_size = builder.CreateSub(stop_address, start_address);
+            auto* count = builder.CreateUDiv(
+                byte_size, llvm::ConstantInt::get(intptr, entry_size));
+            builder.CreateStore(start, accessor->getArg(0));
+            builder.CreateStore(builder.CreateIntCast(count, i32, false), accessor->getArg(1));
+            builder.CreateRet(llvm::ConstantInt::get(i32, 0));
+        }
+    }
+
     resolve_ir_filenames(output_file);
     std::error_code EC;
     llvm::raw_fd_ostream dest(output_file, EC, llvm::sys::fs::OF_None);

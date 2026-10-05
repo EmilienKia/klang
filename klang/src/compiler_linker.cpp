@@ -98,6 +98,8 @@ bool compiler::gen_executable(const std::string& output_file) {
     tools::exec_result exec_res;
     try {
         std::vector<std::string> clang_args = {"-pie", "-o", output_path.string(), object_path.string()};
+        clang_args.push_back("-Wl,--export-dynamic-symbol=__k_rtti_manifest_v1");
+        clang_args.push_back("-Wl,-u,__k_rtti_manifest_v1");
         if (_debug_info_options.enabled) {
             clang_args.push_back("-g");
         }

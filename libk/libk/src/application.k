@@ -59,6 +59,28 @@ module k;
  */
 @ffi::Extern("C") private __k_module_open(path: const unsigned byte[], err: int*): byte*;
 
+@ffi::Extern("C") private __k_module_identity(handle: byte*) : byte*;
+
+@ffi::Extern("C") private __k_module_snapshot_open() : byte*;
+@ffi::Extern("C") private __k_module_snapshot_count(snapshot: byte*) : int;
+@ffi::Extern("C") private __k_module_snapshot_identity(snapshot: byte*, index: int) : byte*;
+@ffi::Extern("C") private __k_module_snapshot_take_handle(snapshot: byte*, index: int) : byte*;
+@ffi::Extern("C") private __k_module_snapshot_manifest_status(snapshot: byte*, index: int) : int;
+@ffi::Extern("C") private __k_module_snapshot_unit_count(snapshot: byte*, image_index: int) : int;
+@ffi::Extern("C") private __k_module_snapshot_unit_at(snapshot: byte*, image_index: int, unit_index: int) : byte*;
+@ffi::Extern("C") private __k_module_snapshot_path(snapshot: byte*, index: int) : unsigned byte[]!;
+@ffi::Extern("C") private __k_module_snapshot_close(snapshot: byte*);
+@ffi::Extern("C") private __k_module_close(handle: byte*);
+@ffi::Extern("C") private __k_module_depends_on(identity: byte*, candidate_identity: byte*) : int;
+@ffi::Extern("C") private __k_module_registry_lock();
+@ffi::Extern("C") private __k_module_registry_unlock();
+
+/**
+ * Return the absolute path of the current process image as an owned K byte
+ * array. The array includes its trailing NUL byte.
+ */
+@ffi::Extern("C") private __k_module_current_path(): unsigned byte[]!;
+
 // ── argv → String[] conversion (called from the synthesised C main proxy) ────
 
 /**
@@ -175,28 +197,9 @@ private __k_module_error_from_code(code: int): LoadModuleError {
     else if (code == 3) { r = LoadModuleError::NOT_A_LIBRARY; }
     else if (code == 4) { r = LoadModuleError::MISSING_DEPENDENCY; }
     else if (code == 5) { r = LoadModuleError::UNRESOLVED_SYMBOL; }
+    else if (code == 7) { r = LoadModuleError::INVALID_MANIFEST; }
+    else if (code == 8) { r = LoadModuleError::INCOMPATIBLE_MANIFEST; }
     return r;
-}
-
-/**
- * ModuleNode — node of the singly linked, owning list of modules loaded by an
- * Application. The list is keyed by the native library handle.
- *
- * Standard collections cannot hold owner ('!') values, hence this minimal list.
- */
-public final class ModuleNode : public Object {
-    public _module : Module!;
-    public _next : ModuleNode!;
-
-    ModuleNode() {
-        _module = null;
-        _next = null;
-    }
-
-    ~ModuleNode() {
-        delete _module;
-        delete _next;
-    }
 }
 
 // ── ::k::Application — abstract base for all K application entry points ──────
@@ -211,6 +214,9 @@ public final class ModuleNode : public Object {
  * Applications inherit from ::k::Object (via Application) and always have
  * access to:
  * - `env()` — a read-only map of environment variables
+ *
+ * `applicationModule()` exposes a shared representation of the process image,
+ * while `modules()` returns a stable snapshot of the registered image handles.
  *
  * The concrete subclass must implement one of the four standard `main`
  * overloads:
@@ -227,14 +233,110 @@ public abstract class Application : public Object {
     // ── Environment variable map ─────────────────────────────────────────────
     private _env : EnvironmentMap!;
 
-    // ── Loaded modules (keyed by native handle), most recent first ───────────
-    private _modules : ModuleNode!;
-    private _modulesLock : ReentrantLock!;
+    // ── Process image and shared module registry ─────────────────────────────
+    private _module : Shared<ApplicationModule>;
+    private _modules : Vector<Shared<Module>>!;
 
     // ── Constructor ──────────────────────────────────────────────────────────
     Application() {
-        _modules = null;
-        _modulesLock = new ReentrantLock();
+        _modules = new Vector<Shared<Module>>();
+        image_snapshot : byte* = __k_module_snapshot_open();
+        image_count : int = __k_module_snapshot_count(image_snapshot);
+        manifest_check_index : int = 0;
+        while (manifest_check_index < image_count) {
+            startup_status : int =
+                __k_module_snapshot_manifest_status(image_snapshot, manifest_check_index);
+            if (startup_status == 2 || startup_status == 3) {
+                __k_module_snapshot_close(image_snapshot);
+                if (startup_status == 2) {
+                    throw ModuleManifestError((int) LoadModuleError::INCOMPATIBLE_MANIFEST);
+                }
+                throw ModuleManifestError((int) LoadModuleError::INVALID_MANIFEST);
+            }
+            ++manifest_check_index;
+        }
+        image_index : int = 0;
+        if (image_count > 0) {
+            app_path_bytes : unsigned byte[]! = __k_module_snapshot_path(image_snapshot, 0);
+            app_path : String = String(app_path_bytes);
+            delete app_path_bytes;
+            app_units : Vector<byte*>;
+            app_unit_count : int = __k_module_snapshot_unit_count(image_snapshot, 0);
+            app_unit_index : int = 0;
+            while (app_unit_index < app_unit_count) {
+                app_descriptor : byte* =
+                    __k_module_snapshot_unit_at(image_snapshot, 0, app_unit_index);
+                app_units.append(app_descriptor);
+                ++app_unit_index;
+            }
+            app_handle : byte* = __k_module_snapshot_take_handle(image_snapshot, 0);
+            app_identity : byte* = __k_module_snapshot_identity(image_snapshot, 0);
+            _module = Shared<ApplicationModule>(
+                new ApplicationModule(
+                    app_handle, app_identity, app_path, app_units,
+                    ModuleResidency::PROCESS_PINNED));
+            app_module : Shared<Module> = Shared<Module>(_module);
+            app_module.get()->_self = Weak<Module>(app_module);
+            _modules.append(app_module);
+
+            image_index = 1;
+            while (image_index < image_count) {
+                image_status : int =
+                    __k_module_snapshot_manifest_status(image_snapshot, image_index);
+                if (image_status == 0 || image_status == 1) {
+                    image_path_bytes : unsigned byte[]! =
+                        __k_module_snapshot_path(image_snapshot, image_index);
+                    image_path : String = String(image_path_bytes);
+                    delete image_path_bytes;
+                    image_identity : byte* =
+                        __k_module_snapshot_identity(image_snapshot, image_index);
+                    image_handle : byte* =
+                        __k_module_snapshot_take_handle(image_snapshot, image_index);
+
+                    image_units : Vector<byte*>;
+                    if (image_status == 1) {
+                        image_unit_count : int =
+                            __k_module_snapshot_unit_count(image_snapshot, image_index);
+                        image_unit_index : int = 0;
+                        while (image_unit_index < image_unit_count) {
+                            image_descriptor : byte* = __k_module_snapshot_unit_at(
+                                image_snapshot, image_index, image_unit_index);
+                            image_units.append(image_descriptor);
+                            ++image_unit_index;
+                        }
+                    }
+
+                    if (image_status == 1) {
+                        concrete : Shared<LibraryModule> = Shared<LibraryModule>(
+                            new LibraryModule(
+                                image_handle, image_identity, image_path, image_units,
+                                ModuleResidency::PROCESS_PINNED));
+                        registered : Shared<Module> = Shared<Module>(concrete);
+                        registered.get()->_self = Weak<Module>(registered);
+                        _modules.append(registered);
+                    } else {
+                        concrete : Shared<NativeLibraryModule> = Shared<NativeLibraryModule>(
+                            new NativeLibraryModule(
+                                image_handle, image_identity, image_path, image_units,
+                                ModuleResidency::PROCESS_PINNED));
+                        registered : Shared<Module> = Shared<Module>(concrete);
+                        registered.get()->_self = Weak<Module>(registered);
+                        _modules.append(registered);
+                    }
+                }
+                ++image_index;
+            }
+        }
+        __k_module_snapshot_close(image_snapshot);
+        linked_index : unsigned int = 0;
+        while (linked_index < _modules.size()) {
+            if (_modules.get(linked_index).get() != _module.get()) {
+                _module.get()->_linkedModules.append(_modules.get(linked_index));
+            }
+            ++linked_index;
+        }
+        __k_module_populate_dependencies();
+
         _env = new EnvironmentMap();
         n : int = __k_env_count();
         i : int = 0;
@@ -250,7 +352,6 @@ public abstract class Application : public Object {
 
     ~Application() {
         delete _modules;
-        delete _modulesLock;
     }
 
     // ── Accessors ────────────────────────────────────────────────────────────
@@ -267,6 +368,49 @@ public abstract class Application : public Object {
         return *_env;
     }
 
+    /** Return the shared representation of the process's application image. */
+    public const applicationModule() : Shared<ApplicationModule> {
+        return _module;
+    }
+
+    /** Return the stable startup snapshot of loaded native images. */
+    public const linkedModules() : Vector<Shared<Module>> {
+        return _module.get()->linkedModules();
+    }
+
+    /** Return owner-retaining RTTI views for units linked at process startup. */
+    public const linkedUnits() : Vector<UnitView> {
+        return _module.get()->linkedUnits();
+    }
+
+    private __k_module_populate_dependencies() : void {
+        module_index : unsigned int = 0;
+        while (module_index < _modules.size()) {
+            source_module : Shared<Module>& = _modules.get(module_index);
+            if (!source_module.get()->_dependenciesInitialized) {
+                dependency_count : int =
+                    __k_module_dependency_count(source_module.get()->_identity);
+                dependency_index : int = 0;
+                while (dependency_index < dependency_count) {
+                    dependency_identity : byte* = __k_module_dependency_at(
+                        source_module.get()->_identity, dependency_index);
+                    candidate_index : unsigned int = 0;
+                    while (candidate_index < _modules.size()) {
+                        candidate : Shared<Module>& = _modules.get(candidate_index);
+                        if (candidate.get()->_identity == dependency_identity) {
+                            source_module.get()->_dependencies.append(Weak<Module>(candidate));
+                            break;
+                        }
+                        ++candidate_index;
+                    }
+                    ++dependency_index;
+                }
+                source_module.get()->_dependenciesInitialized = true;
+            }
+            ++module_index;
+        }
+    }
+
     // ── Dynamic modules ──────────────────────────────────────────────────────
 
     /**
@@ -279,61 +423,228 @@ public abstract class Application : public Object {
      * before the library itself, so a global object may register itself in
      * an object of a library it depends on.
      *
-     * Modules are identified by their native handle: loading a file already
-     * loaded by this process (explicitly, through another path or symbolic link,
-     * or implicitly as a dependency) returns the same Module. Modules are never
-     * unloaded; the returned pointer stays valid until the Application is destroyed.
+     * Modules are identified by their native image identity: loading a file
+     * already loaded by this process (explicitly, through another path or
+     * symbolic link, or implicitly as a dependency) returns the same ownership
+     * group.
+     * Loaded images remain resident until process exit.
      *
      * This function is thread-safe. It must not be called by a global constructor
      * of a library being loaded from another thread.
      *
      * @param path  path of the library file (relative or absolute)
-     * @return      the (non-null) loaded module, or the reason of the failure
+     * @return      shared ownership of the module on success, or the reason of
+     *              failure
      */
-    public loadModule(path: const String&) : Expected<Module*, LoadModuleError> {
+    public loadModule(path: const String&) : Expected<Shared<Module>, LoadModuleError> {
         err : int = 0;
         utf8 : unsigned byte[]! = path.toUtf8();
         real : unsigned byte[]! = __k_module_realpath(utf8, &err);
         delete utf8;
         if (real == null) {
             failure : LoadModuleError = __k_module_error_from_code(err);
-            return Expected<Module*, LoadModuleError>::unexpected(failure);
+            failure_result : Expected<Shared<Module>, LoadModuleError>;
+            failure_result.setError(failure);
+            return failure_result;
         }
 
         realPath : String = String(real);
         handle : byte* = null;
-        found : Module* = null;
-        lock : ReentrantLock* = _modulesLock;
-        lock->lock();
-        {
-            handle = __k_module_open(real, &err);
-            if (handle != null) {
-                node : ModuleNode* = _modules;
-                while (node != null && found == null) {
-                    if (node->_module->_handle == handle) {
-                        found = node->_module;
-                    }
-                    node = node->_next;
-                }
-                if (found == null) {
-                    created : ModuleNode! = new ModuleNode();
-                    created._module = new Module(handle, realPath);
-                    created._next = _modules;
-                    _modules = created;
-                    found = _modules._module;
-                }
+        identity : byte* = null;
+        found : Shared<Module>;
+        handle = __k_module_open(real, &err);
+        if (handle == null) {
+            delete real;
+            failure : LoadModuleError = __k_module_error_from_code(err);
+            failure_result : Expected<Shared<Module>, LoadModuleError>;
+            failure_result.setError(failure);
+            return failure_result;
+        }
+        identity = __k_module_identity(handle);
+        image_snapshot : byte* = __k_module_snapshot_open();
+        image_count : int = __k_module_snapshot_count(image_snapshot);
+        target_index : int = -1;
+        image_index : int = 0;
+        while (image_index < image_count && target_index < 0) {
+            if (__k_module_snapshot_identity(image_snapshot, image_index) == identity) {
+                target_index = image_index;
             }
+            ++image_index;
         }
+        if (target_index < 0) {
+            __k_module_snapshot_close(image_snapshot);
+            __k_module_close(handle);
+            delete real;
+            failure_result : Expected<Shared<Module>, LoadModuleError>;
+            failure : LoadModuleError = LoadModuleError::LOAD_FAILED;
+            failure_result.setError(failure);
+            return failure_result;
+        }
+        image_index = 0;
+        while (image_index < image_count) {
+            image_identity : byte* =
+                __k_module_snapshot_identity(image_snapshot, image_index);
+            depends_on_target : bool =
+                __k_module_depends_on(identity, image_identity) != 0;
+            image_status : int =
+                __k_module_snapshot_manifest_status(image_snapshot, image_index);
+            if ((image_index == target_index || depends_on_target)
+                && (image_status == 2 || image_status == 3)) {
+                __k_module_snapshot_close(image_snapshot);
+                __k_module_close(handle);
+                delete real;
+                failure_result : Expected<Shared<Module>, LoadModuleError>;
+                if (image_status == 2) {
+                    failure : LoadModuleError = LoadModuleError::INCOMPATIBLE_MANIFEST;
+                    failure_result.setError(failure);
+                } else {
+                    failure : LoadModuleError = LoadModuleError::INVALID_MANIFEST;
+                    failure_result.setError(failure);
+                }
+                return failure_result;
+            }
+            ++image_index;
+        }
+        __k_module_close(handle);
+
+        __k_module_registry_lock();
         try {
-            lock->unlock();
-        } catch (e: IllegalMonitorStateException&) {
+            {
+            image_index = 0;
+            while (image_index < image_count) {
+                image_identity : byte* =
+                    __k_module_snapshot_identity(image_snapshot, image_index);
+                existing : Shared<Module>;
+                i : unsigned int = 0;
+                while (i < _modules.size() && !existing) {
+                    candidate : Shared<Module>& = _modules.get(i);
+                    if (candidate.get()->_identity == image_identity) {
+                        existing = candidate;
+                    }
+                    ++i;
+                }
+                if (!existing) {
+                    image_status : int =
+                        __k_module_snapshot_manifest_status(image_snapshot, image_index);
+                    if (image_status == 0 || image_status == 1) {
+                        image_path_bytes : unsigned byte[]! =
+                            __k_module_snapshot_path(image_snapshot, image_index);
+                        image_path : String = String(image_path_bytes);
+                        delete image_path_bytes;
+                        image_handle : byte* =
+                            __k_module_snapshot_take_handle(image_snapshot, image_index);
+                        image_units : Vector<byte*>;
+                        if (image_status == 1) {
+                            image_unit_count : int =
+                                __k_module_snapshot_unit_count(image_snapshot, image_index);
+                            image_unit_index : int = 0;
+                            while (image_unit_index < image_unit_count) {
+                                image_descriptor : byte* = __k_module_snapshot_unit_at(
+                                    image_snapshot, image_index, image_unit_index);
+                                image_units.append(image_descriptor);
+                                ++image_unit_index;
+                            }
+                        }
+                        if (image_status == 1) {
+                            concrete : Shared<LibraryModule> = Shared<LibraryModule>(
+                                new LibraryModule(
+                                    image_handle, image_identity, image_path, image_units,
+                                    ModuleResidency::POTENTIALLY_RELEASABLE));
+                            registered : Shared<Module> = Shared<Module>(concrete);
+                            registered.get()->_self = Weak<Module>(registered);
+                            if (image_index == target_index) {
+                                found = registered;
+                            }
+                            _modules.append(registered);
+                        } else {
+                            concrete : Shared<NativeLibraryModule> = Shared<NativeLibraryModule>(
+                                new NativeLibraryModule(
+                                    image_handle, image_identity, image_path, image_units,
+                                    ModuleResidency::POTENTIALLY_RELEASABLE));
+                            registered : Shared<Module> = Shared<Module>(concrete);
+                            registered.get()->_self = Weak<Module>(registered);
+                            if (image_index == target_index) {
+                                found = registered;
+                            }
+                            _modules.append(registered);
+                        }
+                    }
+                } else if (image_index == target_index) {
+                    found = existing;
+                }
+                ++image_index;
+            }
+            __k_module_populate_dependencies();
+            }
+        } finally {
+            __k_module_registry_unlock();
         }
+        __k_module_snapshot_close(image_snapshot);
         delete real;
 
-        if (found == null) {
-            failure : LoadModuleError = __k_module_error_from_code(err);
-            return Expected<Module*, LoadModuleError>::unexpected(failure);
+        if (!found) {
+            failure_result : Expected<Shared<Module>, LoadModuleError>;
+            failure : LoadModuleError = LoadModuleError::LOAD_FAILED;
+            failure_result.setError(failure);
+            return failure_result;
         }
-        return Expected<Module*, LoadModuleError>::expected(found);
+        success_result : Expected<Shared<Module>, LoadModuleError>;
+        success_result.setResult(found);
+        return success_result;
+    }
+
+    /**
+     * Return shared ownership of a module already registered for `path`, or an
+     * empty handle when no matching module is known. This does not load images.
+     */
+    public lookupModule(path: const String&) : Shared<Module> {
+        err : int = 0;
+        utf8 : unsigned byte[]! = path.toUtf8();
+        real : unsigned byte[]! = __k_module_realpath(utf8, &err);
+        delete utf8;
+        if (real == null) {
+            return Shared<Module>();
+        }
+
+        realPath : String = String(real);
+        delete real;
+        found : Shared<Module>;
+        __k_module_registry_lock();
+        try {
+            {
+            i : unsigned int = 0;
+            while (i < _modules.size() && !found) {
+                candidate : Shared<Module>& = _modules.get(i);
+                if (candidate.get()->path() == realPath) {
+                    found = candidate;
+                }
+                ++i;
+            }
+            }
+        } finally {
+            __k_module_registry_unlock();
+        }
+        return found;
+    }
+
+    /**
+     * Return a stable snapshot of the modules currently registered by this
+     * Application. Each entry shares ownership with its registered image.
+     */
+    public modules() : Vector<Shared<Module>> {
+        snapshot : Vector<Shared<Module>>;
+        __k_module_registry_lock();
+        try {
+            {
+            i : unsigned int = 0;
+            while (i < _modules.size()) {
+                snapshot.append(_modules.get(i));
+                ++i;
+            }
+            }
+        } finally {
+            __k_module_registry_unlock();
+        }
+        return snapshot;
     }
 }

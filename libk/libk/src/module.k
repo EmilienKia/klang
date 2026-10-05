@@ -39,17 +39,171 @@ public enum LoadModuleError {
     UNRESOLVED_SYMBOL = 5;
     /** Any other loading failure. */
     LOAD_FAILED = 6;
+    /** The image exports a malformed or incomplete K RTTI manifest. */
+    INVALID_MANIFEST = 7;
+    /** The image exports a manifest ABI version this runtime cannot read. */
+    INCOMPATIBLE_MANIFEST = 8;
 }
 
 /**
- * A dynamic library (module) loaded in the running process.
- *
- * Instances are created and owned by ::k::Application (see
- * Application::loadModule()); they cannot be constructed by user code.
- * A module is never unloaded: its native handle stays open until the process
- * exits.
+ * The kind of native image represented by a Module.
  */
-public class Module : public Object {
+public enum ModuleKind {
+    APPLICATION = 0;
+    LIBRARY = 1;
+    NATIVE_LIBRARY = 2;
+}
+
+public enum ModuleResidency {
+    PROCESS_PINNED = 0;
+    POTENTIALLY_RELEASABLE = 1;
+}
+
+@ffi::Extern("C") private __k_rtti_unit_ref(descriptor : byte*) : const Unit&;
+@ffi::Extern("C") private __k_rtti_namespace_ref(descriptor : byte*) : const Namespace&;
+@ffi::Extern("C") private __k_rtti_namespace_ptr(descriptor : const Namespace?) : byte*;
+@ffi::Extern("C") private __k_rtti_namespace_count(descriptors : const Namespace?[]?) : unsigned int;
+@ffi::Extern("C") private __k_rtti_namespace_at(
+    descriptors : const Namespace?[]?, index : unsigned int) : const Namespace?;
+@ffi::Extern("C") private __k_module_dependency_count(identity : byte*) : int;
+@ffi::Extern("C") private __k_module_dependency_at(identity : byte*, index : int) : byte*;
+
+/**
+ * A lease on one immutable unit descriptor in a native image.
+ *
+ * The view retains its owning Module. Descriptor references returned by
+ * getDescriptor() are borrowed and must not outlive this view.
+ */
+public final class UnitView {
+    friend Module;
+    friend NamespaceView;
+
+private:
+    _owner : Shared<Module>;
+    _descriptor : byte*;
+
+    UnitView(owner : const Shared<Module>&, descriptor : byte*)
+        : _owner(owner), _descriptor(descriptor) {}
+
+public:
+    UnitView() : _owner(), _descriptor(null) {}
+
+    UnitView(other : const UnitView&)
+        : _owner(other._owner), _descriptor(other._descriptor) {}
+
+    operator =(other : const UnitView&) : UnitView& {
+        _owner = other._owner;
+        _descriptor = other._descriptor;
+        return this;
+    }
+
+    /** Return the owning image handle. */
+    public const owner() : Shared<Module> {
+        return _owner;
+    }
+
+    public const isNull() : bool {
+        return _descriptor == null;
+    }
+
+    /** Return the borrowed compiler-emitted descriptor. */
+    public const getDescriptor() : const Unit& {
+        if (_descriptor == null) {
+            throw NullDereferenceError();
+        }
+        return __k_rtti_unit_ref(_descriptor);
+    }
+
+    /** Return an owner-retaining view of this unit's root namespace. */
+    public const rootNamespace() : NamespaceView {
+        if (_descriptor == null) {
+            throw NullDereferenceError();
+        }
+        root : const Namespace? = getDescriptor().getRootNamespace();
+        if (root == null) {
+            throw NullDereferenceError();
+        }
+        return NamespaceView(_owner, __k_rtti_namespace_ptr(root));
+    }
+}
+
+/** Owner-retaining lease on a borrowed compiler-emitted namespace descriptor. */
+public final class NamespaceView {
+    friend UnitView;
+
+private:
+    _owner : Shared<Module>;
+    _descriptor : byte*;
+
+    NamespaceView(owner : const Shared<Module>&, descriptor : byte*)
+        : _owner(owner), _descriptor(descriptor) {}
+
+public:
+    NamespaceView() : _owner(), _descriptor(null) {}
+
+    NamespaceView(other : const NamespaceView&)
+        : _owner(other._owner), _descriptor(other._descriptor) {}
+
+    operator =(other : const NamespaceView&) : NamespaceView& {
+        _owner = other._owner;
+        _descriptor = other._descriptor;
+        return this;
+    }
+
+    public const owner() : Shared<Module> {
+        return _owner;
+    }
+
+    public const isNull() : bool {
+        return _descriptor == null;
+    }
+
+    public const getDescriptor() : const Namespace& {
+        if (_descriptor == null) {
+            throw NullDereferenceError();
+        }
+        return __k_rtti_namespace_ref(_descriptor);
+    }
+
+    public const children() : Vector<NamespaceView> {
+        if (_descriptor == null) {
+            throw NullDereferenceError();
+        }
+        result : Vector<NamespaceView>;
+        descriptors : const Namespace?[]? = getDescriptor().getNamespaces();
+        if (descriptors != null) {
+            i : unsigned int = 0;
+            while (i < __k_rtti_namespace_count(descriptors)) {
+                child : const Namespace? = __k_rtti_namespace_at(descriptors, i);
+                if (child != null) {
+                    result.append(NamespaceView(_owner, __k_rtti_namespace_ptr(child)));
+                }
+                ++i;
+            }
+        }
+        return result;
+    }
+
+    public const parent() : NamespaceView {
+        if (_descriptor == null) {
+            throw NullDereferenceError();
+        }
+        ancestor : const Namespace? = getDescriptor().getParent();
+        if (ancestor == null) {
+            return NamespaceView();
+        }
+        return NamespaceView(_owner, __k_rtti_namespace_ptr(ancestor));
+    }
+}
+
+/**
+ * A native image (module) loaded in the running process.
+ *
+ * Instances are created by ::k::Application and shared between the
+ * application, its module registry, and callers. Images remain resident until
+ * process exit; there is currently no unload operation.
+ */
+public abstract class Module : public Object {
     // Only Application (friend) can build a Module: friends have access to
     // protected members.
     friend Application;
@@ -58,13 +212,54 @@ protected:
     /** Native library handle (dlopen). */
     _handle : byte*;
 
+    /** Stable identity of the loaded image within the process. */
+    _identity : byte*;
+
     /** Absolute real path of the library file. */
     _path : String;
 
-    Module(handle : byte*, path : const String&) : _handle(handle), _path(path) {}
+    /** Borrowed RTTI unit pointers; the image is retained by the Module. */
+    _unitDescriptors : Vector<byte*>!;
+
+    /** Weak self-reference lets views acquire a lease without a strong cycle. */
+    _self : Weak<Module>;
+
+    /** Direct ELF dependency edges, held weakly to avoid dependency cycles. */
+    _dependencies : Vector<Weak<Module>>!;
+
+    _dependenciesInitialized : bool;
+
+    _residency : ModuleResidency;
+
+    Module(handle : byte*, identity : byte*, path : const String&,
+           unit_descriptors : const Vector<byte*>&, residency : ModuleResidency)
+        : _handle(handle), _identity(identity), _path(path),
+          _unitDescriptors(new Vector<byte*>()), _self(),
+          _dependencies(new Vector<Weak<Module>>()), _dependenciesInitialized(false),
+          _residency(residency) {
+        i : unsigned int = 0;
+        while (i < unit_descriptors.size()) {
+            _unitDescriptors.append(unit_descriptors.get(i));
+            ++i;
+        }
+    }
 
 public:
-    ~Module() {}
+    ~Module() {
+        delete _unitDescriptors;
+        delete _dependencies;
+    }
+
+    /** Return the concrete kind of this native image. */
+    public abstract const kind() : ModuleKind;
+
+    public const residency() : ModuleResidency {
+        return _residency;
+    }
+
+    public const isProcessPinned() : bool {
+        return _residency == ModuleResidency::PROCESS_PINNED;
+    }
 
     /**
      * Absolute real path of the loaded library file (symbolic links resolved).
@@ -72,4 +267,125 @@ public:
     public const path() : const String& {
         return _path;
     }
+
+    /**
+     * Return owner-retaining views for units directly contained in this image.
+     * Dependencies' units are never included.
+     */
+    public const units() : Vector<UnitView> {
+        views : Vector<UnitView>;
+        owner : Shared<Module> = _self.lock();
+        if (!owner) {
+            throw FatalError();
+        }
+        i : unsigned int = 0;
+        while (i < _unitDescriptors.size()) {
+            views.append(UnitView(owner, _unitDescriptors.get(i)));
+            ++i;
+        }
+        return views;
+    }
+
+    /** Return strong handles for this image's direct native dependencies. */
+    public const dependencies() : Vector<Shared<Module>> {
+        result : Vector<Shared<Module>>;
+        i : unsigned int = 0;
+        while (i < _dependencies.size()) {
+            dependency : Shared<Module> = _dependencies.get(i).lock();
+            if (!dependency) {
+                throw FatalError();
+            }
+            result.append(dependency);
+            ++i;
+        }
+        return result;
+    }
+}
+
+/**
+ * The executable image hosting the current Application.
+ */
+public final class ApplicationModule : public Module {
+    friend Application;
+
+private:
+    ApplicationModule(handle : byte*, identity : byte*, path : const String&,
+                      unit_descriptors : const Vector<byte*>&, residency : ModuleResidency)
+        : Module(handle, identity, path, unit_descriptors, residency),
+          _linkedModules(new Vector<Shared<Module>>()) {}
+
+    _linkedModules : Vector<Shared<Module>>!;
+
+public:
+    ~ApplicationModule() {
+        delete _linkedModules;
+    }
+
+    override const kind() : ModuleKind { return ModuleKind::APPLICATION; }
+
+    public const linkedModules() : Vector<Shared<Module>> {
+        result : Vector<Shared<Module>>;
+        self : Shared<Module> = _self.lock();
+        if (!self) {
+            throw FatalError();
+        }
+        result.append(self);
+        i : unsigned int = 0;
+        while (i < _linkedModules.size()) {
+            result.append(_linkedModules.get(i));
+            ++i;
+        }
+        return result;
+    }
+
+    public const linkedUnits() : Vector<UnitView> {
+        result : Vector<UnitView>;
+        images : Vector<Shared<Module>> = linkedModules();
+        i : unsigned int = 0;
+        while (i < images.size()) {
+            views : Vector<UnitView> = images.get(i).get()->units();
+            j : unsigned int = 0;
+            while (j < views.size()) {
+                result.append(views.get(j));
+                ++j;
+            }
+            ++i;
+        }
+        return result;
+    }
+}
+
+/**
+ * A Klang library image.
+ */
+public final class LibraryModule : public Module {
+    friend Application;
+
+private:
+    LibraryModule(handle : byte*, identity : byte*, path : const String&,
+                  unit_descriptors : const Vector<byte*>&, residency : ModuleResidency)
+        : Module(handle, identity, path, unit_descriptors, residency) {}
+
+public:
+    override const kind() : ModuleKind { return ModuleKind::LIBRARY; }
+}
+
+/**
+ * A native shared image.
+ */
+public final class NativeLibraryModule : public Module {
+    friend Application;
+
+private:
+    NativeLibraryModule(handle : byte*, identity : byte*, path : const String&,
+                        unit_descriptors : const Vector<byte*>&, residency : ModuleResidency)
+        : Module(handle, identity, path, unit_descriptors, residency) {}
+
+public:
+    override const kind() : ModuleKind { return ModuleKind::NATIVE_LIBRARY; }
+}
+
+public final class ModuleManifestError : public FatalError {
+public:
+    ModuleManifestError(code : int) : FatalError(code) {}
 }

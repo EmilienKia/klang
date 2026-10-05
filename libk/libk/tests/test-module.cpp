@@ -41,6 +41,7 @@
 
 #include <dlfcn.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <filesystem>
@@ -69,6 +70,8 @@ constexpr int INVALID_PATH       = 2;
 constexpr int NOT_A_LIBRARY      = 3;
 constexpr int MISSING_DEPENDENCY = 4;
 constexpr int UNRESOLVED_SYMBOL  = 5;
+constexpr int INVALID_MANIFEST = 7;
+constexpr int INCOMPATIBLE_MANIFEST = 8;
 
 /// Compile a K program that may import the fixture `modreg` library, then JIT it.
 /// libmodreg.so is loaded into the process (as the test executable itself would
@@ -112,7 +115,7 @@ int load_error_of(const std::string& path) {
     auto jit = jit_module(
         "module __module_error__;\n"
         "main() : int {\n"
-        "    r : Expected<Module*, LoadModuleError> = loadModule(String(\"" + path + "\"));\n"
+        "    r : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + path + "\"));\n"
         "    if (r.hasResult()) { return 99; }\n"
         "    return (int) r.getError();\n"
         "}\n");
@@ -121,6 +124,48 @@ int load_error_of(const std::string& path) {
 }
 
 } // anonymous namespace
+
+TEST_CASE("Application::applicationModule — registers the process image with shared ownership",
+          "[libk][module]") {
+    auto jit = jit_module(
+        "module __module_application__;\n"
+        "saved_app_module : Shared<ApplicationModule>;\n"
+        "main() : int {\n"
+        "    app_module : Shared<ApplicationModule> = applicationModule();\n"
+        "    saved_app_module = app_module;\n"
+        "    if (!app_module) { return 1; }\n"
+        "    if (app_module.get()->kind() != ModuleKind::APPLICATION) { return 2; }\n"
+        "    if (!app_module.get()->isProcessPinned()) { return 3; }\n"
+        "    if (app_module.get()->residency() != ModuleResidency::PROCESS_PINNED) { return 14; }\n"
+        "    owners_before_snapshot : int = app_module.useCount();\n"
+        "    snapshot : Vector<Shared<Module>> = modules();\n"
+        "    if (snapshot.size() < 1u) { return 4; }\n"
+        "    if (snapshot.get(0) != Shared<Module>(app_module)) { return 5; }\n"
+        "    if (app_module.useCount() <= owners_before_snapshot) { return 9; }\n"
+        "    owners_with_snapshot : int = app_module.useCount();\n"
+        "    snapshot.clear();\n"
+        "    if (modules().size() < 1u) { return 6; }\n"
+        "    if (app_module.useCount() >= owners_with_snapshot) { return 10; }\n"
+        "    if (linkedModules().size() < 1u) { return 12; }\n"
+        "    if (linkedUnits().size() < 1u) { return 13; }\n"
+        "    if (app_module.get()->linkedModules().size() != linkedModules().size()) { return 15; }\n"
+        "    if (app_module.get()->linkedUnits().size() != linkedUnits().size()) { return 16; }\n"
+        "    if (!lookupModule(app_module.get()->path())) { return 7; }\n"
+        "    if (lookupModule(String(\"" + FIXTURES + "/not_loaded.so\"))) { return 8; }\n"
+        "    return 0;\n"
+        "}\n"
+        "check_saved_startup_snapshot() : int {\n"
+        "    if (!saved_app_module) { return 1; }\n"
+        "    if (saved_app_module.get()->linkedModules().size() < 1u) { return 2; }\n"
+        "    if (saved_app_module.get()->linkedUnits().size() < 1u) { return 3; }\n"
+        "    return 0;\n"
+        "}\n");
+    REQUIRE(jit);
+    CHECK(run_main(*jit) == 0);
+    auto check_snapshot = jit->lookup_symbol<int(*)()>("check_saved_startup_snapshot");
+    REQUIRE(check_snapshot);
+    CHECK(check_snapshot() == 0);
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Plugin chain: dependencies loaded, global objects constructed and registered
@@ -139,23 +184,29 @@ TEST_CASE("Application::loadModule — plugins register themselves in their depe
         "main() : int {\n"
         "    if (modreg::registeredCount() != 0) { return 1; }\n"
         "\n"
-        "    ra : Expected<Module*, LoadModuleError> = loadModule(String(\"" + FIXTURES + "/libmodplugin_a.so\"));\n"
+        "    ra : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + FIXTURES + "/libmodplugin_a.so\"));\n"
         "    if (!ra.hasResult()) { return 2; }\n"
-        "    ma : Module* = ra.getResult();\n"
+        "    ma : Shared<Module> = ra.getResult();\n"
         "    if (modreg::registeredCount() != 1) { return 3; }\n"
         "    if (modreg::registeredId(0) != 1) { return 4; }\n"
         "\n"
         "    // Same file through other paths: same module, no new registration.\n"
-        "    rl : Expected<Module*, LoadModuleError> = loadModule(String(\"" + (tmp / "link_to_a.so").string() + "\"));\n"
+        "    owners_before_alias : int = ma.useCount();\n"
+        "    rl : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + (tmp / "link_to_a.so").string() + "\"));\n"
         "    if (!rl.hasResult()) { return 5; }\n"
         "    if (rl.getResult() != ma) { return 6; }\n"
-        "    rd : Expected<Module*, LoadModuleError> = loadModule(String(\"" + FIXTURES + "/./libmodplugin_a.so\"));\n"
+        "    if (ma.useCount() != owners_before_alias + 1) { return 19; }\n"
+        "    rd : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + FIXTURES + "/./libmodplugin_a.so\"));\n"
         "    if (!rd.hasResult()) { return 7; }\n"
         "    if (rd.getResult() != ma) { return 8; }\n"
+        "    owners_before_lookup : int = ma.useCount();\n"
+        "    lookup : Shared<Module> = lookupModule(String(\"" + FIXTURES + "/libmodplugin_a.so\"));\n"
+        "    if (lookup != ma) { return 16; }\n"
+        "    if (ma.useCount() != owners_before_lookup + 1) { return 20; }\n"
         "    if (modreg::registeredCount() != 1) { return 9; }\n"
         "\n"
         "    // Second plugin: chained after the first one.\n"
-        "    rb : Expected<Module*, LoadModuleError> = loadModule(String(\"" + FIXTURES + "/libmodplugin_b.so\"));\n"
+        "    rb : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + FIXTURES + "/libmodplugin_b.so\"));\n"
         "    if (!rb.hasResult()) { return 10; }\n"
         "    if (rb.getResult() == ma) { return 11; }\n"
         "    if (modreg::registeredCount() != 2) { return 12; }\n"
@@ -163,7 +214,13 @@ TEST_CASE("Application::loadModule — plugins register themselves in their depe
         "    if (modreg::registeredId(1) != 2) { return 14; }\n"
         "\n"
         "    // The module reports the absolute real path of the library.\n"
-        "    if (ma->path() != String(\"" + fs::canonical(fs::path(FIXTURES) / "libmodplugin_a.so").string() + "\")) { return 15; }\n"
+        "    if (ma.get()->path() != String(\"" + fs::canonical(fs::path(FIXTURES) / "libmodplugin_a.so").string() + "\")) { return 15; }\n"
+        "    if (ma.get()->isProcessPinned()) { return 21; }\n"
+        "    if (ma.get()->residency() != ModuleResidency::POTENTIALLY_RELEASABLE) { return 22; }\n"
+        "    snapshot : Vector<Shared<Module>> = modules();\n"
+        "    if (snapshot.size() < 3u) { return 17; }\n"
+        "    snapshot.clear();\n"
+        "    if (!lookupModule(String(\"" + FIXTURES + "/libmodplugin_b.so\"))) { return 18; }\n"
         "    return 0;\n"
         "}\n");
     REQUIRE(jit);
@@ -184,17 +241,89 @@ TEST_CASE("Application::loadModule — implicitly loaded library gets a dedicate
     auto jit = jit_module(
         "module __module_implicit__;\n"
         "main() : int {\n"
-        "    r1 : Expected<Module*, LoadModuleError> = loadModule(String(\"" + libk + "\"));\n"
+        "    r1 : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + libk + "\"));\n"
         "    if (!r1.hasResult()) { return 1; }\n"
-        "    m1 : Module* = r1.getResult();\n"
-        "    if (m1->path() != String(\"" + libk + "\")) { return 2; }\n"
-        "    r2 : Expected<Module*, LoadModuleError> = loadModule(String(\"" + libk + "\"));\n"
+        "    m1 : Shared<Module> = r1.getResult();\n"
+        "    if (m1.get()->path() != String(\"" + libk + "\")) { return 2; }\n"
+        "    if (m1.get()->kind() != ModuleKind::LIBRARY) { return 7; }\n"
+        "    if (!m1.get()->isProcessPinned()) { return 8; }\n"
+        "    units : Vector<UnitView> = m1.get()->units();\n"
+        "    if (units.size() < 1u) { return 21; }\n"
+        "    unit : UnitView = units.get(0);\n"
+        "    if (unit.owner() != m1) { return 22; }\n"
+        "    if (unit.getDescriptor().getRootNamespace() == null) { return 23; }\n"
+        "    r2 : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + libk + "\"));\n"
         "    if (!r2.hasResult()) { return 3; }\n"
         "    if (r2.getResult() != m1) { return 4; }\n"
         "\n"
-        "    r3 : Expected<Module*, LoadModuleError> = loadModule(String(\"" + reg + "\"));\n"
+        "    r3 : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + reg + "\"));\n"
         "    if (!r3.hasResult()) { return 5; }\n"
         "    if (r3.getResult() == m1) { return 6; }\n"
+        "    return 0;\n"
+        "}\n");
+    REQUIRE(jit);
+    CHECK(run_main(*jit) == 0);
+}
+
+TEST_CASE("Application::loadModule — dependency manifest is not attributed to native image",
+          "[libk][module][manifest]") {
+    auto jit = jit_module(
+        "module __module_native_dependency__;\n"
+        "main() : int {\n"
+        "    r : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" +
+        FIXTURES + "/libmodnative_dep.so\"));\n"
+        "    if (!r.hasResult()) { return 1; }\n"
+        "    native : Shared<Module> = r.getResult();\n"
+        "    if (native.get()->kind() != ModuleKind::NATIVE_LIBRARY) { return 2; }\n"
+        "    if (native.get()->units().size() != 0u) { return 3; }\n"
+        "    registry : Shared<Module> = lookupModule(String(\"" + FIXTURES +
+        "/libmodreg.so\"));\n"
+        "    if (!registry || registry.get()->kind() != ModuleKind::LIBRARY) { return 4; }\n"
+        "    if (registry.get()->units().size() == 0u) { return 5; }\n"
+        "    direct : Vector<Shared<Module>> = native.get()->dependencies();\n"
+        "    if (direct.size() != 1u) { return 6; }\n"
+        "    if (direct.get(0) != registry) { return 7; }\n"
+        "    if (direct.get(0).get()->path() != registry.get()->path()) { return 8; }\n"
+        "    if (native.get()->isProcessPinned()) { return 9; }\n"
+        "    return 0;\n"
+        "}\n");
+    REQUIRE(jit);
+    CHECK(run_main(*jit) == 0);
+}
+
+TEST_CASE("Module views retain namespace owners and reject empty descriptor access",
+          "[libk][module][rtti]") {
+    const std::string reg = fs::canonical(fs::path(FIXTURES) / "libmodreg.so").string();
+    auto jit = jit_module(
+        "module __module_namespace_view__;\n"
+        "main() : int {\n"
+        "    module_handle : Shared<Module> = loadModule(String(\"" + reg + "\")).getResult();\n"
+        "    units : Vector<UnitView> = module_handle.get()->units();\n"
+        "    if (units.size() == 0u) { return 1; }\n"
+        "    unit : UnitView = units.get(0);\n"
+        "    if (unit.isNull()) { return 2; }\n"
+        "    root : NamespaceView = unit.rootNamespace();\n"
+        "    children : Vector<NamespaceView> = root.children();\n"
+        "    if (children.size() == 0u) { return 3; }\n"
+        "    nested : Vector<NamespaceView> = children.get(0).children();\n"
+        "    if (nested.size() == 0u) { return 4; }\n"
+        "    leaf : NamespaceView = nested.get(0);\n"
+        "    if (leaf.isNull()) { return 5; }\n"
+        "    unit = UnitView();\n"
+        "    root = NamespaceView();\n"
+        "    children.clear();\n"
+        "    nested.clear();\n"
+        "    module_handle = Shared<Module>();\n"
+        "    if (!leaf.owner()) { return 6; }\n"
+        "    if (leaf.getDescriptor().getFullName() == null) { return 7; }\n"
+        "    empty_unit : UnitView;\n"
+        "    if (!empty_unit.isNull()) { return 8; }\n"
+        "    try { empty_unit.getDescriptor(); return 9; }\n"
+        "    catch (e: NullDereferenceError&) {}\n"
+        "    empty_namespace : NamespaceView;\n"
+        "    if (!empty_namespace.isNull()) { return 10; }\n"
+        "    try { empty_namespace.getDescriptor(); return 11; }\n"
+        "    catch (e: NullDereferenceError&) {}\n"
         "    return 0;\n"
         "}\n");
     REQUIRE(jit);
@@ -227,6 +356,19 @@ TEST_CASE("Application::loadModule — unresolved symbol", "[libk][module][error
     CHECK(load_error_of(FIXTURES + "/libmodundef.so") == UNRESOLVED_SYMBOL);
 }
 
+TEST_CASE("Application::loadModule — malformed manifest", "[libk][module][manifest][error]") {
+    CHECK(load_error_of(FIXTURES + "/libmodmalformed_manifest.so") == INVALID_MANIFEST);
+}
+
+TEST_CASE("Application::loadModule — malformed dependency manifest",
+          "[libk][module][manifest][error]") {
+    CHECK(load_error_of(FIXTURES + "/libmodmalformed_dependency.so") == INVALID_MANIFEST);
+}
+
+TEST_CASE("Application::loadModule — incompatible manifest", "[libk][module][manifest][error]") {
+    CHECK(load_error_of(FIXTURES + "/libmodincompatible_manifest.so") == INCOMPATIBLE_MANIFEST);
+}
+
 TEST_CASE("Application::loadModule — access denied", "[libk][module][error]") {
     if (geteuid() == 0) {
         SKIP("permissions are not enforced for root");
@@ -254,7 +396,7 @@ TEST_CASE("Application::loadModule — concurrent loads of one file share one Mo
         "\n"
         "class LoadTask : public Runnable {\n"
         "    private _app : Application*;\n"
-        "    public _module : Module*;\n"
+        "    public _module : Shared<Module>;\n"
         "\n"
         "    LoadTask(app : Application*) {\n"
         "        _app = app;\n"
@@ -262,7 +404,7 @@ TEST_CASE("Application::loadModule — concurrent loads of one file share one Mo
         "    }\n"
         "\n"
         "    override run() {\n"
-        "        r : Expected<Module*, LoadModuleError> = _app->loadModule(String(\"" + FIXTURES + "/libmodplugin_b.so\"));\n"
+        "        r : Expected<Shared<Module>, LoadModuleError> = _app->loadModule(String(\"" + FIXTURES + "/libmodplugin_b.so\"));\n"
         "        if (r.hasResult()) {\n"
         "            _module = r.getResult();\n"
         "        }\n"
@@ -291,7 +433,7 @@ TEST_CASE("Application::loadModule — concurrent loads of one file share one Mo
         "    th1.join();\n"
         "    th2.join();\n"
         "    th3.join();\n"
-        "    if (t0._module == null) { return 1; }\n"
+        "    if (!t0._module) { return 1; }\n"
         "    if (t1._module != t0._module) { return 2; }\n"
         "    if (t2._module != t0._module) { return 3; }\n"
         "    if (t3._module != t0._module) { return 4; }\n"
@@ -299,4 +441,24 @@ TEST_CASE("Application::loadModule — concurrent loads of one file share one Mo
         "}\n");
     REQUIRE(jit);
     CHECK(run_main(*jit) == 0);
+}
+
+TEST_CASE("Application startup rejects malformed manifests in already-loaded images",
+          "[libk][module][manifest][startup]") {
+    pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        const std::string malformed = FIXTURES + "/libmodmalformed_manifest.so";
+        if (!dlopen(malformed.c_str(), RTLD_NOW | RTLD_GLOBAL)) _exit(2);
+        auto jit = jit_module(
+            "module __module_startup_manifest_error__;\n"
+            "main() : int { return 0; }\n");
+        if (!jit) _exit(4);
+        _exit(run_main(*jit) != 0 ? 0 : 3);
+    }
+
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
 }

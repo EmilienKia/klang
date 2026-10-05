@@ -748,12 +748,31 @@ add_custom_command(
             -L. -lmodmissing_target -Wl,-rpath,${MODFX_DIR}
     COMMAND ${CMAKE_COMMAND} -E remove libmodmissing_target.so
     COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodundef.so ${MODFX_SRC}/undefined_symbol.c
+    COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodnative_dep.so ${MODFX_SRC}/native_dependency.c
+            -L${MODFX_DIR} -Wl,--no-as-needed -lmodreg -Wl,--as-needed -Wl,-rpath,${MODFX_DIR}
+    COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodincompatible_manifest.so
+            ${MODFX_SRC}/incompatible_manifest.c
+    COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodmalformed_manifest.so
+            ${MODFX_SRC}/malformed_manifest.c
+    COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodmalformed_dependency.so
+            ${MODFX_SRC}/malformed_dependency.c -L${MODFX_DIR} -lmodmalformed_manifest
+            -Wl,-rpath,${MODFX_DIR}
+    COMMAND ${MODFX_KLANGC} --static-lib -o libstaticused.a ${MODFX_SRC}/static_used.k
+    COMMAND ${CMAKE_COMMAND} -E create_symlink libstaticused.kdi staticused.kdi
+    COMMAND ${MODFX_KLANGC} --static-lib -o libstaticunused.a ${MODFX_SRC}/static_unused.k
+    COMMAND ${MODFX_KLANGC} --lib ${MODFX_DIR}/libstaticunused.a
+            -o static_manifest_app ${MODFX_SRC}/static_manifest_app.k
     COMMAND ${CMAKE_COMMAND} -E copy ${MODFX_SRC}/not_a_library.txt ${MODFX_DIR}/not_a_library.txt
     COMMAND ${CMAKE_COMMAND} -E touch ${MODFX_DIR}/.fixtures.stamp
     DEPENDS klangc libk_stdlib
             ${MODFX_SRC}/modreg.k ${MODFX_SRC}/plugin_a.k ${MODFX_SRC}/plugin_b.k
             ${MODFX_SRC}/missing_target.c ${MODFX_SRC}/missing_user.c
-            ${MODFX_SRC}/undefined_symbol.c ${MODFX_SRC}/not_a_library.txt
+            ${MODFX_SRC}/undefined_symbol.c ${MODFX_SRC}/native_dependency.c
+            ${MODFX_SRC}/incompatible_manifest.c ${MODFX_SRC}/malformed_manifest.c
+            ${MODFX_SRC}/malformed_dependency.c
+            ${MODFX_SRC}/static_used.k ${MODFX_SRC}/static_unused.k
+            ${MODFX_SRC}/static_manifest_app.k
+            ${MODFX_SRC}/not_a_library.txt
     WORKING_DIRECTORY ${MODFX_DIR}
     COMMENT "Building dynamic module loading test fixtures"
     VERBATIM
@@ -765,6 +784,9 @@ libk_add_test(libk-tests-module 120
 )
 add_dependencies(libk-tests-module libk_module_fixtures)
 target_compile_definitions(libk-tests-module PRIVATE LIBK_MODULE_FIXTURES_DIR="${MODFX_DIR}")
+add_test(NAME libk-rtti-static-link-fixture
+         COMMAND ${MODFX_DIR}/static_manifest_app)
+set_tests_properties(libk-rtti-static-link-fixture PROPERTIES TIMEOUT 120)
 
 # ── libk basic stream I/O tests ──────────────────────────────────────────────
 libk_add_test_sharded(libk-tests-io 120 2

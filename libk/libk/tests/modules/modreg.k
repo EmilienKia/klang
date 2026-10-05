@@ -50,3 +50,11 @@ public registeredId(index : int) : int {
 public registerPlugin(plugin : Plugin&) {
     registry.add(plugin);
 }
+
+namespace view_fixture {
+    namespace child {
+        public const marker() : int {
+            return 7;
+        }
+    }
+}
