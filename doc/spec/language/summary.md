@@ -1517,9 +1517,18 @@ main() { /* void, exit code = 0 */ }
 - No K-level parameters (no direct access to CLI arguments).
 - The compiler generates a C `main(int, char**)` wrapper that:
   1. Calls global constructors.
-  2. Calls the K `main()`.
-  3. Calls global destructors.
-  4. Returns the exit code.
+  2. Constructs the selected `Application`, then publishes it immediately
+     before calling its resolved `main()`.
+  3. Withdraws the borrowed, process-wide application reference after normal
+     or exceptional exit, before destroying the `Application`.
+  4. Calls global destructors.
+  5. Returns the exit code.
+- `k::Application::getApplication()` returns `OptionalRef<Application>` and is
+  empty in global constructors/destructors and the application's constructor
+  and destructor. Check `hasValue()` before `get()`; the reference is borrowed
+  and valid only during the resolved `main()` call.
+- The same active reference is visible to all threads. Application-created
+  threads must finish before the entry-point `main()` exits.
 
 ---
 

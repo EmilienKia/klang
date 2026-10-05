@@ -288,6 +288,10 @@ public:
         return _unit_name;
     }
 
+    bool has_application_class() const {
+        return static_cast<bool>(_application_class);
+    }
+
     /**
      * Set the model name
      * @param unit_name New model name

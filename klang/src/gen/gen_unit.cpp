@@ -1597,6 +1597,60 @@ void implementation_generator::visit_global_main_function(global_main_function& 
     }
 }
 
+static std::shared_ptr<aggregate> find_application_base(const std::shared_ptr<aggregate>& type) {
+    if (!type) return {};
+    const auto& type_name = type->get_name();
+    if (type_name.size() == 2 && type_name[0] == "k" && type_name[1] == "Application") {
+        return type;
+    }
+    if (type->get_short_name() == "Application") {
+        auto parent = type->parent<ns>();
+        if (parent && parent->get_short_name() == "k") return type;
+    }
+    for (const auto& base : type->get_bases()) {
+        if (auto result = find_application_base(base.base)) return result;
+    }
+    return {};
+}
+
+static size_t application_base_offset(const aggregate& containing,
+                                      const aggregate& target,
+                                      const llvm::DataLayout& data_layout,
+                                      bool visit_virtual_bases = true) {
+    auto containing_struct = containing.get_struct_type();
+    auto* llvm_type = containing_struct
+        ? llvm::dyn_cast_or_null<llvm::StructType>(containing_struct->get_llvm_type())
+        : nullptr;
+    if (!llvm_type) return SIZE_MAX;
+
+    for (const auto& base : containing.get_bases()) {
+        if (!base.base || base.is_virtual) continue;
+        const std::string field_name = "__base_" + base.sanitised_name() + "__";
+        auto field = containing_struct->get_member(field_name);
+        if (!field) continue;
+        const size_t offset = data_layout.getStructLayout(llvm_type)
+            ->getElementOffset(static_cast<unsigned>(field->index));
+        if (base.base.get() == &target) return offset;
+        const size_t inner = application_base_offset(*base.base, target, data_layout, false);
+        if (inner != SIZE_MAX) return offset + inner;
+    }
+
+    if (visit_virtual_bases) {
+        for (const auto& base : containing.get_all_virtual_base_structs()) {
+            if (!base) continue;
+            const std::string field_name = "__vbase_" + base->get_short_name() + "__";
+            auto field = containing_struct->get_member(field_name);
+            if (!field) continue;
+            const size_t offset = data_layout.getStructLayout(llvm_type)
+                ->getElementOffset(static_cast<unsigned>(field->index));
+            if (base.get() == &target) return offset;
+            const size_t inner = application_base_offset(*base, target, data_layout, false);
+            if (inner != SIZE_MAX) return offset + inner;
+        }
+    }
+    return SIZE_MAX;
+}
+
 /**
  * Move the body of the C entry point into an internal function
  * '__k_main_body' and rebuild the entry point as a thin guard:
@@ -1642,6 +1696,9 @@ void implementation_generator::wrap_main_with_abort_guard(llvm::Function& proxy_
     body_fn->setLinkage(llvm::Function::InternalLinkage);
     body_fn->setVisibility(llvm::GlobalValue::DefaultVisibility);
     body_fn->setSubprogram(proxy_fn.getSubprogram());
+    auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+        llvm::FunctionType::get(i32_ty, true));
+    body_fn->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
     proxy_fn.setSubprogram(nullptr);
     body_fn->splice(body_fn->begin(), &proxy_fn);
     for (unsigned i = 0; i < proxy_fn.arg_size(); ++i) {
@@ -1667,8 +1724,6 @@ void implementation_generator::wrap_main_with_abort_guard(llvm::Function& proxy_
         llvm::GlobalValue::InternalLinkage, default_handler, k_main_uncaught_handler_global);
 
     // Rebuild the entry point as the guard.
-    auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
-        llvm::FunctionType::get(i32_ty, true));
     proxy_fn.setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
 
     auto* entry_bb = llvm::BasicBlock::Create(llvm_ctx, "entry", &proxy_fn);
@@ -1742,6 +1797,29 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
     }
     llvm::AllocaInst* app_alloca = _builder->CreateAlloca(app_llvm_type, nullptr, "__app");
 
+    // The executable-owned anchor is the single process authority shared by
+    // every linked or dynamically loaded copy of libk.
+    auto* anchor_i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* anchor_ty = llvm::StructType::get(llvm_ctx, {
+        anchor_i32_ty, anchor_i32_ty, ptr_ty, anchor_i32_ty
+    });
+    auto* anchor_init = llvm::ConstantStruct::get(anchor_ty, {
+        llvm::ConstantInt::get(anchor_i32_ty, 1),
+        llvm::ConstantInt::get(anchor_i32_ty,
+            get_module().getDataLayout().getTypeAllocSize(anchor_ty).getFixedValue()),
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)),
+        llvm::ConstantInt::get(anchor_i32_ty, 0)
+    });
+    auto* anchor_global = new llvm::GlobalVariable(get_module(), anchor_ty, false,
+        llvm::GlobalValue::InternalLinkage, anchor_init, "__k_application_anchor_state_v1");
+    auto* anchor_fn_ty = llvm::FunctionType::get(ptr_ty, false);
+    auto* anchor_fn = llvm::Function::Create(anchor_fn_ty, llvm::Function::ExternalLinkage,
+        "__k_application_anchor_v1", get_module());
+    anchor_fn->setDSOLocal(true);
+    auto* anchor_entry = llvm::BasicBlock::Create(llvm_ctx, "entry", anchor_fn);
+    llvm::IRBuilder<> anchor_builder(anchor_entry);
+    anchor_builder.CreateRet(anchor_global);
+
     // ── Call Application default constructor ──────────────────────────────────
     for (const auto& ctor : app_class->constructors()) {
         if (!ctor->is_deleted() && ctor->get_parameter_size() == 0) {
@@ -1795,6 +1873,66 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         main_args.push_back(args_llvm_val);
     }
 
+    auto k_application = find_application_base(app_class);
+    if (!k_application) {
+        throw_error(0, lex::opt_any_lexeme{},
+            "Internal code generation error: ::k::Application base was not found");
+    }
+    const size_t base_offset = application_base_offset(
+        *app_class, *k_application, get_module().getDataLayout());
+    if (base_offset == SIZE_MAX) {
+        throw_error(0, lex::opt_any_lexeme{},
+            "Internal code generation error: ::k::Application base offset was not found");
+    }
+    llvm::Value* application_base = _builder->CreateBitCast(app_alloca, ptr_ty, "application_object");
+    if (base_offset != 0) {
+        auto* byte_ty = llvm::Type::getInt8Ty(llvm_ctx);
+        application_base = _builder->CreateGEP(byte_ty, application_base,
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(llvm_ctx), base_offset),
+            "application_base");
+    }
+    auto* application_operation_ty = llvm::FunctionType::get(
+        i32_ty, {ptr_ty}, false);
+    auto activate_fn = get_module().getOrInsertFunction(
+        "__k_application_activate", application_operation_ty);
+    auto activation_error_fn = get_module().getOrInsertFunction(
+        "__k_application_activation_error",
+        llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_ctx), {i32_ty}, false));
+    auto* activation_status = _builder->CreateCall(
+        activate_fn, {application_base}, "application_activation_status");
+    auto* main_entry_bb = llvm::BasicBlock::Create(llvm_ctx, "application_active", proxy_fn);
+    auto* activation_error_bb = llvm::BasicBlock::Create(llvm_ctx, "application_activation_error", proxy_fn);
+    _builder->CreateCondBr(
+        _builder->CreateICmpEQ(activation_status, llvm::ConstantInt::get(i32_ty, 0)),
+        main_entry_bb, activation_error_bb);
+
+    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+    auto dtor = app_class->get_destructor();
+    llvm::Function* dtor_llvm_fn = nullptr;
+    if (dtor) {
+        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+        if (dtor_it != _context->_functions.end()) dtor_llvm_fn = dtor_it->second;
+    }
+
+    _builder->SetInsertPoint(activation_error_bb);
+    _builder->CreateCall(activation_error_fn, {activation_status});
+    if (dtor_llvm_fn) {
+        _builder->CreateCall(dtor_llvm_fn->getFunctionType(), dtor_llvm_fn, {app_alloca});
+    }
+    auto* tls_exit_fn_ty = llvm::FunctionType::get(void_ty, false);
+    auto* tls_exit_fn = get_module().getFunction("__k_tls_thread_exit");
+    if (!tls_exit_fn) {
+        tls_exit_fn = llvm::Function::Create(
+            tls_exit_fn_ty, llvm::Function::ExternalLinkage,
+            "__k_tls_thread_exit", get_module());
+    }
+    _builder->CreateCall(tls_exit_fn_ty, tls_exit_fn);
+    _builder->CreateRet(llvm::ConstantInt::get(i32_ty, 125));
+
+    auto* main_unwind_bb = llvm::BasicBlock::Create(llvm_ctx, "application_main_unwind", proxy_fn);
+    auto* main_return_bb = llvm::BasicBlock::Create(llvm_ctx, "application_main_return", proxy_fn);
+    _builder->SetInsertPoint(main_entry_bb);
+
     llvm::Type* main_ret_type = real_fn.has_return_type()
         ? _context->get_llvm_type(real_fn.get_return_type())
         : llvm::Type::getVoidTy(llvm_ctx);
@@ -1814,16 +1952,36 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         auto owner_klass = std::dynamic_pointer_cast<klass>(real_fn.get_owner());
         if (owner_klass && real_fn.get_vtable_slot() >= 0) {
             call_ret = emit_virtual_dispatch_call(*_builder, *owner_klass, app_alloca,
-                real_fn.get_vtable_slot(), main_llvm_fn_type, main_args, _context, "main_ret");
+                real_fn.get_vtable_slot(), main_llvm_fn_type, main_args, _context, "main_ret",
+                [this, main_return_bb, main_unwind_bb](
+                    llvm::FunctionType* fn_type, llvm::Value* callee,
+                    const std::vector<llvm::Value*>& args, const std::string& name) {
+                    return static_cast<llvm::Value*>(
+                        _builder->CreateInvoke(fn_type, callee, main_return_bb, main_unwind_bb, args, name));
+                });
         }
     } else {
         auto main_it = _context->_functions.find(real_fn.shared_as<function>());
         if (main_it != _context->_functions.end()) {
             llvm::Function* main_llvm_fn = main_it->second;
-            call_ret = _builder->CreateCall(main_llvm_fn->getFunctionType(), main_llvm_fn,
-                main_args, real_fn.has_return_type() ? "main_ret" : "");
+            call_ret = _builder->CreateInvoke(main_llvm_fn->getFunctionType(), main_llvm_fn,
+                main_return_bb, main_unwind_bb, main_args,
+                real_fn.has_return_type() ? "main_ret" : "");
         }
     }
+
+    _builder->SetInsertPoint(main_unwind_bb);
+    auto* unwind_lpad_ty = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+    auto* unwind_lpad = _builder->CreateLandingPad(unwind_lpad_ty, 0, "application_main_lpad");
+    unwind_lpad->setCleanup(true);
+    _builder->CreateCall(get_module().getOrInsertFunction(
+        "__k_application_deactivate", application_operation_ty), {application_base});
+    if (dtor_llvm_fn) {
+        _builder->CreateCall(dtor_llvm_fn->getFunctionType(), dtor_llvm_fn, {app_alloca});
+    }
+    _builder->CreateResume(unwind_lpad);
+
+    _builder->SetInsertPoint(main_return_bb);
     if (call_ret && real_fn.has_return_type()) {
         if (call_ret->getType() == i32_ty) {
             ret_val = call_ret;
@@ -1832,25 +1990,13 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         }
     }
 
-    // ── Call Application destructor ────────────────────────────────────────────
-    auto dtor = app_class->get_destructor();
-    if (dtor) {
-        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-        if (dtor_it != _context->_functions.end()) {
-            _builder->CreateCall(dtor_it->second->getFunctionType(),
-                                 dtor_it->second, {app_alloca});
-        }
+    _builder->CreateCall(get_module().getOrInsertFunction(
+        "__k_application_deactivate", application_operation_ty), {application_base});
+    if (dtor_llvm_fn) {
+        _builder->CreateCall(dtor_llvm_fn->getFunctionType(), dtor_llvm_fn, {app_alloca});
     }
 
     // ── Run thread-local destructors for main thread ───────────────────────────
-    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
-    auto* tls_exit_fn_ty = llvm::FunctionType::get(void_ty, false);
-    auto* tls_exit_fn = get_module().getFunction("__k_tls_thread_exit");
-    if (!tls_exit_fn) {
-        tls_exit_fn = llvm::Function::Create(
-            tls_exit_fn_ty, llvm::Function::ExternalLinkage,
-            "__k_tls_thread_exit", get_module());
-    }
     _builder->CreateCall(tls_exit_fn_ty, tls_exit_fn);
 
     // ── Return ────────────────────────────────────────────────────────────────

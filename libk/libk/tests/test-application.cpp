@@ -148,6 +148,198 @@ TEST_CASE("Application — main(args) : int returns computed exit code", "[libk]
     REQUIRE(res == 4);
 }
 
+TEST_CASE("Application singleton — activation, inheritance casts, duplicate rejection and teardown",
+          "[libk][application][singleton]") {
+    auto jit = jit_k(R"SRC(
+        module __app_singleton_lifecycle__;
+        import k;
+
+        @ffi::Extern("C") private __k_application_activate(application: k::Application*): int;
+
+        seen_empty_in_constructor : bool = false;
+        seen_active_in_main : bool = false;
+        seen_empty_in_global_constructor : bool = false;
+        seen_empty_in_global_destructor : bool = false;
+        same_concrete_object : bool = false;
+        same_intermediate_object : bool = false;
+        interface_cast_succeeded : bool = false;
+        same_interface_object : bool = false;
+        seen_active_in_worker : bool = false;
+        same_worker_object : bool = false;
+        duplicate_rejected : bool = false;
+        duplicate_kept_original : bool = false;
+        seen_empty_in_destructor : bool = false;
+
+        struct ApplicationGlobalObserver {
+            static ApplicationGlobalObserver() {
+                current : OptionalRef<k::Application> = k::Application::getApplication();
+                seen_empty_in_global_constructor = !current.hasValue();
+            }
+
+            static ~ApplicationGlobalObserver() {
+                current : OptionalRef<k::Application> = k::Application::getApplication();
+                seen_empty_in_global_destructor = !current.hasValue();
+            }
+        }
+
+        interface ApplicationMarker {
+            marker() : int;
+        }
+
+        abstract class ApplicationLayer : public ApplicationMarker, public k::Application {
+            public main() : int -> delete;
+            public main(args : const String[]) -> delete;
+            public main(args : const String[]) : int -> delete;
+            public abstract main() : int;
+
+            public layerMarker() : int {
+                return 915;
+            }
+        }
+
+        class Application : public ApplicationLayer {
+            private _marker : int = 914;
+
+            public Application() {
+                current : OptionalRef<k::Application> = k::Application::getApplication();
+                seen_empty_in_constructor = !current.hasValue();
+            }
+
+            public override marker() : int {
+                return _marker;
+            }
+
+            public override main() : int {
+                current : OptionalRef<k::Application> = k::Application::getApplication();
+                seen_active_in_main = current.hasValue();
+                if (current.hasValue()) {
+                    concrete : Application? = &current.get();
+                    if (concrete != null) {
+                        same_concrete_object = concrete->marker() == _marker;
+                    }
+                    intermediate : ApplicationLayer? = &current.get();
+                    if (intermediate != null) {
+                        same_intermediate_object = intermediate->layerMarker() == 915;
+                    }
+                    if (concrete != null) {
+                        marker_view : ApplicationMarker? = &*concrete;
+                        interface_cast_succeeded = marker_view != null;
+                        if (marker_view != null) {
+                            marker_ref : ApplicationMarker& = *marker_view;
+                            same_interface_object = marker_ref.marker() == _marker;
+                        }
+                    }
+                }
+
+                duplicate_status : int = __k_application_activate(&this);
+                duplicate_rejected = duplicate_status == 4;
+                duplicate_current : OptionalRef<k::Application> =
+                    k::Application::getApplication();
+                if (duplicate_current.hasValue()) {
+                    original_base : k::Application* = &current.get();
+                    after_duplicate_base : k::Application* = &duplicate_current.get();
+                    duplicate_kept_original = original_base == after_duplicate_base;
+                }
+
+                worker : ApplicationWorker! = new ApplicationWorker();
+                thread : Thread! = new Thread(worker);
+                thread.start();
+                thread.join();
+                return 0;
+            }
+
+            ~Application() {
+                current : OptionalRef<k::Application> = k::Application::getApplication();
+                seen_empty_in_destructor = !current.hasValue();
+            }
+        }
+
+        class ApplicationWorker : public Runnable {
+            public override run() : void {
+                current : OptionalRef<k::Application> = k::Application::getApplication();
+                if (current.hasValue()) {
+                    concrete : Application? = &current.get();
+                    if (concrete != null) {
+                        seen_active_in_worker = true;
+                        same_worker_object = concrete->marker() == 914;
+                    }
+                }
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto run = jit->run_main();
+    REQUIRE(run.has_value());
+    REQUIRE_FALSE(run->uncaught_exception);
+    CHECK(run->status == 0);
+
+    CHECK(*jit->lookup_symbol<bool*>("seen_empty_in_constructor"));
+    CHECK(*jit->lookup_symbol<bool*>("seen_empty_in_global_constructor"));
+    CHECK(*jit->lookup_symbol<bool*>("seen_active_in_main"));
+    CHECK(*jit->lookup_symbol<bool*>("same_concrete_object"));
+    CHECK(*jit->lookup_symbol<bool*>("same_intermediate_object"));
+    CHECK(*jit->lookup_symbol<bool*>("interface_cast_succeeded"));
+    CHECK(*jit->lookup_symbol<bool*>("same_interface_object"));
+    CHECK(*jit->lookup_symbol<bool*>("seen_active_in_worker"));
+    CHECK(*jit->lookup_symbol<bool*>("same_worker_object"));
+    CHECK(*jit->lookup_symbol<bool*>("duplicate_rejected"));
+    CHECK(*jit->lookup_symbol<bool*>("duplicate_kept_original"));
+    CHECK(*jit->lookup_symbol<bool*>("seen_empty_in_destructor"));
+
+    jit->finalize_runtime();
+    CHECK(*jit->lookup_symbol<bool*>("seen_empty_in_global_destructor"));
+}
+
+TEST_CASE("Application singleton — withdrawal and destruction on exceptional main exit",
+          "[libk][application][singleton][exceptions]") {
+    auto jit = jit_k(R"SRC(
+        module __app_singleton_exception__;
+        import k;
+
+        seen_active_in_main : bool = false;
+        seen_empty_in_destructor : bool = false;
+
+        class Application : public k::Application {
+            public main() : int {
+                current : OptionalRef<k::Application> = k::Application::getApplication();
+                seen_active_in_main = current.hasValue();
+                throw FatalError(37);
+            }
+
+            ~Application() {
+                current : OptionalRef<k::Application> = k::Application::getApplication();
+                seen_empty_in_destructor = !current.hasValue();
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto run = jit->run_main();
+    REQUIRE(run.has_value());
+    CHECK(run->uncaught_exception);
+    CHECK(*jit->lookup_symbol<bool*>("seen_active_in_main"));
+    CHECK(*jit->lookup_symbol<bool*>("seen_empty_in_destructor"));
+
+    auto next_jit = jit_k(R"SRC(
+        module __app_singleton_next_run__;
+        import k;
+
+        main() : int {
+            current : OptionalRef<k::Application> = k::Application::getApplication();
+            if (current.hasValue()) {
+                return 23;
+            }
+            return 1;
+        }
+    )SRC");
+    REQUIRE(next_jit);
+    auto next_run = next_jit->run_main();
+    REQUIRE(next_run.has_value());
+    CHECK_FALSE(next_run->uncaught_exception);
+    CHECK(next_run->status == 23);
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 5. ::k::Application::env() — process environment variable access
 // ═════════════════════════════════════════════════════════════════════════════

@@ -23,6 +23,8 @@
 #include "../model/context.hpp"
 
 #include <dlfcn.h>
+#include <string>
+#include <stdexcept>
 
 #include <llvm/IR/Verifier.h>
 
@@ -130,6 +132,10 @@ jit::jit(std::shared_ptr<compiler> compiler) :
 
 jit::~jit() {
     finalize_runtime();
+    if (_application_jit_host_leave) {
+        _application_jit_host_leave();
+        _application_jit_host_leave = nullptr;
+    }
 }
 
 std::unique_ptr<jit> jit::create(std::shared_ptr<compiler> compiler) {
@@ -137,6 +143,42 @@ std::unique_ptr<jit> jit::create(std::shared_ptr<compiler> compiler) {
 }
 
 void jit::add_module(llvm::orc::ThreadSafeModule module) {
+    if (!_application_jit_host_leave && _compiler->has_main_method()) {
+        bool requires_application_activation = false;
+        module.withModuleDo([&](llvm::Module& mod) {
+            requires_application_activation =
+                mod.getFunction("__k_application_activate") != nullptr;
+        });
+
+        using host_enter_fn = int (*)();
+        using host_leave_fn = void (*)();
+        using activation_error_fn = void (*)(int);
+        auto host_enter = reinterpret_cast<host_enter_fn>(
+            dlsym(RTLD_DEFAULT, "__k_application_jit_host_enter"));
+        auto host_leave = reinterpret_cast<host_leave_fn>(
+            dlsym(RTLD_DEFAULT, "__k_application_jit_host_leave"));
+        if (host_enter || host_leave) {
+            if (!host_enter || !host_leave) {
+                throw std::runtime_error(
+                    "Cannot register JIT application host: the libk singleton host ABI is incomplete");
+            }
+
+            const int status = host_enter();
+            if (status != 0) {
+                auto activation_error = reinterpret_cast<activation_error_fn>(
+                    dlsym(RTLD_DEFAULT, "__k_application_activation_error"));
+                if (activation_error) activation_error(status);
+                throw std::runtime_error(
+                    "Cannot register JIT application host: libk rejected host activation with status " +
+                    std::to_string(status));
+            }
+            _application_jit_host_leave = host_leave;
+        } else if (requires_application_activation) {
+            throw std::runtime_error(
+                "Cannot register JIT application host: this module requires the libk singleton ABI");
+        }
+    }
+
     // Replace the default abort() uncaught-exception handler of the generated
     // main guard with the host callback, so that an uncaught exception does not
     // kill the host process.

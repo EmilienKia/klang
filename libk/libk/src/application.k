@@ -74,6 +74,10 @@ module k;
 @ffi::Extern("C") private __k_module_depends_on(identity: byte*, candidate_identity: byte*) : int;
 @ffi::Extern("C") private __k_module_registry_lock();
 @ffi::Extern("C") private __k_module_registry_unlock();
+@ffi::Extern("C") private __k_application_current(): Application*;
+@ffi::Extern("C") private __k_application_activate(application: Application*): int;
+@ffi::Extern("C") private __k_application_deactivate(application: Application*): int;
+@ffi::Extern("C") private __k_application_activation_error(status: int);
 
 /**
  * Return the absolute path of the current process image as an owned K byte
@@ -355,6 +359,18 @@ public abstract class Application : public Object {
     }
 
     // ── Accessors ────────────────────────────────────────────────────────────
+
+    /**
+     * Return a borrowed reference to the active process Application, if any.
+     * The result is empty before entry-point activation and after it ends.
+     */
+    public static getApplication() : OptionalRef<Application> {
+        application : Application* = __k_application_current();
+        if (application == null) {
+            return OptionalRef<Application>();
+        }
+        return OptionalRef<Application>(*application);
+    }
 
     /**
      * Return a read-only view of the process environment variables.

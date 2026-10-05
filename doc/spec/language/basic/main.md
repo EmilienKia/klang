@@ -236,22 +236,34 @@ The K compiler synthesises a C-compatible `main(int argc, char** argv)` entry po
    environment map returned by `env()`.
 3. If the resolved entry-point `main` declares a `const String[]` parameter, builds the
    array from `argc`/`argv`.
-4. Invokes the resolved entry-point `main` (§5, §6) — directly, or through virtual
-   dispatch when required by an application entry-point chain.
-5. Calls the `Application` instance's destructor.
+4. Publishes the fully constructed object's `::k::Application` base subobject as the
+   active application, then invokes the resolved entry-point `main` (§5, §6) — directly,
+   or through virtual dispatch when required by an application entry-point chain.
+5. Withdraws the active application as soon as `main` returns or throws, then calls the
+   `Application` instance's destructor.
 6. Calls the global destructor function (runs destructors in reverse initialisation order).
 7. Returns the exit code.
 
 Steps 2 to 5 (and the return of the exit code) run under an exception guard: any exception
 that reaches the wrapper — a `::k::Throwable` or a foreign exception — is intercepted and the
-wrapper calls the C `abort()` function. The process then terminates with `SIGABRT`
-instead of returning an exit code. The stack is unwound up to the wrapper before `abort()`
-is called, so destructors of the intermediate frames run first. Global constructors and
-destructors (steps 1 and 6) are not covered by this guard.
+wrapper calls the C `abort()` function. Before that guard handles an exception from `main`,
+the active application is withdrawn and its destructor runs. The process then terminates
+with `SIGABRT` instead of returning an exit code. The stack is unwound up to the wrapper
+before `abort()` is called, so destructors of the intermediate frames run first. Global
+constructors and destructors (steps 1 and 6) are not covered by this guard and always observe
+no active application.
 
 When the program runs in a JIT, the hosting process is not aborted: the wrapper returns
 control to the host instead of calling `abort()`, and the host is told that an exception was
-uncaught.
+uncaught. The host/runtime provider is explicitly activated for each JIT entry-point
+invocation, withdrawn on normal and exceptional exits, and reused for sequential JIT runs.
+
+`::k::Application::getApplication()` returns an `OptionalRef<::k::Application>`. It is empty
+before the application object is fully constructed and after its `main` call exits; callers
+must check `hasValue()` before `get()`. The reference is borrowed and remains valid only for
+the duration of that `main` call. It refers to the same object used by the entry point, with
+the correct base-subobject adjustment for inheritance. The slot is shared by threads, not
+thread-local; application-created threads must finish before `main` returns.
 
 The wrapper is transparent to the programmer; user code simply defines `main()` (optionally
 with a `const String[]` parameter), or a full `class Application` when more structure is

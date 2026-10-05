@@ -937,6 +937,7 @@ protected:
         INITIALIZED,
         FINALIZED
     } _state = DEFAULT;
+    void (*_application_jit_host_leave)() = nullptr;
 
     jit(std::shared_ptr<compiler> compiler);
 

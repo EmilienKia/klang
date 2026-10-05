@@ -100,6 +100,10 @@ bool compiler::gen_executable(const std::string& output_file) {
         std::vector<std::string> clang_args = {"-pie", "-o", output_path.string(), object_path.string()};
         clang_args.push_back("-Wl,--export-dynamic-symbol=__k_rtti_manifest_v1");
         clang_args.push_back("-Wl,-u,__k_rtti_manifest_v1");
+        if (get_unit()->has_application_class()) {
+            clang_args.push_back("-Wl,--export-dynamic-symbol=__k_application_anchor_v1");
+            clang_args.push_back("-Wl,-u,__k_application_anchor_v1");
+        }
         if (_debug_info_options.enabled) {
             clang_args.push_back("-g");
         }

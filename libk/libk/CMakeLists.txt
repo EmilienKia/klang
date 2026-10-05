@@ -745,6 +745,11 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E create_symlink libvisitor_fixture.kdi visitor_fixture.kdi
     COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/plugin_a.k
     COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/plugin_b.k
+    COMMAND ${MODFX_KLANGC} --dyn-lib ${MODFX_SRC}/application_probe.k
+    COMMAND ${MODFX_KLANGC} -o application_anchor_app ${MODFX_SRC}/application_anchor_app.k
+    COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -Wl,-Bsymbolic
+            -o libapplication_static_copy_probe.so ${APP_FFI_OBJ}
+            ${MODFX_SRC}/application_static_copy_probe.c
     COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodmissing_target.so ${MODFX_SRC}/missing_target.c
     COMMAND ${CMAKE_C_COMPILER} ${MODFX_C_FLAGS} -o libmodmissing_user.so ${MODFX_SRC}/missing_user.c
             -L. -lmodmissing_target -Wl,-rpath,${MODFX_DIR}
@@ -769,6 +774,10 @@ add_custom_command(
     DEPENDS klangc libk_stdlib
             ${MODFX_SRC}/modreg.k ${MODFX_SRC}/visitor_fixture.k
             ${MODFX_SRC}/plugin_a.k ${MODFX_SRC}/plugin_b.k
+            ${MODFX_SRC}/application_probe.k
+            ${MODFX_SRC}/application_anchor_app.k
+            ${MODFX_SRC}/application_static_copy_probe.c
+            ${APP_FFI_OBJ}
             ${MODFX_SRC}/missing_target.c ${MODFX_SRC}/missing_user.c
             ${MODFX_SRC}/undefined_symbol.c ${MODFX_SRC}/native_dependency.c
             ${MODFX_SRC}/incompatible_manifest.c ${MODFX_SRC}/malformed_manifest.c
@@ -790,6 +799,12 @@ target_compile_definitions(libk-tests-module PRIVATE LIBK_MODULE_FIXTURES_DIR="$
 add_test(NAME libk-rtti-static-link-fixture
          COMMAND ${MODFX_DIR}/static_manifest_app)
 set_tests_properties(libk-rtti-static-link-fixture PROPERTIES TIMEOUT 120)
+add_test(NAME libk-native-application-anchor
+         COMMAND ${MODFX_DIR}/application_anchor_app)
+set_tests_properties(libk-native-application-anchor PROPERTIES
+    TIMEOUT 120
+    WORKING_DIRECTORY ${MODFX_DIR}
+    ENVIRONMENT "TMPDIR=${LIBK_OUTPUT_DIR}")
 
 # ── libk basic stream I/O tests ──────────────────────────────────────────────
 libk_add_test_sharded(libk-tests-io 120 2

@@ -40,6 +40,8 @@
 #include "helpers.hpp"
 #include <kdi.hpp>
 #include <functional>
+#include <atomic>
+#include <thread>
 
 #include <dlfcn.h>
 #include <sys/stat.h>
@@ -229,6 +231,88 @@ TEST_CASE("Application::loadModule — plugins register themselves in their depe
     CHECK(run_main(*jit) == 0);
 
     fs::remove_all(tmp);
+}
+
+TEST_CASE("Application singleton — dynamically loaded module constructors share the active instance",
+          "[libk][module][application]") {
+    auto jit = jit_module(
+        "module __module_application_anchor__;\n"
+        "import modreg;\n"
+        "main() : int {\n"
+        "    before : int = modreg::registeredCount();\n"
+        "    loaded : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" +
+            FIXTURES + "/libapplication_probe.so\"));\n"
+        "    if (!loaded.hasResult()) { return 1; }\n"
+        "    if (modreg::registeredCount() != before + 1) { return 2; }\n"
+        "    if (modreg::registeredId(before) != 4) { return 3; }\n"
+        "    return 0;\n"
+        "}\n");
+    REQUIRE(jit);
+
+    using CurrentApplication = void* (*)();
+    auto current = reinterpret_cast<CurrentApplication>(
+        dlsym(RTLD_DEFAULT, "__k_application_current"));
+    REQUIRE(current);
+    std::atomic<bool> running = true;
+    std::atomic<bool> saw_active_application = false;
+    std::thread reader([&] {
+        while (running.load(std::memory_order_acquire)) {
+            if (current()) saw_active_application.store(true, std::memory_order_release);
+        }
+    });
+    const int status = run_main(*jit);
+    running.store(false, std::memory_order_release);
+    reader.join();
+    CHECK(status == 0);
+    CHECK(saw_active_application.load(std::memory_order_acquire));
+}
+
+TEST_CASE("Application singleton — statically copied runtime bridge resolves the shared provider",
+          "[libk][module][application]") {
+    REQUIRE(ensure_libk_loaded());
+
+    using ApplicationOperation = int (*)(void*);
+    using HostOperation = int (*)();
+    using HostLeaveOperation = void (*)();
+    auto host_enter = reinterpret_cast<HostOperation>(
+        dlsym(RTLD_DEFAULT, "__k_application_jit_host_enter"));
+    auto host_leave = reinterpret_cast<HostLeaveOperation>(
+        dlsym(RTLD_DEFAULT, "__k_application_jit_host_leave"));
+    auto activate = reinterpret_cast<ApplicationOperation>(
+        dlsym(RTLD_DEFAULT, "__k_application_activate"));
+    auto deactivate = reinterpret_cast<ApplicationOperation>(
+        dlsym(RTLD_DEFAULT, "__k_application_deactivate"));
+    auto current = reinterpret_cast<void* (*)()>(
+        dlsym(RTLD_DEFAULT, "__k_application_current"));
+    REQUIRE(host_enter);
+    REQUIRE(host_leave);
+    REQUIRE(activate);
+    REQUIRE(deactivate);
+    REQUIRE(current);
+    CHECK(current() == nullptr);
+
+    REQUIRE(host_enter() == 0);
+    CHECK(current() == nullptr);
+    int active_application = 0;
+    REQUIRE(activate(&active_application) == 0);
+
+    const std::string path = FIXTURES + "/libapplication_static_copy_probe.so";
+    void* handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    REQUIRE(handle);
+    using ConstructorProbe = int (*)();
+    using ApplicationProbe = int (*)(void*);
+    auto constructor_probe = reinterpret_cast<ConstructorProbe>(
+        dlsym(handle, "application_static_copy_constructor_saw_active"));
+    auto application_probe = reinterpret_cast<ApplicationProbe>(
+        dlsym(handle, "application_static_copy_observes"));
+    REQUIRE(constructor_probe);
+    REQUIRE(application_probe);
+    CHECK(constructor_probe() == 1);
+    CHECK(application_probe(&active_application) == 1);
+    REQUIRE(deactivate(&active_application) == 0);
+    CHECK(application_probe(&active_application) == 0);
+    dlclose(handle);
+    host_leave();
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
