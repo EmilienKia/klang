@@ -279,7 +279,10 @@ bool compiler::gen_shared_library(const std::string& output_file) {
     auto object_path = make_temp_object_path(output_path.stem().string());
 
     trace("[compiler::gen_shared_library] generating object '{}'", {object_path.string()});
-    gen_object_file(object_path);
+    if (!emit_object_file(object_path, true)) {
+        std::filesystem::remove(object_path);
+        return false;
+    }
 
     trace("[compiler::gen_shared_library] generating shared library '{}'", {output_path.string()});
     tools::exec_result exec_res;
@@ -319,7 +322,10 @@ bool compiler::gen_static_library(const std::string& output_file) {
     auto object_path = make_temp_object_path(output_path.stem().string());
 
     trace("[compiler::gen_static_library] generating object '{}'", {object_path.string()});
-    gen_object_file(object_path);
+    if (!emit_object_file(object_path, true)) {
+        std::filesystem::remove(object_path);
+        return false;
+    }
 
     trace("[compiler::gen_static_library] generating static library '{}'", {output_path.string()});
     // ar rcs: create archive, add index, be silent on missing files
@@ -355,7 +361,8 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
     // Generate the object file once
     auto object_path = make_temp_object_path("lib" + base);
     trace("[compiler::gen_libraries] generating object '{}'", {object_path.string()});
-    if (!gen_object_file(object_path)) {
+    if (!emit_object_file(object_path, true)) {
+        std::filesystem::remove(object_path);
         return false;
     }
 

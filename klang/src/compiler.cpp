@@ -824,6 +824,27 @@ std::unique_ptr<k::model::gen::jit> compiler::to_jit(bool init_runtime) {
 }
 
 bool compiler::gen_object_file(const std::string& output_file) {
+    return emit_object_file(output_file, false);
+}
+
+bool compiler::emit_object_file(const std::string& output_file, bool position_independent) {
+    // Link-time -fPIC cannot change relocations already emitted into an object.
+    // Keep the caller's target intact for executable, standalone object and JIT use.
+    std::unique_ptr<llvm::TargetMachine> pic_target;
+    auto* emission_target = _target;
+    if (position_independent && _target->getRelocationModel() != llvm::Reloc::PIC_) {
+        pic_target.reset(_target->getTarget().createTargetMachine(
+            _target->getTargetTriple().getTriple(),
+            _target->getTargetCPU(), _target->getTargetFeatureString(),
+            _target->Options, llvm::Reloc::PIC_,
+            _target->getCodeModel(), _target->getOptLevel()));
+        if (!pic_target) {
+            llvm::errs() << "Could not create a position-independent target machine";
+            return false;
+        }
+        emission_target = pic_target.get();
+    }
+
     // Each linked K unit contributes its Unit descriptor to an ELF section.
     // The accessor is emitted into this object (rather than into JIT modules)
     // so the final image can discover all contributions retained by the linker.
@@ -893,7 +914,7 @@ bool compiler::gen_object_file(const std::string& output_file) {
     llvm::legacy::PassManager pass;
     auto FileType = llvm::CodeGenFileType::ObjectFile;
 
-    if (_target->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
+    if (emission_target->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
         llvm::errs() << "TargetMachine can't emit a file of this type";
         return false;
     }

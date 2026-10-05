@@ -34,6 +34,9 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unistd.h>
+
+#include <llvm/MC/TargetRegistry.h>
 
 #include "helpers.hpp"
 #include "../src/model/template.hpp"
@@ -587,7 +590,7 @@ TEST_CASE("[O] M7: generic flag preserved in parse_sources with forced module",
 }
 
 TEST_CASE("[P] M7: generic flag survives shared-lib generation and KDI export",
-          "[milestone7][generic][e2e]") {
+          "[milestone7][generic][e2e][pic]") {
     auto comp = k::compiler::create();
     REQUIRE(comp != nullptr);
 
@@ -634,7 +637,7 @@ TEST_CASE("[P] M7: generic flag survives shared-lib generation and KDI export",
 }
 
 TEST_CASE("[Q] M7: generic KDI export with file-backed source and absolute path",
-          "[milestone7][generic][e2e]") {
+          "[milestone7][generic][e2e][pic]") {
     const auto src_path = (std::filesystem::temp_directory_path() / "klang_m7_q.k").string();
     const auto out_so = (std::filesystem::temp_directory_path() / "klang_m7_q.so").string();
 
@@ -680,3 +683,70 @@ public class LinkedList {
     CHECK(found);
 }
 
+TEST_CASE("Native libraries: default and static targets emit PIC RTTI manifests",
+          "[native-library][pic][model]") {
+    const bool explicit_static_target = GENERATE(false, true);
+    const auto output_kind = GENERATE(std::string{"shared"}, std::string{"static"},
+                                     std::string{"both"});
+    CAPTURE(explicit_static_target, output_kind);
+
+    std::unique_ptr<llvm::TargetMachine> static_target;
+    if (explicit_static_target) {
+        std::unique_ptr<llvm::TargetMachine> pic_target{make_pic_target_machine()};
+        REQUIRE(pic_target != nullptr);
+        static_target.reset(pic_target->getTarget().createTargetMachine(
+            pic_target->getTargetTriple().getTriple(),
+            pic_target->getTargetCPU(), pic_target->getTargetFeatureString(),
+            pic_target->Options, llvm::Reloc::Static,
+            pic_target->getCodeModel(), pic_target->getOptLevel()));
+        REQUIRE(static_target != nullptr);
+    }
+    auto comp = k::compiler::create(static_target.get());
+    REQUIRE_NOTHROW(comp->parse_sources({{"native_pic.k", R"SRC(
+        module native_pic;
+        public value : int = 42;
+        public answer() : int { return value; }
+    )SRC"}}, /*optimize=*/true, /*dump=*/false, /*forced_module_name=*/"k"));
+
+    const auto artifact_path = std::filesystem::path{
+        "klang_native_pic_" + std::to_string(::getpid()) + "_" + output_kind +
+        (explicit_static_target ? "_static_target" : "_default_target")};
+    REQUIRE(std::filesystem::create_directory(artifact_path));
+    struct Artifacts {
+        std::filesystem::path path;
+        ~Artifacts() {
+            std::error_code ec;
+            std::filesystem::remove_all(path, ec);
+        }
+    } artifacts{artifact_path};
+    const auto shared_path = (artifacts.path / "native.so").string();
+    const auto static_path = (artifacts.path / "native.a").string();
+
+    if (output_kind == "shared") {
+        REQUIRE(comp->gen_shared_library(shared_path));
+    } else if (output_kind == "static") {
+        REQUIRE(comp->gen_static_library(static_path));
+    } else {
+        REQUIRE(comp->gen_libraries(shared_path, static_path));
+    }
+    REQUIRE(std::filesystem::exists(artifacts.path / "native.kdi"));
+
+    if (static_target) {
+        CHECK(static_target->getRelocationModel() == llvm::Reloc::Static);
+    }
+    if (output_kind != "shared") {
+        // Force inclusion of the archive member even without an external caller.
+        auto link = k::tools::lookup_run_process("clang++", {
+            "-shared", "-Wl,-z,text", "-o", shared_path,
+            "-Wl,--whole-archive", static_path, "-Wl,--no-whole-archive"
+        });
+        INFO("archive-to-DSO stdout: " << link.out);
+        INFO("archive-to-DSO stderr: " << link.err);
+        REQUIRE(link.exit_code == 0);
+    }
+    auto symbols = k::tools::lookup_run_process(
+        "nm", {"--dynamic", "--defined-only", shared_path});
+    INFO("nm stderr: " << symbols.err);
+    REQUIRE(symbols.exit_code == 0);
+    CHECK(symbols.out.find("__k_rtti_manifest_v1") != std::string::npos);
+}

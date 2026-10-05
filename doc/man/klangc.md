@@ -95,6 +95,11 @@ the module defines a `main` function. Linking is performed with
 automatically (see *Library Output Naming* below).  
 A warning is emitted if the module contains a `main` function.
 
+K-generated library objects use position-independent code during native object
+emission, including objects placed in static archives, so those archives can
+also be linked into shared libraries. Externally supplied `.o` files must
+already be compiled as PIC when they are included in a shared library.
+
 **`--static-lib`**  
 Produce a static archive (`.a`) from the source file, regardless of whether
 the module defines a `main` function. The archive is created with `ar rcs`.

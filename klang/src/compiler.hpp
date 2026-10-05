@@ -102,6 +102,8 @@ protected:
 
     llvm::TargetMachine* _target;
 
+    bool emit_object_file(const std::string& output_file, bool position_independent);
+
     /** Set to true when a fatal compilation error occurs (e.g. overload collision).
      *  to_jit() returns nullptr when this flag is set. */
     bool _has_compilation_error = false;
@@ -433,6 +435,7 @@ public:
 
     /**
      * Compile and link the current module as a shared library (.so).
+     * Object emission uses PIC without changing the configured target machine.
      * If output_file is empty, the output is named lib<base>.so in the current
      * directory, where <base> = unit_name_to_lib_base(module_name).
      */
@@ -440,6 +443,7 @@ public:
 
     /**
      * Archive the current module into a static library (.a).
+     * The archived object uses PIC so it can also be linked into a shared library.
      * If output_file is empty, the output is named lib<base>.a in the current
      * directory, where <base> = unit_name_to_lib_base(module_name).
      * Uses "ar rcs" — no linker involved.
