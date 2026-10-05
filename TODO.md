@@ -102,6 +102,13 @@
       `setResult()` directly is a workaround. Investigate generic static member
       overload resolution/substitution.
 
+- [x] **The aggregate weak-ownership selector exits without a Catch2 report.**
+      The native fixture now calls `ensure_libk_loaded()` before its scoped
+      `dlopen`/`dlclose` of `libk.so`. Without that pin, the fixture could unload
+      libk before the JIT helpers and process teardown finished; preloading
+      `libk.so` reproduces the fix. The `[weak]` selector passes with the
+      fixture change.
+
 - [ ] **Dependent constructor-call expressions in template functions.**
       Calling a bound type parameter as `T(args)` is unresolved in instantiated
       function bodies: the NR-21 named-return regression's `return T(second);`

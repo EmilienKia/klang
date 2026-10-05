@@ -58,6 +58,7 @@ T shared_symbol(void* library, const char* name) {
 
 TEST_CASE("Atomic shared counters balance concurrent copies and never resurrect",
           "[libk][shared][weak][native][thread]") {
+    REQUIRE(ensure_libk_loaded());
     const std::string path = std::string(LIBK_LIB_DIR) + "/libk.so";
     std::unique_ptr<void, decltype(&dlclose)> library(
         dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL), &dlclose);
