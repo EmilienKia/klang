@@ -3524,7 +3524,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
     struct Candidate {
         std::shared_ptr<constructor> ctor;
-        std::vector<std::shared_ptr<expression>> adapted_args;
         cast_weight score;
         size_t defaults_used;
         bool is_template_instantiation;
@@ -3547,8 +3546,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         cast_weight max_weight = CAST_NONE;
         bool has_impossible = false;
         std::vector<size_t> failed_indices;
-        std::vector<std::shared_ptr<expression>> adapted_args;
-
         for (size_t i = 0; i < arg_count; ++i) {
             auto param_type = params[i]->get_type();
             if (param_type && !type::is_resolved(param_type)) {
@@ -3561,14 +3558,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
                 failed_indices.push_back(i);
             } else {
                 if (w > max_weight) max_weight = w;
-                auto a = adapt_type(args[i], param_type);
-                adapted_args.push_back(a ? a : args[i]);
-            }
-        }
-
-        if (!has_impossible) {
-            for (size_t i = arg_count; i < total_params; ++i) {
-                adapted_args.push_back(params[i]->get_default_expr()->clone());
             }
         }
 
@@ -3578,7 +3567,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             auto specificity = template_specificity.find(ctor.get());
             valid_candidates.push_back({
                 ctor,
-                std::move(adapted_args),
                 max_weight,
                 defaults_used,
                 specificity != template_specificity.end(),
@@ -3634,6 +3622,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         }
     }
 
+    std::vector<Candidate*> best_candidates;
     if (best_score == CAST_NONE && best_defaults == 0) {
         Candidate* exact_match = nullptr;
         for (auto& cand : valid_candidates) {
@@ -3647,15 +3636,18 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
                 exact_match = &cand;
             }
         }
-        if (exact_match) return {exact_match->ctor, exact_match->adapted_args};
+        if (exact_match) {
+            best_candidates.push_back(exact_match);
+        }
     }
 
-    std::vector<Candidate*> best_candidates;
-    for (auto& cand : valid_candidates) {
-        if (cand.score == best_score && cand.defaults_used == best_defaults &&
-            cand.is_template_instantiation == best_is_template_instantiation &&
-            cand.template_specificity == best_specificity) {
-            best_candidates.push_back(&cand);
+    if (best_candidates.empty()) {
+        for (auto& cand : valid_candidates) {
+            if (cand.score == best_score && cand.defaults_used == best_defaults &&
+                cand.is_template_instantiation == best_is_template_instantiation &&
+                cand.template_specificity == best_specificity) {
+                best_candidates.push_back(&cand);
+            }
         }
     }
 
@@ -3677,7 +3669,19 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         return {nullptr, {}};
     }
 
-    return {best_candidates[0]->ctor, best_candidates[0]->adapted_args};
+    // Adapt only the selected overload: discarded adaptations otherwise reparent
+    // shared argument nodes to temporary wrappers that disappear after selection.
+    auto best_ctor = best_candidates[0]->ctor;
+    const auto& params = best_ctor->parameters();
+    std::vector<std::shared_ptr<expression>> adapted_args;
+    for (size_t i = 0; i < arg_count; ++i) {
+        auto adapted = adapt_type(args[i], params[i]->get_type());
+        adapted_args.push_back(adapted ? adapted : args[i]);
+    }
+    for (size_t i = arg_count; i < params.size(); ++i) {
+        adapted_args.push_back(params[i]->get_default_expr()->clone());
+    }
+    return {best_ctor, std::move(adapted_args)};
 }
 
 

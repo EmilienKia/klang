@@ -770,3 +770,71 @@ TEST_CASE("Nested template member arguments are resolved before class layout",
     REQUIRE(test != nullptr);
     CHECK(test() == 1);
 }
+
+TEST_CASE("Nested temporary constructor overloads preserve member argument context",
+          "[gen][template][instantiation][nested-constructor-member-context]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_constructor_member_context;
+
+        template<typename T>
+        struct Shared {
+            value : T;
+        }
+
+        template<typename T>
+        struct Weak {
+            value : T;
+            Weak() : value(0) {}
+            Weak(other : const Shared<T>&) : value(other.value) {}
+            template<typename U>
+            Weak(other : const Shared<U>&) : value(other.value) {}
+        }
+
+        template<typename T>
+        struct Container {
+            value : T;
+            size() : unsigned int { return 1; }
+            get(index : unsigned int) : T& { return value; }
+            append(other : const T&) { value = other; }
+        }
+
+        struct Sink {
+            links : Container<Weak<int>>;
+        }
+
+        template<typename T>
+        struct Handle {
+            value : T;
+            get() : T* { return &value; }
+        }
+
+        class Holder {
+            _modules : Container<Shared<int>>!;
+            _module : Handle<Sink>;
+            Holder() : _modules(new Container<Shared<int>>()) {
+                _modules.value.value = 42;
+                index : unsigned int = 0;
+                while (index < _modules.size()) {
+                    _module.get()->links.append(Weak<int>(_modules.get(index)));
+                    ++index;
+                }
+            }
+            update() {
+                _modules.value.value = 75;
+                _module.get()->links.append(Weak<int>(_modules.get(0)));
+            }
+            read() : int { return _module.get()->links.value.value; }
+        }
+
+        test() : int {
+            holder : Holder;
+            first : int = holder.read();
+            holder.update();
+            return first + holder.read();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 117);
+}
