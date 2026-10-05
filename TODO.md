@@ -91,6 +91,17 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Specialized `Expected` static factories reject matching values.**
+      In `libk/libk/src/application.k`, calling
+      `Expected<Shared<Module>, LoadModuleError>::unexpected(failure)` where
+      `failure : LoadModuleError` reports that `LoadModuleError&` cannot be
+      converted to the candidate parameter `E&`, even though the receiver
+      specializes `E` as `LoadModuleError` and `Expected::unexpected(value : E&)`
+      declares that signature. The corresponding `expected(found)` call should
+      also be checked. Constructing an `Expected` and calling `setError()` or
+      `setResult()` directly is a workaround. Investigate generic static member
+      overload resolution/substitution.
+
 - [ ] **Dependent constructor-call expressions in template functions.**
       Calling a bound type parameter as `T(args)` is unresolved in instantiated
       function bodies: the NR-21 named-return regression's `return T(second);`
