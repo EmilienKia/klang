@@ -42,6 +42,49 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 
 } // anonymous namespace
 
+TEST_CASE("FilterOutputStream inherited dispatch retains the implementation subobject through teardown",
+          "[libk][io][filter][lifecycle][vdtor]") {
+    auto jit = jit_k(R"SRC(
+        module __filter_inherited_dispatch_cleanup__;
+
+        destroyed : int = 0;
+
+        class Root : public k::io::ArrayOutputStream<byte> {
+            ~Root() { ++destroyed; }
+        }
+
+        class Decorator : public k::io::FilterOutputStream<byte> {
+            public Decorator(output: k::io::OutputStream<byte>*)
+                : FilterOutputStream(output) {}
+            ~Decorator() { ++destroyed; }
+        }
+
+        test_cleanup() : int {
+            root : Root! = new Root();
+            capture : Root* = &*root;
+            decorator : Decorator! = new Decorator(
+                (k::io::OutputStream<byte>*)&*root);
+            filter : k::io::FilterOutputStream<byte>* =
+                (k::io::FilterOutputStream<byte>*)&*decorator;
+            filter->__k_adoptOutput((k::io::OutputStream<byte>!)root);
+            stream : k::io::OutputStream<byte>! = decorator;
+            {
+                writer : k::io::Utf8Writer(
+                    (k::io::OutputStream<byte>*)&*stream);
+                writer.write('A');
+                writer.flush();
+                if (capture->size() != 1) return 1;
+            }
+            delete stream;
+            return destroyed;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_cleanup");
+    REQUIRE(fn);
+    CHECK(fn() == 2);
+}
+
 
 // ═════════════════════════════════════════════════════════════════════════════
 // FilterInputStream — delegates read()

@@ -31,6 +31,10 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include <filesystem>
+#include <unistd.h>
+
+
 
 #ifndef LIBK_KDI_DIR
 #error "LIBK_KDI_DIR must be defined — check CMakeLists.txt"
@@ -344,6 +348,615 @@ TEST_CASE("Application singleton — withdrawal and destruction on exceptional m
     REQUIRE(next_run.has_value());
     CHECK_FALSE(next_run->uncaught_exception);
     CHECK(next_run->status == 23);
+}
+
+TEST_CASE("Application standard streams — custom roots, text adapters, and frozen configuration",
+          "[libk][application][stdio]") {
+    auto jit = jit_k(R"SRC(
+        module __app_stdio_custom__;
+        import k;
+
+        frozenRejected : bool = false;
+        nullInputRejected : bool = false;
+        constructorAccessorsAvailable : bool = false;
+
+        outsideMain() : bool {
+            try {
+                printer : k::io::TextPrinter& = k::io::stdout();
+            } catch (e : k::io::NoActiveApplicationError&) {
+                return true;
+            }
+            return false;
+        }
+
+        class FixtureInput : public k::io::InputStream<byte> {
+            private _pos : int;
+
+            public FixtureInput() : _pos(0) {}
+
+            public override read() : Optional<byte> {
+                if (_pos >= 4) return Optional<byte>();
+                value : byte = (byte) 0u;
+                if (_pos == 0) value = (byte) 0x68u;
+                else if (_pos == 1) value = (byte) 0xC3u;
+                else if (_pos == 2) value = (byte) 0xA9u;
+                else value = (byte) 0x0Au;
+                ++_pos;
+                return Optional<byte>(value);
+            }
+
+            public override read(buf: byte[], off: unsigned int, len: unsigned int)
+                    : Expected<unsigned int, k::io::StreamOutOfData> {
+                count : unsigned int = 0u;
+                while (count < len && _pos < 4) {
+                    buf[off + count] = read().get();
+                    ++count;
+                }
+                return Expected<unsigned int, k::io::StreamOutOfData>::expected(count);
+            }
+
+            public override read(buf: byte[])
+                    : Expected<unsigned int, k::io::StreamOutOfData> {
+                return read(buf, 0u, (unsigned int) buf.size);
+            }
+
+            public override skip(n: unsigned long) : unsigned long {
+                skipped : unsigned long = 0uL;
+                while (skipped < n && _pos < 4) {
+                    read();
+                    ++skipped;
+                }
+                return skipped;
+            }
+
+            public override available() : Expected<unsigned int, k::io::StreamOutOfData> {
+                remaining : unsigned int = (unsigned int) (4 - _pos);
+                return Expected<unsigned int, k::io::StreamOutOfData>::expected(remaining);
+            }
+
+            public override close() {}
+        }
+
+        class TrackedRoot : public k::io::ArrayOutputStream<byte> {
+            public TrackedRoot() {}
+        }
+
+        class Application : public k::Application {
+            private _stdoutCapture : k::io::ArrayOutputStream<byte>*;
+            private _stderrCapture : k::io::ArrayOutputStream<byte>*;
+
+            public Application() {
+                setStandardInput(new FixtureInput());
+                nullInput : k::io::InputStream<byte>! = null;
+                try {
+                    setStandardInput(nullInput);
+                } catch (e : k::io::StandardStreamConfigurationError&) {
+                    nullInputRejected = true;
+                }
+                stdoutRoot : TrackedRoot! = new TrackedRoot();
+                _stdoutCapture = &*stdoutRoot;
+                setStandardOutput(stdoutRoot);
+                stderrRoot : k::io::ArrayOutputStream<byte>! =
+                    new k::io::ArrayOutputStream<byte>();
+                _stderrCapture = &*stderrRoot;
+                setStandardError(stderrRoot);
+                this.stdin();
+                this.stdinBytes();
+                this.stdinReader();
+                this.stdoutBytes();
+                this.stderrBytes();
+                this.stdout();
+                this.stderr();
+                this.stdoutPrint();
+                this.stderrPrint();
+                constructorAccessorsAvailable = true;
+            }
+
+            public main() : int {
+                firstByte : Optional<byte> = k::io::stdinBytes().read();
+                if (!firstByte.hasValue() || firstByte.get() != (byte) 'h') {
+                    return 4;
+                }
+                line : Optional<String> = k::io::stdinReader().readLine();
+                if (!line.hasValue() || line.get() != String("é")) {
+                    return 1;
+                }
+
+                k::io::stdout().print("A");
+                k::io::stdoutBytes().write((byte) 'B');
+                k::io::stdoutPrint().print("C");
+                k::io::stderr().print("D");
+                k::io::stderrBytes().write((byte) 'E');
+                k::io::stderrPrint().print("F");
+
+                try {
+                    setStandardOutput(new k::io::ArrayOutputStream<byte>());
+                } catch (e : k::io::StandardStreamConfigurationError&) {
+                    frozenRejected = true;
+                }
+
+                if (_stdoutCapture == null || _stderrCapture == null) return 3;
+                stdoutData : byte[]! = _stdoutCapture->toArray();
+                stderrData : byte[]! = _stderrCapture->toArray();
+                valid : bool = stdoutData.size == 3u && stderrData.size == 3u;
+                if (valid) {
+                    valid = stdoutData[0] == (byte) 'A' &&
+                        stdoutData[1] == (byte) 'B' &&
+                        stdoutData[2] == (byte) 'C' &&
+                        stderrData[0] == (byte) 'D' &&
+                        stderrData[1] == (byte) 'E' &&
+                        stderrData[2] == (byte) 'F';
+                }
+                delete stdoutData;
+                delete stderrData;
+                if (!valid || !frozenRejected || !nullInputRejected ||
+                        !constructorAccessorsAvailable) {
+                    return 2;
+                }
+
+                return 0;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto outside_main = jit->lookup_symbol<bool(*)()>("outsideMain");
+    REQUIRE(outside_main());
+
+    static const int argc = 1;
+    static const char* argv[] = {"prog", nullptr};
+    auto main = jit->lookup_main_entry_symbol<int(*)(int, char**)>();
+    CHECK(main(argc, (char**)argv) == 0);
+    CHECK(outside_main());
+}
+
+TEST_CASE("Application standard streams — decorators intercept operations and own their roots",
+          "[libk][application][stdio][decoration][lifecycle]") {
+    auto jit = jit_k(R"SRC(
+        module __app_stdio_decorators__;
+        import k;
+
+        inputIntercepts : int = 0;
+        outputIntercepts : int = 0;
+        outputCloses : int = 0;
+        outputDestructions : int = 0;
+
+        class TrackedRoot : public k::io::ArrayOutputStream<byte> {
+            ~TrackedRoot() {
+                ++outputDestructions;
+            }
+        }
+
+        class CountingOutput : public k::io::FilterOutputStream<byte> {
+            public CountingOutput(output: k::io::OutputStream<byte>*)
+                    : FilterOutputStream(output) {}
+
+            public override write(value: byte) : k::io::OutputStream<byte>& {
+                ++outputIntercepts;
+                return _out->write(value);
+            }
+
+            public override write(values: const byte[], off: unsigned int, len: unsigned int)
+                    : k::io::OutputStream<byte>& {
+                ++outputIntercepts;
+                return _out->write(values, off, len);
+            }
+
+            public override write(values: const byte[]) : k::io::OutputStream<byte>& {
+                ++outputIntercepts;
+                return _out->write(values);
+            }
+
+            public override flush() : k::io::OutputStream<byte>& {
+                return _out->flush();
+            }
+
+            public override close() : k::io::OutputStream<byte>& {
+                ++outputCloses;
+                flush();
+                return _out->close();
+            }
+
+            ~CountingOutput() {
+                ++outputDestructions;
+            }
+        }
+
+        class Application : public k::Application {
+            private _stdoutCapture : k::io::ArrayOutputStream<byte>*;
+            private _stderrCapture : k::io::ArrayOutputStream<byte>*;
+
+            public Application() {
+                setStandardOutput(new TrackedRoot());
+                _stdoutCapture = (k::io::ArrayOutputStream<byte>*)&*_stdout;
+                outputDecorator : CountingOutput! =
+                    new CountingOutput((k::io::OutputStream<byte>*)&*_stdout);
+                decorateStandardOutput(
+                    (k::io::FilterOutputStream<byte>!) outputDecorator);
+            }
+
+            public main() : int {
+                _stdout->write((byte)65);
+                return 0;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto run = jit->run_main();
+    REQUIRE(run.has_value());
+    CHECK_FALSE(run->uncaught_exception);
+    CHECK(run->status == 0);
+    CHECK(*jit->lookup_symbol<int*>("outputIntercepts") == 1);
+    CHECK(*jit->lookup_symbol<int*>("outputCloses") == 1);
+    CHECK(*jit->lookup_symbol<int*>("outputDestructions") == 2);
+}
+
+TEST_CASE("Application standard streams — input and error decorators intercept and own their roots",
+          "[libk][application][stdio][decoration][lifecycle]") {
+    auto jit = jit_k(R"SRC(
+        module __app_stdio_input_error_decorators__;
+        import k;
+
+        inputIntercepts : int = 0;
+        inputRootDestructions : int = 0;
+        inputDecoratorDestructions : int = 0;
+        errorIntercepts : int = 0;
+        errorRootDestructions : int = 0;
+        errorDecoratorDestructions : int = 0;
+
+        class TrackedInput : public k::io::InputStream<byte> {
+            private _position : int;
+
+            public TrackedInput() : _position(0) {}
+
+            public override read() : Optional<byte> {
+                if (_position >= 3) return Optional<byte>();
+                value : byte = (byte) 'I';
+                if (_position == 1) value = (byte) 'O';
+                else if (_position == 2) value = (byte) '\n';
+                ++_position;
+                return Optional<byte>(value);
+            }
+
+            public override read(buf: byte[], off: unsigned int, len: unsigned int)
+                    : Expected<unsigned int, k::io::StreamOutOfData> {
+                count : unsigned int = 0u;
+                while (count < len && _position < 3) {
+                    buf[off + count] = read().get();
+                    ++count;
+                }
+                return Expected<unsigned int, k::io::StreamOutOfData>::expected(count);
+            }
+
+            public override read(buf: byte[])
+                    : Expected<unsigned int, k::io::StreamOutOfData> {
+                return read(buf, 0u, (unsigned int) buf.size);
+            }
+
+            public override skip(n: unsigned long) : unsigned long {
+                skipped : unsigned long = 0uL;
+                while (skipped < n && _position < 3) {
+                    read();
+                    ++skipped;
+                }
+                return skipped;
+            }
+
+            public override available() : Expected<unsigned int, k::io::StreamOutOfData> {
+                return Expected<unsigned int, k::io::StreamOutOfData>::expected(
+                    (unsigned int) (3 - _position));
+            }
+
+            public override close() {}
+
+            ~TrackedInput() {
+                ++inputRootDestructions;
+            }
+        }
+
+        class CountingInput : public k::io::FilterInputStream<byte> {
+            public CountingInput(input: TrackedInput*)
+                    : FilterInputStream(input) {}
+
+            public override read() : Optional<byte> {
+                ++inputIntercepts;
+                return _in->read();
+            }
+
+            public override read(buf: byte[], off: unsigned int, len: unsigned int)
+                    : Expected<unsigned int, k::io::StreamOutOfData> {
+                ++inputIntercepts;
+                return _in->read(buf, off, len);
+            }
+
+            public override read(buf: byte[])
+                    : Expected<unsigned int, k::io::StreamOutOfData> {
+                ++inputIntercepts;
+                return _in->read(buf);
+            }
+
+            ~CountingInput() {
+                ++inputDecoratorDestructions;
+            }
+        }
+
+        class TrackedErrorRoot : public k::io::ArrayOutputStream<byte> {
+            ~TrackedErrorRoot() {
+                ++errorRootDestructions;
+            }
+        }
+
+        class CountingErrorOutput : public k::io::FilterOutputStream<byte> {
+            public CountingErrorOutput(output: TrackedErrorRoot*)
+                    : FilterOutputStream(output) {}
+
+            public override write(value: byte) : k::io::OutputStream<byte>& {
+                ++errorIntercepts;
+                return _out->write(value);
+            }
+
+            public override write(values: const byte[], off: unsigned int, len: unsigned int)
+                    : k::io::OutputStream<byte>& {
+                ++errorIntercepts;
+                return _out->write(values, off, len);
+            }
+
+            public override write(values: const byte[]) : k::io::OutputStream<byte>& {
+                ++errorIntercepts;
+                return _out->write(values);
+            }
+
+            public override flush() : k::io::OutputStream<byte>& {
+                return _out->flush();
+            }
+
+            ~CountingErrorOutput() {
+                ++errorDecoratorDestructions;
+            }
+        }
+
+        class Application : public k::Application {
+            private _errorCapture : k::io::ArrayOutputStream<byte>*;
+
+            public Application() {
+                inputRoot : TrackedInput! = new TrackedInput();
+                inputRootRaw : TrackedInput* = &*inputRoot;
+                setStandardInput(inputRoot);
+                inputDecorator : CountingInput! =
+                    new CountingInput(inputRootRaw);
+                decorateStandardInput(
+                    (k::io::FilterInputStream<byte>!) inputDecorator);
+
+                errorRoot : TrackedErrorRoot! = new TrackedErrorRoot();
+                errorRootRaw : TrackedErrorRoot* = &*errorRoot;
+                setStandardError(errorRoot);
+                _errorCapture = errorRootRaw;
+                errorDecorator : CountingErrorOutput! =
+                    new CountingErrorOutput(errorRootRaw);
+                decorateStandardError(
+                    (k::io::FilterOutputStream<byte>!) errorDecorator);
+            }
+
+            public main() : int {
+                first : Optional<byte> = k::io::stdinBytes().read();
+                if (!first.hasValue() || first.get() != (byte) 'I') return 1;
+                line : Optional<String> = k::io::stdinReader().readLine();
+                if (!line.hasValue() || line.get() != String("O")) return 2;
+
+                k::io::stderr().print("e");
+                k::io::stderrBytes().write((byte) 'r');
+                k::io::stderrPrint().print("l");
+
+                captured : byte[]! = _errorCapture->toArray();
+                valid : bool = captured.size == 3u &&
+                    captured[0] == (byte) 'e' &&
+                    captured[1] == (byte) 'r' &&
+                    captured[2] == (byte) 'l';
+                delete captured;
+                if (!valid || inputIntercepts < 2 || errorIntercepts < 3) return 3;
+                return 0;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto run = jit->run_main();
+    REQUIRE(run.has_value());
+    CHECK_FALSE(run->uncaught_exception);
+    CHECK(run->status == 0);
+    CHECK(*jit->lookup_symbol<int*>("inputIntercepts") >= 2);
+    CHECK(*jit->lookup_symbol<int*>("errorIntercepts") >= 3);
+    CHECK(*jit->lookup_symbol<int*>("inputRootDestructions") == 1);
+    CHECK(*jit->lookup_symbol<int*>("inputDecoratorDestructions") == 1);
+    CHECK(*jit->lookup_symbol<int*>("errorRootDestructions") == 1);
+    CHECK(*jit->lookup_symbol<int*>("errorDecoratorDestructions") == 1);
+}
+
+TEST_CASE("Application standard streams — failed decoration leaves the old root and adapters installed",
+          "[libk][application][stdio][decoration][exceptions]") {
+    auto jit = jit_k(R"SRC(
+        module __app_stdio_decoration_failure__;
+        import k;
+
+        configurationRejected : bool = false;
+        flushRejected : bool = false;
+        rootPreserved : bool = false;
+        flushAttempts : int = 0;
+
+        class FailingOutput : public k::io::ArrayOutputStream<byte> {
+            public override flush() : k::io::OutputStream<byte>& {
+                ++flushAttempts;
+                throw k::io::IOException(5);
+            }
+        }
+
+        class CountingOutput : public k::io::FilterOutputStream<byte> {
+            public CountingOutput(output: k::io::OutputStream<byte>*)
+                    : FilterOutputStream(output) {}
+        }
+
+        class Application : public k::Application {
+            public Application() {
+                setStandardOutput(new FailingOutput());
+                oldRoot : k::io::OutputStream<byte>* = &*_stdout;
+                _stdout->write((byte) 'X');
+
+                invalidDecorator : CountingOutput! = new CountingOutput(null);
+                try {
+                    decorateStandardOutput(
+                        (k::io::FilterOutputStream<byte>!) invalidDecorator);
+                } catch (error : io::StandardStreamConfigurationError&) {
+                    configurationRejected = true;
+                }
+
+                validDecorator : CountingOutput! =
+                    new CountingOutput((k::io::OutputStream<byte>*)&*_stdout);
+                try {
+                    decorateStandardOutput(
+                        (k::io::FilterOutputStream<byte>!) validDecorator);
+                } catch (error : io::IOException&) {
+                    flushRejected = true;
+                }
+
+                rootPreserved = &*_stdout == oldRoot;
+            }
+
+            public main() : int {
+                if (!configurationRejected || !flushRejected || !rootPreserved) {
+                    return 1;
+                }
+                return 0;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto run = jit->run_main();
+    REQUIRE(run.has_value());
+    CHECK_FALSE(run->uncaught_exception);
+    CHECK(run->status == 1);
+    CHECK(*jit->lookup_symbol<bool*>("configurationRejected"));
+    CHECK(*jit->lookup_symbol<bool*>("flushRejected"));
+    CHECK(*jit->lookup_symbol<bool*>("rootPreserved"));
+    CHECK(*jit->lookup_symbol<int*>("flushAttempts") == 3);
+}
+
+TEST_CASE("Application standard streams — flush failures report without replacing main exceptions",
+          "[libk][application][stdio][exceptions]") {
+    auto normal_jit = jit_k(R"SRC(
+        module __app_stdio_flush_failure__;
+        import k;
+
+        class Application : public k::Application {
+            public Application() {
+                setStandardOutput(new k::io::file::FileOutputStream("/dev/full"));
+            }
+
+            public main() : int {
+                k::io::stdout().print("normal flush failure");
+                return 0;
+            }
+        }
+    )SRC");
+    REQUIRE(normal_jit);
+    auto normal_run = normal_jit->run_main();
+    REQUIRE(normal_run.has_value());
+    CHECK_FALSE(normal_run->uncaught_exception);
+    CHECK(normal_run->status == 1);
+
+    auto exception_jit = jit_k(R"SRC(
+        module __app_stdio_flush_failure_exception__;
+        import k;
+
+        class Application : public k::Application {
+            public Application() {
+                setStandardOutput(new k::io::file::FileOutputStream("/dev/full"));
+            }
+
+            public main() : int {
+                k::io::stdout().print("exceptional flush failure");
+                throw FatalError(37);
+            }
+        }
+    )SRC");
+    REQUIRE(exception_jit);
+    auto exception_run = exception_jit->run_main();
+    REQUIRE(exception_run.has_value());
+    CHECK(exception_run->uncaught_exception);
+}
+
+TEST_CASE("Application standard streams — borrowed native handles survive close and repeated runs",
+          "[libk][application][stdio][lifecycle]") {
+    auto jit = jit_k(R"SRC(
+        module __app_stdio_native_lifetime__;
+        import k;
+
+        @ffi::Extern("C") private __k_io_file_get_stdin() : io::file::CFile*;
+        @ffi::Extern("C") private __k_io_file_get_stdout() : io::file::CFile*;
+        @ffi::Extern("C") private __k_io_file_get_stderr() : io::file::CFile*;
+        @ffi::Extern("C") private fileno(stream: io::file::CFile*) : int;
+        @ffi::Extern("C") private fcntl(fd: int, command: int) : int;
+
+        main() : int {
+            io::stdinBytes().close();
+            io::stdoutBytes().close();
+            io::stderrBytes().close();
+            if (fcntl(fileno(__k_io_file_get_stdin()), 1) < 0) return 1;
+            if (fcntl(fileno(__k_io_file_get_stdout()), 1) < 0) return 2;
+            if (fcntl(fileno(__k_io_file_get_stderr()), 1) < 0) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    static const int argc = 1;
+    static const char* argv[] = {"prog", nullptr};
+    auto main = jit->lookup_main_entry_symbol<int(*)(int, char**)>();
+    CHECK(main(argc, (char**)argv) == 0);
+    CHECK(main(argc, (char**)argv) == 0);
+}
+
+TEST_CASE("Application standard streams — owned file roots close after adapter teardown",
+          "[libk][application][stdio][lifecycle]") {
+    const std::string path = "application-owned-output-test.bin";
+    std::filesystem::remove(path);
+    auto jit = jit_k(R"SRC(
+        module __app_stdio_owned_file__;
+        import k;
+
+        capturedFd : int = -1;
+        @ffi::Extern("C") private close(fd: int) : int;
+
+        class TrackedOutput : public k::io::file::FileOutputStream {
+            public TrackedOutput(path: const char[])
+                : FileOutputStream(path) {
+                capturedFd = getFD().getFd();
+            }
+        }
+
+        class Application : public k::Application {
+            public Application() {
+                setStandardOutput(new TrackedOutput("application-owned-output-test.bin"));
+            }
+
+            public main() : int {
+                k::io::stdout().print("owned");
+                return 0;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto run = jit->run_main();
+    REQUIRE(run.has_value());
+    CHECK_FALSE(run->uncaught_exception);
+    CHECK(run->status == 0);
+    auto fd = jit->lookup_symbol<int*>("capturedFd");
+    REQUIRE(fd);
+    REQUIRE(*fd >= 0);
+    CHECK(::close(*fd) == -1);
+    std::filesystem::remove(path);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

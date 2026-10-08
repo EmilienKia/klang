@@ -22,7 +22,7 @@ sumEven(values : int[]) : int {
 main() : int {
     values : int[] {3, 4, 7, 10};
     result : int = sumEven(values);
-    k::io::stdout.println(result);
+    k::io::stdout().println(result);
     return 0;
 }
 ```
@@ -92,7 +92,7 @@ initialization, condition, and update naturally belong together:
 countdown(start : int) {
     current : int = start;
     while (current > 0) {
-        k::io::stdout.println(current);
+        k::io::stdout().println(current);
         current -= 1;
     }
 }

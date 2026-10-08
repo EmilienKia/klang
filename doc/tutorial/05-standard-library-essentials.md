@@ -13,7 +13,7 @@ module greetings;
 
 main() : int {
     name : String("K developer");
-    k::io::stdout.print("Hello, ").println(name);
+    k::io::stdout().print("Hello, ").println(name);
     return 0;
 }
 ```
@@ -38,8 +38,8 @@ main() : int {
     numbers.pushBack(second);
     numbers.get(1) = 25;
 
-    k::io::stdout.println(numbers.getSize());
-    k::io::stdout.println(numbers.get(0) + numbers.get(1));
+    k::io::stdout().println(numbers.getSize());
+    k::io::stdout().println(numbers.get(0) + numbers.get(1));
     return 0;
 }
 ```
@@ -68,7 +68,7 @@ findAnswer(found : bool) : Optional<int> {
 main() : int {
     answer : Optional<int> = findAnswer(true);
     if (answer.hasValue()) {
-        k::io::stdout.println(answer.get());
+        k::io::stdout().println(answer.get());
     }
     return 0;
 }

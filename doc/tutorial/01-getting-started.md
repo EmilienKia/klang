@@ -24,7 +24,7 @@ Create `hello.k`:
 module hello;
 
 main() : int {
-    k::io::stdout.println("Hello, K!");
+    k::io::stdout().println("Hello, K!");
     return 0;
 }
 ```
@@ -48,7 +48,7 @@ Hello, K!
   declaration must be first in the file.
 - `main` is the program entry point. It can return `int` for the process exit
   status, or omit a return type to return zero on success.
-- `k::io::stdout` is the standard output printer and `println` appends a
+- `k::io::stdout()` returns the standard output printer and `println` appends a
   newline.
 - The base standard library module, `k`, is compiler-managed: non-`k` programs
   do not need `import k;`.
@@ -63,7 +63,7 @@ Replace `main` with this version:
 ```k
 main() : int {
     answer : int = 6 * 7;
-    k::io::stdout.println(answer);
+    k::io::stdout().println(answer);
     return 0;
 }
 ```

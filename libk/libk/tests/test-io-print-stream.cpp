@@ -34,6 +34,47 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
     return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
 }
 } // anonymous namespace
+
+TEST_CASE("PrintStream destruction preserves a borrowed derived output decorator",
+          "[libk][io][print][lifecycle][borrowed]") {
+    auto jit = jit_k(R"SRC(
+        module __ps_borrowed_decorator__;
+
+        destructions : int = 0;
+
+        class TrackedOutput : public k::io::FilterOutputStream<byte> {
+            public TrackedOutput(output: k::io::OutputStream<byte>*)
+                : FilterOutputStream(output) {}
+
+            ~TrackedOutput() {
+                ++destructions;
+            }
+        }
+
+        test_borrowed_decorator() : int {
+            root : k::io::ArrayOutputStream<byte>;
+            output : TrackedOutput! =
+                new TrackedOutput((k::io::OutputStream<byte>*)&root);
+            printer : k::io::PrintStream! =
+                new k::io::PrintStream((k::io::OutputStream<byte>*)&*output);
+            printer->print('A');
+            delete printer;
+            if (destructions != 0) return 1;
+
+            output->write((byte)'B');
+            output->flush();
+            if (root.size() != 2u) return 2;
+            delete output;
+            if (destructions != 1) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_borrowed_decorator");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // print(bool)
 // ═════════════════════════════════════════════════════════════════════════════

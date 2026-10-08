@@ -78,6 +78,9 @@ module k;
 @ffi::Extern("C") private __k_application_activate(application: Application*): int;
 @ffi::Extern("C") private __k_application_deactivate(application: Application*): int;
 @ffi::Extern("C") private __k_application_activation_error(status: int);
+@ffi::Extern("C") private __k_application_begin_stream_configuration(application: Application*);
+@ffi::Extern("C") private __k_application_standard_streams_frozen(application: Application*) : int;
+@ffi::Extern("C") private __k_application_report_stream_flush_error(stream: int, error: int);
 
 /**
  * Return the absolute path of the current process image as an owned K byte
@@ -234,6 +237,20 @@ private __k_module_error_from_code(code: int): LoadModuleError {
  */
 public abstract class Application : public Object {
 
+    // ── Application-owned standard streams ───────────────────────────────────
+    protected _stdin : io::InputStream<byte>!;
+    protected _stdout : io::OutputStream<byte>!;
+    protected _stderr : io::OutputStream<byte>!;
+
+    private _stdinUtf8Reader : io::Utf8Reader!;
+    private _stdinBufferedReader : io::BufferedReader!;
+    private _stdoutUtf8Writer : io::Utf8Writer!;
+    private _stdoutTextPrinter : io::TextPrinter!;
+    private _stdoutPrint : io::PrintStream!;
+    private _stderrUtf8Writer : io::Utf8Writer!;
+    private _stderrTextPrinter : io::TextPrinter!;
+    private _stderrPrint : io::PrintStream!;
+
     // ── Environment variable map ─────────────────────────────────────────────
     private _env : EnvironmentMap!;
 
@@ -243,6 +260,19 @@ public abstract class Application : public Object {
 
     // ── Constructor ──────────────────────────────────────────────────────────
     Application() {
+        __k_application_begin_stream_configuration(&this);
+        _stdin = new io::file::FileInputStream(io::file::__k_io_file_get_stdin());
+        _stdinUtf8Reader = new io::Utf8Reader(&*_stdin);
+        _stdinBufferedReader = new io::BufferedReader(&*_stdinUtf8Reader);
+        _stdout = new io::file::FileOutputStream(io::file::__k_io_file_get_stdout());
+        _stdoutUtf8Writer = new io::Utf8Writer(&*_stdout);
+        _stdoutTextPrinter = new io::TextPrinter(&*_stdoutUtf8Writer);
+        _stdoutPrint = new io::PrintStream(&*_stdout);
+        _stderr = new io::file::FileOutputStream(io::file::__k_io_file_get_stderr());
+        _stderrUtf8Writer = new io::Utf8Writer(&*_stderr);
+        _stderrTextPrinter = new io::TextPrinter(&*_stderrUtf8Writer);
+        _stderrPrint = new io::PrintStream(&*_stderr);
+
         _modules = new Vector<Shared<Module>>();
         image_snapshot : byte* = __k_module_snapshot_open();
         image_count : int = __k_module_snapshot_count(image_snapshot);
@@ -355,6 +385,54 @@ public abstract class Application : public Object {
     }
 
     ~Application() {
+        if (_stdinBufferedReader != null) {
+            delete _stdinBufferedReader;
+            _stdinBufferedReader = null;
+        }
+        if (_stdinUtf8Reader != null) {
+            delete _stdinUtf8Reader;
+            _stdinUtf8Reader = null;
+        }
+        if (_stdin != null) {
+            delete _stdin;
+            _stdin = null;
+        }
+
+        if (_stdoutPrint != null) {
+            delete _stdoutPrint;
+            _stdoutPrint = null;
+        }
+        if (_stdoutTextPrinter != null) {
+            delete _stdoutTextPrinter;
+            _stdoutTextPrinter = null;
+        }
+
+        if (_stdoutUtf8Writer != null) {
+            delete _stdoutUtf8Writer;
+            _stdoutUtf8Writer = null;
+        }
+        if (_stdout != null) {
+            delete _stdout;
+            _stdout = null;
+        }
+
+        if (_stderrPrint != null) {
+            delete _stderrPrint;
+            _stderrPrint = null;
+        }
+        if (_stderrTextPrinter != null) {
+            delete _stderrTextPrinter;
+            _stderrTextPrinter = null;
+        }
+
+        if (_stderrUtf8Writer != null) {
+            delete _stderrUtf8Writer;
+            _stderrUtf8Writer = null;
+        }
+        if (_stderr != null) {
+            delete _stderr;
+            _stderr = null;
+        }
         delete _modules;
     }
 
@@ -372,6 +450,318 @@ public abstract class Application : public Object {
         return OptionalRef<Application>(*application);
     }
 
+    /** Borrow the configured standard input byte stream. */
+    public final stdinBytes() : io::InputStream<byte>& {
+        return *_stdin;
+    }
+
+    /** Borrow the configured standard input byte stream. */
+    public final stdin() : io::InputStream<byte>& {
+        return *_stdin;
+    }
+
+    /** Borrow the UTF-8 buffered standard input reader. */
+    public final stdinReader() : io::BufferedReader& {
+        return *_stdinBufferedReader;
+    }
+
+    /** Borrow the configured standard output byte stream. */
+    public final stdoutBytes() : io::OutputStream<byte>& {
+        return *_stdout;
+    }
+
+    /** Borrow the configured standard error byte stream. */
+    public final stderrBytes() : io::OutputStream<byte>& {
+        return *_stderr;
+    }
+
+    /** Borrow the UTF-8 standard output printer. */
+    public final stdout() : io::TextPrinter& {
+        return *_stdoutTextPrinter;
+    }
+
+    /** Borrow the UTF-8 standard error printer. */
+    public final stderr() : io::TextPrinter& {
+        return *_stderrTextPrinter;
+    }
+
+    /** Borrow the legacy byte-oriented standard output printer. */
+    public final stdoutPrint() : io::PrintStream& {
+        return *_stdoutPrint;
+    }
+
+    /** Borrow the legacy byte-oriented standard error printer. */
+    public final stderrPrint() : io::PrintStream& {
+        return *_stderrPrint;
+    }
+
+    /**
+     * Flush configured output streams before the entry point withdraws this
+     * Application from the process-wide active slot.
+     */
+    public final flushStandardStreams() : bool {
+        success : bool = true;
+        if (_stdoutTextPrinter != null) {
+            try {
+                _stdoutTextPrinter->flush();
+            } catch (error : io::IOException&) {
+                __k_application_report_stream_flush_error(0, error.getErrno());
+                success = false;
+            }
+        }
+        if (_stderrTextPrinter != null) {
+            try {
+                _stderrTextPrinter->flush();
+            } catch (error : io::IOException&) {
+                __k_application_report_stream_flush_error(1, error.getErrno());
+                success = false;
+            }
+        }
+        return success;
+    }
+
+    /**
+     * Replace standard input during Application construction. Ownership of
+     * `input` transfers to this Application after its adapters are prepared.
+     * A preparation failure leaves the current stream configuration intact.
+     */
+protected:
+    final __replaceStandardInputAdapters(reader: io::Utf8Reader!,
+                                         buffered: io::BufferedReader!) {
+        __checkStandardStreamConfiguration();
+        __commitStandardInputAdapters(reader, buffered);
+    }
+
+    final __commitStandardInputAdapters(reader: io::Utf8Reader!,
+                                        buffered: io::BufferedReader!) {
+        if (_stdinBufferedReader != null) {
+            delete _stdinBufferedReader;
+            _stdinBufferedReader = null;
+        }
+        if (_stdinUtf8Reader != null) {
+            delete _stdinUtf8Reader;
+            _stdinUtf8Reader = null;
+        }
+        _stdinUtf8Reader = reader;
+        _stdinBufferedReader = buffered;
+    }
+
+    final __checkStandardStreamConfiguration() {
+        if (__k_application_standard_streams_frozen(&this) != 0) {
+            throw io::StandardStreamConfigurationError();
+        }
+    }
+
+    final __replaceStandardOutputAdapters(writer: io::Utf8Writer!,
+                                          printer: io::TextPrinter!,
+                                          legacy: io::PrintStream!) {
+        __checkStandardStreamConfiguration();
+        __flushStandardOutputAdapters();
+        __commitStandardOutputAdapters(writer, printer, legacy);
+    }
+
+    final __flushStandardOutputAdapters() {
+        if (_stdoutTextPrinter != null) {
+            _stdoutTextPrinter->flush();
+        } else if (_stdoutPrint != null) {
+            _stdoutPrint->flush();
+        }
+    }
+
+    final __commitStandardOutputAdapters(writer: io::Utf8Writer!,
+                                         printer: io::TextPrinter!,
+                                         legacy: io::PrintStream!) {
+        if (_stdoutTextPrinter != null) {
+            delete _stdoutTextPrinter;
+            _stdoutTextPrinter = null;
+        }
+        if (_stdoutPrint != null) {
+            delete _stdoutPrint;
+            _stdoutPrint = null;
+        }
+        if (_stdoutUtf8Writer != null) {
+            delete _stdoutUtf8Writer;
+            _stdoutUtf8Writer = null;
+        }
+        _stdoutUtf8Writer = writer;
+        _stdoutTextPrinter = printer;
+        _stdoutPrint = legacy;
+    }
+
+    final __replaceStandardErrorAdapters(writer: io::Utf8Writer!,
+                                         printer: io::TextPrinter!,
+                                         legacy: io::PrintStream!) {
+        __checkStandardStreamConfiguration();
+        __flushStandardErrorAdapters();
+        __commitStandardErrorAdapters(writer, printer, legacy);
+    }
+
+    final __flushStandardErrorAdapters() {
+        if (_stderrTextPrinter != null) {
+            _stderrTextPrinter->flush();
+        } else if (_stderrPrint != null) {
+            _stderrPrint->flush();
+        }
+    }
+
+    final __commitStandardErrorAdapters(writer: io::Utf8Writer!,
+                                        printer: io::TextPrinter!,
+                                        legacy: io::PrintStream!) {
+        if (_stderrTextPrinter != null) {
+            delete _stderrTextPrinter;
+            _stderrTextPrinter = null;
+        }
+        if (_stderrPrint != null) {
+            delete _stderrPrint;
+            _stderrPrint = null;
+        }
+        if (_stderrUtf8Writer != null) {
+            delete _stderrUtf8Writer;
+            _stderrUtf8Writer = null;
+        }
+        _stderrUtf8Writer = writer;
+        _stderrTextPrinter = printer;
+        _stderrPrint = legacy;
+    }
+
+    template<typename T>
+    setStandardInput(input: T!) {
+        if (input == null) {
+            throw io::StandardStreamConfigurationError();
+        }
+        reader : io::Utf8Reader! =
+            new io::Utf8Reader((io::InputStream<byte>*)&*input);
+        buffered : io::BufferedReader! = new io::BufferedReader(&*reader);
+
+        __replaceStandardInputAdapters(reader, buffered);
+        _stdin = input;
+    }
+
+    /**
+     * Decorate standard input with a FilterInputStream during construction.
+     * The decorator must have been constructed over the current standard
+     * input. On success it takes ownership of that root, so nested decorators
+     * remain alive for as long as the configured root.
+     */
+    final decorateStandardInput(input: io::FilterInputStream<byte>!) {
+        if (input == null) {
+            throw io::StandardStreamConfigurationError();
+        }
+        filter : io::FilterInputStream<byte>* =
+            (io::FilterInputStream<byte>*)&*input;
+        if (filter == null || !filter->__k_canAdoptInput(&*_stdin)) {
+            throw io::StandardStreamConfigurationError();
+        }
+
+        __checkStandardStreamConfiguration();
+        reader : io::Utf8Reader! =
+            new io::Utf8Reader((io::InputStream<byte>*)&*input);
+        buffered : io::BufferedReader! = new io::BufferedReader(&*reader);
+        __commitStandardInputAdapters(reader, buffered);
+        previous : ::k::io::InputStream<byte>! = _stdin;
+        filter->__k_adoptInput(previous);
+        _stdin = input;
+    }
+
+    /**
+     * Replace standard output during Application construction. Ownership of
+     * `output` transfers to this Application after its adapters are prepared.
+     * A preparation failure leaves the current stream configuration intact.
+     */
+    template<typename T>
+    setStandardOutput(output: T!) {
+        if (output == null) {
+            throw io::StandardStreamConfigurationError();
+        }
+        writer : io::Utf8Writer! =
+            new io::Utf8Writer((io::OutputStream<byte>*)&*output);
+        printer : io::TextPrinter! = new io::TextPrinter(&*writer);
+        legacy : io::PrintStream! =
+            new io::PrintStream((io::OutputStream<byte>*)&*output);
+
+        __replaceStandardOutputAdapters(writer, printer, legacy);
+        _stdout = output;
+    }
+
+    /**
+     * Decorate standard output during construction. The decorator must have
+     * been constructed over the current standard output. Its previous root is
+     * adopted only after the replacement adapters are prepared and the old
+     * output adapters flush successfully.
+     */
+    final decorateStandardOutput(output: io::FilterOutputStream<byte>!) {
+        if (output == null) {
+            throw io::StandardStreamConfigurationError();
+        }
+        filter : io::FilterOutputStream<byte>* =
+            (io::FilterOutputStream<byte>*)&*output;
+        if (filter == null || !filter->__k_canAdoptOutput(&*_stdout)) {
+            throw io::StandardStreamConfigurationError();
+        }
+
+        __checkStandardStreamConfiguration();
+        writer : io::Utf8Writer! =
+            new io::Utf8Writer((io::OutputStream<byte>*)&*output);
+        printer : io::TextPrinter! = new io::TextPrinter(&*writer);
+        legacy : io::PrintStream! =
+            new io::PrintStream((io::OutputStream<byte>*)&*output);
+
+        __flushStandardOutputAdapters();
+        __commitStandardOutputAdapters(writer, printer, legacy);
+        filter->__k_adoptOutput(_stdout);
+        _stdout = output;
+    }
+
+    /**
+     * Replace standard error during Application construction. Ownership of
+     * `output` transfers to this Application after its adapters are prepared.
+     * A preparation failure leaves the current stream configuration intact.
+     */
+    template<typename T>
+    setStandardError(output: T!) {
+        if (output == null) {
+            throw io::StandardStreamConfigurationError();
+        }
+        writer : io::Utf8Writer! =
+            new io::Utf8Writer((io::OutputStream<byte>*)&*output);
+        printer : io::TextPrinter! = new io::TextPrinter(&*writer);
+        legacy : io::PrintStream! =
+            new io::PrintStream((io::OutputStream<byte>*)&*output);
+
+        __replaceStandardErrorAdapters(writer, printer, legacy);
+        _stderr = output;
+    }
+
+    /**
+     * Decorate standard error during construction. The decorator must have
+     * been constructed over the current standard error. Its previous root is
+     * adopted only after the replacement adapters are prepared and the old
+     * output adapters flush successfully.
+     */
+    final decorateStandardError(output: io::FilterOutputStream<byte>!) {
+        if (output == null) {
+            throw io::StandardStreamConfigurationError();
+        }
+        filter : io::FilterOutputStream<byte>* =
+            (io::FilterOutputStream<byte>*)&*output;
+        if (filter == null || !filter->__k_canAdoptOutput(&*_stderr)) {
+            throw io::StandardStreamConfigurationError();
+        }
+
+        __checkStandardStreamConfiguration();
+        writer : io::Utf8Writer! =
+            new io::Utf8Writer((io::OutputStream<byte>*)&*output);
+        printer : io::TextPrinter! = new io::TextPrinter(&*writer);
+        legacy : io::PrintStream! =
+            new io::PrintStream((io::OutputStream<byte>*)&*output);
+
+        __flushStandardErrorAdapters();
+        __commitStandardErrorAdapters(writer, printer, legacy);
+        filter->__k_adoptOutput(_stderr);
+        _stderr = output;
+    }
+
+public:
     /**
      * Return a read-only view of the process environment variables.
      *
@@ -658,9 +1048,16 @@ public abstract class Application : public Object {
                 ++i;
             }
             }
+
         } finally {
             __k_module_registry_unlock();
         }
         return snapshot;
     }
+}
+
+public __k_application_flush_standard_streams(application: Application*) : int {
+    if (application == null) return 0;
+    if (application->flushStandardStreams()) return 0;
+    return 1;
 }

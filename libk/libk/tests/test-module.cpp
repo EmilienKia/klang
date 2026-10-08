@@ -238,14 +238,27 @@ TEST_CASE("Application singleton — dynamically loaded module constructors shar
     auto jit = jit_module(
         "module __module_application_anchor__;\n"
         "import modreg;\n"
-        "main() : int {\n"
-        "    before : int = modreg::registeredCount();\n"
-        "    loaded : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" +
+        "class Application : public k::Application {\n"
+        "    private _capture : k::io::ArrayOutputStream<byte>*;\n"
+        "    public Application() {\n"
+        "        stdoutRoot : k::io::ArrayOutputStream<byte>! =\n"
+        "            new k::io::ArrayOutputStream<byte>();\n"
+        "        _capture = &*stdoutRoot;\n"
+        "        setStandardOutput(stdoutRoot);\n"
+        "    }\n"
+        "    public main() : int {\n"
+        "        before : int = modreg::registeredCount();\n"
+        "        loaded : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" +
             FIXTURES + "/libapplication_probe.so\"));\n"
-        "    if (!loaded.hasResult()) { return 1; }\n"
-        "    if (modreg::registeredCount() != before + 1) { return 2; }\n"
-        "    if (modreg::registeredId(before) != 4) { return 3; }\n"
-        "    return 0;\n"
+        "        if (!loaded.hasResult()) { return 1; }\n"
+        "        if (modreg::registeredCount() != before + 1) { return 2; }\n"
+        "        if (modreg::registeredId(before) != 4) { return 3; }\n"
+        "        output : byte[]! = _capture->toArray();\n"
+        "        valid : bool = output.size == 1u && output[0] == (byte) 'P';\n"
+        "        delete output;\n"
+        "        if (!valid) { return 4; }\n"
+        "        return 0;\n"
+        "    }\n"
         "}\n");
     REQUIRE(jit);
 

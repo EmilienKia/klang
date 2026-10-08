@@ -32,6 +32,62 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 }
 } // anonymous namespace
 
+TEST_CASE("TextPrinter destruction preserves its borrowed writer and derived byte decorator",
+          "[libk][io][printer][lifecycle][borrowed]") {
+    auto jit = jit_k(R"SRC(
+        module __tp_borrowed_decorator__;
+
+        outputDestructions : int = 0;
+        writerDestructions : int = 0;
+
+        class TrackedOutput : public k::io::FilterOutputStream<byte> {
+            public TrackedOutput(output: k::io::OutputStream<byte>*)
+                : FilterOutputStream(output) {}
+
+            ~TrackedOutput() {
+                ++outputDestructions;
+            }
+        }
+
+        class TrackedWriter : public k::io::Utf8Writer {
+            public TrackedWriter(output: k::io::OutputStream<byte>*)
+                : Utf8Writer(output) {}
+
+            ~TrackedWriter() {
+                ++writerDestructions;
+            }
+        }
+
+        test_borrowed_decorator() : int {
+            root : k::io::ArrayOutputStream<byte>;
+            output : TrackedOutput! =
+                new TrackedOutput((k::io::OutputStream<byte>*)&root);
+            writer : TrackedWriter! =
+                new TrackedWriter((k::io::OutputStream<byte>*)&*output);
+            printer : k::io::TextPrinter! =
+                new k::io::TextPrinter((k::io::Writer*)&*writer);
+            printer->print('A');
+            delete printer;
+            if (writerDestructions != 0 || outputDestructions != 0) return 1;
+
+            writer->write('B');
+            writer->flush();
+            if (root.size() != 2u) return 2;
+            delete writer;
+            if (writerDestructions != 1 || outputDestructions != 0) return 3;
+            output->write((byte)'C');
+            if (root.size() != 3u) return 4;
+            delete output;
+            if (outputDestructions != 1) return 5;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_borrowed_decorator");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
 TEST_CASE("TextPrinter: primitive printing and formatting", "[libk][io][printer]") {
     auto jit = jit_k(R"SRC(
         module __test_printer__;

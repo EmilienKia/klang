@@ -157,6 +157,36 @@
       it as a failure rather than skipping the concurrent-load checks.
       The full module suite passes with the intended identity assertions.
 
+- [ ] **Several full CTest executables exceed the 120-second test budget.**
+      The CTest registrations for `klang-tests-gen-virtuality` and
+      `klang-tests-gen-functions` timed out at 120.37s and 120.41s respectively;
+      direct serial runs completed successfully (660 assertions/144 cases and
+      379 assertions/166 cases). The earlier broad CTest run also timed out
+      `libk-tests-rtti-exceptions` and `libk-tests-collections-sequential`;
+      direct serial reruns completed (537 assertions/141 cases and 337
+      assertions/115 cases). Rebalance/shard these registrations so CTest's
+      timeout remains meaningful.
+
+- [ ] **Abstract base constructors clear the inherited vptr during derived construction.**
+      `implementation_generator::emit_constructor_pre_block()` in
+      `klang/src/gen/gen_function.cpp` zero-initializes the entire base subobject.
+      Abstract classes have no vtable global (`klang/src/gen/gen_class.cpp`,
+      `declaration_generator::visit_class` returns before creating one), so
+      `emit_vptr_store()` returns without replacing the cleared vptr.
+      A concrete derived constructor installs secondary vptrs before calling
+      its base constructor, but restores them only after its entire body.
+      Consequently, an inherited virtual call from that body can dispatch
+      through null even when the base fields are fully initialized.
+      Reproduction: an abstract base with a concrete non-final method and a
+      concrete derived constructor calling that inherited method.
+      Confirmed by the Application decorator construction IR and debugger:
+      the Application base constructor runs before slot 13 dispatch, whose
+      receiver vptr is null (`call *0x68(%rax)`, `rax == 0`).
+      Stream accessors and installation hooks are intentionally non-virtual;
+      fixing their API does not fix this general constructor-dispatch defect.
+      Add a compiler virtuality regression before changing constructor vptr
+      restoration or abstract construction vtable emission.
+
 - [ ] **Specialized `Expected` static factories reject matching values.**
       In `libk/libk/src/application.k`, calling
       `Expected<Shared<Module>, LoadModuleError>::unexpected(failure)` where

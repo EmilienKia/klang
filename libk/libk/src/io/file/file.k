@@ -34,6 +34,7 @@ public struct CFile {
 @ffi::Extern("C") private __k_io_file_fread(fp: CFile*, buf: byte*, len: int) : int;
 @ffi::Extern("C") private __k_io_file_fwrite(fp: CFile*, buf: const byte*, len: int) : int;
 @ffi::Extern("C") private __k_io_file_fflush(fp: CFile*) : int;
+@ffi::Extern("C") private __k_io_file_errno() : int;
 @ffi::Extern("C") private __k_io_file_fileno(fp: CFile*) : int;
 @ffi::Extern("C") private __k_io_file_exists(path: const char*) : int;
 @ffi::Extern("C") private __k_io_file_is_file(path: const char*) : int;
@@ -91,6 +92,7 @@ public:
  */
 public class FileInputStream : public InputStream<byte> {
     _fp : CFile*;
+    _ownsFile : bool;
 
 public:
     /**
@@ -98,7 +100,7 @@ public:
      *
      * @param path Null-terminated file path.
      */
-    FileInputStream(path: const char[]) : _fp(null) {
+    FileInputStream(path: const char[]) : _fp(null), _ownsFile(true) {
         _fp = __k_io_file_fopen(&path[0], &"rb\0"[0]);
     }
 
@@ -107,17 +109,19 @@ public:
      *
      * @param path File system path.
      */
-    FileInputStream(path: const Path&) : _fp(null) {
+    FileInputStream(path: const Path&) : _fp(null), _ownsFile(true) {
         _fp = __k_io_file_fopen(path.nativePath(), &"rb\0"[0]);
     }
 
     /**
-     * Construct a FileInputStream from a raw CFile* handle.
-     * The stream does NOT take ownership — the caller must ensure the
-     * handle remains valid for the lifetime of this stream.
-     * Primarily used internally (e.g. for wrapping libc stdin).
+     * Construct a FileInputStream borrowing a raw CFile* handle. Closing this
+     * stream detaches it without closing the native handle.
      */
-    FileInputStream(fp: CFile*) : _fp(fp) {}
+    FileInputStream(fp: CFile*) : _fp(fp), _ownsFile(false) {}
+
+    ~FileInputStream() {
+        close();
+    }
 
     /**
      * Tell whether the stream currently has an open native handle.
@@ -185,7 +189,9 @@ public:
 
     override close() {
         if (_fp != null) {
-            __k_io_file_fclose(_fp);
+            if (_ownsFile) {
+                __k_io_file_fclose(_fp);
+            }
             _fp = null;
         }
     }
@@ -209,6 +215,7 @@ public:
  */
 public class FileOutputStream : public OutputStream<byte> {
     _fp : CFile*;
+    _ownsFile : bool;
 
 public:
     /**
@@ -216,7 +223,7 @@ public:
      *
      * @param path Null-terminated file path.
      */
-    FileOutputStream(path: const char[]) : _fp(null) {
+    FileOutputStream(path: const char[]) : _fp(null), _ownsFile(true) {
         _fp = __k_io_file_fopen(&path[0], &"wb\0"[0]);
     }
 
@@ -226,7 +233,7 @@ public:
      * @param path Null-terminated file path.
      * @param append `true` to append, `false` to truncate.
      */
-    FileOutputStream(path: const char[], append: bool) : _fp(null) {
+    FileOutputStream(path: const char[], append: bool) : _fp(null), _ownsFile(true) {
         if (append) {
             _fp = __k_io_file_fopen(&path[0], &"ab\0"[0]);
         } else {
@@ -239,7 +246,7 @@ public:
      *
      * @param path File system path.
      */
-    FileOutputStream(path: const Path&) : _fp(null) {
+    FileOutputStream(path: const Path&) : _fp(null), _ownsFile(true) {
         _fp = __k_io_file_fopen(path.nativePath(), &"wb\0"[0]);
     }
 
@@ -249,7 +256,7 @@ public:
      * @param path File system path.
      * @param append `true` to append, `false` to truncate.
      */
-    FileOutputStream(path: const Path&, append: bool) : _fp(null) {
+    FileOutputStream(path: const Path&, append: bool) : _fp(null), _ownsFile(true) {
         if (append) {
             _fp = __k_io_file_fopen(path.nativePath(), &"ab\0"[0]);
         } else {
@@ -258,12 +265,18 @@ public:
     }
 
     /**
-     * Construct a FileOutputStream from a raw CFile* handle.
-     * The stream does NOT take ownership — the caller must ensure the
-     * handle remains valid for the lifetime of this stream.
-     * Primarily used internally (e.g. for wrapping libc stdout/stderr).
+     * Construct a FileOutputStream borrowing a raw CFile* handle. Closing this
+     * stream flushes and detaches it without closing the native handle.
      */
-    FileOutputStream(fp: CFile*) : _fp(fp) {}
+    FileOutputStream(fp: CFile*) : _fp(fp), _ownsFile(false) {}
+
+    ~FileOutputStream() {
+        if (_ownsFile) {
+            close();
+        } else {
+            _fp = null;
+        }
+    }
 
     /**
      * Tell whether the stream currently has an open native handle.
@@ -296,15 +309,20 @@ public:
 
     override flush() : OutputStream<byte>& {
         if (_fp != null) {
-            __k_io_file_fflush(_fp);
+            if (__k_io_file_fflush(_fp) != 0) {
+                throw IOException(__k_io_file_errno());
+            }
         }
         return this;
     }
 
     override close() : OutputStream<byte>& {
         if (_fp != null) {
-            __k_io_file_fflush(_fp);
-            __k_io_file_fclose(_fp);
+            if (_ownsFile) {
+                __k_io_file_fclose(_fp);
+            } else {
+                __k_io_file_fflush(_fp);
+            }
             _fp = null;
         }
         return this;

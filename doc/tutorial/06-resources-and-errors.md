@@ -73,7 +73,7 @@ main() : int {
     try {
         validatePort(0);
     } catch (error : InvalidPort&) {
-        k::io::stderr.println("Invalid port");
+        k::io::stderr().println("Invalid port");
         return 1;
     }
     return 0;

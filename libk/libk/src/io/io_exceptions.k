@@ -60,6 +60,18 @@ public:
     }
 }
 
+/** Raised when process standard I/O is requested without an active Application. */
+public final class NoActiveApplicationError : public IllegalStateException {
+public:
+    NoActiveApplicationError() : IllegalStateException(20) {}
+}
+
+/** Raised when standard stream configuration is invalid or already frozen. */
+public final class StandardStreamConfigurationError : public IllegalStateException {
+public:
+    StandardStreamConfigurationError() : IllegalStateException(21) {}
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // FileNotFoundException
 // ═════════════════════════════════════════════════════════════════════════════

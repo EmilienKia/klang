@@ -1812,12 +1812,13 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
     // every linked or dynamically loaded copy of libk.
     auto* anchor_i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
     auto* anchor_ty = llvm::StructType::get(llvm_ctx, {
-        anchor_i32_ty, anchor_i32_ty, ptr_ty, anchor_i32_ty
+        anchor_i32_ty, anchor_i32_ty, ptr_ty, ptr_ty, anchor_i32_ty
     });
     auto* anchor_init = llvm::ConstantStruct::get(anchor_ty, {
-        llvm::ConstantInt::get(anchor_i32_ty, 1),
+        llvm::ConstantInt::get(anchor_i32_ty, 2),
         llvm::ConstantInt::get(anchor_i32_ty,
             get_module().getDataLayout().getTypeAllocSize(anchor_ty).getFixedValue()),
+        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)),
         llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)),
         llvm::ConstantInt::get(anchor_i32_ty, 0)
     });
@@ -1902,6 +1903,21 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
             llvm::ConstantInt::get(llvm::Type::getInt64Ty(llvm_ctx), base_offset),
             "application_base");
     }
+    llvm::Function* flush_standard_streams_fn = nullptr;
+    k::name flush_standard_streams_name{false, {"k", "__k_application_flush_standard_streams"}};
+    if (const kdi::kdi_function* flush_helper =
+            _unit.find_imported_function(flush_standard_streams_name)) {
+        if (!flush_helper->mangled_name.empty()) {
+            flush_standard_streams_fn = get_module().getFunction(flush_helper->mangled_name);
+            if (!flush_standard_streams_fn) {
+                auto* flush_type = llvm::FunctionType::get(
+                    i32_ty, {ptr_ty}, false);
+                flush_standard_streams_fn = llvm::Function::Create(
+                    flush_type, llvm::Function::ExternalLinkage,
+                    flush_helper->mangled_name, get_module());
+            }
+        }
+    }
     auto* application_operation_ty = llvm::FunctionType::get(
         i32_ty, {ptr_ty}, false);
     auto activate_fn = get_module().getOrInsertFunction(
@@ -1985,6 +2001,10 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
     auto* unwind_lpad_ty = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
     auto* unwind_lpad = _builder->CreateLandingPad(unwind_lpad_ty, 0, "application_main_lpad");
     unwind_lpad->setCleanup(true);
+    if (flush_standard_streams_fn) {
+        _builder->CreateCall(flush_standard_streams_fn->getFunctionType(),
+            flush_standard_streams_fn, {application_base});
+    }
     _builder->CreateCall(get_module().getOrInsertFunction(
         "__k_application_deactivate", application_operation_ty), {application_base});
     if (dtor_llvm_fn) {
@@ -2001,6 +2021,20 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         }
     }
 
+    if (flush_standard_streams_fn) {
+        auto* flush_status = _builder->CreateCall(flush_standard_streams_fn->getFunctionType(),
+            flush_standard_streams_fn, {application_base});
+        auto* flush_failed = _builder->CreateICmpNE(
+            flush_status, llvm::ConstantInt::get(i32_ty, 0), "application_flush_failed");
+        auto* preserve_main_failure = _builder->CreateICmpNE(
+            ret_val, llvm::ConstantInt::get(i32_ty, 0), "application_main_failed");
+        auto* replace_status = _builder->CreateAnd(
+            flush_failed, _builder->CreateNot(preserve_main_failure),
+            "application_flush_sets_failure");
+        ret_val = _builder->CreateSelect(
+            replace_status, llvm::ConstantInt::get(i32_ty, 1), ret_val,
+            "application_exit_status");
+    }
     _builder->CreateCall(get_module().getOrInsertFunction(
         "__k_application_deactivate", application_operation_ty), {application_base});
     if (dtor_llvm_fn) {

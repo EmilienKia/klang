@@ -20,7 +20,7 @@ struct Rectangle {
 
 main() : int {
     rectangle : Rectangle(6, 4);
-    k::io::stdout.println(rectangle.area());
+    k::io::stdout().println(rectangle.area());
     return 0;
 }
 ```
@@ -73,7 +73,7 @@ class Square : public Measurable {
 }
 
 printArea(shape : Measurable&) {
-    k::io::stdout.println(shape.area());
+    k::io::stdout().println(shape.area());
 }
 
 main() : int {

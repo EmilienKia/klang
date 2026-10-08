@@ -17,7 +17,7 @@ tooling used for inter-module APIs.
 module hello;
 
 main() : int {
-    k::io::stdout.println("Hello, K!");
+    k::io::stdout().println("Hello, K!");
     return 0;
 }
 ```

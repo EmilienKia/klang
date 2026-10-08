@@ -29,7 +29,10 @@ namespace io {
 template<typename T>
 public class FilterInputStream : public InputStream<T> {
 protected:
-    _in : InputStream<T>*;
+    _in : ::k::io::InputStream<T>*;
+
+private:
+    _ownedIn : ::k::io::InputStream<T>!;
 
 public:
     /**
@@ -38,10 +41,20 @@ public:
      *
      * @param input Wrapped input stream.
      */
-    FilterInputStream(input: InputStream<T>*) : _in(input) {}
+    FilterInputStream(input: ::k::io::InputStream<T>*) : _in(input), _ownedIn(null) {}
 
     /** Default constructor (null inner stream — for compiler-generated subclass constructors). */
-    FilterInputStream() : _in(null) {}
+    FilterInputStream() : _in(null), _ownedIn(null) {}
+
+    /** Internal Application handoff precondition check. */
+    public final __k_canAdoptInput(input: ::k::io::InputStream<T>*) : bool {
+        return input != null && _in == input && _ownedIn == null;
+    }
+
+    /** Internal non-throwing ownership handoff used by Application. */
+    public final __k_adoptInput(input: ::k::io::InputStream<T>!) {
+        _ownedIn = input;
+    }
 
     // ── InputStream implementation (all delegated) ───────────────────────
 
@@ -82,6 +95,9 @@ public class FilterOutputStream : public OutputStream<T> {
 protected:
     _out : OutputStream<T>*;
 
+private:
+    _ownedOut : OutputStream<T>!;
+
 public:
     /**
      * Construct a FilterOutputStream wrapping the given stream.
@@ -89,10 +105,20 @@ public:
      *
      * @param output Wrapped output stream.
      */
-    FilterOutputStream(output: OutputStream<T>*) : _out(output) {}
+    FilterOutputStream(output: OutputStream<T>*) : _out(output), _ownedOut(null) {}
 
     /** Default constructor (null inner stream — for compiler-generated subclass constructors). */
-    FilterOutputStream() : _out(null) {}
+    FilterOutputStream() : _out(null), _ownedOut(null) {}
+
+    /** Internal Application handoff precondition check. */
+    public final __k_canAdoptOutput(output: OutputStream<T>*) : bool {
+        return output != null && _out == output && _ownedOut == null;
+    }
+
+    /** Internal non-throwing ownership handoff used by Application. */
+    public final __k_adoptOutput(output: OutputStream<T>!) {
+        _ownedOut = output;
+    }
 
     // ── OutputStream implementation (all delegated) ──────────────────────
 
@@ -124,9 +150,3 @@ public:
 }
 
 } // namespace io
-
-
-
-
-
-

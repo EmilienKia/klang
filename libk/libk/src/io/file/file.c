@@ -143,7 +143,12 @@ int32_t __k_io_file_fwrite(void* fp, const uint8_t* buf, int32_t len) {
 
 int __k_io_file_fflush(void* fp) {
     if (!fp) return -1;
+    errno = 0;
     return fflush((FILE*)fp);
+}
+
+int __k_io_file_errno(void) {
+    return errno;
 }
 
 /* ── FileDescriptor helpers ─────────────────────────────────────────────── */
@@ -384,5 +389,3 @@ int __k_io_fs_closedir(void* dir) {
     if (!dir) return -1;
     return closedir((DIR*)dir);
 }
-
-

@@ -49,7 +49,10 @@ public:
     }
 
     ~BufferedReader() {
-        close();
+        if (_cbuf != null) {
+            delete _cbuf;
+            _cbuf = null;
+        }
     }
 
     /**

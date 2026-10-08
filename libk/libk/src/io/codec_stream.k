@@ -167,7 +167,8 @@ public:
  * Base codec input stream decorator.
  *
  * Reads raw or encoded bytes from an underlying InputStream and passes them
- * through a Codec to produce transformed output.
+ * through a Codec to produce transformed output. The input is borrowed;
+ * destroying this wrapper releases only its internal buffer.
  */
 public class CodecInputStream : public FilterInputStream<byte> {
 protected:
@@ -191,7 +192,6 @@ public:
     }
 
     ~CodecInputStream() {
-        close();
         if (_tmpBuf != null) {
             delete _tmpBuf;
             _tmpBuf = null;
@@ -293,7 +293,8 @@ public:
  * Base codec output stream decorator.
  *
  * Encodes or decodes data written through it via a Codec before forwarding
- * to the underlying OutputStream.
+ * to the underlying OutputStream. The output is borrowed; destroying this
+ * wrapper releases only its internal buffer.
  */
 public class CodecOutputStream : public FilterOutputStream<byte> {
 protected:
@@ -327,7 +328,6 @@ public:
     }
 
     ~CodecOutputStream() {
-        close();
         if (_drainBuf != null) {
             delete _drainBuf;
             _drainBuf = null;

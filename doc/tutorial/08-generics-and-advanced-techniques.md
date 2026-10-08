@@ -20,7 +20,7 @@ larger(left : T&, right : T&) : T& {
 main() : int {
     first : int = 7;
     second : int = 11;
-    k::io::stdout.println(larger(first, second));
+    k::io::stdout().println(larger(first, second));
     return 0;
 }
 ```

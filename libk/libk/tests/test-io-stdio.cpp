@@ -26,6 +26,7 @@
 #include "helpers.hpp"
 #include <cstdio>
 #include <filesystem>
+#include <string>
 #include <unistd.h>
 
 // compile_text is defined in klang-test-helpers but not declared in the header.
@@ -44,10 +45,10 @@ namespace {
 k::tools::exec_result compile_and_run(const std::string_view& src,
                                        const std::optional<std::string>& stdin_data = std::nullopt)
 {
-    char out_file[] = "/tmp/klang_stdio_test_XXXXXX";
-    int fd = ::mkstemp(out_file);
-    REQUIRE(fd != -1);
-    ::close(fd);
+    static unsigned int serial = 0;
+    std::string out_file = (std::filesystem::current_path() /
+        ("klang_stdio_test_" + std::to_string(::getpid()) + "_" +
+         std::to_string(serial++))).string();
 
     bool ok = compile_text(src, out_file);
     if (!ok) {
@@ -72,8 +73,8 @@ TEST_CASE("stdio: println writes to stdout and stderr", "[libk][io][stdio]") {
     auto res = compile_and_run(R"SRC(
         module __stdio_println__;
         main() : int {
-            k::io::stdout.println("hello stdout");
-            k::io::stderr.println("hello stderr");
+            k::io::stdout().println("hello stdout");
+            k::io::stderr().println("hello stderr");
             return 0;
         }
     )SRC");
@@ -94,12 +95,12 @@ TEST_CASE("stdio: read stdin and echo to stdout", "[libk][io][stdio]") {
         module __stdio_echo__;
         main() : int {
             buf : byte[1];
-            n : int = (int) k::io::stdin.read(buf, 0, 1).getResultOr((unsigned int) 0);
+            n : int = (int) k::io::stdin().read(buf, 0, 1).getResultOr((unsigned int) 0);
             while (n > 0) {
-                k::io::stdout.write((int) buf[0]);
-                n = (int) k::io::stdin.read(buf, 0, 1).getResultOr((unsigned int) 0);
+                k::io::stdoutBytes().write(buf[0]);
+                n = (int) k::io::stdin().read(buf, 0, 1).getResultOr((unsigned int) 0);
             }
-            k::io::stdout.flush();
+            k::io::stdout().flush();
             return 0;
         }
     )SRC", "ABCDE");
@@ -120,15 +121,15 @@ TEST_CASE("stdio: read stdin, write stdout and stderr", "[libk][io][stdio]") {
     auto res = compile_and_run(R"SRC(
         module __stdio_rw__;
         main() : int {
-            k::io::stderr.print("start ");
+            k::io::stderr().print("start ");
             buf : byte[1];
-            n : int = (int) k::io::stdin.read(buf, 0, 1).getResultOr((unsigned int) 0);
+            n : int = (int) k::io::stdin().read(buf, 0, 1).getResultOr((unsigned int) 0);
             while (n > 0) {
-                k::io::stdout.write((int) buf[0]);
-                n = (int) k::io::stdin.read(buf, 0, 1).getResultOr((unsigned int) 0);
+                k::io::stdoutBytes().write(buf[0]);
+                n = (int) k::io::stdin().read(buf, 0, 1).getResultOr((unsigned int) 0);
             }
-            k::io::stdout.flush();
-            k::io::stderr.println("done");
+            k::io::stdout().flush();
+            k::io::stderr().println("done");
             return 0;
         }
     )SRC", "XYZ");
@@ -138,6 +139,5 @@ TEST_CASE("stdio: read stdin, write stdout and stderr", "[libk][io][stdio]") {
     CHECK(res.out == "XYZ\n");
     CHECK(res.err == "start done\n");
 }
-
 
 

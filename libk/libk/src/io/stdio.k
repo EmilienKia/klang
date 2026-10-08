@@ -18,72 +18,68 @@
 
 module k;
 
-/**
- * Provide access to the process standard I/O streams.
- *
- * This namespace exposes public references bound to the standard C streams:
- * `stdin`, `stdout`, and `stderr`.
- *
- * The underlying stream objects are private library globals created from raw
- * C `FILE*` handles obtained via FFI.
- */
-
 namespace io {
 
-// ── Private backing objects: file streams wrapping libc FILE* ────────────
-private _stdinStream  : file::FileInputStream(file::__k_io_file_get_stdin());
-private _stdoutStream : file::FileOutputStream(file::__k_io_file_get_stdout());
-private _stderrStream : file::FileOutputStream(file::__k_io_file_get_stderr());
+private _activeApplication() : ::k::Application& {
+    application : OptionalRef<::k::Application> = ::k::Application::getApplication();
+    if (!application.hasValue()) {
+        throw NoActiveApplicationError();
+    }
+    return application.get();
+}
 
-// ── Private backing objects: UTF-8 readers/writers and text printers ────
-private _stdinUtf8Reader     : Utf8Reader(&_stdinStream);
-private _stdinBufferedReader : BufferedReader(&_stdinUtf8Reader);
+/** Borrow the active application's standard input byte stream. */
+public stdinBytes() : InputStream<byte>& {
+    application : ::k::Application& = _activeApplication();
+    return application.stdinBytes();
+}
 
-private _stdoutUtf8Writer   : Utf8Writer(&_stdoutStream);
-private _stdoutTextPrinter  : TextPrinter(&_stdoutUtf8Writer);
+/** Borrow the active application's standard input byte stream. */
+public stdin() : InputStream<byte>& {
+    application : ::k::Application& = _activeApplication();
+    return application.stdin();
+}
 
-private _stderrUtf8Writer   : Utf8Writer(&_stderrStream);
-private _stderrTextPrinter  : TextPrinter(&_stderrUtf8Writer);
+/** Borrow the active application's UTF-8 buffered standard input reader. */
+public stdinReader() : BufferedReader& {
+    application : ::k::Application& = _activeApplication();
+    return application.stdinReader();
+}
 
-private _stdoutPrint : PrintStream(&_stdoutStream);
-private _stderrPrint : PrintStream(&_stderrStream);
+/** Borrow the active application's standard output byte stream. */
+public stdoutBytes() : OutputStream<byte>& {
+    application : ::k::Application& = _activeApplication();
+    return application.stdoutBytes();
+}
 
-/**
- * Read raw bytes from the process standard input stream.
- */
-public stdinBytes  : InputStream<byte>& = _stdinStream;
-/**
- * Write raw bytes to the process standard output stream.
- */
-public stdoutBytes : OutputStream<byte>& = _stdoutStream;
-/**
- * Write raw bytes to the process standard error stream.
- */
-public stderrBytes : OutputStream<byte>& = _stderrStream;
+/** Borrow the active application's standard error byte stream. */
+public stderrBytes() : OutputStream<byte>& {
+    application : ::k::Application& = _activeApplication();
+    return application.stderrBytes();
+}
 
-/**
- * Read bytes from the process standard input stream.
- */
-public stdin  : InputStream<byte>& = _stdinStream;
+/** Borrow the active application's UTF-8 standard output printer. */
+public stdout() : TextPrinter& {
+    application : ::k::Application& = _activeApplication();
+    return application.stdout();
+}
 
-/**
- * Read buffered Unicode text from the process standard input stream (UTF-8).
- */
-public stdinReader : BufferedReader& = _stdinBufferedReader;
+/** Borrow the active application's UTF-8 standard error printer. */
+public stderr() : TextPrinter& {
+    application : ::k::Application& = _activeApplication();
+    return application.stderr();
+}
 
-/**
- * Write formatted text to the process standard output stream.
- */
-public stdout : TextPrinter& = _stdoutTextPrinter;
-/**
- * Write formatted text to the process standard error stream.
- */
-public stderr : TextPrinter& = _stderrTextPrinter;
+/** Borrow the active application's legacy byte-oriented standard output printer. */
+public stdoutPrint() : PrintStream& {
+    application : ::k::Application& = _activeApplication();
+    return application.stdoutPrint();
+}
 
-/**
- * Legacy PrintStream wrappers.
- */
-public stdoutPrint : PrintStream& = _stdoutPrint;
-public stderrPrint : PrintStream& = _stderrPrint;
+/** Borrow the active application's legacy byte-oriented standard error printer. */
+public stderrPrint() : PrintStream& {
+    application : ::k::Application& = _activeApplication();
+    return application.stderrPrint();
+}
 
 } // namespace io

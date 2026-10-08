@@ -15,6 +15,7 @@ applicationProbeStatus() : int {
 public class ApplicationProbe : modreg::Plugin {
     public ApplicationProbe() : Plugin(applicationProbeStatus()) {
         modreg::registerPlugin(this);
+        k::io::stdout().print("P");
     }
 }
 

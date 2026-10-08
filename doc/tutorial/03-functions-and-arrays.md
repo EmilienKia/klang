@@ -13,7 +13,7 @@ clamp(value : int, low : int, high : int) : int {
 }
 
 main() : int {
-    k::io::stdout.println(clamp(120, 0, 100));
+    k::io::stdout().println(clamp(120, 0, 100));
     return 0;
 }
 ```

@@ -40,7 +40,7 @@ import geometry;
 
 main() : int {
     result : int = geometry::squareArea(9);
-    k::io::stdout.println(result);
+    k::io::stdout().println(result);
     return 0;
 }
 ```

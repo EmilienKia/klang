@@ -16,6 +16,16 @@ Application`, and multi-level application entry-point chains).
 ```k
 public abstract class Application : public Object {
     public static getApplication() : OptionalRef<Application>;
+    public final stdin() : io::InputStream<byte>&;
+    public final stdinBytes() : io::InputStream<byte>&;
+    public final stdinReader() : io::BufferedReader&;
+    public final stdout() : io::TextPrinter&;
+    public final stderr() : io::TextPrinter&;
+    public final stdoutBytes() : io::OutputStream<byte>&;
+    public final stderrBytes() : io::OutputStream<byte>&;
+    public final stdoutPrint() : io::PrintStream&;
+    public final stderrPrint() : io::PrintStream&;
+    public final flushStandardStreams() : bool;
     public const env() : const EnvironmentMap&;
     public const applicationModule() : Shared<ApplicationModule>;
     public const linkedModules() : Vector<Shared<Module>>;
@@ -23,6 +33,13 @@ public abstract class Application : public Object {
     public loadModule(path: const String&) : Expected<Shared<Module>, LoadModuleError>;
     public lookupModule(path: const String&) : Shared<Module>;
     public modules() : Vector<Shared<Module>>;
+protected:
+    setStandardInput(input: io::InputStream<byte>!);
+    setStandardOutput(output: io::OutputStream<byte>!);
+    setStandardError(output: io::OutputStream<byte>!);
+    final decorateStandardInput(input: io::FilterInputStream<byte>!);
+    final decorateStandardOutput(output: io::FilterOutputStream<byte>!);
+    final decorateStandardError(output: io::FilterOutputStream<byte>!);
 }
 ```
 ---
@@ -50,6 +67,77 @@ if (app.hasValue()) {
     // Use app.get() only within the active main call.
 }
 ```
+
+### Standard streams
+
+Each `Application` owns its standard input/output/error byte roots and their
+UTF-8 and legacy printing adapters. The corresponding namespace functions in
+[`io`](io.md#standard-i-o-streams) borrow the active instance's adapters and
+throw `io::NoActiveApplicationError` when called outside an active entry
+point. Returned references are valid only until that entry point ends.
+
+The instance stream accessors and decoration helpers are final, non-virtual
+methods. Derived constructors may use the instance accessors to borrow the
+current roots and adapters before activation; namespace accessors still require
+an active entry point. Stream configuration and freezing use non-virtual
+installation helpers and cannot be intercepted by overriding these methods.
+
+Derived `Application` constructors may call the protected
+`setStandardInput`, `setStandardOutput`, and `setStandardError` methods to
+transfer ownership of replacement roots. Null roots are rejected with
+`io::StandardStreamConfigurationError`. Replacement adapters are prepared
+before the existing configuration is changed; if preparation fails, the
+existing roots and adapters remain in place. The compiler's entry-point
+activation hook freezes configuration before `main`; later replacement
+attempts throw the same error. Output adapters are flushed before the active
+application is withdrawn on normal and exceptional `main` exit. A flush
+failure is reported to native standard error; it changes a successful `main`
+result to status 1.
+During exceptional exit, flush errors are reported without replacing the
+original exception. Teardown destroys adapters before their roots and does not
+flush them a second time.
+
+An application may instead call `decorateStandardInput`,
+`decorateStandardOutput`, or `decorateStandardError` with a
+`FilterInputStream<byte>` or `FilterOutputStream<byte>` (or a derived class)
+constructed over the current root. These helpers preserve the existing standard-stream adapters'
+behavior while routing operations through the decorator. The helper validates
+that the decorator wraps the current root. It prepares the replacement
+adapters first; output decoration also flushes the old adapters before
+committing. Only then does the library transfer the previous root into the
+decorator's owned inner-stream slot and install the decorator as the new root.
+The ownership handoff itself does not invoke user callbacks or allocate, so
+teardown keeps the entire decorator chain alive and destroys it from the
+outside in. A failed preparation or flush leaves the previous root and
+adapters installed.
+
+For example, a derived application can wrap standard output to intercept
+writes before forwarding them:
+
+```k
+class PrefixOutput : public io::FilterOutputStream<byte> {
+    public PrefixOutput(output: io::OutputStream<byte>*)
+        : FilterOutputStream(output) {}
+
+    override write(value: byte) : io::OutputStream<byte>& {
+        _out->write((byte) '>');
+        _out->write(value);
+        return this;
+    }
+}
+
+class Application : public k::Application {
+    public Application() {
+        decorateStandardOutput(
+            new PrefixOutput((io::OutputStream<byte>*)&*_stdout));
+    }
+}
+```
+
+The default roots borrow libc `stdin`, `stdout`, and `stderr`. Closing or
+destroying their adapters detaches the stream objects without closing the
+native handles. `FileInputStream(path)` and `FileOutputStream(path)` continue
+to own and close files opened from paths.
 
 ### `env() : const EnvironmentMap&`
 Return a read-only view of the process environment variables.

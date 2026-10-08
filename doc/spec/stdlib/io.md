@@ -316,7 +316,7 @@ class FileInputStream : public InputStream<byte> {
 | Constructor / Method | Description |
 |----------------------|-------------|
 | `FileInputStream(path)` | Open the file at `path` for reading (`"rb"`). |
-| `FileInputStream(fp)` | Wrap an existing `CFile*` handle. The stream does **not** take ownership — the caller must keep the handle valid. Used internally to wrap libc `stdin`. |
+| `FileInputStream(fp)` | Borrow an existing `CFile*` handle. Closing the stream detaches it without closing the native handle; path constructors continue to own and close the file they open. |
 | `isOpen() : bool` | Return `true` if the underlying file was opened successfully. |
 | `getFD() : FileDescriptor` | Return a `FileDescriptor` for the OS-level file descriptor. |
 
@@ -333,6 +333,7 @@ class FileOutputStream : public OutputStream<byte> {
     FileOutputStream(fp: CFile*);
 
     isOpen() : bool;
+    flush() : OutputStream<byte>&;
     getFD() : FileDescriptor;
 }
 ```
@@ -341,18 +342,21 @@ class FileOutputStream : public OutputStream<byte> {
 |----------------------|-------------|
 | `FileOutputStream(path)` | Open the file at `path` for writing (`"wb"`). |
 | `FileOutputStream(path, append)` | Open the file for writing; if `append` is `true`, use append mode (`"ab"`). |
-| `FileOutputStream(fp)` | Wrap an existing `CFile*` handle. The stream does **not** take ownership — the caller must keep the handle valid. Used internally to wrap libc `stdout`/`stderr`. |
+| `FileOutputStream(fp)` | Borrow an existing `CFile*` handle. Closing flushes and detaches it without closing the native handle; path constructors continue to own and close the file they open. |
 | `isOpen() : bool` | Return `true` if the underlying file was opened successfully. |
 | `getFD() : FileDescriptor` | Return a `FileDescriptor` for the OS-level file descriptor. |
+| `flush()` | Flush buffered bytes; throw `IOException` if the native flush fails. |
 
 ---
 
 ### FilterInputStream
 
-Wraps an `InputStream<T>` and delegates all calls.  Subclasses override
-specific methods to add behaviour (buffering, data decoding, etc.).
-
-The wrapped stream is held by pointer — the caller retains ownership.
+Wraps an `InputStream<T>` and delegates all calls. Subclasses override
+specific methods to add behaviour (buffering, data decoding, etc.). The
+constructor borrows its wrapped stream; destroying a standalone filter does
+not close that stream. `Application` standard-stream decoration helpers can
+adopt the wrapped root after validating that it is the currently configured
+standard input, keeping the whole chain alive until application teardown.
 
 ```k
 template<typename T>
@@ -367,6 +371,11 @@ class FilterInputStream : public InputStream<T> {
 
 Wraps an `OutputStream<T>` and delegates all calls.  `close()` calls
 `flush()` before closing the underlying stream.
+The constructor borrows its wrapped stream; destroying a standalone filter
+does not close it. `Application` standard-stream decoration helpers can adopt
+the wrapped root after validating that it is the currently configured
+standard output or error stream. Output adapters are prepared and flushed
+before that ownership handoff.
 
 ```k
 template<typename T>
@@ -564,6 +573,9 @@ class LineReader : public FilterReader {
 }
 ```
 
+`BufferedReader` borrows its reader. Destroying the buffer does not close the
+underlying reader; call `close()` explicitly when closing it is intended.
+
 ### TextScanner
 
 Formatted structured text parsing for tokens, booleans, integers (with custom radix), and floating-point numbers:
@@ -685,19 +697,43 @@ class PrintStream : public FilterOutputStream<byte> {
 
 **Source:** `libk/libk/src/io/stdio.k`
 
-Global references provide access to the process standard streams:
+Standard-stream accessors borrow the streams owned by the active
+`Application`. They are available only while its entry point is running;
+calling one when no application is active throws
+`io::NoActiveApplicationError`.
 
-| Reference | Type | Backed by | Description |
-|-----------|------|-----------|-------------|
-| `k::io::stdin` | `InputStream<byte>&` | `FileInputStream` on libc `stdin` | Standard byte input stream. |
-| `k::io::stdinReader` | `BufferedReader&` | UTF-8 `BufferedReader` on `stdin` | Standard buffered character reader. |
-| `k::io::stdout` | `TextPrinter&` | UTF-8 `TextPrinter` on libc `stdout` | Standard text output printer. |
-| `k::io::stderr` | `TextPrinter&` | UTF-8 `TextPrinter` on libc `stderr` | Standard text error printer. |
-| `k::io::stdinBytes` | `InputStream<byte>&` | `FileInputStream` on libc `stdin` | Explicit binary standard input. |
-| `k::io::stdoutBytes` | `OutputStream<byte>&` | `FileOutputStream` on libc `stdout` | Explicit binary standard output. |
-| `k::io::stderrBytes` | `OutputStream<byte>&` | `FileOutputStream` on libc `stderr` | Explicit binary standard error. |
+| Accessor | Type | Description |
+|-----------|------|-------------|
+| `k::io::stdin()` | `InputStream<byte>&` | Standard byte input stream. |
+| `k::io::stdinBytes()` | `InputStream<byte>&` | Explicit binary standard input. |
+| `k::io::stdinReader()` | `BufferedReader&` | UTF-8 buffered standard input. |
+| `k::io::stdout()` | `TextPrinter&` | UTF-8 standard output printer. |
+| `k::io::stderr()` | `TextPrinter&` | UTF-8 standard error printer. |
+| `k::io::stdoutBytes()` | `OutputStream<byte>&` | Explicit binary standard output. |
+| `k::io::stderrBytes()` | `OutputStream<byte>&` | Explicit binary standard error. |
+| `k::io::stdoutPrint()` | `PrintStream&` | Legacy byte-oriented standard output printer. |
+| `k::io::stderrPrint()` | `PrintStream&` | Legacy byte-oriented standard error printer. |
 
-The backing objects are **private** to the library.
+These are functions, not global stream objects. The returned references are
+borrowed and remain valid only for the active application's lifetime. Use the
+parentheses at call sites (`io::stdout().println(...)`). The byte and text
+accessors for one direction share the same configured root; mixing buffered
+text input and raw-byte input can therefore observe bytes already held in the
+text reader's buffer.
+
+Each `Application` owns its standard byte roots and their text/legacy
+adapters. Derived application constructors may replace the input or output
+root through protected `setStandardInput`, `setStandardOutput`, and
+`setStandardError` methods. These methods transfer ownership, reject null,
+and are frozen by entry-point activation; attempts to change a stream from
+`main` throw `io::StandardStreamConfigurationError`. Construct a complete
+replacement before installing it, and use an owning decorator when a chain
+must retain its previous root.
+
+The default roots borrow libc `stdin`, `stdout`, and `stderr`. Closing or
+destroying an application detaches those adapters (and flushes output) without
+closing the process's native handles. `FileInputStream(path)` and
+`FileOutputStream(path)` continue to own and close files they open.
 
 ### Usage
 
@@ -706,14 +742,14 @@ module myapp;
 
 main() : int {
     // Write to standard output
-    k::io::stdout.println("Hello, world!");
-    k::io::stdout.print("value = ").println(42);
+    k::io::stdout().println("Hello, world!");
+    k::io::stdout().print("value = ").println(42);
 
     // Write to standard error
-    k::io::stderr.println("An error occurred");
+    k::io::stderr().println("An error occurred");
 
     // Read a byte from standard input
-    b : Optional<byte> = k::io::stdin.read();
+    b : Optional<byte> = k::io::stdin().read();
     return 0;
 }
 ```
@@ -759,23 +795,18 @@ standard error:
 module echo;
 
 main() : int {
-    k::io::stdout.print("Enter text: ");
-    k::io::stdout.flush();
+    k::io::stdout().print("Enter text: ");
+    k::io::stdout().flush();
 
-    b : Optional<byte> = k::io::stdin.read();
+    b : Optional<byte> = k::io::stdin().read();
     while (b.hasValue()) {
-        k::io::stdout.write(b.get());
-        k::io::stderr.write(b.get());
-        b = k::io::stdin.read();
+        k::io::stdoutBytes().write(b.get());
+        k::io::stderrBytes().write(b.get());
+        b = k::io::stdin().read();
     }
 
-    k::io::stdout.println();
+    k::io::stdout().println();
     return 0;
 }
 ```
-
-
-
-
-
 

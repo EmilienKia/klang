@@ -46,15 +46,27 @@
 /* Extern declaration for the C environ array. */
 extern char** environ;
 
+void __k_application_report_stream_flush_error(int stream, int error) {
+    const char* name = stream == 0 ? "stdout" : "stderr";
+    if (error != 0) {
+        fprintf(stderr, "K: failed to flush standard %s: %s (errno %d)\n",
+                name, strerror(error), error);
+    } else {
+        fprintf(stderr, "K: failed to flush standard %s\n", name);
+    }
+    fflush(stderr);
+}
+
 typedef struct {
     uint32_t abi_version;
     uint32_t struct_size;
     _Atomic(void*) active_application;
+    _Atomic(void*) frozen_stream_application;
     _Atomic(uint32_t) active_jit_host_count;
 } KApplicationAnchorV1;
 
 enum {
-    K_APPLICATION_ABI_VERSION = 1,
+    K_APPLICATION_ABI_VERSION = 2,
     K_APPLICATION_OK = 0,
     K_APPLICATION_NO_PROVIDER = 1,
     K_APPLICATION_INCOMPATIBLE_PROVIDER = 2,
@@ -71,6 +83,7 @@ static KApplicationAnchorV1 k_application_runtime_anchor = {
     .abi_version = K_APPLICATION_ABI_VERSION,
     .struct_size = sizeof(KApplicationAnchorV1),
     .active_application = ATOMIC_VAR_INIT(NULL),
+    .frozen_stream_application = ATOMIC_VAR_INIT(NULL),
     .active_jit_host_count = ATOMIC_VAR_INIT(0)
 };
 
@@ -308,7 +321,27 @@ int __k_application_activate(void* application) {
             memory_order_release, memory_order_acquire)) {
         return K_APPLICATION_ALREADY_ACTIVE;
     }
+    atomic_store_explicit(&anchor->frozen_stream_application, application, memory_order_release);
     return K_APPLICATION_OK;
+}
+
+void __k_application_begin_stream_configuration(void* application) {
+    if (!application) return;
+    int status = K_APPLICATION_OK;
+    KApplicationAnchorV1* anchor = resolve_application_anchor(&status, 1);
+    if (!anchor) return;
+    void* expected = application;
+    atomic_compare_exchange_strong_explicit(&anchor->frozen_stream_application, &expected, NULL,
+        memory_order_acq_rel, memory_order_acquire);
+}
+
+int __k_application_standard_streams_frozen(void* application) {
+    if (!application) return 0;
+    int status = K_APPLICATION_OK;
+    KApplicationAnchorV1* anchor = resolve_application_anchor(&status, 1);
+    if (!anchor) return 0;
+    return atomic_load_explicit(&anchor->frozen_stream_application, memory_order_acquire) ==
+        application;
 }
 
 int __k_application_deactivate(void* application) {
