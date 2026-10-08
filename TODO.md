@@ -113,6 +113,21 @@
       Producer/consumer and ListMap regressions cover nested return identities.
       The full associative suite passes: 43 cases and 129 assertions.
 
+- [x] **Imported `Shared` member templates were re-exported from concrete hosts.**
+      The initial full module run reproduced four `00502: Undefined symbol
+      '_block'` failures at `test-module.cpp:167`, `:428`, `:785`, and `:898`.
+      The generated KDI separately emitted member-template recipes hosted by
+      concrete instantiations such as `k::Shared__k_NModule`; re-materializing
+      those methods against an imported aggregate stub lost the host's private
+      layout and friend context. `kdi_exporter` now leaves member templates in
+      their template aggregate's source/signature and emits standalone hosted
+      method recipes only for non-template, non-instantiated aggregates. This
+      preserves private access without adding private fields to public KDI
+      layout. The focused imported-template regression and the original
+      `Application::applicationModule` reproducer pass. The full module
+      executable now has 19/20 passing cases; its remaining, unrelated
+      `Thread.join()` checked-exception failure is tracked below.
+
 - [ ] **Specialized `Expected` static factories reject matching values.**
       In `libk/libk/src/application.k`, calling
       `Expected<Shared<Module>, LoadModuleError>::unexpected(failure)` where

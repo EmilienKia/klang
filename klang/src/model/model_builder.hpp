@@ -203,6 +203,9 @@ protected:
 
 public:
     static void visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit);
+    static void visit_member(k::log::logger& logger, std::shared_ptr<k::model::context> context,
+                             k::parse::ast::function_decl& src, k::model::unit& unit,
+                             std::shared_ptr<aggregate> host, visibility vis);
 
 
 };

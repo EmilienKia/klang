@@ -1462,6 +1462,15 @@ void kdi_builder::visit_function(function& fn) {
 
     // Template definition: export as kdi_template_def, not as a regular function
     if (fn.is_template()) {
+        // A concrete specialization's member templates are already represented
+        // by the primary template recipe. Exporting an instantiated copy
+        // separately would re-home its body onto an imported aggregate stub
+        // without the host's private layout/friend context.
+        if (!_agg_stack.empty()) {
+            auto host = fn.get_owner();
+            if (host && (host->is_template() || host->has_tpl_args())) return;
+        }
+
         // Generic method of an aggregate: signature-only template attached to its host; the
         // single erased synthesis is exported as a regular method of that aggregate.
         if (!_agg_stack.empty() && !_ns_stack.empty() && fn.is_generic() && fn.get_tpl_info()) {
@@ -1474,6 +1483,18 @@ void kdi_builder::visit_function(function& fn) {
             def.aggregate_signature.reset();
             def.function_signature = std::make_shared<kdi::kdi_function>(
                 build_generic_template_function_signature(fn, *fn.get_tpl_info(), def.fq_name));
+            def.host_fq_name = host_fq;
+            _ns_stack.back()->template_defs.push_back(std::move(def));
+            return;
+        }
+        if (!_agg_stack.empty() && !_ns_stack.empty() && fn.get_tpl_info()) {
+            std::string host_fq = _agg_stack.back()->fq_name;
+            if (host_fq.size() >= 2 && host_fq[0] == ':' && host_fq[1] == ':') {
+                host_fq = host_fq.substr(2);
+            }
+            auto def = build_template_def(fn.get_short_name(),
+                                         host_fq + "::" + fn.get_short_name(),
+                                         "function", fn.get_visibility(), *fn.get_tpl_info(), &fn);
             def.host_fq_name = host_fq;
             _ns_stack.back()->template_defs.push_back(std::move(def));
             return;

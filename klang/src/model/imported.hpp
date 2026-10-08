@@ -212,6 +212,7 @@ public:
     make_shared(std::shared_ptr<element> parent, const kdi::kdi_aggregate* kdi_agg);
     void accept(model_visitor& visitor) override;
     bool is_class() const override { return true; }
+    bool is_interface() const override { return true; }
     bool has_vtable() const override { return true; }
     std::shared_ptr<vtable_layout> get_vtable() const override { return _vtable; }
 };
@@ -261,4 +262,3 @@ public:
 } // namespace k::model
 
 #endif // KLANG_IMPORTED_HPP
-

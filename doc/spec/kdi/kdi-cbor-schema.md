@@ -502,7 +502,7 @@ TemplateDef = {
   "visibility"  : text,
   ?"is_generic" : bool,
   ?"origin_module" : text,
-  ?"host_fq_name" : text,     ; generic method: fully-qualified name of the hosting aggregate
+  ?"host_fq_name" : text,     ; member template: fully-qualified name of the hosting aggregate
   "params"      : array[TemplateParam],
   "source"      : text,
   ?"aggregate_signature" : Aggregate,
@@ -512,9 +512,18 @@ TemplateDef = {
 
 Rules:
 
-* `host_fq_name` is set only for a `generic<...>` method of a (non-template) aggregate: the
-  entry then has `entity_kind = "function"`, an empty `source` and a `function_signature`,
-  and its single erased synthesis is exported as a regular method of the host aggregate
+* `host_fq_name` identifies the hosting (non-template) aggregate for a public or
+  protected member template with `entity_kind = "function"`. Classic methods retain
+  their full `source` and are rebuilt in the imported host with their declared visibility.
+  The host's kind remains authoritative for declaration checks (including interface
+  `default` methods). Concrete classic method instances are generated locally in
+  the consumer with mergeable template linkage, not as external library methods.
+  Member templates of a source-backed template aggregate remain in that template's
+  `source`; their concrete specializations are not emitted again as hosted
+  `TemplateDef` entries. Signature-only generic aggregates remain represented by
+  their `aggregate_signature`.
+  A `generic<...>` method instead has an empty `source` and a `function_signature`,
+  and its single erased synthesis is exported as a regular method of the host
   named `<name><generic>`.
 * Classic (non-generic) templates serialize their full `source` (the
   authoritative form used by the compiler to re-parse/re-instantiate the

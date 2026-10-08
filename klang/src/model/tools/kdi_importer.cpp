@@ -1194,10 +1194,8 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                                              const kdi::kdi_namespace& parent_kdi_ns,
                                              std::shared_ptr<context> ctx)
 {
-    // Generic method of an imported aggregate: attach a signature-only template function to
-    // the imported host. Its single erased synthesis is one of the host's exported methods.
+    std::shared_ptr<aggregate> template_host;
     if (!tdef.host_fq_name.empty()) {
-        if (!tdef.function_signature) return;
         std::string host_fq = tdef.host_fq_name;
         if (host_fq.size() >= 2 && host_fq[0] == ':' && host_fq[1] == ':') host_fq = host_fq.substr(2);
         std::vector<std::string> parts;
@@ -1210,19 +1208,25 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         }
         auto host = _unit.get_or_create_imported_aggregate(k::name(false, std::move(parts)), ctx);
         if (!host) return;
+        template_host = host;
 
-        std::unordered_set<std::string> param_names;
-        for (const auto& param : tdef.params) {
-            if (!param.name.empty()) param_names.insert(param.name);
+        // Generic methods link to the host's erased synthesis; classic methods
+        // keep source and are rebuilt directly in the imported host below.
+        if (tdef.source.empty()) {
+            if (!tdef.function_signature) return;
+            std::unordered_set<std::string> param_names;
+            for (const auto& param : tdef.params) {
+                if (!param.name.empty()) param_names.insert(param.name);
+            }
+            ctx->push_template_param_scope(param_names);
+            auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
+            if (auto tpl_fn = host->define_function(tdef.name, tdef.function_signature->is_static)) {
+                tpl_fn->set_tpl_info(std::move(ti));
+                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
+            }
+            ctx->pop_template_param_scope();
+            return;
         }
-        ctx->push_template_param_scope(param_names);
-        auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
-        if (auto tpl_fn = host->define_function(tdef.name, tdef.function_signature->is_static)) {
-            tpl_fn->set_tpl_info(std::move(ti));
-            populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
-        }
-        ctx->pop_template_param_scope();
-        return;
     }
 
     const bool generic_signature_only =
@@ -1340,14 +1344,16 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
     }
 
     // ── 2. Check if a template with this name already exists ────────────────
-    if (auto existing = target_ns->get_aggregate(tdef.name)) {
-        if (existing->is_template()) return;
-    }
-    if (auto existing_fn = target_ns->get_function(tdef.name)) {
-        if (existing_fn->is_template()) return;
-    }
-    if (auto existing_un = target_ns->get_union(tdef.name)) {
-        if (existing_un->is_template()) return;
+    if (!template_host) {
+        if (auto existing = target_ns->get_aggregate(tdef.name)) {
+            if (existing->is_template()) return;
+        }
+        if (auto existing_fn = target_ns->get_function(tdef.name)) {
+            if (existing_fn->is_template()) return;
+        }
+        if (auto existing_un = target_ns->get_union(tdef.name)) {
+            if (existing_un->is_template()) return;
+        }
     }
 
     // ── 3. Parse the template source text ───────────────────────────────────
@@ -1356,7 +1362,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         // declaration matching the parent namespace so model_builder places
         // the template in the correct namespace.
         //
-        // NOTE: this `module <ns>;` trick renames the root namespace and thus
+        // NOTE: this `module <ns>` trick renames the root namespace and thus
         // *flattens* the re-parsed template into the consumer's root namespace.
         // This is intentional for now: imported top-level symbols (including
         // function templates) must be reachable *unqualified* from the consumer
@@ -1370,7 +1376,6 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         } else {
             wrapped_src = tdef.source;
         }
-
         // Store the source in the unit so lexer tokens (string_views into the
         // source buffer) remain valid throughout compilation.
         auto source_text = std::make_unique<std::string>(std::move(wrapped_src));
@@ -1396,9 +1401,21 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         // ── 4. Build the parsed declaration into the model ──────────────────
         //    Save and restore the unit name because model_builder::visit will
         //    set it from the module declaration in the wrapped source.
-        auto saved_name = _unit.get_unit_name();
-        k::model::model_builder::visit(_logger, ctx, *ast_unit, _unit);
-        _unit.set_unit_name(saved_name);
+        if (template_host) {
+            auto fn_decl = std::dynamic_pointer_cast<k::parse::ast::function_decl>(
+                ast_unit->declarations.front());
+            if (!fn_decl || !fn_decl->is_template()) {
+                throw std::runtime_error("stored member template source is not a function template");
+            }
+            k::model::model_builder::visit_member(
+                _logger, ctx, *fn_decl, _unit, template_host,
+                tdef.visibility == "protected" ? PROTECTED : PUBLIC);
+            return;
+        } else {
+            auto saved_name = _unit.get_unit_name();
+            k::model::model_builder::visit(_logger, ctx, *ast_unit, _unit);
+            _unit.set_unit_name(saved_name);
+        }
 
         // ── 5. Tag the re-parsed template with its originating module namespace ──
         //    Imported template definitions are re-homed under the consumer module's

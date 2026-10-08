@@ -67,6 +67,14 @@ namespace k::model {
         visitor.visit_unit(src);
     }
 
+    void model_builder::visit_member(k::log::logger& logger, std::shared_ptr<k::model::context> context,
+                                      k::parse::ast::function_decl& src, k::model::unit& unit,
+                                      std::shared_ptr<aggregate> host, visibility vis) {
+        model_builder visitor(logger, context, unit);
+        stack<struct_context> push(visitor._contexts, std::move(host), vis);
+        visitor.visit_function_decl(src);
+    }
+
     void model_builder::visit_unit(parse::ast::unit &unit) {
         trace("[model_builder::visit_unit] begin");
         _unit.set_ast_unit(unit.shared_as<parse::ast::unit>());
@@ -1498,13 +1506,13 @@ namespace k::model {
             }
             // Check that we are inside a class or interface, not a struct
             if (auto owner_agg = current_context_content<model::aggregate>()) {
-                if (!owner_agg->is_class() && !std::dynamic_pointer_cast<model::interface>(owner_agg)) {
+                if (!owner_agg->is_class() && !owner_agg->is_interface()) {
                     throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_WITH_BODY), func.name,
                         "Abstract function '{}' is only allowed inside a class or interface, not a struct",
                         {func_name});
                 }
                 // Warn if 'abstract' is redundant (inside an interface)
-                if (std::dynamic_pointer_cast<model::interface>(owner_agg)) {
+                if (owner_agg->is_interface()) {
                     warn(static_cast<unsigned int>(k::diag::model_diag::WARN_ABSTRACT_REDUNDANT_ON_IFACE_METHOD), lex::any_lexeme{func.name},
                         "Specifier 'abstract' is redundant on function '{}' inside interface '{}'; interface member functions are implicitly abstract",
                         {func_name, owner_agg->get_short_name()});
@@ -1541,7 +1549,7 @@ namespace k::model {
             }
             // Check that we are inside a class or interface, not a struct or namespace
             if (auto owner_agg = current_context_content<model::aggregate>()) {
-                if (!owner_agg->is_class() && !std::dynamic_pointer_cast<model::interface>(owner_agg)) {
+                if (!owner_agg->is_class() && !owner_agg->is_interface()) {
                     throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_OVERRIDE_ON_STRUCT), func.name,
                         "Specifier 'override' is not allowed on function '{}' inside struct '{}'; 'override' is only valid inside classes and interfaces",
                         {func_name, owner_agg->get_short_name()});
@@ -1560,8 +1568,8 @@ namespace k::model {
         // override it inherit its implementation through the vtable.
         bool func_is_default = lex::keyword::has(func.specifiers, lex::keyword::DEFAULT);
         if (func_is_default) {
-            auto owner_iface = std::dynamic_pointer_cast<model::interface>(current_context_content<model::aggregate>());
-            if (!owner_iface) {
+            auto owner_iface = current_context_content<model::aggregate>();
+            if (!owner_iface || !owner_iface->is_interface()) {
                 throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_OUTSIDE_INTERFACE), func.name,
                     "The 'default' specifier is only allowed on interface member functions; "
                     "function '{}' is not declared inside an interface",
@@ -1605,7 +1613,8 @@ namespace k::model {
         // Implicitly mark member functions inside an interface as abstract
         // (non-static, non-ctor/dtor, non-final, non-default functions that have no body)
         if (!lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT) && !func_is_default) {
-            if (auto owner_iface = std::dynamic_pointer_cast<model::interface>(current_context_content<model::aggregate>())) {
+            if (auto owner_iface = current_context_content<model::aggregate>();
+                owner_iface && owner_iface->is_interface()) {
                 if (!is_static
                     && !func.is_destructor
                     && !std::dynamic_pointer_cast<model::constructor>(function)

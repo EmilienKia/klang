@@ -787,6 +787,11 @@ void declaration_generator::visit_unit(unit &unit) {
                     km ? km->llvm_def : "",
                     km ? km->mangled_name : "");
                 ++method_idx;
+            } else if (auto fn = std::dynamic_pointer_cast<function>(child);
+                       fn && fn->is_instantiation() && !fn->is_external()) {
+                // A classic member recipe belongs to the imported host, but its
+                // concrete body and ODR declaration belong to this compilation.
+                if (!_context->lookup_llvm_function(fn)) fn->accept(*this);
             }
         }
     }
@@ -964,6 +969,12 @@ void implementation_generator::visit_unit(unit &unit) {
     trace("[implementation_generator::visit_unit] begin");
     // Step 1: Visit root namespace to emit all function bodies
     visit_namespace(*_unit.get_root_namespace());
+
+    // Imported hosts are not traversed by the namespace walk. Only their locally
+    // instantiated methods have bodies here; original imported methods stay external.
+    for (const auto& [fq, agg] : unit.get_imported_aggregates()) {
+        if (agg) visit_aggregate(*agg);
+    }
 
     visit_global_constructor_function(_unit.get_global_constructor_function());
     visit_global_destructor_function(_unit.get_global_destructor_function());

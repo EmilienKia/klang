@@ -2122,10 +2122,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             // (also covers qualified calls like Base::method(d))
             auto obj_expr = this_candidate; // first arg is the object
 
-            // For a qualified call targeting a base-class method (e.g. Base::value(d)),
-            // adapt the object expression to the expected 'this' type (upcast Derived→Base).
-            if (is_qualified_call && best.func->is_member() && !best.func->is_static()) {
-                // The implicit 'this' type is ref<OwningClass>.
+            // Adapt the receiver to the selected method's declaring class. This
+            // includes implicit `this` calls to inherited methods, where the
+            // receiver is a reference to the enclosing derived class.
+            if (best.func->is_member() && !best.func->is_static()) {
                 auto owner_st = best.func->parent<aggregate>();
                 if (owner_st) {
                     auto owner_ref_type = owner_st->get_struct_type()

@@ -520,6 +520,12 @@ This enables two cross-module usage patterns:
    The KDI importer re-parses the template source fragment and builds the template in
    the consumer's model, enabling local instantiation.
 
+Public and protected member templates of a non-template aggregate retain their
+declaring host and visibility across import. Their concrete instantiations are
+generated in the consumer, even when the host itself is imported. A `default`
+member template retains its interface context; importing it does not permit
+`default` methods in classes or namespaces.
+
 ### 8.7 Operator Overloading
 
 Template functions may be operator overloads:

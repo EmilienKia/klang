@@ -277,6 +277,18 @@ Rules:
   is exported as a regular `KdiAggregate` (layout, mangled names, methods) whose types use
   `erased_param` for the erased type parameters; importers link against it instead of
   re-instantiating the definition.
+* A public or protected `template<...>` **method** of a (non-template) aggregate is
+  exported as a `KdiTemplateDef` with `entity_kind = "function"` and `host_fq_name`
+  identifying its aggregate. It retains its full `source` and declaration visibility.
+  Importers rebuild the method in that host, not as a namespace-level function,
+  so derived classes can instantiate protected methods without exposing them publicly.
+  Interface hosts retain interface declaration rules, including `default` methods.
+  Concrete classic method instances are generated in the consumer with mergeable
+  template linkage; the host's original imported methods remain external.
+  Member templates of a source-backed template aggregate remain in that template's
+  `source`; their concrete specializations MUST NOT be emitted again as hosted
+  `KdiTemplateDef` entries. Signature-only generic aggregates remain represented by
+  their `aggregate_signature`.
 * A `generic<...>` **method** of a (non-template) aggregate is exported as a `KdiTemplateDef`
   with `entity_kind = "function"`, `host_fq_name` set to the fully-qualified name of the
   hosting aggregate, an empty `source` and a `function_signature`; its single erased

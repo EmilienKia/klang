@@ -155,7 +155,8 @@ struct kdi_template_def {
     /**
      * For a member function template of a (non-template) aggregate: the fully-qualified
      * name of the hosting aggregate (e.g. "app::Registry"). Empty for a namespace-level
-     * template. Only signature-only member templates (generic methods) are exported.
+     * template. Classic member templates carry source; generic methods carry
+     * a signature only and link against the host's erased synthesis.
      */
     std::string host_fq_name;
     std::vector<kdi_template_param> params; ///< template parameter descriptors

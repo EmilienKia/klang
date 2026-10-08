@@ -39,6 +39,45 @@ extern "C" int __k_test_import_template_count(const int* count) {
 
 namespace {
 
+constexpr std::string_view protected_member_template_library = R"K(
+    module protected_member_tpl_lib;
+
+    public class Base {
+    protected:
+        _value : int;
+        template<typename T>
+        assign(value : T) { _value = (int)value; }
+    private:
+        template<typename T>
+        hidden(value : T) { _value = (int)value; }
+    public:
+        Base() : _value(0) {}
+        template<typename T>
+        identity(value : T) : T { return value; }
+    }
+)K";
+
+constexpr std::string_view templated_host_member_template_library = R"K(
+    module templated_host_member_tpl_lib;
+
+    template<typename T>
+    public struct Cell {
+    private:
+        friend Cell;
+        _value : int;
+    public:
+        Cell(value : int) : _value(value) {}
+        template<typename U>
+        sum(other : Cell<U>&) : int { return _value + other._value; }
+    }
+
+    instantiate_library_cells() : int {
+        first : Cell<int>(20);
+        second : Cell<char>(22);
+        return first.sum<char>(second);
+    }
+)K";
+
 constexpr std::string_view private_extern_template_library = R"K(
     module private_extern_tpl_lib;
 
@@ -146,6 +185,331 @@ struct PrivateFriendTemplateImport {
 };
 
 } // namespace
+
+TEST_CASE("import template aggregate — member templates remain in the host source",
+          "[import][template][member-template][private-template-layout][regression]") {
+    auto lib = compile_model(templated_host_member_template_library);
+    REQUIRE(lib);
+
+    k::model::kdi_builder builder(*lib->get_context_for_test());
+    lib->get_unit()->accept(builder);
+    auto file = builder.take();
+    const auto& defs = file.unit.root_ns.template_defs;
+    REQUIRE(defs.size() == 1);
+    CHECK(defs.front().name == "Cell");
+    CHECK(defs.front().host_fq_name.empty());
+    CHECK(std::none_of(defs.begin(), defs.end(), [](const auto& def) {
+        return !def.host_fq_name.empty();
+    }));
+
+    auto path = fs::current_path() / "templated_host_member_template.kdi";
+    REQUIRE(kdi::kdi_write_cbor_file(file, path.string()));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("templated_host_member_tpl_lib", path);
+
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(resolver);
+    comp->parse_source("templated_host_member_tpl_consumer.k", R"K(
+        module templated_host_member_tpl_consumer;
+        import templated_host_member_tpl_lib;
+
+        struct FirstTag {}
+        struct SecondTag {}
+
+        test() : int {
+            first : Cell<FirstTag>(20);
+            second : Cell<SecondTag>(22);
+            return first.sum<SecondTag>(second);
+        }
+    )K", false, false);
+
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 42);
+
+    CHECK(compile_should_fail(R"K(
+        module templated_host_member_tpl_private_access;
+        import templated_host_member_tpl_lib;
+        struct Tag {}
+        test(cell : Cell<Tag>&) : int { return cell._value; }
+    )K", resolver));
+}
+
+TEST_CASE("import member template — non-template hosts export protected and public recipes",
+          "[import][template][member-template][protected-member-template]") {
+    auto lib = compile_model(protected_member_template_library);
+    REQUIRE(lib);
+    k::model::kdi_builder builder(*lib->get_context_for_test());
+    lib->get_unit()->accept(builder);
+    auto file = builder.take();
+    const auto& defs = file.unit.root_ns.template_defs;
+    REQUIRE(defs.size() == 2);
+    for (const auto& def : defs) {
+        CHECK(def.host_fq_name == "protected_member_tpl_lib::Base");
+        CHECK(def.fq_name == "protected_member_tpl_lib::Base::" + def.name);
+        CHECK_FALSE(def.source.empty());
+        REQUIRE(def.function_signature);
+        CHECK_FALSE(def.is_generic);
+        CHECK(def.name != "hidden");
+        CHECK(def.visibility == (def.name == "assign" ? "protected" : "public"));
+    }
+}
+
+TEST_CASE("import member template — inherited protected recipes resolve through all receiver paths",
+          "[import][template][e2e][member-template][protected-member-template]") {
+    auto result = build_exec_with_lib(protected_member_template_library, R"K(
+        module protected_member_tpl_consumer;
+        import protected_member_tpl_lib;
+
+        class Derived : public Base {
+        public:
+            Derived() { assign(11); }
+            unqualified() : int {
+                assign(12);
+                return _value;
+            }
+            direct() : int {
+                this.assign<int>(13);
+                return _value;
+            }
+            qualified() : int {
+                Base::assign<int>(14);
+                return _value;
+            }
+            value() : int { return _value; }
+        }
+
+        main() : int {
+            obj : Derived;
+            if (obj.value() != 11) return 1;
+            if (obj.unqualified() != 12) return 2;
+            if (obj.direct() != 13) return 3;
+            if (obj.qualified() != 14) return 4;
+            if (obj.identity<int>(42) != 42) return 5;
+            return 0;
+        }
+    )K");
+    INFO("stdout: " << result.out);
+    INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("import member template — protected recipes remain inaccessible outside the host hierarchy",
+          "[import][template][member-template][protected-member-template][error]") {
+    auto lib = compile_model(protected_member_template_library);
+    REQUIRE(lib);
+    k::model::kdi_builder builder(*lib->get_context_for_test());
+    lib->get_unit()->accept(builder);
+    auto path = fs::current_path() / "protected_member_template_negative.kdi";
+    REQUIRE(kdi::kdi_write_cbor_file(builder.take(), path.string()));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("protected_member_tpl_lib", path);
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(resolver);
+    CHECK_THROWS(comp->parse_source("protected_member_tpl_bad.k", R"K(
+        module protected_member_tpl_bad;
+        import protected_member_tpl_lib;
+        test(base : Base&) { base.assign<int>(42); }
+    )K", false, false));
+}
+
+TEST_CASE("import member template — inherited protected owner setter transfers derived ownership",
+          "[import][template][e2e][member-template][protected-member-template][owner]") {
+    auto result = build_exec_with_lib(R"K(
+        module protected_owner_tpl_lib;
+        public class Payload {
+            public value() : int { return 7; }
+        }
+        public class Owner {
+        protected:
+            _owned : Payload!;
+            template<typename T>
+            adopt(value : T!) {
+                if (_owned != null) { delete _owned; }
+                _owned = value;
+            }
+        public:
+            Owner() {}
+            ~Owner() { if (_owned != null) { delete _owned; } }
+            value() : int { return _owned->value(); }
+        }
+    )K", R"K(
+        module protected_owner_tpl_consumer;
+        import protected_owner_tpl_lib;
+        class DerivedPayload : public Payload {
+            public override value() : int { return 42; }
+        }
+        class DerivedOwner : public Owner {
+            public DerivedOwner() { adopt(new DerivedPayload()); }
+            public replace() { adopt(new DerivedPayload()); }
+        }
+        main() : int {
+            owner : DerivedOwner;
+            k::io::stdout().println(owner.value());
+            if (owner.value() != 42) return 1;
+            owner.replace();
+            if (owner.value() != 42) return 2;
+            return 0;
+        }
+    )K");
+    INFO("stdout: " << result.out);
+    INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("import member template — protected recipes resolve namespaced stream owner locals",
+          "[import][template][e2e][member-template][protected-member-template][owner][stream-owner]") {
+    auto result = build_exec_with_lib(R"K(
+        module protected_stream_tpl_lib;
+        namespace io {
+            template<typename E>
+            public interface Stream {
+                public value() : E;
+            }
+            public class Borrower {
+                private _stream : Stream<byte>*;
+                public Borrower(stream : Stream<byte>*) : _stream(stream) {}
+                public Borrower(value : int) : _stream(null) {}
+                public rebind(stream : Stream<byte>*) { _stream = stream; }
+                public rebind(value : int) { _stream = null; }
+                public value() : byte { return _stream->value(); }
+            }
+        }
+        public class Owner {
+        protected:
+            _owned : io::Stream<byte>!;
+            _adapter : io::Borrower!;
+            template<typename T>
+            adopt(value : T!) {
+                if (_adapter != null) { delete _adapter; }
+                if (_owned != null) { delete _owned; }
+                ownedRoot : io::Stream<byte>! = value;
+                _adapter = new io::Borrower(&*ownedRoot);
+                root : io::Stream<byte>* = &*ownedRoot;
+                _adapter->rebind(root);
+                _adapter->rebind(&*ownedRoot);
+                _owned = ownedRoot;
+            }
+        public:
+            Owner() {}
+            ~Owner() {
+                if (_adapter != null) { delete _adapter; }
+                if (_owned != null) { delete _owned; }
+            }
+            value() : byte { return _adapter->value(); }
+            const borrowedValue() : byte {
+                reader : io::Borrower(_owned);
+                return reader.value();
+            }
+        }
+    )K", R"K(
+        module protected_stream_tpl_consumer;
+        import protected_stream_tpl_lib;
+        class FixtureStream : public protected_stream_tpl_lib::io::Stream<byte> {
+            private _destroyed : int*;
+            public FixtureStream(destroyed : int*) : _destroyed(destroyed) {}
+            public ~FixtureStream() { ++*_destroyed; }
+            public override value() : byte { return (byte)42; }
+        }
+        class DerivedOwner : public Owner {
+            public DerivedOwner(destroyed : int*) { adopt(new FixtureStream(destroyed)); }
+            public replace(destroyed : int*) { adopt(new FixtureStream(destroyed)); }
+        }
+        main() : int {
+            destroyed : int = 0;
+            {
+                owner : DerivedOwner(&destroyed);
+                if ((int)owner.value() != 42 || destroyed != 0) return 1;
+                if ((int)owner.borrowedValue() != 42 || destroyed != 0) return 4;
+                owner.replace(&destroyed);
+                if ((int)owner.value() != 42 || destroyed != 1) return 2;
+                if ((int)owner.borrowedValue() != 42 || destroyed != 1) return 5;
+            }
+            if (destroyed != 2) return 3;
+            return 0;
+        }
+    )K");
+    INFO("stdout: " << result.out);
+    INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("import member template — default recipes retain their interface host",
+          "[import][template][e2e][member-template][default-member-template]") {
+    auto result = build_exec_with_lib(R"K(
+        module default_member_tpl_lib;
+        public interface Mapper {
+            template<typename T>
+            public default identity(value : T) : T { return value; }
+            public default seed() : int { return 7; }
+        }
+    )K", R"K(
+        module default_member_tpl_consumer;
+        import default_member_tpl_lib;
+        class ConcreteMapper : public Mapper {
+            public ConcreteMapper() {}
+        }
+        main() : int {
+            mapper : ConcreteMapper;
+            if (mapper.identity<int>(42) != 42) return 1;
+            if (mapper.identity(7) != mapper.seed()) return 2;
+            return 0;
+        }
+    )K");
+    INFO("stdout: " << result.out);
+    INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("import member template — default remains invalid on class recipes",
+          "[import][template][member-template][default-member-template][error]") {
+    auto lib = compile_model(R"K(
+        module class_default_member_tpl_lib;
+        public class Mapper {
+            template<typename T>
+            public identity(value : T) : T { return value; }
+        }
+    )K");
+    REQUIRE(lib);
+    k::model::kdi_builder builder(*lib->get_context_for_test());
+    lib->get_unit()->accept(builder);
+    auto file = builder.take();
+    REQUIRE(file.unit.root_ns.template_defs.size() == 1);
+    file.unit.root_ns.template_defs.front().source = R"K(
+        template<typename T>
+        public default identity(value : T) : T { return value; }
+    )K";
+    auto path = fs::current_path() / "class_default_member_template_negative.kdi";
+    REQUIRE(kdi::kdi_write_cbor_file(file, path.string()));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("class_default_member_tpl_lib", path);
+    test_logger logger;
+    CHECK_FALSE(compile_collect_diagnostics(R"K(
+        module class_default_member_tpl_consumer;
+        import class_default_member_tpl_lib;
+        test(mapper : Mapper&) : int { return mapper.identity<int>(42); }
+    )K", resolver, logger));
+    CHECK(std::any_of(logger.diagnostics.begin(), logger.diagnostics.end(),
+        [](const k::log::diagnostic& diagnostic) {
+            return diagnostic.message.find("No viable overload found for")
+                != std::string::npos;
+        }));
+}
 
 TEST_CASE("import template — private static externs retain raw C linkage in consumer instantiations",
           "[import][template][consumer-inst][ffi][template-extern]") {
