@@ -1319,6 +1319,7 @@ bool aggregate::is_derived_from(const std::shared_ptr<aggregate>& base_st) const
         auto sta = a->get_struct_type();
         auto stb = b->get_struct_type();
         if (sta && stb && sta == stb) return true;
+        if (!a->get_fq_name().empty() && a->get_fq_name() == b->get_fq_name()) return true;
         if (!a->get_mangled_name().empty() && a->get_mangled_name() == b->get_mangled_name()) return true;
         return false;
     };

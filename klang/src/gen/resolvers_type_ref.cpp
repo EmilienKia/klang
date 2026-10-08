@@ -2419,7 +2419,12 @@ type_reference_resolver::cast_weight
  *   7. Enum, struct, primitive conversions.
  */
 type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& expr, const std::shared_ptr<k::model::type>& tgt) {
-    if (!expr || !type::is_resolved(tgt) || !type::is_resolved(expr->get_type())) {
+    // Template instantiations can be semantically complete before their LLVM
+    // layout is materialized. Score them by the same criterion as adapt_type.
+    const auto type_is_usable = [](const std::shared_ptr<type>& t) {
+        return t && (type::is_resolved(t) || !type::contains_unresolved(t));
+    };
+    if (!expr || !type_is_usable(tgt) || !type_is_usable(expr->get_type())) {
         return CAST_IMPOSSIBLE;
     }
 
@@ -2579,7 +2584,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto tgt_sub = tgt_nc->get_subtype();
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
                 // const T* <- T*: allowed (widening), T* <- const T*: forbidden
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
@@ -2611,7 +2616,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         if (type::is_reference(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
             auto src_sub_nc = type::remove_const(type_src->get_subtype());
-            if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
         }
         return CAST_IMPOSSIBLE;
@@ -2624,7 +2629,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto tgt_sub = tgt_nc->get_subtype();
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
@@ -2650,7 +2655,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         if (type::is_reference(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
             auto src_sub_nc = type::remove_const(type_src->get_subtype());
-            if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
         }
         return CAST_IMPOSSIBLE;
@@ -2663,7 +2668,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto tgt_sub = tgt_nc->get_subtype();
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc == tgt_sub_nc) {
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
@@ -2689,7 +2694,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         if (type::is_reference(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
             auto src_sub_nc = type::remove_const(type_src->get_subtype());
-            if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc) ||
+                types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
         }
         return CAST_IMPOSSIBLE;
@@ -2706,7 +2712,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         if (type::is_owner(tgt_nc)) {
             auto tgt_sub = tgt_nc->get_subtype();
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc == tgt_sub_nc) {
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
             // Upcast: owner<Derived> → owner<Base>
@@ -2732,7 +2738,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             // owner<T> as an observer pointer: address is borrowed, no ownership change
             auto tgt_sub = tgt_nc->get_subtype();
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
                 return CAST_WIDENING;
             }
             // Upcast observer: owner<Derived> → ptr<Base>
@@ -2747,13 +2753,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         // owner<T> → lnk<T> / view<T>: borrow as link or view
         if (type::is_link(tgt_nc) || type::is_view(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
-            if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
         }
         // owner<T> → ref<T>: borrow owned object as reference
         if (type::is_reference(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
-            if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
         }
         return CAST_IMPOSSIBLE;
@@ -2841,7 +2847,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto own_sub_nc = type::remove_const(own_sub);
             if (type::is_pointer(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
-                if (own_sub_nc == tgt_sub_nc || types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
+                if (same_conversion_type(own_sub_nc, tgt_sub_nc) ||
+                    types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
                 auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
                 auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
@@ -2866,13 +2873,15 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             // ref<owner<T>> → lnk<T> / view<T>: load owner, borrow as link or view
             if (type::is_link(tgt_nc) || type::is_view(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
-                if (own_sub_nc == tgt_sub_nc || types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
+                if (same_conversion_type(own_sub_nc, tgt_sub_nc) ||
+                    types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
             }
             // ref<owner<T>> → ref<T>: load owner pointer value, borrow as reference
             if (type::is_reference(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
-                if (own_sub_nc == tgt_sub_nc || types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
+                if (same_conversion_type(own_sub_nc, tgt_sub_nc) ||
+                    types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
             }
         }
@@ -2889,7 +2898,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 auto tgt_sub = tgt_nc->get_subtype();
                 auto src_sub_nc = type::remove_const(src_sub);
                 auto tgt_sub_nc = type::remove_const(tgt_sub);
-                if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
+                if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
                     if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                     return CAST_REF_CONV;
                 }
@@ -2909,7 +2918,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             if (type::is_reference(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
                 auto src_sub_nc = type::remove_const(inner->get_subtype());
-                if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
+                if (same_conversion_type(src_sub_nc, tgt_sub_nc) ||
+                    types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
             }
         }
@@ -2919,19 +2929,19 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             // ref<drain<T>> → drain<T>: load the stored drain
             if (type::is_drain(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
-                if (drn_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+                if (same_conversion_type(drn_sub_nc, tgt_sub_nc)) return CAST_REF_CONV;
             }
             // ref<drain<T>> → ref<T>: load drain, use as ref
             if (type::is_reference(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
-                if (drn_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+                if (same_conversion_type(drn_sub_nc, tgt_sub_nc)) return CAST_REF_CONV;
             }
             // ref<drain<T>> → T: load drain, load value
             if (drn_sub_nc == tgt_nc) return CAST_REF_CONV;
             // ref<drain<T>> → link<T>, view<T>, ptr<T>: load drain, borrow
             if (type::is_link(tgt_nc) || type::is_view(tgt_nc) || type::is_pointer(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
-                if (drn_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+                if (same_conversion_type(drn_sub_nc, tgt_sub_nc)) return CAST_REF_CONV;
             }
             // ref<drain<T>> → different primitive: load + cast
             auto prim_drn = std::dynamic_pointer_cast<primitive_type>(drn_sub_nc);

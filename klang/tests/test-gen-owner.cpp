@@ -90,6 +90,99 @@ TEST_CASE("Parse owner type specifier '!'", "[parser][owner]") {
 // Symbol name convention: _KFN<namelen><funcname><modulelen><module>Ev
 // ─────────────────────────────────────────────────────────────────────────────
 
+TEST_CASE("explicit owner upcast arguments transfer the original source slot",
+          "[gen][owner][owner-cast][cast][class][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module owner_cast_args;
+
+        trace : int = 0;
+        destroyedValue : int = 0;
+        class Padding {
+            public padding : long = 123;
+        }
+        class Base {
+            public baseValue : int = 37;
+            ~Base() { trace = trace * 10 + 1; }
+            read() : int { return baseValue; }
+        }
+        class Derived : public Padding, public Base {
+            public derivedValue : int = 19;
+            ~Derived() {
+                destroyedValue = derivedValue;
+                trace = trace * 10 + 2;
+            }
+            override read() : int { return baseValue; }
+        }
+        struct Holder {
+            value : Base!;
+            store(incoming : Base!) : void { value = incoming; }
+        }
+        struct Source {
+            value : Derived!;
+        }
+
+        test(kind : int) : int {
+            trace = 0;
+            destroyedValue = 0;
+            retained : Holder;
+            {
+                if (kind == 2) {
+                    source : Source;
+                    source.value = new Derived();
+                    retained.store((Base!)source.value);
+                    if (source.value != null) { return -2; }
+                } else if (kind == 4) {
+                    retained.store((Base!)new Derived());
+                } else {
+                    local : Derived! = new Derived();
+                    observer : Derived* = local;
+                    if (kind == 0) {
+                        retained.store((Base!)local);
+                    } else if (kind == 1) {
+                        retained.store((Base!)(Derived!)local);
+                    } else {
+                        slot : Derived!* = &local;
+                        retained.store((Base!)*slot);
+                    }
+                    if (local != null) { return -3; }
+                    if (observer == null) { return -4; }
+                    if (observer->derivedValue != 19) { return -5; }
+                }
+            }
+            if (trace != 0) { return -6; }
+            result : int = retained.value->read();
+            delete retained.value;
+            return result * 10000 + trace * 100 + destroyedValue;
+        }
+
+        borrow() : int {
+            trace = 0;
+            destroyedValue = 0;
+            result : int = 0;
+            {
+                local : Derived! = new Derived();
+                pointer : Base* = (Base*)local;
+                readonly : const Base* = (const Base*)local;
+                link : Base+ = (Base+)local;
+                if (local == null) { return -1; }
+                result = pointer->baseValue + readonly->baseValue + link->baseValue;
+                if (trace != 0) { return -2; }
+            }
+            return result * 10000 + trace * 100 + destroyedValue;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)(int)>("_KFN15owner_cast_args4testEi");
+    auto borrow = jit->lookup_symbol<int(*)()>("_KFN15owner_cast_args6borrowEv");
+    REQUIRE(test);
+    REQUIRE(borrow);
+    for (int kind = 0; kind != 5; ++kind) {
+        CAPTURE(kind);
+        CHECK(test(kind) == 372119);
+    }
+    CHECK(borrow() == 1112119);
+}
+
 TEST_CASE("template owner members are destroyed once in reverse declaration order",
           "[gen][owner][template][jit][lifecycle]") {
     auto jit = gen_jit(R"SRC(

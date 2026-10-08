@@ -199,7 +199,15 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
         }
         if (should_unwrap_ref_indir) {
             auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
-            auto loaded = load_value_expression::make_shared(sub_expr);
+            // An owning cast transfers the original slot before any base-pointer
+            // adjustment; loading alone would create a second owner.
+            std::shared_ptr<expression> loaded;
+            if (type::is_owner(type::remove_const(inner)) &&
+                type::is_owner(type::remove_const(target_type))) {
+                loaded = owner_move_expression::make_shared(sub_expr);
+            } else {
+                loaded = load_value_expression::make_shared(sub_expr);
+            }
             loaded->set_type(inner);
             expr.assign(loaded);
             sub_expr = expr.sub_expr();

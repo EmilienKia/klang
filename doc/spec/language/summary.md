@@ -157,6 +157,7 @@ All observer indirection types share the same memory size (one pointer) and call
 - Auto-delete on scope exit if non-null.
 - `delete owner`: destruction + free + owner ← null. No-op if already null.
 - Only valid sources for `T!`: another `T!` (move), `new T(…)`, or `null`.
+- An explicit owner-to-owner cast transfers ownership: the source owner slot becomes null, including when the cast adjusts the pointer to a base subobject. Passing the result to an owning parameter must not leave a second owner in the caller.
 - Observer assignment (`T!` → `T*`, `T+`, `T?`, `T&`) copies the address without ownership transfer.
 
 #### Drain (`T#`)

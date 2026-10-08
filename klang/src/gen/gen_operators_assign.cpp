@@ -655,7 +655,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 auto move = owner_move_expression::make_shared(right);
                 move->set_type(inner_nc);
                 std::shared_ptr<expression> new_right = move;
-                if (!type::are_equal(own_src_nc, own_tgt_nc)) {
+                if (!same_conversion_type(own_src_nc, own_tgt_nc)) {
                     // Check upcast: owner<Derived> → owner<Base>
                     auto src_st = std::dynamic_pointer_cast<struct_type>(own_src_nc);
                     auto tgt_st = std::dynamic_pointer_cast<struct_type>(own_tgt_nc);

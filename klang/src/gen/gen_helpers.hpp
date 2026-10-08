@@ -102,6 +102,19 @@ inline bool is_k_object(const aggregate& agg) {
     return true;
 }
 
+inline bool same_conversion_type(const std::shared_ptr<type>& lhs,
+                                const std::shared_ptr<type>& rhs) {
+    if (type::are_equal(lhs, rhs)) return true;
+    auto left_struct = std::dynamic_pointer_cast<struct_type>(type::remove_const(lhs));
+    auto right_struct = std::dynamic_pointer_cast<struct_type>(type::remove_const(rhs));
+    if (!left_struct || !right_struct) return false;
+    auto left_aggregate = left_struct->get_struct();
+    auto right_aggregate = right_struct->get_struct();
+    return left_aggregate && right_aggregate
+        && !left_aggregate->get_fq_name().empty()
+        && left_aggregate->get_fq_name() == right_aggregate->get_fq_name();
+}
+
 /**
  * Apply the linkage policy for a **template instantiation** symbol.
  *
