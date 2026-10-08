@@ -60,6 +60,11 @@ std::string base_init_simple_name(const std::string& raw) {
     }
     return r;
 }
+
+std::string base_init_aggregate_name(const aggregate& base) {
+    return base_init_simple_name(
+        base.has_tpl_args() ? base.get_tpl_base_name() : base.get_short_name());
+}
 } // anonymous namespace
 
 /**
@@ -104,7 +109,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
         }
         // Also include transitively-collected virtual bases (e.g., A in D : B,C where B,C : virtual A)
         for (auto& vbase : st->get_all_virtual_base_structs()) {
-            base_by_name.emplace(base_init_simple_name(vbase->get_short_name()), vbase);
+            base_by_name.emplace(base_init_aggregate_name(*vbase), vbase);
         }
 
         // Step 2: Resolve each member-initializer target (field or base class)
@@ -243,7 +248,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
                     if (!vbase_var) continue;
 
                     std::vector<std::shared_ptr<expression>> args;
-                    auto it = vbase_init_by_name.find(base_init_simple_name(vbase->get_short_name()));
+                    auto it = vbase_init_by_name.find(base_init_aggregate_name(*vbase));
                     if (it != vbase_init_by_name.end()) {
                         for (auto& arg : it->second->args) {
                             args.push_back(arg->clone());
@@ -414,7 +419,8 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
             if (st->variables().count(vbase_name)) {
                 bool already_counted = false;
                 for (auto& bs : st->get_bases()) {
-                    if (bs.base && bs.is_virtual && bs.raw_name == vbase->get_short_name()) {
+                    if (bs.base && bs.is_virtual &&
+                        base_init_simple_name(bs.raw_name) == base_init_aggregate_name(*vbase)) {
                         already_counted = true; break;
                     }
                 }

@@ -1309,7 +1309,9 @@ static size_t compute_subobject_offset_in(const aggregate& containing,
         if (!field_opt) continue;
         size_t field_off = dl.getStructLayout(llvm_type)
                               ->getElementOffset((unsigned)field_opt->index);
-        if (bs.base.get() == &target) return field_off;
+        if (bs.base.get() == &target
+            || (target.get_struct_type()
+                && bs.base->get_struct_type() == target.get_struct_type())) return field_off;
         // Do NOT traverse virtual bases through an intermediate non-virtual base:
         // an intermediate's __vbase_X__ storage is a dead duplicate (all vbptrs are
         // repointed to the most-derived collector's shared copy at run time). Only
@@ -1330,7 +1332,9 @@ static size_t compute_subobject_offset_in(const aggregate& containing,
             if (!field_opt) continue;
             size_t field_off = dl.getStructLayout(llvm_type)
                                   ->getElementOffset((unsigned)field_opt->index);
-            if (vbase.get() == &target) return field_off;
+            if (vbase.get() == &target
+                || (target.get_struct_type()
+                    && vbase->get_struct_type() == target.get_struct_type())) return field_off;
             size_t inner = compute_subobject_offset_in(*vbase, target, dl, false);
             if (inner != SIZE_MAX) return field_off + inner;
         }
@@ -1506,6 +1510,41 @@ void symbol_resolver::visit_klass(klass& klass) {
     visit_aggregate(klass);
 
     if (klass.has_vtable()) return;
+
+    // Imported slots already have concrete signature types. Resolve the local
+    // declaration's template arguments before matching, rather than comparing
+    // an unresolved bare template name with a concrete specialization.
+    aggregate_type_resolver signatures(*this, _context, _unit);
+    const auto bases = collect_virtual_bases_bfs(klass);
+    const auto children = klass.get_children();
+    for (auto& child : children) {
+        auto fn = std::dynamic_pointer_cast<function>(child);
+        if (!fn || fn->is_template() || std::dynamic_pointer_cast<constructor>(fn)
+            || std::dynamic_pointer_cast<destructor>(fn)) continue;
+        bool matches_imported_slot = false;
+        for (auto& base : bases) {
+            if (!base->is_imported() || !base->has_vtable()) continue;
+            auto base_vt = base->get_vtable();
+            if (!base_vt) continue;
+            for (auto& entry : base_vt->entries) {
+                auto inherited = entry.introducing_func ? entry.introducing_func : entry.func;
+                if (inherited && inherited->get_short_name() == fn->get_short_name()
+                    && inherited->get_parameter_size() == fn->get_parameter_size()
+                    && inherited->is_const_member() == fn->is_const_member()) {
+                    matches_imported_slot = true;
+                    break;
+                }
+            }
+            if (matches_imported_slot) break;
+        }
+        if (!matches_imported_slot) continue;
+        for (auto& param : fn->parameters()) {
+            auto resolved = signatures.resolve_signature_type(param->get_type(), *fn);
+            if (resolved && type::is_resolved(resolved)) param->set_type(resolved);
+        }
+        auto resolved = signatures.resolve_signature_type(fn->get_return_type(), *fn);
+        if (resolved && type::is_resolved(resolved)) fn->set_return_type(resolved);
+    }
 
     lex::opt_any_lexeme klass_lexeme;
     if (auto ast_ad = klass.get_ast_aggregate_decl()) klass_lexeme = lex::any_lexeme{ast_ad->name};
@@ -1942,24 +1981,30 @@ void declaration_generator::visit_klass(klass& klass) {
         };
         collect_all_bases(klass);
 
-        // Also create secondary vtable globals for virtual bases (__vbase_X__)
+        // Also create secondary vtable globals for virtual bases (__vbase_X__).
+        // A most-derived class can inherit the live virtual-base storage from an
+        // imported base instead of collecting it into its own layout. It still
+        // needs a most-derived secondary table for that base so constructors can
+        // update the inherited subobject's vptr through the base's layout.
         for (auto& vbase_agg : klass.get_all_virtual_base_structs()) {
-            auto vbase_klass = std::dynamic_pointer_cast<k::model::klass>(vbase_agg);
-            if (!vbase_klass || !vbase_klass->has_vtable()) continue;
-            if (already_created.count(vbase_klass.get())) continue;
-            already_created.insert(vbase_klass.get());
+            if (!vbase_agg->has_vtable()) continue;
+            if (already_created.count(vbase_agg.get())) continue;
 
-            // Only if klass owns the __vbase_X__ field
             if (!klass.get_struct_type()) continue;
-            std::string vbase_field = "__vbase_" + vbase_klass->get_short_name() + "__";
-            if (!klass.get_struct_type()->get_member(vbase_field)) continue;
 
-            auto base_vt = vbase_klass->get_vtable();
-            if (!base_vt || !base_vt->llvm_type) continue;
+            auto base_vt = vbase_agg->get_vtable();
+            if (!base_vt) continue;
+            if (!base_vt->llvm_type && vbase_agg->is_imported()) {
+                std::vector<llvm::Type*> fields(base_vt->slot_count() + 1, ptr_ty);
+                base_vt->llvm_type = llvm::StructType::create(**_context, fields,
+                    "__vtable_" + mangler::mangle_vtable(vbase_agg->get_name()) + "__");
+            }
+            if (!base_vt->llvm_type) continue;
+            already_created.insert(vbase_agg.get());
 
             std::string sec_vtable_name =
                 mangler::mangle_secondary_vtable(
-                    klass.get_name(), vbase_klass->get_name());
+                    klass.get_name(), vbase_agg->get_name());
 
             std::vector<llvm::Constant*> null_init;
             null_init.push_back(llvm::ConstantPointerNull::get(
@@ -1982,13 +2027,13 @@ void declaration_generator::visit_klass(klass& klass) {
             auto sec_vt_layout = std::make_shared<vtable_layout>();
             sec_vt_layout->llvm_global = sec_gv;
             sec_vt_layout->llvm_type = base_vt->llvm_type;
-            klass.add_secondary_vtable(vbase_klass, sec_vt_layout);
+            klass.add_secondary_vtable(vbase_agg, sec_vt_layout);
 
             // Also create secondary vtable globals for the virtual base's own
             // (non-virtual) sub-objects (e.g. Sized reached via a shared Coll
             // vbase), so their vptrs can be pointed at a correctly this-adjusted
             // secondary vtable rather than falling back to klass's primary vtable.
-            collect_all_bases(*vbase_klass);
+            collect_all_bases(*vbase_agg);
         }
     }
 
@@ -2275,11 +2320,8 @@ void implementation_generator::visit_klass(klass& klass) {
                     continue;
                 }
 
-                // If the base sub-object is at a non-zero offset AND the function
-                // was actually overridden in the derived class, we need a thunk
-                // that adjusts 'this' from Base* back to Derived* before calling
-                // the real function. For non-overridden inherited methods, the
-                // function already expects Base* as 'this', so no thunk is needed.
+                // Determine the fallback adjustment if the declaring subobject
+                // cannot be found in the final layout.
                 bool is_overridden = true;
                 {
                     llvm::Function* base_llvm_func = _context->lookup_llvm_function(base_entry.func);
@@ -2300,9 +2342,24 @@ void implementation_generator::visit_klass(klass& klass) {
                         }
                     }
                 }
-                if (base_byte_offset > 0 && is_overridden) {
+                // An inherited implementation can belong to an intermediate
+                // base, not to either end of this dispatch path.
+                size_t owner_offset = SIZE_MAX;
+                for (auto& primary_entry : vt->entries) {
+                    if (_context->lookup_llvm_function(primary_entry.func) == llvm_func
+                        && primary_entry.func && primary_entry.func->get_owner()) {
+                        auto owner = primary_entry.func->get_owner();
+                        owner_offset = owner.get() == &klass ? 0
+                            : compute_subobject_offset_in(klass, *owner, dl);
+                        break;
+                    }
+                }
+                ptrdiff_t adjustment = owner_offset != SIZE_MAX
+                    ? static_cast<ptrdiff_t>(base_byte_offset) - static_cast<ptrdiff_t>(owner_offset)
+                    : (is_overridden ? static_cast<ptrdiff_t>(base_byte_offset) : 0);
+                if (adjustment != 0) {
                     std::string thunk_name = llvm_func->getName().str()
-                        + "_thunk_adj" + std::to_string(base_byte_offset);
+                        + "_thunk_adj" + std::to_string(adjustment);
                     llvm::Function* thunk = _context->module().getFunction(thunk_name);
                     if (!thunk) {
                         llvm::FunctionType* fn_ty = llvm_func->getFunctionType();
@@ -2326,7 +2383,7 @@ void implementation_generator::visit_klass(klass& klass) {
                                 llvm::Value* this_as_int = tb.CreatePtrToInt(arg, i64_ty, "this_int");
                                 llvm::Value* adj_int = tb.CreateSub(
                                     this_as_int,
-                                    llvm::ConstantInt::get(i64_ty, (uint64_t)base_byte_offset),
+                                    llvm::ConstantInt::get(i64_ty, (uint64_t)adjustment),
                                     "this_adj_int");
                                 llvm::Value* this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
                                 fwd_args.push_back(this_adj);
@@ -3292,7 +3349,7 @@ void implementation_generator::fill_primary_vtable(klass& klass) {
  *
  * For each secondary_vtable_spec:
  *   1. Build the vtable constant with adjusted function pointers and offset-to-top.
- *   2. Create or retrieve thunk functions for overridden slots needing this-adjustment.
+ *   2. Adjust each slot's receiver to its implementation's declaring subobject.
  *   3. Store the vtable constant in the secondary vtable global variable.
  */
 void implementation_generator::fill_secondary_vtables(klass& klass) {
@@ -3343,26 +3400,21 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
                 continue;
             }
 
-            if (!ti.needs_thunk) {
-                // Slot not overridden in klass, or base at offset 0: use function directly.
+            const auto& dl = _context->module().getDataLayout();
+            size_t base_offset = compute_subobject_offset_in(klass, *spec.base_class, dl);
+            auto owner = ti.real_func->get_owner();
+            size_t owner_offset = owner && owner.get() == &klass ? 0
+                : owner ? compute_subobject_offset_in(klass, *owner, dl) : SIZE_MAX;
+            ptrdiff_t offset = base_offset != SIZE_MAX && owner_offset != SIZE_MAX
+                ? static_cast<ptrdiff_t>(base_offset) - static_cast<ptrdiff_t>(owner_offset)
+                : ti.this_adjustment;
+            if (offset == 0) {
                 sec_init.push_back(real_llvm_func);
                 continue;
             }
 
-            // Create a this-adjustment thunk: adjust Base* → Derived* then call the override.
-            ptrdiff_t offset = spec.base_offset;
-            auto kl_st_type = klass.get_struct_type();
-            if (kl_st_type && spec.base_class) {
-                std::string subobj_name = "__base_" + spec.base_class->get_short_name() + "__";
-                if (auto field = kl_st_type->get_member(subobj_name)) {
-                    if (auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(kl_st_type->get_llvm_type())) {
-                        if (!llvm_st->isOpaque()) {
-                            const auto& dl = _context->module().getDataLayout();
-                            offset = static_cast<ptrdiff_t>(dl.getStructLayout(llvm_st)->getElementOffset(field->index));
-                        }
-                    }
-                }
-            }
+            // Adjust to the implementation's declaring subobject, which may
+            // be an intermediate base rather than the complete object.
             std::string thunk_name = real_llvm_func->getName().str()
                 + "_thunk_adj" + std::to_string(offset);
             llvm::Function* thunk = _context->module().getFunction(thunk_name);
@@ -3448,16 +3500,13 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
     if (klass.get_struct_type()) {
         const llvm::DataLayout& dl = _context->module().getDataLayout();
 
-        // Helper: normalize fq_name by stripping leading "::"
-        auto normalize_fq = [](const std::string& s) -> std::string {
-            if (s.size() >= 2 && s[0] == ':' && s[1] == ':') return s.substr(2);
-            return s;
-        };
-
-        // Helper: extract short name (last component after "::") from a fq_name string.
-        auto short_name_from_fq = [](const std::string& fq) -> std::string {
-            auto pos = fq.rfind("::");
-            return (pos == std::string::npos) ? fq : fq.substr(pos + 2);
+        auto overrides = [](const std::shared_ptr<function>& fn,
+                            const std::shared_ptr<function>& base) {
+            if (!base) return false;
+            for (auto current = fn; current; current = current->get_overrides()) {
+                if (current == base) return true;
+            }
+            return false;
         };
 
         // Recursive lambda that fills the secondary vtable for one imported base.
@@ -3494,6 +3543,11 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                         sec_gv = layout->llvm_global;
                         break;
                     }
+                }
+                if (!sec_gv) {
+                    const std::string sec_name = mangler::mangle_secondary_vtable(
+                        klass.get_name(), base_imp->get_name());
+                    sec_gv = _context->module().getNamedGlobal(sec_name);
                 }
                 if (!sec_gv) {
                     // Recurse into this base's bases even if no sec vtable was created for it
@@ -3541,104 +3595,45 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                     : llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
                 sec_init.push_back(rtti_slot);
 
-                // Each slot in the base vtable maps to a method of klass (or the abstract stub).
-                // We match by the introducing_func fq_name stored in the KDI slot.
-                //
-                // Matching challenges:
-                //
-                // Case 1 (direct import): IFace { f() } → Klass : IFace
-                //   KDI slot introducing_func = "iFaceLib::IFace::f"
-                //   Klass vtable entry intro   = imported_method(IFace::f)  ← same owner → Strategy A
-                //
-                // Case 2 (diamond interfaces): IBase { base_val() } ← IB : IBase { b_val() }
-                //   Diamond : IA, IB.  IB vtable slot 0 introducing_func = "ibase_lib::IBase::base_val"
-                //   Diamond vtable entry for base_val: intro = IBase::base_val → Strategy B (fq match)
-                //
-                // Case 3 (chain import): IVal { val() } ← AVal : IVal { val() override } ← ConcreteVal : AVal
-                //   IVal vtable slot 0 introducing_func = "ival_lib::IVal::val"
-                //   ConcreteVal vtable entry for val:  intro = imported_method(AVal::val)
-                //     → fq_name = "::aval_lib::AVal::val" ≠ "ival_lib::IVal::val"  → B fails
-                //   get_overrides() of ConcreteVal::val → AVal::val → none (AVal::val has no overrides
-                //     stored because imported_methods don't chain through the full hierarchy) → C fails
-                //   Solution: Strategy D — match by SHORT NAME of introducing_func.
-                //     "IVal::val" short_name = "val" == entry.introducing_func->get_short_name() "val" ✓
-                //     (This is safe in vtables: slot names are unique within a vtable, so same short_name
-                //      means same method.)
                 const auto& kdi_vt = kdi_agg->vtable.value();
 
-                // Step 2: For each, check if the derived class overrides any of its virtual slots
                 for (std::size_t slot_idx = 0; slot_idx < kdi_vt.slots.size(); ++slot_idx) {
                     const auto& kdi_slot = kdi_vt.slots[slot_idx];
-                    const std::string kdi_intro_norm = normalize_fq(kdi_slot.introducing_func);
-                    const std::string kdi_intro_short = short_name_from_fq(kdi_intro_norm);
+                    const vtable_entry* base_entry = nullptr;
+                    for (auto& entry : base_imp->get_vtable()->entries) {
+                        if (entry.slot_index == kdi_slot.slot_index) {
+                            base_entry = &entry;
+                            break;
+                        }
+                    }
 
-                    // Find the override in klass's vtable entries that corresponds to this slot.
-                    // Matching strategy (tried in order):
-                    //  A. entry.introducing_func is an imported_method of base_imp with
-                    //     the same slot_index (handles non-diamond cases).
-                    //  B. entry.introducing_func fq_name matches kdi_slot.introducing_func
-                    //     (handles diamond cases where the introducer is a grandparent).
-                    //  C. Walk entry.func->get_overrides() chain looking for a function
-                    //     whose fq_name matches kdi_slot.introducing_func.
-                    //  D. entry.introducing_func short_name matches introducing_func short_name
-                    //     (handles chain import: AVal:IVal where IVal's slot has intro=IVal::f
-                    //      but ConcreteVal's vtable entry has intro=AVal::f).
+                    // Names do not distinguish overloaded methods. The imported
+                    // model retains slot identity and the inherited override chain.
                     llvm::Function* override_func = nullptr;
+                    std::shared_ptr<aggregate> implementation_owner;
                     for (auto& entry : vt->entries) {
-                        if (!entry.func) continue;
-
-                        // Strategy A: intro is an imported_method in base_imp at the right slot
-                        if (entry.introducing_func) {
-                            auto intro_imp = std::dynamic_pointer_cast<imported_method>(
-                                entry.introducing_func);
-                            if (intro_imp && intro_imp->get_vtable_slot() == (int)slot_idx
-                                && intro_imp->get_owner() &&
-                                intro_imp->get_owner().get() == base_imp.get()) {
-                                override_func = _context->lookup_llvm_function(entry.func);
-                                break;
-                            }
-
-                            // Strategy B: match by fq_name of introducing_func (normalized)
-                            if (!kdi_intro_norm.empty()
-                                && normalize_fq(entry.introducing_func->get_fq_name()) == kdi_intro_norm) {
-                                override_func = _context->lookup_llvm_function(entry.func);
-                                break;
-                            }
+                        if (!entry.func || !base_entry) continue;
+                        if (overrides(entry.func, base_entry->func)
+                            || overrides(entry.func, base_entry->introducing_func)) {
+                            override_func = _context->lookup_llvm_function(entry.func);
+                            implementation_owner = entry.func->get_owner();
+                            break;
                         }
-
-                        // Step 3: If overrides exist, create a secondary vtable with thunks for the overridden slots
-                        // Strategy C: walk get_overrides() chain matching by fq_name
-                        if (!kdi_intro_norm.empty()) {
-                            auto ov = entry.func->get_overrides();
-                            while (ov) {
-                                if (normalize_fq(ov->get_fq_name()) == kdi_intro_norm) {
-                                    override_func = _context->lookup_llvm_function(entry.func);
-                                    break;
-                                }
-                                // Also check by owner+slot_idx (original strategy)
-                                auto ov_imp = std::dynamic_pointer_cast<imported_method>(ov);
-                                if (ov_imp && ov_imp->get_vtable_slot() == (int)slot_idx
-                                    && ov_imp->get_owner() &&
-                                    ov_imp->get_owner().get() == base_imp.get()) {
-                                    override_func = _context->lookup_llvm_function(entry.func);
-                                    break;
-                                }
-                                ov = ov->get_overrides();
-                            }
-                            if (override_func) break;
-                        }
-
-                        // Strategy D: match by short name of introducing_func (chain-import fallback).
-                        // This handles cases like ConcreteVal:AVal:IVal where IVal slot has
-                        // intro="ival_lib::IVal::f" but ConcreteVal's entry has intro=imported(AVal::f).
-                        // Since vtable slot names are unique within a vtable hierarchy, matching by
-                        // short name is unambiguous.
-                        if (!kdi_intro_short.empty() && entry.introducing_func) {
-                            if (entry.introducing_func->get_short_name() == kdi_intro_short) {
+                    }
+                    if (!override_func && base_entry && base_entry->func
+                        && base_entry->func->is_abstract_func()) {
+                        for (auto& entry : vt->entries) {
+                            if (entry.func && !entry.func->is_abstract_func()
+                                && have_same_virtual_signature(*entry.func, *base_entry->func)) {
                                 override_func = _context->lookup_llvm_function(entry.func);
+                                implementation_owner = entry.func->get_owner();
                                 break;
                             }
                         }
+                    }
+                    if (!override_func && base_entry && base_entry->func) {
+                        override_func = _context->lookup_llvm_function(base_entry->func);
+                        implementation_owner = base_entry->func->get_owner();
                     }
 
                     if (!override_func) {
@@ -3648,23 +3643,25 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                     }
 
                     // Step 4: Emit the vtable global and GEP stores to patch the sub-object vptrs
-                    // If the base subobject is at a non-zero offset, we need a thunk
-                    // ONLY if the function was actually overridden in the derived class.
-                    // For non-overridden inherited methods, the function already expects
-                    // Base* as 'this', so no thunk is needed.
-                    // Detection: if the LLVM function we found has the same name as the
-                    // KDI slot's override_symbol, it's the original base function.
+                    // Retain the symbol-based fallback when the declaring
+                    // subobject is unavailable; otherwise use its exact offset.
                     bool needs_thunk = (base_byte_offset > 0);
                     if (needs_thunk && !kdi_slot.override_symbol.empty()) {
                         if (override_func->getName().str() == kdi_slot.override_symbol) {
                             needs_thunk = false;
                         }
                     }
-                    if (!needs_thunk) {
+                    size_t owner_offset = implementation_owner && implementation_owner.get() == &klass ? 0
+                        : implementation_owner
+                            ? compute_subobject_offset_in(klass, *implementation_owner, dl) : SIZE_MAX;
+                    ptrdiff_t adjustment = owner_offset != SIZE_MAX
+                        ? static_cast<ptrdiff_t>(base_byte_offset) - static_cast<ptrdiff_t>(owner_offset)
+                        : (needs_thunk ? static_cast<ptrdiff_t>(base_byte_offset) : 0);
+                    if (adjustment == 0) {
                         sec_init.push_back(override_func);
                     } else {
                         std::string thunk_name = override_func->getName().str()
-                            + "_thunk_adj" + std::to_string(base_byte_offset);
+                            + "_thunk_adj" + std::to_string(adjustment);
                         llvm::Function* thunk = _context->module().getFunction(thunk_name);
                         if (!thunk) {
                             llvm::FunctionType* fn_ty = override_func->getFunctionType();
@@ -3687,7 +3684,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                                     llvm::Value* this_as_int = tb.CreatePtrToInt(arg, i64_ty, "this_int");
                                     llvm::Value* adj_int = tb.CreateSub(
                                         this_as_int,
-                                        llvm::ConstantInt::get(i64_ty, base_byte_offset),
+                                        llvm::ConstantInt::get(i64_ty, static_cast<uint64_t>(adjustment)),
                                         "this_adj_int");
                                     llvm::Value* this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
                                     fwd_args.push_back(this_adj);

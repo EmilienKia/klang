@@ -511,6 +511,16 @@ metadata field in the KDI records that the entity was produced by template insta
 including the base template name, its fully-qualified name, and the concrete arguments
 used.
 
+When an aggregate instantiation is already exported, the consumer must reuse that
+concrete aggregate's KDI layout, base relationships, and constructor/method symbols.
+The source recipe is used for argument combinations not exported by the producer;
+it must not replace an exported concrete layout, including virtual-base storage
+introduced while compiling the producer.
+Reuse also preserves virtual method signatures, slot identities, and override
+relationships. A consumer-derived class must match its overrides against the
+concrete parameter and return types and install its dispatch tables for imported
+virtual-base subobjects, without rebuilding the producer's aggregate layout.
+
 This enables two cross-module usage patterns:
 1. **Consumer calls a wrapper:** The library instantiates the template internally and
    exports the concrete entity.  The consumer calls the wrapper function that exercises

@@ -46,6 +46,12 @@ resolve_one_type(const std::shared_ptr<type>& t,
                  const element& context_elem,
                  std::shared_ptr<context> ctx);
 
+std::shared_ptr<type> aggregate_type_resolver::resolve_signature_type(
+    const std::shared_ptr<type>& t, const element& scope) {
+    if (!t) return nullptr;
+    return resolve_one_type(t, *this, scope, _context);
+}
+
 // ensure_klass_vtable_built
 // -------------------------
 // See declaration in resolvers_common.hpp. Builds a vtable on demand for
@@ -874,6 +880,7 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             *tpl_agg, model_args, parent_ns, _unit, _context, *this);
     }
     if (!concrete) return {};
+    if (concrete->is_imported()) return concrete->get_struct_type();
 
     // 4b. Resolve unresolved member-variable references in method bodies.
     //     The symbol_resolver skipped the template aggregate, so bare names

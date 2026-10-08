@@ -54,6 +54,8 @@ public:
     std::shared_ptr<type> resolve_type_by_name(const k::name& type_name, const element& context_elem);
     static std::shared_ptr<aggregate> resolve_struct_from(const element& elem, const k::name& qualified_name);
     std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
+    std::shared_ptr<type> resolve_signature_type(const std::shared_ptr<type>& type,
+                                               const element& scope);
 
     /**
      * Try to resolve an unresolved_type that carries AST template arguments
@@ -112,4 +114,3 @@ protected:
 } // namespace k::model::gen
 
 #endif //KLANG_RESOLVERS_AGGREGATE_HPP
-

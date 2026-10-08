@@ -1886,6 +1886,161 @@ TEST_CASE("cross-module template — class template consumer instantiation",
     REQUIRE( result.exit_code == 42 );
 }
 
+TEST_CASE("cross-module template — preserve library-promoted virtual base layout",
+          "[import][e2e][template][cross-tpl][virtual-base-layout]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module promoted_virtual_tpl_lib;
+
+            template<typename T>
+            public class Root {
+                public value : T;
+                public Root(initial : T) : value(initial) {}
+            }
+
+            template<typename T>
+            public class Left : public Root<T> {
+                public ownValue : T;
+                public Left() : Root(1), ownValue(42) {}
+            }
+            template<typename T>
+            public class Right : public Root<T> {
+                public Right() : Root(2) {}
+            }
+            template<typename T>
+            public class Diamond : public Left<T>, public Right<T> {
+                public Diamond() : Root(3) {}
+            }
+
+            public instantiateDiamond() : int {
+                diamond : Diamond<int>();
+                return 0;
+            }
+            public read(left : Left<int>&) : int { return left.ownValue; }
+        )K",
+        R"K(
+            module promoted_virtual_tpl_exe;
+            import promoted_virtual_tpl_lib;
+
+            main() : int {
+                left : Left<int>();
+                return read(left);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("cross-module template — canonical filter layout preserves borrowed and owned roots",
+          "[import][e2e][template][cross-tpl][virtual-base-layout][private-template-layout][regression]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module canonical_filter_tpl_lib;
+
+            template<typename T>
+            public interface Source {
+                read() : T;
+                close();
+            }
+
+            template<typename T>
+            public class Filter : public Source<T> {
+            protected:
+                _borrowed : Source<T>*;
+                final canAdopt(candidate : Source<T>*) : bool {
+                    return candidate != null && _borrowed == candidate && _owned == null;
+                }
+            private:
+                _owned : Source<T>!;
+            public:
+                Filter(input : Source<T>*) : _borrowed(input), _owned(null) {}
+                Filter() : _borrowed(null), _owned(null) {}
+                final probe(candidate : Source<T>*) : bool { return canAdopt(candidate); }
+                final adopt(input : Source<T>!) { _owned = input; }
+                override read() : T { return _borrowed->read(); }
+                override close() { _borrowed->close(); }
+            }
+
+            template<typename T>
+            public class Other : public Source<T> {
+                public override read() : T { return (T) 0; }
+                public override close() {}
+            }
+
+            template<typename T>
+            public class Diamond : public Filter<T>, public Other<T> {
+                public override read() : T { return (T) 0; }
+                public override close() {}
+            }
+
+            public instantiateDiamond() {
+                diamond : Diamond<byte>;
+            }
+            public libraryProbe(filter : Filter<byte>&, candidate : Source<byte>*) : bool {
+                return filter.probe(candidate);
+            }
+            public libraryRead(source : Source<byte>*) : byte { return source->read(); }
+            public libraryClose(source : Source<byte>*) { source->close(); }
+        )K",
+        R"K(
+            module canonical_filter_tpl_exe;
+            import canonical_filter_tpl_lib;
+
+            rootDestructions : int = 0;
+            filterDestructions : int = 0;
+            intercepts : int = 0;
+            rootCloses : int = 0;
+            filterCloses : int = 0;
+
+            class Root : public Source<byte> {
+                public override read() : byte { return (byte) 42; }
+                public override close() { ++rootCloses; }
+                ~Root() { ++rootDestructions; }
+            }
+            class Decorator : public Filter<byte> {
+                public Decorator(input : Source<byte>*) : Filter(input) {}
+                public valid(candidate : Source<byte>*) : bool { return canAdopt(candidate); }
+                public override read() : byte {
+                    ++intercepts;
+                    return _borrowed->read();
+                }
+                public override close() {
+                    ++filterCloses;
+                    _borrowed->close();
+                }
+                ~Decorator() { ++filterDestructions; }
+            }
+
+            main() : int {
+                {
+                    root : Root! = new Root();
+                    candidate : Source<byte>* = &*root;
+                    filter : Decorator(candidate);
+                    if (!filter.valid(candidate) || !libraryProbe(filter, candidate)) return 1;
+                    view : Source<byte>* = &filter;
+                    if (view->read() != (byte) 42) return 21;
+                    if (intercepts != 1) return 22;
+                    if (libraryRead(view) != (byte) 42) return 23;
+                    if (intercepts != 2) return 24;
+                    filter.adopt((Source<byte>!) root);
+                    if (root != null || filter.valid(candidate) || libraryProbe(filter, candidate)) return 3;
+                    if (rootDestructions != 0 || filterDestructions != 0) return 4;
+                    libraryClose(view);
+                    if (rootCloses != 1 || filterCloses != 1) return 7;
+                }
+                if (rootDestructions != 1 || filterDestructions != 1) return 5;
+                if (rootCloses != 1 || filterCloses != 1) return 8;
+                return 42;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
 TEST_CASE("cross-module template — nested imported return arguments keep their declaration identity",
           "[import][e2e][template][cross-tpl][regression][canonical-nested-return]") {
     auto result = build_exec_with_lib(
@@ -2018,6 +2173,98 @@ TEST_CASE("cross-module template — empty ListMap nested returns preserve impor
         REQUIRE(entry_type->get_struct()->get_fq_name() == "::k::Entry__int__int");
         REQUIRE(holder->get_fq_name().find("listmap_lexical_consumer") == std::string::npos);
     }
+}
+
+TEST_CASE("cross-module template — canonical stream signatures retain overloads and template returns",
+          "[import][e2e][template][cross-tpl][regression][canonical-stream-signatures]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module canonical_stream_signature_lib;
+            template<typename T>
+            public struct Packet {
+                public value : T;
+                public Packet(value : T) : value(value) {}
+            }
+            template<typename T>
+            public interface Input {
+                read() : Packet<T>;
+                read(values : T[]) : int;
+                read(values : T[], off : unsigned int, len : unsigned int) : int;
+            }
+            template<typename T>
+            public interface Output {
+                write(value : T) : Output<T>&;
+                write(values : const T[]) : Output<T>&;
+                write(values : const T[], off : unsigned int, len : unsigned int) : Output<T>&;
+                flush() : Output<T>&;
+            }
+            public readPacket(input : Input<byte>&) : Packet<byte> { return input.read(); }
+            public readAll(input : Input<byte>&, values : byte[]) : int {
+                return input.read(values) + input.read(values, 0u, 1u);
+            }
+            public writeAll(output : Output<byte>&, values : const byte[]) {
+                output.write((byte) 42);
+                output.write(values);
+                output.write(values, 0u, 1u);
+                output.flush();
+            }
+        )K",
+        R"K(
+            module canonical_stream_signature_exe;
+            import canonical_stream_signature_lib;
+            reads : int = 0;
+            writes : int = 0;
+            flushes : int = 0;
+            class Reader : public Input<byte> {
+                public override read() : Packet<byte> {
+                    ++reads;
+                    result : Packet<byte>((byte) 42);
+                    return result;
+                }
+                public override read(values : byte[]) : int {
+                    ++reads;
+                    return 17;
+                }
+                public override read(values : byte[], off : unsigned int, len : unsigned int) : int {
+                    ++reads;
+                    return 25;
+                }
+            }
+            class Writer : public Output<byte> {
+                public override write(value : byte) : Output<byte>& {
+                    writes += 1;
+                    return this;
+                }
+                public override write(values : const byte[]) : Output<byte>& {
+                    writes += 10;
+                    return this;
+                }
+                public override write(values : const byte[], off : unsigned int, len : unsigned int)
+                        : Output<byte>& {
+                    writes += 100;
+                    return this;
+                }
+                public override flush() : Output<byte>& {
+                    ++flushes;
+                    return this;
+                }
+            }
+            main() : int {
+                reader : Reader;
+                writer : Writer;
+                values : byte[2];
+                packet : Packet<byte> = readPacket(reader);
+                if (packet.value != (byte) 42 || reads != 1) return 1;
+                if (readAll(reader, values) != 42 || reads != 3) return 2;
+                writeAll(writer, values);
+                if (writes != 111 || flushes != 1) return 3;
+                return 42;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

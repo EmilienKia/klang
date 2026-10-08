@@ -1302,7 +1302,9 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
             if (slot.introducing_func.find("::~") != std::string::npos) {
                 if (auto id = agg->get_destructor()) {
                     if (!entry.introducing_func) entry.introducing_func = id;
+                    if (entry.func && entry.func != id) id->set_overrides(entry.func);
                     entry.func = id;
+                    id->set_virtual(true);
                     id->set_vtable_slot((int)slot.slot_index);
                 }
             } else {
@@ -1310,6 +1312,7 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
                     auto im = std::dynamic_pointer_cast<imported_method>(child);
                     if (im && im->get_vtable_slot() == (int)slot.slot_index) {
                         if (!entry.introducing_func) entry.introducing_func = im;
+                        if (entry.func && entry.func != im) im->set_overrides(entry.func);
                         entry.func = im;
                         break;
                     }

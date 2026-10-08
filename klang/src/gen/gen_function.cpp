@@ -111,8 +111,24 @@ void emit_vptr_store(llvm::IRBuilder<>& builder,
 
         // Recurse into base's embedded non-virtual sub-objects
         for (auto& bs : base_st.get_bases()) {
-            if (!bs.base || !is_class_like(*bs.base) || bs.is_virtual) continue;
-            std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
+            if (!bs.base || !is_class_like(*bs.base)) continue;
+
+            std::string subobj_name;
+            if (bs.is_virtual) {
+                // A virtual base is normally updated once through the
+                // most-derived class's collector field below. If this class
+                // inherits the live virtual-base storage inside an imported
+                // or template-instantiated base, update that embedded copy
+                // instead; intermediate duplicate copies are not live when
+                // the most-derived class owns a collector field.
+                std::string collector_field =
+                    "__vbase_" + bs.base->get_short_name() + "__";
+                if (st.get_struct_type()->get_member(collector_field)) continue;
+                subobj_name = collector_field;
+            } else {
+                subobj_name = "__base_" + bs.sanitised_name() + "__";
+            }
+
             auto field_opt = base_st.get_struct_type()->get_member(subobj_name);
             if (!field_opt) continue;
             llvm::Value* sub_ptr = builder.CreateStructGEP(base_llvm_type, base_ptr,

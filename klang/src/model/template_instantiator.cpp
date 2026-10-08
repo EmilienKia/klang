@@ -1897,6 +1897,19 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     std::string base_name = tpl_def.get_short_name();
     std::string inst_name = build_instantiated_name(base_name, args);
 
+    // An exported concrete specialization owns its ABI, including library-side
+    // virtual-base promotion. Replacing its model with a recipe clone would
+    // rebuild its LLVM layout while still calling the library's symbols.
+    if (!ti->origin_module_ns_fq.empty()) {
+        auto imported_name = unit::make_origin_absolute_name(
+            ti->origin_module_ns_fq, inst_name).without_root_prefix();
+        auto imported = unit.get_or_create_imported_aggregate(imported_name, ctx);
+        if (imported && imported->has_tpl_args() && imported->get_tpl_base_name() == base_name) {
+            ti->instantiations[key] = std::static_pointer_cast<aggregate>(imported);
+            return imported;
+        }
+    }
+
     // Build type substitution map
     auto subst = build_substitution_map(*ti, args);
     auto val_subst = build_value_substitution_map(*ti, args);
@@ -1914,6 +1927,12 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     }
     if (!concrete) return nullptr;
 
+    concrete->_tpl_definition = tpl_def.shared_as<aggregate>();
+    if (!ti->origin_module_ns_fq.empty()) {
+        concrete->assign_name(unit::make_origin_absolute_name(
+            ti->origin_module_ns_fq, inst_name));
+    }
+
     // Copy aggregate flags
     concrete->set_final(tpl_def.is_final());
     concrete->set_abstract(tpl_def.is_abstract());
@@ -1927,12 +1946,6 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);
     // Mark as a synthesised instantiation so codegen applies linkonce_odr + COMDAT.
-    concrete->_tpl_definition = tpl_def.shared_as<aggregate>();
-    if (!ti->origin_module_ns_fq.empty()) {
-        concrete->assign_name(unit::make_origin_absolute_name(
-            ti->origin_module_ns_fq, inst_name));
-    }
-
     concrete->mark_instantiation();
 
     // Copy friend directives from the template definition, substituting template parameters.
@@ -2755,7 +2768,7 @@ void template_instantiator::ensure_agg_names_assigned(std::shared_ptr<aggregate>
 }
 
 void template_instantiator::inject_base_subobject_fields(std::shared_ptr<aggregate> concrete) {
-    if (!concrete || !concrete->has_bases()) return;
+    if (!concrete || concrete->is_imported() || !concrete->has_bases()) return;
 
     // Insert new __base_X__/__vbptr_X__ fields right after the existing __vptr__
     // field (if the aggregate already has one) instead of unconditionally at
@@ -2817,7 +2830,7 @@ void template_instantiator::inject_base_subobject_fields(std::shared_ptr<aggrega
 }
 
 bool template_instantiator::ensure_virtual_base_layout_fields(std::shared_ptr<aggregate> concrete) {
-    if (!concrete) return false;
+    if (!concrete || concrete->is_imported()) return false;
     bool added = false;
 
     // Helper: position of the __vptr__ field in _children (so a vbptr is inserted
@@ -2904,7 +2917,13 @@ void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggr
         return r;
     };
 
-    auto inject_for_aggregate = [&base_init_simple_name](std::shared_ptr<aggregate> agg) {
+    auto base_init_aggregate_name = [&base_init_simple_name](const aggregate& base) {
+        return base_init_simple_name(
+            base.has_tpl_args() ? base.get_tpl_base_name() : base.get_short_name());
+    };
+
+    auto inject_for_aggregate = [&base_init_simple_name, &base_init_aggregate_name](
+        std::shared_ptr<aggregate> agg) {
         for (auto& ctor : agg->constructors()) {
             // Note: compiler-generated constructors (default or copy) still need base
             // constructor calls injected below — symbol_resolver::visit_constructor
@@ -2941,6 +2960,25 @@ void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggr
             // were already injected), causing an out-of-range std::vector::insert.
             size_t insert_idx = 0;
             if (agg->has_bases()) {
+                std::unordered_map<std::string, std::shared_ptr<aggregate>> base_init_targets;
+                for (auto& bs : agg->get_bases()) {
+                    if (bs.base) {
+                        base_init_targets[base_init_simple_name(bs.raw_name)] = bs.base;
+                    }
+                }
+                for (auto& vbase : agg->get_all_virtual_base_structs()) {
+                    if (vbase) {
+                        base_init_targets[base_init_aggregate_name(*vbase)] = vbase;
+                    }
+                }
+                for (auto& mi : ctor->_member_inits) {
+                    auto target = base_init_targets.find(base_init_simple_name(mi.member_name));
+                    if (target != base_init_targets.end()) {
+                        mi.is_base_init = true;
+                        mi.base_struct = target->second;
+                    }
+                }
+
                 std::unordered_map<std::string, const constructor::member_init_spec*> base_init_by_name;
                 for (auto& mi : ctor->member_inits()) {
                     if (mi.is_base_init) base_init_by_name[base_init_simple_name(mi.member_name)] = &mi;
@@ -2992,7 +3030,7 @@ void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggr
                     if (!vbase_var) continue;
 
                     std::vector<std::shared_ptr<expression>> args;
-                    auto it = base_init_by_name.find(base_init_simple_name(vbase->get_short_name()));
+                    auto it = base_init_by_name.find(base_init_aggregate_name(*vbase));
                     if (it != base_init_by_name.end()) {
                         for (auto& arg : it->second->args) {
                             auto cloned = arg->clone();
