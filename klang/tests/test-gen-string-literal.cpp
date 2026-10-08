@@ -72,6 +72,7 @@ TEST_CASE("Char literal — escape sequences decode correctly", "[gen][literal][
         nul()     : char { return '\0'; }
         backslash() : char { return '\\'; }
         hex()     : char { return '\x41'; }
+        newlineByte() : byte { return (byte) '\n'; }
     )SRC");
     REQUIRE(jit);
     REQUIRE(jit->lookup_symbol<char(*)()>("newline")() == '\n');
@@ -80,6 +81,7 @@ TEST_CASE("Char literal — escape sequences decode correctly", "[gen][literal][
     REQUIRE(jit->lookup_symbol<char(*)()>("nul")() == '\0');
     REQUIRE(jit->lookup_symbol<char(*)()>("backslash")() == '\\');
     REQUIRE(jit->lookup_symbol<char(*)()>("hex")() == 'A');
+    REQUIRE(jit->lookup_symbol<unsigned char(*)()>("newlineByte")() == 10);
 }
 
 // =============================================================================

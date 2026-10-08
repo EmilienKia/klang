@@ -209,8 +209,7 @@ k::value_type float_num::value() const {
 // Character literal
 //
 k::value_type character::value()const {
-    // TODO Decode unicode escape
-    return content.at(1);
+    return static_cast<unsigned int>(code_point());
 }
 
 char32_t character::code_point() const {
