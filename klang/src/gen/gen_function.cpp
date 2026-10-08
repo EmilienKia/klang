@@ -2105,6 +2105,25 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
     }
 
     // Step 2: Call destructors for owner-typed member variables (free heap memory)
+    std::vector<std::pair<std::shared_ptr<member_variable_definition>, unsigned>> owner_members;
+    for (auto& var_entry : st->variables()) {
+        auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second);
+        if (!var || !type::is_owner(type::remove_const(var->get_type()))) continue;
+        auto field = st->get_struct_type()->get_member(var->get_short_name());
+        if (field) owner_members.push_back({var, (unsigned)field->index});
+    }
+    std::sort(owner_members.begin(), owner_members.end(), [](const auto& a, const auto& b) {
+        return a.second < b.second;
+    });
+    for (auto it = owner_members.rbegin(); it != owner_members.rend(); ++it) {
+        auto& [var, field_idx] = *it;
+        auto member_ptr = _builder->CreateStructGEP(
+            _context->get_llvm_type(st->get_struct_type()), this_ptr, field_idx,
+            "owner_member_" + var->get_short_name() + "_ptr");
+        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+            member_ptr, type::remove_const(var->get_type())->get_subtype(), "owner_member_cleanup");
+    }
+
     // ── Base destructors in reverse base-declaration order ──
     if (st->has_bases() || st->has_virtual_bases()) {
         const auto& bases = st->get_bases();

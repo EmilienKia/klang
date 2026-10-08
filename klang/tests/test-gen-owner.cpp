@@ -90,6 +90,44 @@ TEST_CASE("Parse owner type specifier '!'", "[parser][owner]") {
 // Symbol name convention: _KFN<namelen><funcname><modulelen><module>Ev
 // ─────────────────────────────────────────────────────────────────────────────
 
+TEST_CASE("template owner members are destroyed once in reverse declaration order",
+          "[gen][owner][template][jit][lifecycle]") {
+    auto jit = gen_jit(R"SRC(
+        module owner_members;
+
+        trace : int = 0;
+        struct Leaf {
+            id : int;
+            Leaf(value : int) : id(value) {}
+            ~Leaf() { trace = trace * 10 + id; }
+        }
+
+        template<typename T>
+        struct Holder {
+            first : T!;
+            second : T!;
+            Holder(a : T!, b : T!) : first(a), second(b) {}
+            ~Holder() {}
+        }
+
+        test(clearSecond : bool) : int {
+            trace = 0;
+            {
+                holder : Holder<Leaf>(new Leaf(1), new Leaf(2));
+                if (clearSecond) {
+                    delete holder.second;
+                }
+            }
+            return trace;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)(bool)>("_KFN13owner_members4testEb");
+    REQUIRE(test);
+    CHECK(test(false) == 21);
+    CHECK(test(true) == 21);
+}
+
 TEST_CASE("new/delete primitive: explicit delete returns value", "[gen][owner][jit]") {
     auto jit = gen_jit_throws(R"SRC(
         module gen_owner_03;

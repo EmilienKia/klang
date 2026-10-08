@@ -233,9 +233,10 @@
     - [x] Test time budget: `libk-tests-io`, `libk-thread-io-tests` and `libk-tests-time` were close to
       the 120 s CTest timeout and timed out under VM load; each is now two Catch2 shards
       (`libk_add_test_sharded`), like `klang-tests-import-templates`.
-    - [ ] Owned members of an aggregate are not destroyed automatically when the aggregate is
-      destroyed (observed on a non-generic class holding `Dog!`; not generic-specific). Check
-      whether this is intended.
+    - [x] Owned members of an aggregate are destroyed automatically in reverse member
+      declaration order; null members are skipped after explicit deletion. Regression:
+      `klang/tests/test-gen-owner.cpp`, `template owner members are destroyed once in reverse
+      declaration order`.
     - [x] **Explicit generic type args in a member method call on a non-generic host
       class** (`obj.method<zoo::Dog>(arg)`). Fixed: the member-call path only used
       `context::resolve_type`, so namespace-qualified types, aliases and enclosing template
