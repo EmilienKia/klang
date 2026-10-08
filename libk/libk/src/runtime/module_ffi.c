@@ -1,5 +1,5 @@
 /*
- * K Language standard library — dynamic module loading FFI helpers
+ * K Language standard library — dynamic module and symbol lookup FFI helpers
  *
  * Copyright 2026 Emilien Kia
  *
@@ -17,10 +17,10 @@
  */
 
 /*
- * C implementations of the K-side FFI helpers declared in application.k for
- * ::k::Application::loadModule().
+ * C implementations of the K-side FFI helpers declared in application.k and
+ * module.k for native image loading and symbol lookup.
  *
- * Paths cross the boundary as K UTF-8 byte arrays (struct { uint32_t size;
+ * Paths and symbol names cross the boundary as K UTF-8 byte arrays (struct { uint32_t size;
  * unsigned char data[]; }, size including the trailing NUL).
  *
  * Error codes returned through `*err` mirror the ::k::LoadModuleError enum
@@ -48,6 +48,12 @@ typedef struct {
     uint32_t      size;
     unsigned char data[];
 } KByteArray;
+
+typedef struct {
+    int status;
+    void* address;
+    KByteArray* message;
+} KSymbolLookupResult;
 
 typedef struct {
     char* path;
@@ -105,6 +111,95 @@ enum {
     K_MODULE_INVALID_MANIFEST   = 7,
     K_MODULE_INCOMPATIBLE_MANIFEST = 8
 };
+
+/* Error values mirror ::k::ffi::SymbolLookupErrorCode; zero denotes success. */
+enum {
+    K_SYMBOL_SUCCESS = 0,
+    K_SYMBOL_INVALID_NAME = 1,
+    K_SYMBOL_NOT_FOUND = 2,
+    K_SYMBOL_LOOKUP_FAILED = 3,
+    K_SYMBOL_OUT_OF_MEMORY = 4
+};
+
+static KByteArray* k_symbol_message_copy(const char* message) {
+    size_t length = strlen(message);
+    if (length >= UINT32_MAX || length > SIZE_MAX - sizeof(KByteArray) - 1)
+        return NULL;
+    KByteArray* bytes = (KByteArray*) malloc(sizeof(KByteArray) + length + 1);
+    if (!bytes) return NULL;
+    bytes->size = (uint32_t) (length + 1);
+    memcpy(bytes->data, message, length + 1);
+    return bytes;
+}
+
+static void k_symbol_error(KSymbolLookupResult* result, int status, const char* message) {
+    result->message = k_symbol_message_copy(message);
+    result->status = result->message ? status : K_SYMBOL_OUT_OF_MEMORY;
+    result->address = NULL;
+}
+
+/*
+ * The input array's size includes its trailing NUL. Validate the entire payload
+ * before dlsym: truncating at the first NUL would silently change the name.
+ */
+void* __k_module_symbol_lookup(void* handle, const KByteArray* name) {
+    KSymbolLookupResult* result = (KSymbolLookupResult*) calloc(1, sizeof(*result));
+    if (!result) return NULL;
+    if (!name || name->size <= 1 || name->data[name->size - 1] != '\0'
+        || memchr(name->data, '\0', name->size - 1) != NULL) {
+        k_symbol_error(result, K_SYMBOL_INVALID_NAME,
+                       "Native symbol name must be nonempty and contain no NUL");
+        return result;
+    }
+    if (!handle) {
+        k_symbol_error(result, K_SYMBOL_LOOKUP_FAILED, "Native module handle is unavailable");
+        return result;
+    }
+
+    dlerror();
+    void* address = dlsym(handle, (const char*) name->data);
+    const char* error = dlerror();
+    if (error) {
+        /* Own the diagnostic before any other loader operation can replace it. */
+        KByteArray* message = k_symbol_message_copy(error);
+        if (!message) {
+            result->status = K_SYMBOL_OUT_OF_MEMORY;
+            return result;
+        }
+        result->message = message;
+        result->status = strstr((const char*) message->data, "undefined symbol")
+            ? K_SYMBOL_NOT_FOUND : K_SYMBOL_LOOKUP_FAILED;
+        return result;
+    }
+    result->status = K_SYMBOL_SUCCESS;
+    result->address = address; /* NULL without dlerror is a successful zero address. */
+    return result;
+}
+
+int __k_module_symbol_status(void* opaque) {
+    const KSymbolLookupResult* result = (const KSymbolLookupResult*) opaque;
+    return result ? result->status : K_SYMBOL_OUT_OF_MEMORY;
+}
+
+void* __k_module_symbol_address(void* opaque) {
+    const KSymbolLookupResult* result = (const KSymbolLookupResult*) opaque;
+    return result && result->status == K_SYMBOL_SUCCESS ? result->address : NULL;
+}
+
+KByteArray* __k_module_symbol_take_message(void* opaque) {
+    KSymbolLookupResult* result = (KSymbolLookupResult*) opaque;
+    if (!result) return NULL;
+    KByteArray* message = result->message;
+    result->message = NULL;
+    return message;
+}
+
+void __k_module_symbol_close(void* opaque) {
+    KSymbolLookupResult* result = (KSymbolLookupResult*) opaque;
+    if (!result) return;
+    free(result->message);
+    free(result);
+}
 
 /* Copy a K byte array into a freshly allocated, always NUL-terminated C string. */
 static char* k_module_to_cstr(const KByteArray* arr) {

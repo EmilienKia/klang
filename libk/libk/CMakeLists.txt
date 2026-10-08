@@ -12,6 +12,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffi.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ffi_symbol.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/annotations.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k

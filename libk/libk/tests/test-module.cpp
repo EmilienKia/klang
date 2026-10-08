@@ -62,6 +62,16 @@
 #error "LIBK_MODULE_FIXTURES_DIR must be defined — check CMakeLists.txt"
 #endif
 
+extern "C" int klang_module_symbol_application_fixture(void) {
+    return 17;
+}
+
+#if defined(__ELF__)
+asm(".globl klang_module_symbol_zero_fixture\n"
+    ".type klang_module_symbol_zero_fixture, @object\n"
+    ".set klang_module_symbol_zero_fixture, 0\n");
+#endif
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -389,6 +399,189 @@ TEST_CASE("Application::loadModule — dependency manifest is not attributed to 
         "}\n");
     REQUIRE(jit);
     CHECK(run_main(*jit) == 0);
+}
+
+TEST_CASE("Module::lookupSymbol retains native library owners and searches dependencies",
+          "[libk][module][ffi][symbol]") {
+    std::string source = R"SRC(
+        module __module_native_symbols__;
+        saved : ffi::NativeSymbol;
+        saved_dependency : ffi::NativeSymbol;
+        main() : int {
+            loaded : Expected<Shared<Module>, LoadModuleError> =
+                loadModule(String("@NATIVE_PATH@"));
+            if (!loaded.hasResult()) { return 1; }
+            image : Shared<Module> = loaded.getResult();
+            if (image.get()->kind() != ModuleKind::NATIVE_LIBRARY) { return 2; }
+            baseline : int = image.useCount();
+            {
+                found : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                    image.get()->lookupSymbol(String("klang_native_dependency_fixture"));
+                if (!found.hasResult() || found.hasError()) { return 3; }
+                symbol : ffi::NativeSymbol = found.getResult();
+                if (symbol.isEmpty() || !symbol.hasAddress()) { return 4; }
+                if (symbol.rawAddress() == null || symbol.owner() != image) { return 5; }
+                copy : ffi::NativeSymbol(symbol);
+                saved = copy;
+                if (image.useCount() <= baseline) { return 6; }
+            }
+            if (image.useCount() != baseline + 1) { return 7; }
+            registry : Shared<Module> = lookupModule(String("@REGISTRY_PATH@"));
+            if (!registry || registry == image) { return 8; }
+            dependency : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                image.get()->lookupSymbol(String("__k_rtti_manifest_v1"));
+            provider : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                registry.get()->lookupSymbol(String("__k_rtti_manifest_v1"));
+            if (!dependency.hasResult() || !provider.hasResult()) { return 9; }
+            saved_dependency = dependency.getResult();
+            if (saved_dependency.rawAddress() != provider.getResult().rawAddress()) { return 10; }
+            if (saved_dependency.owner() != image) { return 11; }
+            empty : ffi::NativeSymbol;
+            if (!empty.isEmpty() || empty.hasAddress() || empty.rawAddress() != null) { return 12; }
+            if (empty.owner()) { return 13; }
+            return 0;
+        }
+        saved_address() : byte* { return saved.rawAddress(); }
+        check_saved() : int {
+            if (saved.isEmpty() || saved_dependency.isEmpty()) { return 1; }
+            if (!saved.hasAddress() || !saved_dependency.hasAddress()) { return 2; }
+            if (!saved.owner() || saved.owner() != saved_dependency.owner()) { return 3; }
+            if (saved.owner().get()->kind() != ModuleKind::NATIVE_LIBRARY) { return 4; }
+            return 0;
+        }
+    )SRC";
+    const std::string native = fs::canonical(fs::path(FIXTURES) / "libmodnative_dep.so").string();
+    const std::string registry = fs::canonical(fs::path(FIXTURES) / "libmodreg.so").string();
+    source.replace(source.find("@NATIVE_PATH@"), std::string("@NATIVE_PATH@").size(), native);
+    source.replace(source.find("@REGISTRY_PATH@"), std::string("@REGISTRY_PATH@").size(), registry);
+    auto jit = jit_module(source);
+    REQUIRE(jit);
+    CHECK(run_main(*jit) == 0);
+
+    auto check_saved = jit->lookup_symbol<int(*)()>("check_saved");
+    REQUIRE(check_saved);
+    CHECK(check_saved() == 0);
+    auto saved_address = jit->lookup_symbol<void*(*)()>("saved_address");
+    REQUIRE(saved_address);
+    void* handle = dlopen(native.c_str(), RTLD_NOW | RTLD_NOLOAD);
+    REQUIRE(handle);
+    dlerror();
+    void* expected = dlsym(handle, "klang_native_dependency_fixture");
+    REQUIRE(dlerror() == nullptr);
+    CHECK(saved_address() == expected);
+    dlclose(handle);
+}
+
+TEST_CASE("Module::lookupSymbol resolves application symbols and accepts a zero address",
+          "[libk][module][ffi][symbol]") {
+    auto jit = jit_module(R"SRC(
+        module __module_application_symbols__;
+        saved : ffi::NativeSymbol;
+        main() : int {
+            app : Shared<ApplicationModule> = applicationModule();
+            found : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                app.get()->lookupSymbol(String("klang_module_symbol_application_fixture"));
+            if (!found.hasResult()) { return 1; }
+            saved = found.getResult();
+            if (saved.isEmpty() || !saved.hasAddress()) { return 2; }
+            if (saved.owner() != Shared<Module>(app)) { return 3; }
+            zero : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                app.get()->lookupSymbol(String("klang_module_symbol_zero_fixture"));
+            if (!zero.hasResult() || zero.hasError()) { return 4; }
+            zero_symbol : ffi::NativeSymbol = zero.getResult();
+            if (zero_symbol.isEmpty() || zero_symbol.hasAddress()) { return 5; }
+            if (zero_symbol.rawAddress() != null) { return 6; }
+            if (zero_symbol.owner() != Shared<Module>(app)) { return 7; }
+            return 0;
+        }
+        saved_address() : byte* { return saved.rawAddress(); }
+        check_saved() : int {
+            if (saved.isEmpty() || !saved.owner()) { return 1; }
+            if (saved.owner().get()->kind() != ModuleKind::APPLICATION) { return 2; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(run_main(*jit) == 0);
+    auto saved_address = jit->lookup_symbol<void*(*)()>("saved_address");
+    REQUIRE(saved_address);
+    CHECK(saved_address() == reinterpret_cast<void*>(&klang_module_symbol_application_fixture));
+    auto check_saved = jit->lookup_symbol<int(*)()>("check_saved");
+    REQUIRE(check_saved);
+    CHECK(check_saved() == 0);
+}
+
+TEST_CASE("Module::lookupSymbol rejects invalid names and owns native error messages",
+          "[libk][module][ffi][symbol][error]") {
+    auto jit = jit_module(R"SRC(
+        module __module_symbol_errors__;
+        main() : int {
+            app : Shared<ApplicationModule> = applicationModule();
+            failure : ffi::SymbolLookupError(ffi::SymbolLookupErrorCode::LOOKUP_FAILED, String(""));
+            {
+                missing : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                    app.get()->lookupSymbol(String("klang_module_symbol_absent_fixture"));
+                if (!missing.hasError() || missing.hasResult()) { return 1; }
+                failure = missing.getError();
+            }
+            if (failure.code() != ffi::SymbolLookupErrorCode::NOT_FOUND) { return 2; }
+            if (failure.message().empty()) { return 3; }
+            message : String = failure.message();
+            copy : ffi::SymbolLookupError(failure);
+
+            empty : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                app.get()->lookupSymbol(String(""));
+            if (!empty.hasError()) { return 4; }
+            if (empty.getError().code() != ffi::SymbolLookupErrorCode::INVALID_NAME) { return 5; }
+            if (empty.getError().message().empty()) { return 6; }
+
+            name : StringBuilder("klang_module_symbol_application_fixture");
+            name.appendChar((char) 0);
+            name.appendChar('x');
+            embedded : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                app.get()->lookupSymbol(name.toString());
+            if (!embedded.hasError() || embedded.hasResult()) { return 7; }
+            if (embedded.getError().code() != ffi::SymbolLookupErrorCode::INVALID_NAME) { return 8; }
+
+            long_name : StringBuilder("klang_module_symbol_absent_");
+            i : unsigned int = 0u;
+            while (i < 4096u) { long_name.appendChar('x'); ++i; }
+            second : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                app.get()->lookupSymbol(long_name.toString());
+            if (!second.hasError()) { return 9; }
+            if (second.getError().code() != ffi::SymbolLookupErrorCode::NOT_FOUND) { return 10; }
+            if (second.getError().message().size() < 4096u) { return 11; }
+            if (failure.message() != message || copy.message() != message) { return 12; }
+
+            utf8_name : String("klang_module_symbol_absent_\u00e9");
+            utf8_missing : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                app.get()->lookupSymbol(utf8_name);
+            if (!utf8_missing.hasError()) { return 15; }
+            if (utf8_missing.getError().code() != ffi::SymbolLookupErrorCode::NOT_FOUND) { return 16; }
+            if (!utf8_missing.getError().message().contains(utf8_name)) { return 17; }
+
+            present : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                app.get()->lookupSymbol(String("klang_module_symbol_application_fixture"));
+            if (!present.hasResult()) { return 13; }
+            if (failure.message() != message) { return 14; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(run_main(*jit) == 0);
+}
+
+TEST_CASE("NativeSymbol cannot be constructed from an arbitrary address",
+          "[libk][module][ffi][symbol][access]") {
+    auto jit = jit_module(R"SRC(
+        module __module_symbol_arbitrary_address__;
+        main() : int {
+            owner : Shared<Module>(applicationModule());
+            symbol : ffi::NativeSymbol(owner, null);
+            return 0;
+        }
+    )SRC");
+    CHECK_FALSE(jit);
 }
 
 TEST_CASE("Module views retain namespace owners and reject empty descriptor access",
