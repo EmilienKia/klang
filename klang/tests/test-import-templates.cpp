@@ -24,6 +24,7 @@
 
 #include "helpers.hpp"
 #include "../src/model/tools/kdi_exporter.hpp"
+#include "../src/model/template.hpp"
 
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
@@ -1519,6 +1520,140 @@ TEST_CASE("cross-module template — class template consumer instantiation",
     if (!result.out.empty()) INFO("stdout: " << result.out);
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE( result.exit_code == 42 );
+}
+
+TEST_CASE("cross-module template — nested imported return arguments keep their declaration identity",
+          "[import][e2e][template][cross-tpl][regression][canonical-nested-return]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module canonical_nested_return_lib;
+            template<typename K, typename V>
+            public interface Entry {
+                const key() : const K&;
+                const value() : const V&;
+            }
+            template<typename T>
+            public struct Holder {
+                public present : bool;
+                public Holder() : present(false) {}
+            }
+            template<typename K, typename V>
+            public interface Ordered {
+                const first() : Holder<Entry<K,V>>;
+                const last() : Holder<Entry<K,V>>;
+            }
+            template<typename K, typename V>
+            public class LocalMap : public Ordered<K,V> {
+                public const first() : Holder<Entry<K,V>> {
+                    result : Holder<Entry<K,V>>;
+                    return result;
+                }
+                public const last() : Holder<Entry<K,V>> {
+                    result : Holder<Entry<K,V>>;
+                    return result;
+                }
+            }
+            public libraryFirst(map : const Ordered<int,int>&) : Holder<Entry<int,int>> {
+                return map.first();
+            }
+            public libraryLast(map : const Ordered<int,int>&) : Holder<Entry<int,int>> {
+                return map.last();
+            }
+        )K",
+        R"K(
+            module canonical_nested_return_exe;
+            import canonical_nested_return_lib;
+            main() : int {
+                map : LocalMap<int,int>;
+                first : Holder<Entry<int,int>> = map.first();
+                last : Holder<Entry<int,int>> = map.last();
+                importedFirst : Holder<Entry<int,int>> = libraryFirst(map);
+                importedLast : Holder<Entry<int,int>> = libraryLast(map);
+                if (first.present || last.present || importedFirst.present || importedLast.present)
+                    return 1;
+                return 42;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("cross-module template — locally instantiated map recipes retain lexical return types",
+          "[import][e2e][template][cross-tpl][regression][lexical-nested-return]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module lexical_map_lib;
+            template<typename K, typename V>
+            public struct Entry {
+                public key : K;
+                public value : V;
+            }
+            template<typename T>
+            public struct OptionalHolder {
+                public value : const T*;
+                public OptionalHolder() : value(null) {}
+            }
+            template<typename K, typename V>
+            public class SourceMap {
+                public const first() : OptionalHolder<Entry<K,V>> {
+                    result : ::lexical_map_lib::OptionalHolder<::lexical_map_lib::Entry<K,V>>;
+                    return result;
+                }
+                public const last() : ::lexical_map_lib::OptionalHolder<::lexical_map_lib::Entry<K,V>> {
+                    result : OptionalHolder<Entry<K,V>>;
+                    return result;
+                }
+            }
+        )K",
+        R"K(
+            module lexical_map_consumer;
+            import lexical_map_lib;
+            main() : int {
+                map : lexical_map_lib::SourceMap<int,int>;
+                first : lexical_map_lib::OptionalHolder<lexical_map_lib::Entry<int,int>> = map.first();
+                last : ::lexical_map_lib::OptionalHolder<::lexical_map_lib::Entry<int,int>> = map.last();
+                if (first.value != null || last.value != null) return 1;
+                return 42;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("cross-module template — empty ListMap nested returns preserve imported Entry identity",
+          "[import][template][regression][listmap-lexical-return]") {
+    auto comp = compile_model_with_stdlib(R"K(
+        module listmap_lexical_consumer;
+        main() : int {
+            map : ListMap<int,int>;
+            first : OptionalConstRef<Entry<int,int>> = map.first();
+            last : ::k::OptionalConstRef<::k::Entry<int,int>> = map.last();
+            if (first.hasValue() || last.hasValue()) return 1;
+            return 42;
+        }
+    )K");
+    REQUIRE(comp);
+    auto map = find_aggregate(comp, "ListMap__int__int");
+    REQUIRE(map);
+    for (const auto* method : {"first", "last"}) {
+        auto fn = map->get_function(method);
+        REQUIRE(fn);
+        auto holder_type = std::dynamic_pointer_cast<k::model::struct_type>(fn->get_return_type());
+        REQUIRE(holder_type);
+        auto holder = holder_type->get_struct();
+        REQUIRE(holder);
+        REQUIRE(holder->get_tpl_args().size() == 1);
+        auto entry_type = std::dynamic_pointer_cast<k::model::struct_type>(
+            holder->get_tpl_args().front().type_arg);
+        REQUIRE(entry_type);
+        REQUIRE(entry_type->get_struct());
+        REQUIRE(entry_type->get_struct()->get_fq_name() == "::k::Entry__int__int");
+        REQUIRE(holder->get_fq_name().find("listmap_lexical_consumer") == std::string::npos);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

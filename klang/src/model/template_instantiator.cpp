@@ -1927,6 +1927,12 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);
     // Mark as a synthesised instantiation so codegen applies linkonce_odr + COMDAT.
+    concrete->_tpl_definition = tpl_def.shared_as<aggregate>();
+    if (!ti->origin_module_ns_fq.empty()) {
+        concrete->assign_name(unit::make_origin_absolute_name(
+            ti->origin_module_ns_fq, inst_name));
+    }
+
     concrete->mark_instantiation();
 
     // Copy friend directives from the template definition, substituting template parameters.
@@ -2185,7 +2191,12 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
     }
     if (!concrete) return nullptr;
 
-    (void)unit;
+    concrete->_tpl_definition = tpl_def.shared_as<aggregate>();
+    if (!ti->origin_module_ns_fq.empty()) {
+        concrete->assign_name(unit::make_origin_absolute_name(
+            ti->origin_module_ns_fq, base_name));
+    }
+
     (void)logger;
 
     concrete->set_final(tpl_def.is_final());

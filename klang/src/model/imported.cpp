@@ -925,12 +925,9 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
     }
     if (!agg) return nullptr;
 
-    // Assign the absolute FQ name
-    if (fq_name.has_root_prefix()) {
-        agg->assign_name(fq_name);
-    } else {
-        agg->assign_name(fq_to_abs_kname(kdi_agg->fq_name.empty() ? kdi_agg->name : kdi_agg->fq_name));
-    }
+    // A rooted lookup can still be a consumer-local binding. It must not become
+    // the declaration identity used to name/cache enclosing specializations.
+    agg->assign_name(fq_to_abs_kname(canonical_key));
 
     // ── Set nesting modifiers from KDI ──────────────────────────────────────
     agg->set_static_nested(kdi_agg->is_static_nested);

@@ -56,6 +56,12 @@ The following template features are fully implemented, tested, and usable:
 - Name mangling of template instantiations.
 - Constructor member-initializer lists in template aggregates.
 
+Cross-module instantiation must preserve the template's defining lexical namespace.
+In particular, an unqualified sibling type in a member signature or body denotes
+the declaration from that namespace, not a same-named declaration in the consumer.
+Qualified and unqualified references to that declaration must produce the same
+nested specialization, even when the producer exported no concrete specialization.
+
 ### 1.2 Planned (Not Yet Implemented)
 
 The following features are planned for future development:

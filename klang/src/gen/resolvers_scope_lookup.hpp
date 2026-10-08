@@ -38,6 +38,15 @@ namespace k::model::gen {
 class scope_lookup {
 public:
     /**
+     * Resolve a sibling type in an imported aggregate's defining namespace,
+     * including locally synthesized specializations of imported recipes.
+     * Called at the aggregate scope, before climbing into the consumer namespace.
+     */
+    static std::shared_ptr<aggregate>
+    lookup_imported_lexical_aggregate(unit& u, const std::shared_ptr<context>& ctx,
+                                     const element& scope, const k::name& name);
+
+    /**
      * Look up a variable by simple name, starting from elem and walking up the scope chain.
      * Checks variable_holder scopes (block, for_statement, ns, structure) and function parameters.
      */
@@ -234,4 +243,3 @@ private:
 } // namespace k::model::gen
 
 #endif //KLANG_RESOLVERS_SCOPE_LOOKUP_HPP
-

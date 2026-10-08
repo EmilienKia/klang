@@ -18,9 +18,51 @@
 #include "resolvers_scope_lookup.hpp"
 #include "resolvers_aggregate.hpp"
 #include "../model/imported.hpp"
+#include "../model/template.hpp"
 #include "../errors.hpp"
 
 namespace k::model::gen {
+
+std::shared_ptr<aggregate> scope_lookup::lookup_imported_lexical_aggregate(
+    unit& u, const std::shared_ptr<context>& ctx,
+    const element& scope, const k::name& name)
+{
+    if (name.empty() || name.has_root_prefix()) return {};
+    auto host = dynamic_cast<const aggregate*>(&scope);
+    if (!host) return {};
+
+    k::name origin;
+    auto definition = host->get_tpl_definition();
+    auto ti = definition ? definition->get_tpl_info() : host->get_tpl_info();
+    if (ti && !ti->origin_module_ns_fq.empty()) {
+        origin = k::name::from(ti->origin_module_ns_fq).without_root_prefix();
+    } else if (host->is_imported()) {
+        origin = k::name::from(host->get_fq_name()).without_root_prefix().without_back();
+    }
+
+    while (!origin.empty()) {
+        auto qualified = origin;
+        for (const auto& part : name.parts()) qualified = qualified.with_back(part);
+        if (auto imported = u.get_or_create_imported_aggregate(qualified.with_root_prefix(), ctx)) {
+            return imported;
+        }
+        // Source recipes are flattened into the consumer root. Only accept a
+        // recipe whose recorded declaration origin matches this lexical lookup.
+        if (auto root = u.get_root_namespace()) {
+            if (auto recipe = root->get_aggregate(qualified.back())) {
+                auto recipe_ti = recipe->get_tpl_info();
+                if (recipe_ti && !recipe_ti->origin_module_ns_fq.empty()
+                    && unit::make_origin_absolute_name(
+                        recipe_ti->origin_module_ns_fq, recipe->get_short_name())
+                        == qualified.with_root_prefix()) {
+                    return recipe;
+                }
+            }
+        }
+        origin = origin.without_back();
+    }
+    return {};
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // scope_lookup — visibility helpers

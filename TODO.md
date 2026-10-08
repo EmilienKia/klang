@@ -91,6 +91,28 @@
 
 #### Current bugs and gaps to fix
 
+- [x] **ListMap/TreeMap imported return specializations retain their lexical origin.**
+      Direct reproduction: from `cmake-build-debug/libk/libk`, run
+      `./libk-tests-collections-associative --reporter compact`. The executable
+      reports 43 cases, 99 assertions, with 15 failed `REQUIRE(j)` assertions.
+      Failures are the nine `ListMap<int,int>` tests and six `TreeMap<int,int>`
+      tests in `libk/libk/tests/test-map.cpp` (lines 50, 76, 99, 116, 138, 165,
+      188, 214, 237, 255, 278, 313, 336, 374, and 403); each generated module reports
+      `00E01: Return expression type must be compatible to the expected
+      function return type`. HashMap cases pass. Test sources and expectations
+      are unchanged. GDB at the return checker confirms incompatible specialized
+      return types: the declaration is
+      `::k::OptionalConstRef___u_ulmap_uempty_u_u_NEntry_u_uint_u_uint`, while
+      the expression is `::k::OptionalConstRef__k_NEntry_u_uint_u_uint&`.
+      Both contain `::k::Entry__int__int` as the template argument, but the
+      `OptionalConstRef` specializations have different names. This
+      was coupled to canonical imported-template/return-type resolution.
+      Specializations now retain their defining template, both resolution
+      phases use that lexical origin, and canonical identity is assigned before
+      resolving children rather than renaming a cached specialization later.
+      Producer/consumer and ListMap regressions cover nested return identities.
+      The full associative suite passes: 43 cases and 129 assertions.
+
 - [ ] **Specialized `Expected` static factories reject matching values.**
       In `libk/libk/src/application.k`, calling
       `Expected<Shared<Module>, LoadModuleError>::unexpected(failure)` where

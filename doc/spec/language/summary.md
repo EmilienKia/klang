@@ -311,6 +311,11 @@ Order (from innermost to outermost):
 
 The first match wins. Shadowing: an inner declaration hides an outer one.
 
+Imported template declarations retain their defining lexical namespace when
+instantiated in another module. Names in their member signatures and bodies must
+resolve in that namespace before the importing module's namespace; nested
+specializations retain the declaration identity of their type arguments.
+
 ### 4.5 Scope Resolution Operator `::`
 
 Access to a name in a specific namespace or struct scope. `::mod::name` = absolute form from root.

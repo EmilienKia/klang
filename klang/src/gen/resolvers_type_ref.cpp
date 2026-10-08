@@ -414,6 +414,23 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
         if (auto st = resolve_struct_from(*current, type_name)) {
             return st->get_struct_type();
         }
+        if (auto st = scope_lookup::lookup_imported_lexical_aggregate(
+                _unit, _context, *current, type_name)) {
+            if (auto resolved = st->get_struct_type()) return resolved;
+        }
+        // Imported hosts are parented to the consumer root, not their lexical
+        // namespace. Recover that namespace before searching consumer scopes.
+        if (auto host = std::dynamic_pointer_cast<const imported_aggregate>(current)) {
+            auto scope_name = k::name::from(host->get_fq_name()).without_back();
+            if (!scope_name.empty()) scope_name = scope_name.without_front();
+            while (!scope_name.empty()) {
+                auto qualified = scope_name;
+                for (const auto& part : type_name.parts()) qualified = qualified.with_back(part);
+                if (auto resolved = resolve_type_from_root(qualified)) return resolved;
+                scope_name = scope_name.without_back();
+            }
+            if (auto resolved = resolve_type_from_root(type_name)) return resolved;
+        }
         // Look for union types (single-part name)
         if (type_name.size() == 1) {
             if (auto uh_ptr = std::dynamic_pointer_cast<const union_holder>(current)) {
@@ -1116,6 +1133,45 @@ std::shared_ptr<aggregate> type_reference_resolver::find_template_aggregate(
             }
             return nullptr;
         }
+        if (auto st = scope_lookup::lookup_imported_lexical_aggregate(
+                _unit, _context, *current, base_name)) {
+            return st->is_template() ? st : nullptr;
+        }
+        if (!base_name.has_root_prefix()) {
+            if (auto host = std::dynamic_pointer_cast<const imported_aggregate>(current)) {
+                auto origin_scope = k::name::from(host->get_fq_name()).without_back();
+                auto scope_name = origin_scope;
+                if (!scope_name.empty()) scope_name = scope_name.without_front();
+                auto origin_qualified = origin_scope;
+                for (const auto& part : base_name.parts()) {
+                    origin_qualified = origin_qualified.with_back(part);
+                }
+                if (auto imported = _unit.get_or_create_imported_aggregate(
+                        origin_qualified.with_root_prefix(), _context);
+                    imported && imported->is_template()) {
+                    return imported;
+                }
+                if (const auto* tdef = find_imported_kdi_template_def(
+                        _unit, origin_qualified.without_root_prefix().to_string())) {
+                    if (auto root = _unit.get_root_namespace()) {
+                        if (auto tpl = root->get_aggregate(tdef->name); tpl && tpl->is_template()) {
+                            return tpl;
+                        }
+                    }
+                }
+                while (!scope_name.empty()) {
+                    auto qualified = scope_name;
+                    for (const auto& part : base_name.parts()) qualified = qualified.with_back(part);
+                    if (auto tpl = find_template_aggregate(qualified.with_root_prefix(), context_elem)) {
+                        return tpl;
+                    }
+                    scope_name = scope_name.without_back();
+                }
+                if (auto tpl = find_template_aggregate(base_name.with_root_prefix(), context_elem)) {
+                    return tpl;
+                }
+            }
+        }
     }
 
     // 2. Try root namespace
@@ -1250,6 +1306,7 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
             *tpl_agg, model_args, parent_ns_ptr, _unit, _context, *this);
     }
     if (!concrete_agg) return {};
+    if (concrete_agg->is_imported()) return concrete_agg->get_struct_type();
 
     // 4b. Resolve unresolved member-variable references in method bodies.
     template_instantiator::resolve_body_symbols(concrete_agg);
@@ -1327,10 +1384,6 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
         if (auto ancestor = concrete_agg->template ancestor<named_element>()) {
             concrete_agg->assign_name(ancestor->get_name().with_back(concrete_agg->get_short_name()));
         }
-    }
-    if (ti && !ti->origin_module_ns_fq.empty()) {
-        concrete_agg->assign_name(unit::make_origin_absolute_name(
-            ti->origin_module_ns_fq, concrete_agg->get_short_name()));
     }
     concrete_agg->update_mangled_name();
 
@@ -2655,7 +2708,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         if (type::is_reference(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
             auto src_sub_nc = type::remove_const(type_src->get_subtype());
-            if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc) ||
+                types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
         }
         return CAST_IMPOSSIBLE;
@@ -2694,8 +2748,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         if (type::is_reference(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
             auto src_sub_nc = type::remove_const(type_src->get_subtype());
-            if (same_conversion_type(src_sub_nc, tgt_sub_nc) ||
-                types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
         }
         return CAST_IMPOSSIBLE;

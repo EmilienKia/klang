@@ -159,6 +159,7 @@ protected:
      */
     std::string _tpl_base_name;
     std::vector<template_argument> _tpl_args;
+    std::weak_ptr<aggregate> _tpl_definition;
 
     /**
      * True when this aggregate is a template instantiation synthesised by
@@ -417,6 +418,9 @@ public:
 
     /** Returns the concrete template arguments used to instantiate this aggregate. */
     const std::vector<template_argument>& get_tpl_args() const { return _tpl_args; }
+
+    /** Lexical definition of a locally synthesized template specialization. */
+    std::shared_ptr<aggregate> get_tpl_definition() const { return _tpl_definition.lock(); }
 
     /** Set the template instantiation metadata (base name + concrete args). */
     void set_tpl_instantiation_info(const std::string& base_name, std::vector<template_argument> args) {

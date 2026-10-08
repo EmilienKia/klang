@@ -436,6 +436,11 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             if (st->is_template()) { tpl_agg = st; break; }
             return {}; // Found non-template — not a template instantiation
         }
+        if (auto st = scope_lookup::lookup_imported_lexical_aggregate(
+                _unit, _context, *current, base_name)) {
+            if (st->is_template()) { tpl_agg = st; break; }
+            return {};
+        }
     }
     if (!tpl_agg) {
         auto root_ns = _unit.get_root_namespace();
@@ -942,15 +947,8 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             concrete->assign_name(ancestor->get_name().with_back(concrete->get_short_name()));
         }
     }
-    // For instantiations of IMPORTED templates, override with an ORIGIN-ABSOLUTE
-    // name (::<origin>::Name) — independent of the synthesising module — so the
-    // mangled symbol is identical across every module that instantiates it and
-    // linkonce_odr/COMDAT can merge the copies (C++ ODR model). Local-template
-    // instantiations keep their model-tree-derived name (already origin-correct).
-    if (ti && !ti->origin_module_ns_fq.empty()) {
-        concrete->assign_name(unit::make_origin_absolute_name(
-            ti->origin_module_ns_fq, concrete->get_short_name()));
-    }
+    // Imported recipe specializations already receive their declaration-origin
+    // name in the instantiator, before any enclosing type can cache that identity.
     concrete->update_mangled_name();
 
     // 5d. Build vtable for class/interface instantiations (runs before child name
@@ -1101,6 +1099,10 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
     // Step 3: Walk up the scope chain looking for aggregates, unions, and enumerations
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
         if (auto st = resolve_struct_from(*current, type_name)) return st->get_struct_type();
+        if (auto st = scope_lookup::lookup_imported_lexical_aggregate(
+                _unit, _context, *current, type_name)) {
+            if (auto resolved = st->get_struct_type()) return resolved;
+        }
         // Look for union types
         if (type_name.size() == 1) {
             if (auto uh_ptr = std::dynamic_pointer_cast<const union_holder>(current)) {
