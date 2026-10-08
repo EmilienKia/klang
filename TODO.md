@@ -91,6 +91,22 @@
 
 #### Current bugs and gaps to fix
 
+- [x] **Application singleton test now handles the checked `Thread.join()` interruption.**
+      Direct reproduction: run `libk-tests-types --reporter compact [singleton]`.
+      The test case `Application singleton — activation, inheritance casts,
+      duplicate rejection and teardown` fails its `REQUIRE(jit)` with
+      `01207`: `Thread.join()` may throw `ThreadInterruptionException`, which
+      is neither caught nor declared by the generated `main`; diagnostic
+      location is `__app_singleton_lifecycle__.k:94:16` (the existing
+      `thread.join()` in `libk/libk/tests/test-application.cpp`). The other
+      `[singleton]` test passes. This is exposed by the current KDI importer
+      change that preserves imported method `throws_spec`; `k::Thread.join()`
+      correctly declares `throws(ThreadInterruptionException)` in
+      `libk/libk/src/thread.k:174`. The fixture now catches that exception and
+      explicitly asserts no interruption occurred, preserving its former
+      success expectation. Retest with `./libk-tests-types --reporter compact
+      [singleton]` and the full direct types executable.
+
 - [x] **ListMap/TreeMap imported return specializations retain their lexical origin.**
       Direct reproduction: from `cmake-build-debug/libk/libk`, run
       `./libk-tests-collections-associative --reporter compact`. The executable
@@ -127,6 +143,19 @@
       `Application::applicationModule` reproducer pass. The full module
       executable now has 19/20 passing cases; its remaining, unrelated
       `Thread.join()` checked-exception failure is tracked below.
+
+- [x] **Concurrent module-load JIT fixture handles checked interruption.**
+      Direct reproduction:
+      `cmake-build-debug/libk/libk/libk-tests-module --reporter console
+      --success "Application::loadModule — concurrent loads of one file share one Module"`.
+      The full module executable now reports 20 cases / 90 assertions, with
+      only this case failing at `test-module.cpp:898` (`REQUIRE(jit)`). The
+      generated module reports `01207` at line 37 on `th0.join()`: the call may
+      throw `ThreadInterruptionException`, but generated `main` neither catches
+      it nor declares it. This is independent of the imported `Shared` KDI
+      regression. The fixture now catches interruption explicitly and treats
+      it as a failure rather than skipping the concurrent-load checks.
+      The full module suite passes with the intended identity assertions.
 
 - [ ] **Specialized `Expected` static factories reject matching values.**
       In `libk/libk/src/application.k`, calling

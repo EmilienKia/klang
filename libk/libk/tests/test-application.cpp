@@ -166,6 +166,7 @@ TEST_CASE("Application singleton — activation, inheritance casts, duplicate re
         same_interface_object : bool = false;
         seen_active_in_worker : bool = false;
         same_worker_object : bool = false;
+        worker_join_interrupted : bool = false;
         duplicate_rejected : bool = false;
         duplicate_kept_original : bool = false;
         seen_empty_in_destructor : bool = false;
@@ -244,7 +245,11 @@ TEST_CASE("Application singleton — activation, inheritance casts, duplicate re
                 worker : ApplicationWorker! = new ApplicationWorker();
                 thread : Thread! = new Thread(worker);
                 thread.start();
-                thread.join();
+                try {
+                    thread.join();
+                } catch (e : ThreadInterruptionException&) {
+                    worker_join_interrupted = true;
+                }
                 return 0;
             }
 
@@ -283,6 +288,7 @@ TEST_CASE("Application singleton — activation, inheritance casts, duplicate re
     CHECK(*jit->lookup_symbol<bool*>("same_interface_object"));
     CHECK(*jit->lookup_symbol<bool*>("seen_active_in_worker"));
     CHECK(*jit->lookup_symbol<bool*>("same_worker_object"));
+    CHECK_FALSE(*jit->lookup_symbol<bool*>("worker_join_interrupted"));
     CHECK(*jit->lookup_symbol<bool*>("duplicate_rejected"));
     CHECK(*jit->lookup_symbol<bool*>("duplicate_kept_original"));
     CHECK(*jit->lookup_symbol<bool*>("seen_empty_in_destructor"));

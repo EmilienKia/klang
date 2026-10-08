@@ -1221,6 +1221,11 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         if (km.is_abstract)    { im->set_abstract_func(true); }
         if (km.is_final)       { im->set_final_func(true); }
         if (km.is_const_member){ im->set_const_member(true); }
+        for (const auto& ts : km.throws_spec) {
+            if (auto exc_type = kdi_type_to_model_type(ts, *this, ctx)) {
+                im->add_throws_type(exc_type);
+            }
+        }
         // Template origin for method instantiations
         if (km.template_origin) {
             auto method_args = convert_template_origin_args(*km.template_origin, *this, ctx);
