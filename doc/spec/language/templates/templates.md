@@ -721,4 +721,3 @@ class Stack : Container<T> {
 ---
 
 *For the complete EBNF grammar integrating template syntax, see [`../grammar.ebnf`](../grammar.ebnf).*
-

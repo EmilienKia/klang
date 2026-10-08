@@ -286,4 +286,3 @@ TEST_CASE("String literal — null terminator present", "[gen][literal][string]"
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == true);
 }
-

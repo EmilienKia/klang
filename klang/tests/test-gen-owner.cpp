@@ -979,4 +979,3 @@ TEST_CASE("new abstract class — error 0x0114", "[gen][owner][error]") {
         }
     )SRC"));
 }
-
