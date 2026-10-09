@@ -432,7 +432,7 @@
   all three import-template shards:
   ```
   ninja -C cmake-build-debug -j3 klang-tests-gen-functions klang-tests-gen-exceptions klang-tests-gen-types-enums-unions klang-tests-gen-virtuality klang-tests-gen-templates-core klang-tests-gen-memory-ownership klang-tests-gen-oop-temporary klang-tests-gen-oop-lifecycle klang-tests-import-templates
-  ctest --test-dir cmake-build-debug -j1 -R '^klang-tests-(gen-functions-shard-[0-2]|gen-exceptions|gen-types-enums-unions|gen-virtuality|gen-templates-core|gen-memory-ownership|gen-oop-temporary|gen-oop-lifecycle|import-templates-shard-[0-2])$' --output-on-failure
+  ctest --test-dir cmake-build-debug -j1 -R '^klang-tests-(gen-functions-shard-[0-2]|gen-exceptions|gen-types-enums-unions|gen-virtuality|gen-templates-core-shard-[0-1]|gen-memory-ownership|gen-oop-temporary|gen-oop-lifecycle|import-templates-shard-[0-2])$' --output-on-failure
   ninja -C cmake-build-debug -j3 libk-tests-io-proactor libk-tests-file-channel-fully
   cmake-build-debug/libk/libk/libk-tests-io-proactor "[count-limit]"
   cmake-build-debug/libk/libk/libk-tests-io-proactor "[file-fully]"
@@ -1141,20 +1141,32 @@
   assertions** in **145.72 seconds**, with no skipped or failing cases.
   The source split retains all four files exactly once, using `klang_gen_test`
   with the unchanged **120-second** timeout and shared setup:
-  - `klang-tests-gen-types-const-null`: `test-gen-const.cpp` (**54 cases,
-    38.941s**) + `test-gen-null-semantics.cpp` (**53 cases, 40.053s**);
-    **107 cases**, **78.994s** summed original per-source duration.
+  - The original combined target has since been split into
+    `klang-tests-gen-types-const` (`test-gen-const.cpp`) and
+    `klang-tests-gen-types-null` (`test-gen-null-semantics.cpp`); its recorded
+    per-source timings below predate that target split.
   - `klang-tests-gen-types-meta-designated`: `test-gen-annotation-meta.cpp`
     (**70 cases, 35.627s**) + `test-gen-designated-init.cpp` (**40 cases,
     29.979s**); **110 cases**, **65.606s** summed original per-source duration.
   These sums are historical measurements, not measured split runtimes.
-  Current regenerated category routes both pass within the unchanged
-  **120-second** limit: const-null **107 cases / 253 assertions, 80.35 s**;
-  meta-designated **110 / 534, 66.22 s**. They preserve **217 / 787** exactly.
-  The original passing 33 entries contain **2,735 / 13,701**; together with
-  the two replacement entries they cover all **35 current compiler CTest
-  entries**, totaling **2,952 / 14,488**. This is combined coverage across
-  replays, **not one single 35-entry CTest run**. The source-only preparation
+  At the original acceptance, the regenerated category routes passed within
+  the unchanged **120-second** limit: combined const-null **107 cases / 253
+  assertions, 80.35 s**; meta-designated **110 / 534, 66.22 s**. They
+  preserved **217 / 787** exactly.
+  The 2026-10-09 follow-up splits const/null into separate targets and shards
+  the arithmetic and template-core targets. All six affected CTest entries
+  passed sequentially under 120 seconds:
+  - arithmetic int8/16: shard 0 **3 cases / 306 assertions, 85.56 s**;
+    shard 1 **2 / 95, 23.56 s**.
+  - const: **54 / 114, 51.82 s**; null: **53 / 139, 50.03 s**.
+  - template core: shard 0 **57 / 258, 45.30 s**; shard 1 **56 / 241,
+    42.86 s**.
+  This replay covers **225 cases / 1,153 assertions** exactly once across the
+  six CTest entries; each remains configured with a **120-second** timeout.
+  At the original acceptance, the passing 33 entries contained **2,735 /
+  13,701**; together with the two replacement entries they covered all **35
+  compiler CTest entries at that time**, totaling **2,952 / 14,488**. This was
+  combined coverage across replays, **not one single 35-entry CTest run**. The source-only preparation
   preceded this accepted validation; budgeting is not a compiler correctness
   or performance bug fix.
 

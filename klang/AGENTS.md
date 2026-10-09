@@ -278,13 +278,14 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-control` | statements/control-flow/init-order/static ctor-dtor |
 | `klang-tests-gen-exceptions` | throw/catch/contracts/rethrow/unwinding |
 | `klang-tests-gen-ternary` | ternary expression behavior matrix |
-| `klang-tests-gen-arithmetic-int8-16` | 8/16-bit integer arithmetic (byte..uint16) |
+| `klang-tests-gen-arithmetic-int8-16` | 8/16-bit integer arithmetic (byte..uint16); CTest shards 0–1 |
 | `klang-tests-gen-arithmetic-int32-64` | 32/64-bit integer arithmetic (int32..uint64) |
 | `klang-tests-gen-arithmetic-float` | float/double/bool/incr-decr arithmetic |
 | `klang-tests-gen-operators` | operator overload/comparison/spaceship/assign |
 | `klang-tests-gen-casts` | scalar casts and indirection casts |
 | `klang-tests-gen-types-enums-unions` | enums, typed enums, and union hierarchies |
-| `klang-tests-gen-types-const-null` | const and null semantics (`test-gen-const.cpp`, `test-gen-null-semantics.cpp`) |
+| `klang-tests-gen-types-const` | const semantics (`test-gen-const.cpp`) |
+| `klang-tests-gen-types-null` | null semantics (`test-gen-null-semantics.cpp`) |
 | `klang-tests-gen-types-meta-designated` | annotations and designated init (`test-gen-annotation-meta.cpp`, `test-gen-designated-init.cpp`) |
 | `klang-tests-gen-aliases` | alias/typedef/callable-alias |
 | `klang-tests-gen-classes` | class basics/inheritance/upcasts |
@@ -294,7 +295,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-oop-lifecycle` | lifecycle and RVO |
 | `klang-tests-gen-oop-temporary` | named return + temporary construction |
 | `klang-tests-gen-scoping` | using/friend |
-| `klang-tests-gen-templates-core` | template functions/instantiation/mangling/members |
+| `klang-tests-gen-templates-core` | template functions/instantiation/mangling/members; CTest shards 0–1 |
 | `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params |
 | `klang-tests-gen-generics` | generic (type-erased) declarations, restrictions, single synthesis |
 | `klang-tests-import-core` | KDI import core, namespaces, enums, transitive |
@@ -312,6 +313,9 @@ Grouping policy:
   All shards use identical lexical ordering and RNG seed, run serially, and
   retain the 120-second timeout; every normally enabled Catch2 test case runs
   exactly once. Hidden (`[.]`) cases remain opt-in as before.
+- `SHARD_COUNT 2` likewise registers `<target>-shard-0` and
+  `<target>-shard-1`, preserving the executable/build target name and 120-second
+  per-entry timeout while running each normally enabled Catch2 case once.
 - Use `ctest -R "^klang-tests-gen-functions-shard-" --output-on-failure` or
   `ctest -R "^klang-tests-import-templates-shard-" --output-on-failure` to run
   a full heavy suite within the per-entry budget. Direct executable invocation
