@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <unordered_set>
 #include <unistd.h>
 #include <llvm/ADT/ScopeExit.h>
@@ -36,7 +37,9 @@
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Target/TargetMachine.h>
 #include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/GVN.h>
@@ -144,8 +147,70 @@ bool create_static_archive(log::logger& logger,
 
 } // anonymous namespace
 
+void compiler::validate_export_symbol(std::string_view symbol) {
+    if (!symbol.empty()) {
+        bool valid = true;
+        for (unsigned char c : symbol) {
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '$')) {
+                valid = false;
+                break;
+            }
+        }
+        if (valid) return;
+    }
+    throw std::invalid_argument(
+        "--export-symbol requires a nonempty exact native name using only ASCII "
+        "letters, digits, '_', '.', or '$'; NUL, whitespace, commas, options and "
+        "wildcard patterns are not allowed");
+}
+
+void compiler::set_export_symbols(std::vector<std::string> symbols) {
+    std::set<std::string> exports;
+    for (const auto& symbol : symbols) {
+        validate_export_symbol(symbol);
+        exports.insert(symbol);
+    }
+    _export_symbols = std::move(exports);
+}
+
+bool compiler::supports_export_symbols(const std::string& target_triple) {
+    const llvm::Triple host(llvm::Triple::normalize(llvm::sys::getDefaultTargetTriple()));
+    const llvm::Triple target(llvm::Triple::normalize(target_triple));
+    return host.isOSLinux() && host.isOSBinFormatELF() &&
+           target.isOSLinux() && target.isOSBinFormatELF();
+}
+
+bool compiler::check_export_symbol_output(bool executable) {
+    if (_export_symbols.empty()) return true;
+    if (!executable) {
+        error(static_cast<unsigned int>(diag::compiler_diag::ERR_EXPORT_SYMBOL_INCOMPATIBLE_OUTPUT),
+              "--export-symbol requires a GNU/Linux ELF executable; "
+              "object, library, KDI and JIT output are not supported");
+        return false;
+    }
+    if (!supports_export_symbols(_target->getTargetTriple().getTriple())) {
+        error(static_cast<unsigned int>(diag::compiler_diag::ERR_EXPORT_SYMBOL_UNSUPPORTED_TARGET),
+              "--export-symbol is supported only on a GNU/Linux ELF host and target");
+        return false;
+    }
+    return true;
+}
+
+std::vector<std::string> compiler::build_export_symbol_link_args() const {
+    std::vector<std::string> args;
+    args.reserve(_export_symbols.size() * 2);
+    for (const auto& symbol : _export_symbols) {
+        // Pass one linker argument, not clang's comma-separated -Wl syntax.
+        args.push_back("-Xlinker");
+        args.push_back("--export-dynamic-symbol=" + symbol);
+    }
+    return args;
+}
+
 bool compiler::gen_executable(const std::string& output_file) {
     if (_has_compilation_error) return false;
+    if (!check_export_symbol_output(true)) return false;
     if (!has_main_method()) {
         error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_NO_MAIN_FOR_EXECUTABLE),
               "Cannot generate executable: no main function");
@@ -160,7 +225,7 @@ bool compiler::gen_executable(const std::string& output_file) {
     auto object_path = make_temp_object_path(output_path.stem().string());
 
     trace("[compiler::gen_executable] generating object '{}'", {object_path.string()});
-    if (!gen_object_file(object_path)) {
+    if (!emit_object_file(object_path, false)) {
         std::filesystem::remove(object_path);
         return false;
     }
@@ -175,6 +240,8 @@ bool compiler::gen_executable(const std::string& output_file) {
             clang_args.push_back("-Wl,--export-dynamic-symbol=__k_application_anchor_v1");
             clang_args.push_back("-Wl,-u,__k_application_anchor_v1");
         }
+        auto export_args = build_export_symbol_link_args();
+        clang_args.insert(clang_args.end(), export_args.begin(), export_args.end());
         if (_debug_info_options.enabled) {
             clang_args.push_back("-g");
         }
@@ -309,6 +376,7 @@ std::vector<std::string> compiler::build_import_link_args() const {
 
 bool compiler::gen_kdi(const std::string& lib_path) {
     if (_has_compilation_error) return false;
+    if (!check_export_symbol_output(false)) return false;
     // --no-emit-kdi: silently skip KDI generation
     if (_ir_output_options.no_emit_kdi) return true;
 
@@ -367,6 +435,7 @@ bool compiler::gen_kdi(const std::string& lib_path) {
 
 bool compiler::gen_shared_library(const std::string& output_file) {
     if (_has_compilation_error) return false;
+    if (!check_export_symbol_output(false)) return false;
     std::filesystem::path output_path(
         output_file.empty() ? "lib" + get_lib_base_name() + ".so"
                             : output_file);
@@ -410,6 +479,7 @@ bool compiler::gen_shared_library(const std::string& output_file) {
 
 bool compiler::gen_static_library(const std::string& output_file) {
     if (_has_compilation_error) return false;
+    if (!check_export_symbol_output(false)) return false;
     std::filesystem::path output_path(
         output_file.empty() ? "lib" + get_lib_base_name() + ".a"
                             : output_file);
@@ -431,6 +501,7 @@ bool compiler::gen_static_library(const std::string& output_file) {
 
 bool compiler::gen_libraries(const std::string& shared_out, const std::string& static_out) {
     if (_has_compilation_error) return false;
+    if (!check_export_symbol_output(false)) return false;
     // Determine output paths up front
     const std::string base = get_lib_base_name();
     std::filesystem::path so_path(shared_out.empty() ? "lib" + base + ".so" : shared_out);

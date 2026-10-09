@@ -554,6 +554,7 @@ add_executable(klangc-tests
         tests/test-klangc-jit-exec.cpp
         tests/test-klangc-main-abort.cpp
         tests/test-klangc-object-input.cpp
+        tests/test-klangc-export-symbol.cpp
         tests/test-klangc-debug.cpp
         tests/test-klangc-mangling.cpp
         tests/test-klangc-static-diamond.cpp

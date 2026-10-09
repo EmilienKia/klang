@@ -25,6 +25,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <cctype>
 #include <csignal>
 #include <cstdlib>
@@ -119,6 +120,7 @@ int main(int argc, const char** argv) {
     std::vector<std::string> kdi_files;     // -i <file.kdi>
     std::vector<std::string> lib_dirs;      // -L <dir>
     std::vector<std::string> lib_files;     // -l <name-or-path>
+    std::vector<std::string> export_symbols; // --export-symbol <native-name>
     std::vector<std::string> plugin_paths;  // --plugin <path>
     std::vector<std::string> disabled_plugins; // --disable-plugin <name>
     std::string lib_path_env;               // --lib-path-env
@@ -179,6 +181,11 @@ int main(int argc, const char** argv) {
                 "Specify a library binary to link against. Accepts either a "
                 "short name (e.g. math.vec → libmath.vec.so) or a full/relative "
                 "path to a .so or .a file. May be repeated.")
+            ("export-symbol",
+                po::value<std::vector<std::string>>(&export_symbols)->composing(),
+                "Export one exact native name from a GNU/Linux ELF executable "
+                "for dynamic lookup. May be repeated; duplicates are ignored. "
+                "No wrappers or forced archive extraction.")
             ("lib-path-env",
                 po::value<std::string>(&lib_path_env),
                 "Override the name of the environment variable used to pass "
@@ -236,13 +243,19 @@ int main(int argc, const char** argv) {
     p.add("input-file", -1);
 
     po::variables_map vm;
-    auto parser = po::command_line_parser(argc, argv)
+    po::parsed_options parser(&cmdline_options);
+    try {
+        parser = po::command_line_parser(argc, argv)
             .options(cmdline_options)
             .positional(p)
             .allow_unregistered()
             .run();
-    po::store(parser, vm);
-    po::notify(vm);
+        po::store(parser, vm);
+        po::notify(vm);
+    } catch (const po::error& e) {
+        std::cerr << "Command-line error: " << e.what() << std::endl;
+        return 1;
+    }
 
     std::vector<std::string> unrecognized = po::collect_unrecognized(parser.options, po::exclude_positional);
     if(!unrecognized.empty()) {
@@ -253,6 +266,25 @@ int main(int argc, const char** argv) {
         std::cout << "Usage: klangc [options] input-file..." << std::endl;
         std::cout << cmdline_options << std::endl;
         return 1;
+    }
+
+    if (!export_symbols.empty()) {
+        try {
+            for (const auto& symbol : export_symbols) {
+                k::compiler::validate_export_symbol(symbol);
+            }
+        } catch (const std::invalid_argument& e) {
+            std::cerr << e.what() << std::endl;
+            return 1;
+        }
+        if (vm.count("compile") || vm.count("dyn-lib") || vm.count("static-lib") ||
+            vm.count("jit-exec") || vm.count("mangle-symbol") || vm.count("demangle-symbol") ||
+            vm.count("version") || vm.count("print-targets") ||
+            vm.count("print-target-triple") || vm.count("print-effective-triple")) {
+            std::cerr << "--export-symbol requires a GNU/Linux ELF executable; "
+                         "it cannot be combined with a non-executable output mode" << std::endl;
+            return 1;
+        }
     }
 
     if (vm.count("mangle-symbol") > 0 || vm.count("demangle-symbol") > 0) {
@@ -275,6 +307,12 @@ int main(int argc, const char** argv) {
 
     if(!vm.count("target")) {
         target_triple = llvm::sys::getDefaultTargetTriple();
+    }
+
+    if (!export_symbols.empty() && !k::compiler::supports_export_symbols(target_triple)) {
+        std::cerr << "--export-symbol is supported only on a GNU/Linux ELF host and target"
+                  << std::endl;
+        return 1;
     }
 
     std::string error;
@@ -363,6 +401,7 @@ int main(int argc, const char** argv) {
     try {
 
         auto compiler = k::compiler::create(target_machine);
+        compiler->set_export_symbols(export_symbols);
 
         // Build and apply IR export options
         k::IrOutputOptions ir_opts;

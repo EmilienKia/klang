@@ -143,6 +143,11 @@ protected:
     std::vector<std::string> _extra_library_dirs;
     std::vector<std::string> _extra_libraries;
 
+    /** Exact native names to expose from the executable's dynamic symbol table. */
+    std::set<std::string> _export_symbols;
+
+    bool check_export_symbol_output(bool executable);
+
     /** Plugin manager handling dynamic and static compiler plugins. */
     std::unique_ptr<plugin::plugin_manager> _plugin_manager;
 
@@ -327,6 +332,26 @@ public:
      * as-is; any other value is forwarded as -l<value>.
      */
     void set_extra_libraries(std::vector<std::string> libs);
+
+    /**
+     * Replace the executable's selective native exports, deduplicating names.
+     * Only nonempty ASCII letters, digits, '_', '.', and '$' are accepted.
+     * Throws std::invalid_argument for unsafe names, without changing the set.
+     * This controls linker visibility only: no wrappers or archive extraction.
+     * With a nonempty set, object, library, KDI and JIT output are rejected.
+     */
+    void set_export_symbols(std::vector<std::string> symbols);
+
+    const std::set<std::string>& get_export_symbols() const { return _export_symbols; }
+
+    /** Validate a single exact native name; throws std::invalid_argument. */
+    static void validate_export_symbol(std::string_view symbol);
+
+    /** Whether the host and requested target support GNU/Linux ELF exports. */
+    static bool supports_export_symbols(const std::string& target_triple);
+
+    /** Selective executable linker arguments; does not force archive extraction. */
+    std::vector<std::string> build_export_symbol_link_args() const;
 
     /**
      * Set the global log-level threshold.

@@ -849,6 +849,7 @@ void compiler::optimize_gen_code() {
 
 std::unique_ptr<k::model::gen::jit> compiler::to_jit(bool init_runtime) {
 
+    if (!check_export_symbol_output(false)) return nullptr;
     if (_has_compilation_error || !verify_gen_code()) {
         return nullptr;
     }
@@ -871,6 +872,7 @@ std::unique_ptr<k::model::gen::jit> compiler::to_jit(bool init_runtime) {
 }
 
 bool compiler::gen_object_file(const std::string& output_file) {
+    if (!check_export_symbol_output(false)) return false;
     return emit_object_file(output_file, false);
 }
 
