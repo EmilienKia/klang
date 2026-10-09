@@ -2010,6 +2010,8 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         if (dtor_it != _context->_functions.end()) dtor_llvm_fn = dtor_it->second;
     }
 
+    // Activation-error helper locals must not share the Application setup scope.
+    {
     _builder->SetInsertPoint(activation_error_bb);
     _builder->CreateCall(activation_error_fn, {activation_status});
     _builder->CreateStore(llvm::ConstantInt::get(i32_ty, 125), exit_status);
@@ -2017,6 +2019,8 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
 
     auto shutdown_fn = get_module().getOrInsertFunction("__k_application_shutdown",
         llvm::FunctionType::get(void_ty, false));
+    // Main cleanup helpers must not share the activation-error helper scope.
+    {
     auto* tls_exit_fn_ty = llvm::FunctionType::get(void_ty, false);
     auto* tls_exit_fn = get_module().getFunction("__k_tls_thread_exit");
     if (!tls_exit_fn) {
@@ -2147,6 +2151,8 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
     emit_cleanup(true);
     create_call_or_invoke(tls_exit_fn_ty, tls_exit_fn, {});
     _builder->CreateResume(exception);
+    }
+    }
 }
 
 void implementation_generator::visit_namespace(ns &ns) {
