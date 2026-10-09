@@ -11,6 +11,7 @@ enable_testing()
 # ── Common dependencies ───────────────────────────────────────────────────────
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCBOR REQUIRED libcbor)
+pkg_check_modules(LIBFFI REQUIRED IMPORTED_TARGET libffi)
 
 find_package(Catch2 REQUIRED)
 find_package(nlohmann_json REQUIRED)

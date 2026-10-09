@@ -546,6 +546,38 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile fixed-signature native C calls ─────────────────────────────────
+set(RUNTIME_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_ffi.c)
+set(RUNTIME_FFI_OBJ ${LIBK_OUTPUT_DIR}/runtime_ffi.o)
+set(FFI_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/ffi_ffi.c)
+set(FFI_FFI_OBJ ${LIBK_OUTPUT_DIR}/ffi_ffi.o)
+set(RUNTIME_FFI_H ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_ffi.h)
+
+add_custom_command(
+    OUTPUT ${RUNTIME_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} -std=c11 ${LIBFFI_CFLAGS}
+            -o ${RUNTIME_FFI_OBJ} ${RUNTIME_FFI_C}
+    DEPENDS ${RUNTIME_FFI_C} ${RUNTIME_FFI_H}
+    COMMENT "Compiling K fixed-signature native call engine (runtime_ffi.c)"
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${FFI_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} -std=c11 ${LIBFFI_CFLAGS}
+            -o ${FFI_FFI_OBJ} ${FFI_FFI_C}
+    DEPENDS ${FFI_FFI_C} ${RUNTIME_FFI_H}
+    COMMENT "Compiling K primitive native call bridges (ffi_ffi.c)"
+    VERBATIM
+)
+foreach(_dir ${LIBFFI_LIBRARY_DIRS})
+    list(APPEND LIBK_EXTRA_LINK_ARGS -L ${_dir})
+endforeach()
+foreach(_lib ${LIBFFI_LIBRARIES})
+    list(APPEND LIBK_EXTRA_LINK_ARGS -l ${_lib})
+endforeach()
+# The archive includes these runtime objects, not libffi itself. Static
+# consumers must also link the libffi dependencies returned by pkg-config.
+
 # ── Compile UUID FFI helpers ──────────────────────────────────────────────
 set(UUID_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/uuid_ffi.c)
 set(UUID_FFI_OBJ ${LIBK_OUTPUT_DIR}/uuid_ffi.o)
@@ -679,6 +711,7 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${EXECUTOR_RUNTIME_OBJ}
                    ${APP_FFI_OBJ}
                    ${MODULE_FFI_OBJ}
+                   ${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ}
                    ${UUID_FFI_OBJ}
                    ${PLATFORM_CLOCK_POSIX_OBJ}
                    ${LEAP_SECOND_DATA_OBJ}
@@ -772,6 +805,18 @@ macro(libk_add_test TARGET TIMEOUT)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
     set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
 endmacro()
+
+# ── Native-only FFI ABI tests ──────────────────────────────────────────────
+# Exercise the exact runtime objects without JIT or compiled K fixtures.
+set_source_files_properties(${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ}
+    PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+add_executable(libk-tests-ffi-native
+    tests/test-ffi-native.cpp ${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ})
+target_include_directories(libk-tests-ffi-native PRIVATE src/runtime)
+target_link_libraries(libk-tests-ffi-native PRIVATE
+    Catch2::Catch2WithMain PkgConfig::LIBFFI pthread dl)
+add_test(NAME libk-tests-ffi-native COMMAND libk-tests-ffi-native)
+set_tests_properties(libk-tests-ffi-native PROPERTIES TIMEOUT 120)
 
 # ── libk sharded test helper macro ───────────────────────────────────────────
 # Like libk_add_test, but registers <SHARDS> CTest entries running disjoint Catch2
