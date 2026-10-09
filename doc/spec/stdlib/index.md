@@ -26,6 +26,7 @@ Contents:
 | [`Object`](object.md) | Root base class for all K classes. | `src/object.k` |
 | [`Application`, `EnvironmentMap`](application.md) | Abstract program entry-point object and read-only `env()` accessor; normal/unwind exit drains I/O before field destruction. | `src/application.k` |
 | [`Module`, `LoadModuleError`](module.md) | Dynamic libraries loaded at run time through `Application::loadModule()`. | `src/module.k`, `src/application.k` |
+| [`k::ffi`](ffi.md) | Owner-retaining native symbol lookup and runtime, fixed-signature C foreign calls backed by libffi. | `src/ffi_symbol.k`, `src/ffi_runtime.k` |
 | [`CharHelpers`](string.md#charhelpers) | Static utility methods for `char[]` buffer operations. | `src/string.k` |
 | [`String`](string.md#string) | Immutable, final string class wrapping a null-terminated `char[]!` buffer. | `src/string.k` |
 | [`StringBuilder`](string.md#stringbuilder) | Mutable, growable string builder backed by a single contiguous buffer. | `src/string.k` |
@@ -50,6 +51,14 @@ Contents:
 | [`k::math::Math`](math.md) | Static utility class for integer and long mathematical operations (`abs`, `min`, `max`, `clamp`, …). | `src/math/math.k` |
 
 *(More types and namespaces will be added as the language evolves.)*
+
+Runtime foreign calls use the required native `libffi` dependency. This API
+does not replace compile-time `@ffi::Extern("C")` declarations. Native
+consumers of `libk.a` must also link its transitive dependencies, available
+through the generated build-tree `libk.pc` with `pkg-config --libs --static
+libk`, and use a C++ linker driver for K exception support. See
+[CMake integration](../../howtos/cmake-integration-k-projects.md#12-build-tree-package-metadata-and-static-consumers)
+for package paths and explicit archive selection.
 
 ---
 

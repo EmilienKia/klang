@@ -16,6 +16,10 @@ For an external CMake project building K sources, assume that the Klang toolchai
   Shared runtime linkage requires the liburing shared library at execution.
   A consumer linking `libk.a` must also link liburing (`-l uring`) and the
   other native runtime dependencies; an archive does not carry `DT_NEEDED`.
+- **Runtime FFI dependency:** `libffi` development files and pkg-config
+  metadata are required when building Klang. Shared runtime consumers need
+  the matching native shared dependencies at execution; archive consumers
+  must supply libffi and the rest of the native dependency closure at link time.
 
 These external examples assume a populated toolchain prefix, which may also
 be staged by manually copying `klangc`, `kditool`, `libk.so`, `libk.a`,
@@ -30,6 +34,86 @@ export PATH="/opt/klang/bin:$PATH"
 export KLANG_LIB_PATH="/opt/klang/lib/kdi:/opt/klang/lib"
 export LD_LIBRARY_PATH="/opt/klang/lib:$LD_LIBRARY_PATH"
 ```
+
+### 1.2 Build-tree package metadata and static consumers
+
+The build generates `cmake-build-debug/libk/libk/libk.pc`, colocated with
+`libk.so`, `libk.a`, `libk.kdi` and `k.kdi`. It describes existing build
+outputs; it does not add CMake installation rules. Its `libdir` and
+`kdi_dir` are relative to `${pcfiledir}`, so copying these artifacts together
+to another directory preserves their package paths.
+
+```bash
+export PKG_CONFIG_PATH="$PWD/cmake-build-debug/libk/libk${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+pkg-config --variable=libdir libk
+pkg-config --variable=kdi_dir libk
+pkg-config --libs libk
+pkg-config --libs --static libk
+```
+
+Shared metadata provides `-L… -lk`. Static metadata additionally supplies
+libffi, liburing, native thread, dynamic-loader and math dependencies, and
+ICU dependencies only if ICU support was enabled when building the runtime.
+Link native consumers with a **C++ driver**, such as `clang++`, even if
+their own source is C: K exceptions use the C++ ABI runtime.
+
+**`pkg-config --static` does not force static library selection.** A normal
+`-lk` can still select `libk.so`. For a native CMake consumer, use the full
+archive path and remove only the generic `-lk` from the ordered dependency
+flags:
+
+```cmake
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(K_RUNTIME REQUIRED libk)
+pkg_get_variable(K_RUNTIME_LIBDIR libk libdir)
+pkg_get_variable(K_RUNTIME_KDI_DIR libk kdi_dir)
+
+set(K_RUNTIME_STATIC_DEPS ${K_RUNTIME_STATIC_LDFLAGS})
+list(REMOVE_ITEM K_RUNTIME_STATIC_DEPS "-lk")
+
+add_executable(native_host src/native_host.cpp)
+target_link_libraries(native_host PRIVATE
+    "${K_RUNTIME_LIBDIR}/libk.a"
+    ${K_RUNTIME_STATIC_DEPS}
+)
+```
+
+Keeping the archive before its dependencies matters for linkers that resolve
+archives from left to right. Shared consumers can instead use
+`pkg_check_modules(K_RUNTIME REQUIRED IMPORTED_TARGET libk)` and
+`PkgConfig::K_RUNTIME`. Runtime shared-library discovery still needs the
+appropriate loader path or RPATH.
+
+For `klangc`, use `-I <kdi_dir>` for metadata and `-L <libdir>` for binaries.
+The compiler automatically imports and links module `k`. A static consumer
+must select a directory containing `libk.a` and `k.kdi` **but no `libk.so`**,
+and put it first in the KDI search order as well as in `-L`. Run from a
+directory without another `libk.so`, because the current directory is
+searched before `-I` directories; use `--no-lib-path-env` when an inherited
+`KLANG_LIB_PATH` could introduce a different runtime.
+
+```bash
+klangc --no-lib-path-env -I /path/to/static-runtime -L /path/to/static-runtime \
+    main.k native_helper.o -l ffi -l uring -l pthread -l dl -l m -o myapp
+```
+
+This example lists the basic native dependencies. Also pass the configured
+dependency library directories and any additional libraries reported by
+`pkg-config --libs --static libk`, including ICU when enabled. The compiler's
+`-l` option accepts library names or library paths, **not arbitrary linker
+options**: use `-l pthread` for thread linkage rather than `-l -pthread`.
+If metadata contains other native driver options, use a separate C++ final
+link step rather than silently discarding them. A full archive path in an
+extra `-l` does not disable the compiler's automatic base `-lk`; isolating
+the runtime directory avoids a mixed shared/static link.
+
+If runtime FFI looks up a native helper through `Module::lookupSymbol()` on
+the application module returned by `applicationModule()`, also pass
+`--export-symbol <exact-native-name>` to `klangc`. On GNU/Linux ELF
+executables this exports that selected native name for dynamic lookup; it
+does not infer a C signature or export every helper. This is unnecessary
+for normal direct calls through `@ffi::Extern("C")`. See the
+[compiler manual](../man/klangc.md) and [FFI reference](../spec/stdlib/ffi.md).
 
 ---
 

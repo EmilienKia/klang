@@ -16,6 +16,7 @@ in the standard library module `k` (source file `libk/libk/src/ffi.k`).
 3. [Type compatibility matrix](#3-type-compatibility-matrix)
 4. [Error and warning reference](#4-error-and-warning-reference)
 5. [Examples](#5-examples)
+6. [Runtime C invocation](#6-runtime-c-invocation)
 
 ---
 
@@ -239,5 +240,30 @@ send_message(fd : int) : long {
 
 ---
 
-*See also:* [Functions](functions.md) · [Annotations](../annotations/annotations.md)
+## 6. Runtime C invocation
 
+Runtime symbol lookup and invocation are standard-library operations, separate
+from `@ffi::Extern("C")` declarations. `Module.lookupSymbol()` resolves an exact
+native name in the module handle's loader scope and returns an owner-retaining
+`ffi::NativeSymbol`. A caller supplies the function's signature using the
+`ffi::c` API and prepares it before invocation. A symbol address does not
+provide or verify a C signature.
+
+C-specific type aliases, type descriptions, signatures, values and functions
+live in `::k::ffi::c`. Native pointers, managed buffers and call results live in
+`::k::ffi`. The initial invocation backend supports fixed signatures with
+scalar and pointer types using the default Linux LP64 C ABI. It does not
+reinterpret ordinary K callable values as C function pointers.
+
+Array arguments expose their element data, not the K count-prefixed array
+representation; the caller must supply a separate length when required by
+the native API. Borrowed arrays and pointers must remain valid for their
+documented usage period.
+
+See the [runtime FFI reference](../../stdlib/ffi.md) for supported types,
+ownership, fluent and direct construction, errors, and native dependency
+requirements. This API does not introduce new language grammar.
+
+---
+
+*See also:* [Functions](functions.md) · [Annotations](../annotations/annotations.md) · [Runtime FFI](../../stdlib/ffi.md)

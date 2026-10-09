@@ -91,6 +91,17 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Vector copy self-assignment clears the source before copying.**
+      Source review of `libk/libk/src/vector.k`, `operator=(const Vector<T>&)`,
+      shows that it calls `clear()` before reading `other.size()` without
+      checking whether `other` is the same vector. Reproduce with
+      `a : int[1] = {7}; values : Vector<int> = Vector<int>(a); values = values;`:
+      the expected size is one, but the implementation leaves the vector empty.
+      Runtime reproduction is deferred. The new FFI signature and call-builder
+      assignment operators guard self-assignment, so this existing defect does
+      not block runtime FFI. Add a sequential-collection regression before
+      fixing the general Vector assignment operator.
+
 - [x] **Application singleton test now handles the checked `Thread.join()` interruption.**
       Direct reproduction: run `libk-tests-types --reporter compact [singleton]`.
       The test case `Application singleton — activation, inheritance casts,

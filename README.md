@@ -62,7 +62,7 @@ Building Klang requires:
 - CMake 3.17 or newer
 - A C++20 compiler and a C/C++ linker toolchain
 - LLVM development files discoverable by CMake
-- `pkg-config` and `libcbor`
+- `pkg-config`, `libcbor`, and `libffi` development files
 - Catch2, nlohmann_json, fmt, and Boost (components: program_options, system,
   filesystem)
 
@@ -72,6 +72,22 @@ on non-Linux platforms. Proactor initialization also checks the kernel's
 explicitly. Channel file and socket transport never falls back to blocking POSIX I/O.
 Optional metadata/control operations (`open`, `statx`, `fsync`, `ftruncate`)
 may instead use a bounded internal worker pool; this is not a transport fallback.
+
+`libffi` is a required build dependency for runtime foreign calls. The
+[`k::ffi` reference](doc/spec/stdlib/ffi.md) describes owner-retaining symbol
+lookup and fixed-signature C calls. This runtime API is distinct from
+compile-time `@ffi::Extern("C")` declarations.
+
+The standard library build generates `libk.pc` alongside `libk.so`, `libk.a`,
+and `k.kdi` in `cmake-build-debug/libk/libk`. Native consumers can use
+`pkg-config --libs libk` for shared linkage or `pkg-config --libs --static libk`
+for the archive's transitive native dependencies after adding that directory
+to `PKG_CONFIG_PATH`. Link with a C++ driver such as `clang++`: K exceptions
+require the C++ ABI runtime. `--static` selects dependency metadata, not the
+archive itself; use the full `libk.a` path or a library directory containing
+only the archive to avoid accidentally selecting `libk.so`. See the
+[CMake integration guide](doc/howtos/cmake-integration-k-projects.md#12-build-tree-package-metadata-and-static-consumers).
+No installation rules are implied by this build-tree metadata.
 
 File, TCP/Unix stream and UDP/Unix datagram channels provide callback, Future
 and Sync forms over the same proactor. Generic streams and synchronous file

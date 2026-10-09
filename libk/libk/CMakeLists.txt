@@ -140,6 +140,18 @@ set(LIBK_DOC_STAMP ${LIBK_MD_DOC_ROOT}/.docgen.stamp)
 set(LIBK_HTML_DOC_ROOT ${LIBK_OUTPUT_DIR}/doc/html)
 set(LIBK_HTML_DOC_STAMP ${LIBK_HTML_DOC_ROOT}/.docgen-html.stamp)
 
+# Colocated metadata remains valid when the runtime artifacts are moved together.
+set(LIBK_PC_ICU_REQUIRES "")
+if(KLANG_HAVE_ICU)
+    set(LIBK_PC_ICU_REQUIRES "icu-uc icu-i18n")
+endif()
+set(LIBK_PC_LIBS_PRIVATE "-pthread")
+foreach(_lib IN LISTS CMAKE_DL_LIBS)
+    string(APPEND LIBK_PC_LIBS_PRIVATE " -l${_lib}")
+endforeach()
+string(APPEND LIBK_PC_LIBS_PRIVATE " -lm")
+configure_file(libk.pc.in "${LIBK_OUTPUT_DIR}/libk.pc" @ONLY)
+
 # ── Compile the C runtime helpers (fatal error functions) ────────────────
 # These are compiled to a .o and passed to klangc so they end up in both
 # libk.so and libk.a.  Every K module resolves the fatal symbols from libk
@@ -830,6 +842,11 @@ target_link_options(libk-tests-ffi PRIVATE -Wl,--export-dynamic)
 target_compile_definitions(libk-tests-ffi PRIVATE
     LIBK_FFI_FIXTURE_PATH="$<TARGET_FILE:klang-ffi-native-fixture>")
 add_dependencies(libk-tests-ffi klang-ffi-native-fixture)
+
+libk_add_test(libk-tests-ffi-distribution 120 tests/test-ffi-distribution.cpp)
+target_compile_definitions(libk-tests-ffi-distribution PRIVATE
+    KLANGC_PATH="$<TARGET_FILE:klangc>"
+    LIBK_FFI_RUNTIME_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/runtime")
 
 # ── libk sharded test helper macro ───────────────────────────────────────────
 # Like libk_add_test, but registers <SHARDS> CTest entries running disjoint Catch2
