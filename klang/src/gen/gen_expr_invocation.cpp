@@ -1684,7 +1684,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                         if (ast_arg->is_type()) {
                             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
-                            arg_type = resolve_explicit_template_arg_type(arg_type, expr);
+                            arg_type = this->resolve_explicit_template_arg_type(arg_type, expr);
                             if (!arg_type || !type::is_resolved(arg_type) || type::contains_unresolved(arg_type)) {
                                 args_ok = false;
                                 break;
