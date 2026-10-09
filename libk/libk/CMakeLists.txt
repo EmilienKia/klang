@@ -13,6 +13,7 @@
 set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffi.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffi_symbol.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ffi_runtime.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/annotations.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
@@ -817,6 +818,18 @@ target_link_libraries(libk-tests-ffi-native PRIVATE
     Catch2::Catch2WithMain PkgConfig::LIBFFI pthread dl)
 add_test(NAME libk-tests-ffi-native COMMAND libk-tests-ffi-native)
 set_tests_properties(libk-tests-ffi-native PROPERTIES TIMEOUT 120)
+
+# ── Public K runtime C FFI tests ───────────────────────────────────────────
+add_library(klang-ffi-native-fixture SHARED tests/ffi/native_fixture.c)
+set_target_properties(klang-ffi-native-fixture PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${LIBK_OUTPUT_DIR}/ffi-fixtures")
+libk_add_test(libk-tests-ffi 120
+    tests/test-ffi.cpp
+)
+target_link_options(libk-tests-ffi PRIVATE -Wl,--export-dynamic)
+target_compile_definitions(libk-tests-ffi PRIVATE
+    LIBK_FFI_FIXTURE_PATH="$<TARGET_FILE:klang-ffi-native-fixture>")
+add_dependencies(libk-tests-ffi klang-ffi-native-fixture)
 
 # ── libk sharded test helper macro ───────────────────────────────────────────
 # Like libk_add_test, but registers <SHARDS> CTest entries running disjoint Catch2
