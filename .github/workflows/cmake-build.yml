@@ -37,6 +37,8 @@ jobs:
             libboost-filesystem-dev \
             libboost-program-options-dev \
             libboost-system-dev \
+            liburing-dev \
+            libicu-dev \
             nlohmann-json3-dev \
             libfmt-dev \
             catch2 \
@@ -54,16 +56,15 @@ jobs:
       # ── Configure ───────────────────────────────────────────────────────────
       - name: Configure CMake
         run: |
-          cmake -S . -B build \
+          cmake -S . -B cmake-build-debug \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Debug
 
       # ── Build ────────────────────────────────────────────────────────────────
       - name: Build
-        run: cmake --build build --parallel $(nproc)
+        run: ninja -C cmake-build-debug -j"$(nproc)"
 
       # ── Tests ────────────────────────────────────────────────────────────────
       - name: Run CTest
-        working-directory: build
-        run: ctest --output-on-failure --parallel $(nproc)
-
+        working-directory: cmake-build-debug
+        run: ctest --parallel "$(nproc)" --output-on-failure
