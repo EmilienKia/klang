@@ -18,11 +18,11 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - ubuntu-24.04
+          # - ubuntu-24.04
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # ── Dependencies ────────────────────────────────────────────────────────
       - name: Install system dependencies
@@ -62,9 +62,9 @@ jobs:
 
       # ── Build ────────────────────────────────────────────────────────────────
       - name: Build
-        run: ninja -C cmake-build-debug -j"$(nproc)"
+        run: ninja -C cmake-build-debug
 
       # ── Tests ────────────────────────────────────────────────────────────────
       - name: Run CTest
         working-directory: cmake-build-debug
-        run: ctest --parallel "$(nproc)" --output-on-failure
+        run: ctest --output-on-failure
