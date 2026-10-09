@@ -20,7 +20,7 @@ module k;
 
 namespace ffi {
 
-/** Numeric values 0..9 match runtime/runtime_ffi.h. */
+/** Values 0..9 match the native engine; values 100+ describe adapters. */
 public enum FfiErrorCode {
     OK = 0;
     INVALID_TYPE = 1;
@@ -32,6 +32,8 @@ public enum FfiErrorCode {
     NULL_FUNCTION = 7;
     OUT_OF_MEMORY = 8;
     INVALID_FRAME = 9;
+    BUFFER_IN_USE = 100;
+    EMBEDDED_ZERO = 101;
 }
 
 private ffiErrorMessage(status : int) : String {
@@ -45,6 +47,8 @@ private ffiErrorMessage(status : int) : String {
     if (status == 7) return String("Empty or zero-address native function");
     if (status == 8) return String("Native call allocation failed");
     if (status == 9) return String("Invalid native call frame or unavailable result");
+    if (status == 100) return String("Native buffer has an active pointer lease");
+    if (status == 101) return String("UTF-8 C string contains an embedded zero byte");
     return String("Unknown native call status");
 }
 
@@ -123,9 +127,321 @@ public:
         return NativePointer(symbol.rawAddress(), symbol, keepalive);
     }
 
+    // Borrow only known native-compatible representations, never a K header.
+    static fromArray(values : const byte[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const unsigned byte[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const short[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const unsigned short[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const int[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const unsigned int[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const long[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const unsigned long[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const float[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const double[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : const byte*[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+    static fromArray(values : byte*[]&) : NativePointer {
+        if (values.size == 0u) return borrowed(null);
+        return borrowed((byte*) &values[0u]);
+    }
+
     const rawAddress() : byte* { return _address; }
     const isNull() : bool { return _address == null; }
     const keepalive() : Shared<Object> { return _keepalive; }
+}
+
+@Extern("C") private __k_io_buffer_allocate(capacity : unsigned int) : byte*;
+@Extern("C") private __k_io_buffer_release(native : byte*);
+@Extern("C") private __k_io_buffer_acquire_lease(native : byte*);
+@Extern("C") private __k_io_buffer_release_lease(native : byte*);
+@Extern("C") private __k_io_buffer_has_lease(native : byte*) : int;
+@Extern("C") private __k_io_buffer_data_at(native : byte*, index : unsigned int) : byte*;
+@Extern("C") private __k_io_buffer_get_byte(native : byte*, index : unsigned int, value : unsigned byte*) : int;
+@Extern("C") private __k_io_buffer_put_byte(native : byte*, index : unsigned int, value : unsigned byte) : int;
+@Extern("C") private __k_io_buffer_copy_from(native : byte*, offset : unsigned int,
+    source : const unsigned byte*, count : unsigned int) : int;
+@Extern("C") private __k_io_buffer_copy_to(native : byte*, offset : unsigned int,
+    destination : unsigned byte*, count : unsigned int) : int;
+
+private ffiBufferError(status : int) : FfiError {
+    if (status == -16) return FfiError(FfiErrorCode::BUFFER_IN_USE);
+    if (status == -34) return FfiError(FfiErrorCode::OUT_OF_RANGE);
+    return FfiError(FfiErrorCode::INVALID_FRAME);
+}
+
+private final class NativeBufferStorage : public Object {
+    friend NativeBuffer;
+    friend NativeBufferLease;
+
+private:
+    _native : byte*;
+    _capacity : unsigned int;
+    _lease : Weak<NativeBufferLease>;
+
+public:
+    NativeBufferStorage(capacity : unsigned int)
+        : _native(null), _capacity(capacity), _lease() {}
+
+    ~NativeBufferStorage() {
+        __k_io_buffer_release(_native);
+    }
+}
+
+private final class NativeBufferLease : public Object {
+    friend NativeBuffer;
+
+private:
+    _storage : Shared<NativeBufferStorage>;
+    _address : byte*;
+    _leased : bool;
+
+public:
+    NativeBufferLease(storage : const Shared<NativeBufferStorage>&)
+        : _storage(storage), _address(null), _leased(false) {
+        _address = __k_io_buffer_data_at(_storage.get()->_native, 0u);
+        if (_address == null) throw FatalError();
+        __k_io_buffer_acquire_lease(_storage.get()->_native);
+        _leased = true;
+    }
+
+    ~NativeBufferLease() {
+        if (_leased) __k_io_buffer_release_lease(_storage.get()->_native);
+    }
+}
+
+/**
+ * Fresh, zero-filled native heap storage. Copies share bytes, not a cursor.
+ * Managed pointers share an operation lease until their last copy is released.
+ */
+public final class NativeBuffer {
+private:
+    _storage : Shared<NativeBufferStorage>;
+
+    NativeBuffer(storage : const Shared<NativeBufferStorage>&) : _storage(storage) {}
+
+    copyFromAddress(source : const unsigned byte*, count : unsigned int, offset : unsigned int)
+        : Expected<unsigned int, FfiError> {
+        result : Expected<unsigned int, FfiError>;
+        if (offset > size() || count > size() - offset) {
+            error : FfiError(FfiErrorCode::OUT_OF_RANGE);
+            result.setError(error);
+        } else if (count == 0u) {
+            value : unsigned int = 0u;
+            result.setResult(value);
+        } else {
+            status : int = __k_io_buffer_copy_from(_storage.get()->_native, offset, source, count);
+            if (status != 0) {
+                error : FfiError = ffiBufferError(status);
+                result.setError(error);
+            } else {
+                value : unsigned int = count;
+                result.setResult(value);
+            }
+        }
+        return result;
+    }
+
+    const copyToAddress(destination : unsigned byte*, count : unsigned int, offset : unsigned int)
+        : Expected<unsigned int, FfiError> {
+        result : Expected<unsigned int, FfiError>;
+        if (offset > size() || count > size() - offset) {
+            error : FfiError(FfiErrorCode::OUT_OF_RANGE);
+            result.setError(error);
+        } else if (count == 0u) {
+            value : unsigned int = 0u;
+            result.setResult(value);
+        } else {
+            status : int = __k_io_buffer_copy_to(_storage.get()->_native, offset, destination, count);
+            if (status != 0) {
+                error : FfiError = ffiBufferError(status);
+                result.setError(error);
+            } else {
+                value : unsigned int = count;
+                result.setResult(value);
+            }
+        }
+        return result;
+    }
+
+public:
+    NativeBuffer() : _storage() {}
+    NativeBuffer(other : const NativeBuffer&) : _storage(other._storage) {}
+
+    operator =(other : const NativeBuffer&) : NativeBuffer& {
+        if (&this != &other) _storage = other._storage;
+        return this;
+    }
+
+    static allocate(capacity : unsigned int) : Expected<NativeBuffer, FfiError> {
+        result : Expected<NativeBuffer, FfiError>;
+        storage : Shared<NativeBufferStorage>(new NativeBufferStorage(capacity));
+        storage.get()->_native = __k_io_buffer_allocate(capacity);
+        if (storage.get()->_native == null) {
+            error : FfiError(FfiErrorCode::OUT_OF_MEMORY);
+            result.setError(error);
+        } else {
+            buffer : NativeBuffer(storage);
+            result.setResult(buffer);
+        }
+        return result;
+    }
+
+    static fromBytes(source : const unsigned byte[]&) : Expected<NativeBuffer, FfiError> {
+        result : Expected<NativeBuffer, FfiError>;
+        allocated : Expected<NativeBuffer, FfiError> = allocate(source.size);
+        if (allocated.hasError()) {
+            error : FfiError = allocated.getError();
+            result.setError(error);
+        } else {
+            buffer : NativeBuffer = allocated.getResult();
+            copied : Expected<unsigned int, FfiError> = buffer.copyFrom(source);
+            if (copied.hasError()) {
+                error : FfiError = copied.getError();
+                result.setError(error);
+            } else {
+                result.setResult(buffer);
+            }
+        }
+        return result;
+    }
+
+    const size() : unsigned int {
+        if (!_storage) return 0u;
+        return _storage.get()->_capacity;
+    }
+    const isEmpty() : bool { return size() == 0u; }
+    const isAllocated() : bool { return !_storage.isNull(); }
+    const hasLease() : bool {
+        if (!_storage) return false;
+        return __k_io_buffer_has_lease(_storage.get()->_native) != 0;
+    }
+
+    const get(index : unsigned int) : Expected<unsigned byte, FfiError> {
+        result : Expected<unsigned byte, FfiError>;
+        if (index >= size()) {
+            error : FfiError(FfiErrorCode::OUT_OF_RANGE);
+            result.setError(error);
+        } else {
+            value : unsigned byte = 0;
+            status : int = __k_io_buffer_get_byte(_storage.get()->_native, index, &value);
+            if (status != 0) {
+                error : FfiError = ffiBufferError(status);
+                result.setError(error);
+            } else {
+                result.setResult(value);
+            }
+        }
+        return result;
+    }
+
+    put(index : unsigned int, value : unsigned byte) : Expected<unsigned byte, FfiError> {
+        result : Expected<unsigned byte, FfiError>;
+        if (index >= size()) {
+            error : FfiError(FfiErrorCode::OUT_OF_RANGE);
+            result.setError(error);
+        } else {
+            status : int = __k_io_buffer_put_byte(_storage.get()->_native, index, value);
+            if (status != 0) {
+                error : FfiError = ffiBufferError(status);
+                result.setError(error);
+            } else {
+                result.setResult(value);
+            }
+        }
+        return result;
+    }
+
+    copyFrom(source : const unsigned byte[]&, offset : unsigned int = 0u)
+        : Expected<unsigned int, FfiError> {
+        data : const unsigned byte* = null;
+        if (source.size != 0u) data = &source[0u];
+        return copyFromAddress(data, source.size, offset);
+    }
+    copyFrom(source : const byte[]&, offset : unsigned int = 0u)
+        : Expected<unsigned int, FfiError> {
+        data : const unsigned byte* = null;
+        if (source.size != 0u) data = (const unsigned byte*) &source[0u];
+        return copyFromAddress(data, source.size, offset);
+    }
+    const copyTo(destination : unsigned byte[]&, offset : unsigned int = 0u)
+        : Expected<unsigned int, FfiError> {
+        data : unsigned byte* = null;
+        if (destination.size != 0u) data = &destination[0u];
+        return copyToAddress(data, destination.size, offset);
+    }
+    const copyTo(destination : byte[]&, offset : unsigned int = 0u)
+        : Expected<unsigned int, FfiError> {
+        data : unsigned byte* = null;
+        if (destination.size != 0u) data = (unsigned byte*) &destination[0u];
+        return copyToAddress(data, destination.size, offset);
+    }
+
+    const borrowedPointer(offset : unsigned int = 0u) : Expected<NativePointer, FfiError> {
+        result : Expected<NativePointer, FfiError>;
+        if (offset > size()) {
+            error : FfiError(FfiErrorCode::OUT_OF_RANGE);
+            result.setError(error);
+        } else if (offset == size()) {
+            pointer : NativePointer = NativePointer::borrowed(null);
+            result.setResult(pointer);
+        } else if (hasLease()) {
+            error : FfiError(FfiErrorCode::BUFFER_IN_USE);
+            result.setError(error);
+        } else {
+            data : byte* = __k_io_buffer_data_at(_storage.get()->_native, offset);
+            if (data == null) {
+                error : FfiError(FfiErrorCode::INVALID_FRAME);
+                result.setError(error);
+            } else {
+                pointer : NativePointer = NativePointer::borrowed(data);
+                result.setResult(pointer);
+            }
+        }
+        return result;
+    }
+
+    const pointer() : NativePointer {
+        if (isEmpty()) return NativePointer::borrowed(null);
+        lease : Shared<NativeBufferLease> = _storage.get()->_lease.lock();
+        if (!lease) {
+            lease = Shared<NativeBufferLease>(new NativeBufferLease(_storage));
+            _storage.get()->_lease = Weak<NativeBufferLease>(lease);
+        }
+        keepalive : Shared<Object>(lease);
+        return NativePointer::retained(lease.get()->_address, keepalive);
+    }
 }
 
 /** Language-independent category of a copied foreign result. */
@@ -542,6 +858,92 @@ public:
     }
 }
 
+/** Owned UTF-8 bytes with one terminator and no embedded zero bytes. */
+public final class Utf8CString {
+private:
+    _buffer : NativeBuffer;
+    _length : unsigned int;
+    _valid : bool;
+
+    Utf8CString(buffer : const NativeBuffer&, length : unsigned int)
+        : _buffer(buffer), _length(length), _valid(true) {}
+
+public:
+    Utf8CString() : _buffer(), _length(0u), _valid(false) {}
+
+    Utf8CString(other : const Utf8CString&)
+        : _buffer(other._buffer), _length(other._length), _valid(other._valid) {}
+
+    operator =(other : const Utf8CString&) : Utf8CString& {
+        if (&this != &other) {
+            _buffer = other._buffer;
+            _length = other._length;
+            _valid = other._valid;
+        }
+        return this;
+    }
+
+    static fromString(text : const String&) : Expected<Utf8CString, FfiError> {
+        result : Expected<Utf8CString, FfiError>;
+        bytes : unsigned byte[]! = text.toUtf8();
+        try {
+            {
+            if (bytes == null || bytes.size == 0u) {
+                error : FfiError(FfiErrorCode::OUT_OF_MEMORY);
+                result.setError(error);
+                return result;
+            }
+            length : unsigned int = bytes.size - 1u;
+            i : unsigned int = 0u;
+            while (i < length) {
+                if (bytes[i] == 0) {
+                    error : FfiError(FfiErrorCode::EMBEDDED_ZERO);
+                    result.setError(error);
+                    return result;
+                }
+                ++i;
+            }
+            if (bytes[length] != 0) {
+                error : FfiError(FfiErrorCode::INVALID_FRAME);
+                result.setError(error);
+                return result;
+            }
+            allocated : Expected<NativeBuffer, FfiError> = NativeBuffer::fromBytes(bytes);
+            if (allocated.hasError()) {
+                error : FfiError = allocated.getError();
+                result.setError(error);
+            } else {
+                buffer : NativeBuffer = allocated.getResult();
+                string : Utf8CString(buffer, length);
+                result.setResult(string);
+            }
+            }
+        } finally {
+            delete bytes;
+        }
+        return result;
+    }
+
+    const isValid() : bool { return _valid; }
+    const isEmpty() : bool { return _valid && _length == 0u; }
+    const byteLength() : unsigned int { return _length; }
+
+    const pointer() : NativePointer {
+        if (!_valid) throw NullDereferenceError();
+        return _buffer.pointer();
+    }
+
+    const borrowedPointer() : Expected<NativePointer, FfiError> {
+        if (!_valid) {
+            result : Expected<NativePointer, FfiError>;
+            error : FfiError(FfiErrorCode::INVALID_FRAME);
+            result.setError(error);
+            return result;
+        }
+        return _buffer.borrowedPointer();
+    }
+}
+
 /** Explicit declared type plus an unconverted scalar or pointer payload. */
 public final class CValue {
     friend CFunction;
@@ -582,6 +984,10 @@ public:
         _signed(0L), _unsigned(value ? 1uL : 0uL), _floating(0.0), _pointer() {}
     CValue(value : const NativePointer&) : _type(CType::POINTER), _kind(ResultKind::POINTER),
         _signed(0L), _unsigned(0uL), _floating(0.0), _pointer(value) {}
+    CValue(value : const NativeBuffer&) : _type(CType::POINTER), _kind(ResultKind::POINTER),
+        _signed(0L), _unsigned(0uL), _floating(0.0), _pointer(value.pointer()) {}
+    CValue(value : const Utf8CString&) : _type(CType::POINTER), _kind(ResultKind::POINTER),
+        _signed(0L), _unsigned(0uL), _floating(0.0), _pointer(value.pointer()) {}
 
     CValue(other : const CValue&)
         : _type(other._type), _kind(other._kind), _signed(other._signed),
@@ -621,6 +1027,20 @@ public:
     static pointerValue(value : const NativePointer&) : CValue {
         return CValue(value);
     }
+    static buffer(value : const NativeBuffer&) : CValue { return CValue(value); }
+    static cstring(value : const Utf8CString&) : CValue { return CValue(value); }
+    static array(values : const byte[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const unsigned byte[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const short[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const unsigned short[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const int[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const unsigned int[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const long[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const unsigned long[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const float[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const double[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : const byte*[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
+    static array(values : byte*[]&) : CValue { return CValue(NativePointer::fromArray(values)); }
 
     const getType() : CType { return _type; }
     const kind() : ResultKind { return _kind; }
@@ -837,9 +1257,79 @@ public:
     }
 
     addArgument(value : const CValue&) { _arguments.append(value); }
+    addArgument(value : const NativeBuffer&) { addArgument(CValue::buffer(value)); }
+    addArgument(value : const Utf8CString&) { addArgument(CValue::cstring(value)); }
+    addArgument(values : const byte[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const unsigned byte[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const short[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const unsigned short[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const int[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const unsigned int[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const long[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const unsigned long[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const float[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const double[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : const byte*[]&) { addArgument(CValue::array(values)); }
+    addArgument(values : byte*[]&) { addArgument(CValue::array(values)); }
     reset() { _arguments.clear(); }
     argument(value : const CValue&) : CCallBuilder& {
         addArgument(value);
+        return this;
+    }
+    argument(value : const NativeBuffer&) : CCallBuilder& {
+        addArgument(value);
+        return this;
+    }
+    argument(value : const Utf8CString&) : CCallBuilder& {
+        addArgument(value);
+        return this;
+    }
+    argument(values : const byte[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const unsigned byte[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const short[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const unsigned short[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const int[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const unsigned int[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const long[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const unsigned long[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const float[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const double[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : const byte*[]&) : CCallBuilder& {
+        addArgument(values);
+        return this;
+    }
+    argument(values : byte*[]&) : CCallBuilder& {
+        addArgument(values);
         return this;
     }
     const getArgumentCount() : unsigned int { return _arguments.size(); }
