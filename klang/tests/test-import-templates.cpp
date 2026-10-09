@@ -23,7 +23,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
-include "../src/model/tools/kdi_exporter.hpp"
+#include "../src/model/tools/kdi_exporter.hpp"
 #include "../src/model/template.hpp"
 #include "../src/model/imported.hpp"
 #include "../src/model/template.hpp"
@@ -35,6 +35,9 @@ include "../src/model/tools/kdi_exporter.hpp"
 #include "../../libk/libk/src/runtime/callable_abi.h"
 
 #include <llvm/IR/Module.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/Support/DynamicLibrary.h>
 #include <llvm/Support/raw_ostream.h>
 
@@ -182,7 +185,7 @@ TEST_CASE("import template return prvalues adopt resources and clean intermediat
 }
 
 
-xtern "C" int __k_test_import_template_count(const int* count) {
+extern "C" int __k_test_import_template_count(const int* count) {
     return *count;
 }
 
@@ -217,13 +220,22 @@ constexpr std::string_view templated_host_member_template_library = R"K(
     public:
         Cell(value : int) : _value(value) {}
         template<typename U>
+        Cell(other : const Cell<U>&) : _value(other._value) {}
+        template<typename U>
+        Cell(other : Cell<U>#) : _value(other._value) { other._value = 0; }
+        const get() : int { return _value; }
+        template<typename U>
         sum(other : Cell<U>&) : int { return _value + other._value; }
     }
 
     instantiate_library_cells() : int {
         first : Cell<int>(20);
         second : Cell<char>(22);
-        return first.sum<char>(second);
+        if (first.sum<char>(second) != 42) return -1;
+        copied : Cell<int>(second);
+        moved : Cell<int>(#second);
+        if (copied.get() != 22 || moved.get() != 22 || second.get() != 0) return -2;
+        return first.sum<int>(moved);
     }
 )K";
 
@@ -336,7 +348,7 @@ struct PrivateFriendTemplateImport {
 } // namespace
 
 TEST_CASE("import template aggregate — member templates remain in the host source",
-          "[import][template][member-template][private-template-layout][regression]") {
+          "[import][template][member-template][template-constructor][private-template-layout][regression]") {
     auto lib = compile_model(templated_host_member_template_library);
     REQUIRE(lib);
 
@@ -350,6 +362,37 @@ TEST_CASE("import template aggregate — member templates remain in the host sou
     CHECK(std::none_of(defs.begin(), defs.end(), [](const auto& def) {
         return !def.host_fq_name.empty();
     }));
+    CHECK(defs.front().source.find("Cell(other : const Cell<U>&)") != std::string::npos);
+    CHECK(defs.front().source.find("Cell(other : Cell<U>#)") != std::string::npos);
+    size_t specializations = 0;
+    size_t concrete_conversions = 0;
+    for (const auto& agg : file.unit.root_ns.aggregates) {
+        if (!agg.template_origin || agg.template_origin->base_name != "Cell") continue;
+        ++specializations;
+        REQUIRE_FALSE(agg.constructors.empty());
+        for (const auto& ctor : agg.constructors) {
+            for (const auto& param : ctor.params) {
+                const auto* component = &param.type;
+                while (auto inner = std::visit([](const auto& value) -> const kdi::kdi_type* {
+                    if constexpr (requires { value.inner; }) return value.inner.get();
+                    else return nullptr;
+                }, component->value)) {
+                    component = inner;
+                }
+                CHECK_FALSE(std::holds_alternative<kdi::kdi_void_type>(component->value));
+                if (auto ref = std::get_if<kdi::kdi_aggregate_ref>(&component->value)) {
+                    auto host_name = agg.fq_name;
+                    if (host_name.starts_with("::")) host_name.erase(0, 2);
+                    if (param.name == "other" && ref->fq_name != host_name) {
+                        ++concrete_conversions;
+                        CHECK_FALSE(ctor.llvm_def.empty());
+                    }
+                }
+            }
+        }
+    }
+    CHECK(specializations >= 2);
+    CHECK(concrete_conversions >= 2);
 
     auto path = fs::current_path() / "templated_host_member_template.kdi";
     REQUIRE(kdi::kdi_write_cbor_file(file, path.string()));
@@ -373,7 +416,11 @@ TEST_CASE("import template aggregate — member templates remain in the host sou
         test() : int {
             first : Cell<FirstTag>(20);
             second : Cell<SecondTag>(22);
-            return first.sum<SecondTag>(second);
+            if (first.sum<SecondTag>(second) != 42) return -1;
+            copied : Cell<FirstTag>(second);
+            moved : Cell<FirstTag>(#second);
+            if (copied.get() != 22 || moved.get() != 22 || second.get() != 0) return -2;
+            return first.sum<FirstTag>(moved);
         }
     )K", false, false);
 
@@ -389,6 +436,141 @@ TEST_CASE("import template aggregate — member templates remain in the host sou
         struct Tag {}
         test(cell : Cell<Tag>&) : int { return cell._value; }
     )K", resolver));
+}
+
+TEST_CASE("import template — concrete constructor signatures survive KDI roundtrip",
+          "[import][template][template-constructor][model][regression]") {
+    auto lib = compile_model(R"K(
+        module tplresolvedsignature;
+        public class NativeLibraryModule {}
+        template<typename T>
+        public struct Shared {
+            public Shared() {}
+        }
+        template<typename T>
+        public struct Weak {
+            public Weak(other : const Shared<T>&) {}
+            public Weak(other : const Weak<T>&) {}
+            public Weak(other : Weak<T>#) {}
+        }
+        exercise() : int {
+            strong : Shared<NativeLibraryModule>;
+            first : Weak<NativeLibraryModule>(strong);
+            second : Weak<NativeLibraryModule>(first);
+            moved : Weak<NativeLibraryModule>(#second);
+            return 0;
+        }
+    )K");
+    REQUIRE(lib);
+    auto ctx = lib->get_context_for_test();
+    std::shared_ptr<k::model::aggregate> weak;
+    for (const auto& child : lib->get_unit()->get_root_namespace()->get_children()) {
+        auto agg = std::dynamic_pointer_cast<k::model::aggregate>(child);
+        if (agg && agg->has_tpl_args() && agg->get_tpl_base_name() == "Weak") weak = agg;
+    }
+    REQUIRE(weak);
+
+    size_t constructor_count = 0;
+    for (const auto& ctor : weak->constructors()) {
+        auto other = ctor->get_parameter("other");
+        if (!other) continue;
+        auto original = other->get_type();
+        REQUIRE(original);
+        const bool is_drain = k::model::type::is_drain(original);
+        const bool is_ref = k::model::type::is_reference(original);
+        REQUIRE((is_drain || is_ref));
+        auto target = k::model::type::remove_const(original->get_subtype());
+        auto concrete = std::dynamic_pointer_cast<k::model::struct_type>(target);
+        REQUIRE(concrete);
+        REQUIRE(concrete->get_struct());
+        CHECK_FALSE(k::model::type::contains_unresolved(original));
+        if (is_ref) CHECK(k::model::type::is_const(original->get_subtype()));
+        if (concrete->get_struct()->get_tpl_base_name() == "Weak")
+            CHECK(concrete == weak->get_struct_type());
+        else
+            CHECK(concrete->get_struct()->get_tpl_base_name() == "Shared");
+        ++constructor_count;
+    }
+    REQUIRE(constructor_count == 3);
+
+    k::model::kdi_builder builder(*ctx);
+    lib->get_unit()->accept(builder);
+    auto file = builder.take();
+    auto signature = std::find_if(file.unit.root_ns.aggregates.begin(),
+        file.unit.root_ns.aggregates.end(), [](const auto& agg) {
+            return agg.template_origin && agg.template_origin->base_name == "Weak";
+        });
+    REQUIRE(signature != file.unit.root_ns.aggregates.end());
+    REQUIRE(signature->constructors.size() == 3);
+    for (const auto& ctor : signature->constructors) {
+        REQUIRE(ctor.params.size() == 1);
+        const auto& param = ctor.params.front().type;
+        const kdi::kdi_type* inner = nullptr;
+        if (auto ref = std::get_if<kdi::kdi_ref_type>(&param.value)) {
+            REQUIRE(ref->inner);
+            auto qualified = std::get_if<kdi::kdi_const_type>(&ref->inner->value);
+            REQUIRE(qualified);
+            inner = qualified->inner.get();
+        } else {
+            auto drain = std::get_if<kdi::kdi_drain_type>(&param.value);
+            REQUIRE(drain);
+            inner = drain->inner.get();
+        }
+        REQUIRE(inner);
+        auto aggregate_ref = std::get_if<kdi::kdi_aggregate_ref>(&inner->value);
+        REQUIRE(aggregate_ref);
+        CHECK(std::any_of(file.unit.root_ns.aggregates.begin(),
+            file.unit.root_ns.aggregates.end(), [&](const auto& agg) {
+                auto fq = agg.fq_name;
+                if (fq.starts_with("::")) fq.erase(0, 2);
+                return fq == aggregate_ref->fq_name;
+            }));
+    }
+
+    auto path = fs::current_path() / "resolved_constructor_signature.kdi";
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    const bool json_roundtrip = GENERATE(false, true);
+    INFO("JSON round-trip: " << json_roundtrip);
+    if (json_roundtrip) {
+        std::ostringstream encoded;
+        kdi::kdi_write_json(file, encoded);
+        std::istringstream input(encoded.str());
+        file = kdi::kdi_read_json(input);
+    }
+    REQUIRE(kdi::kdi_write_cbor_file(file, path.string()));
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("tplresolvedsignature", path);
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    consumer->parse_source("resolved_constructor_consumer.k", R"K(
+        module tplresolvedconsumer;
+        import tplresolvedsignature;
+    )K");
+    REQUIRE_FALSE(consumer->has_compilation_error());
+    auto imported = consumer->get_unit()->get_or_create_imported_aggregate(
+        weak->get_name(), consumer->get_context_for_test());
+    REQUIRE(imported);
+    CHECK(imported->get_name() == weak->get_name());
+    REQUIRE(imported->constructors().size() == constructor_count);
+    for (const auto& ctor : imported->constructors()) {
+        auto other = ctor->get_parameter("other");
+        REQUIRE(other);
+        REQUIRE(other->get_type());
+        if (k::model::type::is_reference(other->get_type()))
+            CHECK(k::model::type::is_const(other->get_type()->get_subtype()));
+        auto target = k::model::type::remove_const(other->get_type()->get_subtype());
+        auto concrete = std::dynamic_pointer_cast<k::model::struct_type>(target);
+        REQUIRE(concrete);
+        REQUIRE(concrete->get_struct());
+        if (concrete->get_struct()->get_tpl_base_name() == "Weak")
+            CHECK(concrete == imported->get_struct_type());
+        else
+            CHECK(concrete->get_struct()->get_tpl_base_name() == "Shared");
+        CHECK_FALSE(k::model::type::contains_unresolved(other->get_type()));
+    }
 }
 
 TEST_CASE("import member template — non-template hosts export protected and public recipes",
@@ -655,8 +837,13 @@ TEST_CASE("import member template — default remains invalid on class recipes",
     )K", resolver, logger));
     CHECK(std::any_of(logger.diagnostics.begin(), logger.diagnostics.end(),
         [](const k::log::diagnostic& diagnostic) {
-            return diagnostic.message.find("No viable overload found for")
-                != std::string::npos;
+            return diagnostic.code == static_cast<unsigned int>(
+                       k::diag::compiler_diag::ERR_KDI_TEMPLATE_REPARSE_FAILED)
+                && std::any_of(diagnostic.args.begin(), diagnostic.args.end(),
+                    [](const std::string& argument) {
+                        return argument.find("The 'default' specifier is only allowed on interface member functions")
+                            != std::string::npos;
+                    });
         }));
 }
 
@@ -791,6 +978,8 @@ TEST_CASE("import template — private helper API remains inaccessible to non-fr
             }
         )K", lib.resolver));
     }
+}
+
 namespace {
 int private_handle_calls;
 int private_callback_calls;
@@ -1136,6 +1325,129 @@ TEST_CASE("import generic — template_def exported as signature-only metadata",
     };
     search_ns(kdi.unit.root_ns);
     REQUIRE(found_def);
+}
+
+TEST_CASE("import member template — dependency preludes retain hosted and free overloads",
+          "[import][template][member-template][ffi][private-dependency][regression]") {
+    constexpr std::string_view library = R"K(
+        module tplhostprivateffi;
+        namespace io {
+            private struct NativeHandle {}
+            @k::ffi::Extern("C", null, "abs")
+            private __private_abs(value: int): int;
+            @k::ffi::Extern("C", null, "free")
+            private __private_free(handle: NativeHandle*);
+
+            public struct Host {
+                template<typename T>
+                execute(value: int): int {
+                    __private_free(null);
+                    return __private_abs(value);
+                }
+                template<typename T>
+                execute(value: int, extra: int): int {
+                    __private_free(null);
+                    return __private_abs(value) + extra;
+                }
+            }
+            template<typename T>
+            execute(value: int): int { return __private_abs(value); }
+            template<typename T>
+            execute(value: int, extra: int): int { return __private_abs(value) + extra; }
+        }
+    )K";
+
+    SECTION("generated scopes are imported before recipes attach to the host") {
+        TmpKdi lib(library, true);
+        auto file = kdi::kdi_read_cbor_file(lib.kdi_path);
+        auto io = std::find_if(file.unit.root_ns.namespaces.begin(), file.unit.root_ns.namespaces.end(),
+            [](const auto& scope) { return scope.name == "io"; });
+        REQUIRE(io != file.unit.root_ns.namespaces.end());
+        REQUIRE(io->template_defs.size() == 4);
+        CHECK(io->functions.empty());
+        CHECK(std::none_of(io->aggregates.begin(), io->aggregates.end(),
+            [](const auto& agg) { return agg.name == "NativeHandle"; }));
+        size_t hosted = 0;
+        for (const auto& definition : io->template_defs) {
+            CHECK(definition.source.find("namespace __kdi_private_") != std::string::npos);
+            if (definition.host_fq_name.empty()) continue;
+            ++hosted;
+            CHECK(definition.host_fq_name == "tplhostprivateffi::io::Host");
+            CHECK(definition.source.starts_with("namespace tplhostprivateffi::io"));
+            CHECK(definition.source.find("private struct NativeHandle") != std::string::npos);
+        }
+        CHECK(hosted == 2);
+        auto definitions = io->template_defs;
+        io->template_defs.insert(io->template_defs.end(), definitions.begin(), definitions.end());
+        REQUIRE(kdi::kdi_write_cbor_file(file, lib.kdi_path));
+
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        resolver->add_explicit_path("tplhostprivateffi", lib.kdi_path);
+        compiler->set_file_resolver(resolver);
+        compiler->parse_source("hosted-private-consumer.k", R"K(
+            module tplhostprivateffimodel;
+            import tplhostprivateffi;
+            exported(): int { return 0; }
+        )K");
+        REQUIRE_FALSE(compiler->has_compilation_error());
+        auto origin = compiler->get_unit()->get_root_namespace()
+            ->get_child_namespace("tplhostprivateffi")->get_child_namespace("io");
+        auto host = origin->get_aggregate("Host");
+        REQUIRE(host);
+        auto scope = origin->get_child_namespace(
+            k::model::template_private_scope_name("tplhostprivateffi::io"));
+        REQUIRE(scope);
+        REQUIRE(scope->get_functions("__private_abs").size() == 1);
+        REQUIRE(scope->get_functions("__private_free").size() == 1);
+        auto handle = origin->get_aggregate("NativeHandle");
+        REQUIRE(handle);
+        CHECK(handle->get_visibility() == k::model::PRIVATE);
+        CHECK(scope->get_function("__private_free")->parameters().front()->get_type()->get_subtype()
+              == handle->get_struct_type());
+        auto member_overloads = host->get_functions("execute");
+        auto free_overloads = origin->get_functions("execute");
+        REQUIRE(member_overloads.size() == 2);
+        REQUIRE(free_overloads.size() == 2);
+        for (const auto& functions : {member_overloads, free_overloads}) {
+            for (const auto& fn : functions) {
+                REQUIRE(fn->get_tpl_info());
+                CHECK(fn->get_tpl_info()->origin_module_ns_fq == "tplhostprivateffi::io");
+                CHECK(fn->get_tpl_info()->private_definition_scope == scope);
+            }
+        }
+        for (const auto& fn : member_overloads) CHECK(fn->get_owner() == host);
+    }
+
+    SECTION("direct and re-exported recipes use native dependencies rather than caller homonyms") {
+        const bool reexport = GENERATE(false, true);
+        INFO("re-export: " << reexport);
+        std::vector<LibSpec> libraries = {{library}};
+        if (reexport) {
+            libraries.push_back({R"K(
+                module tplhostprivateffifacade;
+                import tplhostprivateffi;
+                exported(): int { return 0; }
+            )K"});
+        }
+        std::string consumer = "module tplhostprivatefficonsumer;\nimport ";
+        consumer += reexport ? "tplhostprivateffifacade;\n" : "tplhostprivateffi;\n";
+        consumer += R"K(
+            struct NativeHandle { wrong: long; }
+            __private_abs(value: int): int { return -100; }
+            main(): int {
+                host: tplhostprivateffi::io::Host;
+                if (host.execute<int>(-42) != 42) return -1;
+                if (host.execute<long>(-40, 2) != 42) return -2;
+                if (tplhostprivateffi::io::execute<int>(-42) != 42) return -3;
+                return tplhostprivateffi::io::execute<long>(-40, 2);
+            }
+        )K";
+        auto result = build_exec_with_libs(libraries, consumer);
+        INFO(result.err);
+        REQUIRE(result.exit_code == 42);
+    }
 }
 
 TEST_CASE("import template — private FFI dependencies keep their definition scope",
@@ -2334,6 +2646,7 @@ TEST_CASE("import generic — signature-only template_def is materialised into m
         module consumer;
         import tplgenericimport;
     )K"));
+    REQUIRE_FALSE(comp->has_compilation_error());
 
     auto root_ns = comp->get_unit()->get_root_namespace();
     REQUIRE(root_ns != nullptr);
@@ -2348,6 +2661,13 @@ TEST_CASE("import generic — signature-only template_def is materialised into m
     REQUIRE(box_tpl->get_tpl_info()->is_imported_signature_only);
     REQUIRE(box_tpl->get_variable("value") != nullptr);
     REQUIRE(box_tpl->get_function("relay") != nullptr);
+    auto synthesis = comp->get_unit()->get_or_create_imported_aggregate(
+        k::name("tplgenericimport::Box"), comp->get_context_for_test());
+    REQUIRE(synthesis);
+    CHECK_FALSE(synthesis->is_template());
+    CHECK(synthesis.get() != box_tpl.get());
+    REQUIRE(synthesis->get_struct_type());
+    CHECK(comp->get_context_for_test()->get_llvm_type(synthesis->get_struct_type()) != nullptr);
 }
 
 TEST_CASE("import generic<class> — pointer placeholder is preserved in signature metadata",
@@ -3404,6 +3724,271 @@ TEST_CASE("cross-module template — canonical filter layout preserves borrowed 
     REQUIRE(result.exit_code == 42);
 }
 
+TEST_CASE("cross-module template — live virtual-base offsets preserve receiver and owner identity",
+          "[import][e2e][template][cross-tpl][virtual-base-layout][regression][virtual-destructor]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module live_virtual_offset_tpl_lib;
+
+            template<typename T>
+            public interface Source {
+                read() : T;
+            }
+            template<typename T>
+            public class Layer : public Source<T> {
+            protected:
+                _value : T;
+            public:
+                Layer() : _value(0) {}
+                Layer(value : T) : _value(value) {}
+                final stored() : T { return _value; }
+                override read() : T { return _value; }
+            }
+            template<typename T>
+            public class Other : public Source<T> {
+                public override read() : T { return (T) 0; }
+            }
+            template<typename T>
+            public class Diamond : public Layer<T>, public Other<T> {
+                public override read() : T { return (T) 0; }
+            }
+            public instantiateDiamond() {
+                diamond : Diamond<int>;
+            }
+            public libraryRead(source : Source<int>*) : int { return source->read(); }
+        )K",
+        R"K(
+            module live_virtual_offset_tpl_exe;
+            import live_virtual_offset_tpl_lib;
+
+            destructions : int = 0;
+            class Mid : public Layer<int> {
+                public Mid(value : int) : Layer(value) {}
+            }
+            class Derived : public Mid {
+                guard : int;
+                public Derived() : Mid(19), guard(23) {}
+                public override read() : int { return stored() + guard; }
+                ~Derived() { ++destructions; }
+            }
+            class Inherited : public Mid {
+                guard : int;
+                public Inherited() : Mid(42), guard(97) {}
+                ~Inherited() { ++destructions; }
+            }
+            class Extra : public Source<int> {
+                public override read() : int { return 0; }
+            }
+            class Shared : public Mid, public Extra {
+                guard : int;
+                public Shared() : Mid(19), Extra(), guard(23) {}
+                public override read() : int { return stored() + guard; }
+                ~Shared() { ++destructions; }
+            }
+
+            main() : int {
+                {
+                    derived : Derived! = new Derived();
+                    view : Source<int>* = &*derived;
+                    if (libraryRead(view) != 42 || view->read() != 42) return 1;
+                    owned : Source<int>! = (Source<int>!) derived;
+                    if (derived != null) return 2;
+                    owned = null;
+                    if (destructions != 1) return 3;
+                }
+                {
+                    inherited : Inherited! = new Inherited();
+                    view : Source<int>* = &*inherited;
+                    if (libraryRead(view) != 42 || inherited->read() != 42) return 4;
+                    owned : Source<int>! = (Source<int>!) inherited;
+                    if (inherited != null) return 5;
+                    owned = null;
+                    if (destructions != 2) return 7;
+                }
+                {
+                    shared : Shared! = new Shared();
+                    view : Source<int>* = &*shared;
+                    if (libraryRead(view) != 42 || view->read() != 42) return 8;
+                    owned : Source<int>! = (Source<int>!) shared;
+                    if (shared != null) return 9;
+                    owned = null;
+                    if (destructions != 3) return 10;
+                }
+                if (destructions != 3) return 11;
+                return 42;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("import layout — empty bases retain dynamic root receivers in secondary tables",
+          "[import][e2e][virtual-base-layout][empty-base][regression]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module imported_empty_root_lib;
+            public class Empty {}
+            public readHash(value : Empty&) : int { return value.hash(); }
+        )K",
+        R"K(
+            module imported_empty_root_exe;
+            import imported_empty_root_lib;
+            class Indirect : public Empty {
+                value : int;
+                public Indirect() : value(42) {}
+                public read() : int { return value; }
+            }
+            main() : int {
+                value : Indirect;
+                base : Empty& = value;
+                if (readHash(base) != 0 || base.hash() != 0) return 1;
+                return value.read();
+            }
+        )K");
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("class layout — a vbptr-only root has a receiver path without a physical offset",
+          "[gen][virtual-base-layout][empty-base][regression]") {
+    auto comp = compile_model(R"K(
+        module k;
+        const class Object {
+            public const hash() : int { return 42; }
+        }
+        class Empty {}
+        class Other {}
+        class Indirect : public Empty, public Other {}
+    )K");
+    REQUIRE(comp);
+    REQUIRE_FALSE(comp->has_compilation_error());
+    auto empty = find_klass(comp, "Empty");
+    REQUIRE(empty);
+    REQUIRE(empty->get_bases().size() == 1);
+    const auto& root_base = empty->get_bases().front();
+    REQUIRE(root_base.base);
+    REQUIRE(root_base.is_virtual);
+    auto root = root_base.base;
+    CHECK(root->get_fq_name() == "::k::Object");
+    REQUIRE(empty->get_struct_type()->get_member("__vbptr_Object__"));
+    CHECK_FALSE(empty->get_struct_type()->get_member(
+        "__base_" + root_base.sanitised_name() + "__"));
+    CHECK_FALSE(empty->get_struct_type()->get_member("__vbase_Object__"));
+    REQUIRE(empty->has_vtable());
+    auto* root_llvm = llvm::cast<llvm::StructType>(root->get_struct_type()->get_llvm_type());
+    REQUIRE(root_llvm->getNumElements() == 1);
+    CHECK(root_llvm->getElementType(0)->isPointerTy());
+
+    auto vt = empty->get_vtable();
+    auto* initializer = llvm::dyn_cast<llvm::ConstantStruct>(vt->llvm_global->getInitializer());
+    REQUIRE(initializer);
+    bool found_hash = false;
+    for (const auto& entry : vt->entries) {
+        if (!entry.func || entry.func->get_short_name() != "hash") continue;
+        found_hash = true;
+        auto* thunk = llvm::dyn_cast<llvm::Function>(
+            initializer->getOperand(entry.slot_index + 1)->stripPointerCasts());
+        REQUIRE(thunk);
+        CHECK(thunk->getName().str().find("_fwdthunk_vbase_") != std::string::npos);
+        bool loads_receiver = false;
+        for (const auto& block : *thunk) {
+            for (const auto& instruction : block) {
+                if (llvm::isa<llvm::LoadInst>(instruction)) loads_receiver = true;
+            }
+        }
+        CHECK(loads_receiver);
+    }
+    CHECK(found_hash);
+    REQUIRE(find_klass(comp, "Indirect"));
+}
+
+TEST_CASE("template stream layout — late virtual promotion retains empty Object root storage",
+          "[gen][template][virtual-base-layout][empty-base][regression]") {
+    const bool zero_sized_root = GENERATE(false, true);
+    const bool late_promotion = GENERATE(false, true);
+    INFO("zero-sized Object=" << zero_sized_root);
+    INFO("late virtual promotion=" << late_promotion);
+    std::string source = R"K(
+        module k;
+        const class Object {
+            @OBJECT_MEMBERS@
+        }
+        template<typename T>
+        public interface InputStream { read() : T; }
+        template<typename T>
+        public interface OutputStream { write(value : T); }
+        public class FileInputStream : public InputStream<byte> {
+            _fp : byte*;
+            _ownsFile : bool;
+        public:
+            FileInputStream() : _fp(null), _ownsFile(false) {}
+            override read() : byte { return (byte) 42; }
+        }
+        template<typename T>
+        public class Duplex : public InputStream<T>, public OutputStream<T> {
+            public override read() : T { return (T) 0; }
+            public override write(value : T) {}
+        }
+        @PROMOTION@
+    )K";
+    source.replace(source.find("@OBJECT_MEMBERS@"), std::string("@OBJECT_MEMBERS@").size(),
+        zero_sized_root ? "" : "public: ~Object() {} const hash() : int { return 0; }");
+    source.replace(source.find("@PROMOTION@"), std::string("@PROMOTION@").size(),
+        late_promotion ? "public promote() { duplex : Duplex<byte>; }" : "");
+    auto comp = compile_model(source);
+    REQUIRE(comp);
+    REQUIRE_FALSE(comp->has_compilation_error());
+
+    auto file = find_klass(comp, "FileInputStream");
+    REQUIRE(file);
+    REQUIRE(file->has_vtable());
+    REQUIRE(file->get_bases().size() == 1);
+    const auto& stream_base = file->get_bases().front();
+    auto stream = stream_base.base;
+    REQUIRE(stream);
+    REQUIRE(stream->get_bases().size() == 1);
+    const auto& object_base = stream->get_bases().front();
+    auto object = object_base.base;
+    REQUIRE(object);
+    REQUIRE(object_base.is_virtual == late_promotion);
+    CHECK(object->get_fq_name() == "::k::Object");
+
+    auto stream_field = file->get_struct_type()->get_member(
+        "__base_" + stream_base.sanitised_name() + "__");
+    auto object_field = stream->get_struct_type()->get_member(
+        "__base_" + object_base.sanitised_name() + "__");
+    REQUIRE(stream_field);
+    REQUIRE(object_field);
+    CHECK_FALSE(stream->get_struct_type()->get_member("__vbase_Object__").has_value());
+
+    const auto& dl = file->get_vtable()->llvm_global->getParent()->getDataLayout();
+    auto* object_llvm = llvm::cast<llvm::StructType>(object->get_struct_type()->get_llvm_type());
+    CHECK(dl.getTypeAllocSize(object_llvm) == (zero_sized_root ? 0 : dl.getPointerSize()));
+    auto* file_llvm = llvm::cast<llvm::StructType>(file->get_struct_type()->get_llvm_type());
+    auto* stream_llvm = llvm::cast<llvm::StructType>(stream->get_struct_type()->get_llvm_type());
+    const size_t expected_offset = dl.getStructLayout(file_llvm)->getElementOffset(stream_field->index)
+        + dl.getStructLayout(stream_llvm)->getElementOffset(object_field->index);
+
+    if (!zero_sized_root) {
+        auto* vtable = llvm::dyn_cast<llvm::ConstantStruct>(file->get_vtable()->llvm_global->getInitializer());
+        REQUIRE(vtable);
+        bool found_hash = false;
+        for (const auto& entry : file->get_vtable()->entries) {
+            if (!entry.func || entry.func->get_short_name() != "hash") continue;
+            found_hash = true;
+            auto* thunk = llvm::dyn_cast<llvm::Function>(
+                vtable->getOperand(entry.slot_index + 1)->stripPointerCasts());
+            REQUIRE(thunk);
+            CHECK(thunk->getName().str().find("_fwdthunk_adj" + std::to_string(expected_offset))
+                != std::string::npos);
+        }
+        CHECK(found_hash);
+    }
+}
+
 TEST_CASE("cross-module template — nested imported return arguments keep their declaration identity",
           "[import][e2e][template][cross-tpl][regression][canonical-nested-return]") {
     auto result = build_exec_with_lib(
@@ -3519,8 +4104,13 @@ TEST_CASE("cross-module template — empty ListMap nested returns preserve impor
         }
     )K");
     REQUIRE(comp);
-    auto map = find_aggregate(comp, "ListMap__int__int");
+    REQUIRE_FALSE(comp->has_compilation_error());
+    auto library = comp->get_unit()->get_root_namespace()->get_child_namespace("k");
+    REQUIRE(library);
+    auto map = library->get_aggregate("ListMap__int__int");
     REQUIRE(map);
+    CHECK(map->get_fq_name() == "::k::ListMap__int__int");
+    auto ctx = comp->get_context_for_test();
     for (const auto* method : {"first", "last"}) {
         auto fn = map->get_function(method);
         REQUIRE(fn);
@@ -3535,7 +4125,75 @@ TEST_CASE("cross-module template — empty ListMap nested returns preserve impor
         REQUIRE(entry_type->get_struct());
         REQUIRE(entry_type->get_struct()->get_fq_name() == "::k::Entry__int__int");
         REQUIRE(holder->get_fq_name().find("listmap_lexical_consumer") == std::string::npos);
+        bool has_copy_constructor = false;
+        bool has_conversion_constructor = false;
+        for (const auto& ctor : holder->constructors()) {
+            for (const auto& param : ctor->parameters()) {
+                REQUIRE(param->get_type());
+                CHECK_FALSE(k::model::type::contains_unresolved(param->get_type()));
+                CHECK(ctx->get_llvm_type(param->get_type()) != nullptr);
+                auto target = k::model::type::canonical(param->get_type());
+                if (!k::model::type::is_reference(target)) continue;
+                if (k::model::type::remove_const(target->get_subtype()) == holder_type) {
+                    CHECK(k::model::type::is_const(target->get_subtype()));
+                    has_copy_constructor = true;
+                } else if (auto mutable_type = std::dynamic_pointer_cast<k::model::struct_type>(
+                        k::model::type::remove_const(target->get_subtype()))) {
+                    auto mutable_holder = mutable_type->get_struct();
+                    if (!mutable_holder || mutable_holder->get_tpl_base_name() != "OptionalRef") continue;
+                    CHECK(k::model::type::is_const(target->get_subtype()));
+                    REQUIRE(mutable_holder->get_tpl_args().size() == 1);
+                    CHECK(mutable_holder->get_tpl_args().front().type_arg == entry_type);
+                    CHECK(mutable_holder->get_fq_name().starts_with("::k::OptionalRef__"));
+                    has_conversion_constructor = true;
+                }
+            }
+        }
+        CHECK(has_copy_constructor);
+        CHECK(has_conversion_constructor);
     }
+
+    size_t typed_copy_receivers = 0;
+    for (const auto& child : library->get_children()) {
+        auto holder = std::dynamic_pointer_cast<k::model::aggregate>(child);
+        if (!holder || holder->is_imported() || !holder->is_instantiation()
+            || holder->get_tpl_base_name() != "OptionalRef") continue;
+        for (const auto& ctor : holder->constructors()) {
+            auto other = ctor->get_parameter("other");
+            if (!other) continue;
+            REQUIRE(other->get_type());
+            auto body = ctor->get_existing_block();
+            REQUIRE(body);
+            auto check_receivers = [&](auto&& self,
+                                       const std::shared_ptr<k::model::expression>& expr) -> void {
+                if (!expr) return;
+                if (auto member = std::dynamic_pointer_cast<k::model::member_of_object_expression>(expr);
+                    member && member->symbol().get_name().to_string() == "_ptr") {
+                    auto receiver = std::dynamic_pointer_cast<k::model::symbol_expression>(member->sub_expr());
+                    if (receiver && receiver->get_name().to_string() == "other") {
+                        INFO("copy constructor: " << holder->get_fq_name());
+                        CHECK(receiver->get_variable_def() == other);
+                        REQUIRE(receiver->get_type());
+                        CHECK(k::model::type::are_equal(receiver->get_type(), other->get_type()));
+                        REQUIRE(member->get_type());
+                        ++typed_copy_receivers;
+                    }
+                }
+                if (auto binary = std::dynamic_pointer_cast<k::model::binary_expression>(expr)) {
+                    self(self, binary->left());
+                    self(self, binary->right());
+                } else if (auto unary = std::dynamic_pointer_cast<k::model::unary_expression>(expr)) {
+                    self(self, unary->sub_expr());
+                }
+            };
+            for (const auto& stmt : body->get_statements()) {
+                if (auto expr_stmt = std::dynamic_pointer_cast<k::model::expression_statement>(stmt)) {
+                    check_receivers(check_receivers, expr_stmt->get_expression());
+                }
+            }
+        }
+    }
+    CHECK(typed_copy_receivers >= 2);
 }
 
 TEST_CASE("cross-module template — canonical stream signatures retain overloads and template returns",

@@ -347,10 +347,10 @@ public:
         const std::shared_ptr<ns>& definition_namespace = {});
 
     /**
-     * Create a clone of this unresolved_type with model-level template arg overrides
-     * derived from @p subst.  For each AST arg that is a simple identifier name found
-     * in the substitution map, the corresponding slot in _model_template_args is set
-     * to the substituted concrete type.  Returns nullptr if no arg was substituted.
+     * Create a clone composing model-level template argument overrides with @p subst.
+     * Existing non-null overrides are recursively substituted and retained; only
+     * unbound slots are derived from their AST argument. Returns nullptr if no
+     * model argument changes.
      */
     std::shared_ptr<unresolved_type> clone_with_substituted_model_args(
         const std::unordered_map<std::string, std::shared_ptr<type>>& subst) const;

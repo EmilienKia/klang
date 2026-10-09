@@ -256,6 +256,11 @@ struct character : public literal {
     character(const std::string_view& content, literal_encoding enc = literal_encoding::unspecified)
         : literal(content), enc(enc) {}
 
+    /**
+     * Return the decoded Unicode scalar in the unsigned int alternative of
+     * k::value_type, including ASCII and prefixed literals. The encoding prefix
+     * determines the language type separately; C++ char represents byte values.
+     */
     k::value_type value()const override;
 
     /**

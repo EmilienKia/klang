@@ -1721,6 +1721,10 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
 {
     const auto& base_name = unres->type_id();
     const auto& ast_args = unres->get_ast_template_args();
+    const auto resolved_argument = [](const std::shared_ptr<type>& argument) {
+        return argument && (type::is_resolved(argument)
+            || std::dynamic_pointer_cast<struct_type>(argument));
+    };
 
     // 0. A parameterised alias renames a family of types and is resolved by
     // substitution, never by instantiating an entity of its own.
@@ -1839,7 +1843,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                 if (auto nested = std::dynamic_pointer_cast<unresolved_type>(model_targs[i])) {
                     if (nested->has_model_template_args()) {
                         if (auto nested_res = try_instantiate_template_type(nested, context_elem)) {
-                            if (type::is_resolved(nested_res)) {
+                            if (resolved_argument(nested_res)) {
                                 model_args.push_back(template_argument::make_type(nested_res));
                                 continue;
                             }
@@ -1849,7 +1853,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             }
             // Resolve the type argument through the context (normal path)
             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
-            if (!arg_type || !type::is_resolved(arg_type)) {
+            if (!resolved_argument(arg_type)) {
                 // Try resolving it further through the resolver
                 if (arg_type) {
                     if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
@@ -1862,7 +1866,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                         // would spuriously fail or match the uninstantiated template itself.
                         if (unres_arg->has_template_args()) {
                             auto nested = try_instantiate_template_type(unres_arg, context_elem);
-                            if (nested && type::is_resolved(nested)) {
+                            if (resolved_argument(nested)) {
                                 arg_type = nested;
                             }
                         }
@@ -1872,11 +1876,11 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                         // that happens to share the same short name (e.g. `interface I`)
                         // would be spuriously matched. Only the substitution-map
                         // recovery paths below may legitimately resolve it.
-                        if (!type::is_resolved(arg_type)
+                        if (!resolved_argument(arg_type)
                             && !unres_arg->is_template_param_placeholder()
                             && !is_enclosing_template_param_name(context_elem, unres_arg->type_id().to_string())) {
                             auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
-                            if (resolved && type::is_resolved(resolved)) {
+                            if (resolved_argument(resolved)) {
                                 arg_type = resolved;
                             }
                         }
@@ -1885,7 +1889,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                         // handles cases like  e : Expected<R,E>  in expected__int_int where
                         // "R" and "E" are no longer in scope but the subst map is stored on the
                         // containing function.
-                        if (!type::is_resolved(arg_type)) {
+                        if (!resolved_argument(arg_type)) {
                             // Check if context_elem itself is the concrete function
                             const function* owning_fn = dynamic_cast<const function*>(&context_elem);
                             if (!owning_fn) {
@@ -1900,13 +1904,13 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                                 if (sit == fn_subst.end() && !unres_arg->type_id().empty()) {
                                     sit = fn_subst.find(unres_arg->type_id().back());
                                 }
-                                if (sit != fn_subst.end() && sit->second && type::is_resolved(sit->second)) {
+                                if (sit != fn_subst.end() && resolved_argument(sit->second)) {
                                     arg_type = sit->second;
                                 }
                             }
                             // If still not resolved, check if context is inside a
                             // template-instantiated aggregate that carries param→arg mapping.
-                            if (!type::is_resolved(arg_type)) {
+                            if (!resolved_argument(arg_type)) {
                                 const aggregate* owning_agg = dynamic_cast<const aggregate*>(&context_elem);
                                 if (!owning_agg) {
                                     if (auto parent_agg = context_elem.ancestor<aggregate>()) {
@@ -1929,7 +1933,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                                                 std::string pname = params[pi].name;
                                                 if (pname == unres_arg->type_id().to_string() ||
                                                     (!unres_arg->type_id().empty() && pname == unres_arg->type_id().back())) {
-                                                    if (args[pi].type_arg && type::is_resolved(args[pi].type_arg)) {
+                                                    if (resolved_argument(args[pi].type_arg)) {
                                                         arg_type = args[pi].type_arg;
                                                         break;
                                                     }
@@ -1952,7 +1956,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                     }
                 }
             }
-            if (!arg_type || !type::is_resolved(arg_type)) return {};
+            if (!resolved_argument(arg_type)) return {};
             model_args.push_back(template_argument::make_type(arg_type));
         } else if (ast_arg->is_value()) {
             // Value template argument — evaluate as a compile-time constant

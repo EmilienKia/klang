@@ -74,8 +74,8 @@ protected:
     std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
     resolve_symbol_from_root(const name& name);
 
-    /** Resolve a qualified name (no root prefix) anchored at a given element, without climbing to parents. */
-    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    /** Resolve a qualified name without climbing to parents, recording imported callable usage. */
+    std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
     resolve_qualified_from(const element& elem, const name& qualified_name);
 
     /**

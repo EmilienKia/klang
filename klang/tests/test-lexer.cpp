@@ -1540,8 +1540,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
         REQUIRE( l.content == "'c'" );
 
         k::value_type val = l.value();
-        REQUIRE( std::holds_alternative<char>(val) );
-        REQUIRE( std::get<char>(val) == 'c' );
+        REQUIRE( std::holds_alternative<unsigned int>(val) );
+        REQUIRE( std::get<unsigned int>(val) == 0x63u );
     }
 
     SECTION("Lex digit char") {
@@ -1556,8 +1556,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
         REQUIRE( l.content == "'0'" );
 
         k::value_type val = l.value();
-        REQUIRE( std::holds_alternative<char>(val) );
-        REQUIRE( std::get<char>(val) == '0' );
+        REQUIRE( std::holds_alternative<unsigned int>(val) );
+        REQUIRE( std::get<unsigned int>(val) == 0x30u );
     }
 
     SECTION("Lex special char") {
@@ -1572,8 +1572,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
         REQUIRE( l.content == "'&'" );
 
         k::value_type val = l.value();
-        REQUIRE( std::holds_alternative<char>(val) );
-        REQUIRE( std::get<char>(val) == '&' );
+        REQUIRE( std::holds_alternative<unsigned int>(val) );
+        REQUIRE( std::get<unsigned int>(val) == 0x26u );
     }
 
     SECTION("Lex anti-slash escape char") {
@@ -1588,9 +1588,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
         REQUIRE( l.content == "'\\\\'" );
 
         k::value_type val = l.value();
-        REQUIRE( std::holds_alternative<char>(val) );
-        // TODO add escape decoding
-        // REQUIRE( std::get<char>(val) == '\\' );
+        REQUIRE( std::holds_alternative<unsigned int>(val) );
+        REQUIRE( std::get<unsigned int>(val) == 0x5Cu );
     }
 
     SECTION("Lex simple quote escape char") {
@@ -1605,12 +1604,9 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
         REQUIRE( l.content == "'\\\''" );
 
         k::value_type val = l.value();
-        REQUIRE( std::holds_alternative<char>(val) );
-        // TODO add escape decoding
-        // REQUIRE( std::get<char>(val) == '\'' );
+        REQUIRE( std::holds_alternative<unsigned int>(val) );
+        REQUIRE( std::get<unsigned int>(val) == 0x27u );
     }
-
-    // TODO add unicode escape tests
 }
 
 TEST_CASE( "Lex one string", "[lexer]" ) {
@@ -1646,7 +1642,12 @@ TEST_CASE( "Lex character escape decoding", "[lexer][unicode]" ) {
         auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
         REQUIRE( std::holds_alternative<character>(lexemes[0]) );
-        return std::get<character>(lexemes[0]).code_point();
+        const auto& literal = std::get<character>(lexemes[0]);
+        const auto cp = literal.code_point();
+        const auto val = literal.value();
+        REQUIRE( std::holds_alternative<unsigned int>(val) );
+        REQUIRE( std::get<unsigned int>(val) == static_cast<unsigned int>(cp) );
+        return cp;
     };
 
     REQUIRE( cp_of("'A'") == U'A' );
@@ -1665,12 +1666,22 @@ TEST_CASE( "Lex character with UTF-8 body", "[lexer][unicode]" ) {
     test_logger log;
     lexer lex(log);
 
-    // 'é' encoded as UTF-8 bytes C3 A9 → code point U+00E9
-    k::source src{"'\xC3\xA9'"};
+    auto [text, expected] = GENERATE(table<std::string, unsigned int>({
+        {"'\xC3\xA9'", 0xE9u},
+        {"'\xE2\x82\xAC'", 0x20ACu},
+        {"'\xF0\x9F\x98\x80'", 0x1F600u}
+    }));
+    CAPTURE(text, expected);
+    k::source src{text};
     auto lexemes = lex.parse(src);
     REQUIRE( lexemes.size() == 1 );
     REQUIRE( std::holds_alternative<character>(lexemes[0]) );
-    REQUIRE( std::get<character>(lexemes[0]).code_point() == 0xE9 );
+    const auto& literal = std::get<character>(lexemes[0]);
+    REQUIRE( literal.content == text );
+    REQUIRE( literal.code_point() == expected );
+    const auto val = literal.value();
+    REQUIRE( std::holds_alternative<unsigned int>(val) );
+    REQUIRE( std::get<unsigned int>(val) == expected );
 }
 
 TEST_CASE( "Lex string escape and UTF-8 decoding", "[lexer][unicode]" ) {

@@ -44,6 +44,10 @@
 
 #include "helpers.hpp"
 
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/Support/raw_ostream.h>
+
 // ─────────────────────────────────────────────────────────────────────────────
 // [A] Direct call via dispatch_info DIRECT — non-regression
 // ─────────────────────────────────────────────────────────────────────────────
@@ -304,16 +308,83 @@ TEST_CASE("[J] Phase4: non-regression — main() wrapper (global_main_function)"
 
 TEST_CASE("Main lifecycle: bootstrap legacy proxy has no Application runtime externs",
           "[gen][main][application-lifecycle][legacy]") {
+    const bool with_cleanup = GENERATE(false, true);
+    INFO("legacy main has local cleanup: " << with_cleanup);
     auto compiler = k::compiler::create();
-    compiler->parse_source("legacy-main.k", R"K(
+    const std::string source = with_cleanup ? R"K(
+        module k;
+        struct Guard { ~Guard() {} }
+        main() : int {
+            guard : Guard;
+            return 42;
+        }
+    )K" : R"K(
         module k;
         main() : int { return 42; }
-    )K", false, false);
+    )K";
+    compiler->parse_source("legacy-main.k", source, false, false);
     REQUIRE(compiler->get_unit());
     auto context = compiler->get_context_for_test();
     REQUIRE(context);
     auto& module = context->module();
     REQUIRE_FALSE(module.getFunction("__k_application_shutdown"));
     REQUIRE_FALSE(module.getFunction("__k_tls_thread_exit"));
-    REQUIRE_FALSE(module.getFunction("__gxx_personality_v0"));
+    for (auto& function : module) {
+        REQUIRE_FALSE(function.getName().starts_with("__k_application_"));
+    }
+    REQUIRE_FALSE(llvm::verifyModule(module, &llvm::errs()));
+
+    // The outer uncaught-exception guard needs EH even without an Application.
+    auto* personality = module.getFunction("__gxx_personality_v0");
+    REQUIRE(personality);
+    auto* proxy = module.getFunction("main");
+    auto* body = module.getFunction("__k_main_body");
+    REQUIRE(proxy);
+    REQUIRE(body);
+    REQUIRE(proxy->hasPersonalityFn());
+    REQUIRE(proxy->getPersonalityFn() == personality);
+    REQUIRE_FALSE(body->hasPersonalityFn());
+    int guard_invokes = 0, catch_all_pads = 0;
+    for (auto& block : *proxy) {
+        for (auto& instruction : block) {
+            if (auto* invoke = llvm::dyn_cast<llvm::InvokeInst>(&instruction)) {
+                REQUIRE(invoke->getCalledFunction() == body);
+                REQUIRE(invoke->getNormalDest()->getParent() == proxy);
+                REQUIRE(invoke->getUnwindDest()->getParent() == proxy);
+                ++guard_invokes;
+            }
+            if (auto* lpad = llvm::dyn_cast<llvm::LandingPadInst>(&instruction)) {
+                REQUIRE(lpad->getNumClauses() == 1);
+                REQUIRE(llvm::isa<llvm::ConstantPointerNull>(lpad->getClause(0)));
+                ++catch_all_pads;
+            }
+        }
+    }
+    REQUIRE(guard_invokes == 1);
+    REQUIRE(catch_all_pads == 1);
+
+    auto real_main = compiler->get_unit()->get_root_namespace()->get_function("main");
+    REQUIRE(real_main);
+    auto* real_main_ir = module.getFunction(real_main->get_mangled_name());
+    REQUIRE(real_main_ir);
+    REQUIRE(real_main_ir->hasPersonalityFn() == with_cleanup);
+    if (with_cleanup) {
+        auto guard = compiler->get_unit()->get_root_namespace()->get_aggregate("Guard");
+        REQUIRE(guard);
+        REQUIRE(guard->get_destructor());
+        auto* destructor = module.getFunction(guard->get_destructor()->get_mangled_name());
+        REQUIRE(destructor);
+        int cleanup_invokes = 0;
+        for (auto& block : *real_main_ir) {
+            for (auto& instruction : block) {
+                if (auto* invoke = llvm::dyn_cast<llvm::InvokeInst>(&instruction)) {
+                    if (invoke->getCalledFunction() == destructor) {
+                        REQUIRE(invoke->getUnwindDest()->getParent() == real_main_ir);
+                        ++cleanup_invokes;
+                    }
+                }
+            }
+        }
+        REQUIRE(cleanup_invokes > 0);
+    }
 }

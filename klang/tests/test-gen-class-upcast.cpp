@@ -721,3 +721,31 @@ TEST_CASE("Class upcast: null bypasses virtual-base pointer loads",
     REQUIRE(test);
     REQUIRE(test() == 42);
 }
+
+TEST_CASE("Class upcast: empty direct and indirect bases retain their Object root",
+          "[gen][upcast][class][empty-base][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_class_empty_base_upcast;
+        class Empty {}
+        class Direct : public Empty {}
+        class Mid : public Empty {}
+        class Indirect : public Mid {}
+
+        test() : int {
+            direct : Direct;
+            indirect : Indirect;
+            directBase : Empty* = &direct;
+            indirectBase : Empty* = &indirect;
+            directRoot : const k::Object* = directBase;
+            indirectRoot : const k::Object* = indirectBase;
+            if (directBase == null || indirectBase == null ||
+                directRoot == null || indirectRoot == null) return 1;
+            if (directBase->hash() != 0 || indirectBase->hash() != 0) return 2;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(test);
+    REQUIRE(test() == 42);
+}

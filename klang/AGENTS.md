@@ -57,6 +57,12 @@ materialised: an aggregate can refer to a union or alias declared in a later
 namespace. Pointer return subtypes also need lexical signature resolution before
 any function body uses them; matching LLVM pointer shapes does not establish K
 type identity.
+Imported generic aggregate facades and their erased synthesis share a source
+name. Namespace lookup must retain the facade; the import cache retains the
+concrete synthesis. Nested template arguments can be semantically resolved
+aggregate types before LLVM layout exists, in both signature and body passes.
+An imported recipe parse/model error is fatal: continuing can expose a partial,
+invalid declaration as a viable overload.
 
 ---
 
@@ -94,14 +100,23 @@ the canonical symbol resolver after completing missing nested union declarations
 preserves already-bound cloned targets, and must not repeat aggregate layout or
 constructor-initializer synthesis.
 Full body typing is idempotent per concrete function within the type-reference pass.
+Before leaving that pass, drain unvisited concrete instantiation bodies to a fixed
+point: late declaration resolution can append signature-only dependencies to an
+imported namespace whose body walk has already finished.
 Template-qualified static calls use that pass's instantiation path, not a fresh
 declaration-only aggregate resolver. Explicit function template calls instantiate
 every candidate declaration; argument caches are declaration-owned, not name-owned.
+KDI constructor tables for aggregate template specializations contain only concrete
+constructors. Dependent member-constructor templates remain in the primary recipe
+source, just like member methods; exporting them as ABI signatures loses their types.
 
 Private FFI dependencies of imported templates remain private declarations in a
 definition-scope namespace carried by template source (not exported KDI functions).
 Cloned functions must retain that scope for symbol lookup, overload lookup, and
 visibility checks, including across re-export. Do not widen FFI visibility.
+Hosted member-template source can start with private type and native dependency
+namespace preludes: materialise those scopes before attaching the matching recipe
+to its imported host; never assume the first declaration is the member function.
 Unresolved-type declaration origins belong only to re-parsed imported declarations.
 Do not attach them to ordinary local types or substituted caller arguments. Origin
 references use lexical resolver lookup, not a parallel context-registry lookup;
@@ -113,6 +128,15 @@ instantiation-cache names.
 Nullable class upcasts must preserve null before adjusting a base-subobject
 address or loading a virtual-base pointer. Owner cleanup must never receive a
 base offset manufactured from null.
+Vtable receiver adjustments use the final LLVM DataLayout and the same live
+virtual-base storage as vptr initialization. An inherited collector remains live
+unless an enclosing layout owns a replacement; dead nested copies must not enter
+offset lookup, including shadowed non-virtual copies left by late promotion.
+Semantic subobject presence is separate from physical offset certainty. Inherited
+receivers can follow a validated vbptr path; a vbptr-only base has no inline vptr
+for a secondary table to patch. Same-subobject dispatch needs no adjustment.
+When a physical adjustment is required, unknown offsets must fail compilation,
+never become zero, an ancestor's offset, or a stale materialization-time estimate.
 
 Namespace-level lambda declarations synthesized inside free template functions
 must retain the function's template parameters until instantiation. Bind their

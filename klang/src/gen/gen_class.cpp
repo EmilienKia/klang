@@ -92,6 +92,9 @@
 #include "generators.hpp"
 #include "gen_helpers.hpp"
 
+#include <stdexcept>
+#include <optional>
+
 #include "../model/mangler.hpp"
 #include "../model/context.hpp"
 #include "../model/imported.hpp"
@@ -1294,58 +1297,201 @@ llvm::Constant* build_annotation_instance_constant(
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: find the byte offset of 'target' aggregate within 'containing',
-// traversing the non-virtual base chain recursively.
-// Returns SIZE_MAX if 'target' is not found.
+// Semantic bases need not have inline storage (a virtual edge can use a vbptr).
+// Keep their presence, physical offset and executable receiver path separate.
 // ─────────────────────────────────────────────────────────────────────────────
-static size_t compute_subobject_offset_in(const aggregate& containing,
-                                           const aggregate& target,
-                                           const llvm::DataLayout& dl,
-                                           bool traverse_vbases = true) {
-    auto* llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(
-        containing.get_struct_type()
-            ? containing.get_struct_type()->get_llvm_type()
-            : nullptr);
-    if (!llvm_type) return SIZE_MAX;
+struct subobject_step {
+    llvm::StructType* containing_type;
+    unsigned field_index;
+    bool load_pointer;
+};
 
-    for (auto& bs : containing.get_bases()) {
-        if (!bs.base || bs.is_virtual) continue;
-        std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
-        auto field_opt = containing.get_struct_type()->get_member(subobj_name);
-        if (!field_opt) continue;
-        size_t field_off = dl.getStructLayout(llvm_type)
-                              ->getElementOffset((unsigned)field_opt->index);
-        if (bs.base.get() == &target
-            || (target.get_struct_type()
-                && bs.base->get_struct_type() == target.get_struct_type())) return field_off;
-        // Do NOT traverse virtual bases through an intermediate non-virtual base:
-        // an intermediate's __vbase_X__ storage is a dead duplicate (all vbptrs are
-        // repointed to the most-derived collector's shared copy at run time). Only
-        // the top-level collector's virtual-base storage is the live one.
-        size_t inner = compute_subobject_offset_in(*bs.base, target, dl, false);
-        if (inner != SIZE_MAX) return field_off + inner;
+struct subobject_location {
+    bool present = false;
+    std::optional<size_t> offset;
+    bool embedded = false;
+    std::optional<std::vector<subobject_step>> path;
+};
+
+static bool same_subobject_type(const aggregate& a, const aggregate& b) {
+    return &a == &b || (a.get_struct_type() && a.get_struct_type() == b.get_struct_type());
+}
+
+static subobject_location locate_subobject_in(
+    const aggregate& containing, const aggregate& target, const llvm::DataLayout& dl,
+    const std::unordered_set<const struct_type*>& ancestor_collectors = {}) {
+    if (same_subobject_type(containing, target)) {
+        return {true, 0, true, std::vector<subobject_step>{}};
     }
+    auto containing_type = containing.get_struct_type();
+    auto* llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(
+        containing_type ? containing_type->get_llvm_type() : nullptr);
+    const bool layout_ready = llvm_type && !llvm_type->isOpaque() && llvm_type->isSized();
 
-    // Traverse shared virtual bases through the collector's __vbase_X__ storage
-    // (only at the most-derived/collector level — see note above). Needed so a
-    // sub-object reached only via a virtual base (e.g. Sized inside a shared Coll
-    // vbase) gets its correct cumulative byte offset for this-adjustment thunks.
-    if (traverse_vbases) {
-        for (auto& vbase : containing.get_all_virtual_base_structs()) {
-            if (!vbase) continue;
-            std::string vbase_name = "__vbase_" + vbase->get_short_name() + "__";
-            auto field_opt = containing.get_struct_type()->get_member(vbase_name);
-            if (!field_opt) continue;
-            size_t field_off = dl.getStructLayout(llvm_type)
-                                  ->getElementOffset((unsigned)field_opt->index);
-            if (vbase.get() == &target
-                || (target.get_struct_type()
-                    && vbase->get_struct_type() == target.get_struct_type())) return field_off;
-            size_t inner = compute_subobject_offset_in(*vbase, target, dl, false);
-            if (inner != SIZE_MAX) return field_off + inner;
+    auto has_field = [&](const std::string& name) {
+        return containing_type && containing_type->get_member(name).has_value();
+    };
+    auto field_location = [&](const std::string& name, bool load_pointer = false) {
+        subobject_location location;
+        if (containing_type) {
+            if (auto field = containing_type->get_member(name)) {
+                location.present = true;
+                location.embedded = !load_pointer;
+                if (layout_ready && field->index < llvm_type->getNumElements()
+                    && (!load_pointer || llvm_type->getElementType(field->index)->isPointerTy())) {
+                    location.path = std::vector<subobject_step>{
+                        {llvm_type, static_cast<unsigned>(field->index), load_pointer}};
+                    if (!load_pointer) {
+                        location.offset = dl.getStructLayout(llvm_type)->getElementOffset(field->index);
+                    }
+                }
+            }
+        }
+        return location;
+    };
+    auto base_field_location = [&](const base_spec& bs) {
+        auto location = field_location("__base_" + bs.sanitised_name() + "__");
+        if (location.present || !containing.is_imported() || !layout_ready
+            || !bs.base->get_struct_type()) return location;
+        // KDI virtual edges can retain an as-written __base_X__ name from
+        // before promotion. Match its actual LLVM field type, not an offset estimate.
+        const struct_type::field* match = nullptr;
+        for (auto it = containing_type->fields_begin(); it != containing_type->fields_end(); ++it) {
+            if (it->name.rfind("__base_", 0) != 0 || it->index >= llvm_type->getNumElements()
+                || llvm_type->getElementType(it->index) != bs.base->get_struct_type()->get_llvm_type()) continue;
+            if (match) return location;
+            match = &*it;
+        }
+        return match ? field_location(match->name) : location;
+    };
+
+    const auto vbases = containing.get_all_virtual_base_structs();
+    auto child_collectors = ancestor_collectors;
+    for (const auto& vbase : vbases) {
+        if (!vbase) continue;
+        if (has_field("__vbase_" + vbase->get_short_name() + "__")) {
+            child_collectors.insert(vbase->get_struct_type().get());
         }
     }
-    return SIZE_MAX;
+    for (const auto& bs : containing.get_bases()) {
+        if (bs.base && bs.is_virtual
+            && base_field_location(bs).present) {
+            child_collectors.insert(bs.base->get_struct_type().get());
+        }
+    }
+
+    subobject_location result;
+    auto consider = [&](const aggregate& base, subobject_location edge) {
+        auto inner = locate_subobject_in(base, target, dl, child_collectors);
+        if (!inner.present) return;
+        subobject_location candidate{true, std::nullopt, edge.embedded && inner.embedded, std::nullopt};
+        if (edge.offset && inner.offset) candidate.offset = *edge.offset + *inner.offset;
+        if (edge.path && inner.path) {
+            candidate.path = std::move(edge.path);
+            candidate.path->insert(candidate.path->end(), inner.path->begin(), inner.path->end());
+        }
+        // A semantic/vbptr path must not hide a later live physical collector.
+        if (!result.present || (!result.offset && candidate.offset)
+            || (!result.offset && !result.path && candidate.path)) {
+            result = std::move(candidate);
+        }
+    };
+
+    for (const auto& bs : containing.get_bases()) {
+        if (!bs.base) continue;
+        const auto* base_type = bs.base->get_struct_type().get();
+        const std::string vbase_name = "__vbase_" + bs.base->get_short_name() + "__";
+        // Late promotion can leave non-virtual copies in imported layouts too.
+        if ((base_type && ancestor_collectors.count(base_type)) || has_field(vbase_name)) continue;
+        auto edge = base_field_location(bs);
+        if (!edge.present && bs.is_virtual) {
+            edge = field_location("__vbptr_" + bs.base->get_short_name() + "__", true);
+            if (!edge.present) edge = field_location("__vbptr_" + bs.sanitised_name() + "__", true);
+        }
+        if (!edge.present && !bs.is_virtual) {
+            auto* base_llvm = llvm::dyn_cast_or_null<llvm::StructType>(
+                base_type ? base_type->get_llvm_type() : nullptr);
+            if (base_llvm && !base_llvm->isOpaque() && base_llvm->isSized()
+                && dl.getTypeAllocSize(base_llvm) == 0) {
+                edge = {true, 0, true, std::vector<subobject_step>{}};
+            }
+        }
+        consider(*bs.base, std::move(edge));
+    }
+
+    for (const auto& vbase : vbases) {
+        if (!vbase) continue;
+        const auto* base_type = vbase->get_struct_type().get();
+        if (base_type && ancestor_collectors.count(base_type)) continue;
+        auto edge = field_location("__vbase_" + vbase->get_short_name() + "__");
+        // Without a local collector, direct-base recursion owns the live path.
+        if (edge.present) consider(*vbase, std::move(edge));
+    }
+    return result;
+}
+
+static size_t require_subobject_offset(const aggregate& containing, const aggregate& target,
+                                      const subobject_location& location) {
+    if (!location.present) {
+        throw std::runtime_error("Cannot locate live subobject '" + target.get_fq_name()
+            + "' in the final layout of '" + containing.get_fq_name() + "'");
+    }
+    if (!location.offset) {
+        throw std::runtime_error("Receiver adjustment requires an unknown physical offset for '"
+            + target.get_fq_name() + "' in the final layout of '" + containing.get_fq_name() + "'");
+    }
+    return *location.offset;
+}
+
+struct receiver_adjustment {
+    std::optional<ptrdiff_t> offset;
+    std::optional<std::vector<subobject_step>> path;
+
+    bool needs_thunk() const { return !offset || *offset != 0; }
+
+    std::string suffix(const aggregate& receiver) const {
+        return offset ? "_thunk_adj" + std::to_string(*offset)
+                      : "_thunk_vbase_" + receiver.get_mangled_name();
+    }
+};
+
+static receiver_adjustment resolve_subobject_adjustment_in(
+    const aggregate& containing, const aggregate& receiver, const aggregate& owner,
+    const llvm::DataLayout& dl, const subobject_location& receiver_location) {
+    if (receiver_location.present && same_subobject_type(receiver, owner)) return {0, std::nullopt};
+    auto owner_location = locate_subobject_in(containing, owner, dl);
+    if (receiver_location.offset && owner_location.offset) {
+        return {static_cast<ptrdiff_t>(*receiver_location.offset)
+            - static_cast<ptrdiff_t>(*owner_location.offset), std::nullopt};
+    }
+    // An inherited implementation can be reached through this receiver's
+    // vbptr even when its address is not an offset in the complete object.
+    if (receiver_location.present && owner_location.present) {
+        auto relative = locate_subobject_in(receiver, owner, dl);
+        if (relative.path) return {std::nullopt, std::move(relative.path)};
+    }
+    const size_t receiver_offset = require_subobject_offset(containing, receiver, receiver_location);
+    const size_t owner_offset = require_subobject_offset(containing, owner, owner_location);
+    return {static_cast<ptrdiff_t>(receiver_offset) - static_cast<ptrdiff_t>(owner_offset), std::nullopt};
+}
+
+static llvm::Value* emit_receiver_adjustment(
+    llvm::IRBuilder<>& builder, llvm::Value* receiver, llvm::Type* ptr_type,
+    const receiver_adjustment& adjustment) {
+    if (adjustment.offset) {
+        auto* i64_type = builder.getInt64Ty();
+        auto* address = builder.CreatePtrToInt(receiver, i64_type, "this_int");
+        auto* adjusted = builder.CreateSub(address,
+            llvm::ConstantInt::get(i64_type, static_cast<uint64_t>(*adjustment.offset)),
+            "this_adj_int");
+        return builder.CreateIntToPtr(adjusted, ptr_type, "this_adj");
+    }
+    for (const auto& step : *adjustment.path) {
+        receiver = builder.CreateStructGEP(
+            step.containing_type, receiver, step.field_index, "base_receiver_addr");
+        if (step.load_pointer) receiver = builder.CreateLoad(ptr_type, receiver, "base_receiver");
+    }
+    return receiver;
 }
 
 } // anonymous namespace
@@ -2290,8 +2436,9 @@ void implementation_generator::visit_klass(klass& klass) {
             // cumulative offset, not just direct bases of klass — otherwise
             // the offset silently defaults to 0 and no this-adjustment thunk
             // is generated for indirectly-inherited overridden methods.
-            size_t offset_found = compute_subobject_offset_in(klass, *base_kl, dl);
-            size_t base_byte_offset = (offset_found != SIZE_MAX) ? offset_found : 0;
+            const auto base_location = locate_subobject_in(klass, *base_kl, dl);
+            // A vbptr-only base has no inline vptr to initialise with this table.
+            if (base_location.present && !base_location.embedded) continue;
 
             // Build secondary vtable: for each slot in the base's vtable,
             // find the overriding function in the primary vtable.
@@ -2311,63 +2458,36 @@ void implementation_generator::visit_klass(klass& klass) {
                 // leaving the other base slot pointing at the imported
                 // (anonymous) method.
                 llvm::Function* llvm_func = nullptr;
+                std::shared_ptr<aggregate> implementation_owner;
                 for (auto& primary_entry : vt->entries) {
                     if (primary_entry.introducing_func && base_entry.introducing_func
                         && have_same_virtual_signature(*primary_entry.introducing_func,
                                                        *base_entry.introducing_func)) {
                         llvm_func = _context->lookup_llvm_function(primary_entry.func);
+                        if (primary_entry.func) implementation_owner = primary_entry.func->get_owner();
                         break;
                     }
                 }
                 if (!llvm_func) {
                     // Fallback: try the base entry's own function
                     llvm_func = _context->lookup_llvm_function(base_entry.func);
+                    if (base_entry.func) implementation_owner = base_entry.func->get_owner();
                 }
                 if (!llvm_func) {
                     sec_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
                     continue;
                 }
 
-                // Determine the fallback adjustment if the declaring subobject
-                // cannot be found in the final layout.
-                bool is_overridden = true;
-                {
-                    llvm::Function* base_llvm_func = _context->lookup_llvm_function(base_entry.func);
-                    if (base_llvm_func && base_llvm_func == llvm_func) {
-                        // Same LLVM function — not overridden, no thunk needed
-                        is_overridden = false;
-                    } else if (base_llvm_func && llvm_func
-                               && base_llvm_func->getName() == llvm_func->getName()) {
-                        // Same LLVM function name — not overridden, no thunk needed
-                        is_overridden = false;
-                    } else if (!base_llvm_func && llvm_func) {
-                        // Base entry has no registered LLVM func; compare by mangled name
-                        // If the primary vtable entry's function has the same mangled name as the base
-                        // entry's function, it's inherited and not overridden.
-                        if (base_entry.func && base_entry.func->get_mangled_name() ==
-                            (llvm_func->getName().str())) {
-                            is_overridden = false;
-                        }
-                    }
-                }
                 // An inherited implementation can belong to an intermediate
                 // base, not to either end of this dispatch path.
-                size_t owner_offset = SIZE_MAX;
-                for (auto& primary_entry : vt->entries) {
-                    if (_context->lookup_llvm_function(primary_entry.func) == llvm_func
-                        && primary_entry.func && primary_entry.func->get_owner()) {
-                        auto owner = primary_entry.func->get_owner();
-                        owner_offset = owner.get() == &klass ? 0
-                            : compute_subobject_offset_in(klass, *owner, dl);
-                        break;
-                    }
+                if (!implementation_owner) {
+                    throw std::runtime_error("Secondary vtable implementation has no declaring aggregate");
                 }
-                ptrdiff_t adjustment = owner_offset != SIZE_MAX
-                    ? static_cast<ptrdiff_t>(base_byte_offset) - static_cast<ptrdiff_t>(owner_offset)
-                    : (is_overridden ? static_cast<ptrdiff_t>(base_byte_offset) : 0);
-                if (adjustment != 0) {
+                const auto adjustment = resolve_subobject_adjustment_in(
+                    klass, *base_kl, *implementation_owner, dl, base_location);
+                if (adjustment.needs_thunk()) {
                     std::string thunk_name = llvm_func->getName().str()
-                        + "_thunk_adj" + std::to_string(adjustment);
+                        + adjustment.suffix(*base_kl);
                     llvm::Function* thunk = _context->module().getFunction(thunk_name);
                     if (!thunk) {
                         llvm::FunctionType* fn_ty = llvm_func->getFunctionType();
@@ -2382,19 +2502,12 @@ void implementation_generator::visit_klass(klass& klass) {
                         bool thunk_has_sret = llvm_func->hasParamAttribute(0, llvm::Attribute::StructRet);
                         unsigned this_arg_index = thunk_has_sret ? 1 : 0;
 
-                        llvm::Type* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
                         std::vector<llvm::Value*> fwd_args;
 
                         for (unsigned i = 0; i < thunk->arg_size(); ++i) {
                             llvm::Argument* arg = thunk->getArg(i);
                             if (i == this_arg_index) {
-                                llvm::Value* this_as_int = tb.CreatePtrToInt(arg, i64_ty, "this_int");
-                                llvm::Value* adj_int = tb.CreateSub(
-                                    this_as_int,
-                                    llvm::ConstantInt::get(i64_ty, (uint64_t)adjustment),
-                                    "this_adj_int");
-                                llvm::Value* this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
-                                fwd_args.push_back(this_adj);
+                                fwd_args.push_back(emit_receiver_adjustment(tb, arg, ptr_ty, adjustment));
                             } else {
                                 fwd_args.push_back(arg);
                             }
@@ -3278,17 +3391,21 @@ void implementation_generator::fill_primary_vtable(klass& klass) {
                 continue;
             }
 
-            // Check if a forward this-adjustment thunk is needed.
-            // A thunk is needed when entry.func belongs to a base class (not klass),
-            // and that base class is at a non-zero byte offset within klass.
+            // Inherited receivers use either a final physical offset or a
+            // validated path through the live virtual-base pointer.
             if (entry.func) {
                 auto owner = entry.func->get_owner();
                 if (owner && owner.get() != static_cast<const aggregate*>(&klass)) {
-                    size_t adj = compute_subobject_offset_in(klass, *owner, dl);
-                    if (adj > 0 && adj != SIZE_MAX) {
+                    const auto location = locate_subobject_in(klass, *owner, dl);
+                    if (!location.present || (!location.offset && !location.path)) {
+                        require_subobject_offset(klass, *owner, location);
+                    }
+                    if (!location.offset || *location.offset > 0) {
                         // Create (or reuse) the forward thunk.
                         std::string thunk_name = llvm_func->getName().str()
-                            + "_fwdthunk_adj" + std::to_string(adj);
+                            + (location.offset
+                                ? "_fwdthunk_adj" + std::to_string(*location.offset)
+                                : "_fwdthunk_vbase_" + klass.get_mangled_name());
                         llvm::Function* thunk = _context->module().getFunction(thunk_name);
                         if (!thunk) {
                             llvm::FunctionType* fn_ty = llvm_func->getFunctionType();
@@ -3318,14 +3435,26 @@ void implementation_generator::fill_primary_vtable(klass& klass) {
                             for (unsigned i = 0; i < thunk->arg_size(); ++i) {
                                 llvm::Argument* arg = thunk->getArg(i);
                                 if (i == this_idx) {
-                                    // Add offset: Derived* → Base*
-                                    auto* as_i64 = tb.CreatePtrToInt(
-                                        arg, i64_ty, "this_i64");
-                                    auto* adj_i64 = tb.CreateAdd(as_i64,
-                                        llvm::ConstantInt::get(i64_ty, adj),
-                                        "this_adj_i64");
-                                    fwd_args.push_back(tb.CreateIntToPtr(
-                                        adj_i64, ptr_ty, "this_adj"));
+                                    if (location.offset) {
+                                        auto* as_i64 = tb.CreatePtrToInt(
+                                            arg, i64_ty, "this_i64");
+                                        auto* adj_i64 = tb.CreateAdd(as_i64,
+                                            llvm::ConstantInt::get(i64_ty, *location.offset),
+                                            "this_adj_i64");
+                                        fwd_args.push_back(tb.CreateIntToPtr(
+                                            adj_i64, ptr_ty, "this_adj"));
+                                    } else {
+                                        llvm::Value* receiver = arg;
+                                        for (const auto& step : *location.path) {
+                                            receiver = tb.CreateStructGEP(
+                                                step.containing_type, receiver, step.field_index,
+                                                "base_receiver_addr");
+                                            if (step.load_pointer) {
+                                                receiver = tb.CreateLoad(ptr_ty, receiver, "base_receiver");
+                                            }
+                                        }
+                                        fwd_args.push_back(receiver);
+                                    }
                                 } else {
                                     fwd_args.push_back(arg);
                                 }
@@ -3400,10 +3529,9 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
         // Use the live collector's virtual/transitive subobject, not just a
         // direct __base_X__ field, for both the thunk and exported metadata.
         const auto& dl = _context->module().getDataLayout();
-        const size_t resolved_offset = compute_subobject_offset_in(klass, *spec.base_class, dl);
-        const ptrdiff_t offset = resolved_offset == SIZE_MAX
-            ? spec.base_offset : static_cast<ptrdiff_t>(resolved_offset);
-        spec.base_offset = offset;
+        const auto base_location = locate_subobject_in(klass, *spec.base_class, dl);
+        if (base_location.present && !base_location.embedded) continue;
+        if (base_location.offset) spec.base_offset = static_cast<ptrdiff_t>(*base_location.offset);
 
         for (auto& ti : spec.slot_thunks) {
             if (!ti.real_func) {
@@ -3417,15 +3545,15 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
                 continue;
             }
 
-            const auto& dl = _context->module().getDataLayout();
-            size_t base_offset = compute_subobject_offset_in(klass, *spec.base_class, dl);
             auto owner = ti.real_func->get_owner();
-            size_t owner_offset = owner && owner.get() == &klass ? 0
-                : owner ? compute_subobject_offset_in(klass, *owner, dl) : SIZE_MAX;
-            ptrdiff_t offset = base_offset != SIZE_MAX && owner_offset != SIZE_MAX
-                ? static_cast<ptrdiff_t>(base_offset) - static_cast<ptrdiff_t>(owner_offset)
-                : ti.this_adjustment;
-            if (offset == 0) {
+            if (!owner) {
+                throw std::runtime_error("Secondary vtable implementation has no declaring aggregate");
+            }
+            const auto adjustment = resolve_subobject_adjustment_in(
+                klass, *spec.base_class, *owner, dl, base_location);
+            if (adjustment.offset) ti.this_adjustment = *adjustment.offset;
+            ti.needs_thunk = adjustment.needs_thunk();
+            if (!ti.needs_thunk) {
                 sec_init.push_back(real_llvm_func);
                 continue;
             }
@@ -3433,9 +3561,8 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
             // Adjust from this secondary base subobject to the implementation's
             // declaring subobject (possibly an intermediate base). Persist the
             // final DataLayout-derived adjustment in exported thunk metadata.
-            ti.this_adjustment = offset;
             std::string thunk_name = real_llvm_func->getName().str()
-                + "_thunk_adj" + std::to_string(offset);
+                + adjustment.suffix(*spec.base_class);
             llvm::Function* thunk = _context->module().getFunction(thunk_name);
             if (!thunk) {
                 llvm::FunctionType* fn_ty = real_llvm_func->getFunctionType();
@@ -3453,21 +3580,12 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
                 bool thunk_has_sret = real_llvm_func->hasParamAttribute(0, llvm::Attribute::StructRet);
                 unsigned this_arg_index = thunk_has_sret ? 1 : 0;
 
-                llvm::Type* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
                 std::vector<llvm::Value*> fwd_args;
-                llvm::Value* this_adj = nullptr;
 
                 for (unsigned i = 0; i < thunk->arg_size(); ++i) {
                     llvm::Argument* arg = thunk->getArg(i);
                     if (i == this_arg_index) {
-                        // Adjust 'this' pointer
-                        llvm::Value* this_as_int = tb.CreatePtrToInt(arg, i64_ty, "this_int");
-                        llvm::Value* adj_int = tb.CreateSub(
-                            this_as_int,
-                            llvm::ConstantInt::get(i64_ty, (uint64_t)offset),
-                            "this_adj_int");
-                        this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
-                        fwd_args.push_back(this_adj);
+                        fwd_args.push_back(emit_receiver_adjustment(tb, arg, ptr_ty, adjustment));
                     } else {
                         fwd_args.push_back(arg);
                     }
@@ -3512,10 +3630,8 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
     // the secondary vtable was created in the declaration pass but not filled here
     // (because they don't appear in vt->secondary_vtables which is limited to
     // local klass bases).  We fill them now, recursively for indirect bases too.
-    // Strategy: walk all imported bases transitively (via a recursive lambda),
-    // accumulating the byte offset from the start of klass. For each imported base
-    // with a vtable, find the matching override in klass's vtable and emit a thunk
-    // if the base subobject is at a non-zero offset.
+    // Walk imported bases transitively, resolving receiver offsets against the
+    // final most-derived layout rather than accumulating intermediate offsets.
     if (klass.get_struct_type()) {
         const llvm::DataLayout& dl = _context->module().getDataLayout();
 
@@ -3529,13 +3645,8 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
         };
 
         // Recursive lambda that fills the secondary vtable for one imported base.
-        // cur_agg_type : the LLVM struct type of the aggregate currently being examined.
-        // cur_agg_ptr  : the k::model aggregate currently being examined.
-        // cumulative_offset : byte offset of cur_agg inside klass.
-        std::function<void(llvm::StructType*, const aggregate*, size_t)> fill_imported_secondary;
-        fill_imported_secondary = [&](llvm::StructType* cur_llvm_type,
-                                       const aggregate* cur_agg,
-                                       size_t cumulative_offset) {
+        std::function<void(const aggregate*)> fill_imported_secondary;
+        fill_imported_secondary = [&](const aggregate* cur_agg) {
             if (!cur_agg) return;
             for (auto& bs : cur_agg->get_bases()) {
                 if (!bs.base) continue;
@@ -3548,7 +3659,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                     auto local_llvm = llvm::dyn_cast_or_null<llvm::StructType>(
                         bs.base->get_struct_type() ? bs.base->get_struct_type()->get_llvm_type() : nullptr);
                     if (local_llvm) {
-                        fill_imported_secondary(local_llvm, bs.base.get(), 0);
+                        fill_imported_secondary(bs.base.get());
                     }
                     continue;
                 }
@@ -3573,17 +3684,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                     auto base_imp_llvm = llvm::dyn_cast_or_null<llvm::StructType>(
                         base_imp->get_struct_type() ? base_imp->get_struct_type()->get_llvm_type() : nullptr);
                     if (base_imp_llvm) {
-                        // Compute offset of base_imp within cur_agg
-                        std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
-                        size_t nested_offset = cumulative_offset;
-                        if (cur_llvm_type) {
-                            if (auto field = (cur_agg->get_struct_type()
-                                    ? cur_agg->get_struct_type()->get_member(subobj_name)
-                                    : std::optional<k::model::struct_type::field>{})) {
-                                nested_offset += dl.getStructLayout(cur_llvm_type)->getElementOffset(field->index);
-                            }
-                        }
-                        fill_imported_secondary(base_imp_llvm, base_imp.get(), nested_offset);
+                        fill_imported_secondary(base_imp.get());
                     }
                     continue;
                 }
@@ -3592,8 +3693,11 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                 // (vbase-aware, transitive) helper so imported interfaces reached via a
                 // shared virtual base or local template intermediate get the correct
                 // absolute offset for this-adjustment thunks.
-                size_t off_found = compute_subobject_offset_in(klass, *base_imp, dl);
-                size_t base_byte_offset = (off_found != SIZE_MAX) ? off_found : cumulative_offset;
+                const auto base_location = locate_subobject_in(klass, *base_imp, dl);
+                if (base_location.present && !base_location.embedded) {
+                    fill_imported_secondary(base_imp.get());
+                    continue;
+                }
 
                 // Get the vtable LLVM type from the global variable
                 llvm::StructType* base_vt_type =
@@ -3603,7 +3707,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                     auto base_imp_llvm = llvm::dyn_cast_or_null<llvm::StructType>(
                         base_imp->get_struct_type() ? base_imp->get_struct_type()->get_llvm_type() : nullptr);
                     if (base_imp_llvm)
-                        fill_imported_secondary(base_imp_llvm, base_imp.get(), base_byte_offset);
+                        fill_imported_secondary(base_imp.get());
                     continue;
                 }
 
@@ -3662,25 +3766,16 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                     }
 
                     // Step 4: Emit the vtable global and GEP stores to patch the sub-object vptrs
-                    // Retain the symbol-based fallback when the declaring
-                    // subobject is unavailable; otherwise use its exact offset.
-                    bool needs_thunk = (base_byte_offset > 0);
-                    if (needs_thunk && !kdi_slot.override_symbol.empty()) {
-                        if (override_func->getName().str() == kdi_slot.override_symbol) {
-                            needs_thunk = false;
-                        }
+                    if (!implementation_owner) {
+                        throw std::runtime_error("Secondary vtable implementation has no declaring aggregate");
                     }
-                    size_t owner_offset = implementation_owner && implementation_owner.get() == &klass ? 0
-                        : implementation_owner
-                            ? compute_subobject_offset_in(klass, *implementation_owner, dl) : SIZE_MAX;
-                    ptrdiff_t adjustment = owner_offset != SIZE_MAX
-                        ? static_cast<ptrdiff_t>(base_byte_offset) - static_cast<ptrdiff_t>(owner_offset)
-                        : (needs_thunk ? static_cast<ptrdiff_t>(base_byte_offset) : 0);
-                    if (adjustment == 0) {
+                    const auto adjustment = resolve_subobject_adjustment_in(
+                        klass, *base_imp, *implementation_owner, dl, base_location);
+                    if (!adjustment.needs_thunk()) {
                         sec_init.push_back(override_func);
                     } else {
                         std::string thunk_name = override_func->getName().str()
-                            + "_thunk_adj" + std::to_string(adjustment);
+                            + adjustment.suffix(*base_imp);
                         llvm::Function* thunk = _context->module().getFunction(thunk_name);
                         if (!thunk) {
                             llvm::FunctionType* fn_ty = override_func->getFunctionType();
@@ -3695,18 +3790,11 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                             bool thunk_has_sret = override_func->hasParamAttribute(0, llvm::Attribute::StructRet);
                             unsigned this_idx = thunk_has_sret ? 1 : 0;
 
-                            llvm::Type* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
                             std::vector<llvm::Value*> fwd_args;
                             for (unsigned i = 0; i < thunk->arg_size(); ++i) {
                                 llvm::Argument* arg = thunk->getArg(i);
                                 if (i == this_idx) {
-                                    llvm::Value* this_as_int = tb.CreatePtrToInt(arg, i64_ty, "this_int");
-                                    llvm::Value* adj_int = tb.CreateSub(
-                                        this_as_int,
-                                        llvm::ConstantInt::get(i64_ty, static_cast<uint64_t>(adjustment)),
-                                        "this_adj_int");
-                                    llvm::Value* this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
-                                    fwd_args.push_back(this_adj);
+                                    fwd_args.push_back(emit_receiver_adjustment(tb, arg, ptr_ty, adjustment));
                                 } else {
                                     fwd_args.push_back(arg);
                                 }
@@ -3732,14 +3820,11 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                 auto base_imp_llvm = llvm::dyn_cast_or_null<llvm::StructType>(
                     base_imp->get_struct_type() ? base_imp->get_struct_type()->get_llvm_type() : nullptr);
                 if (base_imp_llvm)
-                    fill_imported_secondary(base_imp_llvm, base_imp.get(), base_byte_offset);
+                    fill_imported_secondary(base_imp.get());
             }
         };
 
-        // Start the recursive fill from klass's own struct type with offset 0
-        auto* kl_llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(
-            klass.get_struct_type()->get_llvm_type());
-        fill_imported_secondary(kl_llvm_type, &klass, 0);
+        fill_imported_secondary(&klass);
     }
 }
 

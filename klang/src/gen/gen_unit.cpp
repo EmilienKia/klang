@@ -26,12 +26,15 @@
 #include "../model/expressions.hpp"
 #include "../model/mangler.hpp"
 
+#include <llvm/ADT/ScopeExit.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/IR/GlobalAlias.h>
 
+#include <algorithm>
 #include <cctype>
 #include <queue>
 #include <unordered_map>
+#include <utility>
 #include "../errors.hpp"
 
 namespace k::model::gen {
@@ -674,6 +677,37 @@ void type_reference_resolver::visit_unit(unit& unit)
 {
     trace("[type_reference_resolver::visit_unit] begin");
     visit_namespace(*_unit.get_root_namespace());
+
+    // Late declaration resolution can append signature-only dependencies to an
+    // imported namespace whose body walk has finished. Drain those bodies before
+    // leaving this pass; their already-resolved signatures cannot trigger catch-up.
+    for (;;) {
+        std::vector<std::shared_ptr<aggregate>> pending;
+        auto collect = [&](auto&& self, const auto& scope) -> void {
+            for (const auto& child : scope.get_children()) {
+                if (auto nested_ns = std::dynamic_pointer_cast<ns>(child)) {
+                    self(self, *nested_ns);
+                } else if (auto agg = std::dynamic_pointer_cast<aggregate>(child)) {
+                    if (agg->is_template() || agg->is_imported()) continue;
+                    if (agg->is_instantiation() && !_resolved_instantiations.contains(agg.get())
+                        && std::any_of(agg->get_children().begin(), agg->get_children().end(),
+                            [&](const auto& member) {
+                                auto fn = std::dynamic_pointer_cast<function>(member);
+                                return fn && !fn->is_template() && !fn->is_deleted()
+                                    && !_resolved_functions.contains(fn.get());
+                            })) {
+                        pending.push_back(agg);
+                    }
+                    self(self, *agg);
+                }
+            }
+        };
+        collect(collect, *_unit.get_root_namespace());
+        if (pending.empty()) break;
+        // Resolution can append more declarations, so visit a separate worklist
+        // and rescan until no unvisited concrete bodies remain.
+        for (const auto& agg : pending) resolve_instantiated_aggregate(*agg);
+    }
 
     // Compute unified initialization/finalization order over all static constructors
     // and global variables, resolving cross-dependencies.
@@ -1590,8 +1624,9 @@ void declaration_generator::visit_namespace(ns &ns) {
  *      dispatch (Phase 4) when the topmost declared 'main' in a
  *      ::k::Application abstract chain is itself abstract (its real
  *      implementation lives further down the chain, in an override).
- *   5. Drain the runtime before Application/argv destruction and main TLS exit.
- *   6. Return the int result (or resume an exception after guarded cleanup).
+ *   5. Drain the runtime, flush streams, and withdraw the active Application.
+ *   6. Destroy the Application/argv and finalize main-thread TLS.
+ *   7. Return the int result (or resume an exception after guarded cleanup).
  *
  * In legacy mode (no Application class) delegates to visit_function().
  *
@@ -1709,7 +1744,6 @@ void implementation_generator::wrap_main_with_abort_guard(llvm::Function& proxy_
     body_fn->setSubprogram(proxy_fn.getSubprogram());
     auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
         llvm::FunctionType::get(i32_ty, true));
-    body_fn->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
     proxy_fn.setSubprogram(nullptr);
     body_fn->splice(body_fn->begin(), &proxy_fn);
     for (unsigned i = 0; i < proxy_fn.arg_size(); ++i) {
@@ -1809,10 +1843,35 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
     llvm::AllocaInst* app_alloca = _builder->CreateAlloca(app_llvm_type, nullptr, "__app");
     auto* app_live = _builder->CreateAlloca(_builder->getInt1Ty(), nullptr, "__app_live");
     _builder->CreateStore(_builder->getFalse(), app_live);
+    auto* app_active = _builder->CreateAlloca(_builder->getInt1Ty(), nullptr, "__app_active");
+    _builder->CreateStore(_builder->getFalse(), app_active);
     auto* shutdown_done = _builder->CreateAlloca(_builder->getInt1Ty(), nullptr, "__shutdown_done");
     _builder->CreateStore(_builder->getFalse(), shutdown_done);
+    auto* streams_flushed = _builder->CreateAlloca(_builder->getInt1Ty(), nullptr, "__streams_flushed");
+    _builder->CreateStore(_builder->getFalse(), streams_flushed);
+    auto* exit_status = _builder->CreateAlloca(i32_ty, nullptr, "__exit_status");
+    _builder->CreateStore(llvm::ConstantInt::get(i32_ty, 0), exit_status);
     auto* args_owner = _builder->CreateAlloca(ptr_ty, nullptr, "__args_owner");
     _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), args_owner);
+
+    auto k_application = find_application_base(app_class);
+    if (!k_application) {
+        throw_error(0, lex::opt_any_lexeme{},
+            "Internal code generation error: ::k::Application base was not found");
+    }
+    const size_t base_offset = application_base_offset(
+        *app_class, *k_application, get_module().getDataLayout());
+    if (base_offset == SIZE_MAX) {
+        throw_error(0, lex::opt_any_lexeme{},
+            "Internal code generation error: ::k::Application base offset was not found");
+    }
+    llvm::Value* application_base = _builder->CreateBitCast(app_alloca, ptr_ty, "application_object");
+    if (base_offset != 0) {
+        auto* byte_ty = llvm::Type::getInt8Ty(llvm_ctx);
+        application_base = _builder->CreateGEP(byte_ty, application_base,
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(llvm_ctx), base_offset),
+            "application_base");
+    }
 
     auto personality = get_module().getOrInsertFunction("__gxx_personality_v0",
         llvm::FunctionType::get(i32_ty, true));
@@ -1912,24 +1971,6 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         main_args.push_back(args_llvm_val);
     }
 
-    auto k_application = find_application_base(app_class);
-    if (!k_application) {
-        throw_error(0, lex::opt_any_lexeme{},
-            "Internal code generation error: ::k::Application base was not found");
-    }
-    const size_t base_offset = application_base_offset(
-        *app_class, *k_application, get_module().getDataLayout());
-    if (base_offset == SIZE_MAX) {
-        throw_error(0, lex::opt_any_lexeme{},
-            "Internal code generation error: ::k::Application base offset was not found");
-    }
-    llvm::Value* application_base = _builder->CreateBitCast(app_alloca, ptr_ty, "application_object");
-    if (base_offset != 0) {
-        auto* byte_ty = llvm::Type::getInt8Ty(llvm_ctx);
-        application_base = _builder->CreateGEP(byte_ty, application_base,
-            llvm::ConstantInt::get(llvm::Type::getInt64Ty(llvm_ctx), base_offset),
-            "application_base");
-    }
     llvm::Function* flush_standard_streams_fn = nullptr;
     k::name flush_standard_streams_name{false, {"k", "__k_application_flush_standard_streams"}};
     if (const kdi::kdi_function* flush_helper =
@@ -1956,6 +1997,7 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         activate_fn, {application_base}, "application_activation_status");
     auto* main_entry_bb = llvm::BasicBlock::Create(llvm_ctx, "application_active", proxy_fn);
     auto* activation_error_bb = llvm::BasicBlock::Create(llvm_ctx, "application_activation_error", proxy_fn);
+    auto* main_return_bb = llvm::BasicBlock::Create(llvm_ctx, "application_main_return", proxy_fn);
     _builder->CreateCondBr(
         _builder->CreateICmpEQ(activation_status, llvm::ConstantInt::get(i32_ty, 0)),
         main_entry_bb, activation_error_bb);
@@ -1970,20 +2012,9 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
 
     _builder->SetInsertPoint(activation_error_bb);
     _builder->CreateCall(activation_error_fn, {activation_status});
-    if (dtor_llvm_fn) {
-        _builder->CreateCall(dtor_llvm_fn->getFunctionType(), dtor_llvm_fn, {app_alloca});
-    }
-    auto* tls_exit_fn_ty = llvm::FunctionType::get(void_ty, false);
-    auto* tls_exit_fn = get_module().getFunction("__k_tls_thread_exit");
-    if (!tls_exit_fn) {
-        tls_exit_fn = llvm::Function::Create(
-            tls_exit_fn_ty, llvm::Function::ExternalLinkage,
-            "__k_tls_thread_exit", get_module());
-    }
-    _builder->CreateCall(tls_exit_fn_ty, tls_exit_fn);
-    _builder->CreateRet(llvm::ConstantInt::get(i32_ty, 125));
+    _builder->CreateStore(llvm::ConstantInt::get(i32_ty, 125), exit_status);
+    _builder->CreateBr(main_return_bb);
 
-    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
     auto shutdown_fn = get_module().getOrInsertFunction("__k_application_shutdown",
         llvm::FunctionType::get(void_ty, false));
     auto* tls_exit_fn_ty = llvm::FunctionType::get(void_ty, false);
@@ -1993,9 +2024,8 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
             tls_exit_fn_ty, llvm::Function::ExternalLinkage,
             "__k_tls_thread_exit", get_module());
     }
-    auto* main_unwind_bb = llvm::BasicBlock::Create(llvm_ctx, "application_main_unwind", proxy_fn);
-    auto* main_return_bb = llvm::BasicBlock::Create(llvm_ctx, "application_main_return", proxy_fn);
     _builder->SetInsertPoint(main_entry_bb);
+    _builder->CreateStore(_builder->getTrue(), app_active);
 
     llvm::Type* main_ret_type = real_fn.has_return_type()
         ? _context->get_llvm_type(real_fn.get_return_type())
@@ -2016,43 +2046,18 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         auto owner_klass = std::dynamic_pointer_cast<klass>(real_fn.get_owner());
         if (owner_klass && real_fn.get_vtable_slot() >= 0) {
             call_ret = emit_virtual_dispatch_call(*_builder, *owner_klass, app_alloca,
-                real_fn.get_vtable_slot(), main_llvm_fn_type, main_args, _context, "main_ret",
-                [this, main_return_bb, main_unwind_bb](
-                    llvm::FunctionType* fn_type, llvm::Value* callee,
-                    const std::vector<llvm::Value*>& args, const std::string& name) {
-                    return static_cast<llvm::Value*>(
-                        _builder->CreateInvoke(fn_type, callee, main_return_bb, main_unwind_bb, args, name));
-                });
+                real_fn.get_vtable_slot(), main_llvm_fn_type, main_args, _context,
+                real_fn.has_return_type() ? "main_ret" : "", make_virtual_call_emitter());
         }
     } else {
         auto main_it = _context->_functions.find(real_fn.shared_as<function>());
         if (main_it != _context->_functions.end()) {
             llvm::Function* main_llvm_fn = main_it->second;
-            call_ret = _builder->CreateInvoke(main_llvm_fn->getFunctionType(), main_llvm_fn,
-                main_return_bb, main_unwind_bb, main_args,
-                real_fn.has_return_type() ? "main_ret" : "");
+            call_ret = create_call_or_invoke(main_llvm_fn->getFunctionType(), main_llvm_fn,
+                main_args, real_fn.has_return_type() ? "main_ret" : "");
         }
     }
 
-    _builder->SetInsertPoint(main_unwind_bb);
-    auto* unwind_lpad_ty = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
-    auto* unwind_lpad = _builder->CreateLandingPad(unwind_lpad_ty, 0, "application_main_lpad");
-    unwind_lpad->setCleanup(true);
-    _builder->CreateCall(shutdown_fn);
-    _builder->CreateStore(_builder->getTrue(), shutdown_done);
-    if (flush_standard_streams_fn) {
-        _builder->CreateCall(flush_standard_streams_fn->getFunctionType(),
-            flush_standard_streams_fn, {application_base});
-    }
-    _builder->CreateCall(get_module().getOrInsertFunction(
-        "__k_application_deactivate", application_operation_ty), {application_base});
-    _builder->CreateStore(_builder->getFalse(), app_live);
-    if (dtor_llvm_fn) {
-        _builder->CreateCall(dtor_llvm_fn->getFunctionType(), dtor_llvm_fn, {app_alloca});
-    }
-    _builder->CreateResume(unwind_lpad);
-
-    _builder->SetInsertPoint(main_return_bb);
     if (call_ret && real_fn.has_return_type()) {
         if (call_ret->getType() == i32_ty) {
             ret_val = call_ret;
@@ -2061,25 +2066,11 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         }
     }
 
-    _builder->CreateCall(shutdown_fn);
-    _builder->CreateStore(_builder->getTrue(), shutdown_done);
-    if (flush_standard_streams_fn) {
-        auto* flush_status = _builder->CreateCall(flush_standard_streams_fn->getFunctionType(),
-            flush_standard_streams_fn, {application_base});
-        auto* flush_failed = _builder->CreateICmpNE(flush_status, llvm::ConstantInt::get(i32_ty, 0));
-        auto* main_failed = _builder->CreateICmpNE(ret_val, llvm::ConstantInt::get(i32_ty, 0));
-        ret_val = _builder->CreateSelect(_builder->CreateAnd(flush_failed, _builder->CreateNot(main_failed)),
-            llvm::ConstantInt::get(i32_ty, 1), ret_val, "application_exit_status");
-    }
-    _builder->CreateCall(get_module().getOrInsertFunction(
-        "__k_application_deactivate", application_operation_ty), {application_base});
-    _builder->CreateStore(_builder->getFalse(), app_live);
-    if (dtor_llvm_fn) {
-        _builder->CreateCall(dtor_llvm_fn->getFunctionType(), dtor_llvm_fn, {app_alloca});
-    }
+    _builder->CreateStore(ret_val, exit_status);
+    _builder->CreateBr(main_return_bb);
+    _builder->SetInsertPoint(main_return_bb);
 
-    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
-    auto emit_cleanup = [&]() {
+    auto emit_cleanup = [&](bool unwinding) {
         // Drain callback captures before any concrete Application fields are destroyed.
         auto* drain_bb = llvm::BasicBlock::Create(llvm_ctx, "application_drain", proxy_fn);
         auto* drained_bb = llvm::BasicBlock::Create(llvm_ctx, "application_drained", proxy_fn);
@@ -2090,17 +2081,47 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         _builder->CreateStore(_builder->getTrue(), shutdown_done);
         _builder->CreateBr(drained_bb);
         _builder->SetInsertPoint(drained_bb);
+
+        auto* active_bb = llvm::BasicBlock::Create(llvm_ctx, "application_withdraw", proxy_fn);
+        auto* withdrawn_bb = llvm::BasicBlock::Create(llvm_ctx, "application_withdrawn", proxy_fn);
+        _builder->CreateCondBr(_builder->CreateLoad(_builder->getInt1Ty(), app_active),
+                              active_bb, withdrawn_bb);
+        _builder->SetInsertPoint(active_bb);
+        if (flush_standard_streams_fn) {
+            auto* flush_bb = llvm::BasicBlock::Create(llvm_ctx, "application_flush", proxy_fn);
+            auto* flushed_bb = llvm::BasicBlock::Create(llvm_ctx, "application_flushed", proxy_fn);
+            _builder->CreateCondBr(_builder->CreateLoad(_builder->getInt1Ty(), streams_flushed),
+                                  flushed_bb, flush_bb);
+            _builder->SetInsertPoint(flush_bb);
+            _builder->CreateStore(_builder->getTrue(), streams_flushed);
+            auto* flush_status = create_call_or_invoke(flush_standard_streams_fn->getFunctionType(),
+                flush_standard_streams_fn, {application_base});
+            if (!unwinding) {
+                auto* status = _builder->CreateLoad(i32_ty, exit_status);
+                auto* flush_failed = _builder->CreateICmpNE(flush_status, llvm::ConstantInt::get(i32_ty, 0));
+                auto* main_failed = _builder->CreateICmpNE(status, llvm::ConstantInt::get(i32_ty, 0));
+                auto* result = _builder->CreateSelect(
+                    _builder->CreateAnd(flush_failed, _builder->CreateNot(main_failed)),
+                    llvm::ConstantInt::get(i32_ty, 1), status, "application_exit_status");
+                _builder->CreateStore(result, exit_status);
+            }
+            _builder->CreateBr(flushed_bb);
+            _builder->SetInsertPoint(flushed_bb);
+        }
+        _builder->CreateCall(get_module().getOrInsertFunction(
+            "__k_application_deactivate", application_operation_ty), {application_base});
+        _builder->CreateStore(_builder->getFalse(), app_active);
+        _builder->CreateBr(withdrawn_bb);
+        _builder->SetInsertPoint(withdrawn_bb);
+
         auto* destroy_bb = llvm::BasicBlock::Create(llvm_ctx, "application_destroy", proxy_fn);
         auto* destroyed_bb = llvm::BasicBlock::Create(llvm_ctx, "application_destroyed", proxy_fn);
         _builder->CreateCondBr(_builder->CreateLoad(_builder->getInt1Ty(), app_live),
                               destroy_bb, destroyed_bb);
         _builder->SetInsertPoint(destroy_bb);
         _builder->CreateStore(_builder->getFalse(), app_live);
-        if (auto dtor = app_class->get_destructor()) {
-            auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-            if (dtor_it != _context->_functions.end())
-                create_call_or_invoke(dtor_it->second->getFunctionType(),
-                                      dtor_it->second, {app_alloca});
+        if (dtor_llvm_fn) {
+            create_call_or_invoke(dtor_llvm_fn->getFunctionType(), dtor_llvm_fn, {app_alloca});
         }
         _builder->CreateBr(destroyed_bb);
         _builder->SetInsertPoint(destroyed_bb);
@@ -2108,12 +2129,14 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
             emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
                 args_owner, args_array_type, "application_args", make_virtual_call_emitter());
         }
-        create_call_or_invoke(tls_exit_fn_ty, tls_exit_fn, {});
     };
 
-    emit_cleanup();
-    _builder->CreateRet(ret_val);
+    emit_cleanup(false);
     _cleanup_lpad_stack.pop();
+    // All owned resources are gone, so a throwing TLS destructor must not
+    // re-enter this cleanup and run TLS finalization again.
+    create_call_or_invoke(tls_exit_fn_ty, tls_exit_fn, {});
+    _builder->CreateRet(_builder->CreateLoad(i32_ty, exit_status));
 
     _builder->SetInsertPoint(cleanup_bb);
     auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
@@ -2121,7 +2144,8 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
     exception->setCleanup(true);
     // A failed constructor already unwinds its completed subobjects. The flag
     // only becomes true after construction; full destruction must not run then.
-    emit_cleanup();
+    emit_cleanup(true);
+    create_call_or_invoke(tls_exit_fn_ty, tls_exit_fn, {});
     _builder->CreateResume(exception);
 }
 
@@ -2446,7 +2470,7 @@ llvm::Value* implementation_generator::get_global_or_thread_local_variable_point
     }
 
     llvm::Function* init_fn = get_or_create_tls_init_function(var);
-    return _builder->CreateCall(init_fn->getFunctionType(), init_fn, {}, var.get_short_name() + ".tls_ptr");
+    return create_call_or_invoke(init_fn->getFunctionType(), init_fn, {}, var.get_short_name() + ".tls_ptr");
 }
 
 llvm::Function* implementation_generator::get_or_create_tls_init_function(global_variable_definition& var) {
@@ -2478,9 +2502,34 @@ llvm::Function* implementation_generator::get_or_create_tls_init_function(global
         llvm::ConstantInt::getFalse(**_context), guard_name);
     guard_var->setThreadLocalMode(llvm::GlobalValue::GeneralDynamicTLSModel);
 
-    // Save current IR builder insertion point
-    auto* prev_bb = _builder->GetInsertBlock();
-    auto prev_pt = _builder->GetInsertPoint();
+    // The lazy initializer is a separate function, not a nested caller scope.
+    // Its calls and temporary cleanup must never use the caller's blocks/slots.
+    llvm::IRBuilderBase::InsertPointGuard insertion_guard(*_builder);
+    auto previous_cleanup_lpads = std::exchange(_cleanup_lpad_stack, {});
+    auto previous_catch_lpads = std::exchange(_landing_pad_stack, {});
+    auto previous_lpad_depth = std::exchange(_lpad_depth_counter, 0);
+    auto* previous_exc_ptr_slot = std::exchange(_exc_ptr_slot, nullptr);
+    auto* previous_exc_sel_slot = std::exchange(_exc_sel_slot, nullptr);
+    auto* previous_sret_destination = std::exchange(_sret_destination, nullptr);
+    auto previous_temporaries = std::exchange(_expression_temporaries, {});
+    auto* previous_null_failure = std::exchange(_null_failure_bb, nullptr);
+    auto* previous_union_failure = std::exchange(_union_failure_bb, nullptr);
+    auto* previous_debug_scope = std::exchange(_current_debug_scope, nullptr);
+    auto* previous_value = _value;
+    auto restore_function_state = llvm::make_scope_exit([&]() {
+        _cleanup_lpad_stack = std::move(previous_cleanup_lpads);
+        _landing_pad_stack = std::move(previous_catch_lpads);
+        _lpad_depth_counter = previous_lpad_depth;
+        _exc_ptr_slot = previous_exc_ptr_slot;
+        _exc_sel_slot = previous_exc_sel_slot;
+        _sret_destination = previous_sret_destination;
+        _expression_temporaries = std::move(previous_temporaries);
+        _null_failure_bb = previous_null_failure;
+        _union_failure_bb = previous_union_failure;
+        _current_debug_scope = previous_debug_scope;
+        _value = previous_value;
+    });
+    _builder->SetCurrentDebugLocation(llvm::DebugLoc{});
 
     // Create entry, do_init, and done basic blocks
     auto* entry_bb = llvm::BasicBlock::Create(**_context, "entry", init_fn);
@@ -2495,6 +2544,9 @@ llvm::Function* implementation_generator::get_or_create_tls_init_function(global
     // do_init block: initialize variable
     _builder->SetInsertPoint(do_init_bb);
     _tls_constructing_vars.insert(&var);
+    auto constructing_guard = llvm::make_scope_exit([&]() {
+        _tls_constructing_vars.erase(&var);
+    });
 
     auto init = var.get_init_expr();
     auto var_type = type::canonical(var.get_type());
@@ -2520,7 +2572,7 @@ llvm::Function* implementation_generator::get_or_create_tls_init_function(global
         }
     }
 
-    _tls_constructing_vars.erase(&var);
+    emit_expression_temporaries_cleanup();
 
     // Register destructor if needed
     if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
@@ -2600,11 +2652,6 @@ llvm::Function* implementation_generator::get_or_create_tls_init_function(global
     // done block: return storage
     _builder->SetInsertPoint(done_bb);
     _builder->CreateRet(storage);
-
-    // Restore IR builder insertion point
-    if (prev_bb) {
-        _builder->SetInsertPoint(prev_bb, prev_pt);
-    }
 
     return init_fn;
 }

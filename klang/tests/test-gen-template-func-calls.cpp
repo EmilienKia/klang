@@ -245,4 +245,40 @@ TEST_CASE("[H] M8: generic nested-node linked-list pattern executes in one modul
     CHECK(test_fn() == 60);
 }
 
+TEST_CASE("Explicit free template overloads resolve qualified wrapped and dependent type arguments",
+          "[template][function][explicit-args][overload][regression][jit]") {
+    const bool tagged_first = GENERATE(false, true);
+    INFO("tagged overload declared first: " << tagged_first);
+    std::string source = R"SRC(
+        module explicit_wrapped_overloads;
+        namespace types {
+            struct Token {}
+            alias TokenAlias : Token;
+        }
+    )SRC";
+    const std::string tagged_definition = R"SRC(
+        template<typename T>
+        choose(value : T, tag : int) : int { return tag; }
+    )SRC";
+    const std::string ordinary_definition = R"SRC(
+        template<typename T>
+        choose(value : T) : int { return choose<T>(value, 10); }
+    )SRC";
+    source += tagged_first ? tagged_definition + ordinary_definition
+                           : ordinary_definition + tagged_definition;
+    source += R"SRC(
+        template<typename U>
+        forward(value : const U*) : int { return choose<const U*>(value, 32); }
 
+        run() : int {
+            token : types::Token;
+            return choose<const types::TokenAlias*>(&token)
+                 + forward<types::TokenAlias>(&token);
+        }
+    )SRC";
+    auto jit = gen_jit(source);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}

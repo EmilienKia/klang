@@ -144,25 +144,31 @@ done : bool = false;
 
 ## 4. Character literals
 
-A character literal represents a single character constant of type `char`
-(8-bit signed integer, range −128 to 127).
+A character literal represents a single Unicode scalar value. An unprefixed
+literal has type `char` (32-bit unsigned, UTF-32), including ASCII literals.
+Valid scalar values are U+0000–U+D7FF and U+E000–U+10FFFF; surrogate code
+points are not scalar values.
 
-At the LLVM IR level a character literal compiles to a constant `i8` value.
-
-> **Current limitation:** Only ASCII character values (0x00–0x7F) are
-> supported. Full escape-sequence decoding and Unicode support will be added
-> in a future language revision.
+The compiler must decode the complete UTF-8 source character or escape sequence,
+not use its first source byte. Thus `'é'` and `'\u00E9'` both have value
+0xE9, while `'😀'` and `'\U0001F600'` both have value 0x1F600.
+An unprefixed character literal compiles to an LLVM `i32` constant.
 
 ### Grammar
 
 ```
 CharacterLiteral:
-    "'" CharacterValue "'"
+    [ EncodingPrefix ] "'" CharacterValue "'"
 
 CharacterValue:
-    AsciiCharacter but not "'" or '\'
+    UnicodeScalar but not "'" or '\'
     | EscapeSequence
+
+EncodingPrefix:
+    'u8' | 'u' | 'u16' | 'U' | 'u32'
 ```
+
+The prefix must be immediately adjacent to the opening quote.
 
 ### Escape sequences
 
@@ -171,17 +177,32 @@ CharacterValue:
 | `\n`     | newline (LF)             | 0x0A |
 | `\r`     | carriage return (CR)     | 0x0D |
 | `\t`     | horizontal tab (HT)      | 0x09 |
+| `\a`     | alert                   | 0x07 |
+| `\b`     | backspace               | 0x08 |
+| `\f`     | form feed               | 0x0C |
+| `\v`     | vertical tab            | 0x0B |
 | `\\`     | backslash                | 0x5C |
 | `\'`     | single quote             | 0x27 |
 | `\"`     | double quote             | 0x22 |
+| `\?`     | question mark           | 0x3F |
 | `\0`     | null character           | 0x00 |
-| `\xNN`   | hex byte (1–2 hex digits) | NN  |
-| `\NNN`   | octal byte (1–3 octal digits) | (value) |
+| `\xNN`   | hexadecimal scalar (one or more hex digits) | (value) |
+| `\NNN`   | octal scalar (1–3 octal digits) | (value) |
+| `\uNNNN` | Unicode scalar (4 hex digits) | (value) |
+| `\UNNNNNNNN` | Unicode scalar (8 hex digits) | (value) |
 
 ### Type
 
-A character literal has type `char` (8-bit signed integer). It is assignable
-to or comparable with any `char` expression.
+| Prefix | Type | Allowed scalar values |
+|--------|------|-----------------------|
+| (none) | `char` | Any Unicode scalar |
+| `u8` | `unsigned byte` | U+0000–U+007F (one UTF-8 code unit) |
+| `u` / `u16` | `unsigned short` | U+0000–U+FFFF, excluding surrogates (one UTF-16 code unit) |
+| `U` / `u32` | `char` | Any Unicode scalar |
+
+A prefixed character literal must fit in a single code unit of its encoding.
+`char` is distinct from the 8-bit `byte` and `unsigned byte` types; an ASCII
+character literal does not become a byte merely because its value fits in 8 bits.
 
 ### Examples
 
@@ -189,6 +210,9 @@ to or comparable with any `char` expression.
 c   : char = 'A';           // 65
 nul : char = '\0';          // null terminator
 tab : char = '\t';          // horizontal tab (9)
+accent : char = 'é';        // U+00E9, not the first UTF-8 byte 0xC3
+emoji  : char = '😀';       // U+1F600
+ascii  : unsigned byte = u8'A'; // one UTF-8 code unit
 
 // Comparison with a literal
 if (c == 'Z') { ... }

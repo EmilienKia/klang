@@ -42,6 +42,10 @@ symbol_resolver::resolve_qualified_from(const element& elem, const name& name) {
         }
         if (auto func_holder = dynamic_cast<const function_holder*>(&elem)) {
             if (auto func = func_holder->get_function(name.to_string())) {
+                // Lexical namespace references bypass the KDI lookup that records linker usage.
+                if (std::dynamic_pointer_cast<imported_function>(func)) {
+                    _unit.find_imported_function(func->get_name().without_root_prefix());
+                }
                 return func;
             }
         }
@@ -342,6 +346,9 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         // Look at a function
         if (auto func_holder = dynamic_cast<const function_holder*>(&elem)) {
             if (auto func = func_holder->get_function(name.to_string())) {
+                if (std::dynamic_pointer_cast<imported_function>(func)) {
+                    _unit.find_imported_function(func->get_name().without_root_prefix());
+                }
                 return func;
             }
         }

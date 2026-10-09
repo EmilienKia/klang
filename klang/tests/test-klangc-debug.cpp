@@ -507,7 +507,7 @@ read(ptr: int*) : int {
     REQUIRE(deref_null_check_line == 5);
 }
 
-TEST_CASE("compiler: debug metadata anchors dynamic-cast RTTI compare on cast line", "[klangc][debug][ir]") {
+TEST_CASE("compiler: debug metadata anchors dynamic-cast RTTI helper call on cast line", "[klangc][debug][ir]") {
     auto comp = k::compiler::create();
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
     resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
@@ -543,7 +543,8 @@ cast_to_derived(base: Base*) : Derived* {
             return -1;
         }
         const auto dbg_pos = ir.find("!dbg !", inst_pos);
-        if (dbg_pos == std::string::npos) {
+        const auto inst_end = ir.find('\n', inst_pos);
+        if (dbg_pos == std::string::npos || dbg_pos >= inst_end) {
             return -1;
         }
         const auto id_start = dbg_pos + 6;
@@ -565,10 +566,9 @@ cast_to_derived(base: Base*) : Derived* {
     };
 
     INFO(ir);
-    const int rtti_cmp_line = extract_dbg_line_for_instruction("dyncast_rtti_match");
-    const int result_line = extract_dbg_line_for_instruction("dyncast_result");
-    REQUIRE(rtti_cmp_line == 13);
-    REQUIRE(result_line == 13);
+    const int cast_call_line = extract_dbg_line_for_instruction(
+        "dyncast_result = call ptr @__k_dynamic_cast_adjust(");
+    REQUIRE(cast_call_line == 13);
 }
 
 TEST_CASE("compiler: debug metadata anchors dynamic-cast nullable guard on cast line", "[klangc][debug][ir]") {

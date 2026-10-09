@@ -640,6 +640,8 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
                     static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED),
                     "Cannot materialise imported parameter '{}' of '{}': its KDI type is unavailable",
                     {param->get_short_name(), fn.get_fq_name()});
+                diag.add_note("KDI parameter type: '{0}'; imported symbol: '{1}'",
+                    {kdi::kdi_type_to_string(signature.params[i].type), fn.get_mangled_name()});
                 _logger.report(diag);
                 throw k::log::compiler_error(std::move(diag));
             }
@@ -654,6 +656,8 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
                         static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
                         "Cannot materialise imported return type of '{}': its KDI type is unavailable",
                         {fn.get_fq_name()});
+                    diag.add_note("KDI return type: '{0}'; imported symbol: '{1}'",
+                        {kdi::kdi_type_to_string(signature.return_type), fn.get_mangled_name()});
                     _logger.report(diag);
                     throw k::log::compiler_error(std::move(diag));
                 }
@@ -745,6 +749,14 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
     // derived classes that reference them in their llvm_def).
     for (const auto& agg : ns.aggregates) {
         materialise_aggregate(agg, ctx);
+        // A generic facade and its erased synthesis share a source name. Keep
+        // the synthesis in the import cache, but reserve lexical lookup for
+        // the signature-only template built in Pass 5.
+        if (std::any_of(ns.template_defs.begin(), ns.template_defs.end(), [&](const auto& def) {
+                return def.name == agg.name && def.is_generic && def.aggregate_signature;
+            })) {
+            continue;
+        }
         if (auto imported = _unit.get_or_create_imported_aggregate(
                 model_ns->get_name().with_back(agg.name).without_root_prefix(), ctx)) {
             model_ns->add_aggregate_reference(agg.name, imported);
@@ -1404,12 +1416,6 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             return;
         }
 
-        if (template_host) {
-            auto fn_decl = std::dynamic_pointer_cast<k::parse::ast::function_decl>(
-                ast_unit->declarations.front());
-            if (!fn_decl || !fn_decl->is_template()) {
-                throw std::runtime_error("stored member template source is not a function template");
-            }
         // Multiple templates can depend on the same private native declaration.
         // Keep a single definition-namespace declaration, including on re-export.
         auto private_origin = tdef.origin_module.empty()
@@ -1494,9 +1500,30 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
 
         // ── 4. Build declarations without changing the consumer unit or its AST ──
         if (template_host) {
-            k::model::model_builder::visit_member(
-                _logger, ctx, *std::dynamic_pointer_cast<k::parse::ast::function_decl>(ast_unit->declarations.front()),
-                _unit, template_host, tdef.visibility == "protected" ? PROTECTED : PUBLIC, target_ns);
+            auto member = std::find_if(ast_unit->declarations.begin(), ast_unit->declarations.end(),
+                [&](const auto& declaration) {
+                    auto fn = std::dynamic_pointer_cast<parse::ast::function_decl>(declaration);
+                    return fn && fn->is_template() && fn->name.content == tdef.name;
+                });
+            if (member == ast_unit->declarations.end()) {
+                throw std::runtime_error("stored member template source is not a function template");
+            }
+            auto fn_decl = std::dynamic_pointer_cast<parse::ast::function_decl>(*member);
+            ast_unit->declarations.erase(member);
+            // Generated private dependency scopes belong to the definition namespace,
+            // while the recipe itself must be attached to its imported aggregate host.
+            k::model::model_builder::visit_imported_declarations(
+                _logger, ctx, *ast_unit, _unit, target_ns);
+            const auto existing_members = template_host->get_functions(tdef.name);
+            if (fn_decl->template_source_text.empty()
+                || std::none_of(existing_members.begin(), existing_members.end(), [&](const auto& fn) {
+                    auto ti = fn->get_tpl_info();
+                    return ti && ti->source_text == fn_decl->template_source_text;
+                })) {
+                k::model::model_builder::visit_member(
+                    _logger, ctx, *fn_decl, _unit, template_host,
+                    tdef.visibility == "protected" ? PROTECTED : PUBLIC, target_ns);
+            }
         } else {
             // Keep same-named overloads, but avoid materializing the exact same
             // source definition twice during repeated or re-exported imports.
@@ -1547,15 +1574,15 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         }
 
     } catch (const std::exception& ex) {
-        // Parsing/model-building of the re-injected template source failed. Report it
-        // instead of leaving the template silently unavailable for cross-module
-        // instantiation (non-fatal: the current compilation may not even reference
-        // this particular template).
-        _logger.error(
+        // Model building can have attached a partial declaration before failing.
+        // It must not remain available to subsequent overload resolution.
+        auto diag = k::log::diagnostic::make_error(
             static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_TEMPLATE_REPARSE_FAILED),
             "Failed to re-parse imported template '{0}': {1}; the template is "
             "unavailable for cross-module instantiation",
             {tdef.name, std::string(ex.what())});
+        _logger.report(diag);
+        throw k::log::compiler_error(std::move(diag));
     }
 }
 

@@ -403,7 +403,16 @@ std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_a
     model_args.reserve(_ast_template_args.size());
     bool any_substituted = false;
 
-    for (const auto& ast_arg : _ast_template_args) {
+    for (size_t i = 0; i < _ast_template_args.size(); ++i) {
+        // A later member-template substitution must compose with the enclosing
+        // specialization, not reconstruct its already-bound arguments from AST.
+        if (i < _model_template_args.size() && _model_template_args[i]) {
+            auto sub = substitute_type(_model_template_args[i], subst);
+            any_substituted |= sub != _model_template_args[i];
+            model_args.push_back(sub);
+            continue;
+        }
+        const auto& ast_arg = _ast_template_args[i];
         if (!ast_arg || !ast_arg->is_type() || !ast_arg->type_arg) {
             model_args.push_back(nullptr);
             continue;

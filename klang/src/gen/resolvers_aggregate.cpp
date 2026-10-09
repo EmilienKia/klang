@@ -414,6 +414,10 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
 {
     const auto& base_name = unres->type_id();
     const auto& ast_args = unres->get_ast_template_args();
+    const auto resolved_argument = [](const std::shared_ptr<type>& argument) {
+        return argument && (type::is_resolved(argument)
+            || std::dynamic_pointer_cast<struct_type>(argument));
+    };
 
     // 0. A parameterised alias renames a family of types and is resolved by
     // substituting the arguments into the renamed type, never by instantiating
@@ -607,7 +611,7 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                 if (auto nested = std::dynamic_pointer_cast<unresolved_type>(model_targs[i])) {
                     if (nested->has_model_template_args()) {
                         if (auto nested_res = try_instantiate_template_type(nested, context_elem)) {
-                            if (type::is_resolved(nested_res)) {
+                            if (resolved_argument(nested_res)) {
                                 model_args.push_back(template_argument::make_type(nested_res));
                                 continue;
                             }
@@ -616,14 +620,14 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                 }
             }
             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
-            if (!arg_type || !type::is_resolved(arg_type)) {
+            if (!resolved_argument(arg_type)) {
                 if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
                     // Resolve nested AST arguments before looking up their bare
                     // template name, so enclosing aggregate layouts are ready
                     // during declaration resolution rather than only in bodies.
                     if (unres_arg->has_template_args()) {
                         auto nested = try_instantiate_template_type(unres_arg, context_elem);
-                        if (nested && type::is_resolved(nested)) {
+                        if (resolved_argument(nested)) {
                             arg_type = nested;
                         }
                     }
@@ -635,11 +639,11 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     // (e.g. `interface I { ... }`) would be spuriously matched.
                     // Only the substitution-map recovery paths below (enclosing
                     // concrete function/aggregate) may legitimately resolve it.
-                    if (!type::is_resolved(arg_type)
+                    if (!resolved_argument(arg_type)
                         && !unres_arg->is_template_param_placeholder()
                         && !is_enclosing_template_param_name(context_elem, unres_arg->type_id().to_string())) {
                         auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
-                        if (resolved && type::is_resolved(resolved)) {
+                        if (resolved_argument(resolved)) {
                             arg_type = resolved;
                         }
                     }
@@ -649,7 +653,7 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     // enclosing template (Optional<int>).  Recover the concrete type
                     // from the substitution map carried by the enclosing concrete
                     // function or aggregate.  Mirrors type_reference_resolver step 3.
-                    if (!type::is_resolved(arg_type)) {
+                    if (!resolved_argument(arg_type)) {
                         // (a) Enclosing concrete function's substitution map.
                         const function* owning_fn = dynamic_cast<const function*>(&context_elem);
                         if (!owning_fn) {
@@ -663,12 +667,12 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                             if (sit == fn_subst.end() && !unres_arg->type_id().empty()) {
                                 sit = fn_subst.find(unres_arg->type_id().back());
                             }
-                            if (sit != fn_subst.end() && sit->second && type::is_resolved(sit->second)) {
+                            if (sit != fn_subst.end() && resolved_argument(sit->second)) {
                                 arg_type = sit->second;
                             }
                         }
                     }
-                    if (!type::is_resolved(arg_type)) {
+                    if (!resolved_argument(arg_type)) {
                         // (b) Enclosing concrete aggregate's template param→arg mapping.
                         const aggregate* owning_agg = dynamic_cast<const aggregate*>(&context_elem);
                         if (!owning_agg) {
@@ -690,7 +694,7 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                                         std::string pname = params[pi].name;
                                         if (pname == unres_arg->type_id().to_string() ||
                                             (!unres_arg->type_id().empty() && pname == unres_arg->type_id().back())) {
-                                            if (args[pi].type_arg && type::is_resolved(args[pi].type_arg)) {
+                                            if (resolved_argument(args[pi].type_arg)) {
                                                 arg_type = args[pi].type_arg;
                                                 break;
                                             }
@@ -726,7 +730,7 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     }
                 }
             }
-            if (!arg_type || !type::is_resolved(arg_type)) return {};
+            if (!resolved_argument(arg_type)) return {};
             model_args.push_back(template_argument::make_type(arg_type));
         } else {
             // Value template argument — evaluate as a compile-time constant
@@ -1036,6 +1040,27 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     for (auto& child : concrete->get_children()) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
             resolve_member_vars(*nested);
+        }
+    }
+
+    // Return-type instantiations can be appended to an already-visited namespace.
+    // Complete their callable declarations now, including unused nested holders'
+    // copy/converting constructors, without visiting any bodies.
+    const auto resolve_signatures = [&](aggregate& agg) {
+        for (const auto& child : agg.get_children()) {
+            if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+                visit_function(*fn);
+            }
+        }
+        for (const auto& ctor : agg.constructors()) {
+            visit_function(*ctor);
+        }
+        if (auto dtor = agg.get_destructor()) visit_function(*dtor);
+    };
+    resolve_signatures(*concrete);
+    for (const auto& child : concrete->get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            if (!nested->is_template()) resolve_signatures(*nested);
         }
     }
 

@@ -87,6 +87,122 @@ TEST_CASE("template substitution preserves caller provenance and scopes only fre
     CHECK(argument->get_definition_namespace() == caller);
 }
 
+TEST_CASE("template substitution composes enclosing and nested model argument bindings",
+          "[gen][alias][template][substitution][regression]") {
+    k::source source{R"K(
+        module k;
+        template<typename A, typename R> alias Function : *(A):R;
+        template<typename C, typename S> struct Box {}
+        template<typename T, typename U> alias Signature : Function<const T&, U>;
+        template<typename T, typename U> alias Nested : Box<Function<const T&, U>, int>;
+    )K"};
+    test_logger logger;
+    k::parse::parser parser(logger, source);
+    auto ast = parser.parse_unit();
+    REQUIRE(ast);
+    auto context = k::model::context::create();
+    auto unit = k::model::unit::create(context);
+    k::model::model_builder::visit(logger, context, *ast, *unit);
+    REQUIRE_FALSE(logger.has_error());
+    auto root = unit->get_root_namespace();
+    for (const auto* alias_name : {"Signature", "Nested"}) {
+        INFO("alias: " << alias_name);
+        auto target = std::dynamic_pointer_cast<k::model::unresolved_type>(
+            root->get_alias(alias_name)->get_target_type());
+        REQUIRE(target);
+        auto enclosing = target->clone_with_substituted_model_args(
+            {{"T", context->from_string("int")}});
+        REQUIRE(enclosing);
+        auto member = enclosing->clone_with_substituted_model_args(
+            {{"U", context->from_string("long")}});
+        REQUIRE(member);
+        auto enclosing_signature = enclosing;
+        auto member_signature = member;
+        if (std::string{alias_name} == "Nested") {
+            REQUIRE(enclosing->get_model_template_args().size() == 2);
+            REQUIRE(member->get_model_template_args().size() == 2);
+            CHECK_FALSE(enclosing->get_model_template_args()[1]);
+            CHECK_FALSE(member->get_model_template_args()[1]);
+            enclosing_signature = std::dynamic_pointer_cast<k::model::unresolved_type>(
+                enclosing->get_model_template_args()[0]);
+            member_signature = std::dynamic_pointer_cast<k::model::unresolved_type>(
+                member->get_model_template_args()[0]);
+        }
+        REQUIRE(enclosing_signature);
+        REQUIRE(member_signature);
+        REQUIRE(enclosing_signature->get_model_template_args().size() == 2);
+        REQUIRE(member_signature->get_model_template_args().size() == 2);
+        auto parameter = member_signature->get_model_template_args()[0];
+        CHECK(parameter == enclosing_signature->get_model_template_args()[0]);
+        REQUIRE(k::model::type::is_reference(parameter));
+        REQUIRE(k::model::type::is_const(parameter->get_subtype()));
+        CHECK(parameter->get_subtype()->get_subtype() == context->from_string("int"));
+        CHECK(member_signature->get_model_template_args()[1] == context->from_string("long"));
+        auto unbound = std::dynamic_pointer_cast<k::model::unresolved_type>(
+            enclosing_signature->get_model_template_args()[1]);
+        REQUIRE(unbound);
+        CHECK(unbound->type_id().to_string() == "U");
+        CHECK_FALSE(unbound->is_resolved());
+        CHECK_FALSE(member->clone_with_substituted_model_args(
+            {{"T", context->from_string("byte")}}));
+    }
+}
+
+TEST_CASE("template alias - member specialization retains enclosing callable arguments",
+          "[gen][alias][template][member-template][callable][substitution][regression]") {
+    auto compiler = compile_model(R"SRC(
+        module k;
+        template<typename A, typename R> alias Function : *(A):R;
+        template<typename C> struct Callback { value : C; }
+        template<typename T>
+        struct Collection {
+            template<typename U>
+            map(mapper : Function<const T&, U>) : U { return (U)42; }
+            template<typename U>
+            nested(mapper : Callback<Function<const T&, U>>&) : U { return (U)42; }
+        }
+        use() {
+            collection : Collection<int>;
+            callback : Callback<Function<const int&, long>>;
+            collection.map<long>(null);
+            collection.nested<long>(callback);
+        }
+    )SRC");
+    REQUIRE(compiler);
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    auto context = compiler->get_context_for_test();
+    auto collection = compiler->get_unit()->get_root_namespace()->get_aggregate("Collection__int");
+    REQUIRE(collection);
+    size_t specialized_methods = 0;
+    for (const auto& fn : collection->functions()) {
+        if (!fn->is_instantiation()
+            || (fn->get_tpl_base_name() != "map" && fn->get_tpl_base_name() != "nested")) continue;
+        INFO("method: " << fn->get_short_name());
+        REQUIRE(fn->parameters().size() == 1);
+        auto mapper_type = fn->parameters().front()->get_type();
+        if (fn->get_tpl_base_name() == "nested") {
+            REQUIRE(k::model::type::is_reference(mapper_type));
+            auto callback_type = std::dynamic_pointer_cast<k::model::struct_type>(mapper_type->get_subtype());
+            REQUIRE(callback_type);
+            auto callback = callback_type->get_struct();
+            REQUIRE(callback);
+            REQUIRE(callback->get_tpl_args().size() == 1);
+            mapper_type = callback->get_tpl_args()[0].type_arg;
+        }
+        auto mapper = std::dynamic_pointer_cast<k::model::callable_type>(mapper_type);
+        REQUIRE(mapper);
+        REQUIRE(mapper->get_parameter_types().size() == 1);
+        auto parameter = mapper->get_parameter_types().front();
+        REQUIRE(k::model::type::is_reference(parameter));
+        REQUIRE(k::model::type::is_const(parameter->get_subtype()));
+        CHECK(parameter->get_subtype()->get_subtype() == context->from_string("int"));
+        CHECK(mapper->get_return_type() == context->from_string("long"));
+        CHECK(fn->get_return_type() == context->from_string("long"));
+        ++specialized_methods;
+    }
+    CHECK(specialized_methods == 2);
+}
+
 TEST_CASE("template alias - functional Consumer stays symbolic until specialization",
           "[gen][alias][template][callable][symbolic-alias]") {
     auto compiler = compile_model(R"SRC(

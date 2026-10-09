@@ -433,6 +433,9 @@ Format: `digits.digits[exponent][suffix]`. Suffix: (none)=`float`, `d`=`double`.
 `'c'` — a single Unicode scalar value; type `char` (32-bit, UTF-32). Encoding
 prefixes force the element type: `u8'c'`→`unsigned byte`, `u'c'`/`u16'c'`→`unsigned short`,
 `U'c'`/`u32'c'`→`char` (the value must fit in one code unit of the encoding).
+The UTF-8 source spelling is decoded to the complete scalar, not its first byte:
+`'é'` and `'\u00E9'` both denote U+00E9; `'😀'` and `'\U0001F600'` both denote
+U+1F600. Unprefixed ASCII literals also have type `char`, not `byte`.
 Escape sequences: `\n`, `\r`, `\t`, `\a`, `\b`, `\f`, `\v`, `\\`, `\'`, `\"`, `\?`, `\0`, `\NNN` (octal), `\xNN` (hex), `\uNNNN`, `\UNNNNNNNN`.
 
 #### Strings
