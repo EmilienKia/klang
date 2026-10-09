@@ -791,12 +791,13 @@ macro(libk_add_test_sharded TARGET TIMEOUT SHARDS)
     foreach(_libk_shard RANGE ${_libk_last_shard})
         add_test(NAME ${TARGET}-shard-${_libk_shard}
                  COMMAND ${TARGET} --shard-count ${SHARDS} --shard-index ${_libk_shard})
-        set_tests_properties(${TARGET}-shard-${_libk_shard} PROPERTIES TIMEOUT ${TIMEOUT})
+        set_tests_properties(${TARGET}-shard-${_libk_shard}
+                             PROPERTIES TIMEOUT ${TIMEOUT} RUN_SERIAL TRUE)
     endforeach()
 endmacro()
 
 # ── libk RTTI & Exception tests ──────────────────────────────────────────────
-libk_add_test(libk-tests-rtti-exceptions 120
+libk_add_test_sharded(libk-tests-rtti-exceptions 120 2
     tests/test-exceptions.cpp
     tests/test-rtti.cpp
     tests/test-rtti-constructors.cpp
@@ -804,7 +805,7 @@ libk_add_test(libk-tests-rtti-exceptions 120
 )
 
 # ── libk String & StringBuilder tests ────────────────────────────────────────
-libk_add_test(libk-tests-strings 120
+libk_add_test_sharded(libk-tests-strings 120 2
     tests/test-string.cpp
     tests/test-string-literal.cpp
     tests/test-string-search.cpp
@@ -837,7 +838,7 @@ libk_add_test(libk-tests-application-lifecycle 120
 target_link_options(libk-tests-application-lifecycle PRIVATE -Wl,--export-dynamic)
 
 # ── libk foundational types & memory tests ───────────────────────────────────
-libk_add_test(libk-tests-types 120
+libk_add_test_sharded(libk-tests-types 120 3
     tests/test-expected.cpp
     tests/test-optional.cpp
     tests/test-shared.cpp
@@ -951,7 +952,7 @@ libk_add_test(libk-tests-io-text 120
 )
 
 # ── libk sequential collection tests (List, Vector, Sequences) ───────────────
-libk_add_test(libk-tests-collections-sequential 120
+libk_add_test_sharded(libk-tests-collections-sequential 120 3
     tests/test-list.cpp
     tests/test-vector.cpp
     tests/test-sequence-helpers.cpp

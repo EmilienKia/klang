@@ -242,8 +242,9 @@ klang_gen_test(klang-tests-model 120
 
 # ---------------------------------------------------------------------------
 # Group 3a — Codegen core: basic codegen, string literals, variable init
+# Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-core 120
+klang_gen_test(klang-tests-gen-core 120 SHARD_COUNT 3
         tests/test-gen.cpp
         tests/test-gen-string-literal.cpp
         tests/test-gen-variable-init.cpp
@@ -284,8 +285,9 @@ klang_gen_test(klang-tests-gen-functions 120 SHARD_COUNT 3
 
 # ---------------------------------------------------------------------------
 # Group 3e — Codegen: statements, control flow, init order, static lifecycle
+# Catch2 shards keep this broad suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-control 120
+klang_gen_test(klang-tests-gen-control 120 SHARD_COUNT 3
         tests/test-gen-statements.cpp
         tests/test-gen-if-link-softfail.cpp
         tests/test-gen-if-local-var.cpp
@@ -300,8 +302,9 @@ klang_gen_test(klang-tests-gen-control 120
 
 # ---------------------------------------------------------------------------
 # Group 3f — Exception model and throw contracts
+# Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-exceptions 120
+klang_gen_test(klang-tests-gen-exceptions 120 SHARD_COUNT 2
         tests/test-gen-exceptions.cpp
         tests/test-gen-main-uncaught.cpp
 )
@@ -322,8 +325,9 @@ klang_gen_test(klang-tests-gen-arithmetic-int8-16 120
 
 # ---------------------------------------------------------------------------
 # Group 4b — Arithmetic operators: 32/64-bit integers (int, uint, long, ulong)
+# Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arithmetic-int32-64 120
+klang_gen_test(klang-tests-gen-arithmetic-int32-64 120 SHARD_COUNT 2
         tests/test-gen-arithmetic-int32-64.cpp
 )
 
@@ -336,8 +340,9 @@ klang_gen_test(klang-tests-gen-arithmetic-float 120
 
 # ---------------------------------------------------------------------------
 # Group 4d — Operator overloads, comparison fallback, spaceship, assignment
+# Catch2 shards keep this broad suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-operators 120
+klang_gen_test(klang-tests-gen-operators 120 SHARD_COUNT 3
         tests/test-gen-operator-overload.cpp
         tests/test-gen-comparison-fallback.cpp
         tests/test-gen-spaceship.cpp
@@ -355,8 +360,9 @@ klang_gen_test(klang-tests-gen-casts 120
 # ---------------------------------------------------------------------------
 # Group 5a — Types: enums/unions, const/null, metadata/designated init
 # Split into enums/unions, const/null and metadata/designated-init executables.
+# Catch2 shards keep the enum/union suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-types-enums-unions 120
+klang_gen_test(klang-tests-gen-types-enums-unions 120 SHARD_COUNT 3
         tests/test-gen-enum.cpp
         tests/test-gen-union.cpp
         tests/test-gen-union-template.cpp
@@ -388,8 +394,9 @@ klang_gen_test(klang-tests-gen-aliases 120
 # ---------------------------------------------------------------------------
 # Group 6a — Structs, inheritance, basic classes
 # Estimated wall-clock: ~50s on a low-spec VM.
+# Catch2 shards bound the import-heavy class matrix.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-classes 120
+klang_gen_test(klang-tests-gen-classes 120 SHARD_COUNT 3
         tests/test-gen-nested-structs.cpp
         tests/test-gen-inheritance.cpp
         tests/test-gen-class-basic.cpp
@@ -401,8 +408,9 @@ klang_gen_test(klang-tests-gen-classes 120
 # ---------------------------------------------------------------------------
 # Group 6b — Virtuality, interfaces, override, diamond inheritance
 # Estimated wall-clock: ~50s on a low-spec VM.
+# Catch2 shards bound the virtual inheritance matrix.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-virtuality 120
+klang_gen_test(klang-tests-gen-virtuality 120 SHARD_COUNT 3
         tests/test-gen-class-virtuality.cpp
         tests/test-gen-virtual-inheritance.cpp
         tests/test-gen-virtuality-coverage.cpp
@@ -426,8 +434,9 @@ klang_gen_test(klang-tests-gen-memory-ownership 120
 
 # ---------------------------------------------------------------------------
 # Group 7b — Memory model: fixed/dynamic arrays and foreach iteration
+# Catch2 shards keep this broad suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arrays 120
+klang_gen_test(klang-tests-gen-arrays 120 SHARD_COUNT 3
         tests/test-gen-array-init.cpp
         tests/test-gen-new-array.cpp
         tests/test-gen-uniform-array-init.cpp
@@ -456,8 +465,9 @@ klang_gen_test(klang-tests-gen-oop-temporary 120
 
 # ---------------------------------------------------------------------------
 # Group 8c — Using declarations and friend: heavier because of import overhead
+# Catch2 shards keep the import-heavy scope cases below the 120-second budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-scoping 120
+klang_gen_test(klang-tests-gen-scoping 120 SHARD_COUNT 2
         tests/test-gen-using.cpp
         tests/test-gen-friend.cpp
 )
@@ -477,8 +487,9 @@ klang_gen_test(klang-tests-gen-templates-core 120
 
 # ---------------------------------------------------------------------------
 # Group 9b — Templates: deduction, constraints, packs, value params
+# Catch2 shards keep the template matrix below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-templates-deduction 120
+klang_gen_test(klang-tests-gen-templates-deduction 120 SHARD_COUNT 3
         tests/test-gen-template-constraints.cpp
         tests/test-gen-template-value-params.cpp
         tests/test-gen-template-aggregate-values.cpp
