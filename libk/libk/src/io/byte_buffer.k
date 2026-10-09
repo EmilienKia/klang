@@ -58,7 +58,8 @@ public struct NativeByteBuffer {
 @ffi::Extern("C") private __k_io_buffer_force(native: NativeByteBuffer*) : int;
 @ffi::Extern("C") private __k_io_buffer_load(native: NativeByteBuffer*) : int;
 @ffi::Extern("C") private __k_io_buffer_is_loaded(native: const NativeByteBuffer*) : int;
-@ffi::Extern("C") private __k_io_buffer_relative(native: NativeByteBuffer*, bytes: byte*, length: unsigned int, write: int) : int;
+@ffi::Extern("C") private __k_io_buffer_get_relative(native: NativeByteBuffer*, dst: byte*, length: unsigned int) : int;
+@ffi::Extern("C") private __k_io_buffer_put_relative(native: NativeByteBuffer*, src: const byte*, length: unsigned int) : int;
 
 /**
  * ByteBuffer — a fixed-capacity byte container with an explicit cursor backed
@@ -309,7 +310,7 @@ public:
      */
     get() : byte {
         b : byte = (byte) 0;
-        rc : int = __k_io_buffer_relative(_native, &b, 1u, 0);
+        rc : int = __k_io_buffer_get_relative(_native, &b, 1u);
         if (rc == -16) {
             throw BufferInUseException();
         } else if (rc < 0) {
@@ -325,7 +326,7 @@ public:
      * @return This buffer.
      */
     put(b: byte) : ByteBuffer& {
-        rc : int = __k_io_buffer_relative(_native, &b, 1u, 1);
+        rc : int = __k_io_buffer_put_relative(_native, &b, 1u);
         if (rc == -16) {
             throw BufferInUseException();
         } else if (rc < 0) {
@@ -337,7 +338,7 @@ public:
     /**
      * Copy src at the cursor and advance it by array size.
      *
-     * @param src Source bytes.
+     * @param src Source bytes; copied without modifying the source.
      * @return This buffer.
      */
     put(src: const byte[]) : ByteBuffer& {
@@ -347,7 +348,7 @@ public:
             throw IndexOutOfBoundsError();
         }
         if (n > 0u && _native != null) {
-            rc : int = __k_io_buffer_relative(_native, (byte*) &src[0], n, 1);
+            rc : int = __k_io_buffer_put_relative(_native, &src[0], n);
             if (rc == -16) {
                 throw BufferInUseException();
             } else if (rc < 0) {
@@ -419,7 +420,7 @@ public:
             n = len;
         }
         if (n > 0u && _native != null) {
-            rc : int = __k_io_buffer_relative(_native, &dst[off], n, 0);
+            rc : int = __k_io_buffer_get_relative(_native, &dst[off], n);
             if (rc == -16) {
                 throw BufferInUseException();
             } else if (rc < 0) {
@@ -432,7 +433,7 @@ public:
     /**
      * Copy up to len bytes from src starting at off into remaining space, and advance cursor.
      *
-     * @param src Source array.
+     * @param src Source array; copied without modifying the source.
      * @param off Source start offset.
      * @param len Maximum number of bytes to copy.
      * @return Number of bytes actually copied.
@@ -445,7 +446,7 @@ public:
             n = len;
         }
         if (n > 0u && _native != null) {
-            rc : int = __k_io_buffer_relative(_native, (byte*) &src[off], n, 1);
+            rc : int = __k_io_buffer_put_relative(_native, &src[off], n);
             if (rc == -16) {
                 throw BufferInUseException();
             } else if (rc < 0) {

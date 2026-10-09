@@ -238,7 +238,7 @@ TEST_CASE("TimeScale: round trips for UTC, TAI, GPS", "[libk][time][scale][round
     auto jit = jit_k(R"SRC(
         module __test_scale_roundtrip__;
 
-        test_utc_roundtrip() : int throws(k::time::TimeScaleDataUnavailableException, k::time::InvalidTemporalValueException) {
+        test_utc_roundtrip() : int throws(k::time::TimeScaleDataUnavailableException, k::time::InvalidTemporalValueException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(1700000000L, 123456789);
             utc : k::time::TimeScale& = k::time::TimeScales::utc();
 
@@ -250,7 +250,7 @@ TEST_CASE("TimeScale: round trips for UTC, TAI, GPS", "[libk][time][scale][round
             return 1;
         }
 
-        test_tai_roundtrip() : int throws(k::time::TimeScaleDataUnavailableException, k::time::InvalidTemporalValueException) {
+        test_tai_roundtrip() : int throws(k::time::TimeScaleDataUnavailableException, k::time::InvalidTemporalValueException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(1700000000L, 987654321);
             tai : k::time::TimeScale& = k::time::TimeScales::tai();
 
@@ -262,7 +262,7 @@ TEST_CASE("TimeScale: round trips for UTC, TAI, GPS", "[libk][time][scale][round
             return 1;
         }
 
-        test_gps_roundtrip() : int throws(k::time::TimeScaleDataUnavailableException, k::time::InvalidTemporalValueException) {
+        test_gps_roundtrip() : int throws(k::time::TimeScaleDataUnavailableException, k::time::InvalidTemporalValueException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(1700000000L, 456789123);
             gps : k::time::TimeScale& = k::time::TimeScales::gps();
 
@@ -274,7 +274,7 @@ TEST_CASE("TimeScale: round trips for UTC, TAI, GPS", "[libk][time][scale][round
             return 1;
         }
 
-        test_instant_to_time_scale() : int throws(k::time::TimeScaleDataUnavailableException) {
+        test_instant_to_time_scale() : int throws(k::time::TimeScaleDataUnavailableException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(1700000000L, 100);
             utcVal : k::time::TimeScaleValue = inst.toTimeScale(k::time::TimeScales::utc());
             taiVal : k::time::TimeScaleValue = inst.toTimeScale(k::time::TimeScales::tai());
@@ -309,7 +309,7 @@ TEST_CASE("TimeScale: constant relation TAI - GPS == 19 seconds", "[libk][time][
     auto jit = jit_k(R"SRC(
         module __test_tai_gps_relation__;
 
-        test_constant_19s_diff(epochSec: long, nano: int) : int throws(k::time::TimeScaleDataUnavailableException) {
+        test_constant_19s_diff(epochSec: long, nano: int) : int throws(k::time::TimeScaleDataUnavailableException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(epochSec, nano);
             tai : k::time::TimeScale& = k::time::TimeScales::tai();
             gps : k::time::TimeScale& = k::time::TimeScales::gps();
@@ -324,7 +324,7 @@ TEST_CASE("TimeScale: constant relation TAI - GPS == 19 seconds", "[libk][time][
             return 1;
         }
 
-        test_across_history() : int throws(k::time::TimeScaleDataUnavailableException) {
+        test_across_history() : int throws(k::time::TimeScaleDataUnavailableException, k::time::TemporalArithmeticException) {
             // 1980 GPS epoch
             if (test_constant_19s_diff(315964809L, 0) == 0) return 0;
             // 2000 Y2K
@@ -496,7 +496,7 @@ TEST_CASE("TimeSourceId and TimeObservation: creation, uncertainty, equality", "
             return 1;
         }
 
-        test_observation_without_uncertainty() : int throws(k::time::InvalidTemporalValueException) {
+        test_observation_without_uncertainty() : int throws(k::time::InvalidTemporalValueException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(1000L, 500);
             srcId : k::time::TimeSourceId = k::time::TimeSourceId::systemClock();
             res : k::time::Duration = k::time::Duration::ofNanos(1L);
@@ -514,7 +514,7 @@ TEST_CASE("TimeSourceId and TimeObservation: creation, uncertainty, equality", "
             return 1;
         }
 
-        test_observation_with_uncertainty() : int throws(k::time::InvalidTemporalValueException) {
+        test_observation_with_uncertainty() : int throws(k::time::InvalidTemporalValueException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(2000L, 0);
             srcId : k::time::TimeSourceId = k::time::TimeSourceId::ntp();
             res : k::time::Duration = k::time::Duration::ofMillis(1L);
@@ -529,7 +529,7 @@ TEST_CASE("TimeSourceId and TimeObservation: creation, uncertainty, equality", "
             return 1;
         }
 
-        test_observation_equality() : int throws(k::time::InvalidTemporalValueException) {
+        test_observation_equality() : int throws(k::time::InvalidTemporalValueException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(2000L, 0);
             srcId : k::time::TimeSourceId = k::time::TimeSourceId::ptp();
             res : k::time::Duration = k::time::Duration::ofNanos(10L);
@@ -600,7 +600,7 @@ TEST_CASE("TimeSource: mock source returning observations", "[libk][time][source
             }
         }
 
-        test_mock_source() : int throws(k::time::TimeDataUnavailableException, k::time::TimeScaleDataUnavailableException) {
+        test_mock_source() : int throws(k::time::TimeDataUnavailableException, k::time::TimeScaleDataUnavailableException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(5000000L, 100);
             unc : k::time::Duration = k::time::Duration::ofNanos(25L);
 

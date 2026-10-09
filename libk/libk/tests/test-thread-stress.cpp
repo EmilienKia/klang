@@ -55,7 +55,7 @@ TEST_CASE("Thread stress: repeated lifecycle is stable", "[libk][thread][stress]
             const done() : int { return _done; }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             rounds : int = 0;
             completed : int = 0;
             while (rounds < 16) {

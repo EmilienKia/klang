@@ -56,7 +56,7 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 TEST_CASE("ReadWriteLock: read holds are shared and counted", "[libk][sync][rwlock]") {
     auto jit = jit_k(R"SRC(
         module __sync_rw_shared__;
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             l : ReadWriteLock;
             res : int = 0;
             if (l.readCount() == 0) { ++res; }
@@ -81,7 +81,7 @@ TEST_CASE("ReadWriteLock: read holds are shared and counted", "[libk][sync][rwlo
 TEST_CASE("ReadWriteLock: the write lock is exclusive", "[libk][sync][rwlock]") {
     auto jit = jit_k(R"SRC(
         module __sync_rw_exclusive__;
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             l : ReadWriteLock;
             res : int = 0;
             if (l.tryWriteLock()) { ++res; }

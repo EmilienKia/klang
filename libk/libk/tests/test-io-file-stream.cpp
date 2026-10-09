@@ -98,7 +98,7 @@ TEST_CASE("FileChannel: an already-interrupted thread reports the interruption",
             const res() : int { return _res; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             w : Worker! = new Worker();
             t : k::Thread! = new k::Thread(w);
             t->start();
@@ -130,13 +130,13 @@ TEST_CASE("FileChannel: closing from another thread is observed by users",
             _chan : k::io::file::FileChannel*;
         public:
             Closer(chan: k::io::file::FileChannel*) : _chan(chan) {}
-            override run() : void {
+            override run() : void throws(k::ThreadInterruptionException) {
                 k::Thread::sleep(k::Duration::ofMillis(30L));
                 _chan->close();
             }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             p : k::io::file::Path("/tmp/klang_afs_closer.bin");
             c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, k::io::file::OPEN_READ);
             res : int = 0;

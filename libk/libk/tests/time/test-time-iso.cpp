@@ -54,19 +54,19 @@ TEST_CASE("ZoneOffset: factories and bounds", "[libk][time][zone_offset]") {
             return 0;
         }
 
-        test_of_total_seconds() : int {
+        test_of_total_seconds() : int throws(k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(7200);
             if (z.totalSeconds() == 7200 && !z.isUtc()) return 1;
             return 0;
         }
 
-        test_min_bound() : int {
+        test_min_bound() : int throws(k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(-64800);
             if (z.totalSeconds() == -64800) return 1;
             return 0;
         }
 
-        test_max_bound() : int {
+        test_max_bound() : int throws(k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(64800);
             if (z.totalSeconds() == 64800) return 1;
             return 0;
@@ -121,64 +121,64 @@ TEST_CASE("ZoneOffset: ISO formatting and parsing", "[libk][time][zone_offset]")
             return 0;
         }
 
-        test_format_plus_hours() : int {
+        test_format_plus_hours() : int throws(k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(7200);
             if (z.toIsoString() == k::String("+02:00")) return 1;
             return 0;
         }
 
-        test_format_minus_hours() : int {
+        test_format_minus_hours() : int throws(k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(-18000);
             if (z.toIsoString() == k::String("-05:00")) return 1;
             return 0;
         }
 
-        test_format_with_seconds() : int {
+        test_format_with_seconds() : int throws(k::time::InvalidTemporalValueException) {
             // +05:30:15 = 5*3600 + 30*60 + 15 = 18000 + 1800 + 15 = 19815
             z : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(19815);
             if (z.toIsoString() == k::String("+05:30:15")) return 1;
             return 0;
         }
 
-        test_format_minus_with_seconds() : int {
+        test_format_minus_with_seconds() : int throws(k::time::InvalidTemporalValueException) {
             // -04:00:30 = -(4*3600 + 30) = -14430
             z : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(-14430);
             if (z.toIsoString() == k::String("-04:00:30")) return 1;
             return 0;
         }
 
-        test_parse_utc() : int {
+        test_parse_utc() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::parseIso("Z");
             if (z.totalSeconds() == 0 && z.isUtc()) return 1;
             return 0;
         }
 
-        test_parse_plus() : int {
+        test_parse_plus() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::parseIso("+01:00");
             if (z.totalSeconds() == 3600) return 1;
             return 0;
         }
 
-        test_parse_minus() : int {
+        test_parse_minus() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::parseIso("-04:00");
             if (z.totalSeconds() == -14400) return 1;
             return 0;
         }
 
-        test_parse_seconds() : int {
+        test_parse_seconds() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::parseIso("+05:30:45");
             if (z.totalSeconds() == 19845) return 1;
             return 0;
         }
 
-        test_parse_compact() : int {
+        test_parse_compact() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             z1 : k::time::ZoneOffset = k::time::ZoneOffset::parseIso("+0200");
             z2 : k::time::ZoneOffset = k::time::ZoneOffset::parseIso("-0330");
             if (z1.totalSeconds() == 7200 && z2.totalSeconds() == -12600) return 1;
             return 0;
         }
 
-        test_parse_compact_seconds() : int {
+        test_parse_compact_seconds() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             z : k::time::ZoneOffset = k::time::ZoneOffset::parseIso("+010203");
             if (z.totalSeconds() == 3723) return 1;
             return 0;
@@ -190,6 +190,8 @@ TEST_CASE("ZoneOffset: ISO formatting and parsing", "[libk][time][zone_offset]")
                 return 0;
             } catch (e: k::time::TemporalParseException&) {
                 return 1;
+            } catch (other: k::time::InvalidTemporalValueException&) {
+                return 0;
             }
         }
 
@@ -199,6 +201,8 @@ TEST_CASE("ZoneOffset: ISO formatting and parsing", "[libk][time][zone_offset]")
                 return 0;
             } catch (e: k::time::InvalidTemporalValueException&) {
                 return 1;
+            } catch (other: k::time::TemporalParseException&) {
+                return 0;
             }
         }
 
@@ -208,6 +212,8 @@ TEST_CASE("ZoneOffset: ISO formatting and parsing", "[libk][time][zone_offset]")
                 return 0;
             } catch (e: k::time::InvalidTemporalValueException&) {
                 return 1;
+            } catch (other: k::time::TemporalParseException&) {
+                return 0;
             }
         }
 
@@ -217,6 +223,8 @@ TEST_CASE("ZoneOffset: ISO formatting and parsing", "[libk][time][zone_offset]")
                 return 0;
             } catch (e: k::time::InvalidTemporalValueException&) {
                 return 1;
+            } catch (other: k::time::TemporalParseException&) {
+                return 0;
             }
         }
     )SRC");
@@ -253,7 +261,7 @@ TEST_CASE("ZoneOffset: comparisons and operators", "[libk][time][zone_offset]") 
     auto jit = jit_k(R"SRC(
         module __test_zone_offset_ops__;
 
-        test_equality() : int {
+        test_equality() : int throws(k::time::InvalidTemporalValueException) {
             z1 : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(3600);
             z2 : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(3600);
             z3 : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(7200);
@@ -265,7 +273,7 @@ TEST_CASE("ZoneOffset: comparisons and operators", "[libk][time][zone_offset]") 
             return 1;
         }
 
-        test_relational() : int {
+        test_relational() : int throws(k::time::InvalidTemporalValueException) {
             zNeg : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(-3600);
             zUtc : k::time::ZoneOffset = k::time::ZoneOffset::utc();
             zPos : k::time::ZoneOffset = k::time::ZoneOffset::ofTotalSeconds(3600);
@@ -305,7 +313,7 @@ TEST_CASE("Iso: formatDuration and parseDuration round-trip", "[libk][time][iso]
     auto jit = jit_k(R"SRC(
         module __test_iso_duration__;
 
-        test_zero() : int {
+        test_zero() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             d : k::time::Duration = k::time::Duration::zero();
             s : k::String = k::time::Iso::formatDuration(d);
             if (s != k::String("PT0S")) return 0;
@@ -314,7 +322,7 @@ TEST_CASE("Iso: formatDuration and parseDuration round-trip", "[libk][time][iso]
             return 1;
         }
 
-        test_positive_seconds() : int {
+        test_positive_seconds() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             d : k::time::Duration = k::time::Duration::ofSeconds(42L);
             s : k::String = k::time::Iso::formatDuration(d);
             if (s != k::String("PT42S")) return 0;
@@ -323,7 +331,7 @@ TEST_CASE("Iso: formatDuration and parseDuration round-trip", "[libk][time][iso]
             return 1;
         }
 
-        test_negative_seconds() : int {
+        test_negative_seconds() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             d : k::time::Duration = k::time::Duration::ofSeconds(-1L);
             s : k::String = k::time::Iso::formatDuration(d);
             if (s != k::String("PT-1S")) return 0;
@@ -332,7 +340,7 @@ TEST_CASE("Iso: formatDuration and parseDuration round-trip", "[libk][time][iso]
             return 1;
         }
 
-        test_fractional_positive() : int {
+        test_fractional_positive() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             d : k::time::Duration = k::time::Duration::ofSeconds(1L, 500000000);
             s : k::String = k::time::Iso::formatDuration(d);
             if (s != k::String("PT1.5S")) return 0;
@@ -341,7 +349,7 @@ TEST_CASE("Iso: formatDuration and parseDuration round-trip", "[libk][time][iso]
             return 1;
         }
 
-        test_fractional_negative() : int {
+        test_fractional_negative() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             // -1.5s = secondsPart -2, nanos 500_000_000
             d : k::time::Duration = k::time::Duration(-2L, 500000000);
             s : k::String = k::time::Iso::formatDuration(d);
@@ -351,7 +359,7 @@ TEST_CASE("Iso: formatDuration and parseDuration round-trip", "[libk][time][iso]
             return 1;
         }
 
-        test_sub_second_negative() : int {
+        test_sub_second_negative() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             // -0.000000001s = secondsPart -1, nanos 999_999_999
             d : k::time::Duration = k::time::Duration(-1L, 999999999);
             s : k::String = k::time::Iso::formatDuration(d);
@@ -361,7 +369,7 @@ TEST_CASE("Iso: formatDuration and parseDuration round-trip", "[libk][time][iso]
             return 1;
         }
 
-        test_sub_second_positive() : int {
+        test_sub_second_positive() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             d : k::time::Duration = k::time::Duration(0L, 1);
             s : k::String = k::time::Iso::formatDuration(d);
             if (s != k::String("PT0.000000001S")) return 0;
@@ -370,7 +378,7 @@ TEST_CASE("Iso: formatDuration and parseDuration round-trip", "[libk][time][iso]
             return 1;
         }
 
-        test_hours_minutes_seconds_parse() : int {
+        test_hours_minutes_seconds_parse() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             // PT1H2M3S = 3600 + 120 + 3 = 3723s
             parsed : k::time::Duration = k::time::Iso::parseDuration("PT1H2M3S");
             if (parsed.secondsPart() != 3723L || parsed.nanoAdjustment() != 0) return 0;
@@ -379,14 +387,14 @@ TEST_CASE("Iso: formatDuration and parseDuration round-trip", "[libk][time][iso]
             return 1;
         }
 
-        test_negative_prefix_parse() : int {
+        test_negative_prefix_parse() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             // -PT1H = -3600s
             parsed : k::time::Duration = k::time::Iso::parseDuration("-PT1H");
             if (parsed.secondsPart() != -3600L || parsed.nanoAdjustment() != 0) return 0;
             return 1;
         }
 
-        test_extreme_durations() : int {
+        test_extreme_durations() : int throws(k::time::TemporalParseException, k::time::TemporalArithmeticException) {
             maxD : k::time::Duration = k::time::Iso::parseDuration("PT9223372036854775807S");
             if (maxD.secondsPart() != 9223372036854775807L) return 0;
             if (k::time::Iso::formatDuration(maxD) != k::String("PT9223372036854775807S")) return 0;
@@ -425,7 +433,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
     auto jit = jit_k(R"SRC(
         module __test_iso_local_date__;
 
-        test_standard_date() : int {
+        test_standard_date() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             d : k::time::LocalDate = k::time::LocalDate::of(2026L, 9, 10);
             s : k::String = k::time::Iso::formatLocalDate(d);
             if (s != k::String("2026-09-10")) return 0;
@@ -434,7 +442,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
             return 1;
         }
 
-        test_leap_year() : int {
+        test_leap_year() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             d : k::time::LocalDate = k::time::LocalDate::of(2024L, 2, 29);
             s : k::String = k::time::Iso::formatLocalDate(d);
             if (s != k::String("2024-02-29")) return 0;
@@ -443,7 +451,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
             return 1;
         }
 
-        test_century_leap_year() : int {
+        test_century_leap_year() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             d : k::time::LocalDate = k::time::LocalDate::of(2000L, 2, 29);
             s : k::String = k::time::Iso::formatLocalDate(d);
             if (s != k::String("2000-02-29")) return 0;
@@ -452,7 +460,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
             return 1;
         }
 
-        test_year_zero() : int {
+        test_year_zero() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             d : k::time::LocalDate = k::time::LocalDate::of(0L, 1, 1);
             s : k::String = k::time::Iso::formatLocalDate(d);
             if (s != k::String("0000-01-01")) return 0;
@@ -461,7 +469,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
             return 1;
         }
 
-        test_negative_year() : int {
+        test_negative_year() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             d : k::time::LocalDate = k::time::LocalDate::of(-1L, 12, 31);
             s : k::String = k::time::Iso::formatLocalDate(d);
             if (s != k::String("-0001-12-31")) return 0;
@@ -470,7 +478,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
             return 1;
         }
 
-        test_large_year() : int {
+        test_large_year() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             d : k::time::LocalDate = k::time::LocalDate::of(10000L, 1, 1);
             s : k::String = k::time::Iso::formatLocalDate(d);
             if (s != k::String("+10000-01-01")) return 0;
@@ -479,7 +487,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
             return 1;
         }
 
-        test_invalid_feb29() : int {
+        test_invalid_feb29() : int throws(k::time::TemporalParseException) {
             try {
                 k::time::Iso::parseLocalDate("2026-02-29");
                 return 0;
@@ -488,7 +496,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
             }
         }
 
-        test_invalid_century_feb29() : int {
+        test_invalid_century_feb29() : int throws(k::time::TemporalParseException) {
             try {
                 k::time::Iso::parseLocalDate("1900-02-29");
                 return 0;
@@ -497,7 +505,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
             }
         }
 
-        test_invalid_month() : int {
+        test_invalid_month() : int throws(k::time::TemporalParseException) {
             try {
                 k::time::Iso::parseLocalDate("2026-13-01");
                 return 0;
@@ -506,7 +514,7 @@ TEST_CASE("Iso: formatLocalDate and parseLocalDate round-trip", "[libk][time][is
             }
         }
 
-        test_invalid_day() : int {
+        test_invalid_day() : int throws(k::time::TemporalParseException) {
             try {
                 k::time::Iso::parseLocalDate("2026-04-31");
                 return 0;
@@ -543,7 +551,7 @@ TEST_CASE("Iso: formatLocalTime and parseLocalTime round-trip", "[libk][time][is
     auto jit = jit_k(R"SRC(
         module __test_iso_local_time__;
 
-        test_midnight() : int {
+        test_midnight() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             t : k::time::LocalTime = k::time::LocalTime::midnight();
             s : k::String = k::time::Iso::formatLocalTime(t);
             if (s != k::String("00:00:00")) return 0;
@@ -552,7 +560,7 @@ TEST_CASE("Iso: formatLocalTime and parseLocalTime round-trip", "[libk][time][is
             return 1;
         }
 
-        test_noon() : int {
+        test_noon() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             t : k::time::LocalTime = k::time::LocalTime::of(12, 0, 0);
             s : k::String = k::time::Iso::formatLocalTime(t);
             if (s != k::String("12:00:00")) return 0;
@@ -561,7 +569,7 @@ TEST_CASE("Iso: formatLocalTime and parseLocalTime round-trip", "[libk][time][is
             return 1;
         }
 
-        test_with_nanos() : int {
+        test_with_nanos() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             t : k::time::LocalTime = k::time::LocalTime::of(12, 34, 56, 123456789);
             s : k::String = k::time::Iso::formatLocalTime(t);
             if (s != k::String("12:34:56.123456789")) return 0;
@@ -570,7 +578,7 @@ TEST_CASE("Iso: formatLocalTime and parseLocalTime round-trip", "[libk][time][is
             return 1;
         }
 
-        test_minimal_fraction() : int {
+        test_minimal_fraction() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             t : k::time::LocalTime = k::time::LocalTime::of(8, 15, 30, 500000000);
             s : k::String = k::time::Iso::formatLocalTime(t);
             if (s != k::String("08:15:30.5")) return 0;
@@ -579,7 +587,7 @@ TEST_CASE("Iso: formatLocalTime and parseLocalTime round-trip", "[libk][time][is
             return 1;
         }
 
-        test_structural_leap_second() : int {
+        test_structural_leap_second() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             t : k::time::LocalTime = k::time::LocalTime::of(23, 59, 60, 0);
             if (!t.isStructuralLeapSecond()) return 0;
             s : k::String = k::time::Iso::formatLocalTime(t);
@@ -590,14 +598,14 @@ TEST_CASE("Iso: formatLocalTime and parseLocalTime round-trip", "[libk][time][is
             return 1;
         }
 
-        test_parse_hh_mm() : int {
+        test_parse_hh_mm() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             parsed : k::time::LocalTime = k::time::Iso::parseLocalTime("14:30");
             if (parsed.hour() != 14 || parsed.minute() != 30 || parsed.second() != 0 || parsed.nano() != 0) return 0;
             if (k::time::Iso::formatLocalTime(parsed) != k::String("14:30:00")) return 0;
             return 1;
         }
 
-        test_reject_24_00() : int {
+        test_reject_24_00() : int throws(k::time::TemporalParseException) {
             try {
                 k::time::Iso::parseLocalTime("24:00");
                 return 0;
@@ -606,7 +614,7 @@ TEST_CASE("Iso: formatLocalTime and parseLocalTime round-trip", "[libk][time][is
             }
         }
 
-        test_reject_invalid_leap_second_hour() : int {
+        test_reject_invalid_leap_second_hour() : int throws(k::time::TemporalParseException) {
             try {
                 k::time::Iso::parseLocalTime("12:00:60");
                 return 0;
@@ -615,7 +623,7 @@ TEST_CASE("Iso: formatLocalTime and parseLocalTime round-trip", "[libk][time][is
             }
         }
 
-        test_reject_invalid_leap_second_minute() : int {
+        test_reject_invalid_leap_second_minute() : int throws(k::time::TemporalParseException) {
             try {
                 k::time::Iso::parseLocalTime("23:58:60");
                 return 0;
@@ -651,7 +659,7 @@ TEST_CASE("Iso: formatLocalDateTime and parseLocalDateTime round-trip", "[libk][
     auto jit = jit_k(R"SRC(
         module __test_iso_local_date_time__;
 
-        test_round_trip_standard() : int {
+        test_round_trip_standard() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             d : k::time::LocalDate = k::time::LocalDate::of(2026L, 9, 10);
             t : k::time::LocalTime = k::time::LocalTime::of(12, 34, 56);
             dt : k::time::LocalDateTime = k::time::LocalDateTime::of(d, t);
@@ -665,7 +673,7 @@ TEST_CASE("Iso: formatLocalDateTime and parseLocalDateTime round-trip", "[libk][
             return 1;
         }
 
-        test_round_trip_with_nanos() : int {
+        test_round_trip_with_nanos() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             d : k::time::LocalDate = k::time::LocalDate::of(2026L, 1, 15);
             t : k::time::LocalTime = k::time::LocalTime::of(23, 59, 59, 123400000);
             dt : k::time::LocalDateTime = k::time::LocalDateTime::of(d, t);
@@ -679,7 +687,7 @@ TEST_CASE("Iso: formatLocalDateTime and parseLocalDateTime round-trip", "[libk][
             return 1;
         }
 
-        test_round_trip_leap_second() : int {
+        test_round_trip_leap_second() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException) {
             d : k::time::LocalDate = k::time::LocalDate::of(2016L, 12, 31);
             t : k::time::LocalTime = k::time::LocalTime::of(23, 59, 60);
             dt : k::time::LocalDateTime = k::time::LocalDateTime::of(d, t);
@@ -692,7 +700,7 @@ TEST_CASE("Iso: formatLocalDateTime and parseLocalDateTime round-trip", "[libk][
             return 1;
         }
 
-        test_missing_t() : int {
+        test_missing_t() : int throws(k::time::InvalidTemporalValueException) {
             try {
                 k::time::Iso::parseLocalDateTime("2026-09-10 12:34:56");
                 return 0;
@@ -723,7 +731,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
     auto jit = jit_k(R"SRC(
         module __test_iso_rejection__;
 
-        test_reject_date_whitespace() : int {
+        test_reject_date_whitespace() : int throws(k::time::InvalidTemporalValueException) {
             try {
                 k::time::Iso::parseLocalDate(" 2026-09-10");
                 return 0;
@@ -739,7 +747,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             return 1;
         }
 
-        test_reject_date_punctuation() : int {
+        test_reject_date_punctuation() : int throws(k::time::InvalidTemporalValueException) {
             try {
                 k::time::Iso::parseLocalDate("2026/09/10");
                 return 0;
@@ -748,7 +756,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             }
         }
 
-        test_reject_date_letters() : int {
+        test_reject_date_letters() : int throws(k::time::InvalidTemporalValueException) {
             try {
                 k::time::Iso::parseLocalDate("202a-09-10");
                 return 0;
@@ -757,7 +765,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             }
         }
 
-        test_reject_time_over_precision() : int {
+        test_reject_time_over_precision() : int throws(k::time::InvalidTemporalValueException) {
             // 10 fractional digits (> 9)
             try {
                 k::time::Iso::parseLocalTime("12:34:56.1234567890");
@@ -767,7 +775,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             }
         }
 
-        test_reject_time_empty_fraction() : int {
+        test_reject_time_empty_fraction() : int throws(k::time::InvalidTemporalValueException) {
             try {
                 k::time::Iso::parseLocalTime("12:34:56.");
                 return 0;
@@ -776,7 +784,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             }
         }
 
-        test_reject_time_whitespace() : int {
+        test_reject_time_whitespace() : int throws(k::time::InvalidTemporalValueException) {
             try {
                 k::time::Iso::parseLocalTime(" 12:34:56");
                 return 0;
@@ -792,7 +800,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             return 1;
         }
 
-        test_reject_duration_over_precision() : int {
+        test_reject_duration_over_precision() : int throws(k::time::TemporalArithmeticException) {
             try {
                 k::time::Iso::parseDuration("PT1.1234567890S");
                 return 0;
@@ -801,7 +809,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             }
         }
 
-        test_reject_duration_whitespace() : int {
+        test_reject_duration_whitespace() : int throws(k::time::TemporalArithmeticException) {
             try {
                 k::time::Iso::parseDuration(" PT1S");
                 return 0;
@@ -810,7 +818,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             }
         }
 
-        test_reject_duration_no_components() : int {
+        test_reject_duration_no_components() : int throws(k::time::TemporalArithmeticException) {
             try {
                 k::time::Iso::parseDuration("PT");
                 return 0;
@@ -819,7 +827,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             }
         }
 
-        test_reject_duration_out_of_order() : int {
+        test_reject_duration_out_of_order() : int throws(k::time::TemporalArithmeticException) {
             try {
                 k::time::Iso::parseDuration("PT1S2M");
                 return 0;
@@ -828,7 +836,7 @@ TEST_CASE("Iso: rejection tests", "[libk][time][iso]") {
             }
         }
 
-        test_reject_duration_fraction_on_hour() : int {
+        test_reject_duration_fraction_on_hour() : int throws(k::time::TemporalArithmeticException) {
             try {
                 k::time::Iso::parseDuration("PT1.5H");
                 return 0;

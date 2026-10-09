@@ -27,6 +27,7 @@
  *  - libmodreg.so       K library owning a global plugin registry;
  *  - libmodplugin_a.so  K library, depends on modreg; its global object registers itself;
  *  - libmodplugin_b.so  same as plugin_a, with another plugin id;
+ *  - libvisitor_fixture.so  K RTTI traversal fixture with declared root function probes;
  *  - libmodmissing_user.so  C library whose DT_NEEDED dependency has been deleted;
  *  - libmodundef.so     C library with an unresolved symbol;
  *  - not_a_library.txt  a plain text file.
@@ -781,6 +782,55 @@ TEST_CASE("RTTI visitor dispatches, traverses, prunes, and retains module owners
     const std::string native = fs::canonical(
         fs::path(FIXTURES) / "libmodnative_dep.so").string();
     source.replace(source.find("@NATIVE_PATH@"), std::string("@NATIVE_PATH@").size(), native);
+    auto jit = jit_module(source);
+    REQUIRE(jit);
+    CHECK(run_main(*jit) == 0);
+}
+
+TEST_CASE("RTTI visitor fixture inventories only its declared root functions",
+          "[libk][module][rtti][visitor]") {
+    const std::string fixture = fs::canonical(
+        fs::path(FIXTURES) / "libvisitor_fixture.so").string();
+    std::string source = R"SRC(
+        module __rtti_visitor_root_inventory__;
+        main() : int {
+            loaded : Expected<Shared<Module>, LoadModuleError> =
+                loadModule(String("@FIXTURE_PATH@"));
+            if (!loaded.hasResult()) { return 1; }
+            image : Shared<Module> = loaded.getResult();
+            units : Vector<UnitView> = image.get()->units();
+            if (units.size() != 1u) { return 2; }
+            root : NamespaceView = units.get(0).rootNamespace();
+            functions : const Function?[]? = root.getDescriptor().getFunctions();
+            if (functions == null || functions->size != 2u) { return 3; }
+            names : String[2] {
+                String("rootThreeParameters"), String("rootTwoParameters")
+            };
+            parameterNames : String[3] {
+                String("first"), String("second"), String("third")
+            };
+            i : unsigned int = 0;
+            while (i < functions->size) {
+                functionDescriptor : const Function? = functions[i];
+                if (functionDescriptor == null) { return 4; }
+                if (String(functionDescriptor->getName()) != names[i]) { return 5; }
+                if (functionDescriptor->getOwner() != null
+                    || functionDescriptor->isMember()) { return 6; }
+                parameters : const Parameter?[]? = functionDescriptor->getParameters();
+                if (parameters == null || parameters->size != 3u - i) { return 7; }
+                j : unsigned int = 0;
+                while (j < parameters->size) {
+                    parameterDescriptor : const Parameter? = parameters[j];
+                    if (parameterDescriptor == null) { return 8; }
+                    if (String(parameterDescriptor->getName()) != parameterNames[j]) { return 9; }
+                    ++j;
+                }
+                ++i;
+            }
+            return 0;
+        }
+    )SRC";
+    source.replace(source.find("@FIXTURE_PATH@"), std::string("@FIXTURE_PATH@").size(), fixture);
     auto jit = jit_module(source);
     REQUIRE(jit);
     CHECK(run_main(*jit) == 0);

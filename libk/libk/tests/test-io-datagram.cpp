@@ -59,7 +59,7 @@ TEST_CASE("DatagramSocket: UDP loopback sendTo/receive", "[libk][io][socket][udp
             const ok() : int { return _ok; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             bindAddr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             recvSock : k::io::DatagramSocket! = k::io::DatagramSocket::bind(bindAddr);
             recvPort : int = recvSock->localPort();
@@ -128,7 +128,7 @@ TEST_CASE("DatagramSocket: connected mode send/receive", "[libk][io][socket][udp
             const ok() : int { return _ok; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             aAddr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             bAddr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             a : k::io::DatagramSocket! = k::io::DatagramSocket::bind(aAddr);
@@ -231,7 +231,7 @@ TEST_CASE("DatagramSocket: receive is interruptible", "[libk][io][socket][udp][i
             const res() : int { return _res; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             s : k::io::DatagramSocket! = k::io::DatagramSocket::bind(addr);
             r : Receiver! = new Receiver(s);
@@ -282,7 +282,7 @@ TEST_CASE("DatagramSocket: close cancels an admitted receive or rejects late adm
             const res() : int { return _res; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             s : k::io::DatagramSocket! = k::io::DatagramSocket::bind(addr);
             r : Receiver! = new Receiver(s);

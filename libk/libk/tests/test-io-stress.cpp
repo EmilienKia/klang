@@ -80,7 +80,7 @@ TEST_CASE("FileChannel stress: concurrent positional reads are stable", "[libk][
             const done() : int { return _done; }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             path : k::io::file::Path! = new k::io::file::Path(
         )SRC";
     src += "\"" + path + "\"";
@@ -119,4 +119,3 @@ TEST_CASE("FileChannel stress: concurrent positional reads are stable", "[libk][
 
     std::remove(path.c_str());
 }
-

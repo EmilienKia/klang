@@ -134,7 +134,6 @@ void   k_io_buffer_test_set_table_full(bool full);
 size_t k_io_buffer_get_registered_count(void);
 int k_io_buffer_fixed_index(const KNativeByteBuffer* buf);
 void k_io_buffer_shutdown_registration(void);
-int __k_io_buffer_relative(void* buf, uint8_t* bytes, unsigned int length, int write);
 
 /* ── FFI Bridge Exports (__k_io_buffer_*) ───────────────────────────────── */
 
@@ -159,6 +158,10 @@ int          __k_io_buffer_compact(void* buf);
 uint8_t*     __k_io_buffer_data_at(void* buf, unsigned int index);
 int          __k_io_buffer_get_byte(const void* buf, unsigned int index, uint8_t* out_byte);
 int          __k_io_buffer_put_byte(void* buf, unsigned int index, uint8_t b);
+/* Relative transfers copy and advance the cursor under the same lease-checked lock.
+ * Get writes caller memory; put only reads it. */
+int          __k_io_buffer_get_relative(void* buf, uint8_t* dst, unsigned int length);
+int          __k_io_buffer_put_relative(void* buf, const uint8_t* src, unsigned int length);
 int          __k_io_buffer_copy_from(void* buf, unsigned int pos, const uint8_t* src, unsigned int len);
 int          __k_io_buffer_copy_to(const void* buf, unsigned int pos, uint8_t* dst, unsigned int len);
 int          __k_io_buffer_is_registered(const void* buf);

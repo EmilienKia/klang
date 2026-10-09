@@ -86,7 +86,7 @@ TEST_CASE("ServerSocket: connect then accept succeeds", "[libk][io][server-socke
             const ok() : int { return _ok; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
             port : int = srv->localPort();
@@ -150,13 +150,13 @@ TEST_CASE("ServerSocket: close from another thread aborts blocking accept",
             _srv : k::io::ServerSocket*;
         public:
             Closer(srv: k::io::ServerSocket*) : _srv(srv) {}
-            override run() : void {
+            override run() : void throws(k::ThreadInterruptionException) {
                 k::Thread::sleep(k::Duration::ofMillis(60L));
                 _srv->close();
             }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
 

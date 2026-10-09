@@ -43,7 +43,7 @@ TEST_CASE("SocketChannel: read timeout is reported", "[libk][io][socket][interru
             _srv : k::io::ServerSocket*;
         public:
             Holder(srv: k::io::ServerSocket*) : _srv(srv) {}
-            override run() : void {
+            override run() : void throws(k::ThreadInterruptionException) {
                 c : k::io::SocketChannel! = _srv->accept(2000000000L);
                 // Keep the connection open but send nothing.
                 k::Thread::sleep(k::Duration::ofMillis(200L));
@@ -52,7 +52,7 @@ TEST_CASE("SocketChannel: read timeout is reported", "[libk][io][socket][interru
             }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
             port : int = srv->localPort();

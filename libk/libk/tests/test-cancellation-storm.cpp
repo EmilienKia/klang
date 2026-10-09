@@ -53,7 +53,7 @@ TEST_CASE("Thread cancellation storm remains stable", "[libk][thread][stress][in
             const caught() : int { return _caught; }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             round : int = 0;
             ok : int = 0;
             while (round < 16) {

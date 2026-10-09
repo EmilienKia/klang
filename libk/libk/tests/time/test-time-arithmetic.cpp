@@ -1208,7 +1208,7 @@ TEST_CASE("Duration: comparisons and relational operators", "[libk][time][durati
     auto jit = jit_k(R"SRC(
         module __test_duration_comparisons__;
 
-        test_compare_to() : bool {
+        test_compare_to() : bool throws(k::time::TemporalArithmeticException) {
             d1 : k::time::Duration = k::time::Duration::ofSeconds(10L, 100);
             d2 : k::time::Duration = k::time::Duration::ofSeconds(10L, 200);
             d3 : k::time::Duration = k::time::Duration::ofSeconds(10L, 100);
@@ -1221,7 +1221,7 @@ TEST_CASE("Duration: comparisons and relational operators", "[libk][time][durati
                    (d1.compareTo(d_neg) > 0);
         }
 
-        test_operators() : bool {
+        test_operators() : bool throws(k::time::TemporalArithmeticException) {
             a : k::time::Duration = k::time::Duration::ofSeconds(5L, 500);
             b : k::time::Duration = k::time::Duration::ofSeconds(10L, 100);
             c : k::time::Duration = k::time::Duration::ofSeconds(5L, 500);
@@ -1514,7 +1514,7 @@ TEST_CASE("Instant: comparisons and ordering", "[libk][time][instant]") {
     auto jit = jit_k(R"SRC(
         module __test_instant_comparisons__;
 
-        test_compare_to() : bool {
+        test_compare_to() : bool throws(k::time::TemporalArithmeticException) {
             i1 : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 100);
             i2 : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 200);
             i3 : k::time::Instant = k::time::Instant::ofEpochSecond(100L, 100);
@@ -1527,7 +1527,7 @@ TEST_CASE("Instant: comparisons and ordering", "[libk][time][instant]") {
                    (i1.compareTo(i_neg) > 0);
         }
 
-        test_operators() : bool {
+        test_operators() : bool throws(k::time::TemporalArithmeticException) {
             a : k::time::Instant = k::time::Instant::ofEpochSecond(5L, 500);
             b : k::time::Instant = k::time::Instant::ofEpochSecond(10L, 100);
             c : k::time::Instant = k::time::Instant::ofEpochSecond(5L, 500);
@@ -2034,7 +2034,7 @@ TEST_CASE("LocalTime: toNanoOfDay and duration arithmetic with 24h wrap", "[libk
             return true;
         }
 
-        test_leap_second_plus_rejected() : int {
+        test_leap_second_plus_rejected() : int throws(k::time::TemporalArithmeticException) {
             try {
                 ls : k::time::LocalTime = k::time::LocalTime::of(23, 59, 60, 0);
                 d : k::time::Duration = k::time::Duration::ofSeconds(1L);
@@ -2045,7 +2045,7 @@ TEST_CASE("LocalTime: toNanoOfDay and duration arithmetic with 24h wrap", "[libk
             }
         }
 
-        test_leap_second_minus_rejected() : int {
+        test_leap_second_minus_rejected() : int throws(k::time::TemporalArithmeticException) {
             try {
                 ls : k::time::LocalTime = k::time::LocalTime::of(23, 59, 60, 0);
                 d : k::time::Duration = k::time::Duration::ofSeconds(1L);
@@ -2541,7 +2541,7 @@ TEST_CASE("LocalDateTime: Duration arithmetic across days", "[libk][time][local_
             return true;
         }
 
-        test_leap_second_plus_rejected() : int {
+        test_leap_second_plus_rejected() : int throws(k::time::TemporalArithmeticException) {
             try {
                 dt : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 6, 30, 23, 59, 60, 0);
                 d : k::time::Duration = k::time::Duration::ofSeconds(1L);
@@ -2552,7 +2552,7 @@ TEST_CASE("LocalDateTime: Duration arithmetic across days", "[libk][time][local_
             }
         }
 
-        test_leap_second_minus_rejected() : int {
+        test_leap_second_minus_rejected() : int throws(k::time::TemporalArithmeticException) {
             try {
                 dt : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 6, 30, 23, 59, 60, 0);
                 d : k::time::Duration = k::time::Duration::ofSeconds(1L);
@@ -2615,6 +2615,5 @@ TEST_CASE("LocalDateTime: comparisons and ordering", "[libk][time][local_date_ti
     REQUIRE(fn != nullptr);
     CHECK(fn() != 0);
 }
-
 
 

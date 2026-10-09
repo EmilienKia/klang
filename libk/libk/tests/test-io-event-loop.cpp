@@ -60,7 +60,7 @@ TEST_CASE("EventLoop: submit executes task and stop exits loop", "[libk][io][eve
             }
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException) {
             loop : k::io::EventLoop! = new k::io::EventLoop();
             runner : LoopRunner! = new LoopRunner(loop);
             tr : Thread! = new Thread(runner);
@@ -107,7 +107,7 @@ TEST_CASE("EventLoop: scheduleAfter executes delayed task", "[libk][io][event-lo
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             loop : k::io::EventLoop! = new k::io::EventLoop();
             runner : LoopRunner! = new LoopRunner(loop);
             tr : Thread! = new Thread(runner);
@@ -146,7 +146,7 @@ TEST_CASE("EventLoop: stop wakes idle loop", "[libk][io][event-loop]") {
             override run() : void { _loop->run(); }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             loop : k::io::EventLoop! = new k::io::EventLoop();
             runner : LoopRunner! = new LoopRunner(loop);
             tr : Thread! = new Thread(runner);
@@ -194,7 +194,7 @@ TEST_CASE("EventLoop: FIFO execution order", "[libk][io][event-loop]") {
             }
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException) {
             loop : k::io::EventLoop! = new k::io::EventLoop();
             task1 : OrderTask! = new OrderTask(1, loop);
             task2 : OrderTask! = new OrderTask(2, loop);
@@ -240,7 +240,7 @@ TEST_CASE("EventLoop: runOnce processes task", "[libk][io][event-loop]") {
             }
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException) {
             loop : k::io::EventLoop! = new k::io::EventLoop();
             task : StepTask! = new StepTask(42);
             loop->execute(task);
@@ -288,7 +288,7 @@ TEST_CASE("EventLoop: timers ordered in min-heap", "[libk][io][event-loop]") {
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             loop : k::io::EventLoop! = new k::io::EventLoop();
 
             runner : LoopRunner! = new LoopRunner(loop);
@@ -345,7 +345,7 @@ TEST_CASE("EventLoop: acquireLease executes tasks through lease", "[libk][io][ev
             }
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException) {
             loop : k::io::EventLoop! = new k::io::EventLoop();
             lease : ExecutorLease! = loop->acquireLease();
 

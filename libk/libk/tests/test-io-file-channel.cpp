@@ -208,7 +208,7 @@ TEST_CASE("FileChannel primitives: every callback is dispatched on its selected 
             else if (observed >= 0) ++observed;
         }
         test() : int throws(ThreadInterruptionException, TimeoutException,
-            CancellationException, ExecutionException, IllegalStateException) {
+            CancellationException, ExecutionException, IllegalStateException, RejectedExecutionException) {
             deadline : Duration = Duration::ofSeconds(5L);
             loop : k::io::EventLoop;
             lease : ExecutorLease! = loop.acquireLease();
@@ -303,7 +303,7 @@ TEST_CASE("FileChannel primitives: every callback is dispatched on its selected 
             return observed;
         }
         testExecutor(direct: bool) : int throws(ThreadInterruptionException, TimeoutException,
-            CancellationException, ExecutionException, IllegalStateException) {
+            CancellationException, ExecutionException, IllegalStateException, RejectedExecutionException) {
             deadline : Duration = Duration::ofSeconds(5L);
             executor : DirectExecutor;
             lease : ExecutorLease! = null;
@@ -415,7 +415,7 @@ TEST_CASE("FileChannel primitives: Future publication progresses while EventLoop
             return value;
         }
         test() : int throws(ThreadInterruptionException, TimeoutException,
-            CancellationException, ExecutionException, IllegalStateException) {
+            CancellationException, ExecutionException, IllegalStateException, RejectedExecutionException) {
             deadline : Duration = Duration::ofSeconds(5L);
             loop : k::io::EventLoop;
             loopPtr : k::io::EventLoop* = &loop;
@@ -575,7 +575,7 @@ TEST_CASE("FileChannel primitives: errors remain observable operations and Sync 
         module __fc_proactor_errors__;
         observed : int = 0;
         test() : int throws(ThreadInterruptionException, TimeoutException,
-            CancellationException, ExecutionException, IllegalStateException) {
+            CancellationException, ExecutionException, IllegalStateException, RejectedExecutionException) {
             deadline : Duration = Duration::ofSeconds(5L);
             loop : k::io::EventLoop;
             lease : ExecutorLease! = loop.acquireLease();
@@ -952,7 +952,7 @@ TEST_CASE("FileChannel: concurrent positional reads from several threads",
             const ok() : int { return _ok; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             p : k::io::file::Path("/tmp/klang_fc_concurrent.bin");
             c : k::io::file::FileChannel! = k::io::file::FileChannel::open(p, k::io::file::OPEN_READ);
 

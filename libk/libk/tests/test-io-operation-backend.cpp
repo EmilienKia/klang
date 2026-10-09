@@ -370,17 +370,73 @@ TEST_CASE("Proactor mock: zero-length buffers require no borrowed storage",
     auto& rt = runtime();
     auto allocate = symbol<void* (*)(unsigned)>(rt.library, "__k_io_buffer_allocate");
     auto release = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release");
-    auto relative = symbol<int (*)(void*, unsigned char*, unsigned, int)>(
-        rt.library, "__k_io_buffer_relative");
+    auto get = symbol<int (*)(void*, unsigned char*, unsigned)>(
+        rt.library, "__k_io_buffer_get_relative");
+    auto put = symbol<int (*)(void*, const unsigned char*, unsigned)>(
+        rt.library, "__k_io_buffer_put_relative");
     void* buffer = allocate(0);
     REQUIRE(buffer);
-    REQUIRE(relative(buffer, nullptr, 0, 1) == 0);
+    REQUIRE(put(buffer, nullptr, 0) == 0);
+    REQUIRE(get(buffer, nullptr, 0) == 0);
     void* op = rt.create(K_IO_OP_READ, -1, nullptr, 0, 0, 0, buffer, nullptr, nullptr, nullptr);
     REQUIRE(rt.submit(rt.get(), op, -1) == 0);
     rt.mock->complete(rt.mock->last().tag, 0);
     REQUIRE(rt.wait(op, 5000000000LL) == 0);
     REQUIRE(rt.bytes(op) == 0);
     rt.release(op);
+    release(buffer);
+}
+
+TEST_CASE("Proactor mock: relative transfers preserve const sources and atomic cursor checks",
+          "[libk][io][proactor][mock][buffer][regression][const-source]") {
+    auto& rt = runtime();
+    auto allocate = symbol<void* (*)(unsigned)>(rt.library, "__k_io_buffer_allocate");
+    auto release = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release");
+    auto position = symbol<unsigned (*)(const void*)>(rt.library, "__k_io_buffer_get_position");
+    auto rewind = symbol<int (*)(void*)>(rt.library, "__k_io_buffer_rewind");
+    auto acquire_lease = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_acquire_lease");
+    auto release_lease = symbol<void (*)(void*)>(rt.library, "__k_io_buffer_release_lease");
+    auto get = symbol<int (*)(void*, unsigned char*, unsigned)>(
+        rt.library, "__k_io_buffer_get_relative");
+    auto put = symbol<int (*)(void*, const unsigned char*, unsigned)>(
+        rt.library, "__k_io_buffer_put_relative");
+    void* buffer = allocate(4);
+    REQUIRE(buffer);
+    static const unsigned char src[] = {1, 2, 3, 4};
+    unsigned char dst[] = {99, 99, 99, 99, 99, 99};
+    REQUIRE(put(buffer, src + 1, 3) == 0);
+    REQUIRE(position(buffer) == 3);
+    REQUIRE(put(buffer, src, 1) == 0);
+    REQUIRE(position(buffer) == 4);
+    REQUIRE(put(buffer, src, 1) == -ERANGE);
+    REQUIRE(get(buffer, dst, 1) == -ERANGE);
+    REQUIRE(position(buffer) == 4);
+    REQUIRE(dst[0] == 99);
+
+    REQUIRE(rewind(buffer) == 0);
+    acquire_lease(buffer);
+    REQUIRE(put(buffer, src, 4) == -EBUSY);
+    REQUIRE(get(buffer, dst + 1, 4) == -EBUSY);
+    REQUIRE(position(buffer) == 0);
+    REQUIRE(dst[1] == 99);
+    release_lease(buffer);
+    REQUIRE(put(buffer, nullptr, 1) == -EINVAL);
+    REQUIRE(get(buffer, nullptr, 1) == -EINVAL);
+    REQUIRE(get(buffer, dst, 5) == -ERANGE);
+    REQUIRE(position(buffer) == 0);
+    REQUIRE(dst[0] == 99);
+    REQUIRE(get(buffer, dst + 1, 4) == 0);
+    REQUIRE(position(buffer) == 4);
+    REQUIRE(dst[0] == 99);
+    REQUIRE(dst[1] == 2);
+    REQUIRE(dst[2] == 3);
+    REQUIRE(dst[3] == 4);
+    REQUIRE(dst[4] == 1);
+    REQUIRE(dst[5] == 99);
+    REQUIRE(src[0] == 1);
+    REQUIRE(src[1] == 2);
+    REQUIRE(src[2] == 3);
+    REQUIRE(src[3] == 4);
     release(buffer);
 }
 

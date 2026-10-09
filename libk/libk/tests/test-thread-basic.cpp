@@ -287,7 +287,7 @@ TEST_CASE("ThreadInterruptionException is catchable as Exception", "[libk][threa
 TEST_CASE("Thread.sleep() returns after positive duration", "[libk][thread][sleep]") {
     auto jit = jit_k(R"SRC(
         module __sleep_basic__;
-        test() : long {
+        test() : long throws(ThreadInterruptionException) {
             before : Instant = Instant::now();
             Thread::sleep(Duration::ofMillis(20L));
             after : Instant = Instant::now();
@@ -305,7 +305,7 @@ TEST_CASE("Thread.sleep() returns after positive duration", "[libk][thread][slee
 TEST_CASE("Thread.sleep() zero duration returns immediately", "[libk][thread][sleep]") {
     auto jit = jit_k(R"SRC(
         module __sleep_zero__;
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             Thread::sleep(Duration::zero());
             return 0;
         }
@@ -373,7 +373,7 @@ TEST_CASE("Thread start and join — task body executes", "[libk][thread][lifecy
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             r : Incrementer! = new Incrementer();
             t : Thread! = new Thread(r);
             t.start();
@@ -405,7 +405,7 @@ TEST_CASE("Thread join — multiple threads increment counter", "[libk][thread][
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             a1 : Adder! = new Adder(10);
             a2 : Adder! = new Adder(20);
             t1 : Thread! = new Thread(a1);
@@ -434,11 +434,14 @@ TEST_CASE("Thread.join(timeout) throws TimeoutException", "[libk][thread][join][
         class LongSleeper : public Runnable {
         public:
             override run() : void {
-                Thread::sleep(Duration::ofSeconds(60L));
+                try {
+                    Thread::sleep(Duration::ofSeconds(60L));
+                } catch (e: ThreadInterruptionException&) {
+                }
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             r : LongSleeper! = new LongSleeper();
             t : Thread! = new Thread(r);
             t.start();
@@ -486,7 +489,7 @@ TEST_CASE("Thread.interrupt() wakes sleeping thread", "[libk][thread][interrupt]
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             r : SleepTask! = new SleepTask();
             t : Thread! = new Thread(r);
             t.start();
@@ -541,7 +544,7 @@ TEST_CASE("Thread.interrupted() clears the flag after reading", "[libk][thread][
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             r : SetAndCheck! = new SetAndCheck();
             t : Thread! = new Thread(r);
             t.start();
@@ -578,7 +581,7 @@ TEST_CASE("Thread.checkInterrupted() throws when interrupted", "[libk][thread][i
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             r : CheckTask! = new CheckTask();
             t : Thread! = new Thread(r);
             t.start();
@@ -615,7 +618,7 @@ TEST_CASE("Thread.isInterrupted() does not clear flag", "[libk][thread][interrup
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             r : CheckTask! = new CheckTask();
             t : Thread! = new Thread(r);
             t.start();
@@ -674,7 +677,7 @@ TEST_CASE("k::Thread: threadlocal variable destructor runs before join returns",
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             w : Worker! = new Worker();
             t : Thread! = new Thread(w);
             t.start();

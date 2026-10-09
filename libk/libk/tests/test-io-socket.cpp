@@ -64,7 +64,7 @@ TEST_CASE("Socket: loopback connect/send/recv round-trip", "[libk][io][socket]")
             const ok() : int { return _ok; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
             port : int = srv->localPort();
@@ -160,7 +160,7 @@ TEST_CASE("ServerSocket: accept is interruptible", "[libk][io][socket][interrupt
             const res() : int { return _res; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
             a : Acceptor! = new Acceptor(srv);
@@ -201,7 +201,7 @@ TEST_CASE("SocketChannel: peer close is reported as EOF", "[libk][io][socket]") 
             }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
             port : int = srv->localPort();
@@ -245,7 +245,7 @@ TEST_CASE("SocketChannel: blocking read is interruptible", "[libk][io][socket][i
             _srv : k::io::ServerSocket*;
         public:
             IdleServer(srv: k::io::ServerSocket*) : _srv(srv) {}
-            override run() : void {
+            override run() : void throws(k::ThreadInterruptionException) {
                 c : k::io::SocketChannel! = _srv->accept(2000000000L);
                 k::Thread::sleep(k::Duration::ofMillis(300L));
                 c->close();
@@ -273,7 +273,7 @@ TEST_CASE("SocketChannel: blocking read is interruptible", "[libk][io][socket][i
             const res() : int { return _res; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
             port : int = srv->localPort();
@@ -319,7 +319,7 @@ TEST_CASE("SocketChannel: close from another thread aborts blocked read",
             _srv : k::io::ServerSocket*;
         public:
             IdleServer(srv: k::io::ServerSocket*) : _srv(srv) {}
-            override run() : void {
+            override run() : void throws(k::ThreadInterruptionException) {
                 c : k::io::SocketChannel! = _srv->accept(2000000000L);
                 k::Thread::sleep(k::Duration::ofMillis(300L));
                 c->close();
@@ -353,13 +353,13 @@ TEST_CASE("SocketChannel: close from another thread aborts blocked read",
             _sock : k::io::SocketChannel*;
         public:
             Closer(sock: k::io::SocketChannel*) : _sock(sock) {}
-            override run() : void {
+            override run() : void throws(k::ThreadInterruptionException) {
                 k::Thread::sleep(k::Duration::ofMillis(60L));
                 _sock->close();
             }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
             port : int = srv->localPort();
@@ -424,7 +424,7 @@ TEST_CASE("Socket: resolves localhost hostnames", "[libk][io][socket]") {
             const ok() : int { return _ok; }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             anyAddr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(anyAddr);
             port : int = srv->localPort();
@@ -476,7 +476,7 @@ TEST_CASE("SocketChannel: writing after close raises ClosedChannelException",
             _server : k::io::ServerSocket*;
         public:
             SinkServer(server: k::io::ServerSocket*) : _server(server) {}
-            override run() : void {
+            override run() : void throws(k::ThreadInterruptionException) {
                 c : k::io::SocketChannel! = _server->accept(2000000000L);
                 k::Thread::sleep(k::Duration::ofMillis(150L));
                 c->close();
@@ -484,7 +484,7 @@ TEST_CASE("SocketChannel: writing after close raises ClosedChannelException",
             }
         }
 
-        test() : int {
+        test() : int throws(k::ThreadInterruptionException) {
             addr : k::io::NetworkAddress! = k::io::NetworkAddress::any(0);
             srv : k::io::ServerSocket! = k::io::ServerSocket::bind(addr);
             port : int = srv->localPort();

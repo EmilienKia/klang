@@ -143,7 +143,7 @@ TEST_CASE("Leap second: POSIX conversion policies at leap second", "[libk][time]
             return 1;
         }
 
-        test_ordinary_posix_round_trip() : int throws(k::time::LeapSecondException) {
+        test_ordinary_posix_round_trip() : int throws(k::time::LeapSecondException, k::time::TemporalArithmeticException) {
             orig : k::time::PosixTimestamp = k::time::PosixTimestamp::ofSeconds(1600000000L, 500);
             inst : k::time::Instant = orig.toInstant();
             rt : k::time::PosixTimestamp = inst.toPosixTimestamp();

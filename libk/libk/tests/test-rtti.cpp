@@ -3396,7 +3396,7 @@ TEST_CASE("Unit RTTI inventories direct namespace declarations", "[libk][rtti][u
     REQUIRE(unit->hasInitializer());
     auto* unit_initializer = llvm::dyn_cast<llvm::ConstantStruct>(unit->getInitializer());
     REQUIRE(unit_initializer);
-    CHECK(k_array_size(unit_initializer->getOperand(4)) == 5);
+    CHECK(k_array_size(unit_initializer->getOperand(4)) == 3);
     CHECK(k_array_size(unit_initializer->getOperand(6)) == 1);
 
     auto* root = llvm::dyn_cast<llvm::GlobalVariable>(
@@ -3406,7 +3406,7 @@ TEST_CASE("Unit RTTI inventories direct namespace declarations", "[libk][rtti][u
     REQUIRE(root_initializer);
     CHECK(k_array_size(root_initializer->getOperand(6)) == 1);
     CHECK(k_array_size(root_initializer->getOperand(7)) == 1);
-    CHECK(k_array_size(root_initializer->getOperand(8)) == 4);
+    CHECK(k_array_size(root_initializer->getOperand(8)) == 2);
 
     auto* children = llvm::dyn_cast<llvm::GlobalVariable>(
         root_initializer->getOperand(6)->stripPointerCasts());
@@ -3446,7 +3446,7 @@ TEST_CASE("Unit RTTI emits a non-null root with empty type and namespace invento
     REQUIRE(unit->hasInitializer());
     auto* unit_initializer = llvm::dyn_cast<llvm::ConstantStruct>(unit->getInitializer());
     REQUIRE(unit_initializer);
-    CHECK(k_array_size(unit_initializer->getOperand(4)) >= 1);
+    CHECK(k_array_size(unit_initializer->getOperand(4)) == 0);
     CHECK(k_array_size(unit_initializer->getOperand(6)) == 0);
 
     auto* root = llvm::dyn_cast<llvm::GlobalVariable>(
@@ -3456,7 +3456,7 @@ TEST_CASE("Unit RTTI emits a non-null root with empty type and namespace invento
     REQUIRE(root_initializer);
     CHECK(llvm::isa<llvm::ConstantPointerNull>(root_initializer->getOperand(6)));
     CHECK(llvm::isa<llvm::ConstantPointerNull>(root_initializer->getOperand(7)));
-    CHECK(k_array_size(root_initializer->getOperand(8)) >= 1);
+    CHECK(k_array_size(root_initializer->getOperand(8)) == 0);
 }
 
 TEST_CASE("Unit RTTI merges multiple source inputs into one direct inventory",

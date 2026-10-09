@@ -934,9 +934,10 @@ void k_io_buffer_shutdown_registration(void) {
     for (unsigned i = 0; i < abandoned_count; ++i) k_io_buffer_release(abandoned[i]);
 }
 
-int __k_io_buffer_relative(void* native, uint8_t* bytes, unsigned int length, int write) {
+static int k_io_buffer_relative(void* native, const uint8_t* src, uint8_t* dst,
+                                unsigned int length, bool write) {
     KNativeByteBuffer* buf = native;
-    if (!buf || buf->creator_pid != getpid() || (!bytes && length)) return -EINVAL;
+    if (!buf || buf->creator_pid != getpid() || (length && (write ? !src : !dst))) return -EINVAL;
     pthread_mutex_lock(&buf->lock);
     int rc = 0;
     if (atomic_load(&buf->lease_count)) rc = -EBUSY;
@@ -945,13 +946,21 @@ int __k_io_buffer_relative(void* native, uint8_t* bytes, unsigned int length, in
     else if (length > buf->limit - buf->position) rc = -ERANGE;
     else {
         if (length) {
-            if (write) memcpy(buf->data + buf->position, bytes, length);
-            else memcpy(bytes, buf->data + buf->position, length);
+            if (write) memcpy(buf->data + buf->position, src, length);
+            else memcpy(dst, buf->data + buf->position, length);
         }
         buf->position += length;
     }
     pthread_mutex_unlock(&buf->lock);
     return rc;
+}
+
+int __k_io_buffer_get_relative(void* native, uint8_t* dst, unsigned int length) {
+    return k_io_buffer_relative(native, NULL, dst, length, false);
+}
+
+int __k_io_buffer_put_relative(void* native, const uint8_t* src, unsigned int length) {
+    return k_io_buffer_relative(native, src, NULL, length, true);
 }
 
 void __k_io_buffer_retain(void* buf) {

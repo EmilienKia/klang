@@ -51,7 +51,7 @@ TEST_CASE("Runtime shutdown survives repeated JIT teardown", "[libk][runtime][sh
                 const done() : int { return _done; }
             }
 
-            test() : int {
+            test() : int throws(ThreadInterruptionException) {
                 worker : Worker! = new Worker();
                 thr : Thread! = new Thread(worker);
                 thr->start();

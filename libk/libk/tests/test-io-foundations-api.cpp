@@ -223,7 +223,7 @@ TEST_CASE("I/O carriers: empty IoDone survives Future and union subobject cleanu
             copied.setResult(value);
             if (!copied.hasResult() || copied.hasError()) callbackState = -4;
         }
-        test(nativeResult: byte*, captured: bool) : int {
+        test(nativeResult: byte*, captured: bool) : int throws(RejectedExecutionException) {
             calls = 0; callbackState = -2; stage = 0;
             caught = false; failureCode = 0;
             live = 0; drops = 0; invalid = 0; closureDrops = 0;
@@ -246,7 +246,14 @@ TEST_CASE("I/O carriers: empty IoDone survives Future and union subobject cleanu
                 stage = 2;
                 {
                     executor : DirectExecutor;
-                    lease : ExecutorLease! = executor.acquireLease();
+                    lease : ExecutorLease! = null;
+                    try {
+                        lease = executor.acquireLease();
+                    } catch (e: RejectedExecutionException&) {
+                        caught = true;
+                        failureCode = e.getCode();
+                        return;
+                    }
                     operation : k::io::IoOperation! = k::io::prepareOperation<int>(
                         1, null, null, 0, 0L, 0, null, *lease, decodeCount);
                     future : Future<int>! = k::io::futureFor<int>(*operation, decodeCount);
@@ -463,7 +470,7 @@ TEST_CASE("I/O foundations: shared Future cancel hooks survive until target quie
         decode(value: long) : int { return (int) value; }
         @ffi::Extern("C") private k_io_operation_on_kernel_completion(
             operation: k::io::NativeIoOperation*, result: int) : void;
-        test() : int {
+        test() : int throws(RejectedExecutionException) {
             executor : DirectExecutor;
             lease : ExecutorLease! = executor.acquireLease();
             operation : k::io::IoOperation! = k::io::prepareOperation<int>(
@@ -499,7 +506,7 @@ TEST_CASE("I/O Sync bridge: cancelled Futures drain targets and preserve partial
         decode(value: long) : int { return (int) value; }
         @ffi::Extern("C") private k_io_operation_on_kernel_completion(
             operation: k::io::NativeIoOperation*, result: int) : void;
-        prepare() : int {
+        prepare() : int throws(RejectedExecutionException) {
             executor : DirectExecutor;
             lease : ExecutorLease! = executor.acquireLease();
             buffer = k::io::ByteBuffer::allocate(8u);
@@ -616,7 +623,7 @@ TEST_CASE("I/O carriers: resource adoption precedes Future publication and rejec
             if (mode == 1) __k_future_complete(watched, FUTURE_CANCELLED);
         }
         test(fd: int, selectedMode: int) : int throws(ThreadInterruptionException,
-            CancellationException, ExecutionException, IllegalStateException) {
+            CancellationException, ExecutionException, IllegalStateException, RejectedExecutionException) {
             mode = selectedMode;
             claims = 0;
             claimSawPending = false;
@@ -716,7 +723,7 @@ TEST_CASE("EventLoop: lease stays valid and rejects after wrapper destruction",
           "[libk][io][event-loop][lease]") {
     auto jit = gen_jit_with_stdlib(R"SRC(
         module __eventloop_strong_endpoint__;
-        test() : int {
+        test() : int throws(RejectedExecutionException) {
             loop : k::io::EventLoop! = new k::io::EventLoop();
             lease : ExecutorLease! = loop->acquireLease();
             delete loop;
@@ -1022,7 +1029,7 @@ TEST_CASE("I/O carriers: a throwing callback completes its operation without fal
         decode(value: long) : int { return (int) value; }
         @ffi::Extern("C") private k_io_operation_on_kernel_completion(
             operation: k::io::NativeIoOperation*, result: int) : void;
-        test() : int {
+        test() : int throws(RejectedExecutionException) {
             calls = 0;
             observedContext = false;
             loop : k::io::EventLoop;
@@ -1077,7 +1084,7 @@ TEST_CASE("Executor carriers: Runnable failures are contained and diagnosed once
             override run() : void throws(Throwable) { ++runs; throw Exception(915); }
         }
         counts() : int { return runs * 10 + drops; }
-        testLease() : int {
+        testLease() : int throws(RejectedExecutionException) {
             runs = 0;
             drops = 0;
             executor : DirectExecutor;
@@ -1100,7 +1107,7 @@ TEST_CASE("Executor carriers: Runnable failures are contained and diagnosed once
             }
             return -1;
         }
-        testLoop() : int {
+        testLoop() : int throws(RejectedExecutionException) {
             runs = 0;
             drops = 0;
             loop : k::io::EventLoop;
@@ -1146,7 +1153,7 @@ TEST_CASE("Executor carriers: throwing task cleanup is diagnosed and dropped exa
                 throw Exception(917);
             }
         }
-        test() : int {
+        test() : int throws(RejectedExecutionException) {
             drops = 0;
             runs = 0;
             executor : DirectExecutor;

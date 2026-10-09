@@ -57,7 +57,7 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 TEST_CASE("Mutex: lock and unlock on a single thread", "[libk][sync][mutex]") {
     auto jit = jit_k(R"SRC(
         module __sync_mutex_basic__;
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             m : Mutex;
             r : int = 0;
             if (!m.isHeldByCurrentThread()) { ++r; }
@@ -79,7 +79,7 @@ TEST_CASE("Mutex: lock and unlock on a single thread", "[libk][sync][mutex]") {
 TEST_CASE("Mutex: tryLock succeeds on a free lock", "[libk][sync][mutex]") {
     auto jit = jit_k(R"SRC(
         module __sync_mutex_trylock__;
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             m : Mutex;
             r : int = 0;
             if (m.tryLock()) { ++r; }
@@ -124,7 +124,7 @@ TEST_CASE("Mutex: unlock without ownership throws", "[libk][sync][mutex]") {
 TEST_CASE("ReentrantLock: the owner may re-acquire the lock", "[libk][sync][mutex]") {
     auto jit = jit_k(R"SRC(
         module __sync_reentrant__;
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             m : ReentrantLock;
             r : int = 0;
             m.lock();
@@ -152,7 +152,7 @@ TEST_CASE("ReentrantLock: the owner may re-acquire the lock", "[libk][sync][mute
 TEST_CASE("ReentrantLock: tryLock also nests", "[libk][sync][mutex]") {
     auto jit = jit_k(R"SRC(
         module __sync_reentrant_try__;
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             m : ReentrantLock;
             r : int = 0;
             if (m.tryLock()) { ++r; }
@@ -330,7 +330,7 @@ TEST_CASE("Mutex: lockInterruptibly honours a pending interruption", "[libk][syn
             }
         }
 
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             s : Shared;
             ready : CountDownLatch! = new CountDownLatch(1L);
             done : CountDownLatch! = new CountDownLatch(1L);

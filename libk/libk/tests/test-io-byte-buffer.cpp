@@ -24,6 +24,7 @@
  *  - relative and absolute get/put
  *  - bulk transfers and toArray()
  *  - wrap() produces a drainable buffer
+ *  - const sources are preserved while relative reads populate mutable destinations
  *  - overflow and underflow raise IndexOutOfBoundsError
  */
 
@@ -234,6 +235,63 @@ TEST_CASE("ByteBuffer: bulk transfers and toArray", "[libk][io][bytebuffer]") {
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
     REQUIRE(fn() == 63);
+}
+
+TEST_CASE("ByteBuffer: const sources feed relative transfers into mutable destinations",
+          "[libk][io][bytebuffer][regression][const-source]") {
+    auto jit = jit_k(R"SRC(
+        module __bb_const_source__;
+        transfer(src: const byte[]) : int {
+            buffer : k::io::ByteBuffer(4u);
+            buffer.put(src);
+            if (buffer.position() != 4u) return -1;
+            buffer.flip();
+            dst : byte[]! = new byte[6];
+            dst[0] = (byte)99;
+            dst[5] = (byte)99;
+            if (buffer.get(dst, 1u, 4u) != 4u || buffer.position() != 4u) return -2;
+            if (dst[0] != (byte)99 || dst[5] != (byte)99) return -3;
+            for (i : unsigned int = 0u; i < 4u; ++i) {
+                if (dst[i + 1u] != src[i]) return -4;
+            }
+
+            buffer.clear();
+            if (buffer.put(src, 1u, 3u) != 3u || buffer.position() != 3u) return -5;
+            if (buffer.put(src, 0u, 4u) != 1u || buffer.position() != 4u) return -6;
+            buffer.flip();
+            if (buffer.get(dst, 1u, 4u) != 4u || buffer.position() != 4u) return -7;
+            if (dst[1] != (byte)2 || dst[2] != (byte)3 ||
+                dst[3] != (byte)4 || dst[4] != (byte)1 ||
+                dst[0] != (byte)99 || dst[5] != (byte)99) return -8;
+
+            wrapped : k::io::ByteBuffer! = k::io::ByteBuffer::wrap(src);
+            if (wrapped->position() != 0u || wrapped->limit() != 4u) return -9;
+            for (i : unsigned int = 0u; i < 4u; ++i) {
+                if (src[i] != (byte)(i + 1u) || wrapped->get() != src[i]) return -10;
+            }
+
+            buffer.clear();
+            buffer.acquireLease();
+            blocked : int = 0;
+            try { buffer.put(src); }
+            catch (e: k::io::BufferInUseException&) { ++blocked; }
+            try { buffer.put(src, 1u, 3u); }
+            catch (e: k::io::BufferInUseException&) { ++blocked; }
+            buffer.releaseLease();
+            if (blocked != 2 || buffer.position() != 0u) return -11;
+            if (buffer.put(src, 4u, 0u) != 0u || buffer.position() != 0u) return -12;
+            return 1;
+        }
+        test() : int {
+            src : byte[]! = new byte[4];
+            for (i : unsigned int = 0u; i < 4u; ++i) src[i] = (byte)(i + 1u);
+            return transfer(src);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
 }
 
 TEST_CASE("ByteBuffer: overflow and underflow are reported", "[libk][io][bytebuffer]") {

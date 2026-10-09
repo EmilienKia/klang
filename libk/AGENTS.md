@@ -197,6 +197,15 @@ text/codec targets together preserve the original I/O cases; budget splitting
 is not evidence of an allocator fix. Report process-local Catch2 totals and
 hidden fresh-executable lifecycle totals separately.
 
+Lifecycle TLS tests must distinguish guarded access from construction: a local
+`threadlocal` declaration emits an access at the declaration point, and later
+uses call the same helper again. Count successful construction/destruction with
+runtime hooks; the single-access IR fixture uses namespace TLS first accessed
+inside `try`, with an outer local cleanup scope. An expected-abort fork child
+must restore `SIGABRT` to `SIG_DFL` before the fatal hook so the inherited Catch2
+reporter does not turn the intentional refusal into a test failure. Capture its
+diagnostic and verify that the parent's backend and owned descriptor survive.
+
 Focused examples:
 ```bash
 # Sync/thread-related only

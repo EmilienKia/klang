@@ -307,8 +307,8 @@ inline void emit_owner_object_destroy(
     auto& llvm_ctx = builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
     llvm::Value* complete_ptr = ptr_value;
-    // Resolved name wrappers still need canonicalisation before destructor dispatch.
-    auto object_type = type::canonical(alloc_type);
+    // Const qualifies access, not destruction; aliases may also hide it.
+    auto object_type = type::remove_const(type::canonical(alloc_type));
 
     // Handle array types: call destructors on each element in reverse order
     if (auto sized_arr = std::dynamic_pointer_cast<sized_array_type>(object_type)) {

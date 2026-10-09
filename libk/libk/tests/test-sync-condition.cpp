@@ -81,7 +81,7 @@ TEST_CASE("Condition: await without the lock throws", "[libk][sync][condition]")
 TEST_CASE("Condition: signal without the lock throws", "[libk][sync][condition]") {
     auto jit = jit_k(R"SRC(
         module __sync_cond_illegal_signal__;
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             m : Mutex;
             c : Condition! = m.newCondition();
             res : int = 0;
@@ -108,7 +108,7 @@ TEST_CASE("Condition: signal without the lock throws", "[libk][sync][condition]"
 TEST_CASE("Condition: await(Duration) times out and keeps the lock", "[libk][sync][condition]") {
     auto jit = jit_k(R"SRC(
         module __sync_cond_timeout__;
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             m : Mutex;
             c : Condition! = m.newCondition();
             res : int = 0;
@@ -160,7 +160,7 @@ TEST_CASE("Condition: await returns once another thread signals", "[libk][sync][
             }
         }
 
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             s : Shared;
             s.value = 0;
             c : Condition! = s.lock.newCondition();
@@ -224,7 +224,7 @@ TEST_CASE("Condition: signalAll releases every waiter", "[libk][sync][condition]
             }
         }
 
-        test() : int {
+        test() : int throws(IllegalMonitorStateException) {
             s : Shared;
             s.open = false;
             s.woken = 0;

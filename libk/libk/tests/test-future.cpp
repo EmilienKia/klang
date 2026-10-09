@@ -426,7 +426,7 @@ TEST_CASE("Future: a blocking get() is interruptible", "[libk][future][thread]")
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             p : Promise<int>;
             f : Future<int>! = p.future();
             w : Waiter! = new Waiter(f);
@@ -470,7 +470,7 @@ TEST_CASE("Future: completion wins over a concurrent interruption", "[libk][futu
             }
         }
 
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             p : Promise<int>;
             f : Future<int>! = p.future();
             w : Waiter! = new Waiter(f);

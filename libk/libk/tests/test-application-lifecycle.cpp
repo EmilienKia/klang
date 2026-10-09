@@ -187,6 +187,7 @@ struct Runtime {
     int (*stage)(const void*);
     int (*shutdown)();
     void (*application_exit)();
+    void* (*current_application)();
     int (*active)();
     int (*cooperative)();
     void* (*current_thread)();
@@ -204,6 +205,7 @@ struct Runtime {
         stage = symbol<decltype(stage)>(library, "__k_io_op_stage");
         shutdown = symbol<decltype(shutdown)>(library, "k_io_runtime_request_shutdown");
         application_exit = symbol<decltype(application_exit)>(library, "__k_application_shutdown");
+        current_application = symbol<decltype(current_application)>(library, "__k_application_current");
         active = symbol<decltype(active)>(library, "__k_io_is_backend_active");
         cooperative = symbol<decltype(cooperative)>(library, "__k_io_execution_context_is_cancellation_requested");
         current_thread = symbol<decltype(current_thread)>(library, "k_thread_current");
@@ -261,6 +263,9 @@ struct ApplicationFixture {
     int submission = -EINPROGRESS;
     const char* hook_failure = nullptr;
     std::atomic<int> invokes{0}, drops{0}, fields{0}, modules{0}, partial_drops{0};
+    std::atomic<int> tls_initializations{0}, tls_drops{0};
+    int tls_initialization_failures = 0;
+    int fields_at_tls_exit = 1;
     std::atomic<bool> valid{true};
     bool pending = false;
     void fail(const char* message) noexcept {
@@ -273,14 +278,12 @@ ApplicationFixture* fixture;
 
 void replay(Task task) { task.run(task.context); task.drop(task.context); }
 int run_main(k::model::gen::jit& jit, bool throwing = false) {
-    auto main = jit.lookup_main_entry_symbol<int (*)(int, char**)>();
-    REQUIRE(main);
     char program[] = "lifecycle", argument[] = "argument";
     char* argv[]{program, argument, nullptr};
-    if (!throwing) return main(2, argv);
-    auto catcher = jit.lookup_symbol<int (*)(KCallable, int, char**)>("catchMain");
-    REQUIRE(catcher);
-    return catcher({reinterpret_cast<void*>(main), nullptr}, 2, argv);
+    auto result = jit.run_main(2, argv);
+    REQUIRE(result);
+    REQUIRE(result->uncaught_exception == throwing);
+    return result->status;
 }
 
 const std::string application_prelude = R"K(
@@ -291,12 +294,21 @@ const std::string application_prelude = R"K(
     @ffi::Extern("C") lifecycle_capture_drop(alive: int);
     @ffi::Extern("C") lifecycle_field_destroy();
     @ffi::Extern("C") lifecycle_module_destroy();
+    @ffi::Extern("C") lifecycle_tls_initialize() : int;
+    @ffi::Extern("C") lifecycle_tls_destroy();
     @ffi::Extern("C") lifecycle_invoked();
     struct Field {
         value : int = 41;
         ~Field() { lifecycle_field_destroy(); value = 0; }
     }
     struct ModuleProbe { ~ModuleProbe() { lifecycle_module_destroy(); } }
+    struct TlsProbe {
+        value : int = 0;
+        TlsProbe() {
+            if (lifecycle_tls_initialize() != 0) throw Exception(728);
+        }
+        ~TlsProbe() { lifecycle_tls_destroy(); }
+    }
     moduleProbe : ModuleProbe;
     struct CaptureProbe {
         field : Field*;
@@ -304,12 +316,10 @@ const std::string application_prelude = R"K(
         ~CaptureProbe() { lifecycle_capture_drop(field->value); }
     }
     decode(value: long) : int { return (int) value; }
-    catchMain(entry: *(int, byte*):int, argc: int, argv: byte*) : int {
-        try { return entry(argc, argv); }
-        catch (e: Throwable&) { return e.getCode(); }
-    }
 )K";
 const std::string application_body = R"K(
+    threadlocal tlsProbe : TlsProbe;
+    tlsProbe.value = 1;
     probe : CaptureProbe! = new CaptureProbe(&_field);
     lease : ExecutorLease(lifecycle_lease());
     completion : k::io::IoCompletion<int> =
@@ -327,6 +337,7 @@ void application_case(const std::string& declaration, bool pending = false,
     state.handle = handle.value;
     state.fd = handle.fd;
     state.pending = pending;
+    state.fields_at_tls_exit = module_field ? 0 : 1;
     auto jit = gen_jit_with_stdlib(application_prelude + declaration,
                                    LIBK_KDI_DIR, LIBK_LIB_DIR);
     REQUIRE(jit);
@@ -334,12 +345,15 @@ void application_case(const std::string& declaration, bool pending = false,
     INFO("lifecycle hook failure: " << (state.hook_failure ? state.hook_failure : "none"));
     REQUIRE(state.submission == 0);
     REQUIRE_FALSE(state.hook_failure);
-    REQUIRE(result == (throwing ? 723 : 42));
+    REQUIRE(result == (throwing ? k::model::gen::k_main_uncaught_status : 42));
     REQUIRE(state.operation);
     REQUIRE(state.runtime.drained());
     REQUIRE(state.invokes == 0);
     REQUIRE(state.drops == 1);
     REQUIRE(state.fields == (module_field ? 0 : 1));
+    REQUIRE(state.tls_initializations == 1);
+    REQUIRE(state.tls_drops == 1);
+    REQUIRE_FALSE(state.runtime.current_application());
     REQUIRE(state.valid);
     REQUIRE(state.executor.refs == 1);
     if (!pending) {
@@ -352,6 +366,8 @@ void application_case(const std::string& declaration, bool pending = false,
     jit.reset();
     REQUIRE(state.fields == 1);
     REQUIRE(state.modules == 1);
+    REQUIRE(state.tls_initializations == 1);
+    REQUIRE(state.tls_drops == 1);
     REQUIRE(state.valid);
     handle.reset();
     REQUIRE(fcntl(state.fd, F_GETFD) >= 0); // the native observer still retains the handle
@@ -412,11 +428,13 @@ extern "C" void lifecycle_publish(void* operation) noexcept {
 }
 extern "C" void lifecycle_invoked() noexcept { ++fixture->invokes; }
 extern "C" void lifecycle_capture_drop(int alive) noexcept {
-    if (alive != 41 || fixture->fields != 0) fixture->valid = false;
+    if (alive != 41 || fixture->fields != 0 || !fixture->runtime.current_application())
+        fixture->valid = false;
     ++fixture->drops;
 }
 extern "C" void lifecycle_field_destroy() noexcept {
-    if (!fixture->runtime.drained() || fixture->drops != 1 || fixture->invokes != 0)
+    if (!fixture->runtime.drained() || fixture->drops != 1 || fixture->invokes != 0 ||
+        fixture->runtime.current_application())
         fixture->valid = false;
     ++fixture->fields;
 }
@@ -426,6 +444,15 @@ extern "C" void lifecycle_module_destroy() noexcept {
     ++fixture->modules;
 }
 extern "C" void lifecycle_partial_drop() noexcept { ++fixture->partial_drops; }
+extern "C" int lifecycle_tls_initialize() noexcept {
+    return ++fixture->tls_initializations <= fixture->tls_initialization_failures ? 1 : 0;
+}
+extern "C" void lifecycle_tls_destroy() noexcept {
+    if (!fixture->runtime.drained() || fixture->fields != fixture->fields_at_tls_exit ||
+        fixture->runtime.current_application())
+        fixture->valid = false;
+    ++fixture->tls_drops;
+}
 
 TEST_CASE("Lifecycle child: explicit Application args and queued capture",
           "[.application-lifecycle-child]") {
@@ -483,6 +510,86 @@ TEST_CASE("Lifecycle child: virtual main exception drains before fields and resu
     )K", false, true);
 }
 
+TEST_CASE("Lifecycle child: direct main exception drains before fields and resumes",
+          "[.application-lifecycle-child]") {
+    application_case(R"K(
+        class Application : public k::Application {
+            _field : Field;
+            public main(args: const String[]) : int throws(Throwable) {
+    )K" + application_body + R"K(
+                throw Exception(723);
+            }
+        }
+    )K", false, true);
+}
+
+TEST_CASE("Lifecycle child: virtual main return drains before fields and TLS",
+          "[.application-lifecycle-child]") {
+    application_case(R"K(
+        abstract class Layer : public k::Application {
+            public main() -> delete;
+            public main(args: const String[]) -> delete;
+            public main() : int -> delete;
+            public abstract main(args: const String[]) : int throws(Throwable);
+        }
+        class Application : public Layer {
+            _field : Field;
+            public main(args: const String[]) : int throws(Throwable) {
+    )K" + application_body + R"K(
+                return args.size + 40;
+            }
+        }
+    )K");
+}
+
+TEST_CASE("Lifecycle child: failed TLS initialization unwinds to catch and retries once",
+          "[.application-lifecycle-child]") {
+    ApplicationFixture state;
+    fixture = &state;
+    state.fields_at_tls_exit = 0;
+    state.tls_initialization_failures = 1;
+    auto jit = gen_jit_with_stdlib(R"K(
+        module __lifecycle_tls_retry__;
+        @ffi::Extern("C") lifecycle_tls_initialize() : int;
+        @ffi::Extern("C") lifecycle_tls_destroy();
+        @ffi::Extern("C") lifecycle_partial_drop();
+        struct LocalProbe { ~LocalProbe() { lifecycle_partial_drop(); } }
+        struct TlsProbe {
+            value : int = 42;
+            TlsProbe() {
+                if (lifecycle_tls_initialize() != 0) throw Exception(728);
+            }
+            ~TlsProbe() { lifecycle_tls_destroy(); }
+        }
+        touchTls() : int {
+            localProbe : LocalProbe;
+            threadlocal probe : TlsProbe;
+            return probe.value;
+        }
+        class Application : public k::Application {
+            public main() : int throws(Throwable) {
+                caught : bool = false;
+                try { touchTls(); }
+                catch (error: Throwable&) { caught = error.getCode() == 728; }
+                if (!caught) return 1;
+                if (touchTls() != 42 || touchTls() != 42) return 2;
+                return 42;
+            }
+        }
+    )K", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    REQUIRE(run_main(*jit) == 42);
+    REQUIRE(state.partial_drops == 3);
+    REQUIRE(state.tls_initializations == 2); // failed attempt, then one successful construction
+    REQUIRE(state.tls_drops == 1);
+    REQUIRE(state.runtime.drained());
+    REQUIRE_FALSE(state.runtime.current_application());
+    REQUIRE(state.valid);
+    jit.reset();
+    REQUIRE(state.tls_drops == 1);
+    fixture = nullptr;
+}
+
 TEST_CASE("Lifecycle child: unused implicit Applications leave runtime virgin",
           "[.application-lifecycle-child]") {
     Runtime runtime(false);
@@ -515,13 +622,9 @@ TEST_CASE("Lifecycle child: failed Application constructor only destroys complet
             ~Application() { lifecycle_partial_drop(); lifecycle_partial_drop(); }
             public main() : int { return 0; }
         }
-        catchMain(entry: *(int, byte*):int, argc: int, argv: byte*) : int {
-            try { return entry(argc, argv); }
-            catch (e: Throwable&) { return e.getCode(); }
-        }
     )K", LIBK_KDI_DIR, LIBK_LIB_DIR);
     REQUIRE(jit);
-    REQUIRE(run_main(*jit, true) == 724);
+    REQUIRE(run_main(*jit, true) == k::model::gen::k_main_uncaught_status);
     REQUIRE(state.partial_drops == 1);
     REQUIRE(state.runtime.drained());
     fixture = nullptr;
@@ -695,27 +798,64 @@ TEST_CASE("Lifecycle child: executor-only failed I/O retains and drops queued de
 TEST_CASE("Lifecycle child: inherited runtime is rejected without locking or closing parent",
           "[.application-lifecycle-child]") {
     Runtime runtime;
+    MockHandle handle(runtime);
+    // A shutdown that touches inherited backend locks would hang until the child's alarm.
+    std::unique_lock backend_lock(runtime.backend->mutex);
     pid_t child = fork();
+    if (child != 0) backend_lock.unlock();
     REQUIRE(child >= 0);
-    if (!child) _exit(runtime.shutdown() == -ENOTSUP ? 0 : 1);
+    if (!child) {
+        alarm(5);
+        _exit(runtime.shutdown() == -ENOTSUP ? 0 : 1);
+    }
     int status = 0;
     REQUIRE(waitpid(child, &status, 0) == child);
     REQUIRE(WIFEXITED(status));
     REQUIRE(WEXITSTATUS(status) == 0);
+    REQUIRE(runtime.active() == 1);
+    REQUIRE(runtime.destroyed == 0);
+    REQUIRE(fcntl(handle.fd, F_GETFD) >= 0);
+    int diagnostic_pipe[2];
+    REQUIRE(pipe(diagnostic_pipe) == 0);
+    backend_lock.lock();
     child = fork();
+    if (child != 0) backend_lock.unlock();
     REQUIRE(child >= 0);
     if (!child) {
+        alarm(5);
+        close(diagnostic_pipe[0]);
+        if (dup2(diagnostic_pipe[1], STDERR_FILENO) < 0) _exit(2);
+        close(diagnostic_pipe[1]);
+        // This expected abort must not enter the inherited Catch2 fatal-signal reporter.
+        struct sigaction action{};
+        action.sa_handler = SIG_DFL;
+        if (sigemptyset(&action.sa_mask) != 0 || sigaction(SIGABRT, &action, nullptr) != 0)
+            _exit(2);
         rlimit limit{0, 0};
         if (setrlimit(RLIMIT_CORE, &limit) != 0) _exit(2);
         runtime.application_exit();
         _exit(1);
     }
+    close(diagnostic_pipe[1]);
     REQUIRE(waitpid(child, &status, 0) == child);
+    char diagnostic[256]{};
+    ssize_t length;
+    do { length = read(diagnostic_pipe[0], diagnostic, sizeof(diagnostic) - 1); }
+    while (length < 0 && errno == EINTR);
+    close(diagnostic_pipe[0]);
+    REQUIRE(length > 0);
+    const std::string message(diagnostic, static_cast<size_t>(length));
+    INFO(message);
     REQUIRE(WIFSIGNALED(status));
     REQUIRE(WTERMSIG(status) == SIGABRT);
+    REQUIRE(message.find("Application shutdown failed:") != std::string::npos);
+    REQUIRE(message.find("(" + std::to_string(ENOTSUP) + ")") != std::string::npos);
     REQUIRE(runtime.active() == 1);
+    REQUIRE(runtime.destroyed == 0);
+    REQUIRE(fcntl(handle.fd, F_GETFD) >= 0);
     REQUIRE(runtime.shutdown() == 0);
     REQUIRE(runtime.drained());
+    REQUIRE(fcntl(handle.fd, F_GETFD) >= 0);
 }
 
 TEST_CASE("Lifecycle child: compiled K loopback fields release only after runtime stop",
@@ -771,6 +911,9 @@ TEST_CASE("Application lifecycle: isolated native and compiled K exit gates",
         "Lifecycle child: pending target and linked timeout before Application fields",
         "Lifecycle child: implicit Application protects module field captures",
         "Lifecycle child: virtual main exception drains before fields and resumes",
+        "Lifecycle child: direct main exception drains before fields and resumes",
+        "Lifecycle child: virtual main return drains before fields and TLS",
+        "Lifecycle child: failed TLS initialization unwinds to catch and retries once",
         "Lifecycle child: unused implicit Applications leave runtime virgin",
         "Lifecycle child: failed Application constructor only destroys completed members",
         "Lifecycle child: system callback cooperation and completed drop",
@@ -802,9 +945,17 @@ TEST_CASE("Application lifecycle: proxy IR protects construction args and direct
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
     resolver->add_search_dir(LIBK_KDI_DIR);
     compiler->set_file_resolver(resolver);
-    std::string source = "module __lifecycle_proxy_ir__;\n";
+    std::string source = R"K(
+        module __lifecycle_proxy_ir__;
+        struct TlsProbe {
+            value : int = 0;
+            ~TlsProbe() {}
+        }
+        threadlocal tlsProbe : TlsProbe;
+    )K";
     if (indirect) source += R"K(
-        abstract class Layer : public k::Application {
+        class Prefix { padding : long = 0L; }
+        abstract class Layer : public Prefix, public k::Application {
             public main() -> delete;
             public main() : int -> delete;
             public main(args: const String[]) -> delete;
@@ -815,6 +966,9 @@ TEST_CASE("Application lifecycle: proxy IR protects construction args and direct
                        : "class Application : public k::Application {\n";
     source += R"K(
             public main(args: const String[]) : int throws(Throwable) {
+                localProbe : TlsProbe;
+                try { tlsProbe.value = 1; }
+                catch (e: Throwable&) { return e.getCode(); }
                 throw Exception(723);
             }
         }
@@ -823,21 +977,44 @@ TEST_CASE("Application lifecycle: proxy IR protects construction args and direct
     auto context = compiler->get_context_for_test();
     REQUIRE(context);
     auto& module = context->module();
+    REQUIRE_FALSE(llvm::verifyModule(module, &llvm::errs()));
     llvm::Function* proxy = nullptr;
     llvm::BasicBlock* cleanup = nullptr;
+    int tls_initializers = 0, tls_init_invokes = 0;
     for (auto& function : module) {
+        if (function.getName().ends_with(".tls_init")) ++tls_initializers;
         for (auto& block : function) {
+            for (auto& instruction : block) {
+                if (auto* invoke = llvm::dyn_cast<llvm::InvokeInst>(&instruction)) {
+                    REQUIRE(invoke->getNormalDest()->getParent() == &function);
+                    REQUIRE(invoke->getUnwindDest()->getParent() == &function);
+                }
+                if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+                    auto* callee = call->getCalledFunction();
+                    if (callee && callee->getName().ends_with(".tls_init")) {
+                        auto* invoke = llvm::dyn_cast<llvm::InvokeInst>(call);
+                        REQUIRE(invoke);
+                        auto* landing_pad = invoke->getUnwindDest()->getLandingPadInst();
+                        REQUIRE(landing_pad);
+                        REQUIRE(landing_pad->getNumClauses() == 1);
+                        ++tls_init_invokes;
+                    }
+                }
+            }
             if (block.getName() == "application_cleanup_lpad") {
                 proxy = &function;
                 cleanup = &block;
             }
         }
     }
+    REQUIRE(tls_initializers == 1);
+    REQUIRE(tls_init_invokes == 1);
     REQUIRE(proxy);
     REQUIRE(proxy->arg_size() == 2);
     REQUIRE(proxy->hasPersonalityFn());
     REQUIRE_FALSE(llvm::verifyFunction(*proxy, &llvm::errs()));
     int invokes = 0, shutdown_calls = 0, argv_invokes = 0, indirect_invokes = 0;
+    int deactivate_calls = 0, flush_calls = 0, tls_calls = 0;
     for (auto& block : *proxy) {
         for (auto& instruction : block) {
             if (auto* invoke = llvm::dyn_cast<llvm::InvokeInst>(&instruction)) {
@@ -850,11 +1027,17 @@ TEST_CASE("Application lifecycle: proxy IR protects construction args and direct
             if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
                 auto* callee = call->getCalledFunction();
                 if (callee && callee->getName() == "__k_application_shutdown") ++shutdown_calls;
+                if (callee && callee->getName() == "__k_application_deactivate") ++deactivate_calls;
+                if (callee && callee->getName().contains("__k_application_flush_standard_streams")) ++flush_calls;
+                if (callee && callee->getName() == "__k_tls_thread_exit") ++tls_calls;
             }
         }
     }
     REQUIRE(invokes >= 3); // constructor, argv conversion, user main
     REQUIRE(argv_invokes == 1);
     REQUIRE(shutdown_calls == 2); // normal and exceptional cleanup
+    REQUIRE(deactivate_calls == 2);
+    REQUIRE(flush_calls == 2);
+    REQUIRE(tls_calls == 2);
     REQUIRE(indirect_invokes == (indirect ? 1 : 0));
 }

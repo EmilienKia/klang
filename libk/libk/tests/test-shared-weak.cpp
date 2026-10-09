@@ -1128,22 +1128,260 @@ TEST_CASE("Same-group assignments replace adjusted Shared and Weak views",
     dropWeak(rightWeak);
 }
 
-TEST_CASE("Shared converting views reject const removal",
-          "[libk][shared][conversion][diagnostic]") {
-    REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __shared_const_drop__;
+TEST_CASE("Shared and Weak convert const handles without making the object const",
+          "[libk][shared][weak][conversion][const]") {
+    auto j = jit_shared("const_handle_conversion", R"SRC(
+        derivedDestroyed : int = 0;
         class Base {
-            public Base() {}
-            public virtualMethod() : int { return 0; }
+            public number : int;
+            Base() : number(42) {}
+            public const virtualMethod() : int { return number; }
         }
         class Derived : public Base {
-            public Derived() {}
-            public value() : int { return 42; }
+            public Derived() : Base() {}
+            ~Derived() { ++derivedDestroyed; }
+        }
+        test() : int {
+            source : Shared<Derived>(new Derived());
+            borrowed : const Shared<Derived>& = source;
+            sourceView : Derived* = borrowed.get();
+            derivedObserver : Weak<Derived>(borrowed);
+            borrowedWeak : const Weak<Derived>& = derivedObserver;
+            observer : Weak<Base>;
+            {
+                converted : Shared<Base>(borrowed);
+                fromShared : Weak<Base>(borrowed);
+                observer = borrowed;
+                fromWeak : Weak<Base>(borrowedWeak);
+                assignedWeak : Weak<Base>;
+                assignedWeak = borrowedWeak;
+                assigned : Shared<Base>;
+                assigned = borrowed;
+                shared : Shared<Base>;
+                shared.share(borrowed);
+                if (source.useCount() != 4) return 1;
+                if (observer.useCount() != 4) return 2;
+                locked : Shared<Base> = observer.lock();
+                if (source.useCount() != 5) return 3;
+                ++converted.get()->number;
+                if (sourceView->virtualMethod() != 43) return 4;
+                if (locked.get()->virtualMethod() != 43) return 5;
+                if (assigned.get() != shared.get()) return 6;
+                weakLocked : Shared<Base> = fromWeak.lock();
+                if (!weakLocked || weakLocked.get() != converted.get()) return 13;
+                weakLocked.reset();
+                if (fromShared.useCount() != 5 || assignedWeak.useCount() != 5) return 14;
+                try {
+                    promoted : Shared<Base>(borrowedWeak);
+                    if (promoted.useCount() != 6 || promoted.get() != converted.get()) return 15;
+                } catch (e : BadWeakReferenceException&) {
+                    return 16;
+                }
+                source.reset();
+                if (derivedDestroyed != 0) return 7;
+                if (converted.useCount() != 4) return 8;
+                if (converted.get()->number != 43) return 9;
+            }
+            if (derivedDestroyed != 1) return 10;
+            if (!observer.expired()) return 11;
+            if (observer.lock()) return 12;
+            expiredCopy : Weak<Base>(borrowedWeak);
+            expiredDrain : Weak<Base>(#derivedObserver);
+            if (!expiredCopy.expired() || !expiredDrain.expired()) return 17;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Shared and Weak converting views preserve const pointees",
+          "[libk][shared][weak][conversion][const]") {
+    auto j = jit_shared("const_pointee_conversion", R"SRC(
+        derivedDestroyed : int = 0;
+        class Base {
+            public Base() {}
+            public const virtualMethod() : int { return 42; }
+        }
+        class Derived : public Base {
+            public Derived() : Base() {}
+            ~Derived() { ++derivedDestroyed; }
         }
         test() : int {
             source : Shared<const Derived>(new Derived());
-            destination : Shared<Base>(source);
+            borrowed : const Shared<const Derived>& = source;
+            observer : Weak<const Base>(borrowed);
+            derivedObserver : Weak<const Derived>(borrowed);
+            borrowedWeak : const Weak<const Derived>& = derivedObserver;
+            staticObserver : Weak<const Base>(borrowedWeak);
+            drainSource : Weak<const Derived>(borrowedWeak);
+            drainedObserver : Weak<const Base>(#drainSource);
+            {
+                converted : Shared<const Base>(borrowed);
+                if (source.useCount() != 2) return 1;
+                assigned : Shared<const Base>;
+                assigned = borrowed;
+                shared : Shared<const Base>;
+                shared.share(borrowed);
+                moveSource : Shared<const Derived>(borrowed);
+                moved : Shared<const Base>(#moveSource);
+                if (moveSource || source.useCount() != 5) return 8;
+                if (assigned.get() != converted.get() || shared.get() != moved.get()) return 9;
+                lockedStatic : Shared<const Base> = staticObserver.lock();
+                lockedDrain : Shared<const Base> = drainedObserver.lock();
+                if (!lockedStatic || !lockedDrain || source.useCount() != 7) return 10;
+                lockedStatic.reset();
+                lockedDrain.reset();
+                source.reset();
+                if (derivedDestroyed != 0) return 2;
+                if (converted.get()->virtualMethod() != 42) return 3;
+                locked : Shared<const Base> = observer.lock();
+                if (locked.useCount() != 5) return 4;
+                if (locked.get() != converted.get()) return 5;
+            }
+            if (derivedDestroyed != 1) return 6;
+            if (!observer.expired()) return 7;
+            expiredCopy : Weak<const Base>(borrowedWeak);
+            expiredDrain : Weak<const Base>(#derivedObserver);
+            if (!expiredCopy.expired() || !expiredDrain.expired()) return 11;
+            if (expiredCopy.lock() || expiredDrain.lock()) return 12;
             return 0;
         }
-    )SRC"));
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Shared and Weak views can add pointee constness without changing ownership",
+          "[libk][shared][weak][conversion][const]") {
+    auto j = jit_shared("add_pointee_const", R"SRC(
+        derivedDestroyed : int = 0;
+        class Base {
+            public Base() {}
+            public const read() : int { return 42; }
+        }
+        class Derived : public Base {
+            public Derived() : Base() {}
+            ~Derived() { ++derivedDestroyed; }
+        }
+        test() : int {
+            source : Shared<Derived>(new Derived());
+            observer : Weak<Derived>(source);
+            {
+                sameType : Shared<const Derived>(source);
+                base : Shared<const Base>(source);
+                weakBase : Weak<const Base>(observer);
+                weakFromShared : Weak<const Base>(source);
+                locked : Shared<const Base> = weakBase.lock();
+                if (source.useCount() != 4) return 1;
+                if (base.get() != locked.get()) return 2;
+                if (sameType.get()->read() != 42) return 3;
+                source.reset();
+                if (derivedDestroyed != 0 || weakFromShared.useCount() != 3) return 4;
+            }
+            if (derivedDestroyed != 1 || !observer.expired()) return 5;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Const owners invoke destructors on explicit deletion and scope exit",
+          "[libk][shared][const][owner]") {
+    auto j = jit_shared("const_owner_destruction", R"SRC(
+        test() : int {
+            {
+                scoped : const Box! = new Box(42);
+                deleted : const Box! = new Box(17);
+                delete deleted;
+                if (deleted != null || destroyed != 1) return 1;
+                delete deleted;
+                if (destroyed != 1) return 2;
+            }
+            if (destroyed != 2) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Shared converting views reject const removal",
+          "[libk][shared][conversion][diagnostic]") {
+    for (const auto* operation : {
+            "destination : Shared<Base>(borrowed);",
+            "destination : Shared<Base>(#source);",
+            "destination : Shared<Base>; destination = borrowed;",
+            "destination : Shared<Base>; destination = #source;",
+            "destination : Shared<Base>; destination.share(borrowed);",
+            "destination : Shared<Base>(borrowedWeak);"}) {
+        DYNAMIC_SECTION(operation) {
+            const std::string source = std::string(R"SRC(
+                module __shared_const_drop__;
+                class Base {
+                    public Base() {}
+                    public const virtualMethod() : int { return 0; }
+                }
+                class Derived : public Base {
+                    public Derived() : Base() {}
+                }
+                test() : int {
+                    source : Shared<const Derived>(new Derived());
+                    borrowed : const Shared<const Derived>& = source;
+                    observer : Weak<const Derived>(source);
+                    borrowedWeak : const Weak<const Derived>& = observer;
+            )SRC") + operation + R"SRC(
+                    return 0;
+                }
+            )SRC";
+            REQUIRE_THROWS_WITH(gen_jit_throws(source),
+                Catch::Matchers::ContainsSubstring("cannot remove const qualification"));
+        }
+    }
+}
+
+TEST_CASE("Weak converting views reject const removal",
+          "[libk][shared][weak][conversion][diagnostic]") {
+    for (const auto* operation : {
+            "destination : Weak<Base>(borrowed);",
+            "destination : Weak<Base>; destination = borrowed;",
+            "destination : Weak<Base>(borrowedWeak);",
+            "destination : Weak<Base>(#observer);",
+            "destination : Weak<Base>; destination = borrowedWeak;",
+            "destination : Weak<Base>; destination = #observer;",
+            "destination : Weak<Derived>(baseObserver);",
+            "destination : Weak<Derived>(#baseObserver);"}) {
+        DYNAMIC_SECTION(operation) {
+            const std::string source = std::string(R"SRC(
+                module __weak_const_drop__;
+                class Base {
+                    public Base() {}
+                    public const virtualMethod() : int { return 0; }
+                }
+                class Derived : public Base {
+                    public Derived() : Base() {}
+                }
+                test() : int {
+                    source : Shared<const Derived>(new Derived());
+                    borrowed : const Shared<const Derived>& = source;
+                    observer : Weak<const Derived>(source);
+                    borrowedWeak : const Weak<const Derived>& = observer;
+                    baseObserver : Weak<const Base>(source);
+            )SRC") + operation + R"SRC(
+                    return 0;
+                }
+            )SRC";
+            REQUIRE_THROWS_WITH(gen_jit_throws(source),
+                Catch::Matchers::ContainsSubstring("cannot remove const qualification"));
+        }
+    }
 }

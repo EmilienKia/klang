@@ -74,13 +74,13 @@ TEST_CASE("FixedClock: returns fixed instant and 1ns resolution", "[libk][time][
     auto jit = jit_k(R"SRC(
         module __test_fixed_clock__;
 
-        test_now_sec() : long throws(k::time::TimeScaleDataUnavailableException, k::time::TimeDataUnavailableException) {
+        test_now_sec() : long throws(k::time::TimeScaleDataUnavailableException, k::time::TimeDataUnavailableException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(1000L, 500);
             clock : k::time::FixedClock(inst);
             return clock.now().epochSeconds();
         }
 
-        test_now_nano() : int throws(k::time::TimeScaleDataUnavailableException, k::time::TimeDataUnavailableException) {
+        test_now_nano() : int throws(k::time::TimeScaleDataUnavailableException, k::time::TimeDataUnavailableException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(1000L, 500);
             clock : k::time::FixedClock(inst);
             return clock.now().nanoAdjustment();
@@ -93,7 +93,7 @@ TEST_CASE("FixedClock: returns fixed instant and 1ns resolution", "[libk][time][
         }
 
         // Test polymorphically via Clock interface reference
-        test_via_interface() : long throws(k::time::TimeScaleDataUnavailableException, k::time::TimeDataUnavailableException) {
+        test_via_interface() : long throws(k::time::TimeScaleDataUnavailableException, k::time::TimeDataUnavailableException, k::time::TemporalArithmeticException) {
             inst : k::time::Instant = k::time::Instant::ofEpochSecond(42L, 0);
             clock : k::time::FixedClock(inst);
             clkRef : k::time::Clock& = clock;
@@ -127,7 +127,7 @@ TEST_CASE("SequenceClock: sequence progression and remaining count", "[libk][tim
     auto jit = jit_k(R"SRC(
         module __test_sequence_clock__;
 
-        test_progression() : int throws(k::time::TimeDataUnavailableException) {
+        test_progression() : int throws(k::time::TimeDataUnavailableException, k::time::TemporalArithmeticException) {
             values : k::time::Instant[3]{
                 k::time::Instant::ofEpochSecond(10L, 0),
                 k::time::Instant::ofEpochSecond(20L, 0),
@@ -152,7 +152,7 @@ TEST_CASE("SequenceClock: sequence progression and remaining count", "[libk][tim
             return 0; // all succeeded
         }
 
-        test_exhaustion() : int {
+        test_exhaustion() : int throws(k::time::TemporalArithmeticException) {
             values : k::time::Instant[1]{
                 k::time::Instant::ofEpochSecond(100L, 0)
             };
@@ -466,14 +466,14 @@ TEST_CASE("PosixTimestamp: normalization, ordering, duration arithmetic", "[libk
             return 0;
         }
 
-        test_to_instant_succeeds() : int {
+        test_to_instant_succeeds() : int throws(k::time::TemporalArithmeticException) {
             pt : k::time::PosixTimestamp = k::time::PosixTimestamp::ofSeconds(100L, 0);
             inst : k::time::Instant = pt.toInstant();
             if (inst.epochSeconds() == 100L) return 1;
             return 0;
         }
 
-        test_instant_from_posix_succeeds() : int {
+        test_instant_from_posix_succeeds() : int throws(k::time::TemporalArithmeticException) {
             pt : k::time::PosixTimestamp = k::time::PosixTimestamp::ofSeconds(100L, 0);
             inst : k::time::Instant = k::time::Instant::fromPosixTimestamp(pt);
             if (inst.epochSeconds() == 100L) return 1;

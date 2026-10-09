@@ -66,7 +66,7 @@ TEST_CASE("DirectExecutor: synchronous execution in calling thread", "[libk][exe
             g_value = 42;
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException) {
             g_value = 0;
             exec : DirectExecutor;
             exec.execute(task);
@@ -88,7 +88,7 @@ TEST_CASE("DirectExecutor: priority overload executes synchronously", "[libk][ex
             g_value = 100;
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException) {
             g_value = 0;
             exec : DirectExecutor;
             exec.execute(task, 10);
@@ -105,7 +105,7 @@ TEST_CASE("DirectExecutor: null task is safely ignored", "[libk][executor][direc
     auto jit = jit_k(R"SRC(
         module __test_direct_exec_null__;
 
-        test() : int {
+        test() : int throws(RejectedExecutionException) {
             exec : DirectExecutor;
             dummy : int = 0;
             f1 : !() = [dummy]() {};
@@ -135,11 +135,15 @@ TEST_CASE("SingleThreadExecutor: executes task in worker thread", "[libk][execut
         task() : void {
             g_lock.lock();
             g_value = 42;
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_value = -1;
+            }
             g_latch.countDown();
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException, IllegalMonitorStateException) {
             g_value = 0;
             exec : SingleThreadExecutor;
             exec.execute(task);
@@ -173,7 +177,11 @@ TEST_CASE("SingleThreadExecutor: executes tasks in FIFO order for equal priority
             g_lock.lock();
             if (g_order != 0) { g_success = false; }
             g_order = 1;
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_success = false;
+            }
             g_latch.countDown();
         }
 
@@ -181,7 +189,11 @@ TEST_CASE("SingleThreadExecutor: executes tasks in FIFO order for equal priority
             g_lock.lock();
             if (g_order != 1) { g_success = false; }
             g_order = 2;
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_success = false;
+            }
             g_latch.countDown();
         }
 
@@ -189,11 +201,15 @@ TEST_CASE("SingleThreadExecutor: executes tasks in FIFO order for equal priority
             g_lock.lock();
             if (g_order != 2) { g_success = false; }
             g_order = 3;
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_success = false;
+            }
             g_latch.countDown();
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException, IllegalMonitorStateException) {
             exec : SingleThreadExecutor;
 
             exec.execute(task1);
@@ -227,32 +243,48 @@ TEST_CASE("SingleThreadExecutor: priority-based task scheduling", "[libk][execut
 
         blockingTask() : void {
             // Block the single worker until all queued tasks are submitted
-            g_blocker.await();
+            try {
+                g_blocker.await();
+            } catch (e: ThreadInterruptionException&) {
+                g_history = -1000;
+            }
             g_done.countDown();
         }
 
         lowPrioTask() : void {
             g_lock.lock();
             g_history = g_history * 10 + 1; // 1 represents low priority task
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_history = -1000;
+            }
             g_done.countDown();
         }
 
         mediumPrioTask() : void {
             g_lock.lock();
             g_history = g_history * 10 + 2; // 2 represents medium priority task
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_history = -1000;
+            }
             g_done.countDown();
         }
 
         highPrioTask() : void {
             g_lock.lock();
             g_history = g_history * 10 + 3; // 3 represents high priority task
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_history = -1000;
+            }
             g_done.countDown();
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException, IllegalMonitorStateException) {
             exec : SingleThreadExecutor;
 
             // First task blocks the worker thread
@@ -296,11 +328,16 @@ TEST_CASE("SingleThreadExecutor: exception in task does not kill worker thread",
         g_latch : CountDownLatch(2L);
         g_lock  : Mutex;
         g_stage : int = 0;
+        g_failed : CountDownLatch(1L);
 
         failingTask() : void {
             g_lock.lock();
             g_stage = 1;
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_failed.countDown();
+            }
             g_latch.countDown();
             throw CustomException();
         }
@@ -308,11 +345,15 @@ TEST_CASE("SingleThreadExecutor: exception in task does not kill worker thread",
         succeedingTask() : void {
             g_lock.lock();
             g_stage = 2;
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_failed.countDown();
+            }
             g_latch.countDown();
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException, IllegalMonitorStateException) {
             exec : SingleThreadExecutor;
 
             exec.execute(failingTask);
@@ -327,7 +368,7 @@ TEST_CASE("SingleThreadExecutor: exception in task does not kill worker thread",
             g_lock.unlock();
 
             // Stage 2 must have completed despite task 1 throwing
-            return res;
+            return g_failed.count() == 0L ? -1 : res;
         }
     )SRC");
     REQUIRE(jit);
@@ -380,30 +421,37 @@ TEST_CASE("ThreadPoolExecutor: concurrent execution with multiple workers", "[li
         g_lock       : Mutex;
         g_activeMax  : int = 0;
         g_current    : int = 0;
+        g_failed     : CountDownLatch(1L);
 
         workerTask() : void {
-            // Signal that this worker is running
-            g_startLatch.countDown();
-            // Wait for all 3 workers to reach this point simultaneously
-            g_allReady.await();
+            try {
+                // Signal that this worker is running
+                g_startLatch.countDown();
+                // Wait for all 3 workers to reach this point simultaneously
+                g_allReady.await();
 
-            g_lock.lock();
-            g_current = g_current + 1;
-            if (g_current > g_activeMax) {
-                g_activeMax = g_current;
+                g_lock.lock();
+                g_current = g_current + 1;
+                if (g_current > g_activeMax) {
+                    g_activeMax = g_current;
+                }
+                g_lock.unlock();
+
+                Thread::sleep(Duration::ofMillis(20L));
+
+                g_lock.lock();
+                g_current = g_current - 1;
+                g_lock.unlock();
+            } catch (e: ThreadInterruptionException&) {
+                g_failed.countDown();
+            } catch (e: IllegalMonitorStateException&) {
+                g_failed.countDown();
             }
-            g_lock.unlock();
-
-            Thread::sleep(Duration::ofMillis(20L));
-
-            g_lock.lock();
-            g_current = g_current - 1;
-            g_lock.unlock();
 
             g_doneLatch.countDown();
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException, IllegalMonitorStateException) {
             exec : ThreadPoolExecutor(3);
 
             exec.execute(workerTask);
@@ -423,7 +471,7 @@ TEST_CASE("ThreadPoolExecutor: concurrent execution with multiple workers", "[li
             maxConc : int = g_activeMax;
             g_lock.unlock();
 
-            return maxConc;
+            return g_failed.count() == 0L ? -1 : maxConc;
         }
     )SRC");
     REQUIRE(jit);
@@ -439,15 +487,20 @@ TEST_CASE("ThreadPoolExecutor: batch task processing", "[libk][executor][pool][s
         g_lock    : Mutex;
         g_counter : int = 0;
         g_latch   : CountDownLatch(60L);
+        g_failed  : CountDownLatch(1L);
 
         increment() : void {
             g_lock.lock();
             g_counter = g_counter + 1;
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_failed.countDown();
+            }
             g_latch.countDown();
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException, IllegalMonitorStateException) {
             exec : ThreadPoolExecutor(4);
 
             i : int = 0;
@@ -464,7 +517,7 @@ TEST_CASE("ThreadPoolExecutor: batch task processing", "[libk][executor][pool][s
             res : int = g_counter;
             g_lock.unlock();
 
-            return res;
+            return g_failed.count() == 0L ? -1 : res;
         }
     )SRC");
     REQUIRE(jit);
@@ -482,16 +535,23 @@ TEST_CASE("ThreadPoolExecutor: shutdownNow clears pending tasks", "[libk][execut
         g_lock     : Mutex;
 
         blockingTask() : void {
-            g_blocker.await();
+            try {
+                g_blocker.await();
+            } catch (e: ThreadInterruptionException&) {
+            }
         }
 
         pendingTask() : void {
             g_lock.lock();
             g_executed = g_executed + 1;
-            g_lock.unlock();
+            try {
+                g_lock.unlock();
+            } catch (e: IllegalMonitorStateException&) {
+                g_executed = -1;
+            }
         }
 
-        test() : int {
+        test() : int throws(RejectedExecutionException, ThreadInterruptionException, IllegalMonitorStateException) {
             exec : SingleThreadExecutor;
 
             // Worker blocked
@@ -558,7 +618,11 @@ TEST_CASE("Executor: template execute<R> returns Future on SingleThreadExecutor"
         test() : int throws(Throwable) {
             exec : SingleThreadExecutor;
             f : Future<int>! = exec.execute<int>([]() : int {
-                Thread::sleep(Duration::ofMillis(20L));
+                try {
+                    Thread::sleep(Duration::ofMillis(20L));
+                } catch (e: ThreadInterruptionException&) {
+                    return -1;
+                }
                 return 100;
             });
             res : int = 0;
@@ -583,9 +647,14 @@ TEST_CASE("Executor: template execute<R> with priority on SingleThreadExecutor",
         module __test_exec_future_prio__;
 
         g_blocker : CountDownLatch(1L);
+        g_failed : CountDownLatch(1L);
 
         blockingTask() : void {
-            g_blocker.await();
+            try {
+                g_blocker.await();
+            } catch (e: ThreadInterruptionException&) {
+                g_failed.countDown();
+            }
         }
 
         test() : int throws(Throwable) {
@@ -612,7 +681,7 @@ TEST_CASE("Executor: template execute<R> with priority on SingleThreadExecutor",
             exec.shutdown();
             exec.awaitTermination(Duration::ofSeconds(2L));
 
-            return resHigh * 10 + resLow; // 21
+            return g_failed.count() == 0L ? -1 : resHigh * 10 + resLow; // 21
         }
     )SRC");
     REQUIRE(jit);
@@ -668,9 +737,30 @@ TEST_CASE("Executor: template execute<R> on ThreadPoolExecutor concurrent future
         test() : int throws(Throwable) {
             exec : ThreadPoolExecutor(3);
 
-            f1 : Future<int>! = exec.execute<int>([]() : int { Thread::sleep(Duration::ofMillis(10L)); return 10; });
-            f2 : Future<int>! = exec.execute<int>([]() : int { Thread::sleep(Duration::ofMillis(10L)); return 20; });
-            f3 : Future<int>! = exec.execute<int>([]() : int { Thread::sleep(Duration::ofMillis(10L)); return 30; });
+            f1 : Future<int>! = exec.execute<int>([]() : int {
+                try {
+                    Thread::sleep(Duration::ofMillis(10L));
+                } catch (e: ThreadInterruptionException&) {
+                    return -1;
+                }
+                return 10;
+            });
+            f2 : Future<int>! = exec.execute<int>([]() : int {
+                try {
+                    Thread::sleep(Duration::ofMillis(10L));
+                } catch (e: ThreadInterruptionException&) {
+                    return -1;
+                }
+                return 20;
+            });
+            f3 : Future<int>! = exec.execute<int>([]() : int {
+                try {
+                    Thread::sleep(Duration::ofMillis(10L));
+                } catch (e: ThreadInterruptionException&) {
+                    return -1;
+                }
+                return 30;
+            });
 
             total : int = 0;
             try {

@@ -23,6 +23,19 @@ continue to share the original control block and its original-type destruction
 callback. The control-block types are implementation plumbing, not user-facing
 ownership APIs.
 
+Converting from a const handle must preserve the managed type's constness, not
+impose the handle's constness on it. A `const Shared<Derived>&` may therefore
+produce a `Shared<Base>` or `Weak<Base>` for a compatible base. A
+`const Weak<Derived>&` may likewise produce a `Weak<Base>` or promote to a
+`Shared<Base>` while the object is alive. Const qualification may be added to
+the pointee without changing ownership. A `Shared<const Derived>` may produce
+only const-compatible views such as
+`Shared<const Base>` or `Weak<const Base>`; conversion must not remove pointee
+constness. This restriction applies to copying, draining, assignment, sharing
+and weak promotion, including conversions that would otherwise use a static
+upcast. Const pointees must still be destroyed exactly once when their last
+strong handle is released.
+
 ## Shared<T>
 
 ```k
@@ -91,7 +104,9 @@ empty state.
 
 `get()` returns a borrowed pointer, or null if empty. The pointer must not be
 used after the last strong reference is released. A const handle does not make
-`T` const: `const Shared<T>` still returns `T*`.
+`T` const: `const Shared<T>` still returns `T*`; `Shared<const T>` returns
+`const T*`. `Weak<T>.lock()` preserves the same distinction in its returned
+`Shared<T>`.
 
 `useCount()` returns an atomic snapshot of the number of strong handles.
 Weak handles are not included. An empty handle returns zero.
@@ -151,6 +166,10 @@ final struct Weak {
 `Weak<T>` deliberately has no raw-object accessor, boolean conversion, or
 dereference operation. Access must first acquire a strong handle through
 `lock()` or the checked `Shared<T>` constructor.
+
+Adding pointee constness to a static weak upcast follows the same lifetime
+rules as any other static weak upcast: an expired source preserves the group
+identity but must not expose or inspect the former object.
 
 Checked conversions use K's runtime RTTI cast lowering. They support class to
 interface, interface to class, and sibling-interface cross-casts when the
@@ -221,6 +240,36 @@ example() : int {
 Weak links can break ownership cycles: a parent may strongly own a child while
 the child holds only a weak link to its parent. A cycle containing only strong
 handles is not automatically collected.
+
+### Const handles and const views
+
+```k
+class Base {
+    public number : int;
+    public Base() : number(42) {}
+}
+class Derived : public Base {
+    public Derived() : Base() {}
+}
+
+exampleViews() {
+    source : Shared<Derived>(new Derived());
+    handle : const Shared<Derived>& = source;
+    writable : Shared<Base>(handle);
+    ++writable.get()->number; // The handle is const, not the object.
+
+    readOnly : Shared<const Base>(handle);
+    observed : Weak<const Base>(readOnly);
+    locked : Shared<const Base> = observed.lock();
+}
+```
+
+The following conversion is invalid, even while the object is alive:
+
+```k
+// Given readOnly : Shared<const Base>, dropping pointee const is an error.
+invalid : Shared<Base>(readOnly);
+```
 
 ## Complexity and scope
 

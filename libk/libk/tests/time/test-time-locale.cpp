@@ -202,7 +202,9 @@ TEST_CASE("TemporalFormatter & TemporalParser: ISO formatting and parsing", "[li
     auto jit = jit_k(R"SRC(
         module __test_formatter_iso__;
 
-        test_iso_format() : int throws(k::time::InvalidTemporalValueException, k::time::TimeDataUnavailableException) {
+        test_iso_format() : int throws(k::time::InvalidTemporalValueException, k::time::TimeDataUnavailableException,
+                                       k::time::LocalTimeGapException, k::time::LocalTimeOverlapException,
+                                       k::time::TemporalArithmeticException) {
             fmt : k::time::TemporalFormatter! = k::time::TemporalFormatters::iso();
 
             ld : k::time::LocalDate = k::time::LocalDate::of(2026L, 9, 11);

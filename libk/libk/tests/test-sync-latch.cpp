@@ -281,7 +281,7 @@ TEST_CASE("CyclicBarrier: a single-party barrier trips immediately", "[libk][syn
 TEST_CASE("CyclicBarrier: a timed await times out and breaks the barrier", "[libk][sync][barrier]") {
     auto jit = jit_k(R"SRC(
         module __sync_barrier_timeout__;
-        test() : int {
+        test() : int throws(ThreadInterruptionException) {
             b : CyclicBarrier(2);
             res : int = 0;
             try {

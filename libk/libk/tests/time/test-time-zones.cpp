@@ -315,7 +315,7 @@ TEST_CASE("Resolvers: all 6 policies on gap and overlap", "[libk][time][resolver
     auto jit = jit_k(R"SRC(
         module __test_resolvers__;
 
-        test_gap_resolvers() : int throws(k::time::InvalidTemporalValueException, k::time::ZoneRulesUnavailableException, k::time::TemporalArithmeticException) {
+        test_gap_resolvers() : int throws(k::time::InvalidTemporalValueException, k::time::ZoneRulesUnavailableException, k::time::TemporalArithmeticException, k::time::LocalTimeGapException, k::time::LocalTimeOverlapException) {
             zid : k::time::ZoneId = k::time::ZoneId::of(k::String("Europe/Paris"));
             tz : k::time::TimeZone = k::time::TimeZone::of(zid);
             localGap : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 3, 29, 2, 30, 0, 0);
@@ -374,7 +374,7 @@ TEST_CASE("Resolvers: all 6 policies on gap and overlap", "[libk][time][resolver
             return 1;
         }
 
-        test_overlap_resolvers() : int throws(k::time::InvalidTemporalValueException, k::time::ZoneRulesUnavailableException, k::time::TemporalArithmeticException) {
+        test_overlap_resolvers() : int throws(k::time::InvalidTemporalValueException, k::time::ZoneRulesUnavailableException, k::time::TemporalArithmeticException, k::time::LocalTimeGapException, k::time::LocalTimeOverlapException) {
             zid : k::time::ZoneId = k::time::ZoneId::of(k::String("Europe/Paris"));
             tz : k::time::TimeZone = k::time::TimeZone::of(zid);
             localOverlap : k::time::LocalDateTime = k::time::LocalDateTime::of(2026L, 10, 25, 2, 30, 0, 0);
@@ -513,7 +513,7 @@ TEST_CASE("Iso: format and parse for Instant and ZonedDateTime", "[libk][time][i
     auto jit = jit_k(R"SRC(
         module __test_iso_zoned__;
 
-        test_format_instant() : int {
+        test_format_instant() : int throws(k::time::TemporalArithmeticException) {
             epoch : k::time::Instant = k::time::Instant::epoch();
             str : k::String = k::time::Iso::formatInstant(epoch);
             if (str != k::String("1970-01-01T00:00:00Z")) return 0;
@@ -562,7 +562,7 @@ TEST_CASE("Iso: format and parse for Instant and ZonedDateTime", "[libk][time][i
             return 1;
         }
 
-        test_parse_zonedDateTime_gap_throws() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException, k::time::ZoneRulesUnavailableException, k::time::TemporalArithmeticException) {
+        test_parse_zonedDateTime_gap_throws() : int throws(k::time::TemporalParseException, k::time::InvalidTemporalValueException, k::time::ZoneRulesUnavailableException, k::time::TemporalArithmeticException, k::time::LocalTimeOverlapException) {
             str : k::String = k::String("2026-03-29T02:30:00+01:00[Europe/Paris]");
             try {
                 k::time::Iso::parseZonedDateTime(str, k::time::StrictResolver::instance());

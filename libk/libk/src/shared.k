@@ -165,7 +165,10 @@ public:
     Shared(other : const ::k::Shared<U>&) : _block(null), _view(null) {
         source_block : SharedControlBlock* = other._block;
         if (source_block != null) {
-            view : T* = (T*) other._view;
+            // Load the pointer slot before adapting it: only U qualifies
+            // the pointee, not the const source handle.
+            source_view : U* = other._view;
+            view : T* = (T*) source_view;
             if (view != null) {
                 _block = source_block;
                 _view = view;
@@ -429,7 +432,8 @@ public:
     Weak(other : const ::k::Shared<U>&) : _block(null), _view(null) {
         source_block : SharedControlBlock* = other._block;
         if (source_block != null) {
-            view : T* = (T*) other._view;
+            source_view : U* = other._view;
+            view : T* = (T*) source_view;
             if (view != null) {
                 _block = source_block;
                 _view = view;
@@ -454,7 +458,8 @@ public:
         if (_block != null) {
             _block->retainWeak();
             if (_block->tryRetainStrong()) {
-                _view = other._view;
+                source_view : U* = other._view;
+                _view = (T*) source_view;
                 _block->releaseStrong();
             }
         }
@@ -487,7 +492,8 @@ public:
     template<typename U : T>
     Weak(other : ::k::Weak<U>#) : _block(other._block), _view(null) {
         if (_block != null && _block->tryRetainStrong()) {
-            _view = other._view;
+            source_view : U* = other._view;
+            _view = (T*) source_view;
             _block->releaseStrong();
         }
         other._block = null;
