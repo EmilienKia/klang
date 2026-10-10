@@ -772,6 +772,8 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
     sig.is_final = agg.is_final();
     sig.is_const_struct = agg.is_const_struct();
     sig.is_static_nested = agg.is_static_nested();
+    for (const auto& annotation : agg.get_annotations())
+        sig.annotations.push_back(to_kdi_annotation(annotation));
     sig.doc = to_kdi_doc_block(agg);
 
     // Export base classes (for templates, use raw_name as identifier)
@@ -1100,6 +1102,8 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
     kagg.is_final        = agg.is_final();
     kagg.is_const_struct = agg.is_const_struct();
     kagg.is_static_nested = agg.is_static_nested();
+    for (const auto& annotation : agg.get_annotations())
+        kagg.annotations.push_back(to_kdi_annotation(annotation));
     kagg.doc             = to_kdi_doc_block(agg);
 
     // Enclosing aggregate fq_name (empty if top-level)

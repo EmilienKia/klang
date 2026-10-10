@@ -44,6 +44,12 @@ namespace kdi {
 struct kdi_function;
 struct kdi_aggregate;
 
+/** An applied annotation preserved as canonical K source for cross-module import. */
+struct kdi_annotation {
+    std::string name;
+    std::string source;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Documentation DTOs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,6 +470,9 @@ struct kdi_aggregate {
     bool                 is_final     = false;
     bool                 is_const_struct = false;
     bool                 is_static_nested = false;
+
+    /// Annotations applied to this aggregate declaration.
+    std::vector<kdi_annotation> annotations;
 
     /// Fully-qualified name of the enclosing aggregate, or empty if top-level.
     std::string          enclosing_fq_name;

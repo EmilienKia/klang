@@ -335,6 +335,29 @@ TEST_CASE("JSON: aggregate with method and layout round-trips", "[json][aggregat
     REQUIRE( a2.methods[0].is_const_member == true );
 }
 
+TEST_CASE("JSON: aggregate annotations round-trip and default empty", "[json][aggregate][annotations]") {
+    auto f = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "CompileOnly";
+    agg.fq_name = "test::json::CompileOnly";
+    agg.kind = kdi_aggregate_kind::annotation_;
+    agg.annotations.push_back({"annotations::Retention", "@annotations::Retention(Policy::SOURCE)"});
+    f.unit.root_ns.aggregates.push_back(agg);
+
+    auto restored = json_round_trip(f);
+    REQUIRE(restored.unit.root_ns.aggregates.size() == 1);
+    REQUIRE(restored.unit.root_ns.aggregates[0].annotations.size() == 1);
+    CHECK(restored.unit.root_ns.aggregates[0].annotations[0].name == "annotations::Retention");
+    CHECK(restored.unit.root_ns.aggregates[0].annotations[0].source
+          == "@annotations::Retention(Policy::SOURCE)");
+
+    auto legacy = make_minimal_file();
+    legacy.unit.root_ns.aggregates.push_back(agg);
+    legacy.unit.root_ns.aggregates[0].annotations.clear();
+    auto restored_legacy = json_round_trip(legacy);
+    CHECK(restored_legacy.unit.root_ns.aggregates[0].annotations.empty());
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Aggregate nesting: is_static_nested, enclosing_fq_name, nested children
 // ─────────────────────────────────────────────────────────────────────────────

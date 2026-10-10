@@ -827,6 +827,9 @@ static kdi_union from_json_union(const json& u) {
     return ku;
 }
 
+static json to_json(const kdi_annotation& annotation);
+static kdi_annotation from_json_annotation(const json& j);
+
 static json to_json(const kdi_aggregate& a) {
     json bases = json::array();
     for (auto& b : a.bases)
@@ -854,6 +857,10 @@ static json to_json(const kdi_aggregate& a) {
         nested_uns.push_back(to_json(u));
     }
 
+    json annotations = json::array();
+    for (const auto& annotation : a.annotations)
+        annotations.push_back(to_json(annotation));
+
     json obj = {
         {"kind",          agg_kind_to_str(a.kind)},
         {"name",          a.name},
@@ -873,6 +880,8 @@ static json to_json(const kdi_aggregate& a) {
         {"nested_unions", nested_uns},
         {"llvm_def",      a.llvm_def},
     };
+    if (!annotations.empty())
+        obj["annotations"] = std::move(annotations);
     if (!a.default_constructor_mangled_name.empty())
         obj["default_constructor_mangled_name"] = a.default_constructor_mangled_name;
     if (!a.enclosing_fq_name.empty())
@@ -901,6 +910,8 @@ static kdi_aggregate from_json_aggregate(const json& j) {
     a.is_const_struct = j.value("is_const_struct", false);
     a.is_static_nested = j.value("is_static_nested", false);
     a.enclosing_fq_name = j.value("enclosing_fq_name", "");
+    for (const auto& annotation : j.value("annotations", json::array()))
+        a.annotations.push_back(from_json_annotation(annotation));
 
     for (auto& b : j.value("bases", json::array())) {
         kdi_base kb;

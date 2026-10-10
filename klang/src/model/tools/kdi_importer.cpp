@@ -689,55 +689,12 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
     // Ensure the namespace node exists in the model so namespace documentation
     // can be attached even when no symbol is explicitly referenced yet.
     auto model_ns = imported_namespace(_unit, ns.fq_name);
-    std::string ns_fq = ns.fq_name;
-    if (ns_fq.size() >= 2 && ns_fq[0] == ':' && ns_fq[1] == ':') ns_fq = ns_fq.substr(2);
     if (model_ns) {
         if (auto doc = to_namespace_doc(ns.doc)) {
             model_ns->set_documentation(std::move(doc));
         }
-        for (const auto& annotation : ns.annotations) {
-            if (ns.name.empty()) continue;
-            if (annotation.source.empty()) {
-                throw std::runtime_error(
-                    "KDI namespace annotation '" + annotation.name + "' has no source representation");
-            }
-            std::string wrapped_source = "module kdi_annotation_metadata; "
-                + annotation.source + " namespace __kdi_annotation_target {}";
-            auto source_text = std::make_unique<std::string>(std::move(wrapped_source));
-            auto source = std::make_unique<k::source>(
-                std::string_view("kdi-annotation.k"), std::string_view(*source_text));
-            k::parse::parser parser(_logger);
-            parser.parse(*source);
-            auto ast_unit = parser.parse_unit();
-            std::shared_ptr<k::parse::ast::namespace_decl> target_decl;
-            for (const auto& declaration : ast_unit->declarations) {
-                if (auto ns_decl = std::dynamic_pointer_cast<k::parse::ast::namespace_decl>(declaration)) {
-                    target_decl = std::move(ns_decl);
-                    break;
-                }
-            }
-            if (!target_decl || target_decl->annotations.size() != 1) {
-                throw std::runtime_error(
-                    "KDI namespace annotation '" + annotation.name + "' is not a valid annotation declaration");
-            }
-            for (const auto& ast_annotation : target_decl->annotations) {
-                if (!ast_annotation || !ast_annotation->name) continue;
-                std::string raw_name;
-                for (size_t i = 0; i < ast_annotation->name->names.size(); ++i) {
-                    if (i) raw_name += "::";
-                    raw_name += std::string{ast_annotation->name->names[i].content};
-                }
-                if (raw_name != annotation.name) {
-                    throw std::runtime_error(
-                        "KDI namespace annotation source does not match its declared type name");
-                }
-                annotation_instance instance{std::move(raw_name), ast_annotation};
-                instance.imported = true;
-                model_ns->add_annotation(std::move(instance));
-            }
-            _unit._imported_template_source_texts.push_back(std::move(source_text));
-            _unit._imported_template_sources.push_back(std::move(source));
-        }
+        if (!ns.name.empty())
+            materialise_annotations(ns.annotations, *model_ns);
     }
 
     // Pass 0 — unions in this namespace (materialised first so aggregate methods returning unions find them)
@@ -823,7 +780,9 @@ void kdi_importer::materialise_aggregate(const kdi::kdi_aggregate& agg,
     }
 
     // Eagerly materialise — the unit method handles caching and LLVM interning.
-    _unit.get_or_create_imported_aggregate(k::name{false, std::move(parts)}, ctx);
+    auto imported = _unit.get_or_create_imported_aggregate(k::name{false, std::move(parts)}, ctx);
+    if (imported && !imported->has_annotations())
+        materialise_annotations(agg.annotations, *imported);
 
     // Materialise nested aggregates (public/protected nested types).
     for (const auto& nested : agg.nested) {
@@ -840,6 +799,54 @@ void kdi_importer::materialise_aggregate(const kdi::kdi_aggregate& agg,
             continue;
         }
         materialise_union(nested_un, ctx);
+    }
+}
+
+void kdi_importer::materialise_annotations(
+    const std::vector<kdi::kdi_annotation>& annotations,
+    annotation_holder& target)
+{
+    for (const auto& annotation : annotations) {
+        if (annotation.source.empty()) {
+            throw std::runtime_error(
+                "KDI annotation '" + annotation.name + "' has no source representation");
+        }
+        std::string wrapped_source = "module kdi_annotation_metadata; "
+            + annotation.source + " namespace __kdi_annotation_target {}";
+        auto source_text = std::make_unique<std::string>(std::move(wrapped_source));
+        auto source = std::make_unique<k::source>(
+            std::string_view("kdi-annotation.k"), std::string_view(*source_text));
+        k::parse::parser parser(_logger);
+        parser.parse(*source);
+        auto ast_unit = parser.parse_unit();
+        std::shared_ptr<k::parse::ast::namespace_decl> target_decl;
+        for (const auto& declaration : ast_unit->declarations) {
+            if (auto ns_decl = std::dynamic_pointer_cast<k::parse::ast::namespace_decl>(declaration)) {
+                target_decl = std::move(ns_decl);
+                break;
+            }
+        }
+        if (!target_decl || target_decl->annotations.size() != 1) {
+            throw std::runtime_error(
+                "KDI annotation '" + annotation.name + "' is not a valid annotation declaration");
+        }
+        for (const auto& ast_annotation : target_decl->annotations) {
+            if (!ast_annotation || !ast_annotation->name) continue;
+            std::string raw_name;
+            for (size_t i = 0; i < ast_annotation->name->names.size(); ++i) {
+                if (i) raw_name += "::";
+                raw_name += std::string{ast_annotation->name->names[i].content};
+            }
+            if (raw_name != annotation.name) {
+                throw std::runtime_error(
+                    "KDI annotation source does not match its declared type name");
+            }
+            annotation_instance instance{std::move(raw_name), ast_annotation};
+            instance.imported = true;
+            target.add_annotation(std::move(instance));
+        }
+        _unit._imported_template_source_texts.push_back(std::move(source_text));
+        _unit._imported_template_sources.push_back(std::move(source));
     }
 }
 
@@ -1340,6 +1347,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                 tpl_agg->set_visibility(tdef.visibility == "protected" ? PROTECTED : PUBLIC);
                 tpl_agg->set_tpl_info(std::move(ti));
                 populate_template_signature_aggregate(*tpl_agg, *tdef.aggregate_signature, _unit, ctx);
+                materialise_annotations(tdef.aggregate_signature->annotations, *tpl_agg);
             }
         } else if (tdef.function_signature) {
             const auto& signature = *tdef.function_signature;

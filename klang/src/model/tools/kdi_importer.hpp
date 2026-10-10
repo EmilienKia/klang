@@ -28,12 +28,14 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 // Forward declarations (avoid pulling all of libkdi in model headers)
 namespace kdi {
     struct kdi_file;
     struct kdi_namespace;
     struct kdi_aggregate;
+    struct kdi_annotation;
     struct kdi_function;
     struct kdi_variable;
     struct kdi_template_def;
@@ -186,6 +188,10 @@ private:
      */
     void materialise_aggregate(const kdi::kdi_aggregate& agg,
                                std::shared_ptr<context> ctx);
+
+    /** Parse and attach annotation source preserved in KDI metadata. */
+    void materialise_annotations(const std::vector<kdi::kdi_annotation>& annotations,
+                                 annotation_holder& target);
 
     /**
      * Materialise a single enumeration.

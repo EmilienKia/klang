@@ -1085,13 +1085,19 @@ void annotation_type::accept(model_visitor& visitor) {
     visitor.visit_annotation_type(*this);
 }
 
-bool annotation_type::is_source_retention() const {
+bool aggregate::is_source_retention() const {
+    if (!is_annotation()) return false;
+
     for (auto& meta : get_annotations()) {
-        if (!meta.resolved_type) continue;
-        std::string meta_fqn = meta.resolved_type->get_fq_name();
-        if (meta_fqn != "k::annotations::Retention"
-            && meta_fqn != "::k::annotations::Retention"
-            && meta.raw_name != "Retention") continue;
+        const bool resolved_retention = meta.resolved_type
+            && (meta.resolved_type->get_fq_name() == "k::annotations::Retention"
+                || meta.resolved_type->get_fq_name() == "::k::annotations::Retention");
+        const bool raw_retention = meta.raw_name == "Retention"
+            || meta.raw_name == "annotations::Retention"
+            || meta.raw_name == "::annotations::Retention"
+            || meta.raw_name == "k::annotations::Retention"
+            || meta.raw_name == "::k::annotations::Retention";
+        if (!resolved_retention && !raw_retention) continue;
 
         // Examine the AST to find the Policy value
         if (!meta.ast_node) continue;

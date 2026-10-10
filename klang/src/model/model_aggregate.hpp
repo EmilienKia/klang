@@ -288,7 +288,7 @@ public:
      * Returns false (RUNTIME) if @Retention is absent or set to RUNTIME.
      * For non-annotation aggregates, always returns false.
      */
-    virtual bool is_source_retention() const { return false; }
+    virtual bool is_source_retention() const;
 
     /**
      * True if this aggregate has at least one virtual function (needs a vtable).
@@ -510,13 +510,6 @@ public:
     bool is_annotation() const override { return true; }
     bool has_vtable() const override { return _vtable != nullptr; }
     std::shared_ptr<vtable_layout> get_vtable() const override { return _vtable; }
-
-    /**
-     * Check whether this annotation type has @Retention(Policy::SOURCE).
-     * Returns true if the type explicitly specifies SOURCE retention.
-     * Returns false (RUNTIME) if @Retention is absent or set to RUNTIME.
-     */
-    bool is_source_retention() const override;
 
     void set_vtable(std::shared_ptr<vtable_layout> vt) { _vtable = std::move(vt); }
 

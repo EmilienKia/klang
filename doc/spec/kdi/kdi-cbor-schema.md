@@ -108,10 +108,12 @@ Annotation = {
 }
 ```
 
-Annotation arrays are omitted when empty and decode as empty when absent,
-preserving compatibility with existing 0.1 files. Their order is declaration
-order. Namespace annotation metadata describes the exported namespace only;
-it does not transfer ownership of declarations or RTTI inventory to an importer.
+Annotation arrays on namespaces and aggregates are omitted when empty and decode
+as empty when absent, preserving compatibility with existing 0.1 files. Their
+order is declaration order. Namespace annotation metadata describes the
+exported namespace only; aggregate annotation metadata describes that aggregate
+declaration and is also carried by declaration-only template aggregate
+signatures. Neither transfers RTTI ownership to an importer.
 The anonymous unit root namespace has no declaration annotations; module
 annotations belong only to `Unit.annotations`.
 
@@ -466,7 +468,7 @@ LayoutField =
 
 ```
 Aggregate = {
-  "kind"           : "struct" | "class" | "interface",
+  "kind"           : "struct" | "class" | "interface" | "annotation",
   "name"           : text,
   "fq_name"        : text,
   "mangled_name"   : text,
@@ -475,6 +477,7 @@ Aggregate = {
   ?"is_final"      : bool,
   ?"is_const_struct": bool,
   ?"is_static_nested": bool,
+  ?"annotations"   : array[Annotation],
   ?"enclosing_fq_name": text,        -- fq_name of enclosing aggregate; omitted
                                      -- when not nested
   "bases"          : array[Base],

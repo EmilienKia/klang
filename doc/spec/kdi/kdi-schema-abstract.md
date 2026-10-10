@@ -147,7 +147,7 @@ KdiNamespace {
   doc        : KdiDocBlock?        -- optional brief/description
   annotations : [KdiAnnotation]   -- optional; omitted when empty
   namespaces : [KdiNamespace]      -- nested namespaces
-  aggregates : [KdiAggregate]      -- struct / class / interface
+  aggregates : [KdiAggregate]      -- struct / class / interface / annotation
   enums      : [KdiEnum]
   aliases    : [KdiAlias]          -- exported 'alias' / 'typedef' declarations
   functions  : [KdiFunction]       -- global and static functions (PUBLIC only)
@@ -170,6 +170,10 @@ annotations describe the imported declaration and must not become part of the
 consuming unit's locally owned RTTI inventory. The anonymous unit root
 namespace has no declaration annotations; module annotations belong only to
 `KdiUnit.annotations`.
+
+Annotations on `KdiAggregate` describe the aggregate declaration and must be
+preserved when the aggregate is imported or re-exported, including declaration-
+only template aggregate signatures.
 
 ---
 
@@ -241,8 +245,17 @@ KdiDocFunction = KdiDocBlock + {
 
 ## KdiAggregate
 
-Describes a `struct`, `class` or `interface`.
+Describes a `struct`, `class`, `interface` or annotation type.
 
+```
+KdiAggregate {
+  kind         : "struct" | "class" | "interface" | "annotation"
+  name         : string
+  fq_name      : string
+  visibility   : "public" | "protected"
+  annotations  : [KdiAnnotation]?  -- annotations applied to this type
+  ...                              -- aggregate layout, members and ABI declarations
+}
 ```
 
 When `KdiAggregate` is embedded inside a `KdiTemplateDef.aggregate_signature`, it

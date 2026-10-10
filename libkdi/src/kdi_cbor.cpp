@@ -1045,6 +1045,8 @@ kdi_base decode_base(cbor_item_t* item, const std::string& path) {
 
 cbor_item_t* encode_aggregate(const kdi_aggregate& agg);
 kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path);
+static cbor_item_t* encode_annotation(const kdi_annotation& annotation);
+static kdi_annotation decode_annotation(cbor_item_t* item);
 cbor_item_t* encode_union(const kdi_union& u);
 kdi_union decode_union(cbor_item_t* item, const std::string& path);
 cbor_item_t* encode_alias(const kdi_alias& a);
@@ -1071,6 +1073,12 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     if (agg.is_static_nested) map_push(m, "is_static_nested", cbor_bool(true));
     if (!agg.enclosing_fq_name.empty())
         map_push(m, "enclosing_fq_name", cbor_str(agg.enclosing_fq_name));
+    if (!agg.annotations.empty()) {
+        cbor_item_t* annotations = cbor_new_indefinite_array();
+        for (const auto& annotation : agg.annotations)
+            cbor_array_push(annotations, cbor_move(encode_annotation(annotation)));
+        map_push(m, "annotations", annotations);
+    }
 
     // bases
     cbor_item_t* bases = cbor_new_indefinite_array();
@@ -1154,6 +1162,11 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
     agg.is_const_struct = opt_bool(item, "is_const_struct");
     agg.is_static_nested = opt_bool(item, "is_static_nested");
     agg.enclosing_fq_name = opt_string(item, "enclosing_fq_name");
+    if (auto* annotations = map_get(item, "annotations");
+        annotations && cbor_isa_array(annotations)) {
+        for (size_t i = 0; i < cbor_array_size(annotations); ++i)
+            agg.annotations.push_back(decode_annotation(cbor_array_get(annotations, i)));
+    }
 
     auto* ba = map_get(item, "bases");
     if (ba && cbor_isa_array(ba)) {

@@ -44,6 +44,7 @@ static kdi_file make_aggregate_file() {
     agg.fq_name      = "geo::Point";
     agg.mangled_name = "_KS3geo5Point";
     agg.visibility   = kdi_visibility::public_;
+    agg.annotations.push_back({"annotations::Retention", "@annotations::Retention(Policy::SOURCE)"});
 
     // layout: two int32 members
     kdi_layout_member mx;
@@ -202,6 +203,26 @@ TEST_CASE("CBOR: aggregate file round-trips", "[cbor]") {
     REQUIRE(agg.constructors[0].mangled_name == "_KFMC1N3geo5PointE");
     REQUIRE(agg.methods.size() == 1u);
     REQUIRE(agg.methods[0].name == "norm");
+    REQUIRE(agg.annotations.size() == 1u);
+    CHECK(agg.annotations[0].name == "annotations::Retention");
+    CHECK(agg.annotations[0].source == "@annotations::Retention(Policy::SOURCE)");
+}
+
+TEST_CASE("CBOR: aggregate annotations default empty for legacy payloads", "[cbor][aggregate][annotations]") {
+    kdi_file original;
+    original.header.module_name = "legacy";
+    original.unit.name = "legacy";
+    kdi_aggregate agg;
+    agg.name = "Plain";
+    agg.fq_name = "legacy::Plain";
+    original.unit.root_ns.aggregates.push_back(agg);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(original, oss));
+    std::istringstream iss(oss.str(), std::ios::binary);
+    auto restored = kdi_read_cbor(iss);
+    REQUIRE(restored.unit.root_ns.aggregates.size() == 1u);
+    CHECK(restored.unit.root_ns.aggregates[0].annotations.empty());
 }
 
 TEST_CASE("CBOR: owner type round-trips", "[cbor][type]") {

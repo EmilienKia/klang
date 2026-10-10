@@ -195,6 +195,39 @@ TEST_CASE("import — KDI annotations remain on imported metadata, not local RTT
     CHECK(root->get_annotations().empty());
 }
 
+TEST_CASE("import — annotation retention metadata survives KDI import",
+          "[import][phase4][annotation][retention]") {
+    TmpKdi lib(R"K(
+        module retention_lib;
+        @annotations::Retention(Policy::SOURCE)
+        annotation CompileOnly {}
+    )K", true);
+
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("retention_lib", lib.kdi_path);
+    resolver->add_search_dir(find_libk_dir());
+    comp->set_file_resolver(resolver);
+
+    REQUIRE_NOTHROW(comp->parse_source("consumer.k", R"K(
+        module retention_consumer;
+        import retention_lib;
+    )K"));
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root = unit->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto module_ns = root->get_child_namespace("retention_lib");
+    REQUIRE(module_ns != nullptr);
+    auto annotation = module_ns->get_aggregate("CompileOnly");
+    REQUIRE(annotation != nullptr);
+    CHECK(annotation->is_annotation());
+    REQUIRE(annotation->get_annotations().size() == 1);
+    CHECK(annotation->get_annotations()[0].imported);
+    CHECK(annotation->is_source_retention());
+}
+
 TEST_CASE("import — module not found is a fatal error", "[import][phase4][error]") {
     auto comp = k::compiler::create();
     // Empty resolver — nothing will be found
