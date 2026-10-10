@@ -17,7 +17,7 @@ find_package(nlohmann_json REQUIRED)
 
 find_package(fmt REQUIRED)
 
-find_package(Boost 1.74 REQUIRED
+find_package(Boost REQUIRED
     COMPONENTS program_options system filesystem
 )
 include_directories(${Boost_INCLUDE_DIRS})
@@ -42,6 +42,9 @@ endif()
 
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
+if(LLVM_PACKAGE_VERSION VERSION_LESS "18.0.0")
+    message(FATAL_ERROR "LLVM version 18.0.0 or higher is required")
+endif()
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 include_directories(${LLVM_INCLUDE_DIRS})
 separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})

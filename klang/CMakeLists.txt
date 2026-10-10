@@ -318,8 +318,9 @@ klang_gen_test(klang-tests-gen-ternary 120
 
 # ---------------------------------------------------------------------------
 # Group 4a — Arithmetic operators: 8/16-bit integers (byte, ubyte, short, ushort)
+# Catch2 shards keep this single-source suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arithmetic-int8-16 120
+klang_gen_test(klang-tests-gen-arithmetic-int8-16 120 SHARD_COUNT 2
         tests/test-gen-arithmetic-int8-16.cpp
 )
 
@@ -358,8 +359,8 @@ klang_gen_test(klang-tests-gen-casts 120
 )
 
 # ---------------------------------------------------------------------------
-# Group 5a — Types: enums/unions, const/null, metadata/designated init
-# Split into enums/unions, const/null and metadata/designated-init executables.
+# Group 5a — Types: enums/unions, const, null, metadata/designated init
+# Split into enums/unions, const, null and metadata/designated-init executables.
 # Catch2 shards keep the enum/union suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-gen-types-enums-unions 120 SHARD_COUNT 3
@@ -370,8 +371,10 @@ klang_gen_test(klang-tests-gen-types-enums-unions 120 SHARD_COUNT 3
         tests/test-gen-union-polymorphic.cpp
         tests/test-gen-union-cast.cpp
 )
-klang_gen_test(klang-tests-gen-types-const-null 120
+klang_gen_test(klang-tests-gen-types-const 120
         tests/test-gen-const.cpp
+)
+klang_gen_test(klang-tests-gen-types-null 120
         tests/test-gen-null-semantics.cpp
 )
 klang_gen_test(klang-tests-gen-types-meta-designated 120
@@ -474,8 +477,9 @@ klang_gen_test(klang-tests-gen-scoping 120 SHARD_COUNT 2
 
 # ---------------------------------------------------------------------------
 # Group 9a — Templates: functions, instantiation, mangling, member templates
+# Catch2 shards keep this broad suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-templates-core 120
+klang_gen_test(klang-tests-gen-templates-core 120 SHARD_COUNT 2
         tests/test-gen-template-functions.cpp
         tests/test-gen-template-instantiation.cpp
         tests/test-gen-template-mangling.cpp
