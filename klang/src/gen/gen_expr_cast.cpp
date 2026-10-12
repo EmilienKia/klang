@@ -533,10 +533,12 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
     // Aliases never take part in code generation: they are pure renamings of the
     // canonical type, which is the only thing that has a representation.
-    source_type = type::canonical(source_type);
-    target_type = type::canonical(target_type);
+    // Value-level const has no representation; pointee const remains on the subtype.
+    source_type = type::remove_const(type::canonical(source_type));
+    target_type = type::remove_const(type::canonical(target_type));
 
-    if(!source_type->is_resolved() || !target_type->is_resolved()) {
+    if (!source_type || !target_type
+        || !source_type->is_resolved() || !target_type->is_resolved()) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F033), expr.first_lexeme(),
             "Internal error: cast expression has an unresolved source or target type; "
             "type resolution must complete before code generation");
