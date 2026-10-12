@@ -491,6 +491,61 @@ kdi::kdi_visibility kdi_builder::to_kdi_vis(visibility v) {
                           : kdi::kdi_visibility::public_;
 }
 
+bool kdi_builder::is_exported_aggregate(const aggregate& agg) {
+    std::unordered_set<const aggregate*> visited;
+    std::function<bool(const aggregate&)> accessible;
+    std::function<bool(const std::shared_ptr<type>&)> accessible_type;
+    accessible_type = [&](const std::shared_ptr<type>& t) {
+        auto canonical = type::canonical(t);
+        if (!canonical) return true;
+        if (auto st = std::dynamic_pointer_cast<struct_type>(canonical)) {
+            if (auto owner = st->get_struct()) return accessible(*owner);
+        }
+        if (auto subtype = canonical->get_subtype()) return accessible_type(subtype);
+        if (auto callable = std::dynamic_pointer_cast<callable_type>(canonical)) {
+            if (!accessible_type(callable->get_return_type())) return false;
+            for (const auto& parameter : callable->get_parameter_types()) {
+                if (!accessible_type(parameter)) return false;
+            }
+            for (const auto& thrown : callable->get_throws()) {
+                if (!accessible_type(thrown)) return false;
+            }
+        }
+        return true;
+    };
+    accessible = [&](const aggregate& candidate) {
+        if (!is_exported(candidate.get_visibility())) return false;
+        if (!visited.insert(&candidate).second) return true;
+        if (auto enclosing = candidate.get_enclosing_aggregate()) {
+            if (!accessible(*enclosing)) return false;
+        }
+        for (const auto& argument : candidate.get_tpl_args()) {
+            if (argument.type_arg && !accessible_type(argument.type_arg)) return false;
+        }
+        return true;
+    };
+    return accessible(agg);
+}
+
+bool kdi_builder::is_exported_type(const std::shared_ptr<type>& t) {
+    auto canonical = type::canonical(t);
+    if (!canonical) return true;
+    if (auto st = std::dynamic_pointer_cast<struct_type>(canonical)) {
+        if (auto agg = st->get_struct()) return is_exported_aggregate(*agg);
+    }
+    if (auto subtype = canonical->get_subtype()) return is_exported_type(subtype);
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(canonical)) {
+        if (!is_exported_type(callable->get_return_type())) return false;
+        for (const auto& parameter : callable->get_parameter_types()) {
+            if (!is_exported_type(parameter)) return false;
+        }
+        for (const auto& thrown : callable->get_throws()) {
+            if (!is_exported_type(thrown)) return false;
+        }
+    }
+    return true;
+}
+
 kdi::kdi_callable_addresser kdi_builder::to_kdi_addresser(callable_type::addresser a) {
     switch (a) {
         case callable_type::addresser::none:      return kdi::kdi_callable_addresser::none;
@@ -1124,7 +1179,27 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
     if (agg.get_struct_type()) {
         auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(
             agg.get_struct_type()->get_llvm_type());
-        kagg.llvm_def = llvm_struct_def(llvm_st);
+        // Private fields and unnameable concrete specializations have no API
+        // records, but their by-value LLVM layout remains an ABI dependency.
+        std::unordered_set<llvm::Type*> seen;
+        std::function<void(llvm::Type*)> collect = [&](llvm::Type* current) {
+            if (!current || !seen.insert(current).second) return;
+            if (auto* array = llvm::dyn_cast<llvm::ArrayType>(current)) {
+                collect(array->getElementType());
+            } else if (auto* structure = llvm::dyn_cast<llvm::StructType>(current)) {
+                if (structure->hasName()) {
+                    auto definition = llvm_struct_def(structure);
+                    if (!definition.empty()) {
+                        if (!kagg.llvm_def.empty()) kagg.llvm_def += '\n';
+                        kagg.llvm_def += definition;
+                    }
+                }
+                if (!structure->isOpaque()) {
+                    for (auto* field : structure->elements()) collect(field);
+                }
+            }
+        };
+        collect(llvm_st);
     }
 
     // ── Bases ────────────────────────────────────────────────────────────
@@ -1308,7 +1383,7 @@ void kdi_builder::visit_namespace(ns& n) {
 // the top of visit_structure()/visit_klass() already skip them; keep that invariant when
 // closure support lands.
 void kdi_builder::visit_structure(structure& s) {
-    if (!is_exported(s.get_visibility())) return;
+    if (!is_exported_aggregate(s)) return;
 
     // Template definition: export as kdi_template_def, not as a regular aggregate
     if (s.is_template()) {
@@ -1353,7 +1428,7 @@ void kdi_builder::visit_structure(structure& s) {
 }
 
 void kdi_builder::visit_klass(klass& k) {
-    if (!is_exported(k.get_visibility())) return;
+    if (!is_exported_aggregate(k)) return;
 
     // Template definition: export as kdi_template_def
     if (k.is_template()) {
@@ -1394,7 +1469,7 @@ void kdi_builder::visit_klass(klass& k) {
 }
 
 void kdi_builder::visit_interface(interface& i) {
-    if (!is_exported(i.get_visibility())) return;
+    if (!is_exported_aggregate(i)) return;
 
     // Template definition: export as kdi_template_def
     if (i.is_template()) {
@@ -1435,7 +1510,7 @@ void kdi_builder::visit_interface(interface& i) {
 }
 
 void kdi_builder::visit_annotation_type(annotation_type& a) {
-    if (!is_exported(a.get_visibility())) return;
+    if (!is_exported_aggregate(a)) return;
 
     kdi::kdi_aggregate kagg = begin_aggregate(a);
     visit_aggregate_body(a, kagg);
@@ -1706,6 +1781,14 @@ void kdi_builder::visit_function(function& fn) {
 
     // For redirected functions, resolve the LLVM function via the redirect target's mangled name
     // (since the redirector is emitted as a GlobalAlias, not an llvm::Function).
+    if (!is_exported_type(std::const_pointer_cast<type>(fn.get_return_type()))) return;
+    for (const auto& parameter : fn.parameters()) {
+        if (!is_exported_type(std::const_pointer_cast<type>(parameter->get_type()))) return;
+    }
+    for (const auto& thrown : fn.get_throws_spec()) {
+        if (!is_exported_type(std::const_pointer_cast<type>(thrown))) return;
+    }
+
     std::string llvm_lookup_name = fn.get_mangled_name();
     if (fn.is_redirected() && fn.get_redirect_target()) {
         llvm_lookup_name = fn.get_redirect_target()->get_mangled_name();

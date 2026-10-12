@@ -91,6 +91,18 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Private imported type pointers report an internal diagnostic.**
+      In `klang/tests/test-import-private-concrete.cpp`, the producer keeps
+      `privateconcrete::Hidden` private. The rejected consumer
+      `module privateconcretedenied; import privateconcrete; run(): int {
+      hidden: privateconcrete::Hidden* = null; return 0; }`
+      emits `0F003` ("unresolvable type that is not an unresolved_type
+      instance") instead of an ordinary unknown/inaccessible-type diagnostic.
+      Reproduce with `klang-tests-import-core
+      "[import][private-dependency][shared][regression]"`. Privacy remains
+      enforced and the positive ABI/layout checks pass; this diagnostic-only
+      gap does not block runtime FFI.
+
 - [ ] **KDI export does not exclude private namespace enums.**
       The imported-enum identity regression initially used
       `module enumidentity; namespace api { public enum CType { CHAR = 12; }

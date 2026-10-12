@@ -417,13 +417,29 @@ KdiAggregate {
   aliases      : [KdiAlias]        -- optional; omitted when empty
   nested       : [KdiAggregate]
 
-  -- LLVM IR struct type definition, e.g. "%struct.ns.Counter = type { i32*, i32 }"
+  -- LLVM IR struct type definitions, e.g. "%struct.ns.Counter = type { ptr, i32 }"
   -- Used by importing compilers to reconstruct the exact LLVM StructType
   -- without re-deriving the layout from the KDI layout fields.
   llvm_def     : string
   doc          : KdiDocBlock?
 }
 ```
+
+`llvm_def` must retain the recursive by-value LLVM layout dependencies of the
+aggregate, including private fields and concrete template specializations whose
+arguments are private. It may contain several newline-separated named type
+definitions, with the aggregate's own definition first. Importers must
+deduplicate each definition separately and reject conflicting bodies for the
+same LLVM name.
+
+A concrete specialization with a private template argument is not an accessible
+API declaration. Its layout may be retained in `llvm_def`, but it must not become
+an aggregate API record or expose constructors, methods, or private field names.
+Member-template constructors remain part of the primary template source recipe;
+they must not be encoded as concrete constructors with unresolved parameter types.
+Concrete overloads whose signatures require inaccessible types are likewise not
+API records. Specializations with accessible arguments retain their ordinary
+public/protected API.
 
 ---
 

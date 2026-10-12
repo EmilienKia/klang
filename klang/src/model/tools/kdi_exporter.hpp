@@ -132,6 +132,11 @@ private:
         return v == PUBLIC || v == PROTECTED;
     }
 
+    /** Concrete specializations must not expose private template arguments. */
+    static bool is_exported_aggregate(const aggregate& agg);
+
+    static bool is_exported_type(const std::shared_ptr<type>& t);
+
     /** Convert a model visibility to a kdi visibility. */
     static kdi::kdi_visibility to_kdi_vis(visibility v);
 

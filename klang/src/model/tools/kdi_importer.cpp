@@ -535,7 +535,7 @@ static void collect_llvm_defs_from_namespace(
     std::unordered_map<std::string, std::string>& seen,
     const std::function<void(const std::string&, const std::string&, const std::string&)>& on_conflict)
 {
-    const auto emit = [&](const std::string& llvm_def) {
+    const auto emit_definition = [&](const std::string& llvm_def) {
         if (llvm_def.empty()) return;
         auto tname = extract_llvm_type_name(llvm_def);
         if (tname.empty()) {
@@ -552,15 +552,27 @@ static void collect_llvm_defs_from_namespace(
             on_conflict(tname, it->second, llvm_def);
         }
     };
+    const auto emit = [&](const std::string& definitions) {
+        // An aggregate also carries definitions for private by-value layout
+        // dependencies. Deduplicate each named definition, not the whole bundle.
+        size_t start = 0;
+        while (start < definitions.size()) {
+            auto end = definitions.find('\n', start);
+            emit_definition(definitions.substr(start, end - start));
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+    };
+    std::function<void(const kdi::kdi_aggregate&)> emit_aggregate;
+    emit_aggregate = [&](const kdi::kdi_aggregate& agg) {
+        for (const auto& nested_un : agg.nested_unions) emit(nested_un.llvm_def);
+        for (const auto& nested : agg.nested) emit_aggregate(nested);
+        emit(agg.llvm_def);
+    };
 
     for (const auto& un : ns.unions) emit(un.llvm_def);
     for (const auto& agg : ns.aggregates) {
-        // 1. Nested unions first (dependencies before the aggregate that references them).
-        for (const auto& nested_un : agg.nested_unions) emit(nested_un.llvm_def);
-        // 2. Nested aggregates (public/protected inner types).
-        for (const auto& nested : agg.nested) emit(nested.llvm_def);
-        // 3. The aggregate's own struct type def (e.g. '%Base = type { ptr, i32 }').
-        emit(agg.llvm_def);
+        emit_aggregate(agg);
     }
     for (const auto& child_ns : ns.namespaces) {
         collect_llvm_defs_from_namespace(child_ns, out, seen, on_conflict);

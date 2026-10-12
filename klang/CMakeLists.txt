@@ -522,6 +522,7 @@ klang_gen_test(klang-tests-gen-generics 120
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-import-core 120
         tests/test-import-core.cpp
+        tests/test-import-private-concrete.cpp
 )
 klang_gen_test(klang-tests-import-templates 120 SHARD_COUNT 3
         tests/test-import-templates.cpp
