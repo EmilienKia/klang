@@ -2232,6 +2232,13 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
             if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
                 var.ancestor<unit>()->get_global_destructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
             }
+        } else if (auto array = std::dynamic_pointer_cast<sized_array_type>(
+                       type::canonical(var.get_type()))) {
+            auto element = std::dynamic_pointer_cast<struct_type>(
+                type::canonical(type::remove_const(array->get_subtype())));
+            if (element && element->get_struct() && element->get_struct()->get_destructor()) {
+                var.ancestor<unit>()->get_global_destructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
+            }
         }
     }
 }

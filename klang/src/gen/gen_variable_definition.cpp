@@ -1354,6 +1354,7 @@ void type_reference_resolver::validate_sized_array_variable(var_init_context& ct
     if (arr_init) {
         // Array brace init — resolve handled in visit_array_init_expression
         arr_init->accept(*this);
+        return;
     } else if (ctx.init_expr && !ctx.init_expr->empty()) {
         // Step 2: If a non-brace explicit initialiser is present, emit an error
         // Non-brace-init explicit initializer is not supported
@@ -1363,8 +1364,19 @@ void type_reference_resolver::validate_sized_array_variable(var_init_context& ct
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?"});
         return;
     }
-    // Step 3: No initialiser → zero-init (always valid)
-    // No initializer = zero-init (always valid for any element type).
+    auto array = std::dynamic_pointer_cast<sized_array_type>(ctx.var_type);
+    auto element_type = type::canonical(type::remove_const(array->get_subtype()));
+    auto element_struct = std::dynamic_pointer_cast<struct_type>(element_type);
+    if (!element_struct || !element_struct->get_struct() || array->get_size() == 0) return;
+
+    // Default construction must go through overload resolution, just like T()[N].
+    // Zero-filled class storage is not a live object (in particular, it has no vptr).
+    if (auto* var_element = dynamic_cast<element*>(&ctx.var)) {
+        auto variable = std::dynamic_pointer_cast<variable_definition>(var_element->shared_as<element>());
+        auto default_init = array_init_expression::make_uniform_shared(variable, {}, array->get_size());
+        ctx.var.set_init_expr(default_init);
+        default_init->accept(*this);
+    }
 }
 
 

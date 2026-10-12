@@ -2149,8 +2149,11 @@ void type_reference_resolver::finalize_aggregate_destructor(aggregate& agg) {
             auto member = std::dynamic_pointer_cast<member_variable_definition>(var);
             if (!member || name.rfind("__", 0) == 0) continue;
             // Only embedded values participate here, not borrowed or owner fields.
-            if (auto member_type = std::dynamic_pointer_cast<struct_type>(
-                    type::canonical(type::remove_const(member->get_type())))) {
+            auto value_type = type::canonical(type::remove_const(member->get_type()));
+            if (auto array = std::dynamic_pointer_cast<sized_array_type>(value_type)) {
+                value_type = type::canonical(type::remove_const(array->get_subtype()));
+            }
+            if (auto member_type = std::dynamic_pointer_cast<struct_type>(value_type)) {
                 if (auto member_aggregate = member_type->get_struct()) {
                     inspect_subobject(member_aggregate);
                 } else if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), member_type)) {

@@ -2330,8 +2330,11 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
             if (var->get_short_name().rfind("__vbptr_", 0) == 0) continue;
             if (var->get_short_name().rfind("__vbase_", 0) == 0) continue;
             if (var->get_short_name().rfind("__vptr", 0) == 0) continue;
-            if (auto m_st_type = std::dynamic_pointer_cast<struct_type>(
-                    type::canonical(type::remove_const(var->get_type())))) {
+            auto member_type = type::canonical(type::remove_const(var->get_type()));
+            if (type::is_sized_array(member_type)) {
+                auto field = st->get_struct_type()->get_member(var->get_short_name());
+                if (field) dtor_members.push_back({var, (unsigned)field->index});
+            } else if (auto m_st_type = std::dynamic_pointer_cast<struct_type>(member_type)) {
                 auto member_aggregate = m_st_type->get_struct();
                 auto member_union = member_aggregate ? nullptr
                     : find_union_by_struct_type(_unit.get_root_namespace(), m_st_type);
@@ -2357,6 +2360,12 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
             _context->get_llvm_type(st->get_struct_type()),
             this_ptr, field_idx,
             "member_" + var->get_short_name() + "_ptr");
+        if (auto array = std::dynamic_pointer_cast<sized_array_type>(
+                type::canonical(type::remove_const(var->get_type())))) {
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                member_ptr, array, make_virtual_call_emitter());
+            continue;
+        }
         if (!m_st_type->get_struct()) {
             if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), m_st_type)) {
                 emit_union_cleanup(member_ptr, *un);

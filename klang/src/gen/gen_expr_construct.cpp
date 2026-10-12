@@ -64,7 +64,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
     expr.set_type(var_def->get_type()->get_reference());
 
     // Check if constructor is explicitly needed
-    auto var_type = var_def->get_type();
+    auto var_type = type::canonical(var_def->get_type());
     if (!var_type) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F00A), expr.first_lexeme(),
             "Internal error: constructor invocation refers to a variable '{}' with no type; "
@@ -161,6 +161,16 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             if (cast && cast != expr.argument(0)) {
                 expr.assign_argument(0, cast);
             }
+        }
+    } else if (auto array = std::dynamic_pointer_cast<sized_array_type>(var_type)) {
+        auto element_struct = std::dynamic_pointer_cast<struct_type>(
+            type::canonical(type::remove_const(array->get_subtype())));
+        if (expr.empty() && array->get_size() != 0 && element_struct && element_struct->get_struct()) {
+            auto default_init = array_init_expression::make_uniform_shared(var_def, {}, array->get_size());
+            // Preserve the constructor's lexical context until the caller attaches the replacement.
+            default_init->set_parent_expression(expr.shared_as<expression>());
+            default_init->accept(*this);
+            _replacement_expr = default_init;
         }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         auto st = st_type->get_struct();

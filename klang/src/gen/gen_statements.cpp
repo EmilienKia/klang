@@ -3801,6 +3801,9 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
         build.CreateStore(
             llvm::ConstantAggregateZero::get(_context->get_or_create_callable_llvm_type()),
             alloca);
+    } else if (k::model::type::is_sized_array(var_type)) {
+        // Unwinding before the declaration must see an empty constructed prefix.
+        build.CreateStore(llvm::ConstantAggregateZero::get(type), alloca);
     }
 
     // Create construction flag for struct-with-dtor variables (for exception unwinding safety)

@@ -182,11 +182,12 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
 
         auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
         if (!var_def) return;
-        auto var_type = var_def->get_type();
+        auto var_type = type::canonical(var_def->get_type());
         if (!type::is_sized_array(var_type)) return;
 
         auto arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
-        auto elem_type = arr_type->get_subtype();
+        expr.set_type(arr_type->get_reference());
+        auto elem_type = type::canonical(type::remove_const(arr_type->get_subtype()));
         size_t arr_size = arr_type->get_size();
 
         // Update stored array size
@@ -217,6 +218,8 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
             }
             expr._uniform_constructor = best_ctor;
             expr.set_uniform_ctor_args(adapted_args);
+            check_constructor_visibility(*best_ctor, expr);
+            check_call_contract(*best_ctor, expr.first_lexeme());
         } else if (type::is_primitive(elem_type)) {
             // Primitive: must have exactly one arg convertible to the element type
             if (expr._uniform_ctor_args.size() > 1) {
@@ -289,7 +292,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                 }
             }
         } else {
-            auto var_type = var_def->get_type();
+            auto var_type = type::canonical(var_def->get_type());
             if (type::is_sized_array(var_type)) {
                 arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
                 elem_type = arr_type->get_subtype();
@@ -837,7 +840,7 @@ void implementation_generator::visit_array_init_expression(array_init_expression
     }
 
     auto* struct_llvm = arr_type->get_llvm_struct_type();
-    auto elem_type = arr_type->get_subtype();
+    auto elem_type = type::canonical(type::remove_const(arr_type->get_subtype()));
     llvm::Type* llvm_elem_type = _context->get_llvm_type(elem_type);
     size_t arr_size = arr_type->get_size();
 
@@ -872,10 +875,24 @@ void implementation_generator::visit_array_init_expression(array_init_expression
     // Write the element count into field 0
     llvm::Value* size_ptr = _builder->CreateStructGEP(struct_llvm, arr_alloca,
         sized_array_type::FIELD_SIZE, "arr_size");
+    const bool constructing_structs = expr.is_uniform()
+        && std::dynamic_pointer_cast<struct_type>(elem_type) && expr.uniform_constructor();
     _builder->CreateStore(
         llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()),
-            arr_size, false),
+            constructing_structs ? 0 : arr_size, false),
         size_ptr);
+
+    if (auto symbol = expr.constructed_symbol()) {
+        auto variable = symbol->get_variable_def();
+        auto flag = _constructor_member_dtor_flags.find(variable);
+        if (flag != _constructor_member_dtor_flags.end()) {
+            _builder->CreateStore(_builder->getTrue(), flag->second);
+            if (std::find(_constructor_initialized_members.begin(), _constructor_initialized_members.end(),
+                          variable) == _constructor_initialized_members.end()) {
+                _constructor_initialized_members.push_back(variable);
+            }
+        }
+    }
 
     // Step 1: Allocate the array on the stack
     // Get pointer to the data array (field 1)
@@ -904,6 +921,7 @@ void implementation_generator::visit_array_init_expression(array_init_expression
                             if (_value) args.push_back(_value);
                         }
                         create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, args, "");
+                        _builder->CreateStore(_builder->getInt32(i + 1), size_ptr);
                     }
                 }
             } else if (type::is_primitive(elem_type)) {
