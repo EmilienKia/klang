@@ -303,6 +303,92 @@ TEST_CASE("Enum — default construction uses first entry when no explicit defau
     CHECK(get() == 10);  // RED is first, so it's the default
 }
 
+TEST_CASE("Enum defaults in namespaced constructor parameters use declaration scope",
+          "[gen][enum][default-argument][enum-default-scope][regression]") {
+    auto jit = gen_jit(R"K(
+        module k;
+        enum CAbi { DEFAULT = 99; }
+        namespace ffi {
+            namespace c {
+                enum CAbi { DEFAULT = 0; OTHER = 7; }
+                final class CSignature {
+                    _abi : CAbi;
+                public:
+                    CSignature(marker : int, abi : CAbi = CAbi::DEFAULT) : _abi(abi) {}
+                    CSignature(marker : long, abi : CAbi = CAbi::DEFAULT) : _abi(abi) {}
+                    const getAbi() : CAbi { return _abi; }
+                }
+                defaultAbi() : int {
+                    signature : CSignature(1);
+                    return signature.getAbi();
+                }
+                defaultLongAbi() : int {
+                    signature : CSignature(1L);
+                    return signature.getAbi();
+                }
+                explicitAbi() : int {
+                    signature : CSignature(1, CAbi::OTHER);
+                    return signature.getAbi();
+                }
+                functionAbi(abi : CAbi = CAbi::DEFAULT) : int { return abi; }
+                defaultFunctionAbi() : int { return functionAbi(); }
+            }
+        }
+        getDefault() : int { return ffi::c::defaultAbi(); }
+        getLongDefault() : int { return ffi::c::defaultLongAbi(); }
+        getExplicit() : int { return ffi::c::explicitAbi(); }
+        getFunctionDefault() : int { return ffi::c::defaultFunctionAbi(); }
+    )K");
+    REQUIRE(jit);
+    auto get_default = jit->lookup_symbol<int(*)()>("getDefault");
+    auto get_long_default = jit->lookup_symbol<int(*)()>("getLongDefault");
+    auto get_explicit = jit->lookup_symbol<int(*)()>("getExplicit");
+    auto get_function_default = jit->lookup_symbol<int(*)()>("getFunctionDefault");
+    REQUIRE(get_default);
+    REQUIRE(get_long_default);
+    REQUIRE(get_explicit);
+    REQUIRE(get_function_default);
+    CHECK(get_default() == 0);
+    CHECK(get_long_default() == 0);
+    CHECK(get_explicit() == 7);
+    CHECK(get_function_default() == 0);
+}
+
+TEST_CASE("Instantiated constructor defaults retain independent parameter scopes",
+          "[gen][enum][template][default-argument][enum-default-scope][regression]") {
+    auto compiler = compile_model(R"K(
+        module k;
+        template<typename T>
+        struct Box {
+            value : T;
+            Box(marker : int = 3) {}
+        }
+        instantiate() {
+            first : Box<int>;
+            second : Box<long>;
+        }
+    )K");
+    REQUIRE(compiler);
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto definition = root->get_aggregate("Box");
+    REQUIRE(definition);
+    std::vector<std::shared_ptr<k::model::expression>> defaults;
+    for (const auto& [name, aggregate] : root->aggregates()) {
+        for (const auto& constructor : aggregate->constructors()) {
+            auto parameter = constructor->get_parameter("marker");
+            if (!parameter) continue;
+            auto expr = parameter->get_default_expr();
+            REQUIRE(expr);
+            CHECK(expr->parent<k::model::element>() == parameter);
+            defaults.push_back(expr);
+        }
+    }
+    REQUIRE(defaults.size() == 3);
+    CHECK(defaults[0] != defaults[1]);
+    CHECK(defaults[0] != defaults[2]);
+    CHECK(defaults[1] != defaults[2]);
+}
+
 TEST_CASE("Enum — assignment from numeric value", "[gen][enum]") {
     auto jit = gen_jit(R"(
         module gen_enum_06;

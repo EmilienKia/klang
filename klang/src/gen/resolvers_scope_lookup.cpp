@@ -516,6 +516,10 @@ scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string&
     };
 
     for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto param = std::dynamic_pointer_cast<parameter>(current)) {
+            if (auto scope = param->get_default_definition_scope())
+                return lookup_functions(scope, name);
+        }
         if (auto agg = std::dynamic_pointer_cast<aggregate>(current)) {
             // Member call lookup includes inherited member functions so unqualified
             // calls inside member/default-method bodies can resolve base methods.

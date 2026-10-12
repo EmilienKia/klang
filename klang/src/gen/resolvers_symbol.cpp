@@ -284,6 +284,13 @@ std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_p
 symbol_resolver::resolve_symbol(const element& elem, const name& name) {
     debug("[symbol_resolver::resolve_symbol] resolving '{}'", {name.to_string()});
 
+    if (!name.has_root_prefix()) {
+        if (auto param = dynamic_cast<const parameter*>(&elem)) {
+            if (auto scope = param->get_default_definition_scope())
+                return resolve_symbol(*scope, name);
+        }
+    }
+
     // Consumer namespace declarations must not replace a template's private
     // definition dependencies. Locals, parameters and members are checked first
     // while walking outward to this namespace boundary.
