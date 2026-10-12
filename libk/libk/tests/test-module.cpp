@@ -42,6 +42,8 @@
 #include <kdi.hpp>
 #include <functional>
 #include <atomic>
+#include <cerrno>
+#include <chrono>
 #include <thread>
 
 #include <dlfcn.h>
@@ -51,6 +53,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 #ifndef LIBK_KDI_DIR
 #error "LIBK_KDI_DIR must be defined — check CMakeLists.txt"
@@ -197,13 +200,31 @@ TEST_CASE("Application::loadModule — plugins register themselves in their depe
         "module __module_chain__;\n"
         "import modreg;\n"
         "main() : int {\n"
-        "    if (modreg::registeredCount() != 0) { return 1; }\n"
+        "    // Earlier cases can leave these plugin images resident and registered.\n"
+        "    expectedCount : int = modreg::registeredCount();\n"
+        "    aIndex : int = -1;\n"
+        "    bIndex : int = -1;\n"
+        "    i : int = 0;\n"
+        "    while (i < expectedCount) {\n"
+        "        id : int = modreg::registeredId(i);\n"
+        "        if (id == 1) {\n"
+        "            if (aIndex >= 0) { return 1; }\n"
+        "            aIndex = i;\n"
+        "        }\n"
+        "        if (id == 2) {\n"
+        "            if (bIndex >= 0) { return 1; }\n"
+        "            bIndex = i;\n"
+        "        }\n"
+        "        ++i;\n"
+        "    }\n"
+        "    aWasResident : bool = aIndex >= 0;\n"
         "\n"
         "    ra : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + FIXTURES + "/libmodplugin_a.so\"));\n"
         "    if (!ra.hasResult()) { return 2; }\n"
         "    ma : Shared<Module> = ra.getResult();\n"
-        "    if (modreg::registeredCount() != 1) { return 3; }\n"
-        "    if (modreg::registeredId(0) != 1) { return 4; }\n"
+        "    if (aIndex < 0) { aIndex = expectedCount; ++expectedCount; }\n"
+        "    if (modreg::registeredCount() != expectedCount) { return 3; }\n"
+        "    if (modreg::registeredId(aIndex) != 1) { return 4; }\n"
         "\n"
         "    // Same file through other paths: same module, no new registration.\n"
         "    owners_before_alias : int = ma.useCount();\n"
@@ -218,20 +239,25 @@ TEST_CASE("Application::loadModule — plugins register themselves in their depe
         "    lookup : Shared<Module> = lookupModule(String(\"" + FIXTURES + "/libmodplugin_a.so\"));\n"
         "    if (lookup != ma) { return 16; }\n"
         "    if (ma.useCount() != owners_before_lookup + 1) { return 20; }\n"
-        "    if (modreg::registeredCount() != 1) { return 9; }\n"
+        "    if (modreg::registeredCount() != expectedCount) { return 9; }\n"
         "\n"
-        "    // Second plugin: chained after the first one.\n"
+        "    // A new second plugin appends once; a resident one does not register again.\n"
         "    rb : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" + FIXTURES + "/libmodplugin_b.so\"));\n"
         "    if (!rb.hasResult()) { return 10; }\n"
         "    if (rb.getResult() == ma) { return 11; }\n"
-        "    if (modreg::registeredCount() != 2) { return 12; }\n"
-        "    if (modreg::registeredId(0) != 1) { return 13; }\n"
-        "    if (modreg::registeredId(1) != 2) { return 14; }\n"
+        "    if (bIndex < 0) { bIndex = expectedCount; ++expectedCount; }\n"
+        "    if (modreg::registeredCount() != expectedCount) { return 12; }\n"
+        "    if (modreg::registeredId(aIndex) != 1) { return 13; }\n"
+        "    if (modreg::registeredId(bIndex) != 2) { return 14; }\n"
         "\n"
         "    // The module reports the absolute real path of the library.\n"
         "    if (ma.get()->path() != String(\"" + fs::canonical(fs::path(FIXTURES) / "libmodplugin_a.so").string() + "\")) { return 15; }\n"
-        "    if (ma.get()->isProcessPinned()) { return 21; }\n"
-        "    if (ma.get()->residency() != ModuleResidency::POTENTIALLY_RELEASABLE) { return 22; }\n"
+        "    if (ma.get()->isProcessPinned() != aWasResident) { return 21; }\n"
+        "    if (aWasResident) {\n"
+        "        if (ma.get()->residency() != ModuleResidency::PROCESS_PINNED) { return 22; }\n"
+        "    } else {\n"
+        "        if (ma.get()->residency() != ModuleResidency::POTENTIALLY_RELEASABLE) { return 22; }\n"
+        "    }\n"
         "    snapshot : Vector<Shared<Module>> = modules();\n"
         "    if (snapshot.size() < 3u) { return 17; }\n"
         "    snapshot.clear();\n"
