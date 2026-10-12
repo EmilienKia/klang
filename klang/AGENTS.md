@@ -103,6 +103,9 @@ Full body typing is idempotent per concrete function within the type-reference p
 Before leaving that pass, drain unvisited concrete instantiation bodies to a fixed
 point: late declaration resolution can append signature-only dependencies to an
 imported namespace whose body walk has already finished.
+Parameter default expressions are parented to their declaring parameter for lexical
+lookup. Template instantiations clone defaults before attachment; sharing a default
+would move its declaration scope to the last instantiated parameter.
 Template-qualified static calls use that pass's instantiation path, not a fresh
 declaration-only aggregate resolver. Explicit function template calls instantiate
 every candidate declaration; argument caches are declaration-owned, not name-owned.
@@ -117,10 +120,35 @@ visibility checks, including across re-export. Do not widen FFI visibility.
 Hosted member-template source can start with private type and native dependency
 namespace preludes: materialise those scopes before attaching the matching recipe
 to its imported host; never assume the first declaration is the member function.
+Conditional operand adaptation must attach load/cast wrappers to the ternary.
+Codegen finds implicit member access through lexical ancestors; orphan wrappers
+lose the enclosing method even when the original access passed visibility checks.
 Unresolved-type declaration origins belong only to re-parsed imported declarations.
 Do not attach them to ordinary local types or substituted caller arguments. Origin
 references use lexical resolver lookup, not a parallel context-registry lookup;
 enum return signatures and cast targets must share their declaration's enum type.
+Wrapper subtypes use the same lexical type-resolution chain as bare names;
+an unsized array under an owner must retain using-imported aliases and element const.
+Resolved composite wrappers can be freshly pinned nodes; enclosing owner/const
+wrappers must pin them too rather than leave their subtype weak and unowned.
+Recursive template signatures may be semantically resolved before LLVM layout;
+retain complete const/reference chains when no unresolved nodes remain.
+Imported definition namespaces retain declaration-origin lookup for peer
+templates even when type resolution enters the namespace without its aggregate.
+Late signature-created local specializations must complete their member
+resolution even when their LLVM layout is already materialized; snapshot
+aggregate member lists when this completion can add constructor specializations.
+Exported concrete template specializations keep their imported nominal type and
+LLVM layout. Missing member recipes hydrate their original host; private field
+names must match KDI slot indices/types, retain private visibility, and never
+rebuild layout. Template friends resolve in the primary declaration's scope.
+Qualified local enum entries use lexical enum lookup before imported fallback;
+resolve forward declarations in place so cross-file constructor and function
+arguments retain the declaration's nominal type, including rooted module names.
+Enum field and callable signature references bind in that same symbol pass before
+the context's short-name registry can select an unrelated namespace homonym.
+Overload ambiguity must propagate its structured diagnostic, including candidates,
+rather than return an unresolved call that raises a secondary type/constructor error.
 Private dependency signatures retain rooted type references. Concrete aggregate
 types are emitted with source template arguments, never only their internal
 instantiation-cache names.
