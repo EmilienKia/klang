@@ -275,7 +275,7 @@ void type_reference_resolver::resolve_variable_type(
                 // Unsized arrays are canonicalised to ref<array<T>> by resolve_type,
                 // but inside an owner we want owner(array(T)), not owner(ref<array<T>>).
                 resolved_inner = strip_ref_array(resolved_inner);
-                auto res_owner = _context->collapse_callable_addresser(resolved_inner->get_owner());
+                auto res_owner = _context->collapse_callable_addresser(type::make_pinned_owner(resolved_inner));
                 var.set_type(res_owner);
             } else {
                 throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED), var_lexeme,
@@ -338,10 +338,9 @@ void type_reference_resolver::resolve_variable_type(
                     }
                 }
             }
-            if (inner && type::is_resolved(inner)) resolved = inner->get_array(sarr->get_size());
+            if (inner && type::is_resolved(inner)) resolved = rewrap_like(sarr, inner);
         } else {
-            // Fallback: delegate to context->resolve_type
-            resolved = _context->resolve_type(var.get_type());
+            resolved = resolve_type_chain(var.get_type(), var_elem);
         }
 
         // An addresser applied to a name denoting a callable re-addresses the

@@ -545,7 +545,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
         } else {
             auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
             if (!var_def) return;
-            auto var_type = var_def->get_type();
+            auto var_type = type::canonical(var_def->get_type());
 
             // Unwrap reference if needed
             if (type::is_reference(var_type)) {

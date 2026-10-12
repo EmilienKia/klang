@@ -529,6 +529,7 @@ klang_gen_test(klang-tests-import-templates 120 SHARD_COUNT 3
 )
 klang_gen_test(klang-tests-import-interop 120
         tests/test-import-interop.cpp
+        tests/test-import-wrapped-alias.cpp
         tests/test-prod-lib.cpp
 )
 

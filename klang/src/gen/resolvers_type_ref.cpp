@@ -2306,8 +2306,8 @@ std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
     // which cannot instantiate templates and thus fails to resolve at all.
     if (auto const_inner = std::dynamic_pointer_cast<const_type>(inner)) {
         auto resolved_sub = resolve_inner_type(const_inner->get_subtype(), scope_elem);
-        if (resolved_sub && (type::is_resolved(resolved_sub) || std::dynamic_pointer_cast<struct_type>(resolved_sub))) {
-            return resolved_sub->get_const();
+        if (resolved_sub && !type::contains_unresolved(resolved_sub)) {
+            return type::make_pinned_const(resolved_sub);
         }
         return nullptr;
     }
@@ -2349,7 +2349,10 @@ std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
         }
         return resolved;
     }
-    return _context->resolve_type(inner);
+    // Composite inner types must use the same lexical lookup as plain names.
+    // In particular, an owner of an unsized array can contain a using-imported
+    // alias that the context's unqualified type registry cannot resolve.
+    return resolve_type_chain(inner, scope_elem);
 }
 std::shared_ptr<type> type_reference_resolver::strip_ref_array(const std::shared_ptr<type>& t) {
     if (auto ref = std::dynamic_pointer_cast<reference_type>(t)) {
