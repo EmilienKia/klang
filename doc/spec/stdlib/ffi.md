@@ -356,6 +356,8 @@ indexing an empty array. No partial transfer is performed on a bounds error.
 
 `pointer()` returns a managed base address whose keepalive retains both storage
 and a native operation lease. Multiple live pointer exports share that lease.
+Copying a managed pointer retains the same lease. Exporting another pointer
+after the last keepalive is destroyed acquires a new lease.
 It lasts until the final managed pointer/value/result keepalive is destroyed,
 not merely until the foreign call returns. Checked reads, writes, nonempty
 copies and nonempty borrowed-pointer exports return `BUFFER_IN_USE` while it

@@ -2,6 +2,11 @@
 
 #include <stddef.h>
 
+/* Opaque FFI addresses erase pointee qualifiers; const sources remain read-only. */
+void *__k_ffi_opaque_address(const void *address) {
+    return (void *)address;
+}
+
 void *__k_ffi_prepare(int32_t return_type, const int32_t *parameter_types,
                       uint32_t count, int32_t abi, int32_t *status) {
     return k_ffi_prepare(return_type, parameter_types, count, abi, status);

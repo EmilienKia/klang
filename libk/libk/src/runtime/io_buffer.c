@@ -1066,3 +1066,45 @@ int __k_io_buffer_load(void* buf) {
 int __k_io_buffer_is_loaded(const void* buf) {
     return k_io_buffer_is_loaded((const KNativeByteBuffer*)buf) ? 1 : 0;
 }
+
+/* ── FFI NativeBuffer bridge: unique symbols for the K FFI module ─────── */
+
+void* __k_ffi_native_buffer_allocate(unsigned int capacity) {
+    return __k_io_buffer_allocate(capacity);
+}
+
+void __k_ffi_native_buffer_release(void* buf) {
+    __k_io_buffer_release(buf);
+}
+
+void __k_ffi_native_buffer_acquire_lease(void* buf) {
+    __k_io_buffer_acquire_lease(buf);
+}
+
+void __k_ffi_native_buffer_release_lease(void* buf) {
+    __k_io_buffer_release_lease(buf);
+}
+
+int __k_ffi_native_buffer_has_lease(const void* buf) {
+    return __k_io_buffer_has_lease(buf);
+}
+
+uint8_t* __k_ffi_native_buffer_data_at(void* buf, unsigned int index) {
+    return __k_io_buffer_data_at(buf, index);
+}
+
+int __k_ffi_native_buffer_get_byte(const void* buf, unsigned int index, uint8_t* out_byte) {
+    return __k_io_buffer_get_byte(buf, index, out_byte);
+}
+
+int __k_ffi_native_buffer_put_byte(void* buf, unsigned int index, uint8_t b) {
+    return __k_io_buffer_put_byte(buf, index, b);
+}
+
+int __k_ffi_native_buffer_copy_from(void* buf, unsigned int pos, const uint8_t* src, unsigned int len) {
+    return __k_io_buffer_copy_from(buf, pos, src, len);
+}
+
+int __k_ffi_native_buffer_copy_to(const void* buf, unsigned int pos, uint8_t* dst, unsigned int len) {
+    return __k_io_buffer_copy_to(buf, pos, dst, len);
+}

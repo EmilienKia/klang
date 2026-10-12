@@ -89,6 +89,8 @@ public:
  * A keepalive only retains an associated K object. It makes no assertion about
  * whether that object owns the address or how long foreign code retains it.
  */
+@Extern("C") private __k_ffi_opaque_address(address : const byte*) : byte*;
+
 public final class NativePointer {
 private:
     _address : byte*;
@@ -130,47 +132,47 @@ public:
     // Borrow only known native-compatible representations, never a K header.
     static fromArray(values : const byte[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const unsigned byte[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const short[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const unsigned short[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const int[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const unsigned int[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const long[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const unsigned long[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const float[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const double[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : const byte*[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
-        return borrowed((byte*) &values[0u]);
+        return borrowed(__k_ffi_opaque_address((const byte*) &values[0u]));
     }
     static fromArray(values : byte*[]&) : NativePointer {
         if (values.size == 0u) return borrowed(null);
@@ -182,17 +184,17 @@ public:
     const keepalive() : Shared<Object> { return _keepalive; }
 }
 
-@Extern("C") private __k_io_buffer_allocate(capacity : unsigned int) : byte*;
-@Extern("C") private __k_io_buffer_release(native : byte*);
-@Extern("C") private __k_io_buffer_acquire_lease(native : byte*);
-@Extern("C") private __k_io_buffer_release_lease(native : byte*);
-@Extern("C") private __k_io_buffer_has_lease(native : byte*) : int;
-@Extern("C") private __k_io_buffer_data_at(native : byte*, index : unsigned int) : byte*;
-@Extern("C") private __k_io_buffer_get_byte(native : byte*, index : unsigned int, value : unsigned byte*) : int;
-@Extern("C") private __k_io_buffer_put_byte(native : byte*, index : unsigned int, value : unsigned byte) : int;
-@Extern("C") private __k_io_buffer_copy_from(native : byte*, offset : unsigned int,
+@Extern("C") private __k_ffi_native_buffer_allocate(capacity : unsigned int) : byte*;
+@Extern("C") private __k_ffi_native_buffer_release(native : byte*);
+@Extern("C") private __k_ffi_native_buffer_acquire_lease(native : byte*);
+@Extern("C") private __k_ffi_native_buffer_release_lease(native : byte*);
+@Extern("C") private __k_ffi_native_buffer_has_lease(native : byte*) : int;
+@Extern("C") private __k_ffi_native_buffer_data_at(native : byte*, index : unsigned int) : byte*;
+@Extern("C") private __k_ffi_native_buffer_get_byte(native : byte*, index : unsigned int, value : unsigned byte*) : int;
+@Extern("C") private __k_ffi_native_buffer_put_byte(native : byte*, index : unsigned int, value : unsigned byte) : int;
+@Extern("C") private __k_ffi_native_buffer_copy_from(native : byte*, offset : unsigned int,
     source : const unsigned byte*, count : unsigned int) : int;
-@Extern("C") private __k_io_buffer_copy_to(native : byte*, offset : unsigned int,
+@Extern("C") private __k_ffi_native_buffer_copy_to(native : byte*, offset : unsigned int,
     destination : unsigned byte*, count : unsigned int) : int;
 
 private ffiBufferError(status : int) : FfiError {
@@ -208,14 +210,14 @@ private final class NativeBufferStorage : public Object {
 private:
     _native : byte*;
     _capacity : unsigned int;
-    _lease : Weak<NativeBufferLease>;
+    _lease : Weak<Object>;
 
 public:
     NativeBufferStorage(capacity : unsigned int)
         : _native(null), _capacity(capacity), _lease() {}
 
     ~NativeBufferStorage() {
-        __k_io_buffer_release(_native);
+        __k_ffi_native_buffer_release(_native);
     }
 }
 
@@ -230,14 +232,14 @@ private:
 public:
     NativeBufferLease(storage : const Shared<NativeBufferStorage>&)
         : _storage(storage), _address(null), _leased(false) {
-        _address = __k_io_buffer_data_at(_storage.get()->_native, 0u);
+        _address = __k_ffi_native_buffer_data_at(_storage.get()->_native, 0u);
         if (_address == null) throw FatalError();
-        __k_io_buffer_acquire_lease(_storage.get()->_native);
+        __k_ffi_native_buffer_acquire_lease(_storage.get()->_native);
         _leased = true;
     }
 
     ~NativeBufferLease() {
-        if (_leased) __k_io_buffer_release_lease(_storage.get()->_native);
+        if (_leased) __k_ffi_native_buffer_release_lease(_storage.get()->_native);
     }
 }
 
@@ -261,7 +263,7 @@ private:
             value : unsigned int = 0u;
             result.setResult(value);
         } else {
-            status : int = __k_io_buffer_copy_from(_storage.get()->_native, offset, source, count);
+            status : int = __k_ffi_native_buffer_copy_from(_storage.get()->_native, offset, source, count);
             if (status != 0) {
                 error : FfiError = ffiBufferError(status);
                 result.setError(error);
@@ -283,7 +285,7 @@ private:
             value : unsigned int = 0u;
             result.setResult(value);
         } else {
-            status : int = __k_io_buffer_copy_to(_storage.get()->_native, offset, destination, count);
+            status : int = __k_ffi_native_buffer_copy_to(_storage.get()->_native, offset, destination, count);
             if (status != 0) {
                 error : FfiError = ffiBufferError(status);
                 result.setError(error);
@@ -307,7 +309,7 @@ public:
     static allocate(capacity : unsigned int) : Expected<NativeBuffer, FfiError> {
         result : Expected<NativeBuffer, FfiError>;
         storage : Shared<NativeBufferStorage>(new NativeBufferStorage(capacity));
-        storage.get()->_native = __k_io_buffer_allocate(capacity);
+        storage.get()->_native = __k_ffi_native_buffer_allocate(capacity);
         if (storage.get()->_native == null) {
             error : FfiError(FfiErrorCode::OUT_OF_MEMORY);
             result.setError(error);
@@ -345,7 +347,7 @@ public:
     const isAllocated() : bool { return !_storage.isNull(); }
     const hasLease() : bool {
         if (!_storage) return false;
-        return __k_io_buffer_has_lease(_storage.get()->_native) != 0;
+        return __k_ffi_native_buffer_has_lease(_storage.get()->_native) != 0;
     }
 
     const get(index : unsigned int) : Expected<unsigned byte, FfiError> {
@@ -355,7 +357,7 @@ public:
             result.setError(error);
         } else {
             value : unsigned byte = 0;
-            status : int = __k_io_buffer_get_byte(_storage.get()->_native, index, &value);
+            status : int = __k_ffi_native_buffer_get_byte(_storage.get()->_native, index, &value);
             if (status != 0) {
                 error : FfiError = ffiBufferError(status);
                 result.setError(error);
@@ -372,7 +374,7 @@ public:
             error : FfiError(FfiErrorCode::OUT_OF_RANGE);
             result.setError(error);
         } else {
-            status : int = __k_io_buffer_put_byte(_storage.get()->_native, index, value);
+            status : int = __k_ffi_native_buffer_put_byte(_storage.get()->_native, index, value);
             if (status != 0) {
                 error : FfiError = ffiBufferError(status);
                 result.setError(error);
@@ -420,7 +422,7 @@ public:
             error : FfiError(FfiErrorCode::BUFFER_IN_USE);
             result.setError(error);
         } else {
-            data : byte* = __k_io_buffer_data_at(_storage.get()->_native, offset);
+            data : byte* = __k_ffi_native_buffer_data_at(_storage.get()->_native, offset);
             if (data == null) {
                 error : FfiError(FfiErrorCode::INVALID_FRAME);
                 result.setError(error);
@@ -434,10 +436,10 @@ public:
 
     const pointer() : NativePointer {
         if (isEmpty()) return NativePointer::borrowed(null);
-        lease : Shared<NativeBufferLease> = _storage.get()->_lease.lock();
+        lease : Shared<NativeBufferLease>(_storage.get()->_lease.lock());
         if (!lease) {
             lease = Shared<NativeBufferLease>(new NativeBufferLease(_storage));
-            _storage.get()->_lease = Weak<NativeBufferLease>(lease);
+            _storage.get()->_lease = Weak<Object>(lease);
         }
         keepalive : Shared<Object>(lease);
         return NativePointer::retained(lease.get()->_address, keepalive);
@@ -623,24 +625,24 @@ public enum CAbi {
     DEFAULT = 0;
 }
 
-@::k::ffi::Extern("C") private __k_ffi_type_canonical(type : int) : int;
-@::k::ffi::Extern("C") private __k_ffi_type_size(type : int) : int;
-@::k::ffi::Extern("C") private __k_ffi_prepare(returnType : int, parameters : const int*,
+@ffi::Extern("C") private __k_ffi_type_canonical(type : int) : int;
+@ffi::Extern("C") private __k_ffi_type_size(type : int) : int;
+@ffi::Extern("C") private __k_ffi_prepare(returnType : int, parameters : const int*,
     count : unsigned int, abi : int, status : int*) : byte*;
-@::k::ffi::Extern("C") private __k_ffi_signature_release(signature : byte*);
-@::k::ffi::Extern("C") private __k_ffi_frame_create(signature : byte*, status : int*) : byte*;
-@::k::ffi::Extern("C") private __k_ffi_frame_release(frame : byte*);
-@::k::ffi::Extern("C") private __k_ffi_set_signed(frame : byte*, index : unsigned int, type : int, value : long) : int;
-@::k::ffi::Extern("C") private __k_ffi_set_unsigned(frame : byte*, index : unsigned int, type : int, value : unsigned long) : int;
-@::k::ffi::Extern("C") private __k_ffi_set_float(frame : byte*, index : unsigned int, type : int, value : double) : int;
-@::k::ffi::Extern("C") private __k_ffi_set_pointer(frame : byte*, index : unsigned int, type : int, value : byte*) : int;
-@::k::ffi::Extern("C") private __k_ffi_invoke(function : byte*, frame : byte*, count : unsigned int, captureErrno : int) : int;
-@::k::ffi::Extern("C") private __k_ffi_result_type(frame : byte*, status : int*) : int;
-@::k::ffi::Extern("C") private __k_ffi_result_signed(frame : byte*, status : int*) : long;
-@::k::ffi::Extern("C") private __k_ffi_result_unsigned(frame : byte*, status : int*) : unsigned long;
-@::k::ffi::Extern("C") private __k_ffi_result_float(frame : byte*, status : int*) : double;
-@::k::ffi::Extern("C") private __k_ffi_result_pointer(frame : byte*, status : int*) : byte*;
-@::k::ffi::Extern("C") private __k_ffi_result_errno(frame : byte*, status : int*) : int;
+@ffi::Extern("C") private __k_ffi_signature_release(signature : byte*);
+@ffi::Extern("C") private __k_ffi_frame_create(signature : byte*, status : int*) : byte*;
+@ffi::Extern("C") private __k_ffi_frame_release(frame : byte*);
+@ffi::Extern("C") private __k_ffi_set_signed(frame : byte*, index : unsigned int, type : int, value : long) : int;
+@ffi::Extern("C") private __k_ffi_set_unsigned(frame : byte*, index : unsigned int, type : int, value : unsigned long) : int;
+@ffi::Extern("C") private __k_ffi_set_float(frame : byte*, index : unsigned int, type : int, value : double) : int;
+@ffi::Extern("C") private __k_ffi_set_pointer(frame : byte*, index : unsigned int, type : int, value : byte*) : int;
+@ffi::Extern("C") private __k_ffi_invoke(function : byte*, frame : byte*, count : unsigned int, captureErrno : int) : int;
+@ffi::Extern("C") private __k_ffi_result_type(frame : byte*, status : int*) : int;
+@ffi::Extern("C") private __k_ffi_result_signed(frame : byte*, status : int*) : long;
+@ffi::Extern("C") private __k_ffi_result_unsigned(frame : byte*, status : int*) : unsigned long;
+@ffi::Extern("C") private __k_ffi_result_float(frame : byte*, status : int*) : double;
+@ffi::Extern("C") private __k_ffi_result_pointer(frame : byte*, status : int*) : byte*;
+@ffi::Extern("C") private __k_ffi_result_errno(frame : byte*, status : int*) : int;
 
 public typeSize(type : CType) : Expected<unsigned int, FfiError> {
     result : Expected<unsigned int, FfiError>;

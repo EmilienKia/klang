@@ -52,8 +52,10 @@ int run_adapter(std::string_view module, std::string_view source) {
         using namespace k::ffi;
         using namespace k::ffi::c;
         private adapterImage() : Shared<Module> {
+            application : OptionalRef<k::Application> = k::Application::getApplication();
+            if (!application.hasValue()) throw FatalError(999);
             loaded : Expected<Shared<Module>, LoadModuleError> =
-                loadModule(String(")K" LIBK_FFI_FIXTURE_PATH R"K("));
+                application.get().loadModule(String(")K" LIBK_FFI_FIXTURE_PATH R"K("));
             if (!loaded.hasResult()) throw FatalError(1000);
             return loaded.getResult();
         }
@@ -188,7 +190,7 @@ TEST_CASE("runtime C FFI: imported aliases, type queries and immutable signature
             invalidType : Expected<CType, FfiError> = canonicalType((CType) 99);
             if (!invalidSize.hasError() || !invalidType.hasError() ||
                 invalidType.getError().code() != FfiErrorCode::INVALID_TYPE) return 4;
-            parameters : CType[2] = {CType::INT, CType::INT};
+            parameters : CType[2] {CType::INT, CType::INT};
             signature : CSignature(CType::INT, parameters);
             parameters[0] = CType::DOUBLE;
             if (signature.getParameterType(0u) != CType::INT) return 5;
@@ -524,14 +526,14 @@ TEST_CASE("runtime C FFI: float conversion checks and explicit errno policy",
             if (!fb.hasResult()) return 2;
             function : CFunction = fb.getResult();
             ok : Expected<CallResult, FfiError> =
-                function.call().argument(CValue::floatingValue(CType::FLOAT, 1.5)).invoke();
+                function.call().argument(CValue::floatingValue(CType::FLOAT, 1.5d)).invoke();
             overflow : Expected<CallResult, FfiError> =
-                function.call().argument(CValue::floatingValue(CType::FLOAT, 1.0e300)).invoke();
+                function.call().argument(CValue::floatingValue(CType::FLOAT, 1.0e300d)).invoke();
             underflow : Expected<CallResult, FfiError> =
-                function.call().argument(CValue::floatingValue(CType::FLOAT, 1.0e-300)).invoke();
-            if (!ok.hasResult() || ok.getResult().asFloating().getResult() != 1.5 ||
-                !overflow.hasError() || overflow.getError().code() != FfiErrorCode::OUT_OF_RANGE ||
-                !underflow.hasError() || underflow.getError().code() != FfiErrorCode::OUT_OF_RANGE) return 3;
+                function.call().argument(CValue::floatingValue(CType::FLOAT, 1.0e-300d)).invoke();
+            if (!ok.hasResult() || ok.getResult().asFloating().getResult() != 1.5d) return 3;
+            if (!overflow.hasError() || overflow.getError().code() != FfiErrorCode::OUT_OF_RANGE) return 9;
+            if (!underflow.hasError() || underflow.getError().code() != FfiErrorCode::OUT_OF_RANGE) return 10;
             builder.reset();
             ep : Expected<CPreparedSignature, FfiError> = builder.returns(CType::INT).prepare();
             el : Expected<NativeSymbol, SymbolLookupError> =
@@ -581,6 +583,18 @@ TEST_CASE("runtime C FFI: returned pointers retain argument owners and module sy
             saved : CallResult;
             {
                 image : Shared<ApplicationModule> = applicationModule();
+                {
+                    source : const Shared<ApplicationModule>& = image;
+                    owners : int = image.useCount();
+                    base : Shared<Module>(source);
+                    baseSource : const Shared<Module>& = base;
+                    object : Shared<Object>(baseSource);
+                    weak : Weak<Module>(source);
+                    if (!base || !object || image.useCount() != owners + 2 ||
+                        weak.useCount() != owners + 2 ||
+                        base.get() != (Module*) image.get() ||
+                        object.get() != (Object*) base.get()) return 15;
+                }
                 lookup : Expected<NativeSymbol, SymbolLookupError> =
                     image.get()->lookupSymbol(String("klang_ffi_pointer"));
                 if (!lookup.hasResult()) return 1;
@@ -806,7 +820,7 @@ TEST_CASE("runtime C FFI: transparent arrays use aligned element payloads, not h
             intSignature : CSignature =
                 builder.returns(CType::SINT64).parameter(CType::POINTER).parameter(CType::SIZE_T).build();
             sumInts : CFunction = adapterFunction(image, String("klang_ffi_fixture_sum_ints"), intSignature);
-            values : Int[3] = {-3, 5, 8};
+            values : Int[3] {-3, 5, 8};
             call : CCallBuilder = sumInts.call().argument(values)
                 .argument(CValue::unsignedValue(CType::SIZE_T, 3uL));
             values[1] = 20;
@@ -814,7 +828,7 @@ TEST_CASE("runtime C FFI: transparent arrays use aligned element payloads, not h
             if (!result.hasResult() || result.getResult().asSigned().getResult() != 25L) return 1;
             payload : NativePointer = NativePointer::fromArray(values);
             if (payload.rawAddress() != (byte*) &values[0u] || payload.keepalive()) return 2;
-            constValues : const Int[2] = {7, 9};
+            constValues : const Int[2] {7, 9};
             readOnly : Expected<CallResult, FfiError> = sumInts.call().argument(constValues)
                 .argument(CValue::unsignedValue(CType::SIZE_T, 2uL)).invoke();
             if (!readOnly.hasResult() || readOnly.getResult().asSigned().getResult() != 16L) return 3;
@@ -829,7 +843,7 @@ TEST_CASE("runtime C FFI: transparent arrays use aligned element payloads, not h
             doubleSignature : CSignature =
                 builder.returns(CType::DOUBLE).parameter(CType::POINTER).parameter(CType::SIZE_T).build();
             sumDoubles : CFunction = adapterFunction(image, String("klang_ffi_fixture_sum_doubles"), doubleSignature);
-            doubles : Double[3] = {1.5, 2.25, -0.75};
+            doubles : Double[3] {1.5, 2.25, -0.75};
             doublePayload : NativePointer = NativePointer::fromArray(doubles);
             if (doublePayload.rawAddress() != (byte*) &doubles[0u]) return 6;
             args : CValue[2];
@@ -843,7 +857,7 @@ TEST_CASE("runtime C FFI: transparent arrays use aligned element payloads, not h
             pick : CFunction = adapterFunction(image, String("klang_ffi_fixture_array_pointer"), pointerSignature);
             first : byte = 11;
             second : byte = 22;
-            pointers : byte*[2] = {&first, &second};
+            pointers : byte*[2] {&first, &second};
             pointerPayload : NativePointer = NativePointer::fromArray(pointers);
             if (pointerPayload.rawAddress() != (byte*) &pointers[0u]) return 8;
             selected : Expected<CallResult, FfiError> = pick.call().argument(pointers)
@@ -854,7 +868,7 @@ TEST_CASE("runtime C FFI: transparent arrays use aligned element payloads, not h
             fillSignature : CSignature = builder.returns(CType::SIZE_T).parameter(CType::POINTER)
                 .parameter(CType::SIZE_T).parameter(CType::UCHAR).build();
             fill : CFunction = adapterFunction(image, String("klang_ffi_fixture_fill"), fillSignature);
-            bytes : UnsignedChar[4] = {0, 1, 2, 3};
+            bytes : UnsignedChar[4] {0, 1, 2, 3};
             changed : Expected<CallResult, FfiError> = fill.call().argument(bytes)
                 .argument(CValue::unsignedValue(CType::SIZE_T, 4uL))
                 .argument(CValue::unsignedValue(CType::UCHAR, 127uL)).invoke();
@@ -864,16 +878,16 @@ TEST_CASE("runtime C FFI: transparent arrays use aligned element payloads, not h
             lengthSignature : CSignature =
                 builder.returns(CType::SIZE_T).parameter(CType::POINTER).build();
             length : CFunction = adapterFunction(image, String("klang_ffi_fixture_strlen"), lengthSignature);
-            chars : Char[3] = {65, 66, 0};
+            chars : Char[3] {65, 66, 0};
             narrow : Expected<CallResult, FfiError> = length.call().argument(chars).invoke();
             if (!narrow.hasResult() || narrow.getResult().asUnsigned().getResult() != 2uL) return 11;
-            signedBytes : SignedChar[1] = {-7};
-            shorts : Short[1] = {-32000};
-            unsignedShorts : UShort[1] = {65000};
-            unsignedInts : UInt[1] = {4000000000u};
-            longs : Long[1] = {-9000000000L};
-            unsignedLongs : ULong[1] = {18000000000uL};
-            floats : Float[1] = {1.25};
+            signedBytes : SignedChar[1] {-7};
+            shorts : Short[1] {-32000};
+            unsignedShorts : UShort[1] {65000};
+            unsignedInts : UInt[1] {4000000000u};
+            longs : Long[1] {-9000000000L};
+            unsignedLongs : ULong[1] {18000000000uL};
+            floats : Float[1] {1.25};
             if (NativePointer::fromArray(signedBytes).rawAddress() != (byte*) &signedBytes[0u] ||
                 NativePointer::fromArray(shorts).rawAddress() != (byte*) &shorts[0u] ||
                 NativePointer::fromArray(unsignedShorts).rawAddress() != (byte*) &unsignedShorts[0u] ||
@@ -927,13 +941,13 @@ TEST_CASE("runtime C FFI: native bytes check bounds and honor managed pointer le
             if (!buffer.isAllocated() || buffer.isEmpty() || buffer.size() != 8u ||
                 buffer.get(0u).getResult() != 0 || buffer.get(7u).getResult() != 0) return 2;
             if (!buffer.put(1u, 255).hasResult() || copy.get(1u).getResult() != 255) return 3;
-            source : unsigned byte[3] = {11, 22, 33};
+            source : unsigned byte[3] {11, 22, 33};
             written : Expected<unsigned int, FfiError> = buffer.copyFrom(source, 2u);
             destination : byte[3];
             read : Expected<unsigned int, FfiError> = buffer.copyTo(destination, 2u);
             if (!written.hasResult() || written.getResult() != 3u || !read.hasResult() ||
                 destination[0u] != 11 || destination[2u] != 33) return 4;
-            signedSource : byte[1] = {-1};
+            signedSource : byte[1] {-1};
             if (!buffer.copyFrom(signedSource, 0u).hasResult() || buffer.get(0u).getResult() != 255) return 5;
             if (!buffer.get(8u).hasError() || buffer.get(8u).getError().code() != FfiErrorCode::OUT_OF_RANGE ||
                 !buffer.put(8u, 1).hasError() || !buffer.copyFrom(source, 7u).hasError() ||
@@ -963,9 +977,24 @@ TEST_CASE("runtime C FFI: native bytes check bounds and honor managed pointer le
                     !buffer.put(0u, 0).hasError() || !buffer.copyFrom(source).hasError() ||
                     !buffer.copyTo(destination).hasError() || !buffer.borrowedPointer().hasError()) return 13;
                 pointer = NativePointer();
-                if (!buffer.hasLease() || weak.expired()) return 14;
+                keeper = Shared<Object>();
+                secondKeeper = Shared<Object>();
+                if (!buffer.hasLease() || weak.expired() ||
+                    !copy.get(0u).hasError() ||
+                    copy.get(0u).getError().code() != FfiErrorCode::BUFFER_IN_USE) return 14;
+                survivingCopy : NativePointer(second);
+                second = NativePointer();
+                if (!buffer.hasLease() || weak.expired() ||
+                    !buffer.copyTo(destination).hasError()) return 101;
             }
             if (buffer.hasLease() || !weak.expired() || buffer.get(0u).getResult() != 255) return 15;
+            {
+                renewed : NativePointer = copy.pointer();
+                another : NativePointer = buffer.pointer();
+                if (!weak.expired() || !buffer.hasLease() ||
+                    renewed.keepalive() != another.keepalive()) return 102;
+            }
+            if (buffer.hasLease() || buffer.get(0u).getResult() != 255) return 103;
             image : Shared<Module> = adapterImage();
             builder : CSignatureBuilder;
             signature : CSignature = builder.returns(CType::SIZE_T).parameter(CType::POINTER)
@@ -1017,7 +1046,7 @@ TEST_CASE("runtime C FFI: native buffer pointer results retain storage after wra
             saved : CallResult;
             weak : Weak<Object>;
             {
-                bytes : unsigned byte[2] = {75, 0};
+                bytes : unsigned byte[2] {75, 0};
                 allocated : Expected<NativeBuffer, FfiError> = NativeBuffer::fromBytes(bytes);
                 if (!allocated.hasResult()) return 1;
                 buffer : NativeBuffer = allocated.getResult();
@@ -1108,7 +1137,7 @@ TEST_CASE("runtime C FFI: UTF-8 C strings reject zero bytes and retain their ter
             if (!empty.isEmpty() || empty.byteLength() != 0u || empty.pointer().isNull()) return 11;
             emptyCall : Expected<CallResult, FfiError> = length.call().argument(empty).invoke();
             if (!emptyCall.hasResult() || emptyCall.getResult().asUnsigned().getResult() != 0uL) return 12;
-            codepoints : char[4] = {'a', (char) 0, 'b', (char) 0};
+            codepoints : char[4] {'a', (char) 0, 'b', (char) 0};
             withZero : String(codepoints);
             rejected : Expected<Utf8CString, FfiError> = Utf8CString::fromString(withZero);
             if (!rejected.hasError() || rejected.getError().code() != FfiErrorCode::EMBEDDED_ZERO ||
@@ -1136,7 +1165,7 @@ TEST_CASE("runtime C FFI: nontrivial, boolean and UTF-32 arrays are not native p
     CHECK_FALSE(compile(R"K(
         module __ffi_reject_utf32_array__;
         test() {
-            text : char[2] = {'a', (char) 0};
+            text : char[2] {'a', (char) 0};
             value : ffi::c::CValue = ffi::c::CValue::array(text);
         }
     )K"));
@@ -1144,7 +1173,7 @@ TEST_CASE("runtime C FFI: nontrivial, boolean and UTF-32 arrays are not native p
         module __ffi_reject_bool_array__;
         test() {
             function : ffi::c::CFunction;
-            values : bool[1] = {true};
+            values : bool[1] {true};
             call : ffi::c::CCallBuilder = function.call().argument(values);
         }
     )K"));

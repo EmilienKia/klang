@@ -121,6 +121,8 @@ int32_t k_ffi_frame_result_errno(const KFFIFrame *frame, int32_t *value);
  * K int -> int32_t, unsigned int -> uint32_t, long -> int64_t,
  * unsigned long -> uint64_t, double -> double, byte* -> void*.
  */
+/* Erases pointee qualifiers, never permission to modify a const source. */
+void *__k_ffi_opaque_address(const void *address);
 void *__k_ffi_prepare(int32_t return_type, const int32_t *parameter_types,
                       uint32_t count, int32_t abi, int32_t *status);
 void __k_ffi_signature_release(void *signature);
