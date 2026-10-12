@@ -344,9 +344,16 @@ public:
 
 class member_of_pointer_expression : public member_of_expression {
 protected:
+    std::shared_ptr<member_of_object_expression> _object_member_access;
+
+    friend class gen::type_reference_resolver;
+
     member_of_pointer_expression() = default;
 public:
     void accept(model_visitor &visitor) override;
+    const std::shared_ptr<member_of_object_expression>& get_object_member_access() const {
+        return _object_member_access;
+    }
     static std::shared_ptr<member_of_pointer_expression> make_shared(const std::shared_ptr<expression> &sub_expr, const std::shared_ptr<symbol_expression>& symbol) {
         std::shared_ptr<member_of_pointer_expression> expr{new member_of_pointer_expression()};
         expr->assign(sub_expr, symbol);

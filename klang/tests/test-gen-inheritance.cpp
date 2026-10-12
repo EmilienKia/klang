@@ -20,6 +20,128 @@
 
 #include "helpers.hpp"
 
+#include <string_view>
+
+TEST_CASE("Arrow inherited fields use base offsets and preserve pointee const",
+          "[gen][inheritance][arrow][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"SRC(
+        module gen_arrow_inherited_fields;
+        accesses : int = 0;
+        struct Prefix {
+            padding : long;
+            Prefix() : padding(7) {}
+        }
+        struct Base {
+            value : int;
+            Base() : value(42) {}
+        }
+        struct Middle : public Prefix, public Base {
+            Middle() : Prefix(), Base() {}
+        }
+        struct Derived : public Middle {
+            Derived() : Middle() {}
+        }
+        address(value : Derived&) : Derived* {
+            ++accesses;
+            return &value;
+        }
+        run() : int {
+            value : Derived;
+            pointer : Derived* = &value;
+            link : Derived+ = &value;
+            view : Derived? = &value;
+            owner : Derived! = new Derived();
+            pointer->value = 20;
+            link->value += 1;
+            view->value += 1;
+            frozen : const Derived* = pointer;
+            if (address(value)->value != 22 || accesses != 1) return -1;
+            if (pointer->padding != 7 || owner->value != 42) return -2;
+            return frozen->value + owner->value;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 64);
+}
+
+TEST_CASE("Arrow inherited class fields use the shared virtual base",
+          "[gen][inheritance][arrow][virtual][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"SRC(
+        module gen_arrow_virtual_base_field;
+        class Base {
+        public:
+            value : int;
+            Base(input : int) : value(input) {}
+        }
+        class Derived : public Base {
+        public:
+            Derived() : Base(42) {}
+        }
+        run() : int {
+            value : Derived;
+            pointer : Derived* = &value;
+            pointer->value = 43;
+            base : Base* = pointer;
+            frozen : const Derived* = pointer;
+            return base->value == 43 && frozen->value == value.value ? 43 : -1;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 43);
+}
+
+TEST_CASE("Arrow inherited fields reject private, const and ambiguous access",
+          "[gen][inheritance][arrow][diagnostic][regression]") {
+    std::string_view source;
+    SECTION("private base field") {
+        source = R"SRC(
+            module gen_arrow_private_base;
+            struct Base {
+            private:
+                value : int;
+            }
+            struct Derived : public Base {}
+            read(pointer : Derived*) : int { return pointer->value; }
+        )SRC";
+    }
+    SECTION("protected base field outside the hierarchy") {
+        source = R"SRC(
+            module gen_arrow_protected_base;
+            struct Base {
+            protected:
+                value : int;
+            }
+            struct Derived : public Base {}
+            read(pointer : Derived*) : int { return pointer->value; }
+        )SRC";
+    }
+    SECTION("const pointee") {
+        source = R"SRC(
+            module gen_arrow_const_base;
+            struct Base { value : int; }
+            struct Derived : public Base {}
+            write(pointer : const Derived*) { pointer->value = 1; }
+        )SRC";
+    }
+    SECTION("distinct bases with the same field name") {
+        source = R"SRC(
+            module gen_arrow_ambiguous_bases;
+            struct Left { value : int; }
+            struct Right { value : int; }
+            struct Derived : public Left, public Right {}
+            read(pointer : Derived*) : int { return pointer->value; }
+        )SRC";
+    }
+    REQUIRE_FALSE(source.empty());
+    REQUIRE_THROWS_AS(gen_jit_throws(source), k::log::compiler_error);
+}
+
 //
 // ─── Parser tests: base clause ───────────────────────────────────────────────
 //

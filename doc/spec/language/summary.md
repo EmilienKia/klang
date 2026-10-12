@@ -519,7 +519,7 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 - **Subscript**: `arr[i]` — runtime bounds-check. Works on any `T[N]`, `T[]`, and any indirection to an array.
 - **Member access `.`**: fields and methods. Works on temporaries (rvalues) — method chaining supported. `arr.size` = element count.
 - **Unified Call Syntax (UCS)**: `obj.func(args...)` / `obj.func<TArgs...>(args...)` can invoke matching static methods on the receiver's aggregate/base hierarchy or matching free functions taking `obj` as their first parameter (`func(obj, args...)`), with aggregate static members prioritized over free functions, supporting both non-template and template functions with argument deduction.
-- **Pointer access `→`**: equivalent to `(*p).member`, with null-check.
+- **Pointer access `→`**: equivalent to `(*p).member`, with null-check. Inherited fields use the same base-subobject adjustment, visibility, ambiguity and const checks as `.`.
 - **Member function reference call**: `(obj.*mfp)(args)` and `(ptr->*mfp)(args)` — parentheses required.
 - **Template-qualified scope call**: expression calls support `Type<T>::func(args...)`,
   `ns::Type<T>::func(args...)`, and `::ns::Type<T>::func(args...)`.
