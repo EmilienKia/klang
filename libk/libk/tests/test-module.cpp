@@ -272,9 +272,20 @@ TEST_CASE("Application::loadModule — plugins register themselves in their depe
 
 TEST_CASE("Application singleton — dynamically loaded module constructors share the active instance",
           "[libk][module][application]") {
+    struct ObservationGate {
+        int descriptors[2] = {-1, -1};
+        ~ObservationGate() {
+            for (int descriptor : descriptors) {
+                if (descriptor >= 0) close(descriptor);
+            }
+        }
+    } gate;
+    REQUIRE(pipe(gate.descriptors) == 0);
+
     auto jit = jit_module(
         "module __module_application_anchor__;\n"
         "import modreg;\n"
+        "@ffi::Extern(\"C\") private read(fd : int, output : byte*, size : unsigned long) : long;\n"
         "class Application : public k::Application {\n"
         "    private _capture : k::io::ArrayOutputStream<byte>*;\n"
         "    public Application() {\n"
@@ -284,6 +295,9 @@ TEST_CASE("Application singleton — dynamically loaded module constructors shar
         "        setStandardOutput(stdoutRoot);\n"
         "    }\n"
         "    public main() : int {\n"
+        "        observed : byte = 0;\n"
+        "        if (read(" + std::to_string(gate.descriptors[0]) +
+            ", &observed, (unsigned long) 1) != (long) 1 || observed != (byte) 1) { return 5; }\n"
         "        before : int = modreg::registeredCount();\n"
         "        loaded : Expected<Shared<Module>, LoadModuleError> = loadModule(String(\"" +
             FIXTURES + "/libapplication_probe.so\"));\n"
@@ -306,9 +320,24 @@ TEST_CASE("Application singleton — dynamically loaded module constructors shar
     std::atomic<bool> running = true;
     std::atomic<bool> saw_active_application = false;
     std::thread reader([&] {
-        while (running.load(std::memory_order_acquire)) {
-            if (current()) saw_active_application.store(true, std::memory_order_release);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (running.load(std::memory_order_acquire)
+               && std::chrono::steady_clock::now() < deadline) {
+            if (current()) {
+                saw_active_application.store(true, std::memory_order_release);
+                break;
+            }
+            std::this_thread::yield();
         }
+        // Keep the Application active until the cross-thread observation completes.
+        const unsigned char observed =
+            saw_active_application.load(std::memory_order_acquire) ? 1 : 0;
+        ssize_t written;
+        do {
+            written = write(gate.descriptors[1], &observed, sizeof(observed));
+        } while (written < 0 && errno == EINTR);
+        close(gate.descriptors[1]);
+        gate.descriptors[1] = -1;
     });
     const int status = run_main(*jit);
     running.store(false, std::memory_order_release);
