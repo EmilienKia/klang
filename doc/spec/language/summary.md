@@ -516,7 +516,12 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 > Details: [call.md](expressions/call.md)
 
 - **Call**: `f(args…)`. Pass by value (copy) or by reference (`T&`).
-- **Default parameters**: only trailing parameters may have default values.
+- **Default parameters**: only trailing parameters may have default values. Overloads may share an argument count if their supplied parameter types differ; identical supplied prefixes (including zero arguments) made possible by defaults are rejected. Conversion ties are diagnosed at the call site.
+  Defaults on imported public/protected functions, methods, and constructors
+  remain available. Their names are bound in the declaration's lexical scope
+  and are not rebound by caller-local or caller-module shadowing; they are
+  evaluated only when the corresponding argument is omitted. Required
+  arguments and nominal enum compatibility remain unchanged.
 - **Subscript**: `arr[i]` — runtime bounds-check. Works on any `T[N]`, `T[]`, and any indirection to an array.
 - **Member access `.`**: fields and methods. Works on temporaries (rvalues) — method chaining supported. `arr.size` = element count.
 - **Unified Call Syntax (UCS)**: `obj.func(args...)` / `obj.func<TArgs...>(args...)` can invoke matching static methods on the receiver's aggregate/base hierarchy or matching free functions taking `obj` as their first parameter (`func(obj, args...)`), with aggregate static members prioritized over free functions, supporting both non-template and template functions with argument deduction.

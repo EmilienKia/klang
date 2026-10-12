@@ -732,14 +732,14 @@ protected:
                                const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates = {});
 
     /**
-     * Check all groups of same-named free functions in a function_holder for arity-overlap
+     * Check all groups of same-named functions in a function_holder for identical supplied-prefix
      * collisions caused by default-parameter values.
      * Reports an error for every colliding pair found.
      */
     void check_overload_collisions(function_holder& fh);
 
     /**
-     * Check all constructor overloads of an aggregate for arity-overlap collisions caused
+     * Check all constructor overloads of an aggregate for identical supplied-prefix collisions caused
      * by default-parameter values.
      * Reports an error for every colliding pair found.
      */

@@ -761,24 +761,38 @@ namespace {
     }
 
     // Compute [min_arity, max_arity] for a function (accounting for default parameters).
-    static std::pair<size_t,size_t> arity_range(const std::shared_ptr<model::function>& fn) {
-        size_t min_a = 0, max_a = fn->parameters().size();
-        for (auto& p : fn->parameters()) if (!p->has_default_expr()) ++min_a;
+    static std::pair<size_t,size_t> arity_range(const model::function& fn) {
+        size_t min_a = 0, max_a = fn.get_parameter_size();
+        for (auto& p : fn.parameters()) if (!p->has_default_expr()) ++min_a;
         return {min_a, max_a};
     }
 
-    // True if ranges [a,b] and [c,d] overlap.
-    static bool ranges_overlap(size_t a, size_t b, size_t c, size_t d) {
-        return a <= d && c <= b;
+    static bool default_overloads_collide(const model::function& a, const model::function& b) {
+        auto [min_a, max_a] = arity_range(a);
+        auto [min_b, max_b] = arity_range(b);
+        const size_t supplied = std::max(min_a, min_b);
+        if ((min_a == max_a && min_b == max_b) || supplied > std::min(max_a, max_b)) return false;
+
+        // A difference in the smallest shared prefix also distinguishes every
+        // longer prefix. The empty prefix deliberately collides at arity zero.
+        for (size_t i = 0; i < supplied; ++i) {
+            auto left = a.parameters()[i]->get_type();
+            auto right = b.parameters()[i]->get_type();
+            // These checks run after parameter resolution/callable normalization.
+            // Dependent template signatures must not be compared by unresolved names.
+            if (!left || !right || type::contains_unresolved(left) || type::contains_unresolved(right)
+                || !type::are_equal(left, right)) return false;
+        }
+        return true;
     }
 } // anonymous namespace
 
 /**
- * Check all function overloads in a function_holder for arity-overlap collisions
+ * Check all function overloads in a function_holder for identical supplied-prefix collisions
  * caused by default-parameter values.
  *
  * For each pair of same-named overloads, if at least one has default params and their
- * arity ranges overlap, throw an ambiguity error.
+ * parameter types are identical at a shared arity, throw an ambiguity error.
  */
 void type_reference_resolver::check_overload_collisions(function_holder& fh)
 {
@@ -792,20 +806,14 @@ void type_reference_resolver::check_overload_collisions(function_holder& fh)
         auto overloads = fh.get_functions(fname);
         if (overloads.size() < 2) continue;
 
-        // For each pair (i < j), check for arity-range overlap when at least one has defaults.
+        // Check each pair's supplied parameter prefix when defaults permit a shared arity.
         for (size_t i = 0; i < overloads.size(); ++i) {
-            auto [min_i, max_i] = arity_range(overloads[i]);
-            bool has_default_i = (min_i < max_i);
-
             for (size_t j = i + 1; j < overloads.size(); ++j) {
-                auto [min_j, max_j] = arity_range(overloads[j]);
-                bool has_default_j = (min_j < max_j);
-
-                if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
+                if (default_overloads_collide(*overloads[i], *overloads[j])) {
                     lex::opt_any_lexeme fn_lexeme;
                     if (auto ast_fd = overloads[i]->get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
                     throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ARITH_TYPE_MISMATCH), fn_lexeme,
-                        "Ambiguous overload: '{}{}' and overload '{}{}' can both be called with the same number of arguments "
+                        "Ambiguous overload: '{}{}' and overload '{}{}' have identical supplied parameter types at a shared arity "
                         "because of default parameter values; rename one overload or remove the default value(s) to resolve the ambiguity",
                         {fname, param_list_str(overloads[i]->parameters()),
                          fname, param_list_str(overloads[j]->parameters())});
@@ -821,17 +829,11 @@ void type_reference_resolver::check_constructor_overload_collisions(aggregate& s
     if (ctors.size() < 2) return;
 
     for (size_t i = 0; i < ctors.size(); ++i) {
-        auto [min_i, max_i] = arity_range(ctors[i]);
-        bool has_default_i = (min_i < max_i);
-
         for (size_t j = i + 1; j < ctors.size(); ++j) {
-            auto [min_j, max_j] = arity_range(ctors[j]);
-            bool has_default_j = (min_j < max_j);
-
-            if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
+            if (default_overloads_collide(*ctors[i], *ctors[j])) {
                 const std::string& sname = st.get_short_name();
                 throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ARITH_NO_COMMON_TYPE), st.get_ast_aggregate_decl() ? lex::opt_any_lexeme{lex::any_lexeme{st.get_ast_aggregate_decl()->name}} : lex::opt_any_lexeme{},
-                    "Ambiguous constructor overload in '{}': constructor '{}{}' and constructor '{}{}' can both be called with the same number of arguments "
+                    "Ambiguous constructor overload in '{}': constructor '{}{}' and constructor '{}{}' have identical supplied parameter types at a shared arity "
                     "because of default parameter values; remove one constructor or remove the default value(s) to resolve the ambiguity",
                     {sname,
                      sname, param_list_str(ctors[i]->parameters()),
@@ -3819,6 +3821,9 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "Ambiguous constructor call: {} equally viable overloads",
             {std::to_string(best_candidates.size())});
+        if (!args.empty() && args.front()) {
+            if (auto lexeme = args.front()->first_lexeme()) d.at(*lexeme);
+        }
         for (auto* c : best_candidates) {
             std::string sig;
             bool first = true;
@@ -3829,8 +3834,8 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             }
             d.add_note("candidate constructor({})", {sig});
         }
-        report(d);
-        return {nullptr, {}};
+        logger_relay::report(d);
+        throw resolution_error(std::move(d));
     }
 
     // Adapt only the selected overload: discarded adaptations otherwise reparent
@@ -4571,8 +4576,9 @@ type_reference_resolver::get_best_matching_function(
         for (auto* c : best) {
             d.add_note("{} {}", {c->is_unified ? "[unified]" : "", format_function_signature(c->func)});
         }
-        report(d);
-        return {nullptr, {}, false, nullptr};
+        if (call_lexeme) d.at(*call_lexeme);
+        logger_relay::report(d);
+        throw resolution_error(std::move(d));
     }
 
     auto* b = best[0];
