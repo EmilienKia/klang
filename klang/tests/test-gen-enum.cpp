@@ -21,6 +21,7 @@
 #include <llvm/IR/DerivedTypes.h>
 
 #include "../src/errors.hpp"
+#include "../src/model/expressions.hpp"
 #include "../src/model/mangler.hpp"
 #include "helpers.hpp"
 
@@ -508,6 +509,148 @@ TEST_CASE("Enum — pass enum to function expecting int", "[gen][enum]") {
     )");
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("get")() == 1);
+}
+
+TEST_CASE("Qualified local enum arguments share constructor and function parameter identity across files",
+          "[gen][enum][multi-source][enum-qualified-argument][regression]") {
+    const std::string producer = R"K(
+        module k;
+        namespace ffi {
+            enum SymbolLookupErrorCode { NOT_FOUND = 2; OUT_OF_MEMORY = 4; }
+            final class SymbolLookupError {
+                _code : SymbolLookupErrorCode;
+            public:
+                SymbolLookupError(code : SymbolLookupErrorCode) : _code(code) {}
+                const code() : SymbolLookupErrorCode { return _code; }
+            }
+            accept(code : SymbolLookupErrorCode) : int { return code; }
+        }
+    )K";
+    const std::string consumer = R"K(
+        module k;
+        makeError() : int {
+            error : ffi::SymbolLookupError(ffi::SymbolLookupErrorCode::OUT_OF_MEMORY);
+            return error.code();
+        }
+        makeRootedError() : int {
+            error : ffi::SymbolLookupError(::k::ffi::SymbolLookupErrorCode::OUT_OF_MEMORY);
+            return error.code();
+        }
+        passError() : int { return ffi::accept(::ffi::SymbolLookupErrorCode::NOT_FOUND); }
+        namespace client {
+            passLexicalError() : int { return ffi::accept(ffi::SymbolLookupErrorCode::OUT_OF_MEMORY); }
+        }
+        passNestedError() : int { return client::passLexicalError(); }
+    )K";
+    for (const bool consumer_first : {false, true}) {
+        INFO("consumer first: " << consumer_first);
+        std::vector<std::pair<std::string, std::string>> sources;
+        if (consumer_first) {
+            sources = {{"consumer.k", consumer}, {"producer.k", producer}};
+        } else {
+            sources = {{"producer.k", producer}, {"consumer.k", consumer}};
+        }
+        auto jit = gen_jit_multi(std::move(sources));
+        REQUIRE(jit);
+        auto make_error = jit->lookup_symbol<int(*)()>("makeError");
+        auto make_rooted_error = jit->lookup_symbol<int(*)()>("makeRootedError");
+        auto pass_error = jit->lookup_symbol<int(*)()>("passError");
+        auto pass_nested_error = jit->lookup_symbol<int(*)()>("passNestedError");
+        REQUIRE(make_error);
+        REQUIRE(make_rooted_error);
+        REQUIRE(pass_error);
+        REQUIRE(pass_nested_error);
+        CHECK(make_error() == 4);
+        CHECK(make_rooted_error() == 4);
+        CHECK(pass_error() == 2);
+        CHECK(pass_nested_error() == 4);
+    }
+}
+
+TEST_CASE("Qualified local enum arguments keep unrelated homonyms incompatible",
+          "[gen][enum][enum-qualified-argument][error][regression]") {
+    REQUIRE_THROWS_AS(gen_jit_multi_throws({
+        {"producer.k", R"K(
+            module k;
+            namespace ffi {
+                enum Code { OUT_OF_MEMORY = 4; }
+                struct Error {
+                    Error(code : Code) {}
+                }
+            }
+            namespace other {
+                enum Code { OUT_OF_MEMORY = 4; }
+            }
+        )K"},
+        {"consumer.k", R"K(
+            module k;
+            rejectUnrelated() {
+                error : ffi::Error(other::Code::OUT_OF_MEMORY);
+            }
+        )K"}
+    }), k::log::compiler_error);
+}
+
+TEST_CASE("Local enum fields and signatures retain lexical identity before layout",
+          "[gen][enum][enum-default-scope][enum-qualified-argument][regression]") {
+    auto compiler = compile_model(R"K(
+        module k;
+        enum Code { ROOT = 1; }
+        probe() : int {
+            error : ffi::Error(ffi::Code::VALUE);
+            return error.code();
+        }
+        qualified() : ::k::ffi::Code { return ffi::Code::VALUE; }
+        namespace ffi {
+            enum Code { VALUE = 65536; }
+            struct Error {
+                value : Code;
+                Error(code : Code = Code::VALUE) : value(code) {}
+                code() : Code { return value; }
+            }
+            accept(code : const Code&) : int { return 0; }
+        }
+    )K");
+    REQUIRE(compiler);
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto ffi = root->get_child_namespace("ffi");
+    REQUIRE(ffi);
+    auto en = ffi->get_enum("Code");
+    auto root_en = root->get_enum("Code");
+    auto error = ffi->get_aggregate("Error");
+    REQUIRE(en);
+    REQUIRE(root_en);
+    REQUIRE(error);
+    auto enum_type = en->get_enum_type();
+    REQUIRE(enum_type);
+    CHECK_FALSE(k::model::type::are_equal(enum_type, root_en->get_enum_type()));
+
+    auto field = error->get_variable("value");
+    auto code = error->get_function("code");
+    auto qualified = root->get_function("qualified");
+    auto accept = ffi->get_function("accept");
+    REQUIRE(field);
+    REQUIRE(code);
+    REQUIRE(qualified);
+    REQUIRE(accept);
+    REQUIRE(error->constructors().size() == 1);
+    auto ctor_param = error->constructors().front()->get_parameter(0);
+    REQUIRE(ctor_param);
+    REQUIRE(ctor_param->get_default_expr());
+    CHECK(field->get_type() == enum_type);
+    CHECK(ctor_param->get_type() == enum_type);
+    CHECK(ctor_param->get_default_expr()->get_type() == enum_type);
+    CHECK(code->get_return_type() == enum_type);
+    CHECK(qualified->get_return_type() == enum_type);
+    CHECK(k::model::type::are_equal(
+        accept->get_parameter(0)->get_type(), enum_type->get_const()->get_reference()));
+
+    REQUIRE(error->get_struct_type());
+    auto field_layout = error->get_struct_type()->get_member("value");
+    REQUIRE(field_layout);
+    auto llvm_type = llvm::dyn_cast<llvm::StructType>(error->get_struct_type()->get_llvm_type());
+    REQUIRE(llvm_type);
+    CHECK(llvm_type->getElementType(field_layout->index)->isIntegerTy(32));
 }
 
 TEST_CASE("Enum — return enum from function returning int", "[gen][enum]") {

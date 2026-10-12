@@ -93,6 +93,8 @@ protected:
      */
     void check_alias_declarations(const alias_holder& holder, const element& scope);
 
+    std::shared_ptr<type> resolve_enum_reference_type(const std::shared_ptr<type>& t, element& scope);
+
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
         logger_relay::report(diag);

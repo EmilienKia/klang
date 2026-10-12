@@ -175,6 +175,7 @@ void emit_vptr_store(llvm::IRBuilder<>& builder,
 //
 void symbol_resolver::visit_parameter(parameter& param) {
     visit_named_element(param);
+    param.set_type(resolve_enum_reference_type(param.get_type(), param));
 
     if(auto expr = param.get_init_expr()) {
         expr->accept(*this);
@@ -421,6 +422,10 @@ void symbol_resolver::visit_function(function& fn) {
 
     for(auto param : fn.parameters()) {
         param->accept(*this);
+    }
+
+    if (fn.get_return_type()) {
+        fn.set_return_type(resolve_enum_reference_type(fn.get_return_type(), fn));
     }
 
     resolve_function_annotations(fn);

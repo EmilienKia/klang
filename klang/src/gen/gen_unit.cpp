@@ -2167,6 +2167,7 @@ void implementation_generator::visit_namespace(ns &ns) {
 //
 void symbol_resolver::visit_member_variable_definition(member_variable_definition& var) {
     visit_named_element(var);
+    var.set_type(resolve_enum_reference_type(var.get_type(), var));
 
     if (!var.get_annotations().empty()) {
         lex::opt_any_lexeme var_lexeme;
