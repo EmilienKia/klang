@@ -53,6 +53,129 @@
 
 #include "helpers.hpp"
 
+TEST_CASE("Private members retain lexical context in nested conditional arguments",
+          "[gen][friend][private][lexical-context][regression]") {
+    auto comp = k::compiler::create();
+    REQUIRE_NOTHROW(comp->parse_source("private-conditional-context.k", R"SRC(
+        module k;
+        forward(value : int) : int { return value; }
+        class Probe {
+        private:
+            _enabled : bool;
+            _value : int;
+        public:
+            Probe(enabled : bool) : _enabled(enabled), _value(42) {}
+            const read() : int {
+                result : int = 0;
+                try {
+                    {
+                        result = forward(_enabled ? forward(_value) : 7);
+                        result += forward(_enabled ? _value : 0);
+                    }
+                } finally {}
+                return result;
+            }
+        }
+        test(enabled : bool) : int {
+            probe : Probe(enabled);
+            return probe.read();
+        }
+    )SRC", false));
+    REQUIRE(comp->get_unit());
+    REQUIRE(comp->get_unit()->get_imports().empty());
+}
+
+TEST_CASE("Nested conditional arguments do not expose another class private fields",
+          "[gen][friend][private][lexical-context][error][regression]") {
+    auto comp = k::compiler::create();
+    REQUIRE_THROWS_MATCHES(comp->parse_source("private-conditional-external.k", R"SRC(
+        module k;
+        forward(value : int) : int { return value; }
+        class Secret {
+        private:
+            _enabled : bool;
+        public:
+            Secret() : _enabled(true) {}
+        }
+        class Outsider {
+        public:
+            read(secret : const Secret&) : int {
+                try {
+                    { return forward(secret._enabled ? 1 : 0); }
+                } finally {}
+            }
+        }
+    )SRC"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const k::log::compiler_error& error) {
+                return error.get_diagnostic().code == 0x080Cu;
+            }, "private field visibility diagnostic"));
+}
+
+TEST_CASE("Nested conditional arguments preserve concrete template friendship",
+          "[gen][friend][template-friend][private][lexical-context][regression]") {
+    auto comp = k::compiler::create();
+    REQUIRE_NOTHROW(comp->parse_source("private-conditional-friend.k", R"SRC(
+        module k;
+        forward(value : int) : int { return value; }
+        class Secret {
+            friend Reader<int>;
+        private:
+            _enabled : bool;
+        public:
+            Secret(enabled : bool) : _enabled(enabled) {}
+        }
+        template<typename T>
+        struct Reader {
+            read(secret : const Secret&) : int {
+                try {
+                    { return forward(secret._enabled ? 42 : 7); }
+                } finally {}
+            }
+        }
+        test(enabled : bool) : int {
+            secret : Secret(enabled);
+            reader : Reader<int>;
+            return reader.read(secret);
+        }
+    )SRC", false));
+    REQUIRE(comp->get_unit());
+    REQUIRE(comp->get_unit()->get_imports().empty());
+}
+
+TEST_CASE("Nested conditional arguments reject a different template friend argument",
+          "[gen][friend][template-friend][private][lexical-context][error][regression]") {
+    auto comp = k::compiler::create();
+    REQUIRE_THROWS_MATCHES(comp->parse_source("private-conditional-wrong-friend.k", R"SRC(
+        module k;
+        forward(value : int) : int { return value; }
+        class Secret {
+            friend Reader<int>;
+        private:
+            _enabled : bool;
+        public:
+            Secret() : _enabled(true) {}
+        }
+        template<typename T>
+        struct Reader {
+            read(secret : const Secret&) : int {
+                try {
+                    { return forward(secret._enabled ? 1 : 0); }
+                } finally {}
+            }
+        }
+        test() : int {
+            secret : Secret;
+            reader : Reader<short>;
+            return reader.read(secret);
+        }
+    )SRC"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const k::log::compiler_error& error) {
+                return error.get_diagnostic().code == 0x080Cu;
+            }, "private template friend visibility diagnostic"));
+}
+
 // ── Friend aggregate — access protected member variable via dot ─────────────
 
 TEST_CASE("Friend aggregate — access protected member variable via dot", "[gen][friend]") {

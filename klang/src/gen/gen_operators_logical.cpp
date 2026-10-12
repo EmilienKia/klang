@@ -560,6 +560,9 @@ void type_reference_resolver::visit_conditional_expression(conditional_expressio
     if (best->else_expr != expr.rexpr()) {
         expr.rexpr() = best->else_expr;
     }
+    // Adapted loads/casts are orphan wrappers until attached to the ternary.
+    // Keep lexical ancestor lookup intact for members in every operand.
+    expr.assign(expr.lexpr(), expr.mexpr(), expr.rexpr());
     expr.set_type(best->target);
 
     if (expr.lexpr()->is_constant()) {
