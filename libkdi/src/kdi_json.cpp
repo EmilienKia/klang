@@ -342,6 +342,7 @@ static kdi_type from_json_type(const json& j) {
 static json to_json(const kdi_param& p) {
     json j = {{"name", p.name}, {"type", to_json(p.type)}};
     if (p.is_varargs) j["is_varargs"] = true;
+    if (p.default_source) j["default_source"] = *p.default_source;
     return j;
 }
 static kdi_param from_json_param(const json& j) {
@@ -349,6 +350,7 @@ static kdi_param from_json_param(const json& j) {
     p.name = j.at("name");
     p.type = from_json_type(j.at("type"));
     if (j.contains("is_varargs")) p.is_varargs = j["is_varargs"].get<bool>();
+    if (j.contains("default_source")) p.default_source = j.at("default_source").get<std::string>();
     return p;
 }
 

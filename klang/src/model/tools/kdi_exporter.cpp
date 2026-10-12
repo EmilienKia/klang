@@ -738,6 +738,10 @@ std::vector<kdi::kdi_param> kdi_builder::to_kdi_params(const function& fn) const
         kp.name = p->get_short_name();
         kp.type = to_kdi_type(p->get_type());
         kp.is_varargs = p->is_varargs();
+        if (p->has_default_expr()) {
+            k_source_emitter emitter;
+            kp.default_source = emitter.emit_parameter_default(*p);
+        }
         result.push_back(std::move(kp));
     }
     return result;
@@ -752,6 +756,10 @@ std::vector<kdi::kdi_param> kdi_builder::to_kdi_signature_params(const function&
         kp.name = p->get_short_name();
         kp.type = to_kdi_signature_type(p->get_type(), ti);
         kp.is_varargs = p->is_varargs();
+        if (p->has_default_expr()) {
+            k_source_emitter emitter;
+            kp.default_source = emitter.emit_parameter_default(*p);
+        }
         result.push_back(std::move(kp));
     }
     return result;

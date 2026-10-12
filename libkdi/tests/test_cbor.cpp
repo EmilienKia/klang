@@ -562,6 +562,33 @@ TEST_CASE("CBOR: template_origin round-trips on function", "[cbor][template]") {
     REQUIRE(targ.is_signed);
 }
 
+TEST_CASE("CBOR: parameter defaults preserve source and absence", "[cbor][function][default-args]") {
+    auto f = make_aggregate_file();
+    std::vector<kdi_param> params = {{"required", kdi_type::make_int(32)},
+                                   {"capture", kdi_type::make_bool()},
+                                   {"abi", kdi_type::make_int(32)}};
+    params[1].default_source = "false";
+    params[2].default_source = "::producer::Abi::DEFAULT";
+    kdi_function fn;
+    fn.name = "defaults";
+    fn.params = params;
+    f.unit.root_ns.functions.push_back(fn);
+    f.unit.root_ns.aggregates.front().methods.front().params = params;
+    f.unit.root_ns.aggregates.front().constructors.front().params = params;
+    std::ostringstream output(std::ios::binary);
+    kdi_write_cbor(f, output);
+    std::istringstream input(output.str(), std::ios::binary);
+    auto restored = kdi_read_cbor(input);
+    for (const auto* entries : {&restored.unit.root_ns.functions.back().params,
+                               &restored.unit.root_ns.aggregates.front().methods.front().params,
+                               &restored.unit.root_ns.aggregates.front().constructors.front().params}) {
+        REQUIRE(entries->size() == 3);
+        CHECK_FALSE((*entries)[0].default_source);
+        CHECK((*entries)[1].default_source == "false");
+        CHECK((*entries)[2].default_source == "::producer::Abi::DEFAULT");
+    }
+}
+
 TEST_CASE("CBOR: template_origin round-trips on aggregate", "[cbor][template]") {
     kdi_file f;
     f.header.module_name = "tpl";

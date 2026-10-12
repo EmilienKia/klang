@@ -36,11 +36,140 @@
 
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/DynamicLibrary.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
 
 namespace fs = std::filesystem;
+
+TEST_CASE("imported parameter defaults preserve primitive and enum arguments",
+          "[import][default-args][regression]") {
+    constexpr std::string_view producer = R"K(
+        module defaultarguments;
+        enum Abi { DEFAULT = 7; OTHER = 9; }
+        choose(required: int, enabled: bool = false): int {
+            if (enabled) return required + 1;
+            return required;
+        }
+        signature(required: int, abi: Abi = Abi::DEFAULT): int {
+            return required + (int)abi;
+        }
+        struct Binding {
+            value: int;
+            Binding(value: int, enabled: bool = false) {
+                this.value = choose(value, enabled);
+            }
+            const get(extra: int = 2): int { return value + extra; }
+            static bind(required: int, capture: bool = false): int {
+                return choose(required, capture);
+            }
+        }
+    )K";
+    constexpr std::string_view consumer = R"K(
+        module defaultconsumer;
+        import defaultarguments;
+        main(): int {
+            b: defaultarguments::Binding(10);
+            if (b.get() != 12 || b.get(3) != 13) return 1;
+            if (defaultarguments::choose(20) != 20) return 2;
+            if (defaultarguments::choose(20, true) != 21) return 3;
+            if (defaultarguments::signature(30) != 37) return 4;
+            if (defaultarguments::signature(30, defaultarguments::Abi::OTHER) != 39) return 5;
+            if (defaultarguments::Binding::bind(40) != 40) return 6;
+            return 42;
+        }
+    )K";
+    auto result = build_exec_with_lib(producer, consumer);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("imported parameter defaults keep producer lexical bindings under shadowing",
+          "[import][default-args][scope][regression]") {
+    constexpr std::string_view producer = R"K(
+        module defaultscope;
+        outerSeed(): int { return 40; }
+        namespace api {
+            enum Abi { DEFAULT = 2; OTHER = 4; }
+            seed(): int { return 20; }
+            value(required: int, extra: int = seed() + (int)Abi::DEFAULT): int {
+                return required + extra;
+            }
+        }
+    )K";
+    constexpr std::string_view consumer = R"K(
+        module defaultscopeshadow;
+        import defaultscope;
+        seed(): int { return 100; }
+        enum Abi { DEFAULT = 200; }
+        main(): int {
+            seed: int = 250;
+            if (defaultscope::api::value(20) != 42) return 1;
+            return defaultscope::api::value(40, 2);
+        }
+    )K";
+    auto result = build_exec_with_lib(producer, consumer);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("imported defaults do not relax required arguments or nominal enum types",
+          "[import][default-args][negative][regression]") {
+    TmpKdi lib(R"K(
+        module defaultnegative;
+        enum Abi { DEFAULT = 7; }
+        value(required: int, abi: Abi = Abi::DEFAULT): int { return required; }
+    )K");
+    for (auto call : {"defaultnegative::value()", "defaultnegative::value(1, Other::DEFAULT)"}) {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("defaultnegative", lib.kdi_path);
+        compiler->set_file_resolver(resolver);
+        std::string source = "module defaultnegativeconsumer; import defaultnegative; "
+            "enum Other { DEFAULT = 7; } main(): int { return " + std::string(call) + "; }";
+        CHECK_THROWS(compiler->parse_source("defaultnegativeconsumer.k", source));
+    }
+}
+
+TEST_CASE("imported template source and generic signatures preserve defaults",
+          "[import][default-args][template][regression]") {
+    constexpr std::string_view producer = R"K(
+        module defaulttemplates;
+        template<typename T>
+        choose(value: T, enabled: bool = false): T {
+            if (enabled) return value + 1;
+            return value;
+        }
+        generic<typename T>
+        struct Box {
+            value: T*;
+            Box(value: T*, enabled: bool = false) : value(value) {}
+            const get(enabled: bool = false): T* { return value; }
+        }
+    )K";
+    TmpKdi lib(producer);
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("defaulttemplates", lib.kdi_path);
+    compiler->set_file_resolver(resolver);
+    compiler->parse_source("defaulttemplateconsumer.k", R"K(
+        module defaulttemplateconsumer;
+        import defaulttemplates;
+        main(): int { return defaulttemplates::choose<int>(42); }
+    )K", false, false);
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    REQUIRE(compiler->verify_gen_code());
+    auto origin = compiler->get_unit()->get_root_namespace()->get_child_namespace("defaulttemplates");
+    REQUIRE(origin);
+    auto box = origin->get_aggregate("Box");
+    REQUIRE(box);
+    REQUIRE(box->constructors().size() == 1);
+    CHECK(box->constructors().front()->parameters()[1]->has_default_expr());
+    auto methods = box->get_functions("get");
+    REQUIRE(methods.size() == 1);
+    CHECK(methods.front()->parameters().front()->has_default_expr());
+}
 
 TEST_CASE("imported exception downcasts declare the defining library RTTI",
           "[import][rtti][exception][downcast][regression]") {

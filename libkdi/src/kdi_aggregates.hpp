@@ -188,6 +188,7 @@ struct kdi_param {
     std::string name;
     kdi_type    type;
     bool        is_varargs = false;  ///< True if declared with '...' (informational)
+    std::optional<std::string> default_source; ///< K expression evaluated in the declaration's scope.
 };
 
 struct kdi_variable {

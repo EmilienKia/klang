@@ -41,6 +41,14 @@ void k_source_emitter::reset() {
     _os.clear();
 }
 
+std::string k_source_emitter::emit_parameter_default(const parameter& param) {
+    reset();
+    _emitting_default = true;
+    emit_expression(param.get_default_expr());
+    _emitting_default = false;
+    return _os.str();
+}
+
 void k_source_emitter::indent(int level) {
     for (int i = 0; i < level; ++i) _os << '\t';
 }
@@ -349,7 +357,7 @@ void k_source_emitter::emit_value(const k::value_type& val) {
     std::visit([this](auto&& v) {
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
-            _os << "0";
+            _os << (_emitting_default && std::is_same_v<T, std::nullptr_t> ? "null" : "0");
         } else if constexpr (std::is_same_v<T, bool>) {
             _os << (v ? "true" : "false");
         } else if constexpr (std::is_same_v<T, char>) {
@@ -401,14 +409,21 @@ void k_source_emitter::emit_expression(const std::shared_ptr<expression>& expr) 
         }
         if (se->is_variable_def()) {
             auto var = se->get_variable_def();
-            _os << var->get_short_name();
+            if (_emitting_default && std::dynamic_pointer_cast<global_variable_definition>(var))
+                _os << "::" << fq_name_for_source(var->get_fq_name());
+            else
+                _os << var->get_short_name();
         } else if (se->is_function()) {
             auto func = se->get_function();
             // For functions in template bodies, use the short name
-            _os << func->get_short_name();
+            if (_emitting_default)
+                _os << "::" << fq_name_for_source(func->get_fq_name());
+            else
+                _os << func->get_short_name();
         } else if (se->is_enum_entry()) {
             auto& target = se->get_enum_entry();
             auto en = target.enum_def;
+            if (_emitting_default) _os << "::";
             _os << fq_name_for_source(en->get_fq_name())
                 << "::" << en->entries()[target.entry_index].name;
         } else {
@@ -458,6 +473,11 @@ void k_source_emitter::emit_expression(const std::shared_ptr<expression>& expr) 
 
     // Cast expression
     if (auto ce = std::dynamic_pointer_cast<cast_expression>(expr)) {
+        if (_emitting_default) {
+            _os << "("; emit_type(ce->get_cast_type()); _os << ")(";
+            emit_expression(ce->sub_expr()); _os << ")";
+            return;
+        }
         emit_expression(ce->sub_expr());
         _os << " as ";
         emit_type(ce->get_cast_type());
@@ -532,6 +552,12 @@ void k_source_emitter::emit_expression(const std::shared_ptr<expression>& expr) 
     }
 
     // ── Binary operators ─────────────────────────────────────────────────
+
+    if (auto e = std::dynamic_pointer_cast<conditional_expression>(expr)) {
+        _os << "("; emit_expression(e->lexpr()); _os << " ? ";
+        emit_expression(e->mexpr()); _os << " : "; emit_expression(e->rexpr()); _os << ")";
+        return;
+    }
 
     // We need to check specific binary types in order.
     // Assignments first, then arithmetic, then comparison, then logical.
@@ -701,6 +727,20 @@ void k_source_emitter::emit_expression(const std::shared_ptr<expression>& expr) 
     }
 
     // Fallback: unknown expression
+    if (_emitting_default) {
+        auto ast = expr->get_ast_node();
+        auto first = ast ? ast->get_first_lexeme() : lex::opt_any_lexeme{};
+        auto last = ast ? ast->get_last_lexeme() : lex::opt_any_lexeme{};
+        if (first && last) {
+            auto begin = std::visit([](const auto& token) { return token.content.data(); }, *first);
+            auto end = std::visit([](const auto& token) {
+                return token.content.data() + token.content.size();
+            }, *last);
+            _os << std::string_view(begin, static_cast<size_t>(end - begin));
+            return;
+        }
+        throw std::runtime_error("Cannot export parameter default expression without K source");
+    }
     _os << "/* <unknown-expr> */";
 }
 
@@ -1230,8 +1270,6 @@ void k_source_emitter::emit_bases(const aggregate& agg) {
 }
 
 } // namespace k::model
-
-
 
 
 

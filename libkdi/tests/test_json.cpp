@@ -285,6 +285,36 @@ TEST_CASE("JSON: global variable round-trips", "[json][variable]") {
     REQUIRE( f2.unit.root_ns.variables[0].mangled_name == "_KN7g_countE" );
 }
 
+TEST_CASE("JSON: parameter defaults preserve source and absence", "[json][function][default-args]") {
+    auto f = make_minimal_file();
+    kdi_function fn;
+    fn.name = "defaults";
+    fn.params = {{"required", kdi_type::make_int(32)},
+                 {"capture", kdi_type::make_bool()},
+                 {"abi", kdi_type::make_int(32)}};
+    fn.params[1].default_source = "false";
+    fn.params[2].default_source = "::producer::Abi::DEFAULT";
+    f.unit.root_ns.functions.push_back(fn);
+    kdi_aggregate agg;
+    agg.name = "Defaults";
+    kdi_method method;
+    method.params = fn.params;
+    agg.methods.push_back(method);
+    kdi_constructor ctor;
+    ctor.params = fn.params;
+    agg.constructors.push_back(ctor);
+    f.unit.root_ns.aggregates.push_back(agg);
+    auto restored = json_round_trip(f);
+    for (const auto* params : {&restored.unit.root_ns.functions.back().params,
+                              &restored.unit.root_ns.aggregates.back().methods.front().params,
+                              &restored.unit.root_ns.aggregates.back().constructors.front().params}) {
+        REQUIRE(params->size() == 3);
+        CHECK_FALSE((*params)[0].default_source);
+        CHECK((*params)[1].default_source == "false");
+        CHECK((*params)[2].default_source == "::producer::Abi::DEFAULT");
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Aggregate round-trip
 // ─────────────────────────────────────────────────────────────────────────────

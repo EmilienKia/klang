@@ -1561,7 +1561,9 @@ void template_instantiator::populate_function_from_template(
             // Preserve the default value expression (e.g. "flag: bool = true"),
             // otherwise overload resolution on the instantiated function would
             // require all arguments to be provided explicitly.
-            new_param->set_default_expr(param->get_default_expr());
+            new_param->set_default_expr(clone_and_substitute_expr(
+                param->get_default_expr(), subst, val_subst));
+            new_param->set_default_definition_scope(param->get_default_definition_scope());
         }
     }
 

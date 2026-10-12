@@ -616,10 +616,21 @@ KdiFunction {
 }
 
 KdiParam {
-  name : string
-  type : KdiType
+  name           : string
+  type           : KdiType
+  is_varargs     : bool?           -- defaults to false
+  default_source : string?         -- K expression, absent for required parameters
 }
 ```
+
+`default_source` preserves the default argument of functions, methods, and
+constructors. Consumers must parse and type-check it in the declaring callable's
+lexical scope, not the caller's scope, and evaluate it only when the argument is
+omitted. Producers must preserve symbol bindings (including qualified enum
+entries), using rooted names where needed to prevent consumer shadowing. This
+optional field does not change the LLVM prototype or mangled symbol. Descriptors
+without the field retain required-parameter behavior. JSON and CBOR carry the
+same expression text; the schema version remains `0.1`.
 
 ---
 
