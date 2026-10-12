@@ -115,6 +115,24 @@ does not infer a C signature or export every helper. This is unnecessary
 for normal direct calls through `@ffi::Extern("C")`. See the
 [compiler manual](../man/klangc.md) and [FFI reference](../spec/stdlib/ffi.md).
 
+### Package-metadata relocation limitations
+
+Use the package name with `pkg-config --with-path=<directory> libk` rather
+than querying an absolute `.pc` filename: some pkgconf versions split
+package queries even when the filename is supplied as one argument.
+
+Package-metadata relocation is tested in directories without whitespace or
+shell quote characters. In pkgconf 1.8.1, `${pcfiledir}` expansion can escape
+spaces even in `--variable` output, while an apostrophe can cause unquoted
+`Libs` fragments to disappear. Quoting `${libdir}` in the `.pc` file instead
+can double-escape already escaped spaces. Neither quoting the command-line
+argument nor decoding emitted flags once repairs these tool-side errors.
+Keep the package directory free of these characters when relying on this
+tool version; arbitrary package paths are not guaranteed. Direct compiler
+argument handling is tested separately with spaces and apostrophes, including
+relocated native shared/archive runtime paths and archive-only K consumer
+source, object and executable paths.
+
 ---
 
 ## 2. In-Tree Integration (Inside the Klang Repository)

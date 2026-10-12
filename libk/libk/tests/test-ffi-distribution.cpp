@@ -32,7 +32,7 @@
 #include <vector>
 #include <unistd.h>
 
-#include "common/process.hpp"
+#include "helpers.hpp"
 
 #ifndef LIBK_LIB_DIR
 #error "LIBK_LIB_DIR must identify the built runtime and libk.pc"
@@ -170,7 +170,8 @@ std::vector<std::string> split_flags(std::string_view text) {
 
 k::tools::exec_result pkg_config(const fs::path& package,
                                 std::vector<std::string> options) {
-    options.push_back(package.string());
+    options.insert(options.begin(), "--with-path=" + package.parent_path().string());
+    options.push_back(package.stem().string());
     auto result = k::tools::lookup_run_process("pkg-config", options);
     check_success(result);
     return result;
@@ -359,7 +360,9 @@ TEST_CASE("Distributed libk metadata includes native static dependencies and rel
     CHECK((contains(native, "-pthread") || contains(native, "-lpthread")));
 
     Workspace workspace;
-    const auto relocated = workspace.path / "relocated runtime's files";
+    // pkgconf 1.8.1 cannot faithfully expand every quoted relocation path.
+    // Actual runtime paths with spaces and apostrophes are tested via direct argv below.
+    const auto relocated = workspace.path / "relocated-runtime";
     copy_package(relocated, true);
     const auto relocated_package = relocated / "libk.pc";
     pkg_config(relocated_package, {"--exists", "--static"});
@@ -368,9 +371,13 @@ TEST_CASE("Distributed libk metadata includes native static dependencies and rel
             {std::string("--variable=") + variable}).out);
         CHECK(fs::weakly_canonical(value) == fs::weakly_canonical(relocated));
     }
-    const auto relocated_flags = pkg_flags(relocated_package, {"--libs", "--static"});
-    CHECK(contains(relocated_flags, "-L" + relocated.string()));
-    CHECK_FALSE(contains(relocated_flags, "-L" + std::string(LIBK_LIB_DIR)));
+    for (const auto& options : {std::vector<std::string>{"--libs"},
+                               std::vector<std::string>{"--libs", "--static"}}) {
+        const auto relocated_flags = pkg_flags(relocated_package, options);
+        CHECK(contains(relocated_flags, "-lk"));
+        CHECK(contains(relocated_flags, "-L" + relocated.string()));
+        CHECK_FALSE(contains(relocated_flags, "-L" + std::string(LIBK_LIB_DIR)));
+    }
 }
 
 TEST_CASE("Native downstream FFI consumer links the actual shared runtime or archive",
@@ -383,7 +390,9 @@ TEST_CASE("Native downstream FFI consumer links the actual shared runtime or arc
     SECTION("shared runtime") { static_link = false; }
     SECTION("explicit runtime archive") { static_link = true; }
 
-    const auto runtime = fs::path(LIBK_LIB_DIR) / (static_link ? "libk.a" : "libk.so");
+    const auto relocated = workspace.path / "relocated runtime's files";
+    copy_package(relocated, !static_link);
+    const auto runtime = relocated / (static_link ? "libk.a" : "libk.so");
     REQUIRE(fs::is_regular_file(runtime));
     auto options = std::vector<std::string>{"--libs"};
     if (static_link) options.push_back("--static");
@@ -392,7 +401,7 @@ TEST_CASE("Native downstream FFI consumer links the actual shared runtime or arc
         "-std=c++20", "-I", LIBK_FFI_RUNTIME_INCLUDE_DIR, source.string(), "-o", output.string()
     };
     args.insert(args.end(), flags.begin(), flags.end());
-    args.insert(args.end(), {"-Xlinker", "-rpath", "-Xlinker", LIBK_LIB_DIR});
+    args.insert(args.end(), {"-Xlinker", "-rpath", "-Xlinker", relocated.string()});
     check_success(k::tools::lookup_run_process("clang++", args));
     check_runtime_dependency(output, !static_link);
     check_success(k::tools::run_process(output.string()));
@@ -401,19 +410,21 @@ TEST_CASE("Native downstream FFI consumer links the actual shared runtime or arc
 TEST_CASE("Downstream K executable invokes an exported C symbol with archive-only libk",
           "[libk][ffi][distribution]") {
     Workspace workspace;
-    const auto runtime = workspace.path / "static-only runtime's files";
+    const auto runtime = workspace.path / "static-only-runtime";
     copy_package(runtime, false);
     REQUIRE_FALSE(fs::exists(runtime / "libk.so"));
-    const auto source = workspace.write("consumer.k", K_CONSUMER);
-    const auto native_source = workspace.write("host.c", R"(
+    const auto consumer = workspace.path / "consumer's files with spaces";
+    fs::create_directory(consumer);
+    const auto source = workspace.write("consumer's files with spaces/consumer.k", K_CONSUMER);
+    const auto native_source = workspace.write("consumer's files with spaces/host.c", R"(
         #include <errno.h>
         int klang_ffi_distribution_host(int value) {
             errno = 37;
             return value + 2;
         }
     )");
-    const auto object = workspace.path / "host.o";
-    const auto output = workspace.path / "k-consumer";
+    const auto object = consumer / "host.o";
+    const auto output = consumer / "k-consumer";
     check_success(k::tools::lookup_run_process("clang",
         {"-c", "-fPIC", native_source.string(), "-o", object.string()}));
     REQUIRE(fs::path(KLANGC_PATH).is_absolute());
