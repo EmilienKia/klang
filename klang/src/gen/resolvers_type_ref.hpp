@@ -682,6 +682,7 @@ protected:
     cast_weight compute_cast_weight(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type);
 
     void resolve_parameter_type(parameter& param);
+    void ensure_template_type_ready(const std::shared_ptr<type>& t, const element& scope);
 
     /**
      * Choose the best-matching constructor among a list of candidates given a set of arguments.

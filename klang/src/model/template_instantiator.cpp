@@ -25,10 +25,14 @@
 #include "imported.hpp"
 #include "aggregate_value.hpp"
 #include "../errors.hpp"
+#include "../../../libkdi/src/kdi_aggregates.hpp"
+#include <llvm/IR/DerivedTypes.h>
 
 #include <sstream>
+#include <algorithm>
 #include <queue>
 #include <cctype>
+#include <type_traits>
 #include <unordered_map>
 
 namespace k::model {
@@ -1877,6 +1881,178 @@ void template_instantiator::clone_nested_union(
 // ═══════════════════════════════════════════════════════════════════════════
 // Instantiation: aggregate
 // ═══════════════════════════════════════════════════════════════════════════
+
+std::vector<std::shared_ptr<function>> template_instantiator::hydrate_imported_aggregate(
+    aggregate& tpl_def,
+    const std::vector<template_argument>& args,
+    std::shared_ptr<aggregate> imported,
+    std::shared_ptr<context> ctx,
+    k::log::logger& logger,
+    const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_type)
+{
+    std::vector<std::shared_ptr<function>> added;
+    auto host = std::dynamic_pointer_cast<imported_aggregate>(imported);
+    auto* ti = tpl_def.get_tpl_info();
+    if (!host || !ti || imported->get_tpl_definition() || tpl_def.is_generic()) return added;
+    bool has_member_recipe = false;
+    for (const auto& child : tpl_def.get_children()) {
+        auto fn = std::dynamic_pointer_cast<function>(child);
+        if (fn && fn->is_template()) has_member_recipe = true;
+    }
+    if (!has_member_recipe) return added;
+
+    auto fail = [&](const std::string& reason) {
+        auto diag = k::log::diagnostic::make_error(
+            static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+            "Cannot hydrate imported template specialization '{}': {}; "
+            "its exported ABI must match the template recipe",
+            {imported->get_fq_name(), reason});
+        logger.report(diag);
+        throw k::log::compiler_error(std::move(diag));
+    };
+    const auto* metadata = host->get_kdi_aggregate();
+    auto st = imported->get_struct_type();
+    auto* llvm_st = st ? llvm::dyn_cast_or_null<llvm::StructType>(st->get_llvm_type()) : nullptr;
+    if (!metadata || !llvm_st || llvm_st->isOpaque()) fail("the concrete layout is unavailable");
+    if (imported->get_tpl_base_name() != tpl_def.get_short_name()
+        || ti->params.size() != args.size()
+        || build_instantiation_key(imported->get_tpl_args()) != build_instantiation_key(args)) {
+        fail("the template origin or arguments disagree");
+    }
+
+    // KDI mechanism fields keep their exact indices. Recipe fields occupy only
+    // named-member and opaque-block slots, in source declaration order.
+    std::vector<bool> user_slots(llvm_st->getNumElements(), false);
+    std::vector<bool> covered(llvm_st->getNumElements(), false);
+    for (const auto& entry : metadata->layout) {
+        std::visit([&](const auto& field) {
+            using F = std::decay_t<decltype(field)>;
+            const size_t count = [&]() -> size_t {
+                if constexpr (std::is_same_v<F, kdi::kdi_layout_opaque_block>) return field.field_count;
+                return 1;
+            }();
+            for (size_t i = 0; i < count; ++i) {
+                const size_t index = field.llvm_field_index + i;
+                if (index >= covered.size() || covered[index]) fail("layout indices are inconsistent");
+                covered[index] = true;
+                user_slots[index] = std::is_same_v<F, kdi::kdi_layout_member>
+                    || std::is_same_v<F, kdi::kdi_layout_opaque_block>;
+            }
+        }, entry);
+    }
+    if (std::find(covered.begin(), covered.end(), false) != covered.end()) {
+        fail("the layout does not describe every LLVM field");
+    }
+    std::vector<size_t> indices;
+    for (size_t i = 0; i < user_slots.size(); ++i) {
+        if (user_slots[i]) indices.push_back(i);
+    }
+    std::vector<std::shared_ptr<member_variable_definition>> recipe_fields;
+    for (const auto& child : tpl_def.get_children()) {
+        if (auto field = std::dynamic_pointer_cast<member_variable_definition>(child)) {
+            const auto& name = field->get_short_name();
+            if (name == "__vptr__" || name == "__parent__"
+                || name.starts_with("__base_") || name.starts_with("__vbptr_")
+                || name.starts_with("__vbase_") || name.starts_with("__vptr_")) continue;
+            recipe_fields.push_back(field);
+        }
+    }
+    if (indices.size() != recipe_fields.size()) fail("the number of recipe fields disagrees");
+
+    // Set the definition link before resolving field types: a recursive type
+    // reference can encounter this same exported specialization again.
+    imported->_tpl_definition = tpl_def.shared_as<aggregate>();
+    auto subst = build_substitution_map(*ti, args);
+    auto val_subst = build_value_substitution_map(*ti, args);
+    std::vector<struct_type::field> fields(st->fields_begin(), st->fields_end());
+    for (size_t i = 0; i < recipe_fields.size(); ++i) {
+        const auto& source = recipe_fields[i];
+        auto resolved = resolve_type(substitute_type(source->get_type(), subst), tpl_def);
+        auto* llvm_field = resolved ? ctx->get_llvm_type(resolved) : nullptr;
+        if (!llvm_field || llvm_field != llvm_st->getElementType(indices[i])) {
+            fail("field '" + source->get_short_name() + "' has a different LLVM type");
+        }
+        auto existing_field = st->get_member(source->get_short_name());
+        if (existing_field && existing_field->index != indices[i]) {
+            fail("field '" + source->get_short_name() + "' has a different index");
+        }
+        if (!existing_field && source->get_visibility() != PRIVATE) {
+            fail("an accessible recipe field was not exported");
+        }
+        for (const auto& entry : metadata->layout) {
+            if (auto exported = std::get_if<kdi::kdi_layout_member>(&entry);
+                exported && exported->llvm_field_index == indices[i]) {
+                const auto visibility = exported->visibility == kdi::kdi_visibility::public_
+                    ? PUBLIC : PROTECTED;
+                if (exported->name != source->get_short_name()
+                    || source->get_visibility() != visibility
+                    || source->is_const() != exported->is_const) {
+                    fail("field '" + source->get_short_name() + "' has different declaration metadata");
+                }
+            }
+        }
+        auto member = imported->get_variable(source->get_short_name());
+        if (!member) {
+            clone_member_variable(*source, imported, subst, val_subst);
+            member = imported->get_variable(source->get_short_name());
+        }
+        if (!member) fail("a recipe field could not be materialized");
+        member->set_type(resolved);
+        auto concrete_field = std::dynamic_pointer_cast<member_variable_definition>(member);
+        if (!concrete_field) fail("a recipe field is not an instance member");
+        concrete_field->set_visibility(source->get_visibility());
+        concrete_field->set_const(source->is_const());
+        if (!existing_field) {
+            fields.push_back({indices[i], source->get_short_name(), resolved});
+        } else {
+            for (auto& field : fields) {
+                if (field.name == source->get_short_name()) field.field_type = resolved;
+            }
+        }
+    }
+    // Attach semantic names only. Never setBody(), rebuild bases, replace the
+    // imported aggregate, or rebind its canonical struct_type.
+    ctx->attach_llvm_struct_type(st, llvm_st, std::move(fields));
+    std::stable_sort(imported->_children.begin(), imported->_children.end(),
+        [&st](const auto& left, const auto& right) {
+            auto lhs = std::dynamic_pointer_cast<member_variable_definition>(left);
+            auto rhs = std::dynamic_pointer_cast<member_variable_definition>(right);
+            if (!lhs || !rhs) return lhs && !rhs;
+            return st->get_member(lhs->get_short_name())->index
+                < st->get_member(rhs->get_short_name())->index;
+        });
+
+    for (const auto& directive : tpl_def.get_friend_directives()) {
+        auto copy = directive;
+        copy.resolved_tpl_arg_types.clear();
+        for (const auto& name : copy.raw_template_arg_names) {
+            auto binding = subst.find(name);
+            copy.resolved_tpl_arg_types.push_back(binding != subst.end()
+                ? binding->second : ctx->from_string(name));
+        }
+        imported->add_friend_directive(std::move(copy));
+    }
+    for (const auto& child : tpl_def.get_children()) {
+        auto source = std::dynamic_pointer_cast<function>(child);
+        if (!source || std::dynamic_pointer_cast<destructor>(source)
+            || (!source->is_template() && source->get_visibility() != PRIVATE)) continue;
+        const auto before = imported->get_children().size();
+        if (auto ctor = std::dynamic_pointer_cast<constructor>(source)) {
+            clone_constructor(*ctor, imported, subst, val_subst);
+        } else {
+            clone_method(*source, imported, subst, val_subst);
+        }
+        if (imported->get_children().size() == before) fail("a recipe callable could not be materialized");
+        auto concrete = std::dynamic_pointer_cast<function>(imported->get_children().back());
+        if (!concrete) fail("a recipe callable has an invalid model kind");
+        if (!concrete->get_template_definition_scope()) {
+            concrete->set_template_definition_scope(tpl_def.parent<ns>());
+        }
+        if (!concrete->is_template()) concrete->mark_instantiation();
+        added.push_back(std::move(concrete));
+    }
+    return added;
+}
 
 std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     aggregate& tpl_def,

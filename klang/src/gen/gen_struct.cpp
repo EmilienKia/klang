@@ -940,7 +940,8 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
     finalize_aggregate_destructor(st);
 
     // Visit all other children (functions, constructors, destructors), skip nested aggregates and unions.
-    for(auto& child : st.get_children()) {
+    const auto members = st.get_children();
+    for(const auto& child : members) {
         if(std::dynamic_pointer_cast<aggregate>(child)) continue;
         if(std::dynamic_pointer_cast<union_type_def>(child)) continue;
         child->accept(*this);

@@ -1863,11 +1863,11 @@ void kdi_builder::visit_function(function& fn) {
 void kdi_builder::visit_constructor(constructor& ctor) {
     if (!in_aggregate()) return;
     if (!is_exported(ctor.get_visibility())) return;
-    if (ctor.is_template()) {
-        auto host = ctor.get_owner();
-        // Dependent member constructors remain in the primary aggregate recipe,
-        // not in a specialization's concrete ABI constructor table.
-        if (host && (host->is_template() || host->has_tpl_args())) return;
+    // Member-template recipes belong to the primary aggregate template, not
+    // concrete ABI constructor records with unresolved template parameters.
+    if (ctor.is_template()) return;
+    for (const auto& parameter : ctor.parameters()) {
+        if (!is_exported_type(std::const_pointer_cast<type>(parameter->get_type()))) return;
     }
 
     kdi::kdi_constructor kc;

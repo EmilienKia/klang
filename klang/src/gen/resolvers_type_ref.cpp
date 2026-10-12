@@ -1327,7 +1327,10 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
             *tpl_agg, model_args, parent_ns_ptr, _unit, _context, *this);
     }
     if (!concrete_agg) return {};
-    if (concrete_agg->is_imported()) return concrete_agg->get_struct_type();
+    if (concrete_agg->is_imported()) {
+        ensure_template_type_ready(concrete_agg->get_struct_type(), context_elem);
+        return concrete_agg->get_struct_type();
+    }
 
     // 4b. Resolve unresolved member-variable references in method bodies.
     template_instantiator::resolve_body_symbols(concrete_agg);
@@ -2089,10 +2092,60 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     return instantiate_template_aggregate(tpl_agg, model_args, context_elem);
 }
 
+void type_reference_resolver::ensure_template_type_ready(
+    const std::shared_ptr<type>& t, const element& scope)
+{
+    if (!t) return;
+    auto canonical = type::canonical(t);
+    if (!canonical) return;
+    if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(canonical)) {
+        if (unresolved->get_resolved()) ensure_template_type_ready(unresolved->get_resolved(), scope);
+        return;
+    }
+    if (auto sub = canonical->get_subtype()) {
+        ensure_template_type_ready(sub, scope);
+        return;
+    }
+    auto st = std::dynamic_pointer_cast<struct_type>(canonical);
+    if (auto local = st ? st->get_struct() : nullptr;
+        local && local->is_instantiation() && !local->is_imported()) {
+        // A late signature pre-pass can create this type after its namespace was
+        // visited. A completed LLVM layout does not mean its members are resolved.
+        resolve_instantiated_aggregate(*local);
+        return;
+    }
+    auto host = st ? std::dynamic_pointer_cast<imported_aggregate>(st->get_struct()) : nullptr;
+    if (!host || !host->has_tpl_args() || host->get_tpl_definition()) return;
+    const auto* metadata = host->get_kdi_aggregate();
+    if (!metadata || !metadata->template_origin) return;
+    auto origin = k::name::from(metadata->template_origin->base_fq_name);
+    if (origin.empty()) {
+        origin = host->get_name().without_back().with_back(host->get_tpl_base_name());
+    }
+    auto recipe = find_template_aggregate(origin.with_root_prefix(), scope);
+    if (!recipe) return;
+    auto added = template_instantiator::hydrate_imported_aggregate(
+        *recipe, host->get_tpl_args(), host, _context, *this,
+        [this](const std::shared_ptr<type>& field_type, const element& field_scope) {
+            return resolve_type_chain(field_type, &field_scope);
+        });
+    for (const auto& fn : added) {
+        if (fn->is_template()) continue;
+        symbol_resolver symbols(*this, _context, _unit);
+        fn->accept(symbols);
+        aggregate_type_resolver aggregates(*this, _context, _unit);
+        fn->accept(aggregates);
+        signature_resolver signatures(*this, _context, _unit);
+        fn->accept(signatures);
+        fn->accept(*this);
+    }
+}
+
 std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
     const std::shared_ptr<type>& t,
     const element* scope_elem)
 {
+    if (scope_elem) ensure_template_type_ready(t, *scope_elem);
     if (!t || type::is_resolved(t)) return _context->collapse_callable_addresser(t);
     // A struct_type is semantically resolved even before its LLVM type is materialized.
     if (std::dynamic_pointer_cast<struct_type>(t)) return t;
@@ -2116,7 +2169,8 @@ std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
     if (!sub) return t;
 
     auto resolved_sub = resolve_type_chain(sub, scope_elem);
-    if (!resolved_sub || (!type::is_resolved(resolved_sub) && !std::dynamic_pointer_cast<struct_type>(resolved_sub))) return t;
+    // Recursive specializations can have complete model types before LLVM layout.
+    if (!resolved_sub || type::contains_unresolved(resolved_sub)) return t;
 
     auto rewrapped = rewrap_like(t, resolved_sub);
     // An addresser applied to a name denoting a callable re-addresses it in
@@ -2229,7 +2283,7 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     for (auto& [name, var] : agg.variables()) {
         if (var && var->get_type() && !type::is_resolved(var->get_type())) {
             auto resolved = resolve_type_chain(var->get_type(), &agg);
-            if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
+            if (resolved && !type::contains_unresolved(resolved)) {
                 var->set_type(resolved);
             }
         }
@@ -2244,17 +2298,17 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
         // still contain uninstantiated template parameters (e.g. R in accumulate<R>).
         if (fn.is_template()) return;
         // Resolve return type
-        if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
+        if (fn.get_return_type()) {
             auto resolved = resolve_type_chain(fn.get_return_type(), &agg);
-            if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
+            if (resolved && !type::contains_unresolved(resolved)) {
                 fn.set_return_type(resolved);
             }
         }
         // Resolve parameter types
         for (auto& param : fn.parameters()) {
-            if (param && param->get_type() && (!type::is_resolved(param->get_type()) || type::contains_unresolved(param->get_type()))) {
+            if (param && param->get_type()) {
                 auto resolved = resolve_type_chain(param->get_type(), &agg);
-                if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
+                if (resolved && !type::contains_unresolved(resolved)) {
                     param->set_type(resolved);
                 }
             }
@@ -2262,12 +2316,14 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     };
 
     auto resolve_agg_fn_types = [&](aggregate& a) {
-        for (auto& child : a.get_children()) {
+        const auto children = a.get_children();
+        for (const auto& child : children) {
             if (auto fn = std::dynamic_pointer_cast<function>(child)) {
                 resolve_fn_types(*fn);
             }
         }
-        for (auto& ctor : a.constructors()) {
+        const auto constructors = a.constructors();
+        for (const auto& ctor : constructors) {
             if (ctor) resolve_fn_types(*ctor);
         }
         if (auto dtor = a.get_destructor()) {
@@ -2278,7 +2334,8 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     resolve_agg_fn_types(agg);
 
     // Also resolve function types in nested aggregates
-    for (auto& child : agg.get_children()) {
+    const auto children = agg.get_children();
+    for (const auto& child : children) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
             resolve_agg_fn_types(*nested);
         }
@@ -3565,16 +3622,34 @@ std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::sha
  * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
  */
 type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
-    debug("[type_reference_resolver::get_best_matching_constructor] {} candidates, {} args", {std::to_string(constructors.size()), std::to_string(args.size())});
+    auto available = constructors;
+    if (!constructors.empty() && constructors.front()) {
+        if (auto owner = constructors.front()->get_owner()) {
+            const bool complete_set = available == owner->constructors();
+            ensure_template_type_ready(owner->get_struct_type(), *owner);
+            if (complete_set) available = owner->constructors();
+        }
+    }
+    for (const auto& arg : args) {
+        if (arg) ensure_template_type_ready(arg->get_type(), *arg);
+    }
+    debug("[type_reference_resolver::get_best_matching_constructor] {} candidates, {} args", {std::to_string(available.size()), std::to_string(args.size())});
     const size_t arg_count = args.size();
 
     std::vector<std::shared_ptr<constructor>> candidates;
     std::vector<std::shared_ptr<constructor>> template_candidates;
     std::unordered_map<const constructor*, size_t> template_specificity;
-    candidates.reserve(constructors.size());
-    for (const auto& ctor : constructors) {
+    std::unordered_set<std::string> imported_symbols;
+    candidates.reserve(available.size());
+    for (const auto& ctor : available) {
         if (ctor && ctor->is_template()) template_candidates.push_back(ctor);
-        else if (ctor) candidates.push_back(ctor);
+        else if (ctor) {
+            // Repeated exported specializations can describe one ABI callable.
+            if (std::dynamic_pointer_cast<imported_constructor>(ctor)
+                && !ctor->get_mangled_name().empty()
+                && !imported_symbols.insert(ctor->get_mangled_name()).second) continue;
+            candidates.push_back(ctor);
+        }
     }
     std::vector<std::shared_ptr<type>> arg_types;
     arg_types.reserve(arg_count);
@@ -3586,6 +3661,19 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         auto* ti = ctor->get_tpl_info();
         auto owner = ctor->get_owner();
         if (!ti || !owner) continue;
+        size_t specificity = 0;
+        for (const auto& param : ti->params) {
+            if (param.kind != template_param_kind::TYPENAME || param.constraint_type) ++specificity;
+        }
+        for (const auto& [key, instance] : ti->instantiations) {
+            if (const auto* fn = std::get_if<std::shared_ptr<function>>(&instance)) {
+                if (auto cached = std::dynamic_pointer_cast<constructor>(*fn);
+                    cached && cached->is_instantiation()
+                    && !std::dynamic_pointer_cast<imported_constructor>(cached)) {
+                    template_specificity[cached.get()] = specificity;
+                }
+            }
+        }
 
         auto deduction = deduce_template_arguments(*ti, ctor->parameters(), arg_types);
         if (!deduction.success) continue;
@@ -3616,7 +3704,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             auto subst = template_instantiator::build_substitution_map_public(*ti, deduction.deduced_args);
             auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduction.deduced_args);
             auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
-            template_instantiator::populate_function_from_template_public(
+            template_instantiator::populate_constructor_from_template_public(
                 concrete, *ctor, subst, val_subst, pack_subst, ctor->is_generic());
             concrete->set_tpl_instantiation_info(ctor->get_short_name(), deduction.deduced_args);
             concrete->mark_instantiation();
@@ -3631,15 +3719,35 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             concrete->accept(atr);
             signature_resolver sigr(*this, _context, _unit);
             concrete->accept(sigr);
-            concrete->accept(*this);
-        }
-        size_t specificity = 0;
-        for (const auto& param : ti->params) {
-            if (param.kind != template_param_kind::TYPENAME || param.constraint_type) {
-                ++specificity;
+            concrete->update_mangled_name();
+            // A non-template constructor may already own this signature, either
+            // locally or in the producer. Preserve it rather than emit a duplicate.
+            std::shared_ptr<constructor> authoritative;
+            for (const auto& existing : owner->constructors()) {
+                if (existing != concrete && !existing->is_template()
+                    && (!existing->is_instantiation()
+                        || std::dynamic_pointer_cast<imported_constructor>(existing))
+                    && existing->get_mangled_name() == concrete->get_mangled_name()
+                    && scope_lookup::same_parameter_signature(*existing, *concrete)) {
+                    authoritative = existing;
+                    break;
+                }
+            }
+            if (authoritative) {
+                owner->_constructors.erase(std::remove(owner->_constructors.begin(),
+                    owner->_constructors.end(), concrete), owner->_constructors.end());
+                owner->_children.erase(std::remove(owner->_children.begin(),
+                    owner->_children.end(), concrete), owner->_children.end());
+                concrete = authoritative;
+                ti->instantiations[key] = std::static_pointer_cast<function>(concrete);
+            } else {
+                concrete->accept(*this);
             }
         }
-        template_specificity[concrete.get()] = specificity;
+        if (concrete->is_instantiation()
+            && !std::dynamic_pointer_cast<imported_constructor>(concrete)) {
+            template_specificity[concrete.get()] = specificity;
+        }
         if (std::find(candidates.begin(), candidates.end(), concrete) == candidates.end()) {
             candidates.push_back(std::move(concrete));
         }

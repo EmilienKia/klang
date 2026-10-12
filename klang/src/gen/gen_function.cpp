@@ -294,6 +294,7 @@ void signature_resolver::visit_parameter(parameter& param) {
 
 void type_reference_resolver::resolve_parameter_type(parameter& param) {
     if (!param.get_type()) return;
+    ensure_template_type_ready(param.get_type(), param);
 
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
         // Extract lexeme from AST parameter_spec for error reporting
@@ -315,8 +316,8 @@ void type_reference_resolver::resolve_parameter_type(parameter& param) {
                     {var_type->to_string(), param.get_short_name(), owner_name});
             }
         } else {
-        std::shared_ptr<type> res_type = _context->resolve_type(var_type);
-        if (!type::is_resolved(res_type)) {
+        std::shared_ptr<type> res_type = resolve_type_chain(var_type, &param);
+        if (!res_type || type::contains_unresolved(res_type)) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
             // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.

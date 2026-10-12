@@ -31,15 +31,19 @@ std::shared_ptr<aggregate> scope_lookup::lookup_imported_lexical_aggregate(
 {
     if (name.empty() || name.has_root_prefix()) return {};
     auto host = dynamic_cast<const aggregate*>(&scope);
-    if (!host) return {};
 
     k::name origin;
-    auto definition = host->get_tpl_definition();
-    auto ti = definition ? definition->get_tpl_info() : host->get_tpl_info();
-    if (ti && !ti->origin_module_ns_fq.empty()) {
-        origin = k::name::from(ti->origin_module_ns_fq).without_root_prefix();
-    } else if (host->is_imported()) {
-        origin = k::name::from(host->get_fq_name()).without_root_prefix().without_back();
+    if (host) {
+        auto definition = host->get_tpl_definition();
+        auto ti = definition ? definition->get_tpl_info() : host->get_tpl_info();
+        if (ti && !ti->origin_module_ns_fq.empty()) {
+            origin = k::name::from(ti->origin_module_ns_fq).without_root_prefix();
+        } else if (host->is_imported()) {
+            origin = k::name::from(host->get_fq_name()).without_root_prefix().without_back();
+        }
+    } else if (auto definition_scope = dynamic_cast<const ns*>(&scope);
+               definition_scope && is_definition_namespace_boundary(scope)) {
+        origin = definition_scope->get_name().without_root_prefix();
     }
 
     while (!origin.empty()) {
@@ -278,7 +282,9 @@ bool scope_lookup::is_friend_of(
 
         std::shared_ptr<const element> target;
         if (!dir.target_name.has_root_prefix()) {
-            for (auto scope = owner_agg.shared_as<const element>(); scope;
+            auto declaration = owner_agg.get_tpl_definition();
+            for (auto scope = declaration ? declaration->shared_as<const element>()
+                                          : owner_agg.shared_as<const element>(); scope;
                  scope = scope->parent<const element>()) {
                 if ((target = find_target(scope, name))) break;
                 if (is_definition_namespace_boundary(*scope)) break;

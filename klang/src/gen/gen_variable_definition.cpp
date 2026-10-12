@@ -209,6 +209,9 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
 void type_reference_resolver::resolve_variable_type(
     variable_definition& var, const lex::opt_any_lexeme& var_lexeme)
 {
+    if (const auto* scope = dynamic_cast<const element*>(&var)) {
+        ensure_template_type_ready(var.get_type(), *scope);
+    }
     // Step 1: If the type is already resolved, return immediately (no-op)
     if (type::is_resolved(var.get_type())) return;
 
