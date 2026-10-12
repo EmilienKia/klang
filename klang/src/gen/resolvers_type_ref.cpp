@@ -720,6 +720,23 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
 void type_reference_resolver::resolve()
 {
     trace("[type_reference_resolver::resolve] begin");
+    // Imported callable bodies are not traversed by the namespace passes.
+    // Resolve their defaults before overload selection clones them into calls.
+    symbol_resolver symbols(*this, _context, _unit);
+    const auto resolve_defaults = [&](function& fn) {
+        for (auto param : fn.parameters()) {
+            if (!param->has_default_expr()) continue;
+            param->get_default_expr()->accept(symbols);
+            param->accept(*this);
+        }
+    };
+    for (const auto& [mangled, fn] : _unit.get_imported_functions()) resolve_defaults(*fn);
+    for (const auto& [fq, agg] : _unit.get_imported_aggregates()) {
+        for (const auto& ctor : agg->constructors()) resolve_defaults(*ctor);
+        for (const auto& child : agg->get_children()) {
+            if (auto fn = std::dynamic_pointer_cast<function>(child)) resolve_defaults(*fn);
+        }
+    }
     visit_unit(_unit);
     trace("[type_reference_resolver::resolve] done");
 }
