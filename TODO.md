@@ -91,6 +91,38 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **External pkgconf 1.8.1 relocation escaping limitation.**
+      The FFI distribution tests exposed tool-side handling of package paths
+      containing spaces and apostrophes. Reproduce with the generated package
+      and its real native dependencies:
+      ```bash
+      probe="$PWD/cmake-build-debug/ffi-pkg-config-probe/relocated runtime's files"
+      mkdir -p "$probe"
+      cp cmake-build-debug/libk/libk/libk.pc "$probe/libk.pc"
+      pkg-config --with-path="$probe" --variable=libdir libk
+      pkg-config --with-path="$probe" --libs libk
+      ```
+      On pkgconf 1.8.1, the variable query inserts backslashes before spaces
+      rather than returning the raw directory, and unquoted `Libs:
+      -L${libdir} -lk` can emit no flags because of the apostrophe. Changing
+      only the probe's field to `Libs: -L"${libdir}" -lk` instead emits
+      triple-backslash space escapes; ordinary shell-flag decoding leaves
+      literal backslashes in the compiler's `-L` argument.
+      `--dont-define-prefix` did not change the reproduced behavior.
+      Passing an absolute `.pc` filename also encounters pkgconf's package
+      query tokenization; directory lookup via `--with-path` plus `libk`
+      addresses that separate issue, but not variable/flag escaping.
+      Metadata relocation acceptance therefore uses ordinary directory names
+      and retains real shared/static dependency flags without repairing tool
+      output. Actual native shared/archive relocation still covers spaces and
+      apostrophes through direct compiler argv; archive-only K consumers cover
+      quoted source/object/output paths separately. Revisit metadata-path
+      coverage after upstream behavior is resolved. Related upstream reports
+      [pkgconf/pkgconf#287](https://github.com/pkgconf/pkgconf/issues/287) and
+      [pkgconf/pkgconf#575](https://github.com/pkgconf/pkgconf/issues/575) concern
+      apostrophes and triple escaping respectively, but do not establish an
+      identical version-specific defect.
+
 - [ ] **Private imported type pointers report an internal diagnostic.**
       In `klang/tests/test-import-private-concrete.cpp`, the producer keeps
       `privateconcrete::Hidden` private. The rejected consumer

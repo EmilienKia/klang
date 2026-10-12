@@ -41,15 +41,33 @@ The build generates `cmake-build-debug/libk/libk/libk.pc`, colocated with
 `libk.so`, `libk.a`, `libk.kdi` and `k.kdi`. It describes existing build
 outputs; it does not add CMake installation rules. Its `libdir` and
 `kdi_dir` are relative to `${pcfiledir}`, so copying these artifacts together
-to another directory preserves their package paths.
+to another directory preserves their package paths, subject to the package
+tool's path-escaping limitations described below.
 
 ```bash
-export PKG_CONFIG_PATH="$PWD/cmake-build-debug/libk/libk${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-pkg-config --variable=libdir libk
-pkg-config --variable=kdi_dir libk
-pkg-config --libs libk
-pkg-config --libs --static libk
+runtime_dir="$PWD/cmake-build-debug/libk/libk"
+pkg-config --with-path="$runtime_dir" --variable=libdir libk
+pkg-config --with-path="$runtime_dir" --variable=kdi_dir libk
+pkg-config --with-path="$runtime_dir" --libs libk
+pkg-config --with-path="$runtime_dir" --libs --static libk
 ```
+
+Use the package name with a directory search option rather than querying an
+absolute `.pc` filename: some pkgconf versions split package queries even
+when the filename is supplied as one argument. For CMake's `FindPkgConfig`,
+set `PKG_CONFIG_PATH` to the runtime directory before the examples below.
+
+Package-metadata relocation is tested in directories without whitespace or
+shell quote characters. In pkgconf 1.8.1, `${pcfiledir}` expansion can escape
+spaces even in `--variable` output, while an apostrophe can cause unquoted
+`Libs` fragments to disappear. Quoting `${libdir}` in the `.pc` file instead
+can double-escape already escaped spaces. Neither quoting the command-line
+argument nor decoding emitted flags once repairs these tool-side errors.
+Keep the package directory free of these characters when relying on this
+tool version; arbitrary package paths are not guaranteed. Direct compiler
+argument handling is tested separately with spaces and apostrophes, including
+relocated native shared/archive runtime paths and archive-only K consumer
+source, object and executable paths.
 
 Shared metadata provides `-L… -lk`. Static metadata additionally supplies
 libffi, liburing, native thread, dynamic-loader and math dependencies, and
@@ -114,24 +132,6 @@ executables this exports that selected native name for dynamic lookup; it
 does not infer a C signature or export every helper. This is unnecessary
 for normal direct calls through `@ffi::Extern("C")`. See the
 [compiler manual](../man/klangc.md) and [FFI reference](../spec/stdlib/ffi.md).
-
-### Package-metadata relocation limitations
-
-Use the package name with `pkg-config --with-path=<directory> libk` rather
-than querying an absolute `.pc` filename: some pkgconf versions split
-package queries even when the filename is supplied as one argument.
-
-Package-metadata relocation is tested in directories without whitespace or
-shell quote characters. In pkgconf 1.8.1, `${pcfiledir}` expansion can escape
-spaces even in `--variable` output, while an apostrophe can cause unquoted
-`Libs` fragments to disappear. Quoting `${libdir}` in the `.pc` file instead
-can double-escape already escaped spaces. Neither quoting the command-line
-argument nor decoding emitted flags once repairs these tool-side errors.
-Keep the package directory free of these characters when relying on this
-tool version; arbitrary package paths are not guaranteed. Direct compiler
-argument handling is tested separately with spaces and apostrophes, including
-relocated native shared/archive runtime paths and archive-only K consumer
-source, object and executable paths.
 
 ---
 
