@@ -235,6 +235,20 @@
       assertions/115 cases). Rebalance/shard these registrations so CTest's
       timeout remains meaningful.
 
+- [ ] **Aggregate array brace defaults and heap-construction unwind need lifecycle coverage.**
+      Source-only gaps found while fixing default-sized-array receivers:
+      `type_reference_resolver::visit_array_init_expression()` in
+      `klang/src/gen/gen_expr_memory.cpp` skips null brace slots, and its
+      implementation skips them after zero-fill instead of constructing
+      aggregate elements. Reproducer: a class with a non-zero default member
+      and non-final method, then `values : Value[2] {}; values[0].get();`.
+      Omitted trailing slots have the same gap. Separately, the static/dynamic
+      `new` array constructor loops in that file do not record and clean a
+      successfully constructed prefix or free the allocation when an element
+      constructor throws. Add isolated constructor/destructor-count regressions
+      for both before extending the plain stack/member/global default-array fix.
+      These paths were not runtime-validated during the fluent FFI investigation.
+
 - [ ] **Abstract base constructors clear the inherited vptr during derived construction.**
       `implementation_generator::emit_constructor_pre_block()` in
       `klang/src/gen/gen_function.cpp` zero-initializes the entire base subobject.
@@ -1201,6 +1215,25 @@
   `compiler_linker.cpp`, which currently always shells out to the host `clang`/`ar`).
 
 #### Current bugs and gaps to fix
+
+- [ ] **Implicit return upcast from a const aggregate's pointer field loses value-level const normalization.**
+  Fresh `ffi-final-gen-casts-rerun.log` records `00E01` for
+  `const Derived*& -> Base*` in a const member function. The stored pointer is
+  immutable, but its pointee is mutable; a public base upcast should not add
+  pointee constness. `gen_statements.cpp::visit_return_statement()` rejects the
+  expression through `adapt_type()`, before cast lowering. Minimal reproduction:
+  ```k
+  module const_pointer_field_return;
+  struct Base {}
+  struct Derived : public Base {}
+  struct Holder {
+      pointer : Derived*;
+      const asBase() : Base* { return this.pointer; }
+  }
+  ```
+  An explicit `(Base*) this.pointer` exercises the supported cast-lowering path.
+  Keep this separate from the value-level const lowering fix; any
+  future return-adaptation fix must still reject `const Derived* -> Base*`.
 
 - [x] **Compiler const/meta CTest budget — resolved and accepted, 2026-10-04.**
   The historical full compiler replay passed **33/34** entries; the original
