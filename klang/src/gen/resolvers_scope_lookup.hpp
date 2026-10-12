@@ -103,7 +103,8 @@ public:
                                 std::shared_ptr<element> elem, const std::string& name);
 
     /**
-     * Look up an enumeration by name, starting from elem and walking up the scope chain.
+     * Look up a simple or qualified enumeration name in lexical scopes.
+     * Rooted names accept the complete module prefix or start directly at its root.
      */
     static std::shared_ptr<enumeration>
     lookup_enumeration(std::shared_ptr<element> elem, const std::string& name);

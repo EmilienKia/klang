@@ -616,14 +616,78 @@ scope_lookup::lookup_structure_or_import(unit& u, const std::shared_ptr<context>
 
 std::shared_ptr<enumeration>
 scope_lookup::lookup_enumeration(std::shared_ptr<element> elem, const std::string& name) {
-    for (auto current = elem; current; current = current->parent<element>()) {
-        if (auto eh = std::dynamic_pointer_cast<enum_holder>(current)) {
-            if (auto en = eh->get_enum(name)) {
+    if (!elem || name.empty()) return {};
+    const auto qualified = k::name::from(name);
+    if (qualified.empty()) return {};
+    const auto lookup_from = [](const auto& self, const std::shared_ptr<const element>& scope,
+                                const k::name& remaining) -> std::shared_ptr<enumeration> {
+        if (remaining.empty()) return {};
+        if (remaining.size() == 1) {
+            if (auto holder = std::dynamic_pointer_cast<const enum_holder>(scope)) {
+                return holder->get_enum(remaining.front());
+            }
+            return {};
+        }
+        const auto rest = remaining.without_front();
+        if (auto namespace_scope = std::dynamic_pointer_cast<const ns>(scope)) {
+            if (auto child = namespace_scope->get_child_namespace(remaining.front())) {
+                if (auto en = self(self, child, rest)) return en;
+            }
+        }
+        if (auto holder = std::dynamic_pointer_cast<const aggregate_holder>(scope)) {
+            if (auto child = holder->get_aggregate(remaining.front())) {
+                if (auto en = self(self, child, rest)) return en;
+            }
+        }
+        return {};
+    };
+    const auto lookup_root = [&]() -> std::shared_ptr<enumeration> {
+        auto root = root_namespace(*elem);
+        if (!root) return {};
+        const auto module = root->get_name().without_root_prefix();
+        const auto relative = qualified.without_root_prefix();
+        if (!module.empty() && relative.start_with(module)) {
+            if (auto en = lookup_from(lookup_from, root, relative.without_front(module.size()))) {
                 return en;
             }
         }
+        return lookup_from(lookup_from, root, relative);
+    };
+    if (qualified.has_root_prefix()) return lookup_root();
+
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto en = lookup_from(lookup_from, current, qualified)) return en;
+        if (auto holder = std::dynamic_pointer_cast<const using_holder>(current)) {
+            auto root = root_namespace(*current);
+            auto owner = root ? root->parent<unit>() : nullptr;
+            if (owner) {
+                for (const auto& directive : holder->get_using_directives()) {
+                    auto target_name = directive.target_name;
+                    auto remaining = qualified;
+                    if (directive.is_namespace()) {
+                        if (directive.has_alias()) {
+                            if (remaining.front() != *directive.alias_name || remaining.size() == 1) continue;
+                            remaining = remaining.without_front();
+                        }
+                    } else {
+                        const auto& lookup_name = directive.has_alias()
+                            ? *directive.alias_name : target_name.back();
+                        if (remaining.front() != lookup_name) continue;
+                        remaining = k::name{target_name.back()};
+                        for (size_t i = 1; i < qualified.size(); ++i)
+                            remaining = remaining.with_back(qualified[i]);
+                        target_name = target_name.without_back();
+                    }
+                    auto target = target_name.empty()
+                        ? std::static_pointer_cast<const element>(root)
+                        : resolve_using_target(target_name, *owner);
+                    if (auto en = lookup_from(lookup_from, target, remaining)) return en;
+                }
+            }
+        }
+        if (is_definition_namespace_boundary(*current)) return {};
     }
-    return {};
+    return lookup_root();
 }
 
 std::shared_ptr<union_type_def>

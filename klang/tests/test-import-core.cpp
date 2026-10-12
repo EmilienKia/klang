@@ -1234,6 +1234,122 @@ TEST_CASE("import diamond interfaces — IBase/IA/IB from 3 libs, Diamond class 
 // ENUM IMPORT TESTS
 // ═════════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("import enum — using namespace and aliases retain canonical declaration identity",
+          "[import][import-enum][using][regression][enum-identity]") {
+    struct Artifacts {
+        fs::path path;
+        ~Artifacts() {
+            std::error_code error;
+            fs::remove_all(path, error);
+        }
+    } artifacts;
+    static std::atomic<unsigned> sequence{0};
+    while (artifacts.path.empty()) {
+        auto candidate = fs::current_path() /
+            (".klang-enum-identity-" + std::to_string(++sequence));
+        if (!fs::exists(candidate) && fs::create_directory(candidate))
+            artifacts.path = std::move(candidate);
+    }
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    resolver->add_search_dir(artifacts.path.string());
+    auto producer = k::compiler::create(make_pic_target_machine());
+    producer->set_file_resolver(resolver);
+    producer->parse_source("enum-identity-producer.k", R"K(
+        module enumidentity;
+        namespace api {
+            public enum CType : unsigned byte { CHAR = 12; INT = 17; }
+            public enum Other : unsigned byte { CHAR = 12; }
+            private struct Hidden {}
+            private secret(): int { return 99; }
+            public canonical(value: CType): CType { return value; }
+        }
+        public enum Root { VALUE = 42; }
+    )K", false, false);
+    REQUIRE_FALSE(producer->has_compilation_error());
+    auto library = artifacts.path / "libenumidentity.so";
+    REQUIRE(producer->gen_shared_library(library.string()));
+    auto kdi_path = library;
+    kdi_path.replace_extension(".kdi");
+    resolver->add_explicit_path("enumidentity", kdi_path);
+    auto metadata = kdi::kdi_read_cbor_file(kdi_path.string());
+    auto api = std::find_if(metadata.unit.root_ns.namespaces.begin(),
+                            metadata.unit.root_ns.namespaces.end(),
+        [](const auto& ns) { return ns.name == "api"; });
+    REQUIRE(api != metadata.unit.root_ns.namespaces.end());
+    const auto& api_metadata = *api;
+    REQUIRE(api_metadata.enums.size() == 2);
+    CHECK(api_metadata.enums.front().fq_name == "enumidentity::api::CType");
+    CHECK(api_metadata.enums.front().entries.front().value == 12);
+    REQUIRE(api_metadata.functions.size() == 1);
+    CHECK(api_metadata.functions.front().name == "canonical");
+
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    consumer->parse_source("enum-identity-consumer.k", R"K(
+        module enumidentityconsumer;
+        import enumidentity;
+        using namespace enumidentity::api;
+        using namespace api = enumidentity::api;
+        using Code = enumidentity::api::CType;
+        run(): int {
+            a: CType = CType::CHAR;
+            b: api::CType = api::CType::INT;
+            c: Code = Code::CHAR;
+            d: ::enumidentity::api::CType = ::enumidentity::api::CType::INT;
+            if (canonical(a) != c || canonical(b) != d) return -1;
+            return enumidentity::Root::VALUE;
+        }
+    )K", false, false);
+    REQUIRE_FALSE(consumer->has_compilation_error());
+    REQUIRE(consumer->verify_gen_code());
+    auto ctx = consumer->get_context_for_test();
+    auto unit = consumer->get_unit();
+    auto origin = unit->get_root_namespace()->get_child_namespace("enumidentity");
+    REQUIRE(origin);
+    auto imported_api = origin->get_child_namespace("api");
+    REQUIRE(imported_api);
+    auto canonical = imported_api->get_enum("CType");
+    REQUIRE(canonical);
+    CHECK_FALSE(imported_api->get_aggregate("Hidden"));
+    CHECK_FALSE(imported_api->get_function("secret"));
+    REQUIRE(imported_api->get_enum("Other"));
+    CHECK(imported_api->get_enum("Other")->get_enum_type() != canonical->get_enum_type());
+    for (const auto* spelling : {"enumidentity::api::CType", "::enumidentity::api::CType",
+                                 "api::CType"}) {
+        INFO(spelling);
+        auto imported = unit->get_or_create_imported_enum(k::name::from(spelling), ctx);
+        CHECK(imported == canonical);
+        REQUIRE(imported);
+        CHECK(imported->get_enum_type() == canonical->get_enum_type());
+    }
+    auto root_enum = origin->get_enum("Root");
+    REQUIRE(root_enum);
+    CHECK(unit->get_or_create_imported_enum(k::name{"Root"}, ctx) == root_enum);
+    REQUIRE(ensure_libk_loaded());
+    std::string load_error;
+    REQUIRE_FALSE(llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+        library.c_str(), &load_error));
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
+    for (const auto* forbidden : {"value: Hidden; return 0;", "return secret();"}) {
+        INFO(forbidden);
+        auto denied = k::compiler::create();
+        denied->set_file_resolver(resolver);
+        try {
+            denied->parse_source("enum-identity-denied.k",
+                std::string("module enumidentitydenied; import enumidentity; "
+                            "using namespace enumidentity::api; run(): int { ")
+                    + forbidden + " }", false, false);
+        } catch (const k::log::compiler_error&) {
+        }
+        CHECK(denied->has_compilation_error());
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // [import-enum-basic] Enum defined in a lib, accessed by qualified name in exe.
 //

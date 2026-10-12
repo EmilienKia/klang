@@ -91,6 +91,19 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **KDI export does not exclude private namespace enums.**
+      The imported-enum identity regression initially used
+      `module enumidentity; namespace api { public enum CType { CHAR = 12; }
+      public enum Other { CHAR = 12; } private enum Hidden { SECRET = 99; } }`.
+      Its generated KDI contains three `api.enums` instead of the two public
+      declarations. `model_builder::visit_enum_decl` in
+      `klang/src/model/model_builder.cpp` applies enclosing visibility sections
+      but does not apply declaration visibility specifiers; the exporter
+      therefore receives a public enum despite `private enum`. This is independent of canonical enum
+      lookup; the permanent identity test controls privacy with a private
+      aggregate and function instead. Add a private-enum producer/consumer
+      regression before correcting export/import visibility.
+
 - [ ] **Vector copy self-assignment clears the source before copying.**
       Source review of `libk/libk/src/vector.k`, `operator=(const Vector<T>&)`,
       shows that it calls `clear()` before reading `other.size()` without

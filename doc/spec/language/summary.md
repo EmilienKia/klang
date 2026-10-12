@@ -1233,6 +1233,9 @@ Enums are nominal types identified by their fully qualified declaration names.
 Same-named enums in different namespaces remain distinct, and an unqualified
 enum name in a return signature or cast resolves in the declaration's lexical
 scope. Return-type mismatch diagnostics identify the qualified nominal types.
+Imported enum entries follow the same namespace and `using` lookup rules as
+their types. Qualified names, namespace aliases and specific `using` aliases
+must refer to the original declaration, not introduce distinct enum types.
 
 ### 19.1 Entries
 
