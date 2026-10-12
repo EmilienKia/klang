@@ -991,6 +991,9 @@ add_custom_target(libk_module_fixtures DEPENDS ${MODFX_DIR}/.fixtures.stamp)
 libk_add_test(libk-tests-module 120
     tests/test-module.cpp
 )
+target_link_options(libk-tests-module PRIVATE
+    -Wl,--export-dynamic-symbol=klang_module_symbol_application_fixture
+    -Wl,--export-dynamic-symbol=klang_module_symbol_zero_fixture)
 add_dependencies(libk-tests-module libk_module_fixtures)
 target_compile_definitions(libk-tests-module PRIVATE LIBK_MODULE_FIXTURES_DIR="${MODFX_DIR}")
 add_test(NAME libk-rtti-static-link-fixture

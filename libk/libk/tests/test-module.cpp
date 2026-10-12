@@ -557,7 +557,7 @@ TEST_CASE("Module::lookupSymbol resolves application symbols and accepts a zero 
         }
     )SRC");
     REQUIRE(jit);
-    CHECK(run_main(*jit) == 0);
+    REQUIRE(run_main(*jit) == 0);
     auto saved_address = jit->lookup_symbol<void*(*)()>("saved_address");
     REQUIRE(saved_address);
     CHECK(saved_address() == reinterpret_cast<void*>(&klang_module_symbol_application_fixture));
