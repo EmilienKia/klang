@@ -17,6 +17,7 @@
  */
 
 #include <catch2/catch_all.hpp>
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
@@ -127,7 +128,7 @@ TEST_CASE("Compiler errors latch failure through logger relays and filters",
     require_failed_outputs(comp, artifacts);
 }
 
-TEST_CASE("Non-throwing overload errors suppress all compiler outputs",
+TEST_CASE("Ambiguous overload diagnostics propagate and suppress all compiler outputs",
           "[compiler][diagnostics][fatal-diagnostics][resolution]") {
     DiagnosticArtifacts artifacts;
     auto comp = k::compiler::create(make_pic_target_machine());
@@ -136,7 +137,27 @@ TEST_CASE("Non-throwing overload errors suppress all compiler outputs",
     options.opt_ir_file = (artifacts.path / "failed.opt.ll").string();
     comp->set_ir_output_options(options);
 
-    REQUIRE_NOTHROW(comp->parse_source("ambiguous.k", ambiguous_source, true, false));
+    try {
+        comp->parse_source("ambiguous.k", ambiguous_source, true, false);
+        FAIL("Expected an ambiguous overload diagnostic");
+    } catch (const k::model::gen::resolution_error& error) {
+        const auto& diagnostic = error.get_diagnostic();
+        CHECK(diagnostic.code ==
+              static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS));
+        CHECK(diagnostic.level == k::log::diagnostic::severity::error);
+        CHECK(diagnostic.message.find("Ambiguous call") != std::string::npos);
+        REQUIRE(diagnostic.args.size() == 2);
+        CHECK(diagnostic.args[0] == "pick");
+        CHECK(diagnostic.args[1] == "2");
+        REQUIRE(diagnostic.notes.size() == 2);
+        for (const auto* signature : {"pick(a : int, b : double)",
+                                      "pick(a : double, b : int)"}) {
+            CHECK(std::any_of(diagnostic.notes.begin(), diagnostic.notes.end(),
+                [&](const k::log::diagnostic::note& note) {
+                    return note.args.size() == 2 && note.args[1] == signature;
+                }));
+        }
+    }
     require_failed_outputs(comp, artifacts);
 }
 
