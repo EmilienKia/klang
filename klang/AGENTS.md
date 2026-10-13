@@ -165,6 +165,12 @@ receivers can follow a validated vbptr path; a vbptr-only base has no inline vpt
 for a secondary table to patch. Same-subobject dispatch needs no adjustment.
 When a physical adjustment is required, unknown offsets must fail compilation,
 never become zero, an ancestor's offset, or a stale materialization-time estimate.
+Exception dispatch chains and Throwable cause bookkeeping use named ABI fields
+with the final DataLayout, never LLVM identified-type pointer equality. Walk live
+collector storage once, excluding nested copies replaced by an enclosing collector;
+missing fields, unresolved bases and unrepresentable chain offsets are codegen errors.
+After copying a thrown object, rebind live virtual-base pointers to the exception
+allocation rather than retaining addresses into the source object.
 
 Namespace-level lambda declarations synthesized inside free template functions
 must retain the function's template parameters until instantiation. Bind their

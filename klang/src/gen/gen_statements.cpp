@@ -23,6 +23,9 @@
 #include "../model/mangler.hpp"
 #include "../errors.hpp"
 
+#include <limits>
+#include <set>
+
 namespace k::model::gen {
 
 using namespace k::model;
@@ -1428,73 +1431,130 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     std::vector<chain_entry_data> chain_data;
     chain_data.push_back({typeinfo_gv, 0}); // Self — offset 0
 
+    const auto& data_layout = mod.getDataLayout();
+    auto layout_error = [&](const aggregate& owner, const std::string& field) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_EXCEPTION_LAYOUT),
+            get_statement_debug_lexeme(stmt),
+            "Internal error: cannot determine exception layout for '{}' (field/base '{}')",
+            {owner.get_fq_name(), field});
+    };
+    auto require_field_offset = [&](const aggregate& owner, const std::string& field,
+                                    bool pointer_field = false) -> uint64_t {
+        llvm::Type* field_type = nullptr;
+        auto offset = aggregate_field_offset(owner, field, data_layout, &field_type);
+        if (!offset || !field_type
+            || (pointer_field ? !field_type->isPointerTy() : !field_type->isStructTy())) {
+            layout_error(owner, field);
+        }
+        return *offset;
+    };
+    auto checked_offset = [&](const aggregate& owner, uint64_t outer,
+                              uint64_t inner) -> uint32_t {
+        constexpr uint64_t max_offset = std::numeric_limits<int32_t>::max();
+        if (outer > max_offset || inner > max_offset - outer) {
+            layout_error(owner, "exception chain offset exceeds i32");
+        }
+        return static_cast<uint32_t>(outer + inner);
+    };
+
     if (thrown_agg) {
-        // Walk the base class hierarchy and compute byte offsets for each base sub-object.
-        // K's class layout: each class struct has { vptr, base_subobject, ...fields }.
-        // The base_subobject is typically at field index 1 in the LLVM struct.
-        const auto& data_layout = mod.getDataLayout();
-        std::function<void(const std::shared_ptr<aggregate>&, uint32_t)> add_bases;
-        add_bases = [&](const std::shared_ptr<aggregate>& agg, uint32_t cumulative_offset) {
-            for (auto& bs : agg->get_bases()) {
-                std::shared_ptr<aggregate> base_agg = bs.base;
-                // For imported aggregates, base_spec.base may still be null
-                if (!base_agg && !bs.raw_name.empty()) {
-                    std::vector<std::string> parts;
-                    std::size_t pos = 0;
-                    std::string raw = bs.raw_name;
-                    if (raw.size() >= 2 && raw[0] == ':' && raw[1] == ':') {
-                        raw = raw.substr(2);
-                    }
-                    while (true) {
-                        auto sep = raw.find("::", pos);
-                        if (sep == std::string::npos) { parts.push_back(raw.substr(pos)); break; }
-                        parts.push_back(raw.substr(pos, sep - pos));
-                        pos = sep + 2;
-                    }
-                    k::name lookup_name{false, std::move(parts)};
-                    base_agg = _unit.get_or_create_imported_aggregate(lookup_name, _context);
-                }
-                if (!base_agg) continue;
-
-                // Compute the byte offset of this base sub-object within the parent.
-                // In K's layout, the base sub-object is the field named "__base_<Name>__"
-                // which is at a specific struct offset. Use the DataLayout to get the
-                // exact byte offset of the base sub-object field.
-                uint32_t field_offset = 0;
-                auto agg_st = agg->get_struct_type();
-                if (agg_st) {
-                    llvm::Type* agg_llvm_type = _context->get_llvm_type(agg_st);
-                    if (agg_llvm_type && agg_llvm_type->isStructTy()) {
-                        auto* struct_ty = llvm::cast<llvm::StructType>(agg_llvm_type);
-                        auto* sl = data_layout.getStructLayout(struct_ty);
-                        // The base sub-object field is typically at index 1 (after vptr).
-                        // For single inheritance with a class/interface, field 0 is __vptr__
-                        // and field 1 is the base sub-object.
-                        // For structs (non-class), field 0 is the base sub-object directly.
-                        // We find the correct field by matching the type.
-                        auto base_st = base_agg->get_struct_type();
-                        llvm::Type* base_llvm = base_st ? _context->get_llvm_type(base_st) : nullptr;
-                        unsigned num_fields = struct_ty->getNumElements();
-                        for (unsigned fi = 0; fi < num_fields; ++fi) {
-                            if (struct_ty->getElementType(fi) == base_llvm) {
-                                field_offset = (uint32_t)sl->getElementOffset(fi);
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                uint32_t base_offset = cumulative_offset + field_offset;
-
-                std::string base_ti_name = mangler::mangle_rtti(base_agg->get_name());
-                auto* base_ti = get_or_declare_typeinfo_global(
-                    mod, base_ti_name, has_external_rtti_definition(base_agg),
-                    is_annotation_aggregate(base_agg));
-                chain_data.push_back({base_ti, base_offset});
-                add_bases(base_agg, base_offset); // Recursive
+        struct virtual_pointer {
+            std::string target_rtti;
+            uint32_t offset;
+        };
+        std::vector<virtual_pointer> virtual_pointers;
+        std::set<const aggregate*> visited;
+        std::vector<std::shared_ptr<aggregate>> semantic_bases;
+        std::function<void(const std::shared_ptr<aggregate>&)> validate_bases;
+        validate_bases = [&](const std::shared_ptr<aggregate>& owner) {
+            if (!visited.insert(owner.get()).second) return;
+            for (const auto& bs : owner->get_bases()) {
+                if (!bs.base) layout_error(*owner, bs.raw_name);
+                semantic_bases.push_back(bs.base);
+                validate_bases(bs.base);
             }
         };
-        add_bases(thrown_agg, 0);
+        validate_bases(thrown_agg);
+
+        std::function<void(const std::shared_ptr<aggregate>&, uint32_t,
+                           const std::set<std::string>&)> add_subobjects;
+        add_subobjects = [&](const std::shared_ptr<aggregate>& owner, uint32_t offset,
+                             const std::set<std::string>& ancestor_collectors) {
+            auto* ti = get_or_declare_typeinfo_global(
+                mod, mangler::mangle_rtti(owner->get_name()), has_external_rtti_definition(owner),
+                is_annotation_aggregate(owner));
+            if (std::none_of(chain_data.begin(), chain_data.end(), [&](const auto& entry) {
+                return entry.ti == ti && entry.offset == offset;
+            })) {
+                chain_data.push_back({ti, offset});
+            }
+
+            auto owner_type = owner->get_struct_type();
+            if (!owner_type) layout_error(*owner, "aggregate type");
+            auto collectors = ancestor_collectors;
+            std::vector<std::shared_ptr<aggregate>> local_collectors;
+            for (const auto& vbase : owner->get_all_virtual_base_structs()) {
+                const auto identity = mangler::mangle_rtti(vbase->get_name());
+                const auto field = "__vbase_" + vbase->get_short_name() + "__";
+                if (!ancestor_collectors.count(identity) && owner_type->has_member(field)) {
+                    collectors.insert(identity);
+                    local_collectors.push_back(vbase);
+                }
+            }
+            for (const auto& bs : owner->get_bases()) {
+                const auto identity = mangler::mangle_rtti(bs.base->get_name());
+                if (bs.is_virtual) {
+                    auto pointer_field = "__vbptr_" + bs.sanitised_name() + "__";
+                    if (!owner_type->has_member(pointer_field)) {
+                        pointer_field = "__vbptr_" + bs.base->get_short_name() + "__";
+                    }
+                    if (owner_type->has_member(pointer_field)) {
+                        virtual_pointers.push_back({identity, checked_offset(*owner, offset,
+                            require_field_offset(*owner, pointer_field, true))});
+                    }
+                }
+                if (collectors.count(identity)) continue;
+                const auto field = "__base_" + bs.sanitised_name() + "__";
+                // A virtual edge is only a vbptr unless this layout retains inline
+                // storage. Enclosing collectors replace all nested/stale copies.
+                if (bs.is_virtual && !owner_type->has_member(field)) continue;
+                auto base_offset = checked_offset(*owner, offset,
+                    require_field_offset(*owner, field));
+                add_subobjects(bs.base, base_offset, collectors);
+            }
+            for (const auto& vbase : local_collectors) {
+                auto base_offset = checked_offset(*owner, offset, require_field_offset(
+                    *owner, "__vbase_" + vbase->get_short_name() + "__"));
+                add_subobjects(vbase, base_offset, collectors);
+            }
+        };
+        add_subobjects(thrown_agg, 0, {});
+        for (const auto& base : semantic_bases) {
+            const auto identity = mangler::mangle_rtti(base->get_name());
+            if (std::none_of(chain_data.begin(), chain_data.end(), [&](const auto& entry) {
+                return entry.ti->getName() == identity;
+            })) {
+                layout_error(*thrown_agg, base->get_fq_name());
+            }
+        }
+        // memcpy preserves source addresses in vbptrs. Rebind each live slot
+        // to the corresponding collector in the allocated exception object.
+        for (const auto& pointer : virtual_pointers) {
+            std::optional<uint32_t> target_offset;
+            for (const auto& entry : chain_data) {
+                if (entry.ti->getName() != pointer.target_rtti) continue;
+                if (target_offset && *target_offset != entry.offset) {
+                    layout_error(*thrown_agg, pointer.target_rtti);
+                }
+                target_offset = entry.offset;
+            }
+            if (!target_offset) layout_error(*thrown_agg, pointer.target_rtti);
+            auto* slot = _builder->CreateConstGEP1_64(
+                llvm::Type::getInt8Ty(llvm_ctx), exc_mem, pointer.offset, "exception_vbptr");
+            auto* target = _builder->CreateConstGEP1_64(
+                llvm::Type::getInt8Ty(llvm_ctx), exc_mem, *target_offset, "exception_vbase");
+            _builder->CreateStore(target, slot);
+        }
     }
 
     // Build the LLVM constant array from chain_data
@@ -1541,7 +1601,8 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
         std::shared_ptr<aggregate> throwable_class;
         auto root_ns = _unit.get_root_namespace();
         if (root_ns) {
-            auto k_ns = root_ns->get_child_namespace("k");
+            auto k_ns = root_ns->get_short_name() == "k"
+                ? root_ns : root_ns->get_child_namespace("k");
             if (k_ns) {
                 throwable_class = k_ns->get_aggregate("Throwable");
             }
@@ -1555,113 +1616,86 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
             (thrown_agg == throwable_class || thrown_agg->is_derived_from(throwable_class))) {
             // Find the byte offset of Throwable within the thrown type (from chain_data)
             std::string throwable_rtti = mangler::mangle_rtti(throwable_class->get_name());
-            uint32_t throwable_offset = 0;
+            std::optional<uint32_t> throwable_offset;
             for (auto& entry : chain_data) {
                 if (entry.ti->getName() == throwable_rtti) {
                     throwable_offset = entry.offset;
                     break;
                 }
             }
+            if (!throwable_offset) layout_error(*thrown_agg, throwable_rtti);
 
             // Find the _cause and _cause_handle field offsets within Throwable's LLVM struct
-            auto throwable_st = throwable_class->get_struct_type();
-            llvm::Type* throwable_llvm_type = throwable_st
-                ? _context->get_llvm_type(throwable_st) : nullptr;
-            if (throwable_llvm_type && throwable_llvm_type->isStructTy()) {
-                auto* throwable_struct = llvm::cast<llvm::StructType>(throwable_llvm_type);
-                auto* sl = mod.getDataLayout().getStructLayout(throwable_struct);
+            uint64_t total_cause_offset = checked_offset(*throwable_class, *throwable_offset,
+                require_field_offset(*throwable_class, "_cause", true));
+            uint64_t total_handle_offset = checked_offset(*throwable_class, *throwable_offset,
+                require_field_offset(*throwable_class, "_cause_handle", true));
 
-                // Find the _cause and _cause_handle field indices by name
-                unsigned cause_field_idx = 0;
-                unsigned handle_field_idx = 0;
-                bool found_cause = false;
-                bool found_handle = false;
-                for (auto it = throwable_st->fields_begin();
-                     it != throwable_st->fields_end(); ++it) {
-                    if (it->name == "_cause") {
-                        cause_field_idx = static_cast<unsigned>(it->index);
-                        found_cause = true;
-                    } else if (it->name == "_cause_handle") {
-                        handle_field_idx = static_cast<unsigned>(it->index);
-                        found_handle = true;
-                    }
-                }
+            // After memcpy: load _cause from exc_mem. If non-null, retain the
+            // currently active exception via __k_exception_retain_current() and
+            // store the returned raw handle into _cause_handle.
+            auto* cause_gep = _builder->CreateConstGEP1_64(
+                llvm::Type::getInt8Ty(llvm_ctx), exc_mem, total_cause_offset, "cause_ptr");
+            auto* cause_val = _builder->CreateLoad(ptr_ty, cause_gep, "cause_val");
+            auto* is_null = _builder->CreateICmpEQ(cause_val,
+                llvm::ConstantPointerNull::get(ptr_ty), "cause_is_null");
 
-                if (found_cause && found_handle) {
-                    uint64_t cause_offset_in_throwable = sl->getElementOffset(cause_field_idx);
-                    uint64_t handle_offset_in_throwable = sl->getElementOffset(handle_field_idx);
-                    uint64_t total_cause_offset = throwable_offset + cause_offset_in_throwable;
-                    uint64_t total_handle_offset = throwable_offset + handle_offset_in_throwable;
+            auto* retain_bb = llvm::BasicBlock::Create(
+                llvm_ctx, "retain_cause", current_func);
+            auto* done_bb = llvm::BasicBlock::Create(
+                llvm_ctx, "cause_retain_done", current_func);
+            _builder->CreateCondBr(is_null, done_bb, retain_bb);
 
-                    // After memcpy: load _cause from exc_mem. If non-null, retain the
-                    // currently active exception via __k_exception_retain_current() and
-                    // store the returned raw handle into _cause_handle.
-                    auto* cause_gep = _builder->CreateConstGEP1_64(
-                        llvm::Type::getInt8Ty(llvm_ctx), exc_mem, total_cause_offset, "cause_ptr");
-                    auto* cause_val = _builder->CreateLoad(ptr_ty, cause_gep, "cause_val");
-                    auto* is_null = _builder->CreateICmpEQ(cause_val,
-                        llvm::ConstantPointerNull::get(ptr_ty), "cause_is_null");
+            _builder->SetInsertPoint(retain_bb);
+            // __k_exception_retain_current() calls std::current_exception(),
+            // increments refcount, and returns the raw thrown object pointer.
+            auto k_retain = mod.getOrInsertFunction(
+                "__k_exception_retain_current",
+                llvm::FunctionType::get(ptr_ty, {}, false));
+            auto* raw_handle = _builder->CreateCall(k_retain, {}, "raw_cause_handle");
+            auto* handle_gep = _builder->CreateConstGEP1_64(
+                llvm::Type::getInt8Ty(llvm_ctx), exc_mem, total_handle_offset, "handle_ptr");
+            _builder->CreateStore(raw_handle, handle_gep);
+            _builder->CreateBr(done_bb);
 
-                    auto* retain_bb = llvm::BasicBlock::Create(
-                        llvm_ctx, "retain_cause", current_func);
-                    auto* done_bb = llvm::BasicBlock::Create(
-                        llvm_ctx, "cause_retain_done", current_func);
-                    _builder->CreateCondBr(is_null, done_bb, retain_bb);
+            _builder->SetInsertPoint(done_bb);
 
-                    _builder->SetInsertPoint(retain_bb);
-                    // __k_exception_retain_current() calls std::current_exception(),
-                    // increments refcount, and returns the raw thrown object pointer.
-                    auto k_retain = mod.getOrInsertFunction(
-                        "__k_exception_retain_current",
-                        llvm::FunctionType::get(ptr_ty, {}, false));
-                    auto* raw_handle = _builder->CreateCall(k_retain, {}, "raw_cause_handle");
-                    // Store the raw handle into _cause_handle field in exc_mem
-                    auto* handle_gep = _builder->CreateConstGEP1_64(
-                        llvm::Type::getInt8Ty(llvm_ctx), exc_mem, total_handle_offset, "handle_ptr");
-                    _builder->CreateStore(raw_handle, handle_gep);
-                    _builder->CreateBr(done_bb);
+            // Get or create the destructor function for this exception type.
+            // It releases the retained cause handle when the exception is freed.
+            std::string dtor_name = "__k_exc_dtor_" + typeinfo_name;
+            auto* dtor_func = mod.getFunction(dtor_name);
+            if (!dtor_func) {
+                auto* dtor_type = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+                dtor_func = llvm::Function::Create(dtor_type,
+                    llvm::GlobalValue::LinkOnceODRLinkage, dtor_name, mod);
+                auto* entry_bb = llvm::BasicBlock::Create(
+                    llvm_ctx, "entry", dtor_func);
+                llvm::IRBuilder<> dtor_builder(entry_bb);
+                auto* exc_arg = dtor_func->getArg(0);
+                auto* d_handle_gep = dtor_builder.CreateConstGEP1_64(
+                    llvm::Type::getInt8Ty(llvm_ctx), exc_arg,
+                    total_handle_offset, "handle_ptr");
+                auto* d_handle = dtor_builder.CreateLoad(
+                    ptr_ty, d_handle_gep, "cause_handle");
+                auto* d_is_null = dtor_builder.CreateICmpEQ(d_handle,
+                    llvm::ConstantPointerNull::get(ptr_ty), "is_null");
+                auto* d_dec_bb = llvm::BasicBlock::Create(
+                    llvm_ctx, "release_cause", dtor_func);
+                auto* d_done_bb = llvm::BasicBlock::Create(
+                    llvm_ctx, "done", dtor_func);
+                dtor_builder.CreateCondBr(d_is_null, d_done_bb, d_dec_bb);
 
-                    _builder->SetInsertPoint(done_bb);
+                dtor_builder.SetInsertPoint(d_dec_bb);
+                auto k_release = mod.getOrInsertFunction(
+                    "__k_exception_release",
+                    llvm::FunctionType::get(void_ty, {ptr_ty}, false));
+                dtor_builder.CreateCall(k_release, {d_handle});
+                dtor_builder.CreateBr(d_done_bb);
 
-                    // Get or create the destructor function for this exception type.
-                    // It releases the retained cause handle when the exception is freed.
-                    std::string dtor_name = "__k_exc_dtor_" + typeinfo_name;
-                    auto* dtor_func = mod.getFunction(dtor_name);
-                    if (!dtor_func) {
-                        auto* dtor_type = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
-                        dtor_func = llvm::Function::Create(dtor_type,
-                            llvm::GlobalValue::LinkOnceODRLinkage, dtor_name, mod);
-                        // Generate the destructor body: load _cause_handle and release
-                        auto* entry_bb = llvm::BasicBlock::Create(
-                            llvm_ctx, "entry", dtor_func);
-                        llvm::IRBuilder<> dtor_builder(entry_bb);
-                        auto* exc_arg = dtor_func->getArg(0);
-                        auto* d_handle_gep = dtor_builder.CreateConstGEP1_64(
-                            llvm::Type::getInt8Ty(llvm_ctx), exc_arg,
-                            total_handle_offset, "handle_ptr");
-                        auto* d_handle = dtor_builder.CreateLoad(
-                            ptr_ty, d_handle_gep, "cause_handle");
-                        auto* d_is_null = dtor_builder.CreateICmpEQ(d_handle,
-                            llvm::ConstantPointerNull::get(ptr_ty), "is_null");
-                        auto* d_dec_bb = llvm::BasicBlock::Create(
-                            llvm_ctx, "release_cause", dtor_func);
-                        auto* d_done_bb = llvm::BasicBlock::Create(
-                            llvm_ctx, "done", dtor_func);
-                        dtor_builder.CreateCondBr(d_is_null, d_done_bb, d_dec_bb);
-
-                        dtor_builder.SetInsertPoint(d_dec_bb);
-                        auto k_release = mod.getOrInsertFunction(
-                            "__k_exception_release",
-                            llvm::FunctionType::get(void_ty, {ptr_ty}, false));
-                        dtor_builder.CreateCall(k_release, {d_handle});
-                        dtor_builder.CreateBr(d_done_bb);
-
-                        dtor_builder.SetInsertPoint(d_done_bb);
-                        dtor_builder.CreateRetVoid();
-                    }
-                    dtor_fn_val = dtor_func;
-                }
+                dtor_builder.SetInsertPoint(d_done_bb);
+                dtor_builder.CreateRetVoid();
             }
+            dtor_fn_val = dtor_func;
         }
     }
 

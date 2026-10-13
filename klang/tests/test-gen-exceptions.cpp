@@ -19,12 +19,311 @@
 /**
  * Tests for exception handling: throw, try-catch, throws clause, contract verification.
  *
- * All throwable types must derive from ::k::Exception (auto-imported from the stdlib).
+ * Hosted throwable types derive from ::k::Throwable (auto-imported from the stdlib).
+ * Bootstrap module k can also exercise struct exceptions without that hierarchy.
  */
 
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
+#include "../src/model/mangler.hpp"
+
+#include <llvm/IR/Instructions.h>
+
+TEST_CASE("Exception layout: imported chain and cause addresses match the final DataLayout",
+          "[gen][exceptions][exception-layout][import][regression]") {
+    auto comp = compile_model_with_stdlib(R"K(
+        module imported_exception_layout;
+        probe() : int {
+            try { throw k::time::TemporalArithmeticException(907, null); }
+            catch (e : Throwable&) { return e.getCode(); }
+            return 0;
+        }
+    )K");
+    REQUIRE(comp);
+    auto& mod = comp->get_context_for_test()->module();
+    const auto& dl = mod.getDataLayout();
+    auto k_ns = comp->get_unit()->get_root_namespace()->get_child_namespace("k");
+    REQUIRE(k_ns);
+    auto time_ns = k_ns->get_child_namespace("time");
+    REQUIRE(time_ns);
+    auto thrown = time_ns->get_aggregate("TemporalArithmeticException");
+    REQUIRE(thrown);
+    auto chain_name = k::model::mangler::mangle_rtti(thrown->get_name()) + "_chain";
+    auto* chain = mod.getNamedGlobal(chain_name);
+    REQUIRE(chain);
+    REQUIRE(chain->hasInitializer());
+    auto* entries = llvm::dyn_cast<llvm::ConstantArray>(chain->getInitializer());
+    REQUIRE(entries);
+
+    uint64_t offset = 0;
+    unsigned entry_index = 0;
+    uint64_t throwable_offset = 0;
+    std::shared_ptr<k::model::aggregate> throwable;
+    for (auto owner = thrown; owner;) {
+        INFO("subobject=" << owner->get_fq_name());
+        REQUIRE(entry_index < entries->getNumOperands());
+        auto* entry = llvm::dyn_cast<llvm::ConstantStruct>(entries->getOperand(entry_index++));
+        REQUIRE(entry);
+        CHECK(entry->getOperand(0) ==
+              mod.getNamedGlobal(k::model::mangler::mangle_rtti(owner->get_name())));
+        auto* actual_offset = llvm::dyn_cast<llvm::ConstantInt>(entry->getOperand(1));
+        REQUIRE(actual_offset);
+        CHECK(actual_offset->getZExtValue() == offset);
+        if (owner->get_short_name() == "Throwable") {
+            throwable = owner;
+            throwable_offset = offset;
+        }
+        if (owner->get_bases().empty()) break;
+        REQUIRE(owner->get_bases().size() == 1);
+        const auto& base = owner->get_bases().front();
+        REQUIRE_FALSE(base.is_virtual);
+        REQUIRE(base.base);
+        auto st = owner->get_struct_type();
+        REQUIRE(st);
+        auto field = st->get_member("__base_" + base.sanitised_name() + "__");
+        REQUIRE(field);
+        auto* llvm_st = llvm::dyn_cast<llvm::StructType>(st->get_llvm_type());
+        REQUIRE(llvm_st);
+        REQUIRE(field->index < llvm_st->getNumElements());
+        offset += dl.getStructLayout(llvm_st)->getElementOffset(field->index);
+        owner = base.base;
+    }
+    REQUIRE(throwable);
+    CHECK(throwable_offset > 0);
+    REQUIRE(entries->getNumOperands() == entry_index + 1);
+    auto* terminator = entries->getAggregateElement(entry_index);
+    REQUIRE(terminator);
+    CHECK(terminator->isNullValue());
+
+    auto st = throwable->get_struct_type();
+    auto* llvm_st = llvm::dyn_cast<llvm::StructType>(st->get_llvm_type());
+    REQUIRE(llvm_st);
+    auto cause = st->get_member("_cause");
+    auto handle = st->get_member("_cause_handle");
+    REQUIRE(cause);
+    REQUIRE(handle);
+    const uint64_t cause_offset = throwable_offset +
+        dl.getStructLayout(llvm_st)->getElementOffset(cause->index);
+    const uint64_t handle_offset = throwable_offset +
+        dl.getStructLayout(llvm_st)->getElementOffset(handle->index);
+    unsigned cause_addresses = 0;
+    unsigned handle_addresses = 0;
+    for (auto& function : mod) {
+        for (auto& block : function) {
+            for (auto& instruction : block) {
+                auto* gep = llvm::dyn_cast<llvm::GetElementPtrInst>(&instruction);
+                if (!gep || (gep->getName() != "cause_ptr" && gep->getName() != "handle_ptr")) continue;
+                REQUIRE(gep->getSourceElementType()->isIntegerTy(8));
+                REQUIRE(gep->getNumIndices() == 1);
+                auto* actual = llvm::dyn_cast<llvm::ConstantInt>(gep->getOperand(1));
+                REQUIRE(actual);
+                if (gep->getName() == "cause_ptr") {
+                    CHECK(actual->getZExtValue() == cause_offset);
+                    ++cause_addresses;
+                } else {
+                    CHECK(actual->getZExtValue() == handle_offset);
+                    ++handle_addresses;
+                }
+            }
+        }
+    }
+    CHECK(cause_addresses == 1);
+    CHECK(handle_addresses == 2); // Throw-time retention and exception destructor.
+}
+
+TEST_CASE("Exception layout: multiple and shared virtual bases preserve caught fields",
+          "[gen][exceptions][exception-layout][virtual][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module physical_exception_layout;
+        interface Tag {
+            tag() : int;
+        }
+        class Shared : public Exception {
+        public:
+            marker : int = 73;
+            Shared() : Exception(613) {}
+        }
+        class Left : public Shared {}
+        class Right : public Shared {}
+        class Diamond : public Left, public Right, public Tag {
+        public:
+            override tag() : int { return 41; }
+        }
+        class Multiple : public Tag, public Exception {
+        public:
+            marker : int = 83;
+            Multiple() : Exception(623) {}
+            override tag() : int { return marker; }
+        }
+        diamondExact() : int {
+            try {
+                error : Diamond;
+                error.marker = 97;
+                throw error;
+            } catch (e : Diamond&) {
+                return e.getCode() == 613 && e.marker == 97 &&
+                    e.getCause() == null && e.tag() == 41 ? 1 : -1;
+            }
+            return 0;
+        }
+        diamondShared() : int {
+            try { throw Diamond(); }
+            catch (e : Shared&) {
+                return e.getCode() == 613 && e.marker == 73 &&
+                    e.getCause() == null ? 1 : -2;
+            }
+            return 0;
+        }
+        diamondThrowable() : int {
+            try { throw Diamond(); }
+            catch (e : Throwable&) {
+                return e.getCode() == 613 && !e.hasCause() ? 1 : -3;
+            }
+            return 0;
+        }
+        multipleExact() : int {
+            try { throw Multiple(); }
+            catch (e : Multiple&) {
+                return e.getCode() == 623 && e.marker == 83 &&
+                    e.getCause() == null && e.tag() == 83 ? 1 : -4;
+            }
+            return 0;
+        }
+        multipleBase() : int {
+            try { throw Multiple(); }
+            catch (e : Exception&) {
+                return e.getCode() == 623 && !e.hasCause() ? 1 : -5;
+            }
+            return 0;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    for (const auto* name : {"diamondExact", "diamondShared", "diamondThrowable",
+                             "multipleExact", "multipleBase"}) {
+        INFO("optimize=" << optimize << " function=" << name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        int result = -100;
+        REQUIRE_NOTHROW(result = run());
+        CHECK(result == 1);
+    }
+}
+
+TEST_CASE("Exception layout: bootstrap struct exceptions retain a valid zero-offset base",
+          "[gen][exceptions][exception-layout][bootstrap][regression]") {
+    auto jit = gen_jit(R"K(
+        module k;
+        struct Payload {
+            value : int = 47;
+        }
+        struct Derived : public Payload {
+            extra : int = 9;
+        }
+        exact() : int {
+            try { throw Derived(); }
+            catch (e : Derived&) { return e.value + e.extra; }
+            return 0;
+        }
+        base() : int {
+            try {
+                error : Derived;
+                error.value = 83;
+                throw error;
+            } catch (e : Payload&) { return e.value; }
+            return 0;
+        }
+    )K", false, false);
+    REQUIRE(jit);
+    auto exact = jit->lookup_symbol<int (*)()>("exact");
+    auto base = jit->lookup_symbol<int (*)()>("base");
+    REQUIRE(exact);
+    REQUIRE(base);
+    CHECK(exact() == 56);
+    CHECK(base() == 83);
+}
+
+TEST_CASE("Exception layout: invalid model fields produce a structured codegen error",
+          "[.][gen][exceptions][exception-layout][diagnostics]") {
+    auto comp = compile_model_with_stdlib(R"K(
+        module invalid_exception_layout;
+        class LayoutError : public Exception {
+        public:
+            LayoutError() : Exception(991) {}
+        }
+        probe() : int {
+            try { throw LayoutError(); }
+            catch (e : Throwable&) { return e.getCode(); }
+            return 0;
+        }
+    )K");
+    REQUIRE(comp);
+    auto root = comp->get_unit()->get_root_namespace();
+    auto error = root->get_aggregate("LayoutError");
+    REQUIRE(error);
+    SECTION("Missing named base field") {
+        REQUIRE(error->get_struct_type()->rename_field("__base_Exception__", "__missing_base__"));
+    }
+    SECTION("Invalid base field type") {
+        auto st = error->get_struct_type();
+        auto field = st->get_member("__base_Exception__");
+        REQUIRE(field);
+        auto* llvm_st = llvm::dyn_cast<llvm::StructType>(st->get_llvm_type());
+        REQUIRE(llvm_st);
+        std::vector<llvm::Type*> fields(llvm_st->element_begin(), llvm_st->element_end());
+        fields[field->index] = llvm::PointerType::get(llvm_st->getContext(), 0);
+        llvm_st->setBody(fields, llvm_st->isPacked());
+    }
+    SECTION("Chain offset cannot fit i32") {
+        auto* llvm_st = llvm::dyn_cast<llvm::StructType>(error->get_struct_type()->get_llvm_type());
+        REQUIRE(llvm_st);
+        std::vector<llvm::Type*> fields(llvm_st->element_begin(), llvm_st->element_end());
+        REQUIRE_FALSE(fields.empty());
+        fields.front() = llvm::ArrayType::get(
+            llvm::Type::getInt8Ty(llvm_st->getContext()), uint64_t{1} << 31);
+        llvm_st->setBody(fields, llvm_st->isPacked());
+        auto& module = comp->get_context_for_test()->module();
+        const auto layout = module.getDataLayout().getStringRepresentation();
+        module.setDataLayout(layout);
+    }
+    SECTION("Unresolved base") {
+        REQUIRE_FALSE(error->get_bases_mutable().empty());
+        error->get_bases_mutable().front().base.reset();
+    }
+    SECTION("Missing cause field") {
+        auto k_ns = root->get_child_namespace("k");
+        REQUIRE(k_ns);
+        auto throwable = k_ns->get_aggregate("Throwable");
+        REQUIRE(throwable);
+        REQUIRE(throwable->get_struct_type()->rename_field("_cause", "_missing_cause"));
+    }
+    SECTION("Missing cause handle field") {
+        auto k_ns = root->get_child_namespace("k");
+        REQUIRE(k_ns);
+        auto throwable = k_ns->get_aggregate("Throwable");
+        REQUIRE(throwable);
+        REQUIRE(throwable->get_struct_type()->rename_field("_cause_handle", "_missing_handle"));
+    }
+    auto functions = root->get_functions("probe");
+    REQUIRE(functions.size() == 1);
+    test_logger logger;
+    k::model::gen::implementation_generator generator(
+        logger, *comp, comp->get_context_for_test(), *comp->get_unit());
+    try {
+        functions.front()->accept(generator);
+        FAIL("Expected an exception-layout codegen diagnostic");
+    } catch (const k::model::gen::generation_error& error) {
+        const auto& diagnostic = error.get_diagnostic();
+        CHECK(diagnostic.code ==
+              static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_EXCEPTION_LAYOUT));
+        CHECK(diagnostic.level == k::log::diagnostic::severity::error);
+        REQUIRE(diagnostic.args.size() == 2);
+        CHECK_FALSE(diagnostic.args[0].empty());
+        CHECK_FALSE(diagnostic.args[1].empty());
+    }
+}
 
 TEST_CASE("Return prvalue: elision and failed construction preserve exception cleanup guards",
           "[gen][exceptions][return-prvalue][copy-arguments][constructor-members][regression]") {

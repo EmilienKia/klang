@@ -33,9 +33,25 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace k::model::gen {
+
+/** Resolve a named ABI field against the final layout, not LLVM type identity. */
+inline std::optional<uint64_t> aggregate_field_offset(
+    const aggregate& owner, const std::string& field_name,
+    const llvm::DataLayout& layout, llvm::Type** field_type = nullptr) {
+    auto st = owner.get_struct_type();
+    auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(
+        st ? st->get_llvm_type() : nullptr);
+    auto field = st ? st->get_member(field_name) : std::nullopt;
+    if (!field || !llvm_st || llvm_st->isOpaque() || !llvm_st->isSized()
+        || field->index >= llvm_st->getNumElements()) return std::nullopt;
+    if (field_type) *field_type = llvm_st->getElementType(field->index);
+    return layout.getStructLayout(llvm_st)->getElementOffset(
+        static_cast<unsigned>(field->index));
+}
 
 /** Field schema shared by local RTTI definitions and imported RTTI declarations. */
 inline std::vector<llvm::Type*> aggregate_rtti_fields(llvm::LLVMContext& context) {

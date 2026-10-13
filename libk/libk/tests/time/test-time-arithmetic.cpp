@@ -139,7 +139,8 @@ TEST_CASE("Temporal exceptions: custom error code constructor", "[libk][time][ex
     CHECK(fn() == 999);
 }
 
-TEST_CASE("Temporal exceptions: throw and catch by base classes", "[libk][time][exceptions]") {
+TEST_CASE("Temporal exceptions: throw and catch by base classes",
+          "[libk][time][exceptions][exception-layout][regression]") {
     auto jit = jit_k(R"SRC(
         module __test_temporal_catch_hierarchy__;
 
@@ -147,6 +148,7 @@ TEST_CASE("Temporal exceptions: throw and catch by base classes", "[libk][time][
             try {
                 throw k::time::TemporalArithmeticException();
             } catch (e: k::time::TemporalException&) {
+                if (e.hasCause() || e.getCause() != null) return -1;
                 return e.getCode();
             }
             return 0;
@@ -156,6 +158,7 @@ TEST_CASE("Temporal exceptions: throw and catch by base classes", "[libk][time][
             try {
                 throw k::time::ZoneRulesUnavailableException();
             } catch (e: Exception&) {
+                if (e.hasCause() || e.getCause() != null) return -2;
                 return e.getCode();
             }
             return 0;
@@ -165,6 +168,7 @@ TEST_CASE("Temporal exceptions: throw and catch by base classes", "[libk][time][
             try {
                 throw k::time::SystemTimeZoneUnavailableException();
             } catch (e: k::time::TimeDataUnavailableException&) {
+                if (e.hasCause() || e.getCause() != null) return -3;
                 return e.getCode();
             }
             return 0;
@@ -174,7 +178,51 @@ TEST_CASE("Temporal exceptions: throw and catch by base classes", "[libk][time][
             try {
                 throw k::time::LocalTimeGapException();
             } catch (e: k::time::LocalTimeResolutionException&) {
+                if (e.hasCause() || e.getCause() != null) return -4;
                 return e.getCode();
+            }
+            return 0;
+        }
+
+        test_catch_exact() : int {
+            try {
+                throw k::time::TemporalArithmeticException();
+            } catch (e: k::time::TemporalArithmeticException&) {
+                if (e.hasCause() || e.getCause() != null) return -5;
+                return e.getCode();
+            }
+            return 0;
+        }
+
+        test_named_custom_by_throwable() : int {
+            try {
+                error : k::time::TemporalArithmeticException(907, null);
+                throw error;
+            } catch (e: Throwable&) {
+                if (e.hasCause() || e.getCause() != null) return -6;
+                return e.getCode();
+            }
+            return 0;
+        }
+
+        test_nested_causes() : int {
+            try {
+                try {
+                    try {
+                        throw k::time::TemporalArithmeticException(802);
+                    } catch (inner: k::time::TemporalException&) {
+                        throw k::time::ZoneRulesUnavailableException(811, inner);
+                    }
+                } catch (middle: Exception&) {
+                    throw k::time::LocalTimeGapException(821, middle);
+                }
+            } catch (outer: Throwable&) {
+                middle : Throwable* = outer.getCause();
+                if (outer.getCode() != 821 || middle == null) return -7;
+                inner : Throwable* = middle->getCause();
+                if (middle->getCode() != 811 || inner == null) return -8;
+                if (inner->getCode() != 802 || inner->hasCause()) return -9;
+                return 1;
             }
             return 0;
         }
@@ -191,6 +239,9 @@ TEST_CASE("Temporal exceptions: throw and catch by base classes", "[libk][time][
     check("test_catch_by_exception", 511);
     check("test_catch_by_data_unavailable", 512);
     check("test_catch_by_resolution", 521);
+    check("test_catch_exact", 502);
+    check("test_named_custom_by_throwable", 907);
+    check("test_nested_causes", 1);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2615,5 +2666,4 @@ TEST_CASE("LocalDateTime: comparisons and ordering", "[libk][time][local_date_ti
     REQUIRE(fn != nullptr);
     CHECK(fn() != 0);
 }
-
 

@@ -2770,14 +2770,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
 
             auto field_offset = [&](const aggregate& owner,
                                     const std::string& field_name) -> size_t {
-                auto st_type = owner.get_struct_type();
-                if (!st_type) return SIZE_MAX;
-                auto field = st_type->get_member(field_name);
-                auto* llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(
-                    st_type->get_llvm_type());
-                if (!field || !llvm_type) return SIZE_MAX;
-                return dl.getStructLayout(llvm_type)->getElementOffset(
-                    static_cast<unsigned>(field->index));
+                return aggregate_field_offset(owner, field_name, dl).value_or(SIZE_MAX);
             };
 
             std::function<void(const aggregate&, size_t)> collect_nonvirtual;

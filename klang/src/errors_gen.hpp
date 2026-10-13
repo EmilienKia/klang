@@ -552,6 +552,9 @@ enum class codegen_diag : unsigned int {
 
     /// Callable invocation: an argument expression produced no LLVM value.
     INTERNAL_ERR_F05F                             = 0xF05F,
+
+    /// Exception dispatch or cause bookkeeping requires an invalid/unknown physical layout.
+    INTERNAL_ERR_EXCEPTION_LAYOUT                 = 0xF060,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
