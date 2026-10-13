@@ -1973,16 +1973,23 @@ TEST_CASE("Array of struct with single-arg constructor: element access after fil
     auto jit = gen_jit(R"SRC(
         module gen_71;
 
+        constructed : int = 0;
+
         struct Counter {
             value : int = 0;
-            Counter(v : int) { value = v; }
+            Counter(v : int) {
+                value = v;
+                constructed += 1;
+            }
             get() : int { return value; }
         }
 
-        // Manually construct each element into a pre-allocated array
         test() : int {
-            arr : Counter[3];
-            // Assign through member directly (no per-element ctor call yet)
+            constructed = 0;
+            arr : Counter(7)[3];
+            if (constructed != 3) return -1;
+            if (arr[0].get() != 7 || arr[1].get() != 7 || arr[2].get() != 7)
+                return -2;
             arr[0].value = 10;
             arr[1].value = 20;
             arr[2].value = 30;
@@ -1999,16 +2006,24 @@ TEST_CASE("Array of struct with two-arg constructor: element access", "[gen][arr
     auto jit = gen_jit(R"SRC(
         module gen_72;
 
+        constructed : int = 0;
+
         struct Vec2 {
             x : int = 0;
             y : int = 0;
-            Vec2(px : int, py : int) : x(px), y(py) {}
+            Vec2(px : int, py : int) : x(px), y(py) {
+                constructed += 1;
+            }
             dot(other : Vec2&) : int { return x * other.x + y * other.y; }
             len2() : int { return x * x + y * y; }
         }
 
         test() : int {
-            arr : Vec2[3];
+            constructed = 0;
+            arr : Vec2(2, 3)[3];
+            if (constructed != 3) return -1;
+            if (arr[0].len2() != 13 || arr[1].len2() != 13 || arr[2].len2() != 13)
+                return -2;
             arr[0].x = 1;  arr[0].y = 0;
             arr[1].x = 0;  arr[1].y = 1;
             arr[2].x = 3;  arr[2].y = 4;
