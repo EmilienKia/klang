@@ -32,6 +32,7 @@
 #include "../model/template_deduction.hpp"
 #include "../model/constant_evaluator.hpp"
 #include "../model/tools/kdi_type_converter.hpp"
+#include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
 #include <kdi.hpp>
 #include <llvm/IR/DerivedTypes.h>
@@ -4093,11 +4094,19 @@ std::string format_user_type(const std::shared_ptr<type>& t) {
     return raw;
 }
 
+static std::string format_function_source_name(const function& fn) {
+    auto name = fn.has_tpl_args() ? fn.get_tpl_base_name() : fn.get_short_name();
+    if (fn.is_operator() && !k::op::is_cast_operator(name)) {
+        return "operator" + k::op::get_operator_symbol(name);
+    }
+    return name;
+}
+
 std::string format_function_display_name(const std::shared_ptr<function>& fn) {
     if (!fn) return "<unknown>";
-    std::string name;
+    std::string name = format_function_source_name(*fn);
     if (fn->has_tpl_args()) {
-        name = fn->get_tpl_base_name() + "<";
+        name += "<";
         const auto& targs = fn->get_tpl_args();
         for (size_t i = 0; i < targs.size(); ++i) {
             if (i > 0) name += ", ";
@@ -4122,14 +4131,14 @@ std::string format_function_display_name(const std::shared_ptr<function>& fn) {
             }
         }
         name += ">";
-    } else {
-        name = fn->get_short_name();
     }
 
     if (fn->is_member()) {
         if (auto agg = fn->parent<aggregate>()) {
             std::string agg_name;
-            if (agg->has_tpl_args()) {
+            if (agg->get_struct_type()) {
+                agg_name = format_user_type(agg->get_struct_type());
+            } else if (agg->has_tpl_args()) {
                 agg_name = agg->get_tpl_base_name() + "<";
                 const auto& targs = agg->get_tpl_args();
                 for (size_t i = 0; i < targs.size(); ++i) {
@@ -4169,7 +4178,7 @@ std::string format_function_signature(const std::shared_ptr<function>& fn) {
 
 std::string format_template_function_signature(const std::shared_ptr<function>& fn) {
     if (!fn) return "<unknown>";
-    std::string name = fn->get_short_name();
+    std::string name = format_function_source_name(*fn);
     if (auto* ti = fn->get_tpl_info()) {
         name += "<";
         for (size_t i = 0; i < ti->params.size(); ++i) {
@@ -4181,7 +4190,9 @@ std::string format_template_function_signature(const std::shared_ptr<function>& 
     if (fn->is_member()) {
         if (auto agg = fn->parent<aggregate>()) {
             std::string agg_name;
-            if (agg->has_tpl_args()) {
+            if (agg->get_struct_type()) {
+                agg_name = format_user_type(agg->get_struct_type());
+            } else if (agg->has_tpl_args()) {
                 agg_name = agg->get_tpl_base_name() + "<";
                 const auto& targs = agg->get_tpl_args();
                 for (size_t i = 0; i < targs.size(); ++i) {

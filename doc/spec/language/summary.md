@@ -511,6 +511,11 @@ Semantics depend on the target type — see §3.2 for per-indirection-type behav
 
 Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result to `a`.
 
+An overloaded assignment operator should return a reference to its owning aggregate
+for chaining. A missing or different return type is allowed but produces a convention
+warning. For member templates, this check applies to concrete instantiations, not
+uninstantiated recipes whose signature types remain deferred.
+
 ### 8.6 Function Call, Subscript and Member Access
 
 > Details: [call.md](expressions/call.md)

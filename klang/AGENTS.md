@@ -100,6 +100,10 @@ the canonical symbol resolver after completing missing nested union declarations
 preserves already-bound cloned targets, and must not repeat aggregate layout or
 constructor-initializer synthesis.
 Full body typing is idempotent per concrete function within the type-reference pass.
+Assignment-return convention warnings share that concrete-function guard, after
+lexical signature resolution and return deduction. Never inspect dependent
+member recipes during aggregate revisits. Display source operator/type names in
+diagnostics without changing mangled symbols or template-instantiation cache keys.
 Before leaving that pass, drain unvisited concrete instantiation bodies to a fixed
 point: late declaration resolution can append signature-only dependencies to an
 imported namespace whose body walk has already finished.

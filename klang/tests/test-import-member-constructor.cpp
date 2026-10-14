@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/common/operator_names.hpp"
 #include "../src/errors_gen.hpp"
 #include "../src/gen/resolvers_scope_lookup.hpp"
 
@@ -196,6 +197,44 @@ TEST_CASE("imported Shared specializations retain converting member constructors
     )K", optimize, false);
     REQUIRE_FALSE(consumer->has_compilation_error());
     REQUIRE(consumer->verify_gen_code());
+
+    test_logger assignment_logger;
+    k::model::gen::type_reference_resolver assignment_resolver(
+        assignment_logger, consumer->get_context_for_test(), *consumer->get_unit());
+    assignment_resolver.resolve();
+    assignment_resolver.resolve();
+    for (const auto& diagnostic : assignment_logger.diagnostics) {
+        if (!diagnostic.message.starts_with("Assignment operator") || diagnostic.args.size() < 2) continue;
+        INFO(k::log::format_diagnostic_message(diagnostic));
+        CHECK_FALSE(diagnostic.args[1].starts_with("Shared"));
+        CHECK_FALSE(diagnostic.args[1].starts_with("Weak"));
+    }
+    auto weak_function = consumer->get_unit()->get_root_namespace()->get_functions("weakConversions").front();
+    size_t concrete_assignments = 0;
+    for (const auto* name : {"base", "object", "view", "fromConst"}) {
+        auto variable = weak_function->get_block()->get_variable(name);
+        REQUIRE(variable);
+        auto weak_type = std::dynamic_pointer_cast<k::model::struct_type>(
+            k::model::type::canonical(variable->get_type()));
+        REQUIRE(weak_type);
+        for (const auto& function : weak_type->get_struct()->functions()) {
+            const auto operator_name = function->has_tpl_args()
+                ? function->get_tpl_base_name() : function->get_short_name();
+            if (!function->is_operator() || !k::op::is_assignment_operator(operator_name)
+                || function->is_template() || function->is_deleted()) continue;
+            CHECK_FALSE(k::model::type::contains_unresolved(function->get_return_type()));
+            auto reference = std::dynamic_pointer_cast<k::model::reference_type>(
+                k::model::type::canonical(function->get_return_type()));
+            REQUIRE(reference);
+            CHECK(k::model::type::are_equal(
+                k::model::type::remove_const(reference->get_subtype()), weak_type));
+            const auto display = k::model::gen::format_function_display_name(function);
+            CHECK(display.starts_with("Weak<"));
+            CHECK(display.find("__operator_") == std::string::npos);
+            if (function->has_tpl_args()) ++concrete_assignments;
+        }
+    }
+    CHECK(concrete_assignments > 0);
 
     auto run_function = consumer->get_unit()->get_root_namespace()->get_functions("run").front();
     auto base = run_function->get_block()->get_variable("base");

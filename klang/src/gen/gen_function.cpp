@@ -30,6 +30,7 @@
 #include "../model/statements.hpp"
 #include "../model/imported.hpp"
 #include "../model/mangler.hpp"
+#include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
 
 #include <llvm/IR/Verifier.h>
@@ -1084,14 +1085,49 @@ void type_reference_resolver::visit_function(function& fn) {
             if (owner && owner->get_short_name().starts_with("__kdi_private_"))
                 check_function_visibility(*target, fn);
         }
-        _resolved_functions.insert(&fn);
-        return;
+    } else {
+        _function_stack.push_back(fn.shared_as<function>());
+        auto pop_function = llvm::make_scope_exit([this] { _function_stack.pop_back(); });
+        if (fn._block) {
+            visit_block(*fn._block);
+        }
     }
 
-    _function_stack.push_back(fn.shared_as<function>());
-    auto pop_function = llvm::make_scope_exit([this] { _function_stack.pop_back(); });
-    if (fn._block) {
-        visit_block(*fn._block);
+    // Recipes retain dependent signatures until instantiated; check each concrete
+    // operator once, after both lexical return typing and body return deduction.
+    const auto operator_name = fn.has_tpl_args() ? fn.get_tpl_base_name() : fn.get_short_name();
+    if (fn.is_operator() && k::op::is_assignment_operator(operator_name) && !fn.is_deleted()) {
+        auto owner = fn.get_owner();
+        auto owner_type = owner ? owner->get_struct_type() : nullptr;
+        if (owner_type) {
+            lex::opt_any_lexeme location;
+            if (auto ast = fn.get_ast_function_decl()) {
+                location = ast->operator_symbol ? ast->operator_symbol : ast->operator_;
+                if (!location) location = lex::any_lexeme{ast->name};
+            }
+            const auto display_name = "operator" + k::op::get_operator_symbol(operator_name);
+            const auto owner_name = format_user_type(owner_type);
+            const auto expected_name = format_user_type(owner_type->get_reference());
+            if (!fn.has_return_type()) {
+                warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_BASE),
+                    location,
+                    "Assignment operator '{}' in '{}' has no return type; "
+                    "conventionally it should return '{}' to allow chaining (e.g. a = b = c)",
+                    {display_name, owner_name, expected_name});
+            } else if (!type::contains_unresolved(fn.get_return_type())) {
+                auto ret = type::canonical(fn.get_return_type());
+                auto reference = std::dynamic_pointer_cast<reference_type>(ret);
+                if (!reference ||
+                    !type::are_equal(type::remove_const(reference->get_subtype()),
+                                     type::remove_const(owner_type))) {
+                    warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_MEMBER),
+                        location,
+                        "Assignment operator '{}' in '{}' returns '{}' instead of '{}'; "
+                        "returning a reference to the owning type is recommended for chaining",
+                        {display_name, owner_name, format_user_type(fn.get_return_type()), expected_name});
+                }
+            }
+        }
     }
     _resolved_functions.insert(&fn);
 }

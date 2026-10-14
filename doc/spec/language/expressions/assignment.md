@@ -35,6 +35,13 @@ AssignmentOperator: (one of)
 
 Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result to `a`.
 
+An overloaded assignment operator should return a reference to its owning aggregate
+so that subsequent assignments can use that result. Omitting the return type or
+returning a different type is allowed, but the compiler warns about this convention.
+Member-template signatures are checked after concrete instantiation; an unused
+recipe is not instantiated merely to issue this warning. Diagnostic names use
+source-level operator and template spellings rather than internal instance names.
+
 **Examples:**
 ```k
 x = 42;
