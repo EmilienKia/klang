@@ -337,7 +337,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params |
 | `klang-tests-gen-generics` | generic (type-erased) declarations, restrictions, single synthesis |
 | `klang-tests-import-core` | KDI import core, namespaces, enums, transitive |
-| `klang-tests-import-templates` | KDI cross-module template instantiation; CTest shards 0–2 |
+| `klang-tests-import-templates` | KDI cross-module template instantiation; CTest shards 0–14 |
 | `klang-tests-import-interop` | KDI aliases, typedefs, callables, prod-lib |
 | `klangc-tests` | CLI/integration behavior |
 
@@ -354,6 +354,9 @@ Grouping policy:
 - `SHARD_COUNT 2` likewise registers `<target>-shard-0` and
   `<target>-shard-1`, preserving the executable/build target name and 120-second
   per-entry timeout while running each normally enabled Catch2 case once.
+- `SHARD_COUNT 15` gives the import-template suite fifteen serial entries,
+  `<target>-shard-0` through `<target>-shard-14`, without changing its executable,
+  dependencies, case selection, lexical order, RNG seed or 120-second timeout.
 - Use `ctest -R "^klang-tests-gen-functions-shard-" --output-on-failure` or
   `ctest -R "^klang-tests-import-templates-shard-" --output-on-failure` to run
   a full heavy suite within the per-entry budget. Direct executable invocation

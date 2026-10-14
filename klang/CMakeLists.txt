@@ -524,7 +524,7 @@ klang_gen_test(klang-tests-import-core 120
         tests/test-import-core.cpp
         tests/test-import-private-concrete.cpp
 )
-klang_gen_test(klang-tests-import-templates 120 SHARD_COUNT 3
+klang_gen_test(klang-tests-import-templates 120 SHARD_COUNT 15
         tests/test-import-templates.cpp
         tests/test-import-member-constructor.cpp
         tests/test-import-template-reparse-diagnostic.cpp
