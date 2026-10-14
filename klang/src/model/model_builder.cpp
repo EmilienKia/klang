@@ -62,6 +62,18 @@ namespace k::model {
         return oss.str();
     }
 
+    std::shared_ptr<expression> model_builder::build_imported_expression(k::log::logger& logger,
+        std::shared_ptr<k::model::context> context, k::parse::ast::expression& src,
+        k::model::unit& unit, const std::shared_ptr<parameter>& parameter,
+        const std::shared_ptr<ns>& declaration_scope) {
+        model_builder visitor(logger, context, unit);
+        visitor._building_imported_declarations = true;
+        visitor._imported_definition_namespace = declaration_scope;
+        stack<func_context> push(visitor._contexts, parameter->get_function());
+        src.visit(visitor);
+        return visitor._expr;
+    }
+
     void model_builder::visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit) {
         model_builder visitor(logger, context, unit);
         visitor.visit_unit(src);

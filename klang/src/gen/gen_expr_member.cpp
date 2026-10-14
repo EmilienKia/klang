@@ -837,6 +837,11 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
  *   4. Set type and record field index or function target.
  */
 void type_reference_resolver::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
+    if (auto access = expr.get_object_member_access()) {
+        access->accept(*this);
+        expr.set_type(access->get_type());
+        return;
+    }
     expr.sub_expr()->accept(*this);
     auto type = expr.sub_expr()->get_type();
 
@@ -921,6 +926,24 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
     // Step 2: For link/view/pointer: unwrap indirection to get the struct type
     const auto& member_name = expr.symbol();
     const std::string& name_str = member_name.get_name().to_string();
+    auto aggregate = struct_subtype->get_struct();
+    if (aggregate && !aggregate->get_bases().empty()
+        && !struct_subtype->get_member(name_str)
+        && collect_member_overloads(aggregate, name_str).empty()) {
+        // Reuse '.' lookup, visibility, const propagation and base-subobject adjustment.
+        auto dereferenced = dereference_expression::make_shared(expr.sub_expr());
+        auto symbol = std::dynamic_pointer_cast<symbol_expression>(expr.symbol().clone());
+        auto access = member_of_object_expression::make_shared(dereferenced, symbol);
+        access->set_ast_expression(expr.get_ast_expression());
+        access->set_parent_expression(expr.shared_as<expression>());
+        access->accept(*this);
+        expr._object_member_access = access;
+        expr.set_type(access->get_type());
+        if (auto variable = access->symbol().get_variable_def()) {
+            expr.symbol().set_target(variable);
+        }
+        return;
+    }
     // Step 3: Look up the member name in the struct (fields and methods)
     if (auto field = struct_subtype->get_member(name_str)) {
         // Check visibility of the accessed field
@@ -991,6 +1014,10 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
  *   3. GEP to the member field.
  */
 void implementation_generator::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
+    if (auto access = expr.get_object_member_access()) {
+        access->accept(*this);
+        return;
+    }
     _value = nullptr;
     expr.sub_expr()->accept(*this);
 

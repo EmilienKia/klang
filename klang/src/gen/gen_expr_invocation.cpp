@@ -1472,7 +1472,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             if (callee->is_function() && callee->get_function()) {
                 auto resolved_fn = callee->get_function();
                 auto owner = resolved_fn->parent<element>();
-                if (owner) {
+                // Imported free functions are cache-owned by the consumer root,
+                // not by their lexical namespace. Its same-name declarations
+                // are not overloads of this qualified producer function.
+                if (owner && !std::dynamic_pointer_cast<imported_function>(resolved_fn)) {
                     // Collect all overloads of func_name directly in the owner element.
                     if (auto fh = dynamic_cast<function_holder*>(owner.get())) {
                         for (auto& fn : fh->functions()) {
@@ -1684,7 +1687,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                         if (ast_arg->is_type()) {
                             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
-                            arg_type = resolve_explicit_template_arg_type(arg_type, expr);
+                            arg_type = this->resolve_explicit_template_arg_type(arg_type, expr);
                             if (!arg_type || !type::is_resolved(arg_type) || type::contains_unresolved(arg_type)) {
                                 args_ok = false;
                                 break;

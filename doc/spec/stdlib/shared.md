@@ -36,6 +36,13 @@ and weak promotion, including conversions that would otherwise use a static
 upcast. Const pointees must still be destroyed exactly once when their last
 strong handle is released.
 
+Converting a const wrapper preserves the managed type's constness, not the
+wrapper's constness. A `const Shared<Derived>&` can produce `Shared<Base>`,
+`Shared<Object>`, or `Weak<Base>` views of the same mutable object. An empty
+source stays empty, and a successful shared conversion adds one strong
+reference. This never permits removing pointee constness:
+`Shared<const Derived>` cannot convert to `Shared<Base>` or `Weak<Base>`.
+
 ## Shared<T>
 
 ```k

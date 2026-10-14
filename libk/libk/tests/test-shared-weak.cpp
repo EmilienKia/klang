@@ -24,6 +24,7 @@
 #include <dlfcn.h>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <thread>
 
 namespace {
@@ -1313,6 +1314,118 @@ TEST_CASE("Const owners invoke destructors on explicit deletion and scope exit",
     auto test = j->lookup_symbol<int(*)()>("test");
     REQUIRE(test);
     CHECK(test() == 0);
+}
+
+TEST_CASE("Shared const-wrapper upcasts preserve mutable objects and weak lifetimes",
+          "[libk][shared][weak][conversion][const-wrapper]") {
+    auto j = jit_shared("const_wrapper_upcasts", R"SRC(
+        class Base : public Object {
+        public:
+            value : int;
+            Base(v : int) : value(v) {}
+        }
+        class Derived : public Base {
+        public:
+            Derived(v : int) : Base(v) {}
+            ~Derived() { ++destroyed; }
+        }
+        test() : int {
+            owner : Shared<Derived>(new Derived(42));
+            source : const Shared<Derived>& = owner;
+            base : Shared<Base>(source);
+            baseSource : const Shared<Base>& = base;
+            object : Shared<Object>(baseSource);
+            if (!base || !object || owner.useCount() != 3) return 1;
+            if (base.get() != (Base*) owner.get() ||
+                object.get() != (Object*) base.get()) return 2;
+            base.get()->value = 43;
+            if (owner.get()->value != 43) return 3;
+
+            weak : Weak<Base>(source);
+            if (weak.useCount() != 3) return 4;
+            {
+                assigned : Shared<Base>;
+                assigned = source;
+                assigned.share(source);
+                if (owner.useCount() != 4 || assigned.get() != base.get()) return 5;
+                locked : Shared<Base> = weak.lock();
+                if (!locked || locked.get()->value != 43 || owner.useCount() != 5) return 6;
+            }
+            if (owner.useCount() != 3) return 7;
+
+            empty : const Shared<Derived>;
+            emptyBase : Shared<Base>(empty);
+            emptyBaseSource : const Shared<Base>& = emptyBase;
+            emptyObject : Shared<Object>(emptyBaseSource);
+            emptyWeak : Weak<Base>(empty);
+            if (emptyBase || emptyObject || emptyBase.useCount() != 0 ||
+                emptyObject.useCount() != 0 || !emptyWeak.expired() || emptyWeak.lock()) return 8;
+
+            emptyImage : const Shared<ApplicationModule>;
+            emptyModule : Shared<Module>(emptyImage);
+            emptyModuleSource : const Shared<Module>& = emptyModule;
+            emptyModuleObject : Shared<Object>(emptyModuleSource);
+            if (emptyModule || emptyModuleObject || emptyModuleObject.useCount() != 0) return 9;
+
+            owner.reset();
+            base.reset();
+            if (destroyed != 0 || object.useCount() != 1) return 10;
+            object.reset();
+            if (destroyed != 1 || !weak.expired() || weak.lock()) return 11;
+            weak.reset();
+            if (destroyed != 1) return 12;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto test = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Weak converting views reject const pointee removal",
+          "[libk][weak][shared][conversion][diagnostic]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __weak_const_pointee_drop__;
+        class Base {
+            public Base() {}
+        }
+        class Derived : public Base {
+            public Derived() {}
+        }
+        test() : int {
+            source : Shared<const Derived>(new Derived());
+            destination : Weak<Base>(source);
+            return 0;
+        }
+    )SRC"));
+}
+
+TEST_CASE("Weak const-pointee sources reject mutable shared and weak conversions",
+          "[libk][weak][shared][conversion][const-pointee][diagnostic][regression]") {
+    std::string_view source;
+    SECTION("weak conversion") {
+        source = R"SRC(
+            module __weak_const_pointee_to_mutable_weak__;
+            class Base { public Base() {} }
+            class Derived : public Base { public Derived() : Base() {} }
+            reject(source : const Weak<const Derived>&) {
+                destination : Weak<Base>(source);
+            }
+        )SRC";
+    }
+    SECTION("shared promotion") {
+        source = R"SRC(
+            module __weak_const_pointee_to_mutable_shared__;
+            class Base { public Base() {} }
+            class Derived : public Base { public Derived() : Base() {} }
+            reject(source : const Weak<const Derived>&) {
+                destination : Shared<Base>(source);
+            }
+        )SRC";
+    }
+    REQUIRE_FALSE(source.empty());
+    REQUIRE_THROWS_AS(gen_jit_throws(source), k::log::compiler_error);
 }
 
 TEST_CASE("Shared converting views reject const removal",

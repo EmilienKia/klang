@@ -67,6 +67,11 @@ public enum ModuleResidency {
     descriptors : const Namespace?[]?, index : unsigned int) : const Namespace?;
 @ffi::Extern("C") private __k_module_dependency_count(identity : byte*) : int;
 @ffi::Extern("C") private __k_module_dependency_at(identity : byte*, index : int) : byte*;
+@ffi::Extern("C") private __k_module_symbol_lookup(handle : byte*, name : const unsigned byte[]) : byte*;
+@ffi::Extern("C") private __k_module_symbol_status(result : byte*) : int;
+@ffi::Extern("C") private __k_module_symbol_address(result : byte*) : byte*;
+@ffi::Extern("C") private __k_module_symbol_take_message(result : byte*) : unsigned byte[]!;
+@ffi::Extern("C") private __k_module_symbol_close(result : byte*);
 
 /**
  * A lease on one immutable unit descriptor in a native image.
@@ -293,6 +298,63 @@ public:
      */
     public const path() : const String& {
         return _path;
+    }
+
+    /**
+     * Look up an exact native symbol name in this handle's loader scope.
+     * Dependencies may provide the symbol; the result retains this Module.
+     */
+    public const lookupSymbol(name : const String&)
+        : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> {
+        owner : Shared<Module> = _self.lock();
+        if (!owner) {
+            throw FatalError();
+        }
+        utf8 : unsigned byte[]! = name.toUtf8();
+        native_result : byte* = null;
+        try {
+            native_result = __k_module_symbol_lookup(_handle, utf8);
+        } finally {
+            delete utf8;
+        }
+
+        result : Expected<ffi::NativeSymbol, ffi::SymbolLookupError>;
+        if (native_result == null) {
+            error : ffi::SymbolLookupError(ffi::SymbolLookupErrorCode::OUT_OF_MEMORY,
+                String("Cannot allocate native symbol lookup result"));
+            result.setError(error);
+            return result;
+        }
+
+        try {
+            {
+            status : int = __k_module_symbol_status(native_result);
+            if (status == 0) {
+                symbol : ffi::NativeSymbol(owner, __k_module_symbol_address(native_result));
+                result.setResult(symbol);
+            } else {
+                bytes : unsigned byte[]! = __k_module_symbol_take_message(native_result);
+                if (bytes == null) {
+                    error : ffi::SymbolLookupError(ffi::SymbolLookupErrorCode::OUT_OF_MEMORY,
+                        String("Cannot allocate native symbol lookup diagnostic"));
+                    result.setError(error);
+                } else {
+                    try {
+                        {
+                        message : String(bytes);
+                        error : ffi::SymbolLookupError((ffi::SymbolLookupErrorCode) status, message);
+                        result.setError(error);
+                        }
+                    } finally {
+                        delete bytes;
+                    }
+                }
+            }
+            }
+        } finally {
+            __k_module_symbol_close(native_result);
+        }
+        return result;
     }
 
     /**

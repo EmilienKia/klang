@@ -33,9 +33,25 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace k::model::gen {
+
+/** Resolve a named ABI field against the final layout, not LLVM type identity. */
+inline std::optional<uint64_t> aggregate_field_offset(
+    const aggregate& owner, const std::string& field_name,
+    const llvm::DataLayout& layout, llvm::Type** field_type = nullptr) {
+    auto st = owner.get_struct_type();
+    auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(
+        st ? st->get_llvm_type() : nullptr);
+    auto field = st ? st->get_member(field_name) : std::nullopt;
+    if (!field || !llvm_st || llvm_st->isOpaque() || !llvm_st->isSized()
+        || field->index >= llvm_st->getNumElements()) return std::nullopt;
+    if (field_type) *field_type = llvm_st->getElementType(field->index);
+    return layout.getStructLayout(llvm_st)->getElementOffset(
+        static_cast<unsigned>(field->index));
+}
 
 /** Field schema shared by local RTTI definitions and imported RTTI declarations. */
 inline std::vector<llvm::Type*> aggregate_rtti_fields(llvm::LLVMContext& context) {
@@ -538,7 +554,7 @@ inline void emit_sized_array_elements_cleanup(
     const std::shared_ptr<sized_array_type>& arr_type,
     const virtual_call_emitter& emit_call = {})
 {
-    auto elem_type = arr_type->get_subtype();
+    auto elem_type = type::canonical(type::remove_const(arr_type->get_subtype()));
     auto* struct_llvm = arr_type->get_llvm_struct_type();
     auto* llvm_arr_type = arr_type->get_llvm_data_array_type();
     if (!struct_llvm || !llvm_arr_type) return;
@@ -554,14 +570,28 @@ inline void emit_sized_array_elements_cleanup(
         if (!dtor) return;
         auto dtor_it = functions.find(dtor->shared_as<function>());
         if (dtor_it == functions.end()) return;
-        for (size_t ri = arr_size; ri > 0; --ri) {
-            size_t i = ri - 1;
-            llvm::Value* elem_ptr = builder->CreateConstInBoundsGEP2_32(
-                llvm_arr_type, data_ptr, 0, i, "arr_dtor_" + std::to_string(i));
-            if (emit_call) emit_call(dtor_it->second->getFunctionType(),
-                dtor_it->second, {elem_ptr}, "");
-            else builder->CreateCall(dtor_it->second, {elem_ptr});
-        }
+        // The count tracks the successfully constructed prefix during initialization.
+        // Decrement before destruction so an unwinding destructor is not repeated.
+        auto* count_ptr = builder->CreateStructGEP(struct_llvm, arr_alloca,
+            sized_array_type::FIELD_SIZE, "arr_cleanup_count_ptr");
+        auto* fn = builder->GetInsertBlock()->getParent();
+        auto* test_bb = llvm::BasicBlock::Create(builder->getContext(), "arr_cleanup_test", fn);
+        auto* destroy_bb = llvm::BasicBlock::Create(builder->getContext(), "arr_cleanup_destroy", fn);
+        auto* done_bb = llvm::BasicBlock::Create(builder->getContext(), "arr_cleanup_done", fn);
+        builder->CreateBr(test_bb);
+        builder->SetInsertPoint(test_bb);
+        auto* count = builder->CreateLoad(builder->getInt32Ty(), count_ptr, "arr_cleanup_count");
+        builder->CreateCondBr(builder->CreateICmpNE(count, builder->getInt32(0)), destroy_bb, done_bb);
+        builder->SetInsertPoint(destroy_bb);
+        auto* index = builder->CreateSub(count, builder->getInt32(1), "arr_cleanup_index");
+        builder->CreateStore(index, count_ptr);
+        auto* elem_ptr = builder->CreateInBoundsGEP(llvm_arr_type, data_ptr,
+            {builder->getInt32(0), index}, "arr_dtor_element");
+        if (emit_call) emit_call(dtor_it->second->getFunctionType(),
+            dtor_it->second, {elem_ptr}, "");
+        else builder->CreateCall(dtor_it->second, {elem_ptr});
+        builder->CreateBr(test_bb);
+        builder->SetInsertPoint(done_bb);
     } else if (auto own_elem = std::dynamic_pointer_cast<owner_type>(elem_type)) {
         // Owner elements: conditional destroy+free each in reverse order
         for (size_t ri = arr_size; ri > 0; --ri) {

@@ -1355,17 +1355,24 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
 {
     const k::name normalised_name = fq_name.has_root_prefix()
                                     ? fq_name.without_root_prefix() : fq_name;
-    const std::string key = normalised_name.to_string();
-    auto it = _imported_enums.find(key);
+    const std::string lookup_key = normalised_name.to_string();
+    auto it = _imported_enums.find(lookup_key);
     if (it != _imported_enums.end()) {
         return it->second;
     }
 
     // Find the enum definition in loaded KDIs
-    const kdi::kdi_enum* kdi_en = find_imported_enum(fq_name);
+    const kdi::kdi_enum* kdi_en = find_imported_enum(normalised_name);
     if (!kdi_en) {
         return nullptr;
     }
+
+    // Every spelling of an imported declaration shares its nominal enum type.
+    const auto canonical_name = kdi_en->fq_name.empty()
+        ? normalised_name : k::name::from(kdi_en->fq_name).without_root_prefix();
+    const std::string key = canonical_name.to_string();
+    if (auto canonical = _imported_enums.find(key); canonical != _imported_enums.end())
+        return canonical->second;
 
     // Create the enumeration model node
     auto root = get_root_namespace();

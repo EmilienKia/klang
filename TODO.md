@@ -91,6 +91,74 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **External pkgconf 1.8.1 relocation escaping limitation.**
+      The FFI distribution tests exposed tool-side handling of package paths
+      containing spaces and apostrophes. Reproduce with the generated package
+      and its real native dependencies:
+      ```bash
+      probe="$PWD/cmake-build-debug/ffi-pkg-config-probe/relocated runtime's files"
+      mkdir -p "$probe"
+      cp cmake-build-debug/libk/libk/libk.pc "$probe/libk.pc"
+      pkg-config --with-path="$probe" --variable=libdir libk
+      pkg-config --with-path="$probe" --libs libk
+      ```
+      On pkgconf 1.8.1, the variable query inserts backslashes before spaces
+      rather than returning the raw directory, and unquoted `Libs:
+      -L${libdir} -lk` can emit no flags because of the apostrophe. Changing
+      only the probe's field to `Libs: -L"${libdir}" -lk` instead emits
+      triple-backslash space escapes; ordinary shell-flag decoding leaves
+      literal backslashes in the compiler's `-L` argument.
+      `--dont-define-prefix` did not change the reproduced behavior.
+      Passing an absolute `.pc` filename also encounters pkgconf's package
+      query tokenization; directory lookup via `--with-path` plus `libk`
+      addresses that separate issue, but not variable/flag escaping.
+      Metadata relocation acceptance therefore uses ordinary directory names
+      and retains real shared/static dependency flags without repairing tool
+      output. Actual native shared/archive relocation still covers spaces and
+      apostrophes through direct compiler argv; archive-only K consumers cover
+      quoted source/object/output paths separately. Revisit metadata-path
+      coverage after upstream behavior is resolved. Related upstream reports
+      [pkgconf/pkgconf#287](https://github.com/pkgconf/pkgconf/issues/287) and
+      [pkgconf/pkgconf#575](https://github.com/pkgconf/pkgconf/issues/575) concern
+      apostrophes and triple escaping respectively, but do not establish an
+      identical version-specific defect.
+
+- [ ] **Private imported type pointers report an internal diagnostic.**
+      In `klang/tests/test-import-private-concrete.cpp`, the producer keeps
+      `privateconcrete::Hidden` private. The rejected consumer
+      `module privateconcretedenied; import privateconcrete; run(): int {
+      hidden: privateconcrete::Hidden* = null; return 0; }`
+      emits `0F003` ("unresolvable type that is not an unresolved_type
+      instance") instead of an ordinary unknown/inaccessible-type diagnostic.
+      Reproduce with `klang-tests-import-core
+      "[import][private-dependency][shared][regression]"`. Privacy remains
+      enforced and the positive ABI/layout checks pass; this diagnostic-only
+      gap does not block runtime FFI.
+
+- [ ] **KDI export does not exclude private namespace enums.**
+      The imported-enum identity regression initially used
+      `module enumidentity; namespace api { public enum CType { CHAR = 12; }
+      public enum Other { CHAR = 12; } private enum Hidden { SECRET = 99; } }`.
+      Its generated KDI contains three `api.enums` instead of the two public
+      declarations. `model_builder::visit_enum_decl` in
+      `klang/src/model/model_builder.cpp` applies enclosing visibility sections
+      but does not apply declaration visibility specifiers; the exporter
+      therefore receives a public enum despite `private enum`. This is independent of canonical enum
+      lookup; the permanent identity test controls privacy with a private
+      aggregate and function instead. Add a private-enum producer/consumer
+      regression before correcting export/import visibility.
+
+- [ ] **Vector copy self-assignment clears the source before copying.**
+      Source review of `libk/libk/src/vector.k`, `operator=(const Vector<T>&)`,
+      shows that it calls `clear()` before reading `other.size()` without
+      checking whether `other` is the same vector. Reproduce with
+      `a : int[1] = {7}; values : Vector<int> = Vector<int>(a); values = values;`:
+      the expected size is one, but the implementation leaves the vector empty.
+      Runtime reproduction is deferred. The new FFI signature and call-builder
+      assignment operators guard self-assignment, so this existing defect does
+      not block runtime FFI. Add a sequential-collection regression before
+      fixing the general Vector assignment operator.
+
 - [x] **Application singleton test now handles the checked `Thread.join()` interruption.**
       Direct reproduction: run `libk-tests-types --reporter compact [singleton]`.
       The test case `Application singleton — activation, inheritance casts,
@@ -166,6 +234,20 @@
       direct serial reruns completed (537 assertions/141 cases and 337
       assertions/115 cases). Rebalance/shard these registrations so CTest's
       timeout remains meaningful.
+
+- [ ] **Aggregate array brace defaults and heap-construction unwind need lifecycle coverage.**
+      Source-only gaps found while fixing default-sized-array receivers:
+      `type_reference_resolver::visit_array_init_expression()` in
+      `klang/src/gen/gen_expr_memory.cpp` skips null brace slots, and its
+      implementation skips them after zero-fill instead of constructing
+      aggregate elements. Reproducer: a class with a non-zero default member
+      and non-final method, then `values : Value[2] {}; values[0].get();`.
+      Omitted trailing slots have the same gap. Separately, the static/dynamic
+      `new` array constructor loops in that file do not record and clean a
+      successfully constructed prefix or free the allocation when an element
+      constructor throws. Add isolated constructor/destructor-count regressions
+      for both before extending the plain stack/member/global default-array fix.
+      These paths were not runtime-validated during the fluent FFI investigation.
 
 - [ ] **Abstract base constructors clear the inherited vptr during derived construction.**
       `implementation_generator::emit_constructor_pre_block()` in
@@ -1133,6 +1215,25 @@
   `compiler_linker.cpp`, which currently always shells out to the host `clang`/`ar`).
 
 #### Current bugs and gaps to fix
+
+- [ ] **Implicit return upcast from a const aggregate's pointer field loses value-level const normalization.**
+  Fresh `ffi-final-gen-casts-rerun.log` records `00E01` for
+  `const Derived*& -> Base*` in a const member function. The stored pointer is
+  immutable, but its pointee is mutable; a public base upcast should not add
+  pointee constness. `gen_statements.cpp::visit_return_statement()` rejects the
+  expression through `adapt_type()`, before cast lowering. Minimal reproduction:
+  ```k
+  module const_pointer_field_return;
+  struct Base {}
+  struct Derived : public Base {}
+  struct Holder {
+      pointer : Derived*;
+      const asBase() : Base* { return this.pointer; }
+  }
+  ```
+  An explicit `(Base*) this.pointer` exercises the supported cast-lowering path.
+  Keep this separate from the value-level const lowering fix; any
+  future return-adaptation fix must still reject `const Derived* -> Base*`.
 
 - [x] **Compiler const/meta CTest budget — resolved and accepted, 2026-10-04.**
   The historical full compiler replay passed **33/34** entries; the original

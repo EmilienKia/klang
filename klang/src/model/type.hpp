@@ -101,7 +101,7 @@ protected:
 
     /**
      * Strong owning reference to the wrapped subtype, used only for wrappers
-     * built by make_pinned_wrapper() during template-argument substitution.
+     * built by make_pinned_wrapper() during resolution or type substitution.
      * Normal wrappers leave this empty and rely on the subtype keeping the
      * wrapper alive through the cache members above. A pinned wrapper instead
      * keeps its (freshly cloned, otherwise unowned) subtype alive while
@@ -230,6 +230,8 @@ public:
     static std::shared_ptr<owner_type> make_pinned_owner(const std::shared_ptr<type>& inner);
     static std::shared_ptr<drain_type> make_pinned_drain(const std::shared_ptr<type>& inner);
     static std::shared_ptr<array_type> make_pinned_array(const std::shared_ptr<type>& inner);
+    static std::shared_ptr<sized_array_type> make_pinned_sized_array(
+        const std::shared_ptr<type>& inner, unsigned long size);
 
     virtual llvm::Type* get_llvm_type() const;
 
@@ -777,7 +779,9 @@ protected:
     unsigned long size;
 
     std::weak_ptr<array_type> _unsized_array_type;
+    std::shared_ptr<array_type> _pinned_unsized_array_type;
 
+    friend class type;
     friend class array_type;
     sized_array_type(std::weak_ptr<array_type> unsized_array_type, unsigned long size);
 

@@ -337,6 +337,39 @@ imported modules without any error.  This flag makes it an error if the
 root namespace component of the unit being compiled collides with the root
 namespace component of any imported module.
 
+**`--export-symbol` _native-name_** (repeatable)  
+Make one exact native symbol name available in the dynamic symbol table of the
+generated executable, for lookup with facilities such as `dlsym`. Repeating the
+option selects additional names; duplicate names are ignored. This option is
+supported only for GNU/Linux ELF executables on a GNU/Linux ELF host, with an
+ELF linker supporting `--export-dynamic-symbol`.
+
+The name must be nonempty and contain only ASCII letters, digits, `_`, `.` or
+`$`. Empty names, NUL, whitespace, commas, linker-option spellings and wildcard
+patterns (`*`, `?`, brackets or backslash escapes) are rejected. Names are not
+interpreted as K qualified names, demangled names or linker patterns.
+
+This is **linker visibility only**. For example, a native C function already
+defined in a linked `.o` file can be selected without generating a C wrapper:
+
+```sh
+clang -fPIC -c native.c -o native.o
+klangc main.k native.o --export-symbol native_callback -o app
+```
+
+The function must already have an externally visible definition in the linked
+objects. The option neither defines a missing symbol nor forces extraction of
+an otherwise unused archive member, and does not override hidden visibility.
+It does not turn an arbitrary K function into a C-callable function or make a
+native address compatible with a K callable. Existing RTTI and application
+exports remain unchanged; other symbols are not exported merely because this
+option is present.
+
+Using it with `-c`, `--dyn-lib`, `--static-lib`, `--jit-exec`, symbol-conversion,
+version or target-information modes is an error. A source without a `main`
+entry point also fails rather than silently applying the option to an
+automatically generated shared library.
+
 #### Search order summary
 
 For each `import foo::bar;` declaration, **klangc** searches for

@@ -522,13 +522,16 @@ klang_gen_test(klang-tests-gen-generics 120
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-import-core 120
         tests/test-import-core.cpp
+        tests/test-import-private-concrete.cpp
 )
-klang_gen_test(klang-tests-import-templates 120 SHARD_COUNT 3
+klang_gen_test(klang-tests-import-templates 120 SHARD_COUNT 15
         tests/test-import-templates.cpp
+        tests/test-import-member-constructor.cpp
         tests/test-import-template-reparse-diagnostic.cpp
 )
 klang_gen_test(klang-tests-import-interop 120
         tests/test-import-interop.cpp
+        tests/test-import-wrapped-alias.cpp
         tests/test-prod-lib.cpp
 )
 
@@ -554,6 +557,7 @@ add_executable(klangc-tests
         tests/test-klangc-jit-exec.cpp
         tests/test-klangc-main-abort.cpp
         tests/test-klangc-object-input.cpp
+        tests/test-klangc-export-symbol.cpp
         tests/test-klangc-debug.cpp
         tests/test-klangc-mangling.cpp
         tests/test-klangc-static-diamond.cpp

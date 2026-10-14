@@ -32,6 +32,7 @@
 #include "../model/template_deduction.hpp"
 #include "../model/constant_evaluator.hpp"
 #include "../model/tools/kdi_type_converter.hpp"
+#include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
 #include <kdi.hpp>
 #include <llvm/IR/DerivedTypes.h>
@@ -720,6 +721,23 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
 void type_reference_resolver::resolve()
 {
     trace("[type_reference_resolver::resolve] begin");
+    // Imported callable bodies are not traversed by the namespace passes.
+    // Resolve their defaults before overload selection clones them into calls.
+    symbol_resolver symbols(*this, _context, _unit);
+    const auto resolve_defaults = [&](function& fn) {
+        for (auto param : fn.parameters()) {
+            if (!param->has_default_expr()) continue;
+            param->get_default_expr()->accept(symbols);
+            param->accept(*this);
+        }
+    };
+    for (const auto& [mangled, fn] : _unit.get_imported_functions()) resolve_defaults(*fn);
+    for (const auto& [fq, agg] : _unit.get_imported_aggregates()) {
+        for (const auto& ctor : agg->constructors()) resolve_defaults(*ctor);
+        for (const auto& child : agg->get_children()) {
+            if (auto fn = std::dynamic_pointer_cast<function>(child)) resolve_defaults(*fn);
+        }
+    }
     visit_unit(_unit);
     trace("[type_reference_resolver::resolve] done");
 }
@@ -744,24 +762,38 @@ namespace {
     }
 
     // Compute [min_arity, max_arity] for a function (accounting for default parameters).
-    static std::pair<size_t,size_t> arity_range(const std::shared_ptr<model::function>& fn) {
-        size_t min_a = 0, max_a = fn->parameters().size();
-        for (auto& p : fn->parameters()) if (!p->has_default_expr()) ++min_a;
+    static std::pair<size_t,size_t> arity_range(const model::function& fn) {
+        size_t min_a = 0, max_a = fn.get_parameter_size();
+        for (auto& p : fn.parameters()) if (!p->has_default_expr()) ++min_a;
         return {min_a, max_a};
     }
 
-    // True if ranges [a,b] and [c,d] overlap.
-    static bool ranges_overlap(size_t a, size_t b, size_t c, size_t d) {
-        return a <= d && c <= b;
+    static bool default_overloads_collide(const model::function& a, const model::function& b) {
+        auto [min_a, max_a] = arity_range(a);
+        auto [min_b, max_b] = arity_range(b);
+        const size_t supplied = std::max(min_a, min_b);
+        if ((min_a == max_a && min_b == max_b) || supplied > std::min(max_a, max_b)) return false;
+
+        // A difference in the smallest shared prefix also distinguishes every
+        // longer prefix. The empty prefix deliberately collides at arity zero.
+        for (size_t i = 0; i < supplied; ++i) {
+            auto left = a.parameters()[i]->get_type();
+            auto right = b.parameters()[i]->get_type();
+            // These checks run after parameter resolution/callable normalization.
+            // Dependent template signatures must not be compared by unresolved names.
+            if (!left || !right || type::contains_unresolved(left) || type::contains_unresolved(right)
+                || !type::are_equal(left, right)) return false;
+        }
+        return true;
     }
 } // anonymous namespace
 
 /**
- * Check all function overloads in a function_holder for arity-overlap collisions
+ * Check all function overloads in a function_holder for identical supplied-prefix collisions
  * caused by default-parameter values.
  *
  * For each pair of same-named overloads, if at least one has default params and their
- * arity ranges overlap, throw an ambiguity error.
+ * parameter types are identical at a shared arity, throw an ambiguity error.
  */
 void type_reference_resolver::check_overload_collisions(function_holder& fh)
 {
@@ -775,20 +807,14 @@ void type_reference_resolver::check_overload_collisions(function_holder& fh)
         auto overloads = fh.get_functions(fname);
         if (overloads.size() < 2) continue;
 
-        // For each pair (i < j), check for arity-range overlap when at least one has defaults.
+        // Check each pair's supplied parameter prefix when defaults permit a shared arity.
         for (size_t i = 0; i < overloads.size(); ++i) {
-            auto [min_i, max_i] = arity_range(overloads[i]);
-            bool has_default_i = (min_i < max_i);
-
             for (size_t j = i + 1; j < overloads.size(); ++j) {
-                auto [min_j, max_j] = arity_range(overloads[j]);
-                bool has_default_j = (min_j < max_j);
-
-                if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
+                if (default_overloads_collide(*overloads[i], *overloads[j])) {
                     lex::opt_any_lexeme fn_lexeme;
                     if (auto ast_fd = overloads[i]->get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
                     throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ARITH_TYPE_MISMATCH), fn_lexeme,
-                        "Ambiguous overload: '{}{}' and overload '{}{}' can both be called with the same number of arguments "
+                        "Ambiguous overload: '{}{}' and overload '{}{}' have identical supplied parameter types at a shared arity "
                         "because of default parameter values; rename one overload or remove the default value(s) to resolve the ambiguity",
                         {fname, param_list_str(overloads[i]->parameters()),
                          fname, param_list_str(overloads[j]->parameters())});
@@ -804,17 +830,11 @@ void type_reference_resolver::check_constructor_overload_collisions(aggregate& s
     if (ctors.size() < 2) return;
 
     for (size_t i = 0; i < ctors.size(); ++i) {
-        auto [min_i, max_i] = arity_range(ctors[i]);
-        bool has_default_i = (min_i < max_i);
-
         for (size_t j = i + 1; j < ctors.size(); ++j) {
-            auto [min_j, max_j] = arity_range(ctors[j]);
-            bool has_default_j = (min_j < max_j);
-
-            if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
+            if (default_overloads_collide(*ctors[i], *ctors[j])) {
                 const std::string& sname = st.get_short_name();
                 throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ARITH_NO_COMMON_TYPE), st.get_ast_aggregate_decl() ? lex::opt_any_lexeme{lex::any_lexeme{st.get_ast_aggregate_decl()->name}} : lex::opt_any_lexeme{},
-                    "Ambiguous constructor overload in '{}': constructor '{}{}' and constructor '{}{}' can both be called with the same number of arguments "
+                    "Ambiguous constructor overload in '{}': constructor '{}{}' and constructor '{}{}' have identical supplied parameter types at a shared arity "
                     "because of default parameter values; remove one constructor or remove the default value(s) to resolve the ambiguity",
                     {sname,
                      sname, param_list_str(ctors[i]->parameters()),
@@ -1308,7 +1328,10 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
             *tpl_agg, model_args, parent_ns_ptr, _unit, _context, *this);
     }
     if (!concrete_agg) return {};
-    if (concrete_agg->is_imported()) return concrete_agg->get_struct_type();
+    if (concrete_agg->is_imported()) {
+        ensure_template_type_ready(concrete_agg->get_struct_type(), context_elem);
+        return concrete_agg->get_struct_type();
+    }
 
     // 4b. Resolve unresolved member-variable references in method bodies.
     template_instantiator::resolve_body_symbols(concrete_agg);
@@ -2070,10 +2093,60 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     return instantiate_template_aggregate(tpl_agg, model_args, context_elem);
 }
 
+void type_reference_resolver::ensure_template_type_ready(
+    const std::shared_ptr<type>& t, const element& scope)
+{
+    if (!t) return;
+    auto canonical = type::canonical(t);
+    if (!canonical) return;
+    if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(canonical)) {
+        if (unresolved->get_resolved()) ensure_template_type_ready(unresolved->get_resolved(), scope);
+        return;
+    }
+    if (auto sub = canonical->get_subtype()) {
+        ensure_template_type_ready(sub, scope);
+        return;
+    }
+    auto st = std::dynamic_pointer_cast<struct_type>(canonical);
+    if (auto local = st ? st->get_struct() : nullptr;
+        local && local->is_instantiation() && !local->is_imported()) {
+        // A late signature pre-pass can create this type after its namespace was
+        // visited. A completed LLVM layout does not mean its members are resolved.
+        resolve_instantiated_aggregate(*local);
+        return;
+    }
+    auto host = st ? std::dynamic_pointer_cast<imported_aggregate>(st->get_struct()) : nullptr;
+    if (!host || !host->has_tpl_args() || host->get_tpl_definition()) return;
+    const auto* metadata = host->get_kdi_aggregate();
+    if (!metadata || !metadata->template_origin) return;
+    auto origin = k::name::from(metadata->template_origin->base_fq_name);
+    if (origin.empty()) {
+        origin = host->get_name().without_back().with_back(host->get_tpl_base_name());
+    }
+    auto recipe = find_template_aggregate(origin.with_root_prefix(), scope);
+    if (!recipe) return;
+    auto added = template_instantiator::hydrate_imported_aggregate(
+        *recipe, host->get_tpl_args(), host, _context, *this,
+        [this](const std::shared_ptr<type>& field_type, const element& field_scope) {
+            return resolve_type_chain(field_type, &field_scope);
+        });
+    for (const auto& fn : added) {
+        if (fn->is_template()) continue;
+        symbol_resolver symbols(*this, _context, _unit);
+        fn->accept(symbols);
+        aggregate_type_resolver aggregates(*this, _context, _unit);
+        fn->accept(aggregates);
+        signature_resolver signatures(*this, _context, _unit);
+        fn->accept(signatures);
+        fn->accept(*this);
+    }
+}
+
 std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
     const std::shared_ptr<type>& t,
     const element* scope_elem)
 {
+    if (scope_elem) ensure_template_type_ready(t, *scope_elem);
     if (!t || type::is_resolved(t)) return _context->collapse_callable_addresser(t);
     // A struct_type is semantically resolved even before its LLVM type is materialized.
     if (std::dynamic_pointer_cast<struct_type>(t)) return t;
@@ -2097,7 +2170,8 @@ std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
     if (!sub) return t;
 
     auto resolved_sub = resolve_type_chain(sub, scope_elem);
-    if (!resolved_sub || (!type::is_resolved(resolved_sub) && !std::dynamic_pointer_cast<struct_type>(resolved_sub))) return t;
+    // Recursive specializations can have complete model types before LLVM layout.
+    if (!resolved_sub || type::contains_unresolved(resolved_sub)) return t;
 
     auto rewrapped = rewrap_like(t, resolved_sub);
     // An addresser applied to a name denoting a callable re-addresses it in
@@ -2149,8 +2223,11 @@ void type_reference_resolver::finalize_aggregate_destructor(aggregate& agg) {
             auto member = std::dynamic_pointer_cast<member_variable_definition>(var);
             if (!member || name.rfind("__", 0) == 0) continue;
             // Only embedded values participate here, not borrowed or owner fields.
-            if (auto member_type = std::dynamic_pointer_cast<struct_type>(
-                    type::canonical(type::remove_const(member->get_type())))) {
+            auto value_type = type::canonical(type::remove_const(member->get_type()));
+            if (auto array = std::dynamic_pointer_cast<sized_array_type>(value_type)) {
+                value_type = type::canonical(type::remove_const(array->get_subtype()));
+            }
+            if (auto member_type = std::dynamic_pointer_cast<struct_type>(value_type)) {
                 if (auto member_aggregate = member_type->get_struct()) {
                     inspect_subobject(member_aggregate);
                 } else if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), member_type)) {
@@ -2207,7 +2284,7 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     for (auto& [name, var] : agg.variables()) {
         if (var && var->get_type() && !type::is_resolved(var->get_type())) {
             auto resolved = resolve_type_chain(var->get_type(), &agg);
-            if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
+            if (resolved && !type::contains_unresolved(resolved)) {
                 var->set_type(resolved);
             }
         }
@@ -2222,17 +2299,17 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
         // still contain uninstantiated template parameters (e.g. R in accumulate<R>).
         if (fn.is_template()) return;
         // Resolve return type
-        if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
+        if (fn.get_return_type()) {
             auto resolved = resolve_type_chain(fn.get_return_type(), &agg);
-            if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
+            if (resolved && !type::contains_unresolved(resolved)) {
                 fn.set_return_type(resolved);
             }
         }
         // Resolve parameter types
         for (auto& param : fn.parameters()) {
-            if (param && param->get_type() && (!type::is_resolved(param->get_type()) || type::contains_unresolved(param->get_type()))) {
+            if (param && param->get_type()) {
                 auto resolved = resolve_type_chain(param->get_type(), &agg);
-                if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
+                if (resolved && !type::contains_unresolved(resolved)) {
                     param->set_type(resolved);
                 }
             }
@@ -2240,12 +2317,14 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     };
 
     auto resolve_agg_fn_types = [&](aggregate& a) {
-        for (auto& child : a.get_children()) {
+        const auto children = a.get_children();
+        for (const auto& child : children) {
             if (auto fn = std::dynamic_pointer_cast<function>(child)) {
                 resolve_fn_types(*fn);
             }
         }
-        for (auto& ctor : a.constructors()) {
+        const auto constructors = a.constructors();
+        for (const auto& ctor : constructors) {
             if (ctor) resolve_fn_types(*ctor);
         }
         if (auto dtor = a.get_destructor()) {
@@ -2256,7 +2335,8 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     resolve_agg_fn_types(agg);
 
     // Also resolve function types in nested aggregates
-    for (auto& child : agg.get_children()) {
+    const auto children = agg.get_children();
+    for (const auto& child : children) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
             resolve_agg_fn_types(*nested);
         }
@@ -2284,8 +2364,8 @@ std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
     // which cannot instantiate templates and thus fails to resolve at all.
     if (auto const_inner = std::dynamic_pointer_cast<const_type>(inner)) {
         auto resolved_sub = resolve_inner_type(const_inner->get_subtype(), scope_elem);
-        if (resolved_sub && (type::is_resolved(resolved_sub) || std::dynamic_pointer_cast<struct_type>(resolved_sub))) {
-            return resolved_sub->get_const();
+        if (resolved_sub && !type::contains_unresolved(resolved_sub)) {
+            return type::make_pinned_const(resolved_sub);
         }
         return nullptr;
     }
@@ -2327,7 +2407,10 @@ std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
         }
         return resolved;
     }
-    return _context->resolve_type(inner);
+    // Composite inner types must use the same lexical lookup as plain names.
+    // In particular, an owner of an unsized array can contain a using-imported
+    // alias that the context's unqualified type registry cannot resolve.
+    return resolve_type_chain(inner, scope_elem);
 }
 std::shared_ptr<type> type_reference_resolver::strip_ref_array(const std::shared_ptr<type>& t) {
     if (auto ref = std::dynamic_pointer_cast<reference_type>(t)) {
@@ -3540,16 +3623,34 @@ std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::sha
  * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
  */
 type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
-    debug("[type_reference_resolver::get_best_matching_constructor] {} candidates, {} args", {std::to_string(constructors.size()), std::to_string(args.size())});
+    auto available = constructors;
+    if (!constructors.empty() && constructors.front()) {
+        if (auto owner = constructors.front()->get_owner()) {
+            const bool complete_set = available == owner->constructors();
+            ensure_template_type_ready(owner->get_struct_type(), *owner);
+            if (complete_set) available = owner->constructors();
+        }
+    }
+    for (const auto& arg : args) {
+        if (arg) ensure_template_type_ready(arg->get_type(), *arg);
+    }
+    debug("[type_reference_resolver::get_best_matching_constructor] {} candidates, {} args", {std::to_string(available.size()), std::to_string(args.size())});
     const size_t arg_count = args.size();
 
     std::vector<std::shared_ptr<constructor>> candidates;
     std::vector<std::shared_ptr<constructor>> template_candidates;
     std::unordered_map<const constructor*, size_t> template_specificity;
-    candidates.reserve(constructors.size());
-    for (const auto& ctor : constructors) {
+    std::unordered_set<std::string> imported_symbols;
+    candidates.reserve(available.size());
+    for (const auto& ctor : available) {
         if (ctor && ctor->is_template()) template_candidates.push_back(ctor);
-        else if (ctor) candidates.push_back(ctor);
+        else if (ctor) {
+            // Repeated exported specializations can describe one ABI callable.
+            if (std::dynamic_pointer_cast<imported_constructor>(ctor)
+                && !ctor->get_mangled_name().empty()
+                && !imported_symbols.insert(ctor->get_mangled_name()).second) continue;
+            candidates.push_back(ctor);
+        }
     }
     std::vector<std::shared_ptr<type>> arg_types;
     arg_types.reserve(arg_count);
@@ -3561,6 +3662,19 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         auto* ti = ctor->get_tpl_info();
         auto owner = ctor->get_owner();
         if (!ti || !owner) continue;
+        size_t specificity = 0;
+        for (const auto& param : ti->params) {
+            if (param.kind != template_param_kind::TYPENAME || param.constraint_type) ++specificity;
+        }
+        for (const auto& [key, instance] : ti->instantiations) {
+            if (const auto* fn = std::get_if<std::shared_ptr<function>>(&instance)) {
+                if (auto cached = std::dynamic_pointer_cast<constructor>(*fn);
+                    cached && cached->is_instantiation()
+                    && !std::dynamic_pointer_cast<imported_constructor>(cached)) {
+                    template_specificity[cached.get()] = specificity;
+                }
+            }
+        }
 
         auto deduction = deduce_template_arguments(*ti, ctor->parameters(), arg_types);
         if (!deduction.success) continue;
@@ -3591,7 +3705,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             auto subst = template_instantiator::build_substitution_map_public(*ti, deduction.deduced_args);
             auto val_subst = template_instantiator::build_value_substitution_map_public(*ti, deduction.deduced_args);
             auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
-            template_instantiator::populate_function_from_template_public(
+            template_instantiator::populate_constructor_from_template_public(
                 concrete, *ctor, subst, val_subst, pack_subst, ctor->is_generic());
             concrete->set_tpl_instantiation_info(ctor->get_short_name(), deduction.deduced_args);
             concrete->mark_instantiation();
@@ -3606,15 +3720,35 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             concrete->accept(atr);
             signature_resolver sigr(*this, _context, _unit);
             concrete->accept(sigr);
-            concrete->accept(*this);
-        }
-        size_t specificity = 0;
-        for (const auto& param : ti->params) {
-            if (param.kind != template_param_kind::TYPENAME || param.constraint_type) {
-                ++specificity;
+            concrete->update_mangled_name();
+            // A non-template constructor may already own this signature, either
+            // locally or in the producer. Preserve it rather than emit a duplicate.
+            std::shared_ptr<constructor> authoritative;
+            for (const auto& existing : owner->constructors()) {
+                if (existing != concrete && !existing->is_template()
+                    && (!existing->is_instantiation()
+                        || std::dynamic_pointer_cast<imported_constructor>(existing))
+                    && existing->get_mangled_name() == concrete->get_mangled_name()
+                    && scope_lookup::same_parameter_signature(*existing, *concrete)) {
+                    authoritative = existing;
+                    break;
+                }
+            }
+            if (authoritative) {
+                owner->_constructors.erase(std::remove(owner->_constructors.begin(),
+                    owner->_constructors.end(), concrete), owner->_constructors.end());
+                owner->_children.erase(std::remove(owner->_children.begin(),
+                    owner->_children.end(), concrete), owner->_children.end());
+                concrete = authoritative;
+                ti->instantiations[key] = std::static_pointer_cast<function>(concrete);
+            } else {
+                concrete->accept(*this);
             }
         }
-        template_specificity[concrete.get()] = specificity;
+        if (concrete->is_instantiation()
+            && !std::dynamic_pointer_cast<imported_constructor>(concrete)) {
+            template_specificity[concrete.get()] = specificity;
+        }
         if (std::find(candidates.begin(), candidates.end(), concrete) == candidates.end()) {
             candidates.push_back(std::move(concrete));
         }
@@ -3799,6 +3933,9 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "Ambiguous constructor call: {} equally viable overloads",
             {std::to_string(best_candidates.size())});
+        if (!args.empty() && args.front()) {
+            if (auto lexeme = args.front()->first_lexeme()) d.at(*lexeme);
+        }
         for (auto* c : best_candidates) {
             std::string sig;
             bool first = true;
@@ -3809,8 +3946,8 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             }
             d.add_note("candidate constructor({})", {sig});
         }
-        report(d);
-        return {nullptr, {}};
+        logger_relay::report(d);
+        throw resolution_error(std::move(d));
     }
 
     // Adapt only the selected overload: discarded adaptations otherwise reparent
@@ -3957,11 +4094,19 @@ std::string format_user_type(const std::shared_ptr<type>& t) {
     return raw;
 }
 
+static std::string format_function_source_name(const function& fn) {
+    auto name = fn.has_tpl_args() ? fn.get_tpl_base_name() : fn.get_short_name();
+    if (fn.is_operator() && !k::op::is_cast_operator(name)) {
+        return "operator" + k::op::get_operator_symbol(name);
+    }
+    return name;
+}
+
 std::string format_function_display_name(const std::shared_ptr<function>& fn) {
     if (!fn) return "<unknown>";
-    std::string name;
+    std::string name = format_function_source_name(*fn);
     if (fn->has_tpl_args()) {
-        name = fn->get_tpl_base_name() + "<";
+        name += "<";
         const auto& targs = fn->get_tpl_args();
         for (size_t i = 0; i < targs.size(); ++i) {
             if (i > 0) name += ", ";
@@ -3986,14 +4131,14 @@ std::string format_function_display_name(const std::shared_ptr<function>& fn) {
             }
         }
         name += ">";
-    } else {
-        name = fn->get_short_name();
     }
 
     if (fn->is_member()) {
         if (auto agg = fn->parent<aggregate>()) {
             std::string agg_name;
-            if (agg->has_tpl_args()) {
+            if (agg->get_struct_type()) {
+                agg_name = format_user_type(agg->get_struct_type());
+            } else if (agg->has_tpl_args()) {
                 agg_name = agg->get_tpl_base_name() + "<";
                 const auto& targs = agg->get_tpl_args();
                 for (size_t i = 0; i < targs.size(); ++i) {
@@ -4033,7 +4178,7 @@ std::string format_function_signature(const std::shared_ptr<function>& fn) {
 
 std::string format_template_function_signature(const std::shared_ptr<function>& fn) {
     if (!fn) return "<unknown>";
-    std::string name = fn->get_short_name();
+    std::string name = format_function_source_name(*fn);
     if (auto* ti = fn->get_tpl_info()) {
         name += "<";
         for (size_t i = 0; i < ti->params.size(); ++i) {
@@ -4045,7 +4190,9 @@ std::string format_template_function_signature(const std::shared_ptr<function>& 
     if (fn->is_member()) {
         if (auto agg = fn->parent<aggregate>()) {
             std::string agg_name;
-            if (agg->has_tpl_args()) {
+            if (agg->get_struct_type()) {
+                agg_name = format_user_type(agg->get_struct_type());
+            } else if (agg->has_tpl_args()) {
                 agg_name = agg->get_tpl_base_name() + "<";
                 const auto& targs = agg->get_tpl_args();
                 for (size_t i = 0; i < targs.size(); ++i) {
@@ -4551,8 +4698,9 @@ type_reference_resolver::get_best_matching_function(
         for (auto* c : best) {
             d.add_note("{} {}", {c->is_unified ? "[unified]" : "", format_function_signature(c->func)});
         }
-        report(d);
-        return {nullptr, {}, false, nullptr};
+        if (call_lexeme) d.at(*call_lexeme);
+        logger_relay::report(d);
+        throw resolution_error(std::move(d));
     }
 
     auto* b = best[0];

@@ -250,9 +250,16 @@ Encoded as a CBOR uint.
 ```
 Param = {
   "name" : text,
-  "type" : Type
+  "type" : Type,
+  ? "is_varargs" : bool,
+  ? "default_source" : text
 }
 ```
+
+`default_source` is the K default-argument expression defined by `KdiParam`
+in the abstract schema. Absence means the parameter is required. It has the
+same declaration-scope semantics as JSON and does not affect the ABI. The
+optional field is part of schema version `0.1`.
 
 ---
 

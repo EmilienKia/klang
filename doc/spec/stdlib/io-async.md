@@ -184,6 +184,9 @@ Invariant: `0 <= position <= limit <= capacity`.
 | `dataAt(index: unsigned int) : byte*` | Raw pointer into the backing array, for channel transfers. |
 
 Relative accesses past the limit raise `IndexOutOfBoundsError`.
+Bulk writes must accept const source arrays without modifying them. A successful
+bulk transfer advances the position by exactly the number of bytes copied;
+rejected leased or read-only writes must leave the position and content unchanged.
 
 ### Leases and mapped storage
 

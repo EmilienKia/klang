@@ -12,6 +12,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ffi.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ffi_symbol.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ffi_runtime.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/annotations.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
@@ -137,6 +139,18 @@ set(LIBK_MD_DOC_ROOT ${LIBK_OUTPUT_DIR}/doc/md)
 set(LIBK_DOC_STAMP ${LIBK_MD_DOC_ROOT}/.docgen.stamp)
 set(LIBK_HTML_DOC_ROOT ${LIBK_OUTPUT_DIR}/doc/html)
 set(LIBK_HTML_DOC_STAMP ${LIBK_HTML_DOC_ROOT}/.docgen-html.stamp)
+
+# Colocated metadata remains valid when the runtime artifacts are moved together.
+set(LIBK_PC_ICU_REQUIRES "")
+if(KLANG_HAVE_ICU)
+    set(LIBK_PC_ICU_REQUIRES "icu-uc icu-i18n")
+endif()
+set(LIBK_PC_LIBS_PRIVATE "-pthread")
+foreach(_lib IN LISTS CMAKE_DL_LIBS)
+    string(APPEND LIBK_PC_LIBS_PRIVATE " -l${_lib}")
+endforeach()
+string(APPEND LIBK_PC_LIBS_PRIVATE " -lm")
+configure_file(libk.pc.in "${LIBK_OUTPUT_DIR}/libk.pc" @ONLY)
 
 # ── Compile the C runtime helpers (fatal error functions) ────────────────
 # These are compiled to a .o and passed to klangc so they end up in both
@@ -545,6 +559,38 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile fixed-signature native C calls ─────────────────────────────────
+set(RUNTIME_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_ffi.c)
+set(RUNTIME_FFI_OBJ ${LIBK_OUTPUT_DIR}/runtime_ffi.o)
+set(FFI_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/ffi_ffi.c)
+set(FFI_FFI_OBJ ${LIBK_OUTPUT_DIR}/ffi_ffi.o)
+set(RUNTIME_FFI_H ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/runtime_ffi.h)
+
+add_custom_command(
+    OUTPUT ${RUNTIME_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} -std=c11 ${LIBFFI_CFLAGS}
+            -o ${RUNTIME_FFI_OBJ} ${RUNTIME_FFI_C}
+    DEPENDS ${RUNTIME_FFI_C} ${RUNTIME_FFI_H}
+    COMMENT "Compiling K fixed-signature native call engine (runtime_ffi.c)"
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${FFI_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} -std=c11 ${LIBFFI_CFLAGS}
+            -o ${FFI_FFI_OBJ} ${FFI_FFI_C}
+    DEPENDS ${FFI_FFI_C} ${RUNTIME_FFI_H}
+    COMMENT "Compiling K primitive native call bridges (ffi_ffi.c)"
+    VERBATIM
+)
+foreach(_dir ${LIBFFI_LIBRARY_DIRS})
+    list(APPEND LIBK_EXTRA_LINK_ARGS -L ${_dir})
+endforeach()
+foreach(_lib ${LIBFFI_LIBRARIES})
+    list(APPEND LIBK_EXTRA_LINK_ARGS -l ${_lib})
+endforeach()
+# The archive includes these runtime objects, not libffi itself. Static
+# consumers must also link the libffi dependencies returned by pkg-config.
+
 # ── Compile UUID FFI helpers ──────────────────────────────────────────────
 set(UUID_FFI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/uuid_ffi.c)
 set(UUID_FFI_OBJ ${LIBK_OUTPUT_DIR}/uuid_ffi.o)
@@ -678,6 +724,7 @@ set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_
                    ${EXECUTOR_RUNTIME_OBJ}
                    ${APP_FFI_OBJ}
                    ${MODULE_FFI_OBJ}
+                   ${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ}
                    ${UUID_FFI_OBJ}
                    ${PLATFORM_CLOCK_POSIX_OBJ}
                    ${LEAP_SECOND_DATA_OBJ}
@@ -771,6 +818,35 @@ macro(libk_add_test TARGET TIMEOUT)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
     set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
 endmacro()
+
+# ── Native-only FFI ABI tests ──────────────────────────────────────────────
+# Exercise the exact runtime objects without JIT or compiled K fixtures.
+set_source_files_properties(${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ}
+    PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+add_executable(libk-tests-ffi-native
+    tests/test-ffi-native.cpp ${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ})
+target_include_directories(libk-tests-ffi-native PRIVATE src/runtime)
+target_link_libraries(libk-tests-ffi-native PRIVATE
+    Catch2::Catch2WithMain PkgConfig::LIBFFI pthread dl)
+add_test(NAME libk-tests-ffi-native COMMAND libk-tests-ffi-native)
+set_tests_properties(libk-tests-ffi-native PROPERTIES TIMEOUT 120)
+
+# ── Public K runtime C FFI tests ───────────────────────────────────────────
+add_library(klang-ffi-native-fixture SHARED tests/ffi/native_fixture.c)
+set_target_properties(klang-ffi-native-fixture PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${LIBK_OUTPUT_DIR}/ffi-fixtures")
+libk_add_test(libk-tests-ffi 120
+    tests/test-ffi.cpp
+)
+target_link_options(libk-tests-ffi PRIVATE -Wl,--export-dynamic)
+target_compile_definitions(libk-tests-ffi PRIVATE
+    LIBK_FFI_FIXTURE_PATH="$<TARGET_FILE:klang-ffi-native-fixture>")
+add_dependencies(libk-tests-ffi klang-ffi-native-fixture)
+
+libk_add_test(libk-tests-ffi-distribution 120 tests/test-ffi-distribution.cpp)
+target_compile_definitions(libk-tests-ffi-distribution PRIVATE
+    KLANGC_PATH="$<TARGET_FILE:klangc>"
+    LIBK_FFI_RUNTIME_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/runtime")
 
 # ── libk sharded test helper macro ───────────────────────────────────────────
 # Like libk_add_test, but registers <SHARDS> CTest entries running disjoint Catch2
@@ -915,6 +991,9 @@ add_custom_target(libk_module_fixtures DEPENDS ${MODFX_DIR}/.fixtures.stamp)
 libk_add_test(libk-tests-module 120
     tests/test-module.cpp
 )
+target_link_options(libk-tests-module PRIVATE
+    -Wl,--export-dynamic-symbol=klang_module_symbol_application_fixture
+    -Wl,--export-dynamic-symbol=klang_module_symbol_zero_fixture)
 add_dependencies(libk-tests-module libk_module_fixtures)
 target_compile_definitions(libk-tests-module PRIVATE LIBK_MODULE_FIXTURES_DIR="${MODFX_DIR}")
 add_test(NAME libk-rtti-static-link-fixture

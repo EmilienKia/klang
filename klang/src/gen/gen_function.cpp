@@ -30,6 +30,7 @@
 #include "../model/statements.hpp"
 #include "../model/imported.hpp"
 #include "../model/mangler.hpp"
+#include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
 
 #include <llvm/IR/Verifier.h>
@@ -175,6 +176,7 @@ void emit_vptr_store(llvm::IRBuilder<>& builder,
 //
 void symbol_resolver::visit_parameter(parameter& param) {
     visit_named_element(param);
+    param.set_type(resolve_enum_reference_type(param.get_type(), param));
 
     if(auto expr = param.get_init_expr()) {
         expr->accept(*this);
@@ -293,6 +295,7 @@ void signature_resolver::visit_parameter(parameter& param) {
 
 void type_reference_resolver::resolve_parameter_type(parameter& param) {
     if (!param.get_type()) return;
+    ensure_template_type_ready(param.get_type(), param);
 
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
         // Extract lexeme from AST parameter_spec for error reporting
@@ -314,8 +317,8 @@ void type_reference_resolver::resolve_parameter_type(parameter& param) {
                     {var_type->to_string(), param.get_short_name(), owner_name});
             }
         } else {
-        std::shared_ptr<type> res_type = _context->resolve_type(var_type);
-        if (!type::is_resolved(res_type)) {
+        std::shared_ptr<type> res_type = resolve_type_chain(var_type, &param);
+        if (!res_type || type::contains_unresolved(res_type)) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
             // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
@@ -421,6 +424,10 @@ void symbol_resolver::visit_function(function& fn) {
 
     for(auto param : fn.parameters()) {
         param->accept(*this);
+    }
+
+    if (fn.get_return_type()) {
+        fn.set_return_type(resolve_enum_reference_type(fn.get_return_type(), fn));
     }
 
     resolve_function_annotations(fn);
@@ -1078,14 +1085,49 @@ void type_reference_resolver::visit_function(function& fn) {
             if (owner && owner->get_short_name().starts_with("__kdi_private_"))
                 check_function_visibility(*target, fn);
         }
-        _resolved_functions.insert(&fn);
-        return;
+    } else {
+        _function_stack.push_back(fn.shared_as<function>());
+        auto pop_function = llvm::make_scope_exit([this] { _function_stack.pop_back(); });
+        if (fn._block) {
+            visit_block(*fn._block);
+        }
     }
 
-    _function_stack.push_back(fn.shared_as<function>());
-    auto pop_function = llvm::make_scope_exit([this] { _function_stack.pop_back(); });
-    if (fn._block) {
-        visit_block(*fn._block);
+    // Recipes retain dependent signatures until instantiated; check each concrete
+    // operator once, after both lexical return typing and body return deduction.
+    const auto operator_name = fn.has_tpl_args() ? fn.get_tpl_base_name() : fn.get_short_name();
+    if (fn.is_operator() && k::op::is_assignment_operator(operator_name) && !fn.is_deleted()) {
+        auto owner = fn.get_owner();
+        auto owner_type = owner ? owner->get_struct_type() : nullptr;
+        if (owner_type) {
+            lex::opt_any_lexeme location;
+            if (auto ast = fn.get_ast_function_decl()) {
+                location = ast->operator_symbol ? ast->operator_symbol : ast->operator_;
+                if (!location) location = lex::any_lexeme{ast->name};
+            }
+            const auto display_name = "operator" + k::op::get_operator_symbol(operator_name);
+            const auto owner_name = format_user_type(owner_type);
+            const auto expected_name = format_user_type(owner_type->get_reference());
+            if (!fn.has_return_type()) {
+                warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_BASE),
+                    location,
+                    "Assignment operator '{}' in '{}' has no return type; "
+                    "conventionally it should return '{}' to allow chaining (e.g. a = b = c)",
+                    {display_name, owner_name, expected_name});
+            } else if (!type::contains_unresolved(fn.get_return_type())) {
+                auto ret = type::canonical(fn.get_return_type());
+                auto reference = std::dynamic_pointer_cast<reference_type>(ret);
+                if (!reference ||
+                    !type::are_equal(type::remove_const(reference->get_subtype()),
+                                     type::remove_const(owner_type))) {
+                    warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_MEMBER),
+                        location,
+                        "Assignment operator '{}' in '{}' returns '{}' instead of '{}'; "
+                        "returning a reference to the owning type is recommended for chaining",
+                        {display_name, owner_name, format_user_type(fn.get_return_type()), expected_name});
+                }
+            }
+        }
     }
     _resolved_functions.insert(&fn);
 }
@@ -2330,8 +2372,11 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
             if (var->get_short_name().rfind("__vbptr_", 0) == 0) continue;
             if (var->get_short_name().rfind("__vbase_", 0) == 0) continue;
             if (var->get_short_name().rfind("__vptr", 0) == 0) continue;
-            if (auto m_st_type = std::dynamic_pointer_cast<struct_type>(
-                    type::canonical(type::remove_const(var->get_type())))) {
+            auto member_type = type::canonical(type::remove_const(var->get_type()));
+            if (type::is_sized_array(member_type)) {
+                auto field = st->get_struct_type()->get_member(var->get_short_name());
+                if (field) dtor_members.push_back({var, (unsigned)field->index});
+            } else if (auto m_st_type = std::dynamic_pointer_cast<struct_type>(member_type)) {
                 auto member_aggregate = m_st_type->get_struct();
                 auto member_union = member_aggregate ? nullptr
                     : find_union_by_struct_type(_unit.get_root_namespace(), m_st_type);
@@ -2357,6 +2402,12 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
             _context->get_llvm_type(st->get_struct_type()),
             this_ptr, field_idx,
             "member_" + var->get_short_name() + "_ptr");
+        if (auto array = std::dynamic_pointer_cast<sized_array_type>(
+                type::canonical(type::remove_const(var->get_type())))) {
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                member_ptr, array, make_virtual_call_emitter());
+            continue;
+        }
         if (!m_st_type->get_struct()) {
             if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), m_st_type)) {
                 emit_union_cleanup(member_ptr, *un);

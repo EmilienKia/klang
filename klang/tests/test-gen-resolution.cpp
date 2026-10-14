@@ -20,6 +20,7 @@
 #include <algorithm>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
 #include "../src/gen/gen_callable_helpers.hpp"
 #include "../src/gen/resolvers_scope_lookup.hpp"
 #include "../src/gen/resolvers_common.hpp"
@@ -1595,15 +1596,11 @@ TEST_CASE("Overload: non-overlapping arities with defaults — valid", "[gen][re
 }
 
 // -----------------------------------------------------------------------------
-// OK: type distinguishes when using defaults — no arity collision
+// OK: supplied types distinguish overloads when using defaults.
 // f(int, int=10) vs f(double, int=10) — ranges both [1,2], but types differ.
-// This is valid because arity collision is checked purely on count, not types.
-// Wait — [1,2] ∩ [1,2] ≠ ∅ → this IS a collision now.
-// So this test must now check for collision.
 // -----------------------------------------------------------------------------
-TEST_CASE("Overload collision: same arity range even with different types", "[gen][resolution][default-params][collision]") {
-    // f(int, int=10) and f(double, int=10): both callable with 1 or 2 args → collision
-    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+TEST_CASE("Overload: supplied types distinguish overlapping default arities", "[gen][resolution][default-params][default-overload-prefix]") {
+    auto jit = gen_jit(R"SRC(
         module __ovl_type_default__;
 
         label(a: int, b: int = 10) : int {
@@ -1616,7 +1613,175 @@ TEST_CASE("Overload collision: same arity range even with different types", "[ge
 
         test_int()    : int { return label(5);     }
         test_double() : int { return label(5.0d);  }
-    )SRC"), k::model::gen::resolution_error);
+        test_explicit_int()    : int { return label(5, 20);    }
+        test_explicit_double() : int { return label(5.0d, 20); }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test_int")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("test_double")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("test_explicit_int")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("test_explicit_double")() == 2);
+}
+
+TEST_CASE("Default overloads distinguish int and enum prefixes for functions and constructors",
+          "[gen][resolution][default-params][default-overload-prefix][enum][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module __ovl_enum_default__;
+        enum FfiErrorCode { FAILURE = 7; }
+
+        select(code: int, detail: int = -1) : int { return 100 + detail; }
+        select(code: FfiErrorCode, detail: int = -1) : int { return 200 + detail; }
+
+        struct FfiError {
+            kind: int;
+            FfiError(code: int, detail: int = -1) : kind(100 + detail) {}
+            FfiError(code: FfiErrorCode, detail: int = -1) : kind(200 + detail) {}
+            select(code: int, detail: int = -1) : int { return 100 + detail; }
+            select(code: FfiErrorCode, detail: int = -1) : int { return 200 + detail; }
+        }
+
+        test_int() : int {
+            error: FfiError(7);
+            return error.kind + error.select(7) + select(7);
+        }
+        test_enum() : int {
+            error: FfiError(FfiErrorCode::FAILURE);
+            return error.kind + error.select(FfiErrorCode::FAILURE) + select(FfiErrorCode::FAILURE);
+        }
+        test_explicit() : int {
+            error: FfiError(FfiErrorCode::FAILURE, 5);
+            return error.kind + error.select(7, 5) + select(FfiErrorCode::FAILURE, 5);
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test_int")() == 297);
+    CHECK(jit->lookup_symbol<int(*)()>("test_enum")() == 597);
+    CHECK(jit->lookup_symbol<int(*)()>("test_explicit")() == 515);
+}
+
+TEST_CASE("Default overloads distinguish const array and instantiated vector reference prefixes",
+          "[gen][resolution][default-params][default-overload-prefix][template][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module __ovl_array_vector_default__;
+        enum CType { INT = 1; }
+        enum CAbi { DEFAULT = 0; }
+        template<typename T>
+        struct Vector { count: int = 2; }
+
+        select(type: CType, params: const CType[]&, abi: CAbi = CAbi::DEFAULT) : int { return 1; }
+        select(type: CType, params: const Vector<CType>&, abi: CAbi = CAbi::DEFAULT) : int { return 2; }
+
+        struct CSignature {
+            kind: int;
+            CSignature(type: CType, params: const CType[]&, abi: CAbi = CAbi::DEFAULT) : kind(1) {}
+            CSignature(type: CType, params: const Vector<CType>&, abi: CAbi = CAbi::DEFAULT) : kind(2) {}
+        }
+
+        test_array() : int {
+            params: CType[1]{CType::INT};
+            signature: CSignature(CType::INT, params);
+            return signature.kind + select(CType::INT, params);
+        }
+        test_vector() : int {
+            params: Vector<CType>;
+            signature: CSignature(CType::INT, params);
+            return signature.kind + select(CType::INT, params);
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test_array")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("test_vector")() == 4);
+}
+
+TEST_CASE("Default overload collision ignores differing omitted suffix types without a call",
+          "[gen][resolution][default-params][default-overload-prefix][collision][regression]") {
+    SECTION("Free functions") {
+        REQUIRE_THROWS_WITH(gen_jit_throws(R"SRC(
+            module __ovl_shared_prefix__;
+            select(value: int, detail: int = 0) : int { return 1; }
+            select(value: int, detail: long = 0) : int { return 2; }
+        )SRC"), Catch::Matchers::ContainsSubstring("identical supplied parameter types"));
+    }
+    SECTION("Constructors") {
+        REQUIRE_THROWS_WITH(gen_jit_throws(R"SRC(
+            module __ctor_shared_prefix__;
+            struct Box {
+                Box(value: int, detail: int = 0) {}
+                Box(value: int, detail: long = 0) {}
+            }
+        )SRC"), Catch::Matchers::ContainsSubstring("identical supplied parameter types"));
+    }
+    SECTION("Normalized const reference prefix") {
+        REQUIRE_THROWS_WITH(gen_jit_throws(R"SRC(
+            module __ovl_shared_const_ref_prefix__;
+            select(value: const int&, detail: int = 0) : int { return 1; }
+            select(value: const int&, detail: long = 0) : int { return 2; }
+        )SRC"), Catch::Matchers::ContainsSubstring("identical supplied parameter types"));
+    }
+    SECTION("Normalized callable prefix") {
+        REQUIRE_THROWS_WITH(gen_jit_throws(R"SRC(
+            module __ovl_shared_callable_prefix__;
+            select(callback: !(), detail: int = 0) : int { return 1; }
+            select(callback: !(), detail: long = 0) : int { return 2; }
+        )SRC"), Catch::Matchers::ContainsSubstring("identical supplied parameter types"));
+    }
+}
+
+TEST_CASE("Default overloads retain ranked conversion ambiguity at the call site",
+          "[gen][resolution][default-params][default-overload-prefix][collision][regression]") {
+    std::string_view source;
+    SECTION("Free functions") {
+        source = R"SRC(
+            module k;
+            select(value: int, detail: int = 0) : int { return 1; }
+            select(value: long, detail: int = 0) : int { return 2; }
+            test() : int {
+                value: short = 5;
+                return select(value);
+            }
+        )SRC";
+    }
+    SECTION("Constructors") {
+        source = R"SRC(
+            module k;
+            struct Box {
+                Box(value: int, detail: int = 0) {}
+                Box(value: long, detail: int = 0) {}
+            }
+            test() {
+                value: short = 5;
+                box: Box(value);
+            }
+        )SRC";
+    }
+    test_logger logger;
+    REQUIRE_FALSE(compile_collect_diagnostics(source, nullptr, logger));
+    CHECK(std::any_of(logger.diagnostics.begin(), logger.diagnostics.end(),
+                     [](const k::log::diagnostic& diagnostic) {
+                         return diagnostic.level == k::log::diagnostic::severity::error
+                             && diagnostic.code == static_cast<unsigned int>(
+                                 k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS)
+                             && diagnostic.message.find("equally viable overloads") != std::string::npos
+                             && !diagnostic.args.empty()
+                             && diagnostic.args.back() == "2"
+                             && diagnostic.notes.size() == 2;
+                     }));
+}
+
+TEST_CASE("Default overloads keep same-named enums from different namespaces distinct",
+          "[gen][resolution][default-params][default-overload-prefix][enum][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module __ovl_nominal_enum_default__;
+        namespace left { enum Code { VALUE = 1; } }
+        namespace right { enum Code { VALUE = 2; } }
+        select(value: left::Code, detail: int = 0) : int { return 1; }
+        select(value: right::Code, detail: int = 0) : int { return 2; }
+        test_left() : int { return select(left::Code::VALUE); }
+        test_right() : int { return select(right::Code::VALUE); }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test_left")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("test_right")() == 2);
 }
 
 // =============================================================================

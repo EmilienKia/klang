@@ -1,6 +1,6 @@
 # Module
 **Module:** `k`
-**Source:** `libk/libk/src/module.k`, `libk/libk/src/application.k`, `libk/libk/src/runtime/module_ffi.c`
+**Source:** `libk/libk/src/module.k`, `libk/libk/src/ffi_symbol.k`, `libk/libk/src/application.k`, `libk/libk/src/runtime/module_ffi.c`
 ---
 ## Overview
 `Module` represents a native image in the running process. The abstract base
@@ -39,6 +39,8 @@ public abstract class Module : public Object {
     public const residency() : ModuleResidency;
     public const isProcessPinned() : bool;
     public const path() : const String&;
+    public const lookupSymbol(name : const String&)
+        : Expected<ffi::NativeSymbol, ffi::SymbolLookupError>;
     public const units() : Vector<UnitView>;
     public const dependencies() : Vector<Shared<Module>>;
 }
@@ -68,6 +70,32 @@ public final class NamespaceView {
 }
 
 public final class ModuleManifestError : FatalError;
+
+// In ::k::ffi
+public enum SymbolLookupErrorCode {
+    INVALID_NAME = 1;
+    NOT_FOUND = 2;
+    LOOKUP_FAILED = 3;
+    OUT_OF_MEMORY = 4;
+}
+
+public final class SymbolLookupError {
+    SymbolLookupError(code : SymbolLookupErrorCode, message : const String&);
+    SymbolLookupError(other : const SymbolLookupError&);
+    operator =(other : const SymbolLookupError&) : SymbolLookupError&;
+    public const code() : SymbolLookupErrorCode;
+    public const message() : const String&;
+}
+
+public final class NativeSymbol {
+    NativeSymbol();
+    NativeSymbol(other : const NativeSymbol&);
+    operator =(other : const NativeSymbol&) : NativeSymbol&;
+    public const owner() : Shared<Module>;
+    public const isEmpty() : bool;
+    public const hasAddress() : bool;
+    public const rawAddress() : byte*;
+}
 
 // In ::k::Application
 public const applicationModule() : Shared<ApplicationModule>;
@@ -193,6 +221,53 @@ loads an image. `modules()` returns a stable vector snapshot; its entries share
 ownership with the corresponding registry entries, and changes to the returned
 vector do not mutate the registry.
 
+### Native symbol lookup
+`Module.lookupSymbol(name)` looks up an exact native linker symbol name,
+encoded as UTF-8, using the native loader's scope for that module handle.
+This is not an image-only lookup: a library's dependencies may provide the
+symbol. Lookup on the application module uses the executable's native loader
+scope; only symbols available to the dynamic loader are discoverable. The
+operation does not translate K identifiers or infer a callable signature.
+An empty name or a name containing any embedded NUL is rejected with
+`INVALID_NAME`, rather than silently truncated.
+
+A successful result contains `ffi::NativeSymbol`. It retains a
+`Shared<Module>` referring to the module on which lookup was requested,
+including when a dependency provides the address. Copies and assignments
+retain the same ownership group. The symbol may outlive the `Application`
+and the caller's original module handle. `owner()` identifies the lookup
+owner, not necessarily the image containing the symbol.
+
+`rawAddress()` explicitly exposes a borrowed, untyped `byte*`. The caller
+must keep the symbol or its owner alive while using that address; extracting
+the pointer does not itself retain ownership. No arbitrary-address constructor
+or implicit conversion to a callable pointer is provided.
+
+A default-constructed symbol is empty: `isEmpty()` is true, `owner()` is empty,
+`hasAddress()` is false, and `rawAddress()` is null. The native loader may
+successfully resolve a symbol whose address is zero. That is a successful
+`Expected` result with a nonempty symbol and owner, `hasAddress()` false, and
+`rawAddress()` null. Neither an empty symbol nor a null address is the test
+for lookup failure: callers must inspect `hasError()` / `hasResult()`.
+
+Lookup failures contain `ffi::SymbolLookupError` with an error code and an
+owned message. The message remains valid after later loader operations,
+including lookups on the same thread, and copies of the error own their
+diagnostics independently.
+
+| Code | Meaning |
+|---|---|
+| `INVALID_NAME` | The name is empty or contains an embedded NUL. |
+| `NOT_FOUND` | The native loader reports an undefined symbol in this scope. |
+| `LOOKUP_FAILED` | Another native loader failure or an unavailable native handle. |
+| `OUT_OF_MEMORY` | The native lookup result or diagnostic could not be allocated. |
+
+Native lookup clears stale loader error state, queries the outcome immediately,
+and copies any diagnostic before another loader operation can replace it.
+Allocation failure must not be reported as successful lookup. K allocations
+may still raise the usual unchecked `OutOfMemory`. An unavailable module
+self-reference is an internal invariant failure and raises `FatalError`.
+
 ### Errors
 No exception is thrown for a load failure; `loadModule()` returns an `Expected`
 holding a `LoadModuleError`:
@@ -216,7 +291,8 @@ ones map to `LOAD_FAILED`. The numeric values are shared with the C runtime
 ### Thread safety
 `loadModule()` is thread-safe. The native loader and image discovery run outside
 the module-registry lock; registration and de-duplication are protected by a
-runtime mutex. A `Module` is immutable after registration. The runtime does not promise safe
+runtime mutex. `lookupSymbol()` uses per-call result storage and does not hold
+the module-registry lock. A `Module` is immutable after registration. The runtime does not promise safe
 reentrant module loading from arbitrary global constructors.
 
 ---
@@ -235,14 +311,30 @@ main() : int {
 }
 ```
 
+```k
+main() : int {
+    image : Shared<Module>(applicationModule());
+    found : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+        image.get()->lookupSymbol(String("native_entry"));
+    if (found.hasError()) {
+        error : ffi::SymbolLookupError = found.getError();
+        // error.message() owns the native diagnostic.
+        return (int) error.code();
+    }
+    symbol : ffi::NativeSymbol = found.getResult();
+    // Retain symbol while using its borrowed rawAddress().
+    return 0;
+}
+```
+
 ---
 ## Design Notes
 - The result is `Expected<Shared<Module>, …>` so that the caller and registry
   can share the module's ownership group while preserving its concrete
   destruction type.
-- `Module`'s constructor and fields are `protected` rather than `private`
-  because friendship grants access to protected members only.
-- Not provided yet: symbol lookup, unloading.
+- `Application` constructs module handles. Only `Module` may construct a
+  `NativeSymbol` from an address and an owner.
+- Not provided yet: unloading.
 
 ---
 

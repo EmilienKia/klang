@@ -32,6 +32,7 @@ protected:
 
     /** Optional default value expression for this parameter (may be nullptr). */
     std::shared_ptr<expression> _default_expr;
+    std::shared_ptr<ns> _default_definition_scope;
 
     /**
      * True if this parameter carries @k::ffi::CString and should be treated
@@ -69,10 +70,12 @@ public:
 
     /** Returns the optional default expression for this parameter (nullptr if none). */
     std::shared_ptr<expression> get_default_expr() const { return _default_expr; }
-    /** Sets the default expression for this parameter. */
-    void set_default_expr(std::shared_ptr<expression> expr) { _default_expr = std::move(expr); }
+    /** Sets the default expression and attaches it to this parameter's lexical scope. */
+    void set_default_expr(std::shared_ptr<expression> expr);
     /** True if this parameter has a default value expression. */
     bool has_default_expr() const { return _default_expr != nullptr; }
+    std::shared_ptr<ns> get_default_definition_scope() const { return _default_definition_scope; }
+    void set_default_definition_scope(std::shared_ptr<ns> scope) { _default_definition_scope = std::move(scope); }
 
     /** True if this parameter is marked @ffi::CString for C FFI. */
     bool is_ffi_cstring() const { return _is_ffi_cstring; }

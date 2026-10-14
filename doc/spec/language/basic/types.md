@@ -726,8 +726,11 @@ g   : double[100];      // global array of 100 doubles, zero-initialised
 ```
 
 **Initialisation:**
-- A sized array variable is **zero-initialised** at its declaration by default (primitives are set to
-  `0`; struct elements will be default-constructed).
+- A sized array variable is **default-initialised** at its declaration: primitives are set to
+  `0`; struct and class elements invoke their accessible default constructor in index order.
+  Class elements are fully constructed before subsequent assignment or virtual dispatch.
+  If an element constructor throws, only the successfully constructed prefix is destroyed,
+  in reverse index order; an array whose declaration has not been reached is not destroyed.
 - Explicit initialisation with a brace initializer list is supported:
   ```k
   arr : int[3] {1, 2, 3};           // each element explicitly initialised

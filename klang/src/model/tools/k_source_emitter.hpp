@@ -117,8 +117,12 @@ public:
     std::string emit_extern_function_declaration(const function& fn,
                                                 const std::string& name = {});
 
+    /** Emit a default argument with declaration-bound, fully qualified symbols. */
+    std::string emit_parameter_default(const parameter& param);
+
 private:
     std::ostringstream _os;
+    bool _emitting_default = false;
 
     /** Map from using-alias names to fully-qualified type names. */
     std::unordered_map<std::string, std::string> _alias_map;
@@ -183,6 +187,5 @@ private:
 } // namespace k::model
 
 #endif // KLANG_K_SOURCE_EMITTER_HPP
-
 
 

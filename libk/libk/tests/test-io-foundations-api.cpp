@@ -173,6 +173,109 @@ TEST_CASE("I/O foundations: native buffer predicates preserve lease protection",
     REQUIRE(test() == 1);
 }
 
+TEST_CASE("I/O foundations: const-source bulk writes preserve cursors and protection",
+          "[libk][io][proactor][api][buffer][const-source][regression]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __io_foundation_const_source__;
+        verify(buffer: k::io::ByteBuffer&, src: const byte[], dst: byte[]) : int {
+            buffer.position(1u);
+            buffer.limit(7u);
+            buffer.put(src);
+            if (buffer.position() != 4u || buffer.remaining() != 3u) return -1;
+            if (buffer.put(src, 1u, 2u) != 2u || buffer.position() != 6u) return -2;
+            if (buffer.get(1u) != src[0] || buffer.get(3u) != src[2] ||
+                buffer.get(4u) != src[1] || buffer.get(5u) != src[2]) return -3;
+            rejected : bool = false;
+            try { buffer.put(src); }
+            catch (e: IndexOutOfBoundsError&) { rejected = true; }
+            if (!rejected || buffer.position() != 6u) return -4;
+            rejected = false;
+            try { buffer.put(src, 4u, 0u); }
+            catch (e: IndexOutOfBoundsError&) { rejected = true; }
+            if (!rejected || buffer.position() != 6u) return -5;
+            if (buffer.put(src, 0u, 3u) != 1u || buffer.position() != 7u) return -6;
+            if (buffer.put(src, 0u, 3u) != 0u || buffer.position() != 7u) return -7;
+            buffer.flip();
+            buffer.position(1u);
+            if (buffer.get(dst, 1u, 3u) != 3u || buffer.position() != 4u ||
+                dst[1] != src[0] || dst[3] != src[2]) return -8;
+            buffer.acquireLease();
+            blocked : int = 0;
+            try { buffer.put(src); }
+            catch (e: k::io::BufferInUseException&) { ++blocked; }
+            try { buffer.put(src, 0u, 2u); }
+            catch (e: k::io::BufferInUseException&) { ++blocked; }
+            try { buffer.get(dst, 0u, 2u); }
+            catch (e: k::io::BufferInUseException&) { ++blocked; }
+            buffer.releaseLease();
+            if (blocked != 3 || buffer.position() != 4u ||
+                buffer.get(4u) != src[1]) return -9;
+            buffer.put((byte) 44);
+            if (buffer.position() != 5u || buffer.get(4u) != (byte) 44) return -10;
+            if (src[0] != (byte) 11 || src[1] != (byte) 22 ||
+                src[2] != (byte) 33) return -11;
+            return 1;
+        }
+        test(storage: int) : int {
+            src : byte[]! = new byte[3];
+            src[0] = (byte) 11;
+            src[1] = (byte) 22;
+            src[2] = (byte) 33;
+            dst : byte[]! = new byte[5];
+            if (storage == 0) {
+                heap : k::io::ByteBuffer(8u);
+                return verify(heap, src, dst);
+            }
+            if (storage == 1) {
+                direct : k::io::ByteBuffer! = k::io::ByteBuffer::allocateDirect(8u);
+                return verify(*direct, src, dst);
+            }
+            mapped : k::io::MappedByteBuffer! = k::io::MappedByteBuffer::map(
+                -1, 0L, 8L, k::io::MapMode::ReadWrite);
+            return verify(*mapped, src, dst);
+        }
+        readOnly(src: const byte[], dst: byte[]) : int {
+            mapped : k::io::MappedByteBuffer! = k::io::MappedByteBuffer::map(
+                -1, 0L, 8L, k::io::MapMode::ReadOnly);
+            mapped->position(1u);
+            rejected : int = 0;
+            try { mapped->put(src); }
+            catch (e: IndexOutOfBoundsError&) { ++rejected; }
+            try { mapped->put(src, 0u, 2u); }
+            catch (e: IndexOutOfBoundsError&) { ++rejected; }
+            if (rejected != 2 || mapped->position() != 1u ||
+                mapped->get(1u) != (byte) 0) return -1;
+            mapped->acquireLease();
+            blocked : bool = false;
+            try { mapped->put(src, 0u, 2u); }
+            catch (e: k::io::BufferInUseException&) { blocked = true; }
+            mapped->releaseLease();
+            if (!blocked || mapped->position() != 1u) return -2;
+            if (mapped->get(dst, 1u, 2u) != 2u || mapped->position() != 3u ||
+                dst[1] != (byte) 0 || dst[2] != (byte) 0) return -3;
+            return 1;
+        }
+        testReadOnly() : int {
+            src : byte[]! = new byte[3];
+            src[0] = (byte) 11;
+            src[1] = (byte) 22;
+            src[2] = (byte) 33;
+            dst : byte[]! = new byte[5];
+            return readOnly(src, dst);
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(int)>("test");
+    auto testReadOnly = jit->lookup_symbol<int (*)()>("testReadOnly");
+    REQUIRE(test);
+    REQUIRE(testReadOnly);
+    for (int storage = 0; storage < 3; ++storage) {
+        INFO("storage: " << storage);
+        REQUIRE(test(storage) == 1);
+    }
+    REQUIRE(testReadOnly() == 1);
+}
+
 TEST_CASE("I/O carriers: empty IoDone survives Future and union subobject cleanup before delivery",
           "[libk][io][proactor][api][io-done-carrier][callback-carrier][regression]") {
     auto jit = gen_jit_with_stdlib(R"SRC(

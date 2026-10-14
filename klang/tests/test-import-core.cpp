@@ -36,11 +36,140 @@
 
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Module.h>
+#include <llvm/Support/DynamicLibrary.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
 
 namespace fs = std::filesystem;
+
+TEST_CASE("imported parameter defaults preserve primitive and enum arguments",
+          "[import][default-args][regression]") {
+    constexpr std::string_view producer = R"K(
+        module defaultarguments;
+        enum Abi { DEFAULT = 7; OTHER = 9; }
+        choose(required: int, enabled: bool = false): int {
+            if (enabled) return required + 1;
+            return required;
+        }
+        signature(required: int, abi: Abi = Abi::DEFAULT): int {
+            return required + (int)abi;
+        }
+        struct Binding {
+            value: int;
+            Binding(value: int, enabled: bool = false) {
+                this.value = choose(value, enabled);
+            }
+            const get(extra: int = 2): int { return value + extra; }
+            static bind(required: int, capture: bool = false): int {
+                return choose(required, capture);
+            }
+        }
+    )K";
+    constexpr std::string_view consumer = R"K(
+        module defaultconsumer;
+        import defaultarguments;
+        main(): int {
+            b: defaultarguments::Binding(10);
+            if (b.get() != 12 || b.get(3) != 13) return 1;
+            if (defaultarguments::choose(20) != 20) return 2;
+            if (defaultarguments::choose(20, true) != 21) return 3;
+            if (defaultarguments::signature(30) != 37) return 4;
+            if (defaultarguments::signature(30, defaultarguments::Abi::OTHER) != 39) return 5;
+            if (defaultarguments::Binding::bind(40) != 40) return 6;
+            return 42;
+        }
+    )K";
+    auto result = build_exec_with_lib(producer, consumer);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("imported parameter defaults keep producer lexical bindings under shadowing",
+          "[import][default-args][scope][regression]") {
+    constexpr std::string_view producer = R"K(
+        module defaultscope;
+        outerSeed(): int { return 40; }
+        namespace api {
+            enum Abi { DEFAULT = 2; OTHER = 4; }
+            seed(): int { return 20; }
+            value(required: int, extra: int = seed() + (int)Abi::DEFAULT): int {
+                return required + extra;
+            }
+        }
+    )K";
+    constexpr std::string_view consumer = R"K(
+        module defaultscopeshadow;
+        import defaultscope;
+        seed(): int { return 100; }
+        enum Abi { DEFAULT = 200; }
+        main(): int {
+            seed: int = 250;
+            if (defaultscope::api::value(20) != 42) return 1;
+            return defaultscope::api::value(40, 2);
+        }
+    )K";
+    auto result = build_exec_with_lib(producer, consumer);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("imported defaults do not relax required arguments or nominal enum types",
+          "[import][default-args][negative][regression]") {
+    TmpKdi lib(R"K(
+        module defaultnegative;
+        enum Abi { DEFAULT = 7; }
+        value(required: int, abi: Abi = Abi::DEFAULT): int { return required; }
+    )K");
+    for (auto call : {"defaultnegative::value()", "defaultnegative::value(1, Other::DEFAULT)"}) {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("defaultnegative", lib.kdi_path);
+        compiler->set_file_resolver(resolver);
+        std::string source = "module defaultnegativeconsumer; import defaultnegative; "
+            "enum Other { DEFAULT = 7; } main(): int { return " + std::string(call) + "; }";
+        CHECK_THROWS(compiler->parse_source("defaultnegativeconsumer.k", source));
+    }
+}
+
+TEST_CASE("imported template source and generic signatures preserve defaults",
+          "[import][default-args][template][regression]") {
+    constexpr std::string_view producer = R"K(
+        module defaulttemplates;
+        template<typename T>
+        choose(value: T, enabled: bool = false): T {
+            if (enabled) return value + 1;
+            return value;
+        }
+        generic<typename T>
+        struct Box {
+            value: T*;
+            Box(value: T*, enabled: bool = false) : value(value) {}
+            const get(enabled: bool = false): T* { return value; }
+        }
+    )K";
+    TmpKdi lib(producer);
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("defaulttemplates", lib.kdi_path);
+    compiler->set_file_resolver(resolver);
+    compiler->parse_source("defaulttemplateconsumer.k", R"K(
+        module defaulttemplateconsumer;
+        import defaulttemplates;
+        main(): int { return defaulttemplates::choose<int>(42); }
+    )K", false, false);
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    REQUIRE(compiler->verify_gen_code());
+    auto origin = compiler->get_unit()->get_root_namespace()->get_child_namespace("defaulttemplates");
+    REQUIRE(origin);
+    auto box = origin->get_aggregate("Box");
+    REQUIRE(box);
+    REQUIRE(box->constructors().size() == 1);
+    CHECK(box->constructors().front()->parameters()[1]->has_default_expr());
+    auto methods = box->get_functions("get");
+    REQUIRE(methods.size() == 1);
+    CHECK(methods.front()->parameters().front()->has_default_expr());
+}
 
 TEST_CASE("imported exception downcasts declare the defining library RTTI",
           "[import][rtti][exception][downcast][regression]") {
@@ -1104,6 +1233,122 @@ TEST_CASE("import diamond interfaces — IBase/IA/IB from 3 libs, Diamond class 
 // ═════════════════════════════════════════════════════════════════════════════
 // ENUM IMPORT TESTS
 // ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("import enum — using namespace and aliases retain canonical declaration identity",
+          "[import][import-enum][using][regression][enum-identity]") {
+    struct Artifacts {
+        fs::path path;
+        ~Artifacts() {
+            std::error_code error;
+            fs::remove_all(path, error);
+        }
+    } artifacts;
+    static std::atomic<unsigned> sequence{0};
+    while (artifacts.path.empty()) {
+        auto candidate = fs::current_path() /
+            (".klang-enum-identity-" + std::to_string(++sequence));
+        if (!fs::exists(candidate) && fs::create_directory(candidate))
+            artifacts.path = std::move(candidate);
+    }
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    resolver->add_search_dir(artifacts.path.string());
+    auto producer = k::compiler::create(make_pic_target_machine());
+    producer->set_file_resolver(resolver);
+    producer->parse_source("enum-identity-producer.k", R"K(
+        module enumidentity;
+        namespace api {
+            public enum CType : unsigned byte { CHAR = 12; INT = 17; }
+            public enum Other : unsigned byte { CHAR = 12; }
+            private struct Hidden {}
+            private secret(): int { return 99; }
+            public canonical(value: CType): CType { return value; }
+        }
+        public enum Root { VALUE = 42; }
+    )K", false, false);
+    REQUIRE_FALSE(producer->has_compilation_error());
+    auto library = artifacts.path / "libenumidentity.so";
+    REQUIRE(producer->gen_shared_library(library.string()));
+    auto kdi_path = library;
+    kdi_path.replace_extension(".kdi");
+    resolver->add_explicit_path("enumidentity", kdi_path);
+    auto metadata = kdi::kdi_read_cbor_file(kdi_path.string());
+    auto api = std::find_if(metadata.unit.root_ns.namespaces.begin(),
+                            metadata.unit.root_ns.namespaces.end(),
+        [](const auto& ns) { return ns.name == "api"; });
+    REQUIRE(api != metadata.unit.root_ns.namespaces.end());
+    const auto& api_metadata = *api;
+    REQUIRE(api_metadata.enums.size() == 2);
+    CHECK(api_metadata.enums.front().fq_name == "enumidentity::api::CType");
+    CHECK(api_metadata.enums.front().entries.front().value == 12);
+    REQUIRE(api_metadata.functions.size() == 1);
+    CHECK(api_metadata.functions.front().name == "canonical");
+
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    consumer->parse_source("enum-identity-consumer.k", R"K(
+        module enumidentityconsumer;
+        import enumidentity;
+        using namespace enumidentity::api;
+        using namespace api = enumidentity::api;
+        using Code = enumidentity::api::CType;
+        run(): int {
+            a: CType = CType::CHAR;
+            b: api::CType = api::CType::INT;
+            c: Code = Code::CHAR;
+            d: ::enumidentity::api::CType = ::enumidentity::api::CType::INT;
+            if (canonical(a) != c || canonical(b) != d) return -1;
+            return enumidentity::Root::VALUE;
+        }
+    )K", false, false);
+    REQUIRE_FALSE(consumer->has_compilation_error());
+    REQUIRE(consumer->verify_gen_code());
+    auto ctx = consumer->get_context_for_test();
+    auto unit = consumer->get_unit();
+    auto origin = unit->get_root_namespace()->get_child_namespace("enumidentity");
+    REQUIRE(origin);
+    auto imported_api = origin->get_child_namespace("api");
+    REQUIRE(imported_api);
+    auto canonical = imported_api->get_enum("CType");
+    REQUIRE(canonical);
+    CHECK_FALSE(imported_api->get_aggregate("Hidden"));
+    CHECK_FALSE(imported_api->get_function("secret"));
+    REQUIRE(imported_api->get_enum("Other"));
+    CHECK(imported_api->get_enum("Other")->get_enum_type() != canonical->get_enum_type());
+    for (const auto* spelling : {"enumidentity::api::CType", "::enumidentity::api::CType",
+                                 "api::CType"}) {
+        INFO(spelling);
+        auto imported = unit->get_or_create_imported_enum(k::name::from(spelling), ctx);
+        CHECK(imported == canonical);
+        REQUIRE(imported);
+        CHECK(imported->get_enum_type() == canonical->get_enum_type());
+    }
+    auto root_enum = origin->get_enum("Root");
+    REQUIRE(root_enum);
+    CHECK(unit->get_or_create_imported_enum(k::name{"Root"}, ctx) == root_enum);
+    REQUIRE(ensure_libk_loaded());
+    std::string load_error;
+    REQUIRE_FALSE(llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+        library.c_str(), &load_error));
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
+    for (const auto* forbidden : {"value: Hidden; return 0;", "return secret();"}) {
+        INFO(forbidden);
+        auto denied = k::compiler::create();
+        denied->set_file_resolver(resolver);
+        try {
+            denied->parse_source("enum-identity-denied.k",
+                std::string("module enumidentitydenied; import enumidentity; "
+                            "using namespace enumidentity::api; run(): int { ")
+                    + forbidden + " }", false, false);
+        } catch (const k::log::compiler_error&) {
+        }
+        CHECK(denied->has_compilation_error());
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [import-enum-basic] Enum defined in a lib, accessed by qualified name in exe.

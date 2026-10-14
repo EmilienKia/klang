@@ -100,9 +100,16 @@ the canonical symbol resolver after completing missing nested union declarations
 preserves already-bound cloned targets, and must not repeat aggregate layout or
 constructor-initializer synthesis.
 Full body typing is idempotent per concrete function within the type-reference pass.
+Assignment-return convention warnings share that concrete-function guard, after
+lexical signature resolution and return deduction. Never inspect dependent
+member recipes during aggregate revisits. Display source operator/type names in
+diagnostics without changing mangled symbols or template-instantiation cache keys.
 Before leaving that pass, drain unvisited concrete instantiation bodies to a fixed
 point: late declaration resolution can append signature-only dependencies to an
 imported namespace whose body walk has already finished.
+Parameter default expressions are parented to their declaring parameter for lexical
+lookup. Template instantiations clone defaults before attachment; sharing a default
+would move its declaration scope to the last instantiated parameter.
 Template-qualified static calls use that pass's instantiation path, not a fresh
 declaration-only aggregate resolver. Explicit function template calls instantiate
 every candidate declaration; argument caches are declaration-owned, not name-owned.
@@ -117,10 +124,35 @@ visibility checks, including across re-export. Do not widen FFI visibility.
 Hosted member-template source can start with private type and native dependency
 namespace preludes: materialise those scopes before attaching the matching recipe
 to its imported host; never assume the first declaration is the member function.
+Conditional operand adaptation must attach load/cast wrappers to the ternary.
+Codegen finds implicit member access through lexical ancestors; orphan wrappers
+lose the enclosing method even when the original access passed visibility checks.
 Unresolved-type declaration origins belong only to re-parsed imported declarations.
 Do not attach them to ordinary local types or substituted caller arguments. Origin
 references use lexical resolver lookup, not a parallel context-registry lookup;
 enum return signatures and cast targets must share their declaration's enum type.
+Wrapper subtypes use the same lexical type-resolution chain as bare names;
+an unsized array under an owner must retain using-imported aliases and element const.
+Resolved composite wrappers can be freshly pinned nodes; enclosing owner/const
+wrappers must pin them too rather than leave their subtype weak and unowned.
+Recursive template signatures may be semantically resolved before LLVM layout;
+retain complete const/reference chains when no unresolved nodes remain.
+Imported definition namespaces retain declaration-origin lookup for peer
+templates even when type resolution enters the namespace without its aggregate.
+Late signature-created local specializations must complete their member
+resolution even when their LLVM layout is already materialized; snapshot
+aggregate member lists when this completion can add constructor specializations.
+Exported concrete template specializations keep their imported nominal type and
+LLVM layout. Missing member recipes hydrate their original host; private field
+names must match KDI slot indices/types, retain private visibility, and never
+rebuild layout. Template friends resolve in the primary declaration's scope.
+Qualified local enum entries use lexical enum lookup before imported fallback;
+resolve forward declarations in place so cross-file constructor and function
+arguments retain the declaration's nominal type, including rooted module names.
+Enum field and callable signature references bind in that same symbol pass before
+the context's short-name registry can select an unrelated namespace homonym.
+Overload ambiguity must propagate its structured diagnostic, including candidates,
+rather than return an unresolved call that raises a secondary type/constructor error.
 Private dependency signatures retain rooted type references. Concrete aggregate
 types are emitted with source template arguments, never only their internal
 instantiation-cache names.
@@ -137,6 +169,12 @@ receivers can follow a validated vbptr path; a vbptr-only base has no inline vpt
 for a secondary table to patch. Same-subobject dispatch needs no adjustment.
 When a physical adjustment is required, unknown offsets must fail compilation,
 never become zero, an ancestor's offset, or a stale materialization-time estimate.
+Exception dispatch chains and Throwable cause bookkeeping use named ABI fields
+with the final DataLayout, never LLVM identified-type pointer equality. Walk live
+collector storage once, excluding nested copies replaced by an enclosing collector;
+missing fields, unresolved bases and unrepresentable chain offsets are codegen errors.
+After copying a thrown object, rebind live virtual-base pointers to the exception
+allocation rather than retaining addresses into the source object.
 
 Namespace-level lambda declarations synthesized inside free template functions
 must retain the function's template parameters until instantiation. Bind their
@@ -299,7 +337,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params |
 | `klang-tests-gen-generics` | generic (type-erased) declarations, restrictions, single synthesis |
 | `klang-tests-import-core` | KDI import core, namespaces, enums, transitive |
-| `klang-tests-import-templates` | KDI cross-module template instantiation; CTest shards 0–2 |
+| `klang-tests-import-templates` | KDI cross-module template instantiation; CTest shards 0–14 |
 | `klang-tests-import-interop` | KDI aliases, typedefs, callables, prod-lib |
 | `klangc-tests` | CLI/integration behavior |
 
@@ -316,6 +354,9 @@ Grouping policy:
 - `SHARD_COUNT 2` likewise registers `<target>-shard-0` and
   `<target>-shard-1`, preserving the executable/build target name and 120-second
   per-entry timeout while running each normally enabled Catch2 case once.
+- `SHARD_COUNT 15` gives the import-template suite fifteen serial entries,
+  `<target>-shard-0` through `<target>-shard-14`, without changing its executable,
+  dependencies, case selection, lexical order, RNG seed or 120-second timeout.
 - Use `ctest -R "^klang-tests-gen-functions-shard-" --output-on-failure` or
   `ctest -R "^klang-tests-import-templates-shard-" --output-on-failure` to run
   a full heavy suite within the per-entry budget. Direct executable invocation

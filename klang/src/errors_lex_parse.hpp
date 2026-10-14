@@ -82,6 +82,8 @@ enum class compiler_diag : unsigned int {
      */
     ERR_KDI_TEMPLATE_REPARSE_FAILED               = 0x011C,
     ERR_CREATE_STATIC_LIB_FAILED                 = 0x011D,
+    ERR_EXPORT_SYMBOL_INCOMPATIBLE_OUTPUT         = 0x011E,
+    ERR_EXPORT_SYMBOL_UNSUPPORTED_TARGET          = 0x011F,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

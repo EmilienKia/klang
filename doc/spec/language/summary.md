@@ -238,6 +238,7 @@ Owner follows the same rules as indirections for upcast/downcast, with the same 
 ### 3.8 Const
 
 - `const` on a variable: immutable after initialization. No assignment, no increment/decrement.
+- Reading a pointer field through a const aggregate makes the stored pointer immutable, not its pointee. Its value may still upcast normally; pointee `const` remains enforced.
 - `const T*`, `const T&`, etc.: the pointed-to value cannot be modified.
 - `const` on a member function: `this` is `const T&`, the function cannot modify fields.
 - `const struct`: all non-static member functions are implicitly `const`.
@@ -510,16 +511,26 @@ Semantics depend on the target type — see §3.2 for per-indirection-type behav
 
 Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result to `a`.
 
+An overloaded assignment operator should return a reference to its owning aggregate
+for chaining. A missing or different return type is allowed but produces a convention
+warning. For member templates, this check applies to concrete instantiations, not
+uninstantiated recipes whose signature types remain deferred.
+
 ### 8.6 Function Call, Subscript and Member Access
 
 > Details: [call.md](expressions/call.md)
 
 - **Call**: `f(args…)`. Pass by value (copy) or by reference (`T&`).
-- **Default parameters**: only trailing parameters may have default values.
+- **Default parameters**: only trailing parameters may have default values. Overloads may share an argument count if their supplied parameter types differ; identical supplied prefixes (including zero arguments) made possible by defaults are rejected. Conversion ties are diagnosed at the call site.
+  Defaults on imported public/protected functions, methods, and constructors
+  remain available. Their names are bound in the declaration's lexical scope
+  and are not rebound by caller-local or caller-module shadowing; they are
+  evaluated only when the corresponding argument is omitted. Required
+  arguments and nominal enum compatibility remain unchanged.
 - **Subscript**: `arr[i]` — runtime bounds-check. Works on any `T[N]`, `T[]`, and any indirection to an array.
 - **Member access `.`**: fields and methods. Works on temporaries (rvalues) — method chaining supported. `arr.size` = element count.
 - **Unified Call Syntax (UCS)**: `obj.func(args...)` / `obj.func<TArgs...>(args...)` can invoke matching static methods on the receiver's aggregate/base hierarchy or matching free functions taking `obj` as their first parameter (`func(obj, args...)`), with aggregate static members prioritized over free functions, supporting both non-template and template functions with argument deduction.
-- **Pointer access `→`**: equivalent to `(*p).member`, with null-check.
+- **Pointer access `→`**: equivalent to `(*p).member`, with null-check. Inherited fields use the same base-subobject adjustment, visibility, ambiguity and const checks as `.`.
 - **Member function reference call**: `(obj.*mfp)(args)` and `(ptr->*mfp)(args)` — parentheses required.
 - **Template-qualified scope call**: expression calls support `Type<T>::func(args...)`,
   `ns::Type<T>::func(args...)`, and `::ns::Type<T>::func(args...)`.
@@ -1227,6 +1238,9 @@ Enums are nominal types identified by their fully qualified declaration names.
 Same-named enums in different namespaces remain distinct, and an unqualified
 enum name in a return signature or cast resolves in the declaration's lexical
 scope. Return-type mismatch diagnostics identify the qualified nominal types.
+Imported enum entries follow the same namespace and `using` lookup rules as
+their types. Qualified names, namespace aliases and specific `using` aliases
+must refer to the original declaration, not introduce distinct enum types.
 
 ### 19.1 Entries
 

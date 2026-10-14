@@ -407,3 +407,182 @@ TEST_CASE("Array brace init — local const array folding in return", "[gen][bra
     REQUIRE(test_fold() == 11);
 }
 
+TEST_CASE("Sized class arrays default-construct receivers before virtual assignment",
+          "[gen][array][class][vptr][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module class_array_default_receivers;
+        constructed : int = 0;
+        destroyed : int = 0;
+        class Value {
+            public value : int = 7;
+            public Value() { ++constructed; }
+            public Value(number : int) : value(number) { ++constructed; }
+            public ~Value() { ++destroyed; }
+            public get() : int { return value; }
+            public operator =(other : const Value&) : Value& {
+                value = other.value;
+                return this;
+            }
+        }
+        test() : int {
+            constructed = 0;
+            destroyed = 0;
+            result : int = 0;
+            {
+                values : Value[2];
+                if (constructed != 2 || values[0].get() != 7 || values[1].get() != 7) return -1;
+                values[0] = Value(19);
+                values[1] = Value(23);
+                result = values[0].get() + values[1].get();
+            }
+            return constructed == 4 && destroyed == 4 ? result : -2;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Sized aggregate arrays destroy only completed default constructors",
+          "[gen][array][lifecycle][exceptions][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module array_default_constructor_lifetime;
+        attempts : int = 0;
+        drops : int = 0;
+        order : int = 0;
+        failAt : int = 0;
+        struct Element {
+            id : int;
+            Element() {
+                id = ++attempts;
+                if (id == failAt) throw Exception(924);
+            }
+            ~Element() { ++drops; order = order * 10 + id; }
+        }
+        reset(failure : int) { attempts = 0; drops = 0; order = 0; failAt = failure; }
+        normal() : int {
+            reset(0);
+            { values : Element[3]; }
+            return attempts == 3 && drops == 3 && order == 321 ? 1 : 0;
+        }
+        partial() : int {
+            reset(3);
+            code : int = 0;
+            try { values : Element[4]; }
+            catch (error : Throwable&) { code = error.getCode(); }
+            return code == 924 && attempts == 3 && drops == 2 && order == 21 ? 1 : 0;
+        }
+        beforeDeclaration() : int {
+            reset(0);
+            code : int = 0;
+            try {
+                throw Exception(925);
+                values : Element[2];
+            } catch (error : Throwable&) { code = error.getCode(); }
+            return code == 925 && attempts == 0 && drops == 0 ? 1 : 0;
+        }
+        struct Container {
+            values : Element[3];
+            Container() {}
+        }
+        memberNormal() : int {
+            reset(0);
+            { container : Container; }
+            return attempts == 3 && drops == 3 && order == 321 ? 1 : 0;
+        }
+        memberPartial() : int {
+            reset(3);
+            code : int = 0;
+            try { container : Container; }
+            catch (error : Throwable&) { code = error.getCode(); }
+            return code == 924 && attempts == 3 && drops == 2 && order == 21 ? 1 : 0;
+        }
+        attemptCount() : int { return attempts; }
+        dropCount() : int { return drops; }
+        destructionOrder() : int { return order; }
+    )SRC");
+    REQUIRE(jit);
+    auto attempts = jit->lookup_symbol<int (*)()>("attemptCount");
+    auto drops = jit->lookup_symbol<int (*)()>("dropCount");
+    auto order = jit->lookup_symbol<int (*)()>("destructionOrder");
+    REQUIRE(attempts);
+    REQUIRE(drops);
+    REQUIRE(order);
+    for (const auto* name : {"normal", "partial", "beforeDeclaration", "memberNormal", "memberPartial"}) {
+        INFO(name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        int result = 0;
+        REQUIRE_NOTHROW(result = run());
+        INFO("attempts=" << attempts() << " drops=" << drops() << " order=" << order());
+        CHECK(result == 1);
+    }
+}
+
+TEST_CASE("Sized aggregate arrays validate their default constructor",
+          "[gen][array][constructor][regression]") {
+    SECTION("no matching default constructor") {
+        REQUIRE_THROWS(gen_jit_throws(R"SRC(
+            module array_missing_default_constructor;
+            class Value { public Value(number : int) {} }
+            test() { values : Value[2]; }
+        )SRC"));
+    }
+    SECTION("private default constructor") {
+        REQUIRE_THROWS(gen_jit_throws(R"SRC(
+            module array_private_default_constructor;
+            class Value { private Value() {} }
+            test() { values : Value[2]; }
+        )SRC"));
+    }
+    SECTION("abstract class") {
+        REQUIRE_THROWS(gen_jit_throws(R"SRC(
+            module array_abstract_default_constructor;
+            abstract class Value { public abstract get() : int; }
+            test() { values : Value[2]; }
+        )SRC"));
+    }
+    SECTION("zero-size array does not require default construction") {
+        auto jit = gen_jit(R"SRC(
+            module array_empty_without_default_constructor;
+            class Value { public Value(number : int) {} }
+            test() : int { values : Value[0]; return values.size; }
+        )SRC");
+        REQUIRE(jit);
+        auto run = jit->lookup_symbol<int (*)()>("test");
+        REQUIRE(run);
+        CHECK(run() == 0);
+    }
+}
+
+TEST_CASE("Sized global aggregate arrays default-construct and finalize their elements",
+          "[gen][array][global][lifecycle][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module global_array_default_lifetime;
+        attempts : int = 0;
+        order : int = 0;
+        class Element {
+            id : int;
+            public Element() { id = ++attempts; }
+            public ~Element() { order = order * 10 + id; }
+            public get() : int { return id; }
+        }
+        values : Element[3];
+        count() : int { return attempts; }
+        last() : int { return values[2].get(); }
+        destructionOrder() : int { return order; }
+    )SRC");
+    REQUIRE(jit);
+    auto count = jit->lookup_symbol<int (*)()>("count");
+    auto last = jit->lookup_symbol<int (*)()>("last");
+    auto order = jit->lookup_symbol<int (*)()>("destructionOrder");
+    REQUIRE(count);
+    REQUIRE(last);
+    REQUIRE(order);
+    CHECK(count() == 3);
+    CHECK(last() == 3);
+    CHECK(order() == 0);
+    jit->finalize_runtime();
+    CHECK(order() == 321);
+}

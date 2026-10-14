@@ -37,6 +37,24 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/common/operator_names.hpp"
+#include "../src/errors.hpp"
+#include "../src/model/model_builder.hpp"
+
+#include <algorithm>
+
+namespace {
+
+bool is_assignment_diagnostic(const k::log::diagnostic& diagnostic) {
+    return diagnostic.level == k::log::diagnostic::severity::warning
+        && diagnostic.message.starts_with("Assignment operator");
+}
+
+size_t assignment_diagnostic_count(const test_logger& logger) {
+    return std::count_if(logger.diagnostics.begin(), logger.diagnostics.end(), is_assignment_diagnostic);
+}
+
+} // namespace
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Parser tests
@@ -814,4 +832,216 @@ test(x : int) : int {
     CHECK(fn(-1) == 0);
     CHECK(fn(5) == 1);  // x>0 is true, returns 1 before reaching x==5
     CHECK(fn(0) == 0);  // x>0 is false, x==5 is false
+}
+
+TEST_CASE("Assignment diagnostics defer unused member recipes and preserve concrete reference chaining",
+          "[operator][gen][assign][template][assignment-diagnostics]") {
+    auto compiler = compile_model_with_stdlib(R"SRC(
+        module gen_assign_diagnostics_deferred;
+        template<typename T>
+        struct Input {
+            value : T;
+        }
+        template<typename T>
+        struct Holder {
+            value : T;
+            operator =(other : const Holder<T>&) : Holder<T>& {
+                value = other.value;
+                return this;
+            }
+            template<typename U>
+            operator =(input : const Input<U>&) : Holder<T>& {
+                value = (T) input.value;
+                return this;
+            }
+            template<typename U>
+            operator +=(input : U) : Holder<T>& {
+                return input.dependentMember();
+            }
+            operator -=(input : int) -> delete;
+        }
+        test() : int {
+            first : Holder<int>;
+            second : Holder<int>;
+            input : Input<int>;
+            input.value = 21;
+            result : Holder<int>& = (first = second = input);
+            result.value = result.value + 21;
+            return first.value == 42 && second.value == 21 ? 42 : -1;
+        }
+    )SRC");
+    REQUIRE(compiler);
+    auto unit = compiler->get_unit();
+    auto test = unit->get_root_namespace()->get_functions("test").front();
+    auto first = test->get_block()->get_variable("first");
+    REQUIRE(first);
+    auto type = std::dynamic_pointer_cast<k::model::struct_type>(
+        k::model::type::canonical(first->get_type()));
+    REQUIRE(type);
+    auto owner = type->get_struct();
+    REQUIRE(owner);
+
+    test_logger logger;
+    k::model::gen::type_reference_resolver resolver(logger, compiler->get_context_for_test(), *unit);
+    resolver.resolve();
+    CHECK(assignment_diagnostic_count(logger) == 0);
+    resolver.resolve();
+    CHECK(assignment_diagnostic_count(logger) == 0);
+
+    size_t concrete_templates = 0;
+    size_t unused_recipes = 0;
+    for (const auto& function : owner->functions()) {
+        const auto name = function->has_tpl_args()
+            ? function->get_tpl_base_name() : function->get_short_name();
+        if (!k::op::is_assignment_operator(name) || function->is_deleted()) continue;
+        if (function->is_template()) {
+            CHECK(k::model::type::contains_unresolved(function->get_return_type()));
+            if (name == k::op::OP_ADD_ASGN) ++unused_recipes;
+            continue;
+        }
+        CHECK_FALSE(k::model::type::contains_unresolved(function->get_return_type()));
+        auto reference = std::dynamic_pointer_cast<k::model::reference_type>(
+            k::model::type::canonical(function->get_return_type()));
+        REQUIRE(reference);
+        CHECK(k::model::type::are_equal(reference->get_subtype(), type));
+        if (function->has_tpl_args()) {
+            ++concrete_templates;
+            CHECK(k::model::gen::format_function_display_name(function)
+                == "Holder<int>::operator=<int>");
+            CHECK(k::model::gen::format_function_signature(function).find("Holder<int>&")
+                != std::string::npos);
+        }
+    }
+    CHECK(concrete_templates == 1);
+    CHECK(unused_recipes == 1);
+
+    auto jit = compiler->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Assignment diagnostics do not hide an unresolved concrete return type",
+          "[operator][gen][assign][assignment-diagnostics]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module gen_assign_diagnostics_unresolved;
+        struct Holder {
+            operator =(input : int) : Missing& { return this; }
+        }
+        test() {
+            value : Holder;
+            value = 42;
+        }
+    )SRC"), k::log::compiler_error);
+}
+
+TEST_CASE("Assignment diagnostics warn once for concrete invalid returns using source names",
+          "[operator][gen][assign][template][assignment-diagnostics]") {
+    test_logger logger;
+    k::source source(R"SRC(
+        module gen_assign_diagnostics_invalid;
+        struct Other {}
+        other : Other;
+        template<typename T>
+        struct Holder {
+            value : T;
+            operator =(input : const Holder<T>&) : int { return 0; }
+            operator +=(input : int) { value = value + input; }
+            operator -=(input : int) : void {}
+            template<typename U>
+            operator *=(input : U) : int { return (int) input; }
+            template<typename U>
+            operator /=(input : U) : Holder<T>& { return this; }
+            operator %=(input : int) -> delete;
+            operator <<=(input : int) : const Holder<T>& { return this; }
+            operator >>=(input : int) : Other& { return other; }
+        }
+        const struct Frozen {
+            const operator =(input : int) : const Frozen& { return this; }
+        }
+        test() {
+            holder : Holder<int>;
+            holder *= 2;
+            holder *= 3;
+            frozen : Frozen;
+        }
+    )SRC");
+    k::parse::parser parser(logger);
+    parser.parse(source);
+    auto ast = parser.parse_unit();
+    REQUIRE(ast);
+    auto context = k::model::context::create();
+    auto unit = k::model::unit::create(context);
+    k::model::model_builder::visit(logger, context, *ast, *unit);
+    k::model::gen::symbol_resolver symbols(logger, context, *unit);
+    symbols.resolve();
+    context->resolve_types();
+    k::model::gen::aggregate_type_resolver aggregates(logger, context, *unit);
+    aggregates.resolve();
+    context->resolve_types();
+    k::model::gen::model_materializer materializer(logger, context, *unit);
+    materializer.materialize();
+    k::model::gen::type_reference_resolver resolver(logger, context, *unit);
+    resolver.resolve();
+    REQUIRE_FALSE(logger.has_error());
+    REQUIRE(assignment_diagnostic_count(logger) == 5);
+
+    size_t wrong_returns = 0;
+    size_t void_returns = 0;
+    size_t instantiated_returns = 0;
+    for (const auto& diagnostic : logger.diagnostics) {
+        if (!is_assignment_diagnostic(diagnostic)) continue;
+        const auto message = k::log::format_diagnostic_message(diagnostic);
+        INFO(message);
+        CHECK(message.find("__operator_") == std::string::npos);
+        CHECK(message.find("Holder__") == std::string::npos);
+        CHECK(message.find("unresolved") == std::string::npos);
+        CHECK(message.find("struct:") == std::string::npos);
+        REQUIRE(diagnostic.args.size() >= 3);
+        CHECK(diagnostic.args[1] == "Holder<int>");
+        CHECK(diagnostic.args.back() == "Holder<int>&");
+        REQUIRE(diagnostic.pos);
+        const auto token = std::visit([](const auto& lexeme) {
+            return std::string(lexeme.content);
+        }, *diagnostic.pos);
+        CHECK(diagnostic.args[0] == "operator" + token);
+        if (diagnostic.code == static_cast<unsigned int>(
+                k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_MEMBER)) {
+            ++wrong_returns;
+            REQUIRE(diagnostic.args.size() == 4);
+            CHECK((diagnostic.args[2] == "int" || diagnostic.args[2] == "Other&"));
+            if (diagnostic.args[0] == "operator*=") ++instantiated_returns;
+        } else {
+            CHECK(diagnostic.code == static_cast<unsigned int>(
+                k::diag::structure_diag::WARN_CONST_STRUCT_NON_CONST_BASE));
+            ++void_returns;
+            CHECK((diagnostic.args[0] == "operator+=" || diagnostic.args[0] == "operator-="));
+        }
+    }
+    CHECK(wrong_returns == 3);
+    CHECK(void_returns == 2);
+    CHECK(instantiated_returns == 1);
+    resolver.resolve();
+    CHECK(assignment_diagnostic_count(logger) == 5);
+
+    auto test = unit->get_root_namespace()->get_functions("test").front();
+    auto holder = test->get_block()->get_variable("holder");
+    REQUIRE(holder);
+    auto type = std::dynamic_pointer_cast<k::model::struct_type>(holder->get_type());
+    REQUIRE(type);
+    size_t template_signatures = 0;
+    for (const auto& function : type->get_struct()->functions()) {
+        if (function->is_template() && function->get_short_name() == k::op::OP_MUL_ASGN) {
+            CHECK(k::model::gen::format_template_function_signature(function)
+                == "Holder<int>::operator*=<U>(input : U) : int");
+            ++template_signatures;
+        }
+        if (function->has_tpl_args() && function->get_tpl_base_name() == k::op::OP_MUL_ASGN) {
+            CHECK(k::model::gen::format_function_signature(function)
+                == "Holder<int>::operator*=<int>(input : int) : int");
+            ++template_signatures;
+        }
+    }
+    CHECK(template_signatures == 2);
 }

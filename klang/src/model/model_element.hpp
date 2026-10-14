@@ -40,6 +40,7 @@ protected:
 
     friend class statement;
     friend class variable_definition;
+    friend class parameter;
     friend class template_instantiator;
     void set_parent(const std::shared_ptr<element> &parent_element) {
         _parent = parent_element;

@@ -150,11 +150,11 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
         bool resolved_as_special = false;
         const auto& sym_name = symbol.get_name();
 
-        if (sym_name.size() >= 2 && !sym_name.has_root_prefix()) {
+        if (sym_name.size() >= 2) {
             const std::string& last_part = sym_name.back();
 
             // ── AnnotationName::annotation → RTTI descriptor ────────────
-            if (last_part == "annotation") {
+            if (last_part == "annotation" && !sym_name.has_root_prefix()) {
                 std::vector<std::string> ann_parts(sym_name.parts().begin(),
                                                      sym_name.parts().end() - 1);
                 k::name ann_name{false, std::move(ann_parts)};
@@ -182,19 +182,9 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
             // ── EnumName::entryName → enum entry ────────────────────────
             if (!resolved_as_special) {
                 const std::string& entry_name = last_part;
-                std::shared_ptr<enumeration> found_enum;
-
-                if (sym_name.size() == 2) {
-                    // Simple: EnumName::entryName — walk up the scope chain
-                    for (auto current = symbol.shared_as<element>(); current; current = current->parent<element>()) {
-                        if (auto eh = std::dynamic_pointer_cast<enum_holder>(current)) {
-                            if (auto en = eh->get_enum(sym_name.front())) {
-                                found_enum = en;
-                                break;
-                            }
-                        }
-                    }
-                }
+                const auto enum_name = sym_name.without_back();
+                auto found_enum = scope_lookup::lookup_enumeration(
+                    symbol.shared_as<element>(), enum_name.to_string());
 
                 // UnionName::Kind::entryName — look for union Kind enum
                 if (!found_enum && sym_name.size() == 3 && sym_name[1] == "Kind") {
@@ -211,13 +201,13 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
 
                 // If not found locally, try imported enums (works for both 2-part and N-part names)
                 if (!found_enum) {
-                    std::vector<std::string> enum_parts(sym_name.parts().begin(),
-                                                         sym_name.parts().end() - 1);
-                    k::name enum_name{false, std::move(enum_parts)};
                     found_enum = _unit.get_or_create_imported_enum(enum_name, _context);
                 }
 
                 if (found_enum) {
+                    // A producer file can follow its consumer in the same unit.
+                    // Resolve the declaration, never manufacture another enum type.
+                    if (!found_enum->is_resolved()) visit_enumeration(*found_enum);
                     auto entry = found_enum->get_entry_by_name(entry_name);
                     if (entry.has_value()) {
                         size_t idx = 0;

@@ -171,6 +171,18 @@ int          __k_io_buffer_force(void* buf);
 int          __k_io_buffer_load(void* buf);
 int          __k_io_buffer_is_loaded(const void* buf);
 
+/* ── FFI NativeBuffer bridge: unique symbols for the K FFI module ─────── */
+void*        __k_ffi_native_buffer_allocate(unsigned int capacity);
+void         __k_ffi_native_buffer_release(void* buf);
+void         __k_ffi_native_buffer_acquire_lease(void* buf);
+void         __k_ffi_native_buffer_release_lease(void* buf);
+int          __k_ffi_native_buffer_has_lease(const void* buf);
+uint8_t*     __k_ffi_native_buffer_data_at(void* buf, unsigned int index);
+int          __k_ffi_native_buffer_get_byte(const void* buf, unsigned int index, uint8_t* out_byte);
+int          __k_ffi_native_buffer_put_byte(void* buf, unsigned int index, uint8_t b);
+int          __k_ffi_native_buffer_copy_from(void* buf, unsigned int pos, const uint8_t* src, unsigned int len);
+int          __k_ffi_native_buffer_copy_to(const void* buf, unsigned int pos, uint8_t* dst, unsigned int len);
+
 #ifdef __cplusplus
 }
 #endif

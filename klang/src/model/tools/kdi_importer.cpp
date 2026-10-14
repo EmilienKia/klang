@@ -535,7 +535,7 @@ static void collect_llvm_defs_from_namespace(
     std::unordered_map<std::string, std::string>& seen,
     const std::function<void(const std::string&, const std::string&, const std::string&)>& on_conflict)
 {
-    const auto emit = [&](const std::string& llvm_def) {
+    const auto emit_definition = [&](const std::string& llvm_def) {
         if (llvm_def.empty()) return;
         auto tname = extract_llvm_type_name(llvm_def);
         if (tname.empty()) {
@@ -552,15 +552,27 @@ static void collect_llvm_defs_from_namespace(
             on_conflict(tname, it->second, llvm_def);
         }
     };
+    const auto emit = [&](const std::string& definitions) {
+        // An aggregate also carries definitions for private by-value layout
+        // dependencies. Deduplicate each named definition, not the whole bundle.
+        size_t start = 0;
+        while (start < definitions.size()) {
+            auto end = definitions.find('\n', start);
+            emit_definition(definitions.substr(start, end - start));
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+    };
+    std::function<void(const kdi::kdi_aggregate&)> emit_aggregate;
+    emit_aggregate = [&](const kdi::kdi_aggregate& agg) {
+        for (const auto& nested_un : agg.nested_unions) emit(nested_un.llvm_def);
+        for (const auto& nested : agg.nested) emit_aggregate(nested);
+        emit(agg.llvm_def);
+    };
 
     for (const auto& un : ns.unions) emit(un.llvm_def);
     for (const auto& agg : ns.aggregates) {
-        // 1. Nested unions first (dependencies before the aggregate that references them).
-        for (const auto& nested_un : agg.nested_unions) emit(nested_un.llvm_def);
-        // 2. Nested aggregates (public/protected inner types).
-        for (const auto& nested : agg.nested) emit(nested.llvm_def);
-        // 3. The aggregate's own struct type def (e.g. '%Base = type { ptr, i32 }').
-        emit(agg.llvm_def);
+        emit_aggregate(agg);
     }
     for (const auto& child_ns : ns.namespaces) {
         collect_llvm_defs_from_namespace(child_ns, out, seen, on_conflict);
@@ -568,6 +580,39 @@ static void collect_llvm_defs_from_namespace(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+void kdi_importer::restore_parameter_defaults(function& fn,
+    const std::vector<kdi::kdi_param>& params, const std::shared_ptr<context>& ctx,
+    std::shared_ptr<ns> scope) {
+    if (!scope) {
+        std::string fq = fn.is_member() ? fn.get_owner()->get_fq_name() : fn.get_fq_name();
+        auto separator = fq.rfind("::");
+        scope = imported_namespace(_unit, separator == std::string::npos
+            ? std::string{} : fq.substr(0, separator));
+    }
+    for (size_t i = 0; i < params.size(); ++i) {
+        auto param = fn.get_parameter(i);
+        if (!params[i].default_source || param->has_default_expr()) continue;
+        auto text = std::make_unique<std::string>(
+            "__kdi_default(value: int = (" + *params[i].default_source + ")) {}");
+        auto source = std::make_unique<k::source>(
+            std::string_view("kdi-default.k"), std::string_view(*text));
+        auto source_ptr = source.get();
+        _unit._imported_template_source_texts.push_back(std::move(text));
+        _unit._imported_template_sources.push_back(std::move(source));
+        k::parse::parser parser(_logger, *source_ptr);
+        auto ast = parser.parse_unit();
+        auto declaration = ast->declarations.size() == 1
+            ? std::dynamic_pointer_cast<parse::ast::function_decl>(ast->declarations.front())
+            : nullptr;
+        if (!declaration || declaration->params.size() != 1
+            || !declaration->params.front()->default_expr)
+            throw std::runtime_error("Invalid KDI default expression for '" + fn.get_fq_name() + "'");
+        param->set_default_expr(model_builder::build_imported_expression(
+            _logger, ctx, *declaration->params.front()->default_expr, _unit, param, scope));
+        param->set_default_definition_scope(scope);
+    }
+}
 
 void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
     // ── Step B1: collect all llvm_def strings from every loaded KDI ─────────
@@ -647,6 +692,7 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
             }
             param->set_type(std::move(resolved));
         }
+        restore_parameter_defaults(fn, signature.params, ctx);
         if constexpr (requires { signature.return_type; }) {
             if (!fn.get_return_type()
                 && !std::holds_alternative<kdi::kdi_void_type>(signature.return_type.value)) {
@@ -1283,6 +1329,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             if (auto tpl_fn = host->define_function(tdef.name, tdef.function_signature->is_static)) {
                 tpl_fn->set_tpl_info(std::move(ti));
                 populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
+                restore_parameter_defaults(*tpl_fn, tdef.function_signature->params, ctx);
             }
             ctx->pop_template_param_scope();
             return;
@@ -1348,6 +1395,12 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                 tpl_agg->set_tpl_info(std::move(ti));
                 populate_template_signature_aggregate(*tpl_agg, *tdef.aggregate_signature, _unit, ctx);
                 materialise_annotations(tdef.aggregate_signature->annotations, *tpl_agg);
+                for (size_t i = 0; i < tpl_agg->constructors().size(); ++i)
+                    restore_parameter_defaults(*tpl_agg->constructors()[i],
+                        tdef.aggregate_signature->constructors[i].params, ctx, target_ns);
+                for (size_t i = 0; i < tdef.aggregate_signature->methods.size(); ++i)
+                    restore_parameter_defaults(*tpl_agg->functions()[i],
+                        tdef.aggregate_signature->methods[i].params, ctx, target_ns);
             }
         } else if (tdef.function_signature) {
             const auto& signature = *tdef.function_signature;
@@ -1375,6 +1428,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             if (tpl_fn) {
                 tpl_fn->set_tpl_info(std::move(ti));
                 populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
+                restore_parameter_defaults(*tpl_fn, tdef.function_signature->params, ctx, target_ns);
             }
         }
 

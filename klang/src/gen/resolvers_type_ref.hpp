@@ -682,6 +682,7 @@ protected:
     cast_weight compute_cast_weight(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type);
 
     void resolve_parameter_type(parameter& param);
+    void ensure_template_type_ready(const std::shared_ptr<type>& t, const element& scope);
 
     /**
      * Choose the best-matching constructor among a list of candidates given a set of arguments.
@@ -732,14 +733,14 @@ protected:
                                const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates = {});
 
     /**
-     * Check all groups of same-named free functions in a function_holder for arity-overlap
+     * Check all groups of same-named functions in a function_holder for identical supplied-prefix
      * collisions caused by default-parameter values.
      * Reports an error for every colliding pair found.
      */
     void check_overload_collisions(function_holder& fh);
 
     /**
-     * Check all constructor overloads of an aggregate for arity-overlap collisions caused
+     * Check all constructor overloads of an aggregate for identical supplied-prefix collisions caused
      * by default-parameter values.
      * Reports an error for every colliding pair found.
      */

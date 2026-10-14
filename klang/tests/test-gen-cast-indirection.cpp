@@ -62,6 +62,63 @@
 #include <catch2/catch_all.hpp>
 #include "helpers.hpp"
 
+TEST_CASE("Const wrapper pointer fields retain mutable pointees during upcast",
+          "[gen][cast][const-wrapper][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"SRC(
+        module gen_const_wrapper_pointer_upcast;
+        struct Prefix {
+            padding : long;
+            Prefix() : padding(7) {}
+        }
+        struct Base {
+            value : int;
+            Base() : value(42) {}
+        }
+        struct Derived : public Prefix, public Base {
+            Derived() : Prefix(), Base() {}
+        }
+        struct Holder {
+            pointer : Derived*;
+            Holder(value : Derived*) : pointer(value) {}
+            const explicit() : Base* { return (Base*) this.pointer; }
+        }
+        run() : int {
+            value : Derived;
+            holder : Holder(&value);
+            source : const Holder& = holder;
+            const empty : Holder(null);
+            if ((Base*) empty.pointer != null || empty.explicit() != null) return -1;
+            first : Base* = (Base*) source.pointer;
+            second : Base* = source.explicit();
+            if (first != second || first->value != 42) return -2;
+            first->value = 43;
+            return second->value;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 43);
+}
+
+TEST_CASE("Const wrapper pointer casts still reject removing pointee const",
+          "[gen][cast][const-wrapper][diagnostic][regression]") {
+    REQUIRE_THROWS_MATCHES(gen_jit_throws(R"SRC(
+        module gen_const_wrapper_pointer_const_drop;
+        struct Base {}
+        struct Derived : public Base {}
+        struct Holder {
+            pointer : const Derived*;
+            const erase() : Base* { return (Base*) this.pointer; }
+        }
+    )SRC"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const k::log::compiler_error& error) {
+                return error.get_diagnostic().code == 0x0918u;
+            }, "pointer cast cannot remove pointee const"));
+}
+
 // =============================================================================
 // [EC1] Explicit (Base*) ptr<Derived> — static upcast
 // =============================================================================

@@ -289,13 +289,8 @@ TEST_CASE("Model lexemes: expressions and operators", "[model][lexemes]") {
 }
 
 TEST_CASE("Model lexemes: control statements (if, while, for, foreach, throw, try-catch)", "[model][lexemes]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module model_lexemes_05;
-
-        namespace k {
-            class Throwable {}
-            class Exception : public Throwable {}
-        }
 
         class MyError : public k::Exception {}
 

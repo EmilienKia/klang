@@ -2010,6 +2010,8 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
         if (dtor_it != _context->_functions.end()) dtor_llvm_fn = dtor_it->second;
     }
 
+    // Activation-error helper locals must not share the Application setup scope.
+    {
     _builder->SetInsertPoint(activation_error_bb);
     _builder->CreateCall(activation_error_fn, {activation_status});
     _builder->CreateStore(llvm::ConstantInt::get(i32_ty, 125), exit_status);
@@ -2017,6 +2019,8 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
 
     auto shutdown_fn = get_module().getOrInsertFunction("__k_application_shutdown",
         llvm::FunctionType::get(void_ty, false));
+    // Main cleanup helpers must not share the activation-error helper scope.
+    {
     auto* tls_exit_fn_ty = llvm::FunctionType::get(void_ty, false);
     auto* tls_exit_fn = get_module().getFunction("__k_tls_thread_exit");
     if (!tls_exit_fn) {
@@ -2147,6 +2151,8 @@ void implementation_generator::emit_global_main_body(global_main_function& main_
     emit_cleanup(true);
     create_call_or_invoke(tls_exit_fn_ty, tls_exit_fn, {});
     _builder->CreateResume(exception);
+    }
+    }
 }
 
 void implementation_generator::visit_namespace(ns &ns) {
@@ -2161,6 +2167,7 @@ void implementation_generator::visit_namespace(ns &ns) {
 //
 void symbol_resolver::visit_member_variable_definition(member_variable_definition& var) {
     visit_named_element(var);
+    var.set_type(resolve_enum_reference_type(var.get_type(), var));
 
     if (!var.get_annotations().empty()) {
         lex::opt_any_lexeme var_lexeme;
@@ -2224,6 +2231,13 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
         // If the variable's type is a struct with a destructor, also register it for global destruction.
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(var.get_type())) {
             if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+                var.ancestor<unit>()->get_global_destructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
+            }
+        } else if (auto array = std::dynamic_pointer_cast<sized_array_type>(
+                       type::canonical(var.get_type()))) {
+            auto element = std::dynamic_pointer_cast<struct_type>(
+                type::canonical(type::remove_const(array->get_subtype())));
+            if (element && element->get_struct() && element->get_struct()->get_destructor()) {
                 var.ancestor<unit>()->get_global_destructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
             }
         }

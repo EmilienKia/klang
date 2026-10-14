@@ -205,6 +205,11 @@ protected:
     }
 
 public:
+    static std::shared_ptr<expression> build_imported_expression(k::log::logger& logger,
+        std::shared_ptr<k::model::context> context, k::parse::ast::expression& src,
+        k::model::unit& unit, const std::shared_ptr<parameter>& parameter,
+        const std::shared_ptr<ns>& declaration_scope);
+
     static void visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit);
     static void visit_imported_declarations(k::log::logger& logger,
         std::shared_ptr<k::model::context> context, k::parse::ast::unit& src,

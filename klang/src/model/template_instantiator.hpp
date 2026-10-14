@@ -25,6 +25,7 @@
 #include "../common/logger.hpp"
 
 #include <memory>
+#include <functional>
 #include <string>
 #include <vector>
 #include <unordered_set>
@@ -89,6 +90,18 @@ std::string type_display_name(const std::shared_ptr<type>& t);
  */
 class template_instantiator {
 public:
+    /**
+     * Add missing executable recipe members to an exported specialization.
+     * Its imported LLVM layout, existing callables and nominal type stay authoritative.
+     */
+    static std::vector<std::shared_ptr<function>> hydrate_imported_aggregate(
+        aggregate& tpl_def,
+        const std::vector<template_argument>& args,
+        std::shared_ptr<aggregate> imported,
+        std::shared_ptr<context> ctx,
+        k::log::logger& logger,
+        const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_type);
+
     /**
      * Instantiate a template aggregate with concrete arguments.
      *
@@ -262,6 +275,25 @@ public:
         const pack_substitution_map& pack_subst = {},
         bool signature_only = false) {
         populate_function_from_template(dst, src, subst, val_subst, pack_subst, signature_only);
+    }
+
+    static void populate_constructor_from_template_public(
+        std::shared_ptr<constructor> dst,
+        const constructor& src,
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst,
+        const pack_substitution_map& pack_subst = {},
+        bool signature_only = false) {
+        populate_function_from_template(dst, src, subst, val_subst, pack_subst, signature_only);
+        for (const auto& init : src.member_inits()) {
+            std::vector<std::shared_ptr<expression>> args;
+            for (const auto& arg : init.args) {
+                args.push_back(clone_and_substitute_expr(arg, subst, val_subst));
+            }
+            dst->add_member_init(init.member_name, std::move(args), init.is_base_init);
+        }
+        dst->set_inits_injected(src.inits_injected());
+        dst->set_base_inits_injected(src.are_base_inits_injected());
     }
 
     /**

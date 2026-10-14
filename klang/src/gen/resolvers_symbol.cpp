@@ -25,6 +25,33 @@
 #include <queue>
 #include <unordered_set>
 namespace k::model::gen {
+
+std::shared_ptr<type> symbol_resolver::resolve_enum_reference_type(
+    const std::shared_ptr<type>& t, element& scope) {
+    if (!t || type::is_resolved(t)) return t;
+    if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (unresolved->is_template_param_placeholder() || unresolved->has_template_args()) return t;
+        auto definition = unresolved->get_definition_namespace();
+        auto lookup_scope = definition && scope_lookup::enclosing_namespace(scope) != definition
+            ? std::static_pointer_cast<element>(definition) : scope.shared_as<element>();
+        if (scope_lookup::lookup_alias(lookup_scope, unresolved->type_id())) return t;
+        if (auto en = scope_lookup::lookup_enumeration(
+                lookup_scope, unresolved->type_id().to_string())) {
+            // Bind before layout/signature completion can consult the short-name registry.
+            if (!en->is_resolved()) visit_enumeration(*en);
+            return en->get_enum_type();
+        }
+        return t;
+    }
+    if (auto sub = t->get_subtype()) {
+        auto resolved = resolve_enum_reference_type(sub, scope);
+        if (resolved != sub) {
+            if (auto wrapper = type::make_pinned_wrapper(t, resolved)) return wrapper;
+        }
+    }
+    return t;
+}
+
 /**
  * Resolve a qualified name strictly descending from elem, without climbing to parents.
  * name must be non-empty and have no root prefix.
@@ -256,6 +283,13 @@ std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_p
  */
 symbol_resolver::resolve_symbol(const element& elem, const name& name) {
     debug("[symbol_resolver::resolve_symbol] resolving '{}'", {name.to_string()});
+
+    if (!name.has_root_prefix()) {
+        if (auto param = dynamic_cast<const parameter*>(&elem)) {
+            if (auto scope = param->get_default_definition_scope())
+                return resolve_symbol(*scope, name);
+        }
+    }
 
     // Consumer namespace declarations must not replace a template's private
     // definition dependencies. Locals, parameters and members are checked first

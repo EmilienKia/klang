@@ -808,6 +808,14 @@ void implementation_generator::visit_global_destructor_function(global_destructo
             } else if (auto gv = std::get_if<std::shared_ptr<global_variable_definition>>(&item)) {
                 if (auto st_type = std::dynamic_pointer_cast<struct_type>((*gv)->get_type())) {
                     if (st_type->get_struct() && st_type->get_struct()->get_destructor()) { has_work = true; break; }
+                } else if (auto array = std::dynamic_pointer_cast<sized_array_type>(
+                               type::canonical((*gv)->get_type()))) {
+                    auto element = std::dynamic_pointer_cast<struct_type>(
+                        type::canonical(type::remove_const(array->get_subtype())));
+                    if (element && element->get_struct() && element->get_struct()->get_destructor()) {
+                        has_work = true;
+                        break;
+                    }
                 }
             }
         }
@@ -846,6 +854,15 @@ void implementation_generator::visit_global_destructor_function(global_destructo
             if (sdtor_it == _context->_functions.end()) continue;
             dtor_builder.CreateCall(sdtor_it->second, {});
         } else if (auto gv = std::get_if<std::shared_ptr<global_variable_definition>>(&item)) {
+            if (auto array = std::dynamic_pointer_cast<sized_array_type>(
+                    type::canonical((*gv)->get_type()))) {
+                auto variable = _context->_global_vars.find(*gv);
+                if (variable != _context->_global_vars.end()) {
+                    emit_sized_array_elements_cleanup(&dtor_builder, get_module(), _context->_functions,
+                        variable->second, array);
+                }
+                continue;
+            }
             auto st_type = std::dynamic_pointer_cast<struct_type>((*gv)->get_type());
             if (!st_type) continue;
             auto st = st_type->get_struct();

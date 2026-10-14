@@ -37,6 +37,7 @@ namespace kdi {
     struct kdi_aggregate;
     struct kdi_annotation;
     struct kdi_function;
+    struct kdi_param;
     struct kdi_variable;
     struct kdi_template_def;
     struct kdi_union;
@@ -170,6 +171,10 @@ private:
     void register_root_ns(const std::string& module_name, const lex::opt_any_lexeme& lexeme = std::nullopt);
 
     // ── Phase B helpers ──────────────────────────────────────────────────────
+
+    void restore_parameter_defaults(function& fn, const std::vector<kdi::kdi_param>& params,
+                                    const std::shared_ptr<context>& ctx,
+                                    std::shared_ptr<ns> scope = {});
 
     /**
      * Materialise all symbols inside a kdi_namespace (recursively descends

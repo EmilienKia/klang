@@ -209,6 +209,9 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
 void type_reference_resolver::resolve_variable_type(
     variable_definition& var, const lex::opt_any_lexeme& var_lexeme)
 {
+    if (const auto* scope = dynamic_cast<const element*>(&var)) {
+        ensure_template_type_ready(var.get_type(), *scope);
+    }
     // Step 1: If the type is already resolved, return immediately (no-op)
     if (type::is_resolved(var.get_type())) return;
 
@@ -275,7 +278,7 @@ void type_reference_resolver::resolve_variable_type(
                 // Unsized arrays are canonicalised to ref<array<T>> by resolve_type,
                 // but inside an owner we want owner(array(T)), not owner(ref<array<T>>).
                 resolved_inner = strip_ref_array(resolved_inner);
-                auto res_owner = _context->collapse_callable_addresser(resolved_inner->get_owner());
+                auto res_owner = _context->collapse_callable_addresser(type::make_pinned_owner(resolved_inner));
                 var.set_type(res_owner);
             } else {
                 throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED), var_lexeme,
@@ -338,10 +341,9 @@ void type_reference_resolver::resolve_variable_type(
                     }
                 }
             }
-            if (inner && type::is_resolved(inner)) resolved = inner->get_array(sarr->get_size());
+            if (inner && type::is_resolved(inner)) resolved = rewrap_like(sarr, inner);
         } else {
-            // Fallback: delegate to context->resolve_type
-            resolved = _context->resolve_type(var.get_type());
+            resolved = resolve_type_chain(var.get_type(), var_elem);
         }
 
         // An addresser applied to a name denoting a callable re-addresses the
@@ -1354,6 +1356,7 @@ void type_reference_resolver::validate_sized_array_variable(var_init_context& ct
     if (arr_init) {
         // Array brace init — resolve handled in visit_array_init_expression
         arr_init->accept(*this);
+        return;
     } else if (ctx.init_expr && !ctx.init_expr->empty()) {
         // Step 2: If a non-brace explicit initialiser is present, emit an error
         // Non-brace-init explicit initializer is not supported
@@ -1363,8 +1366,19 @@ void type_reference_resolver::validate_sized_array_variable(var_init_context& ct
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?"});
         return;
     }
-    // Step 3: No initialiser → zero-init (always valid)
-    // No initializer = zero-init (always valid for any element type).
+    auto array = std::dynamic_pointer_cast<sized_array_type>(ctx.var_type);
+    auto element_type = type::canonical(type::remove_const(array->get_subtype()));
+    auto element_struct = std::dynamic_pointer_cast<struct_type>(element_type);
+    if (!element_struct || !element_struct->get_struct() || array->get_size() == 0) return;
+
+    // Default construction must go through overload resolution, just like T()[N].
+    // Zero-filled class storage is not a live object (in particular, it has no vptr).
+    if (auto* var_element = dynamic_cast<element*>(&ctx.var)) {
+        auto variable = std::dynamic_pointer_cast<variable_definition>(var_element->shared_as<element>());
+        auto default_init = array_init_expression::make_uniform_shared(variable, {}, array->get_size());
+        ctx.var.set_init_expr(default_init);
+        default_init->accept(*this);
+    }
 }
 
 

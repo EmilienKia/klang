@@ -103,7 +103,7 @@ std::shared_ptr<type> type::canonical(const std::shared_ptr<type>& t) {
     if (canon_sub == sub) return current;
 
     if (auto sized = std::dynamic_pointer_cast<sized_array_type>(current)) {
-        return canon_sub->get_array(sized->get_size());
+        return make_pinned_sized_array(canon_sub, sized->get_size());
     }
     if (auto wrapper = make_pinned_wrapper(current, canon_sub)) {
         return wrapper;
@@ -244,6 +244,17 @@ std::shared_ptr<array_type> type::make_pinned_array(const std::shared_ptr<type>&
     return wrapper;
 }
 
+std::shared_ptr<sized_array_type> type::make_pinned_sized_array(
+    const std::shared_ptr<type>& inner, unsigned long size)
+{
+    if (!inner) return nullptr;
+    auto unsized = make_pinned_array(inner);
+    auto wrapper = std::shared_ptr<sized_array_type>(new sized_array_type(unsized, size));
+    wrapper->_pinned_subtype = inner;
+    wrapper->_pinned_unsized_array_type = std::move(unsized);
+    return wrapper;
+}
+
 std::shared_ptr<type> type::make_pinned_wrapper(
     const std::shared_ptr<type>& kind_of,
     const std::shared_ptr<type>& inner)
@@ -266,7 +277,9 @@ std::shared_ptr<type> type::make_pinned_wrapper(
         return make_pinned_drain(inner);
     } else if (is_const(kind_of)) {
         return make_pinned_const(inner);
-    } else if (is_array(kind_of) && !is_sized_array(kind_of)) {
+    } else if (auto sized = std::dynamic_pointer_cast<sized_array_type>(kind_of)) {
+        return make_pinned_sized_array(inner, sized->get_size());
+    } else if (is_array(kind_of)) {
         return make_pinned_array(inner);
     } else {
         return nullptr;
@@ -360,7 +373,7 @@ std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
     if (auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(spec)) {
         auto sub = substitute_ast_type_spec(arr->subtype.get(), subst, definition_namespace);
         if (!sub) return nullptr;
-        if (arr->lex_int) return sub->get_array(arr->lex_int->to_unsigned_int());
+        if (arr->lex_int) return type::make_pinned_sized_array(sub, arr->lex_int->to_unsigned_int());
         return type::make_pinned_array(sub);
     }
     if (auto id_spec = dynamic_cast<const k::parse::ast::identified_type_specifier*>(spec)) {

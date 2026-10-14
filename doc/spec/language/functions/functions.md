@@ -69,6 +69,25 @@ increment(n: int, step: int = 1) : int { return n + step; }
 ```
 Only trailing parameters may have default values.  
 The default expression is evaluated at each call site that omits the argument.
+
+Default values must not make two same-named overloads (including constructors)
+have identical supplied parameter types at an argument count accepted by both.
+The omitted suffix does not distinguish overloads; in particular, two overloads
+accepting zero arguments conflict even if their defaulted parameter types differ.
+Overlapping argument counts are otherwise valid: distinct supplied parameter
+types are matched by normal ranked overload resolution. An actual call with
+equally ranked conversions remains ambiguous.
+
+```k
+label(value: int, detail: int = 10) : int { return 1; }
+label(value: double, detail: int = 10) : int { return 2; } // valid
+label(5);      // selects int
+label(5.0d);   // selects double
+
+pick(value: int, detail: int = 0) : int { return 1; }
+pick(value: int, detail: long = 0) : int { return 2; } // error: identical int prefix
+```
+
 ### Pass-by-value vs pass-by-reference
 - A parameter of type `T` receives a copy of the argument.
 - A parameter of type `T&` receives a reference to the argument (the caller's variable is affected).

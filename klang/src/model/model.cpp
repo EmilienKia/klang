@@ -660,6 +660,13 @@ std::shared_ptr<parameter> parameter::make_shared(std::shared_ptr<function> func
     return param;
 }
 
+void parameter::set_default_expr(std::shared_ptr<expression> expr) {
+    _default_expr = std::move(expr);
+    if (_default_expr) {
+        _default_expr->set_parent(shared_as<element>());
+    }
+}
+
 void parameter::update_mangled_name() {
     // Parameter is not mangled cause not exported
 }
