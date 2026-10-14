@@ -880,6 +880,13 @@ add_test(NAME libk-tests-big-integer-native COMMAND libk-tests-big-integer-nativ
 klang_scale_ctest_timeout(_libk_test_timeout 120)
 set_tests_properties(libk-tests-big-integer-native PROPERTIES TIMEOUT "${_libk_test_timeout}")
 
+# Private direct-entry K ABI proof, independent of the public C FFI contract.
+libk_add_test(libk-tests-k-ffi-abi 120 tests/test-k-ffi-abi.cpp)
+target_link_libraries(libk-tests-k-ffi-abi PkgConfig::LIBFFI)
+target_link_options(libk-tests-k-ffi-abi PRIVATE -Wl,--export-dynamic)
+target_compile_options(libk-tests-k-ffi-abi PRIVATE
+    -fexceptions -fasynchronous-unwind-tables)
+
 # ── Public K runtime C FFI tests ───────────────────────────────────────────
 add_library(klang-ffi-native-fixture SHARED tests/ffi/native_fixture.c)
 set_target_properties(klang-ffi-native-fixture PROPERTIES

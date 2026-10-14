@@ -3,6 +3,55 @@
 
 #### Features to add
 
+- [ ] **Direct RTTI invocation: by-value aggregate arguments (deferred).**
+      The initial metadata-driven K invocation implementation supports scalar
+      and addresser arguments, including references/pointers/owners/drains to
+      aggregates. Aggregate return values remain in scope through the actual
+      K return ABI. Passing an aggregate itself by value is deferred; reject
+      such signatures explicitly before calling the target or moving owners.
+  - Describe exact compiled layout: size/alignment, nested field types and
+    offsets, padding, array representation, base subobjects, compiler-generated
+    fields, packed/over-aligned cases, unions and fat callable representations.
+    LLVM DataLayout and finalized compiler types are authoritative; public
+    fields, object size alone, or a byte-array surrogate are not sufficient.
+  - Describe the native parameter ABI independently from memory layout:
+    register/stack classification, direct/coerced/expanded/indirect/by-value
+    passing, argument ordering and relevant attributes. LLVM aggregate
+    parameters are not automatically compatible with the C struct ABI used
+    by libffi. Verify actual K definitions and calls on each supported target.
+  - Build recursive `ffi_type` graphs only where their layout and native
+    classification match K. Keep descriptor graphs alive with prepared plans;
+    validate nested/mixed integer-floating aggregates, unions, array members,
+    packing/alignment and register-exhaustion cases. Extend the shared
+    data-driven backend where required, never generate per-function thunks,
+    wrappers, executable trampolines or JIT invocation stubs.
+  - Add variable-sized, correctly aligned invocation-frame argument storage
+    and logical-to-physical slot mapping. Preserve receiver and hidden result
+    pointer ordering when combined with aggregate parameters. Do not confuse
+    a pointer-value slot, pointed-to storage and by-value argument bytes.
+  - Preserve semantic lifecycle: ordinary accessible copy/drain construction,
+    deleted/private-operation checks, temporary elision where supported, and
+    explicit caller-to-callee cleanup responsibility on normal/exceptional
+    paths. Nontrivial aggregates must not silently use `memcpy`; existing
+    lifecycle entries must be called directly through the generic FFI engine.
+    Owner fields and source-slot aliases must not introduce duplicate ownership.
+  - Keep `Argument` immutable, borrowed and reference-only. Any prepared value
+    belongs to synchronous invocation-frame staging, not persistent boxing.
+    Preserve strict detectable `SourceChanged` rejection and pre-call validation.
+  - Cover small/large/nested aggregates, integer/FP mixtures, arrays/unions,
+    noncopyable/drainable types, multiple aggregate arguments interleaved with
+    scalars, methods/virtual receivers and aggregate returns in the same call.
+    Assert exact values, source-owner state, constructor/destructor counts,
+    failure-before-entry and original K exception propagation/unwind cleanup.
+    Compare direct FFI calls with ordinary compiled K calls and inspect actual
+    target entries/artifacts to prove the absence of specialized adapters.
+  - Extend RTTI/native ABI/KDI metadata and JSON/CBOR/import/export/tooling
+    consistently if new fields are needed; never serialize runtime pointers.
+    Keep KDI schema policy at `0.1`, update related language/stdlib specs and
+    remove the explicit unsupported-argument diagnostic only when the full
+    supported-target matrix passes. Source defaults remain source-only:
+    reflective callers must still provide every parameter explicitly.
+
 - **Template-qualified type references in non-expression contexts**
   - Ensure support (with the same diagnostics quality) in every context that accepts
     type names and deferred symbol references.

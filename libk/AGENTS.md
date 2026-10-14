@@ -149,6 +149,9 @@ Unless fully qualified, paths below are relative to `libk/libk/src/`.
 ## 5. Tests in this subtree
 
 - `libk-tests-rtti-exceptions`: functional RTTI and exception handling tests.
+- `libk-tests-k-ffi-abi`: private direct-entry K/libffi ABI and typed-unwind
+  proofs (Linux x86-64 sret recipe); distinct from the public foreign-C FFI
+  contract, which still forbids exceptions crossing its boundary.
 - `libk-tests-strings`: string and string builder tests.
 - `libk-tests-types`: foundational types, optional, expected, shared, math, and application tests.
 - `libk-tests-big-integer-native`: GMP bridge arithmetic, ownership, checked conversions, and formatting; public K API cases run in `libk-tests-types`.
