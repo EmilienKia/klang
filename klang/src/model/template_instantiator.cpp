@@ -112,7 +112,7 @@ std::string type_display_name(const std::shared_ptr<type>& t) {
 }
 
 /**
- * Build the type name of a nested union cloned into a concrete instantiation.
+ * Build the storage type name of a nested declaration in a concrete instantiation.
  *
  * The name must be unique per instantiation: sibling instantiations own distinct
  * `struct_type`s / `llvm::StructType`s whose payload sizes differ. A shared name would
@@ -121,7 +121,7 @@ std::string type_display_name(const std::shared_ptr<type>& t) {
  * Qualifying by the enclosing instantiation's name — itself unique — gives a
  * deterministic name that does not rely on LLVM's `.N` auto-uniquification.
  */
-std::string nested_type_name(const aggregate& owner, const std::string& union_name) {
+std::string nested_type_name(const aggregate& owner, const std::string& nested_name) {
     std::string base = owner.get_fq_name();
     if (base.size() >= 2 && base[0] == ':' && base[1] == ':') {
         base = base.substr(2);
@@ -130,9 +130,9 @@ std::string nested_type_name(const aggregate& owner, const std::string& union_na
         base = owner.get_short_name();
     }
     if (base.empty()) {
-        return union_name;
+        return nested_name;
     }
-    return base + "::" + union_name;
+    return base + "::" + nested_name;
 }
 
 /**
@@ -1938,6 +1938,8 @@ void template_instantiator::clone_nested_aggregate(
     if (!target->get_fq_name().empty())
         nested->assign_name(target->get_name().with_back(nested->get_short_name()));
 
+    nested->assign_name(target->get_name().with_back(src.get_short_name()));
+
     // Copy aggregate flags
     nested->set_final(src.is_final());
     nested->set_abstract(src.is_abstract());
@@ -2041,6 +2043,7 @@ void template_instantiator::clone_nested_union(
     auto nested = target->define_union(src.get_short_name());
     if (!nested) return;
 
+    nested->assign_name(target->get_name().with_back(src.get_short_name()));
     nested->set_visibility(src.get_visibility());
 
     // Give the nested union a **fresh** struct_type and LLVM struct type, one per
@@ -2382,6 +2385,10 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     } else if (!enclosing_aggregate && !ti->origin_module_ns_fq.empty()) {
         concrete->assign_name(unit::make_origin_absolute_name(
             ti->origin_module_ns_fq, inst_name));
+    } else {
+        // Nested storage is registered while cloning, before the resolver's
+        // later name-completion step. Qualify its host before any clone exists.
+        concrete->assign_name(parent_ns->get_name().with_back(inst_name));
     }
 
     // Copy aggregate flags
@@ -2671,6 +2678,8 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
     } else if (!enclosing_aggregate && !ti->origin_module_ns_fq.empty()) {
         concrete->assign_name(unit::make_origin_absolute_name(
             ti->origin_module_ns_fq, base_name));
+    } else {
+        concrete->assign_name(parent_ns->get_name().with_back(base_name));
     }
 
     (void)logger;

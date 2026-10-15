@@ -434,6 +434,206 @@ TEST_CASE("[M] Same-named templates in different namespaces are distinct types",
     CHECK(run() == 41);
 }
 
+namespace {
+
+constexpr std::string_view nested_template_registration_source = R"SRC(
+    module nested_template_registration;
+
+    namespace left {
+        template<typename T>
+        struct Host {
+            static struct Nested {
+                value: T;
+                Nested(x: T): value(x) {}
+                const read(): T { return value; }
+            }
+            union Storage { value: T; error: int; }
+            nested: Nested;
+            storage: Storage;
+            Host(x: T): nested(x) { storage.value = x; }
+            const read(): T { return nested.read() + storage.value; }
+            static readNested(n: Nested&): T { return n.value; }
+        }
+    }
+    namespace right {
+        template<typename T>
+        struct Host {
+            static struct Nested {
+                value: T;
+                extra: int;
+                Nested(x: T): value(x), extra(3) {}
+                const read(): T { return value + (T) extra; }
+            }
+            union Storage { value: T; error: long; }
+            nested: Nested;
+            storage: Storage;
+            Host(x: T): nested(x) { storage.value = x; }
+            const read(): T { return nested.read() + storage.value; }
+            static readNested(n: Nested&): T { return n.value; }
+        }
+    }
+
+    run(): int {
+        a: left::Host<int>(5);
+        repeated: left::Host<int>(7);
+        wide: left::Host<long>(4294967296l);
+        b: right::Host<int>(11);
+        if (a.read() != 10 || repeated.read() != 14 || b.read() != 25) return -1;
+        if (wide.read() != 8589934592l) return -2;
+        if (left::Host<int>::readNested(a.nested) != 5) return -3;
+        if (right::Host<int>::readNested(b.nested) != 11) return -4;
+        a.nested.value = 13;
+        if (a.read() != 18 || repeated.read() != 14 || b.read() != 25) return -5;
+        return 42;
+    }
+)SRC";
+
+} // namespace
+
+TEST_CASE("Nested template storage registration preserves lexical host identity",
+          "[gen][template][instantiation][nested-registration][ns-collision]") {
+    auto comp = compile_model(nested_template_registration_source);
+    REQUIRE(comp != nullptr);
+    auto root = comp->get_unit()->get_root_namespace();
+    auto left = root->get_child_namespace("left");
+    auto right = root->get_child_namespace("right");
+    REQUIRE(left != nullptr);
+    REQUIRE(right != nullptr);
+    auto left_int = left->get_aggregate("Host__int");
+    auto left_long = left->get_aggregate("Host__long");
+    auto right_int = right->get_aggregate("Host__int");
+    REQUIRE(left_int != nullptr);
+    REQUIRE(left_long != nullptr);
+    REQUIRE(right_int != nullptr);
+
+    std::set<const k::model::aggregate*> hosts;
+    std::set<const k::model::struct_type*> nested_types;
+    std::set<llvm::Type*> nested_llvm_types;
+    std::set<const k::model::struct_type*> union_types;
+    std::set<llvm::Type*> union_llvm_types;
+    std::set<const k::model::enum_type*> kind_types;
+    for (const auto& host : {left_int, left_long, right_int}) {
+        INFO(host->get_fq_name());
+        hosts.insert(host.get());
+        auto nested = host->get_aggregate("Nested");
+        auto storage = host->get_union("Storage");
+        REQUIRE(nested != nullptr);
+        REQUIRE(storage != nullptr);
+        CHECK(nested->get_enclosing_aggregate() == host);
+        auto nested_type = nested->get_struct_type();
+        auto union_type = storage->get_struct_type();
+        REQUIRE(nested_type != nullptr);
+        REQUIRE(union_type != nullptr);
+        REQUIRE(nested_type->get_llvm_type() != nullptr);
+        REQUIRE(union_type->get_llvm_type() != nullptr);
+        CHECK(nested_type->get_struct() == nested);
+        const auto prefix = host->get_name().without_root_prefix().to_string() + "::";
+        CHECK(nested_type->name() == prefix + "Nested");
+        CHECK(union_type->name() == prefix + "Storage");
+        CHECK(root->get_context()->from_string(nested_type->name()) == nested_type);
+        CHECK(root->get_context()->from_string(union_type->name()) == union_type);
+        auto nested_field = host->get_variable("nested");
+        auto storage_field = host->get_variable("storage");
+        REQUIRE(nested_field != nullptr);
+        REQUIRE(storage_field != nullptr);
+        CHECK(nested_field->get_type() == nested_type);
+        CHECK(storage_field->get_type() == union_type);
+        auto kind = storage->get_kind_enum();
+        REQUIRE(kind != nullptr);
+        REQUIRE(kind->get_enum_type() != nullptr);
+        CHECK(kind->get_fq_name() == storage->get_fq_name() + "::Kind");
+        nested_types.insert(nested_type.get());
+        nested_llvm_types.insert(nested_type->get_llvm_type());
+        union_types.insert(union_type.get());
+        union_llvm_types.insert(union_type->get_llvm_type());
+        kind_types.insert(kind->get_enum_type().get());
+    }
+    CHECK(hosts.size() == 3);
+    CHECK(nested_types.size() == 3);
+    CHECK(nested_llvm_types.size() == 3);
+    CHECK(union_types.size() == 3);
+    CHECK(union_llvm_types.size() == 3);
+    CHECK(kind_types.size() == 3);
+    auto primary = left->get_aggregate("Host");
+    REQUIRE(primary != nullptr);
+    REQUIRE(primary->get_tpl_info() != nullptr);
+    CHECK(primary->get_tpl_info()->instantiations.size() == 2);
+}
+
+TEST_CASE("Namespace homonym nested template constructors and references execute independently",
+          "[gen][template][instantiation][nested-registration][ns-collision]") {
+    auto jit = gen_jit(nested_template_registration_source);
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Erased generic nested storage registration preserves lexical host identity",
+          "[gen][template][instantiation][generic][nested-registration][ns-collision]") {
+    auto comp = compile_model(R"SRC(
+        module nested_generic_registration;
+        namespace left {
+            generic<typename T>
+            struct Host {
+                static struct Nested { value: int; }
+                union Storage { value: int; error: int; }
+                pointer: T*;
+            }
+        }
+        namespace right {
+            generic<typename T>
+            struct Host {
+                static struct Nested { value: long; }
+                union Storage { value: long; error: int; }
+                pointer: T*;
+            }
+        }
+        private force() {
+            a: left::Host<int>;
+            b: right::Host<int>;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto root = comp->get_unit()->get_root_namespace();
+    std::set<const k::model::struct_type*> nested_types;
+    std::set<llvm::Type*> nested_llvm_types;
+    std::set<const k::model::struct_type*> union_types;
+    for (const auto& ns_name : {"left", "right"}) {
+        auto scope = root->get_child_namespace(ns_name);
+        REQUIRE(scope != nullptr);
+        auto primary = scope->get_aggregate("Host");
+        REQUIRE(primary != nullptr);
+        REQUIRE(primary->get_tpl_info() != nullptr);
+        const auto& cache = primary->get_tpl_info()->instantiations;
+        auto synthesis = cache.find("<generic_synthesis>");
+        REQUIRE(synthesis != cache.end());
+        auto host_ptr = std::get_if<std::shared_ptr<k::model::aggregate>>(&synthesis->second);
+        REQUIRE(host_ptr != nullptr);
+        auto host = *host_ptr;
+        REQUIRE(host != nullptr);
+        REQUIRE(host->is_instantiation());
+        auto nested = host->get_aggregate("Nested");
+        auto storage = host->get_union("Storage");
+        REQUIRE(nested != nullptr);
+        REQUIRE(storage != nullptr);
+        REQUIRE(nested->get_struct_type() != nullptr);
+        REQUIRE(storage->get_struct_type() != nullptr);
+        REQUIRE(nested->get_struct_type()->get_llvm_type() != nullptr);
+        const auto prefix = host->get_name().without_root_prefix().to_string() + "::";
+        CHECK(nested->get_struct_type()->name() == prefix + "Nested");
+        CHECK(storage->get_struct_type()->name() == prefix + "Storage");
+        CHECK(root->get_context()->from_string(prefix + "Nested") == nested->get_struct_type());
+        CHECK(root->get_context()->from_string(prefix + "Storage") == storage->get_struct_type());
+        nested_types.insert(nested->get_struct_type().get());
+        nested_llvm_types.insert(nested->get_struct_type()->get_llvm_type());
+        union_types.insert(storage->get_struct_type().get());
+    }
+    CHECK(nested_types.size() == 2);
+    CHECK(nested_llvm_types.size() == 2);
+    CHECK(union_types.size() == 2);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  [N] Namespace-qualified enum as a template argument
 //
@@ -1821,6 +2021,29 @@ constexpr std::string_view primary_nested_binding_source = R"SRC(
     }
 )SRC";
 
+constexpr std::string_view primary_nested_binding_run = R"SRC(
+    run(): int {
+        first: left::Host<int>(5);
+        repeated: left::Host<int>(7);
+        wide: left::Host<long>(4294967296l);
+        other: right::Host<int>(11);
+        otherRepeated: right::Host<int>(13);
+        otherWide: right::Host<long>(8589934592l);
+        if (first.read() != 10 || repeated.read() != 14) return -1;
+        if (other.read() != 25 || otherRepeated.read() != 29) return -2;
+        if (wide.read() != 8589934592l || otherWide.read() != 17179869187l) return -3;
+        if (left::Host<int>::readNested(first.nested) != 5) return -4;
+        if (right::Host<int>::readNested(other.nested) != 11) return -5;
+        left::Host<int>::same(first.nested).value = 17;
+        right::Host<long>::same(otherWide.nested).value = 8589934593l;
+        if (first.read() != 22 || repeated.read() != 14 || other.read() != 25) return -6;
+        if (wide.read() != 8589934592l || otherWide.read() != 17179869188l) return -7;
+        if (left::Host<long>::readNested(wide.nested) != 4294967296l) return -8;
+        if (right::Host<long>::readNested(otherWide.nested) != 8589934593l) return -9;
+        return 42;
+    }
+)SRC";
+
 } // namespace
 
 TEST_CASE("Uninstantiated namespace homonyms bind primary nested formals lexically",
@@ -1860,4 +2083,85 @@ TEST_CASE("Uninstantiated namespace homonyms bind primary nested formals lexical
         nested_types.insert(nested_type.get());
     }
     CHECK(nested_types.size() == 2);
+}
+
+TEST_CASE("Namespace primary bindings produce distinct and cached nested specialization storage",
+          "[model][template][instantiation][primary-nested-binding][regression]") {
+    using namespace k::model;
+    auto source = std::string(primary_nested_binding_source) + std::string(primary_nested_binding_run);
+    auto comp = compile_model(source);
+    REQUIRE(comp != nullptr);
+    auto root = comp->get_unit()->get_root_namespace();
+    std::set<const struct_type*> nested_types;
+    std::set<const struct_type*> storage_types;
+    for (const auto& ns_name : {"left", "right"}) {
+        INFO(ns_name);
+        auto scope = root->get_child_namespace(ns_name);
+        REQUIRE(scope != nullptr);
+        auto primary = scope->get_aggregate("Host");
+        REQUIRE(primary != nullptr);
+        REQUIRE(primary->get_tpl_info() != nullptr);
+        CHECK(primary->get_tpl_info()->instantiations.size() == 2);
+        auto primary_nested = primary->get_aggregate("Nested");
+        REQUIRE(primary_nested != nullptr);
+        auto primary_read = primary->get_function("readNested");
+        REQUIRE(primary_read != nullptr);
+        auto primary_param = primary_read->get_parameter("n");
+        REQUIRE(primary_param != nullptr);
+        REQUIRE(type::is_reference(primary_param->get_type()));
+        CHECK(primary_param->get_type()->get_subtype() == primary_nested->get_struct_type());
+        for (const auto& host_name : {"Host__int", "Host__long"}) {
+            INFO(host_name);
+            auto host = scope->get_aggregate(host_name);
+            REQUIRE(host != nullptr);
+            auto nested = host->get_aggregate("Nested");
+            auto storage = host->get_union("Storage");
+            REQUIRE(nested != nullptr);
+            REQUIRE(storage != nullptr);
+            auto nested_type = nested->get_struct_type();
+            auto storage_type = storage->get_struct_type();
+            REQUIRE(nested_type != nullptr);
+            REQUIRE(storage_type != nullptr);
+            CHECK(nested->get_enclosing_aggregate() == host);
+            CHECK(nested_type->get_struct() == nested);
+            CHECK(nested_type != primary_nested->get_struct_type());
+            REQUIRE(nested_type->get_llvm_type() != nullptr);
+            REQUIRE(storage_type->get_llvm_type() != nullptr);
+            auto nested_field = host->get_variable("nested");
+            auto storage_field = host->get_variable("storage");
+            REQUIRE(nested_field != nullptr);
+            REQUIRE(storage_field != nullptr);
+            CHECK(nested_field->get_type() == nested_type);
+            CHECK(storage_field->get_type() == storage_type);
+            for (const auto& fn_name : {"readNested", "same"}) {
+                auto fn = host->get_function(fn_name);
+                REQUIRE(fn != nullptr);
+                auto param = fn->get_parameter("n");
+                REQUIRE(param != nullptr);
+                REQUIRE(type::is_reference(param->get_type()));
+                CHECK(param->get_type()->get_subtype() == nested_type);
+            }
+            auto result = host->get_function("same")->get_return_type();
+            REQUIRE(type::is_reference(result));
+            CHECK(result->get_subtype() == nested_type);
+            auto read = host->get_function("readNested");
+            auto value = nested->get_variable("value");
+            REQUIRE(value != nullptr);
+            CHECK(read->get_return_type() == value->get_type());
+            nested_types.insert(nested_type.get());
+            storage_types.insert(storage_type.get());
+        }
+    }
+    CHECK(nested_types.size() == 4);
+    CHECK(storage_types.size() == 4);
+}
+
+TEST_CASE("Namespace primary nested references preserve independent runtime storage",
+          "[gen][template][instantiation][primary-nested-binding][regression]") {
+    auto source = std::string(primary_nested_binding_source) + std::string(primary_nested_binding_run);
+    auto jit = gen_jit(source);
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
 }
