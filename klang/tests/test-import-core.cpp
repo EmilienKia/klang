@@ -2084,6 +2084,69 @@ TEST_CASE("KDI duplicate layouts require compatible referenced definitions",
     }
 }
 
+TEST_CASE("KDI link conversion preserves const pointees and non-null mutable bindings",
+          "[import][imported-link][model][regression]") {
+    const bool is_const = GENERATE(false, true);
+    auto context = k::model::context::create();
+    auto unit = k::model::unit::create(context);
+    auto inner = kdi::kdi_type::make_int(32);
+    if (is_const)
+        inner = kdi::kdi_type{kdi::kdi_const_type{std::make_shared<kdi::kdi_type>(inner)}};
+    auto subtype = std::make_shared<kdi::kdi_type>(inner);
+    auto link = k::model::kdi_type_to_model_type(
+        kdi::kdi_type{kdi::kdi_link_type{subtype}}, *unit, context);
+    auto pointer = k::model::kdi_type_to_model_type(
+        kdi::kdi_type{kdi::kdi_ptr_type{subtype}}, *unit, context);
+    REQUIRE(link);
+    REQUIRE(pointer);
+    auto expected = context->from_string("int");
+    REQUIRE(expected);
+    if (is_const) expected = expected->get_const();
+    CHECK(k::model::type::are_equal(link, expected->get_link()));
+    CHECK(k::model::type::is_link(link));
+    CHECK(k::model::type::is_mutable_indirection(link));
+    CHECK(k::model::type::is_strong_indirection(link));
+    CHECK_FALSE(k::model::type::is_nullable_indirection(link));
+    CHECK(k::model::type::is_const(link->get_subtype()) == is_const);
+    CHECK(k::model::type::is_pointer(pointer));
+    CHECK(k::model::type::is_nullable_indirection(pointer));
+    CHECK_FALSE(k::model::type::are_equal(link, pointer));
+}
+
+TEST_CASE("imported link parameters results and producer redirects retain their contracts",
+          "[import][imported-link][e2e][regression]") {
+    auto result = build_exec_with_lib(R"K(
+        module importedlinks;
+        public:
+        accept(value : int+) : int { return *value; }
+        keep(value : int+) : int+ { return value; }
+        acceptConst(value : const int+) : int { return *value; }
+        keepConst(value : const int+) : const int+ { return value; }
+        redirectedAccept(value : int+) : int -> accept;
+        redirectedKeep(value : int+) : int+ -> keep;
+    )K", R"K(
+        module importedlinksconsumer;
+        import importedlinks;
+        main() : int {
+            value : int = 40;
+            mutableLink : int+ = &value;
+            if (importedlinks::accept(mutableLink) != 40) return 1;
+            returned : int+ = importedlinks::keep(mutableLink);
+            *returned = 41;
+            if (importedlinks::redirectedAccept(mutableLink) != 41) return 2;
+            redirected : int+ = importedlinks::redirectedKeep(mutableLink);
+            *redirected = 42;
+            readonlyLink : const int+ = mutableLink;
+            if (importedlinks::acceptConst(readonlyLink) != 42) return 3;
+            readonlyResult : const int+ = importedlinks::keepConst(readonlyLink);
+            return *readonlyResult;
+        }
+    )K");
+    INFO(result.out);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
 TEST_CASE("imported parameter defaults preserve primitive and enum arguments",
           "[import][default-args][regression]") {
     constexpr std::string_view producer = R"K(

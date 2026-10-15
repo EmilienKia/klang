@@ -133,6 +133,10 @@ definition. It must not occur in a concrete declaration, including recursively
 within constructor exception types. `erased_param` remains valid in a generic
 synthesis.
 
+Importers must preserve indirection kinds and their nested const qualifiers.
+In particular, `link` denotes a non-null, rebindable `T+`, not a nullable `T*`.
+Their shared LLVM pointer representation does not make the types interchangeable.
+
 ---
 
 ## KdiUnit
