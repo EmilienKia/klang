@@ -32,9 +32,11 @@
 #include <catch2/catch_all.hpp>
 #include <set>
 #include <sstream>
+#include <string_view>
 
 #include "helpers.hpp"
 #include "../src/errors.hpp"
+#include "../src/model/context.hpp"
 #include "../src/model/template.hpp"
 #include "../src/model/template_instantiator.hpp"
 
@@ -1583,4 +1585,86 @@ TEST_CASE("Nested template value destruction propagates after releasing owned st
         REQUIRE(count);
         REQUIRE(count() == 1);
     }
+}
+
+namespace {
+
+constexpr std::string_view primary_nested_binding_source = R"SRC(
+    module primary_nested_binding;
+    namespace left {
+        template<typename T>
+        struct Host {
+            static struct Nested {
+                value: T;
+                Nested(x: T): value(x) {}
+                const read(): T { return value; }
+            }
+            union Storage { value: T; error: int; }
+            nested: Nested;
+            storage: Storage;
+            Host(x: T): nested(x) { storage.value = x; }
+            const read(): T { return nested.read() + storage.value; }
+            static readNested(n: Nested&): T { return n.value; }
+            static same(n: Nested&): Nested& { return n; }
+        }
+    }
+    namespace right {
+        template<typename T>
+        struct Host {
+            static struct Nested {
+                value: T;
+                extra: int;
+                Nested(x: T): value(x), extra(3) {}
+                const read(): T { return value + (T) extra; }
+            }
+            union Storage { value: T; error: long; }
+            nested: Nested;
+            storage: Storage;
+            Host(x: T): nested(x) { storage.value = x; }
+            const read(): T { return nested.read() + storage.value; }
+            static readNested(n: Nested&): T { return n.value; }
+            static same(n: Nested&): Nested& { return n; }
+        }
+    }
+)SRC";
+
+} // namespace
+
+TEST_CASE("Uninstantiated namespace homonyms bind primary nested formals lexically",
+          "[model][template][instantiation][primary-nested-binding][regression]") {
+    using namespace k::model;
+    auto comp = compile_model(primary_nested_binding_source);
+    REQUIRE(comp != nullptr);
+    auto root = comp->get_unit()->get_root_namespace();
+    std::set<const struct_type*> nested_types;
+    for (const auto& ns_name : {"left", "right"}) {
+        INFO(ns_name);
+        auto scope = root->get_child_namespace(ns_name);
+        REQUIRE(scope != nullptr);
+        auto primary = scope->get_aggregate("Host");
+        REQUIRE(primary != nullptr);
+        REQUIRE(primary->is_template());
+        REQUIRE(primary->get_tpl_info() != nullptr);
+        CHECK(primary->get_tpl_info()->instantiations.empty());
+        auto nested = primary->get_aggregate("Nested");
+        REQUIRE(nested != nullptr);
+        CHECK(nested->get_enclosing_aggregate() == primary);
+        auto nested_type = nested->get_struct_type();
+        REQUIRE(nested_type != nullptr);
+        CHECK(nested_type->get_struct() == nested);
+        CHECK(nested_type->get_llvm_type() == nullptr);
+        for (const auto& fn_name : {"readNested", "same"}) {
+            auto fn = primary->get_function(fn_name);
+            REQUIRE(fn != nullptr);
+            auto param = fn->get_parameter("n");
+            REQUIRE(param != nullptr);
+            REQUIRE(type::is_reference(param->get_type()));
+            CHECK(param->get_type()->get_subtype() == nested_type);
+        }
+        auto result = primary->get_function("same")->get_return_type();
+        REQUIRE(type::is_reference(result));
+        CHECK(result->get_subtype() == nested_type);
+        nested_types.insert(nested_type.get());
+    }
+    CHECK(nested_types.size() == 2);
 }

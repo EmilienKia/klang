@@ -1516,7 +1516,10 @@ resolve_one_type(const std::shared_ptr<type>& t,
                 && !unres_inner->has_template_args()) {
                 resolved_inner = resolver.resolve_type_by_name(unres_inner->type_id(), lookup_context);
             }
-            if ((!resolved_inner || !type::is_resolved(resolved_inner))
+            // A lexical aggregate binding is authoritative before LLVM layout exists,
+            // including a dependent nested declaration in a template primary.
+            if ((!resolved_inner || (!type::is_resolved(resolved_inner)
+                                     && type::contains_unresolved(resolved_inner)))
                 && !unres_inner->get_definition_namespace()
                 && !unres_inner->has_template_args()) {
                 resolved_inner = ctx->from_string(unres_inner->type_id());

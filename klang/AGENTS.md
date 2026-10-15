@@ -137,6 +137,9 @@ Resolved composite wrappers can be freshly pinned nodes; enclosing owner/const
 wrappers must pin them too rather than leave their subtype weak and unowned.
 Recursive template signatures may be semantically resolved before LLVM layout;
 retain complete const/reference chains when no unresolved nodes remain.
+Lexically bound primary-template nested declarations are authoritative even
+without LLVM layout. Never replace them with a context short-name registry hit:
+namespace homonyms must retain their own primary declaration before cloning.
 Imported definition namespaces retain declaration-origin lookup for peer
 templates even when type resolution enters the namespace without its aggregate.
 Late signature-created local specializations must complete their member
