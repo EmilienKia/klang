@@ -1587,6 +1587,199 @@ TEST_CASE("Nested template value destruction propagates after releasing owned st
     }
 }
 
+TEST_CASE("Nested template formal binds to its concrete declaration",
+          "[gen][template][instantiation][nested-formal-binding][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_formal_binding;
+        template<typename T>
+        struct Host {
+            static struct Nested {
+                value: T;
+                Nested(x: T): value(x) {}
+            }
+            nested: Nested;
+            Host(x: T): nested(x) {}
+            static readNested(n: Nested&): T { return n.value; }
+        }
+        run(): int {
+            h: Host<int>(7);
+            return Host<int>::readNested(h.nested);
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 7);
+}
+
+namespace {
+
+constexpr std::string_view nested_formal_binding_source = R"SRC(
+    module nested_signature_binding;
+    typedef Token: int;
+    struct Control {
+        static struct Nested {
+            value: int;
+            Nested(x: int): value(x) {}
+        }
+    }
+    template<typename T>
+    struct Host {
+        static struct Nested {
+            value: T;
+            Nested(x: T): value(x) {}
+            static same(n: Nested&): Nested& { return n; }
+        }
+        nested: Nested;
+        Host(x: T): nested(x) {}
+        Host(n: Nested&): nested(n.value) {}
+        static readNested(n: Nested&): T { return n.value; }
+        static same(n: Nested&): Nested& { return n; }
+        static constSame(n: const Nested&): const Nested& { return n; }
+        static apply(n: Nested&, callback: *(Nested&): T): T { return callback(n); }
+        static readControl(n: Control::Nested&): int { return n.value; }
+        static token(n: Token): Token { return n; }
+    }
+    run(): int {
+        first: Host<int>(7);
+        repeated: Host<int>(11);
+        wide: Host<long>(4294967296l);
+        copied: Host<int>(first.nested);
+        control: Control::Nested(19);
+        if (Host<int>::readNested(first.nested) != 7) return -1;
+        if (Host<int>::readNested(Host<int>::same(repeated.nested)) != 11) return -2;
+        if (Host<long>::readNested(Host<long>::same(wide.nested)) != 4294967296l) return -3;
+        if (Host<int>::constSame(first.nested).value != 7) return -4;
+        if (Host<int>::apply(first.nested, Host<int>::readNested) != 7) return -5;
+        if (Host<int>::readNested(copied.nested) != 7) return -6;
+        if (Host<int>::readControl(control) != 19) return -7;
+        Host<int>::same(first.nested).value = 13;
+        if (Host<int>::readNested(first.nested) != 13) return -8;
+        if (Host<int>::readNested(repeated.nested) != 11) return -9;
+        return 42;
+    }
+)SRC";
+
+} // namespace
+
+TEST_CASE("Nested signature rebinding preserves declaration and qualifier identity",
+          "[model][template][instantiation][nested-formal-binding][regression]") {
+    using namespace k::model;
+    auto comp = compile_model(nested_formal_binding_source);
+    REQUIRE(comp != nullptr);
+    auto root = comp->get_unit()->get_root_namespace();
+    auto primary = root->get_aggregate("Host");
+    auto host_int = root->get_aggregate("Host__int");
+    auto host_long = root->get_aggregate("Host__long");
+    REQUIRE(primary != nullptr);
+    REQUIRE(host_int != nullptr);
+    REQUIRE(host_long != nullptr);
+    auto primary_nested = primary->get_aggregate("Nested");
+    auto control_host = root->get_aggregate("Control");
+    REQUIRE(control_host != nullptr);
+    auto control = control_host->get_aggregate("Nested");
+    REQUIRE(primary_nested != nullptr);
+    REQUIRE(control != nullptr);
+    auto token_decl = root->get_alias("Token");
+    REQUIRE(token_decl != nullptr);
+    auto token = token_decl->get_alias_type();
+    REQUIRE(token != nullptr);
+
+    for (const auto& host : {host_int, host_long}) {
+        INFO(host->get_short_name());
+        auto nested = host->get_aggregate("Nested");
+        REQUIRE(nested != nullptr);
+        auto nested_type = nested->get_struct_type();
+        REQUIRE(nested_type != nullptr);
+        CHECK(nested_type != primary_nested->get_struct_type());
+        auto read = host->get_function("readNested");
+        REQUIRE(read != nullptr);
+        auto read_type = read->get_parameter("n")->get_type();
+        REQUIRE(type::is_reference(read_type));
+        CHECK(read_type->get_subtype() == nested_type);
+        CHECK(read->get_return_type() == nested->get_variable("value")->get_type());
+        for (const auto& owner : {host, nested}) {
+            auto same = owner->get_function("same");
+            REQUIRE(same != nullptr);
+            REQUIRE(type::is_reference(same->get_return_type()));
+            CHECK(same->get_return_type()->get_subtype() == nested_type);
+            CHECK(same->get_parameter("n")->get_type()->get_subtype() == nested_type);
+        }
+        auto const_same = host->get_function("constSame");
+        REQUIRE(const_same != nullptr);
+        for (const auto& qualified : {const_same->get_return_type(),
+                                     const_same->get_parameter("n")->get_type()}) {
+            REQUIRE(type::is_reference(qualified));
+            REQUIRE(type::is_const(qualified->get_subtype()));
+            CHECK(qualified->get_subtype()->get_subtype() == nested_type);
+        }
+        auto apply = host->get_function("apply");
+        REQUIRE(apply != nullptr);
+        auto callback = std::dynamic_pointer_cast<callable_type>(
+            apply->get_parameter("callback")->get_type());
+        REQUIRE(callback != nullptr);
+        CHECK(callback->get_addresser() == callable_type::addresser::pointer);
+        REQUIRE(callback->get_parameter_types().size() == 1);
+        CHECK(callback->get_parameter_types()[0]->get_subtype() == nested_type);
+        CHECK(callback->get_return_type() == read->get_return_type());
+        bool nested_constructor = false;
+        for (const auto& ctor : host->constructors()) {
+            if (auto n = ctor->get_parameter("n")) {
+                nested_constructor = true;
+                CHECK(n->get_type()->get_subtype() == nested_type);
+            }
+        }
+        CHECK(nested_constructor);
+        CHECK(host->get_function("readControl")->get_parameter("n")->get_type()->get_subtype()
+              == control->get_struct_type());
+        CHECK(host->get_function("token")->get_parameter("n")->get_type() == token);
+        CHECK(host->get_function("token")->get_return_type() == token);
+    }
+    CHECK(host_int->get_aggregate("Nested")->get_struct_type()
+          != host_long->get_aggregate("Nested")->get_struct_type());
+    REQUIRE(primary->get_tpl_info() != nullptr);
+    CHECK(primary->get_tpl_info()->instantiations.size() == 2);
+    CHECK(primary->get_function("readNested")->get_parameter("n")->get_type()->get_subtype()
+          == primary_nested->get_struct_type());
+
+    auto old_nested = host_int->get_aggregate("Nested");
+    auto new_nested = host_long->get_aggregate("Nested");
+    type_rebinding_map rebound_types{
+        {old_nested->get_struct_type().get(), new_nested->get_struct_type()}};
+    callable_type_builder builder(root->get_context());
+    builder.member_of(old_nested);
+    builder.addresser(callable_type::addresser::link);
+    builder.return_type(old_nested->get_struct_type()->get_reference());
+    builder.append_parameter_type(token);
+    builder.throws({old_nested->get_struct_type()});
+    auto original_callable = builder.build();
+    auto original = type::make_pinned_const(original_callable);
+    auto rebound = substitute_type(original, {}, rebound_types);
+    REQUIRE(type::is_const(rebound));
+    auto callable = std::dynamic_pointer_cast<member_function_reference_type>(rebound->get_subtype());
+    REQUIRE(callable != nullptr);
+    CHECK(callable->get_member_of() == new_nested);
+    CHECK(callable->get_addresser() == callable_type::addresser::link);
+    CHECK(callable->get_return_type()->get_subtype() == new_nested->get_struct_type());
+    CHECK(callable->get_parameter_types()[0] == token);
+    CHECK(callable->get_throws()[0] == new_nested->get_struct_type());
+    CHECK(original_callable->get_return_type()->get_subtype() == old_nested->get_struct_type());
+    CHECK(original_callable->get_throws()[0] == old_nested->get_struct_type());
+    CHECK(std::dynamic_pointer_cast<member_function_reference_type>(original_callable)->get_member_of()
+          == old_nested);
+    CHECK(substitute_type(control->get_struct_type(), {}, rebound_types) == control->get_struct_type());
+    CHECK(substitute_type(token, {}, rebound_types) == token);
+}
+
+TEST_CASE("Distinct and repeated nested signature specializations execute independently",
+          "[gen][template][instantiation][nested-formal-binding][regression]") {
+    auto jit = gen_jit(nested_formal_binding_source);
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
+}
+
 namespace {
 
 constexpr std::string_view primary_nested_binding_source = R"SRC(

@@ -397,6 +397,13 @@ When the compiler encounters a template instantiation `Name<Args...>` or a deduc
 7. Register the resulting concrete entity so that future uses of the same arguments
    reuse it.
 
+References to a nested declaration in an instantiated aggregate's fields or
+function signatures must denote that instantiation's concrete nested declaration,
+not the declaration in the primary template. This also applies inside callable
+parameter, return, owner and exception types, while preserving indirections and
+`const` qualifiers. Declarations outside that template and nominal aliases retain
+their identity; a same-named declaration must not be selected as a replacement.
+
 ### 5.4 Instantiation Context
 
 Template instantiation occurs lazily (on first use). The instantiated entity is placed in

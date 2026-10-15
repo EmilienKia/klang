@@ -1916,7 +1916,8 @@ void template_instantiator::clone_nested_aggregate(
     const type_substitution_map& subst,
     const value_substitution_map& val_subst,
     std::shared_ptr<context> ctx,
-    const source_type_substitution_map& source_subst)
+    const source_type_substitution_map& source_subst,
+    type_rebinding_map* rebound_types)
 {
     // Create the nested aggregate inside target (not in the parent namespace).
     std::shared_ptr<aggregate> nested;
@@ -1972,6 +1973,9 @@ void template_instantiator::clone_nested_aggregate(
         ctx->add_struct(nested_st);
         nested->set_struct_type(nested_st);
     }
+    if (rebound_types && src.get_struct_type() && nested->get_struct_type()) {
+        rebound_types->emplace(src.get_struct_type().get(), nested->get_struct_type());
+    }
 
     // Copy base class specs (raw names — resolved later by resolution passes)
     // Substitute template type parameters in base names (e.g. "Collection<T>" → "Collection<int>")
@@ -1994,10 +1998,11 @@ void template_instantiator::clone_nested_aggregate(
             clone_method(*fn, nested, body_subst, body_val_subst, source_subst);
         } else if (auto inner = std::dynamic_pointer_cast<aggregate>(child)) {
             // Recursively clone deeper nested aggregates
-            clone_nested_aggregate(*inner, nested, body_subst, body_val_subst, ctx, source_subst);
+            clone_nested_aggregate(*inner, nested, body_subst, body_val_subst, ctx, source_subst,
+                                   rebound_types);
         } else if (auto inner_un = std::dynamic_pointer_cast<union_type_def>(child)) {
             // Clone nested union types (e.g. an inner union inside a nested struct)
-            clone_nested_union(*inner_un, nested, body_subst, ctx);
+            clone_nested_union(*inner_un, nested, body_subst, ctx, rebound_types);
         }
     }
 
@@ -2029,7 +2034,8 @@ void template_instantiator::clone_nested_union(
     const union_type_def& src,
     std::shared_ptr<aggregate> target,
     const type_substitution_map& subst,
-    std::shared_ptr<context> ctx)
+    std::shared_ptr<context> ctx,
+    type_rebinding_map* rebound_types)
 {
     // Create the nested union inside target (registers it in _unions).
     auto nested = target->define_union(src.get_short_name());
@@ -2050,6 +2056,9 @@ void template_instantiator::clone_nested_union(
         ctx->attach_llvm_struct_type(st_type, union_llvm_type);
         ctx->add_struct(st_type);
         nested->set_struct_type(st_type);
+    }
+    if (rebound_types && src.get_struct_type() && nested->get_struct_type()) {
+        rebound_types->emplace(src.get_struct_type().get(), nested->get_struct_type());
     }
 
     // Clone alternatives with type substitution.
@@ -2073,6 +2082,44 @@ void template_instantiator::clone_nested_union(
     }
 
     nested->update_mangled_name();
+}
+
+void template_instantiator::rebind_cloned_declaration_types(
+    aggregate& target,
+    const type_rebinding_map& rebound_types)
+{
+    if (rebound_types.empty()) return;
+    // Signatures can precede the nested declarations they reference. Rebind only
+    // after cloning the entire declaration tree, never through a short-name lookup.
+    for (const auto& child : target.get_children()) {
+        if (auto var = std::dynamic_pointer_cast<variable_definition>(child)) {
+            var->set_type(substitute_type(var->get_type(), {}, rebound_types));
+        } else if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            if (fn->has_return_type()) {
+                fn->set_return_type(substitute_type(
+                    fn->get_return_type(), {}, rebound_types));
+            }
+            for (const auto& param : fn->parameters()) {
+                param->set_type(substitute_type(param->get_type(), {}, rebound_types));
+            }
+            if (auto result = fn->get_named_return_var()) {
+                result->set_type(substitute_type(result->get_type(), {}, rebound_types));
+            }
+            if (auto ti = fn->get_tpl_info()) {
+                for (auto& param : ti->params) {
+                    param.constraint_type = substitute_type(param.constraint_type, {}, rebound_types);
+                    param.value_type = substitute_type(param.value_type, {}, rebound_types);
+                    param.default_type = substitute_type(param.default_type, {}, rebound_types);
+                }
+            }
+        } else if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            rebind_cloned_declaration_types(*nested, rebound_types);
+        } else if (auto nested = std::dynamic_pointer_cast<union_type_def>(child)) {
+            for (auto& alt : nested->alternatives_mutable()) {
+                alt.resolved_type = substitute_type(alt.resolved_type, {}, rebound_types);
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2484,6 +2531,7 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     klass::compute_virtual_bases_single(*concrete);
 
     // 2. Clone children from the template aggregate
+    type_rebinding_map rebound_types;
     for (auto& child : tpl_def.get_children()) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
             clone_member_variable(*mv, concrete, subst, val_subst, source_subst);
@@ -2513,13 +2561,15 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
             }
         } else if (auto inner = std::dynamic_pointer_cast<aggregate>(child)) {
             // Clone nested aggregate types (structs/classes defined inside the template)
-            clone_nested_aggregate(*inner, concrete, subst, val_subst, ctx, source_subst);
+            clone_nested_aggregate(*inner, concrete, subst, val_subst, ctx, source_subst,
+                                   &rebound_types);
         } else if (auto inner_un = std::dynamic_pointer_cast<union_type_def>(child)) {
             // Clone nested union types (e.g. Expected<R,E>::Storage)
-            clone_nested_union(*inner_un, concrete, subst, ctx);
+            clone_nested_union(*inner_un, concrete, subst, ctx, &rebound_types);
         }
         // Enums and using declarations — handled as needed in future
     }
+    rebind_cloned_declaration_types(*concrete, rebound_types);
 
     // 3. Post-instantiation: generate default constructor and set up this parameters
     //    The concrete aggregate was not visited by symbol_resolver, so it needs
@@ -2644,6 +2694,7 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
         }
     }
 
+    type_rebinding_map rebound_types;
     for (auto& child : tpl_def.get_children()) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
             clone_member_variable(*mv, concrete, subst, val_subst);
@@ -2672,12 +2723,13 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
             }
         } else if (auto inner = std::dynamic_pointer_cast<aggregate>(child)) {
             // Clone nested aggregate types (e.g. private Node struct inside LinkedList)
-            clone_nested_aggregate(*inner, concrete, subst, val_subst);
+            clone_nested_aggregate(*inner, concrete, subst, val_subst, ctx, {}, &rebound_types);
         } else if (auto inner_un = std::dynamic_pointer_cast<union_type_def>(child)) {
             // Clone nested union types
-            clone_nested_union(*inner_un, concrete, subst, ctx);
+            clone_nested_union(*inner_un, concrete, subst, ctx, &rebound_types);
         }
     }
+    rebind_cloned_declaration_types(*concrete, rebound_types);
 
     if (concrete->constructors().empty()) {
         auto default_ctor = constructor::make_shared(concrete->shared_as<aggregate>());

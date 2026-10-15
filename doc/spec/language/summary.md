@@ -1651,6 +1651,8 @@ Same-named function templates instantiate independently by declaration and retai
 their overload signatures and canonical origin across imports. Late aggregate
 instantiation does not change lifecycle semantics: embedded values are constructed
 exactly once per object.
+Nested types in fields and function/callable signatures belong to the concrete
+instantiation; external declarations and nominal aliases retain their identity.
 
 ### 25.1 Template Declaration
 
@@ -1775,6 +1777,9 @@ Non-parameter types, including nested callable components and alias targets, res
 the declaration scope. Explicit arguments resolve at the use site; defaults resolve in
 the declaration scope. Consumer declarations with the same short names do not replace
 definition-scope types.
+Nested declarations referenced from an instantiation's fields or signatures (including
+callable parameter, return, owner and exception types) denote that instantiation's own
+nested declaration, never the primary template's; `const` and indirections are preserved.
 
 ### 25.5 Type Constraints
 

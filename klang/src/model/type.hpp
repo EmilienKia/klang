@@ -83,6 +83,10 @@ class enum_type;
 class enumeration;
 class alias_type;
 class alias_definition;
+class type;
+
+/** Declaration-owned types replaced by their concrete clones, keyed by identity. */
+using type_rebinding_map = std::unordered_map<const type*, std::shared_ptr<type>>;
 
 /**
  * Base type class
@@ -371,10 +375,12 @@ public:
      * Create a clone composing model-level template argument overrides with @p subst.
      * Existing non-null overrides are recursively substituted and retained; only
      * unbound slots are derived from their AST argument. Returns nullptr if no
-     * model argument changes.
+     * model argument changes. Identity rebinding preserves the declaration namespace
+     * and only replaces existing bound model arguments.
      */
     std::shared_ptr<unresolved_type> clone_with_substituted_model_args(
-        const std::unordered_map<std::string, std::shared_ptr<type>>& subst) const;
+        const std::unordered_map<std::string, std::shared_ptr<type>>& subst,
+        const type_rebinding_map& rebound_types = {}) const;
     std::shared_ptr<unresolved_type> clone_with_model_args(
         std::vector<std::shared_ptr<type>> args) const;
 
@@ -1025,12 +1031,14 @@ public:
      * Build a callable that shares @p proto's addresser and LLVM representation but
      * carries the given prototype components. Used by template type substitution,
      * which has no `context` at hand; the resulting type is *not* interned.
+     * A supplied member owner replaces the original unbound callable's owner.
      */
     static std::shared_ptr<callable_type> make_like(
         const callable_type& proto,
         const std::shared_ptr<type>& ret,
         const std::vector<std::shared_ptr<type>>& params,
-        const std::vector<std::shared_ptr<type>>& throws);
+        const std::vector<std::shared_ptr<type>>& throws,
+        const std::shared_ptr<aggregate>& member_of = nullptr);
 
     /** Nominal: same return type, parameter types and throws set (addresser ignored). */
     bool signature_equal(const callable_type& other) const;
@@ -1548,11 +1556,15 @@ void set_type_definition_namespace(const std::shared_ptr<type>& t, const std::sh
  * the concrete type from the map is returned.  For wrapper types
  * (pointer, reference, const, owner, view, link, drain, array) the
  * inner type is substituted and the wrapper is rebuilt on the new inner
- * type.  All other types are returned unchanged.
+ * type. Callable components and explicit model-level template arguments are
+ * substituted recursively. The optional identity map rebinds declaration-owned
+ * types to their clones without matching names or canonicalizing nominal aliases.
+ * All other types are returned unchanged.
  */
 std::shared_ptr<type> substitute_type(
     const std::shared_ptr<type>& t,
-    const type_substitution_map& subst);
+    const type_substitution_map& subst,
+    const type_rebinding_map& rebound_types = {});
 
 } // namespace k::model
 #endif //KLANG_TYPE_HPP

@@ -477,9 +477,11 @@ std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
 }
 
 std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_args(
-    const std::unordered_map<std::string, std::shared_ptr<type>>& subst) const
+    const std::unordered_map<std::string, std::shared_ptr<type>>& subst,
+    const type_rebinding_map& rebound_types) const
 {
-    if ((!_model_only_template_args && _ast_template_args.empty()) || subst.empty()) return nullptr;
+    if ((!_model_only_template_args && _ast_template_args.empty())
+        || (subst.empty() && rebound_types.empty())) return nullptr;
 
     std::vector<std::shared_ptr<type>> model_args;
     const auto count = _model_only_template_args ? _model_template_args.size() : _ast_template_args.size();
@@ -490,12 +492,14 @@ std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_a
         // A later member-template substitution must compose with the enclosing
         // specialization, not reconstruct its already-bound arguments from AST.
         if (i < _model_template_args.size() && _model_template_args[i]) {
-            auto sub = substitute_type(_model_template_args[i], subst);
+            auto sub = substitute_type(_model_template_args[i], subst, rebound_types);
             any_substituted |= sub != _model_template_args[i];
             model_args.push_back(sub);
             continue;
         }
-        if (_model_only_template_args) {
+        // Model-only arguments have no AST to derive from; with only identity
+        // rebinding there is no name substitution to apply either.
+        if (_model_only_template_args || subst.empty()) {
             model_args.push_back(nullptr);
             continue;
         }
@@ -1184,11 +1188,12 @@ std::shared_ptr<callable_type> callable_type::make_like(
     const callable_type& proto,
     const std::shared_ptr<type>& ret,
     const std::vector<std::shared_ptr<type>>& params,
-    const std::vector<std::shared_ptr<type>>& throws)
+    const std::vector<std::shared_ptr<type>>& throws,
+    const std::shared_ptr<aggregate>& member_of)
 {
     if (auto mem = dynamic_cast<const member_function_reference_type*>(&proto)) {
         auto res = std::shared_ptr<member_function_reference_type>(
-            new member_function_reference_type(mem->get_member_of(), ret, params,
+            new member_function_reference_type(member_of ? member_of : mem->get_member_of(), ret, params,
                                                proto._addresser, proto._llvm_type));
         res->set_throws(throws);
         return res;
@@ -1419,16 +1424,22 @@ void set_type_definition_namespace(const std::shared_ptr<type>& t, const std::sh
 
 std::shared_ptr<type> substitute_type(
     const std::shared_ptr<type>& t,
-    const type_substitution_map& subst)
+    const type_substitution_map& subst,
+    const type_rebinding_map& rebound_types)
 {
     if (!t) return nullptr;
+    if (auto it = rebound_types.find(t.get()); it != rebound_types.end()) return it->second;
 
     // Leaf: unresolved_type → look up in substitution map
     if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (!rebound_types.empty() && ut->is_resolved()) {
+            auto resolved = substitute_type(ut->get_resolved(), subst, rebound_types);
+            if (resolved != ut->get_resolved()) return resolved;
+        }
         const auto& tid = ut->type_id();
 
         if (ut->has_model_only_template_args()) {
-            if (auto substituted = ut->clone_with_substituted_model_args(subst)) return substituted;
+            if (auto substituted = ut->clone_with_substituted_model_args(subst, rebound_types)) return substituted;
             return t;
         }
         auto it = subst.find(tid.to_string());
@@ -1451,7 +1462,7 @@ std::shared_ptr<type> substitute_type(
         // (e.g. "InputStream<byte>").  Without this, "InputStream<T>*" member/param
         // types keep a dangling 'T' and never resolve.
         if (ut->has_template_args()) {
-            if (auto substituted = ut->clone_with_substituted_model_args(subst)) {
+            if (auto substituted = ut->clone_with_substituted_model_args(subst, rebound_types)) {
                 return substituted;
             }
         }
@@ -1464,40 +1475,56 @@ std::shared_ptr<type> substitute_type(
     // handled before the generic get_subtype() path.
     if (auto ct = std::dynamic_pointer_cast<callable_type>(t)) {
         bool changed = false;
-        auto new_ret = substitute_type(ct->get_return_type(), subst);
+        auto new_ret = substitute_type(ct->get_return_type(), subst, rebound_types);
         if (new_ret != ct->get_return_type()) changed = true;
         std::vector<std::shared_ptr<type>> new_params;
         new_params.reserve(ct->get_parameter_types().size());
         for (const auto& p : ct->get_parameter_types()) {
-            auto np = substitute_type(p, subst);
+            auto np = substitute_type(p, subst, rebound_types);
             if (np != p) changed = true;
             new_params.push_back(np);
         }
         std::vector<std::shared_ptr<type>> new_throws;
         new_throws.reserve(ct->get_throws().size());
         for (const auto& th : ct->get_throws()) {
-            auto nt = substitute_type(th, subst);
+            auto nt = substitute_type(th, subst, rebound_types);
             if (nt != th) changed = true;
             new_throws.push_back(nt);
         }
+        std::shared_ptr<aggregate> member_of;
+        if (auto mem = std::dynamic_pointer_cast<member_function_reference_type>(ct)) {
+            auto owner = mem->get_member_of();
+            if (owner) {
+                auto rebound = substitute_type(owner->get_struct_type(), {}, rebound_types);
+                if (auto st = std::dynamic_pointer_cast<struct_type>(rebound);
+                    st && st->get_struct() != owner) {
+                    member_of = st->get_struct();
+                    changed = true;
+                }
+            }
+        }
         if (!changed) return t;
-        return callable_type::make_like(*ct, new_ret, new_params, new_throws);
+        return callable_type::make_like(*ct, new_ret, new_params, new_throws, member_of);
     }
     if (auto uct = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (!rebound_types.empty() && uct->is_resolved()) {
+            auto resolved = substitute_type(uct->get_resolved(), subst, rebound_types);
+            if (resolved != uct->get_resolved()) return resolved;
+        }
         bool changed = false;
-        auto new_ret = substitute_type(uct->get_return_type(), subst);
+        auto new_ret = substitute_type(uct->get_return_type(), subst, rebound_types);
         if (new_ret != uct->get_return_type()) changed = true;
         std::vector<std::shared_ptr<type>> new_params;
         new_params.reserve(uct->parameter_types().size());
         for (const auto& p : uct->parameter_types()) {
-            auto np = substitute_type(p, subst);
+            auto np = substitute_type(p, subst, rebound_types);
             if (np != p) changed = true;
             new_params.push_back(np);
         }
         std::vector<std::shared_ptr<type>> new_throws;
         new_throws.reserve(uct->get_throws().size());
         for (const auto& th : uct->get_throws()) {
-            auto nt = substitute_type(th, subst);
+            auto nt = substitute_type(th, subst, rebound_types);
             if (nt != th) changed = true;
             new_throws.push_back(nt);
         }
@@ -1510,7 +1537,7 @@ std::shared_ptr<type> substitute_type(
     auto inner = t->get_subtype();
     if (!inner) return t; // primitive or leaf — no substitution needed
 
-    auto new_inner = substitute_type(inner, subst);
+    auto new_inner = substitute_type(inner, subst, rebound_types);
     if (new_inner == inner) return t; // unchanged
 
     // When the substituted inner type is a freshly cloned, otherwise-unowned node
@@ -1518,7 +1545,10 @@ std::shared_ptr<type> substitute_type(
     // or a nested pinned wrapper), the standard cached wrappers (get_reference/…) would
     // only weak-reference it, leaving the subtype dangling once this function returns.
     // Build a pinned wrapper that strongly owns such an inner instead.
-    bool inner_needs_pinning = new_inner->is_pinned();
+    bool inner_needs_pinning = new_inner->is_pinned()
+        || (!rebound_types.empty()
+            && (type::is_callable(new_inner)
+                || std::dynamic_pointer_cast<unresolved_callable_type>(new_inner)));
     if (!inner_needs_pinning) {
         if (auto ut = std::dynamic_pointer_cast<unresolved_type>(new_inner)) {
             inner_needs_pinning = ut->has_template_args();

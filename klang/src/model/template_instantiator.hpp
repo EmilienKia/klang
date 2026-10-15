@@ -502,7 +502,8 @@ private:
         const type_substitution_map& subst,
         const value_substitution_map& val_subst,
         std::shared_ptr<context> ctx = nullptr,
-        const source_type_substitution_map& source_subst = {});
+        const source_type_substitution_map& source_subst = {},
+        type_rebinding_map* rebound_types = nullptr);
 
     /**
      * Clone a nested union_type_def from a template aggregate into a concrete
@@ -517,7 +518,13 @@ private:
         const union_type_def& src,
         std::shared_ptr<aggregate> target,
         const type_substitution_map& subst,
-        std::shared_ptr<context> ctx);
+        std::shared_ptr<context> ctx,
+        type_rebinding_map* rebound_types = nullptr);
+
+    /** Rebind cloned fields and signatures after all nested declarations exist. */
+    static void rebind_cloned_declaration_types(
+        aggregate& target,
+        const type_rebinding_map& rebound_types);
 
     /**
      * Walk all statements in a block and expand pack_expansion_expression
