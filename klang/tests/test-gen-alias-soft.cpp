@@ -85,6 +85,20 @@ TEST_CASE("alias — soft alias of a function", "[gen][alias]") {
     CHECK(f() == 42);
 }
 
+TEST_CASE("alias — soft function aliases complete source defaults",
+          "[gen][alias][default-args][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_alias_soft_defaults;
+        original(value : int = 41) : int { return value + 1; }
+        alias renamed : original;
+        test() : int { return renamed(); }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
 TEST_CASE("alias — chained soft aliases resolve to the final type", "[gen][alias]") {
     auto jit = gen_jit(R"SRC(
         module gen_alias_soft_05;

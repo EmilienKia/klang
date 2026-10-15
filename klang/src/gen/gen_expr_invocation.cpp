@@ -1632,6 +1632,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             }
         }
 
+        // Transparent function aliases keep their source declaration bound even
+        // when lookup by the alias spelling finds no function-holder entry.
+        if (all_candidates.empty() && callee->is_function()
+            && !callee->get_function()->is_template()) {
+            append_unique_candidate(callee->get_function());
+        }
+
         std::shared_ptr<expression> this_candidate;
         std::vector<std::shared_ptr<expression>> rest_args;
 
@@ -2072,31 +2079,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             }
         }
 
-        // Step 4: If callee is a function pointer: validate argument types
+        // Step 4: No function candidate: try temporary object construction.
         if (all_candidates.empty()) {
-            if (callee->is_function() && !callee->get_function()->is_template()) {
-                auto already_func = callee->get_function();
-                expr.set_type(already_func->get_return_type());
-                const auto& params = already_func->parameters();
-                for (size_t n = 0; n < expr.arguments().size() && n < params.size(); ++n) {
-                    auto arg = expr.arguments().at(n);
-                    auto w = compute_cast_weight(arg, params[n]->get_type());
-                    if (w != CAST_IMPOSSIBLE) {
-                        auto cast = adapt_type(arg, params[n]->get_type());
-                        if (cast && cast != arg) expr.assign_argument(n, cast);
-                    }
-                }
-                // Phase 3: annotate — already_func is resolved but we have no member_callee here
-                {
-                    auto mc = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
-                    annotate_dispatch_info(expr, already_func, mc);
-                }
-                // Exception contract check
-                check_call_contract(*already_func, expr.first_lexeme());
-                record_generic_cstring_obligations(already_func, expr.arguments(), expr.first_lexeme());
-                return;
-            }
-
             // ── Temporary anonymous object construction: S(args...) ────────────
             // The callee name does not resolve to any function. Try to resolve it
             // as a struct/class type. If found, this is a temporary construction
