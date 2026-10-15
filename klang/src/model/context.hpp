@@ -368,7 +368,10 @@ public:
     /**
      * Parse a 'declare ... @mangled(...)' LLVM IR snippet and create/return
      * the corresponding llvm::Function* (ExternalLinkage) in _module.
-     * Returns nullptr if _module is not yet initialised or parsing fails.
+     * Preserve the provider's calling convention and ABI attributes.
+     * Reuse canonical named layouts in typed attributes and value parameters.
+     * Returns nullptr if _module is not initialised, parsing fails, or an
+     * existing symbol has an incompatible native prototype.
      */
     llvm::Function* declare_llvm_function_from_def(const std::string& llvm_def,
                                                    const std::string& mangled_name,

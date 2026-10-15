@@ -434,5 +434,11 @@ kdi_type_to_model_type(const kdi::kdi_type& kdi_t,
     return convert(kdi_t, owner, ctx, mode);
 }
 
-} // namespace k::model
+bool apply_kdi_redirect_target(function& fn, const kdi::kdi_redirect_target& target,
+                               unit& owner, const std::shared_ptr<context>& ctx) {
+    auto receiver = target.receiver_type ? kdi_type_to_model_type(*target.receiver_type, owner, ctx) : nullptr;
+    fn.set_imported_redirect_contract({target.symbol, target.is_member, receiver});
+    return !target.receiver_type || receiver != nullptr;
+}
 
+} // namespace k::model

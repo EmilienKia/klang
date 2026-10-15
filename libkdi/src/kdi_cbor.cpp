@@ -666,6 +666,23 @@ kdi_variable decode_variable(cbor_item_t* item, const std::string& path) {
     return v;
 }
 
+cbor_item_t* encode_redirect_target(const kdi_redirect_target& target) {
+    auto* map = cbor_new_indefinite_map();
+    map_push(map, "symbol", cbor_str(target.symbol));
+    map_push(map, "is_member", cbor_bool(target.is_member));
+    if (target.receiver_type) map_push(map, "receiver_type", encode_type(*target.receiver_type));
+    return map;
+}
+
+kdi_redirect_target decode_redirect_target(cbor_item_t* item, const std::string& path) {
+    kdi_redirect_target target;
+    target.symbol = req_string(item, "symbol", path);
+    target.is_member = read_bool(map_get(item, "is_member"), path + ".is_member");
+    if (auto* receiver = map_get(item, "receiver_type"))
+        target.receiver_type = decode_type(receiver, path + ".receiver_type");
+    return target;
+}
+
 cbor_item_t* encode_function(const kdi_function& f) {
     cbor_item_t* m = cbor_new_indefinite_map();
     map_push(m, "name",         cbor_str(f.name));
@@ -686,6 +703,7 @@ cbor_item_t* encode_function(const kdi_function& f) {
         map_push(m, "throws_spec", ts);
     }
     if (f.doc) map_push(m, "doc", encode_doc_function(*f.doc));
+    if (f.redirect_target) map_push(m, "redirect_target", encode_redirect_target(*f.redirect_target));
     return m;
 }
 
@@ -711,6 +729,8 @@ kdi_function decode_function(cbor_item_t* item, const std::string& path) {
             f.throws_spec.push_back(decode_type(cbor_array_get(ts, i), path + ".throws_spec[" + std::to_string(i) + "]"));
     }
     if (auto* doc = map_get(item, "doc")) f.doc = decode_doc_function(doc, path + ".doc");
+    if (auto* target = map_get(item, "redirect_target"))
+        f.redirect_target = decode_redirect_target(target, path + ".redirect_target");
     return f;
 }
 
@@ -741,6 +761,7 @@ cbor_item_t* encode_method(const kdi_method& m) {
         map_push(map, "throws_spec", ts);
     }
     if (m.doc) map_push(map, "doc", encode_doc_function(*m.doc));
+    if (m.redirect_target) map_push(map, "redirect_target", encode_redirect_target(*m.redirect_target));
     return map;
 }
 
@@ -773,6 +794,8 @@ kdi_method decode_method(cbor_item_t* item, const std::string& path) {
             m.throws_spec.push_back(decode_type(cbor_array_get(ts, i), path + ".throws_spec[" + std::to_string(i) + "]"));
     }
     if (auto* doc = map_get(item, "doc")) m.doc = decode_doc_function(doc, path + ".doc");
+    if (auto* target = map_get(item, "redirect_target"))
+        m.redirect_target = decode_redirect_target(target, path + ".redirect_target");
     return m;
 }
 

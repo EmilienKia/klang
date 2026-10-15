@@ -18,6 +18,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_redirect.hpp"
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
 #include "../model/operators.hpp"
@@ -489,6 +490,7 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             if (namespace_owner && namespace_owner->get_short_name().starts_with("__kdi_private_"))
                 check_function_visibility(*func, symbol);
 
+            if (has_redirect_contract(*func)) func->accept(*this);
             // Build the callable_type for this function.
             callable_type_builder builder(_context);
             builder.addresser(callable_type::addresser::link);
@@ -514,14 +516,19 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
                 auto param_type = concrete_signature ? concrete_params[i]
                                                      : (p ? p->get_type() : nullptr);
                 if (p && param_type) {
-                    builder.append_parameter_type(param_type);
+                    auto receiver = i == 0 && (!func->is_member() || func->is_static())
+                        && has_redirect_contract(*func) ? implementation_receiver_type(*func) : nullptr;
+                    builder.append_parameter_type(receiver ? receiver : param_type);
                 }
             }
             // Owner struct (member function)
             auto owner_st = func->parent<aggregate>();
+            if (has_redirect_contract(*func) && owner_st && !func->is_static())
+                owner_st = implementation_receiver_owner(*func);
             if (owner_st && !func->is_static()) {
-                auto owner_struct = std::dynamic_pointer_cast<structure>(owner_st);
-                if (owner_struct) builder.member_of(owner_struct);
+                if (has_redirect_contract(*func)) builder.member_of(owner_st);
+                else if (auto owner_struct = std::dynamic_pointer_cast<structure>(owner_st))
+                    builder.member_of(owner_struct);
             }
             auto fn_ref_type = builder.build();
             // Keep fn_ref_type alive for the duration of type resolution.

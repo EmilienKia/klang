@@ -1191,6 +1191,17 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
             }
         }
         restore_parameter_defaults(fn, signature.params, ctx);
+        if constexpr (requires { signature.redirect_target; }) {
+            if (signature.redirect_target
+                && !apply_kdi_redirect_target(fn, *signature.redirect_target, _unit, ctx)) {
+                auto diag = k::log::diagnostic::make_error(
+                    static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_INCOMPATIBLE_SIG),
+                    "Cannot materialise imported redirect receiver of '{}': its KDI type is unavailable",
+                    {fn.get_fq_name()});
+                _logger.report(diag);
+                throw k::log::compiler_error(std::move(diag));
+            }
+        }
         if constexpr (requires { signature.return_type; }) {
             if (!fn.get_return_type()
                 && !std::holds_alternative<kdi::kdi_void_type>(signature.return_type.value)) {

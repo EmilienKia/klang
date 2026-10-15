@@ -17,9 +17,11 @@
  */
 
 #include "context.hpp"
+#include <functional>
 #include <sstream>
 #include <stdexcept>
 
+#include <unordered_map>
 #include <unordered_set>
 #include <string_view>
 
@@ -34,6 +36,9 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Type.h"
+#include "llvm/AsmParser/LLLexer.h"
+#include "llvm/AsmParser/Parser.h"
+#include "llvm/AsmParser/SlotMapping.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
@@ -1726,18 +1731,40 @@ context::declare_llvm_function_from_def(const std::string& llvm_def,
     if (llvm_def.empty() || mangled_name.empty()) return nullptr;
     if (!_module) return nullptr;
 
-    // If already declared in this module, return it.
-    if (!native) {
-        if (auto* existing = _module->getFunction(mangled_name))
-            return existing;
-    }
-
-    // Parse the snippet in a temporary module sharing *_context so that
-    // struct types referenced in the prototype are resolved.
-    std::string ir = "; KDI import\n" + llvm_def + "\n";
+    // Typed ABI attributes (sret/byval) need the same named layouts as their
+    // source declarations, not opaque forward references in a new IR snippet.
+    std::string definitions;
+    llvm::raw_string_ostream definitions_stream(definitions);
+    std::unordered_set<llvm::Type*> emitted_types;
+    std::function<void(llvm::Type*)> emit_type = [&](llvm::Type* type) {
+        if (!emitted_types.insert(type).second) return;
+        for (auto* subtype : type->subtypes()) emit_type(subtype);
+        if (auto* structure = llvm::dyn_cast<llvm::StructType>(type);
+            structure && structure->hasName()) {
+            structure->print(definitions_stream);
+            definitions_stream << '\n';
+        }
+    };
     llvm::SMDiagnostic diag;
+    llvm::SourceMgr sources;
+    sources.AddNewSourceBuffer(llvm::MemoryBuffer::getMemBuffer(llvm_def), llvm::SMLoc());
+    llvm::LLLexer lexer(sources.getMemoryBuffer(sources.getMainFileID())->getBuffer(),
+        sources, diag, *_context);
+    for (auto token = lexer.Lex(); token != llvm::lltok::Eof; token = lexer.Lex()) {
+        if (token == llvm::lltok::Error) return nullptr;
+        if (token == llvm::lltok::LocalVar) {
+            if (auto* structure = llvm::StructType::getTypeByName(*_context, lexer.getStrVal()))
+                emit_type(structure);
+        }
+    }
+    definitions_stream.flush();
+
+    // Recover the original names of types parsed in this snippet: the parser
+    // can create suffixed opaque types even in a shared LLVMContext.
+    std::string ir = "; KDI import\n" + definitions + llvm_def + "\n";
     auto buf = llvm::MemoryBuffer::getMemBuffer(ir, "<kdi-fn-def>");
-    auto tmp = llvm::parseIR(buf->getMemBufferRef(), diag, *_context);
+    llvm::SlotMapping slots;
+    auto tmp = llvm::parseAssembly(buf->getMemBufferRef(), diag, *_context, &slots);
     if (!tmp) return nullptr;
 
     auto* tmpFn = tmp->getFunction(mangled_name);
@@ -1754,26 +1781,63 @@ context::declare_llvm_function_from_def(const std::string& llvm_def,
             if (tmpFn->getAttributes().hasParamAttrs(i))
                 throw std::runtime_error("native symbol '" + mangled_name + "' has unsupported LLVM parameter attributes");
         }
+    }
+
+    std::unordered_map<llvm::Type*, llvm::Type*> named_types;
+    for (const auto& entry : slots.NamedTypes) {
+        if (auto* canonical = llvm::StructType::getTypeByName(*_context, entry.getKey()))
+            named_types[entry.getValue()] = canonical;
+    }
+    std::function<llvm::Type*(llvm::Type*)> import_type = [&](llvm::Type* type) -> llvm::Type* {
+        if (auto found = named_types.find(type); found != named_types.end()) return found->second;
+        if (auto* array = llvm::dyn_cast<llvm::ArrayType>(type))
+            return llvm::ArrayType::get(import_type(array->getElementType()), array->getNumElements());
+        if (auto* structure = llvm::dyn_cast<llvm::StructType>(type);
+            structure && structure->isLiteral()) {
+            std::vector<llvm::Type*> fields;
+            for (auto* field : structure->elements()) fields.push_back(import_type(field));
+            return llvm::StructType::get(*_context, fields, structure->isPacked());
+        }
+        return type;
+    };
+    std::vector<llvm::Type*> parameters;
+    for (auto* parameter : tmpFn->getFunctionType()->params())
+        parameters.push_back(import_type(parameter));
+    auto* function_type = llvm::FunctionType::get(
+        import_type(tmpFn->getReturnType()), parameters, tmpFn->isVarArg());
+    auto attributes = tmpFn->getAttributes();
+    for (unsigned index = 0; index < tmpFn->arg_size(); ++index) {
+        for (auto attribute : tmpFn->getAttributes().getParamAttrs(index)) {
+            if (attribute.isTypeAttribute()) {
+                attributes = attributes.replaceAttributeTypeAtIndex(*_context,
+                    index + llvm::AttributeList::FirstArgIndex, attribute.getKindAsEnum(),
+                    import_type(attribute.getValueAsType()));
+            }
+        }
+    }
+    if (native) {
         if (auto* named = _module->getNamedValue(mangled_name)) {
             auto* existing = llvm::dyn_cast<llvm::Function>(named);
-            if (!existing || existing->getFunctionType() != tmpFn->getFunctionType()
+            if (!existing || existing->getFunctionType() != function_type
                 || existing->getCallingConv() != tmpFn->getCallingConv()
-                || existing->getAttributes() != tmpFn->getAttributes())
+                || existing->getAttributes() != attributes)
                 throw std::runtime_error("native symbol '" + mangled_name + "' has incompatible LLVM declarations");
             return existing;
         }
+    } else if (auto* existing = _module->getFunction(mangled_name)) {
+        if (existing->getFunctionType() != function_type
+            || existing->getCallingConv() != tmpFn->getCallingConv()
+            || existing->getAttributes() != attributes) return nullptr;
+        return existing;
     }
 
-    // Create/get the function in *_module with the same type and ExternalLinkage.
     auto* fn = llvm::Function::Create(
-        tmpFn->getFunctionType(),
+        function_type,
         llvm::GlobalValue::ExternalLinkage,
         mangled_name,
         *_module);
-    if (native) {
-        fn->setCallingConv(tmpFn->getCallingConv());
-        fn->setAttributes(tmpFn->getAttributes());
-    }
+    fn->setAttributes(attributes);
+    fn->setCallingConv(tmpFn->getCallingConv());
     return fn;
 }
 

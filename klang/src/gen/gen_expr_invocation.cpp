@@ -18,6 +18,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_redirect.hpp"
 #include "gen_callable_helpers.hpp"
 #include "ffi_validation.hpp"
 #include <exception>
@@ -2152,6 +2153,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 {func_name});
         }
 
+        // A forward call can precede the redirect declaration's normal visit.
+        // Resolve its source defaults and every redirect edge before selecting
+        // arguments; provider defaults must never replace source defaults.
+        for (const auto& candidate : all_candidates) {
+            if (has_redirect_contract(*candidate)) candidate->accept(*this);
+        }
+
         // Step 5: Perform overload resolution via get_best_matching_function
         FunctionCandidate best = get_best_matching_function(all_candidates,
                                                             this_candidate ? rest_args : args,
@@ -3181,6 +3189,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
     }
     // ── Direct call (non-virtual, or qualified, or free function) ────────────
+    if (function && has_redirect_contract(*function) && !args.empty()) {
+        args[0] = project_redirect_receiver(*_builder, args[0], *function,
+            _context->module().getDataLayout());
+    }
     bool call_uses_sret = llvm_func->getReturnType()->isVoidTy()
         && expr.get_type() && needs_sret_return(expr.get_type());
     if (call_uses_sret) {

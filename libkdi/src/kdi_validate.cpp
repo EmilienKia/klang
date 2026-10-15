@@ -307,6 +307,29 @@ void validate_params(const std::vector<kdi_param>& params,
     }
 }
 
+void validate_redirect_target(const std::optional<kdi_redirect_target>& target,
+                              bool source_member, size_t parameter_count,
+                              const std::string& path, const kdi_type_table& types,
+                              kdi_validation_result& result) {
+    if (!target) return;
+    const auto target_path = path + ".redirect_target";
+    if (target->symbol.empty()) result.add(target_path, "provider symbol must not be empty");
+    if ((source_member || target->is_member) && !target->receiver_type)
+        result.add(target_path, "provider receiver_type is required");
+    if (!target->receiver_type) return;
+    if (!source_member && parameter_count == 0)
+        result.add(target_path, "a receiver binding requires an effective source parameter");
+    validate_type(*target->receiver_type, target_path + ".receiver_type", types, result);
+    auto reference = std::get_if<kdi_ref_type>(&target->receiver_type->value);
+    const kdi_type* object = reference && reference->inner ? reference->inner.get() : nullptr;
+    if (object) {
+        if (auto qualifier = std::get_if<kdi_const_type>(&object->value))
+            object = qualifier->inner.get();
+    }
+    if (!object || !std::holds_alternative<kdi_aggregate_ref>(object->value))
+        result.add(target_path, "provider receiver_type must be a reference to an aggregate");
+}
+
 void validate_layout(const std::vector<kdi_layout_field>& layout,
                      const std::string& path,
                      kdi_validation_result& result) {
@@ -362,6 +385,8 @@ void validate_aggregate(const kdi_aggregate& agg,
         if (agg.methods[i].is_extern && !agg.methods[i].is_static)
             result.add(mp + ".is_extern", "native methods must be static");
         validate_throws_placeholders(agg.methods[i].throws_spec, mp, types, result);
+        validate_redirect_target(agg.methods[i].redirect_target, !agg.methods[i].is_static,
+                                 agg.methods[i].params.size(), mp, types, result);
         if (!agg.methods[i].is_deleted && agg.methods[i].mangled_name.empty()) {
             result.add(mp, "mangled_name must not be empty");
         }
@@ -422,6 +447,8 @@ void validate_namespace(const kdi_namespace& ns,
         validate_native_callable(ns.functions[i].is_extern, ns.functions[i].mangled_name,
                                  ns.functions[i].params, fp, result);
         validate_throws_placeholders(ns.functions[i].throws_spec, fp, types, result);
+        validate_redirect_target(ns.functions[i].redirect_target, false,
+                                 ns.functions[i].params.size(), fp, types, result);
         if (ns.functions[i].mangled_name.empty()) {
             result.add(fp, "mangled_name must not be empty");
         }
@@ -480,4 +507,3 @@ kdi_validation_result kdi_validate(const kdi_file& file) {
 }
 
 } // namespace kdi
-

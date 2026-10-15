@@ -655,6 +655,7 @@ protected:
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
     void visit_parameter(parameter &) override;
+    void resolve_redirect(function& fn);
     void visit_function(function&) override;
     void visit_constructor(constructor &) override;
     void visit_destructor(destructor&) override;

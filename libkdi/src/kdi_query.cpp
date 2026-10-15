@@ -89,13 +89,20 @@ std::string throws_to_string(const std::vector<kdi_type>& throws_spec) {
     return out.str();
 }
 
+std::string redirect_to_string(const std::optional<kdi_redirect_target>& target) {
+    if (!target) return {};
+    std::string text = " -> " + target->symbol + (target->is_member ? " [member]" : " [free]");
+    if (target->receiver_type) text += " receiver: " + kdi_type_to_string(*target->receiver_type);
+    return text;
+}
+
 std::string function_signature(const kdi_function& fn) {
     std::ostringstream out;
     if (fn.is_extern) out << "@ffi::Extern(\"C\") ";
     if (fn.is_static) out << "static ";
     if (fn.is_operator) out << "operator ";
     out << fn.name << params_to_string(fn.params) << " : " << kdi_type_to_string(fn.return_type)
-        << throws_to_string(fn.throws_spec);
+        << throws_to_string(fn.throws_spec) << redirect_to_string(fn.redirect_target);
     return out.str();
 }
 
@@ -111,7 +118,8 @@ std::string method_signature(const kdi_method& method) {
     if (method.is_const_member) out << "const ";
     if (method.is_operator) out << "operator ";
     out << method.name << params_to_string(method.params) << " : "
-        << kdi_type_to_string(method.return_type) << throws_to_string(method.throws_spec);
+        << kdi_type_to_string(method.return_type) << throws_to_string(method.throws_spec)
+        << redirect_to_string(method.redirect_target);
     return out.str();
 }
 

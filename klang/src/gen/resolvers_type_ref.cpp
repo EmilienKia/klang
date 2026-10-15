@@ -1060,9 +1060,8 @@ type_reference_resolver::resolve_callable_type(
                 "Cannot find owner struct '{}' for member function reference type",
                 {ufrt->owner_name().to_string()});
         }
-        // Accept both structure and klass as owner aggregates
-        if (!std::dynamic_pointer_cast<structure>(owner_agg) &&
-            !std::dynamic_pointer_cast<klass>(owner_agg)) {
+        // Local and imported aggregates have different model subclasses.
+        if (!owner_agg->is_struct() && !owner_agg->is_class() && !owner_agg->is_interface()) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SIGNATURE_ENUM_BAD_UNDERLYING), std::nullopt,
                 "'{}' is not a structure or class; member function pointers require a struct/class owner",
                 {ufrt->owner_name().to_string()});

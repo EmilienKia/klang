@@ -66,6 +66,7 @@ add_executable(kdi-tests
     tests/test_symbols.cpp
     tests/test_mangling.cpp
     tests/test_query.cpp
+    tests/test_redirect.cpp
     tests/test_doc.cpp
     tests/test_docgen.cpp
 )

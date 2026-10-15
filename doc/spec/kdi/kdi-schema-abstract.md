@@ -681,6 +681,7 @@ KdiFunction {
                                    -- Used by importing compilers to reconstruct
                                    -- the exact LLVM Function declaration.
   doc          : KdiDocFunction?
+  redirect_target : KdiRedirectTarget?
 }
 
 KdiParam {
@@ -757,8 +758,46 @@ KdiMethod {
                                    -- "declare i32 @_ZN2ns5Adder3addEi
                                    --   (%struct.ns.Adder* %this, i32)"
   doc            : KdiDocFunction?
+  redirect_target : KdiRedirectTarget?
 }
 ```
+
+### Redirect provider contract
+
+```
+KdiRedirectTarget {
+  symbol        : string         -- nonempty final native body symbol
+  is_member     : bool           -- final provider has an implicit receiver
+  receiver_type : KdiType?        -- actual receiver binding at effective argument zero
+}
+```
+
+The containing function or method retains its source signature, parameter names,
+defaults, and visibility. Its `mangled_name` names the callable linkage entry,
+and `llvm_def` declares that entry using the actual body prototype and
+attributes. For a locally defined provider the source symbol is a data alias
+to the same body address, not an executable adapter. A re-export of an imported
+declaration retains that existing entry symbol; it must not create an LLVM
+alias to an undefined declaration or an executable forwarding stub.
+`symbol` identifies the final provider independently; it need not name a public
+declaration. Neither field contains a process address.
+
+`receiver_type` is required when the source or provider has an implicit receiver.
+It is a reference to an aggregate, optionally const-qualified inside the
+reference, and denotes the provider's first effective parameter. Effective
+parameters are the implicit receiver, when present, followed by explicit
+parameters. A free source therefore binds its first explicit parameter.
+The receiver binding must also be retained through flattened member/free chains,
+even if both endpoint declarations are free functions.
+
+Producers must validate every source redirect edge before flattening. Consumers
+must preserve this symbolic receiver binding, resolve its nominal type, and
+project the source effective argument zero to the provider's same or ancestor
+subobject before ordinary typed calls. They must reject missing, unresolved, or
+incompatible receiver contracts rather than use the source owner as a fallback.
+Other effective parameters and the result retain exact semantic types.
+Descriptors without `redirect_target` keep their previous nonredirect behavior.
+JSON and CBOR carry the same optional object; the schema version remains `0.1`.
 
 ---
 

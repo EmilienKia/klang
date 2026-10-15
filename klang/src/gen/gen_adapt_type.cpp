@@ -25,6 +25,7 @@
 #include "resolvers.hpp"
 #include "gen_callable_helpers.hpp"
 #include "gen_helpers.hpp"
+#include "gen_redirect.hpp"
 
 #include "../model/expressions.hpp"
 #include "../model/constant_evaluator.hpp"
@@ -208,6 +209,15 @@ type_reference_resolver::adapt_callable_type(
                 auto sym = std::dynamic_pointer_cast<symbol_expression>(expr);
                 if (sym && sym->is_function()) {
                     if (tgt_frt->is_unbound_member()) {
+                        auto source_member = std::dynamic_pointer_cast<member_function_reference_type>(src_frt);
+                        auto target_member = std::dynamic_pointer_cast<member_function_reference_type>(tgt_frt);
+                        if (has_redirect_contract(*sym->get_function()) && source_member && target_member
+                            && source_member->get_member_of() != target_member->get_member_of()) {
+                            throw_error(static_cast<unsigned int>(k::diag::callable_diag::ERR_CALLABLE_COVARIANCE_NEEDS_ADJUSTMENT),
+                                expr->first_lexeme(),
+                                "Redirected member '{}' requires its implementation receiver type for an unbound member reference",
+                                {sym->get_function()->get_fq_name()});
+                        }
                         // Unbound member function reference: keeps the historical bare
                         // function-pointer representation, produced directly by impl_gen.
                         return expr;

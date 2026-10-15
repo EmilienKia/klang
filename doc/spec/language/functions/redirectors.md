@@ -66,10 +66,12 @@ foo(a: int) -> ns::helper(int);
 
 A function redirector:
 
-- Declares a new **symbol** (with its own name, visibility, and mangled name).
+- Declares a new source **symbol**, with its own name, visibility and signature.
 - Does **not** generate a new function body; it shares the exact same machine code as the target.
-- At the LLVM IR level, a `GlobalAlias` is emitted pointing to the target function.
-- In the ELF binary, the alias symbol appears as a regular function symbol.
+- For a locally defined implementation, a `GlobalAlias` with the redirector's
+  mangled name points to the target; its ELF symbol is a regular function symbol.
+- A redirect to an imported declaration retains the existing imported linkage
+  entry, while its independent source declaration is preserved in KDI.
 - The redirector has **no body**, **no member initializer list**, and **no block statement**.
 
 ---
@@ -92,10 +94,39 @@ The redirector's full prototype (including the implicit `this` parameter for mem
 must be **strictly compatible** with the target's prototype:
 
 - The number of parameters must match (including implicit `this`).
-- Each parameter type must be identical (exact match).
+- Each explicit parameter type must be identical (exact semantic match), including
+  signedness, const qualification, addressers, ownership, nominal types, and
+  callable signatures. Matching machine representations is not sufficient.
+- K typed-vararg packing is caller-local: `values... : T` and `values : T[]`
+  may redirect to each other when their resolved parameter types are identical.
 - The return type must be identical.
 - For member functions: const-qualification of the `this` parameter must be compatible
   (a const redirector can only target a const function).
+- Every exception the target declares must be covered by the redirector's `throws`
+  clause, either by the same exception type or by one of its ancestors. A noexcept
+  redirector must not target a throwing implementation.
+- Parameter names and default argument expressions belong to the redirector and
+  need not match those of the target. Transparent type aliases remain transparent.
+
+K typed varargs pass one array parameter; they are not native C ellipsis.
+Native variadic calling-convention constraints are separate from this packing sugar.
+
+Compatibility is checked after lexical type resolution, before code generation.
+Each edge of a redirect chain must satisfy the contract; a compatible final
+implementation does not make an incompatible intermediate declaration valid.
+
+```k
+alias Count : int;
+impl(value : int) : int { return value; }
+valid(renamed : Count = 7) : int -> impl;
+invalid(value : unsigned int) : int -> impl; // error: different semantic type
+```
+
+The implicit receiver has one additional rule for inherited member re-exports:
+the redirector's owner may derive from the implementation's owner. The call must
+project the receiver to the implementation's base subobject, including when that
+subobject has a nonzero offset or is reached through a virtual-base pointer.
+This exception does not apply to explicit parameter or return types.
 
 > **Future extension:** Covariance on return types and contravariance on parameter types
 > may be relaxed in a future version.
@@ -139,7 +170,20 @@ top() : int -> mid;
 ```
 
 - Circular redirections are detected and produce a compile-time error.
-- Resolution is performed in a dedicated pass after all individual redirect targets are resolved.
+- Chains are validated and flattened after their individual signatures and targets
+  have been resolved. Overload disambiguation precedes cycle detection.
+- A receiver binding introduced by a member edge is retained when later edges
+  use free functions. Thus a free alias taking `Derived&` may reach a `Base`
+  implementation through a valid `Derived` member redirect; its direct calls
+  still project argument zero to the actual `Base` subobject.
+- Imported redirectors preserve their source signature and symbolic provider
+  receiver contract in KDI. Calls to their exported alias symbols apply the same
+  projection, without executable redirect adapters.
+- An unbound callable cannot insert a receiver adjustment. Member references
+  therefore name the provider's receiver owner; a free alias whose first
+  parameter has a retained receiver binding exposes that actual receiver type
+  when bound as a bare callable. Its direct named calls still use the source
+  logical signature.
 
 ---
 
@@ -160,6 +204,8 @@ helper(a: int) : int { return a * 2; }
 Since member functions use the same calling convention as free functions (with `this`
 as the first parameter), any free function whose first parameter matches the `this`
 type of a member function can serve as its redirect target, and vice versa.
+The explicit receiver parameter must match the implicit receiver semantically:
+for example, `Foo&` is not interchangeable with `Foo*` or `Foo!`.
 
 ---
 
@@ -170,6 +216,8 @@ A redirector declared on a virtual method participates in vtable slot assignment
 - The vtable slot stores a pointer to the **target**'s implementation (not a wrapper).
 - A derived class can override a redirected virtual method with a concrete implementation.
 - Redirectors do **not** replace or interact with virtual dispatch thunks; thunks remain separate.
+- Receiver adjustment in an ordinary virtual dispatch thunk uses the actual
+  implementation's receiver, not merely the aggregate declaring the redirector.
 
 ```k
 class Base {
@@ -202,7 +250,7 @@ main() : int {
 
 ## 9. Code generation
 
-At the LLVM IR level, a function redirector is compiled as:
+For an implementation defined in the current module, a redirector is compiled as:
 
 ```llvm
 @_KFN...redirectorE... = alias i32 (...)*, @_KFN...targetE...
@@ -215,6 +263,18 @@ This `GlobalAlias` ensures:
 - The context function map registers the redirector pointing to the target's LLVM function
   so that call sites can resolve the alias transparently.
 
+LLVM and ELF aliases cannot define another module's external declaration.
+An imported re-export therefore uses the existing callable entry symbol in its
+KDI linkage fields, while retaining its own logical name, defaults and receiver
+contract. Consumers must not conflate source declarations merely because their
+native linkage entries are identical.
+
+No executable redirect wrapper is generated. A direct call or bound callable
+projects an inherited receiver before entering the implementation; virtual calls
+use the existing vtable receiver-adjustment machinery. An unbound member reference
+is a bare function pointer and must use the implementation's receiver type when
+the declaring and implementation receivers differ.
+
 ---
 
 ## 10. Error conditions
@@ -225,6 +285,6 @@ This `GlobalAlias` ensures:
 | Circular redirect chain | `Circular redirect chain detected involving function 'X'` |
 | Target is abstract | `Function redirector 'X' targets abstract function 'Y', which has no implementation` |
 | Target is deleted | `Function redirector 'X' targets deleted function 'Y'` |
+| Incompatible semantic prototype or exception contract | `Function redirector 'X' has an incompatible signature with target 'Y': ...` |
 | Missing target after `->` | Parse error: `Function redirect declaration expects a target function name` |
 | Missing `;` after target | Parse error: `Function redirect declaration expects ';' after target` |
-

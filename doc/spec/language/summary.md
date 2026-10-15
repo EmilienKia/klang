@@ -757,8 +757,19 @@ foo(a: int) -> bar(int);           // with disambiguation
 public compute() : int -> Base::impl;  // visibility change
 ```
 
-- No body: LLVM `GlobalAlias` to the target.
-- Strictly compatible prototypes.
+- No body: local providers use LLVM `GlobalAlias`; imported re-exports retain
+  the existing callable linkage entry and their independent source signature.
+- Strict semantic parameter/result identity (including addressers, ownership,
+  signedness, const and nominal types); matching machine representations is insufficient.
+- Implicit receivers may re-export an ancestor's implementation with receiver
+  projection; member/free mixing requires an exact explicit receiver type.
+- Validated receiver bindings survive flattened member/free chains and KDI imports;
+  direct calls project effective argument zero, while bare callable references
+  expose the actual provider receiver contract.
+- Target exceptions must be covered by the redirector's `throws` contract.
+- Parameter names/defaults and K typed-vararg packing remain declaration-local;
+  array and typed-vararg aliases may mix when resolved parameter types are identical.
+  Transparent aliases are accepted; native C ellipsis is a separate ABI contract.
 - Redirector chains allowed (transitive). Circular = error.
 - Redirector visibility is independent of the target.
 - Compatible with vtable and virtual dispatch.

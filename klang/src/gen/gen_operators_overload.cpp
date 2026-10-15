@@ -20,6 +20,7 @@
 #include "resolvers_constexpr.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_redirect.hpp"
 #include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
 #include "../model/template_deduction.hpp"
@@ -1289,6 +1290,8 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
 
     // Step 3: For member operators: load 'this' from left operand, call with right as arg
     // Direct call
+    if (has_redirect_contract(*op_func) && !args.empty())
+        args[0] = project_redirect_receiver(*_builder, args[0], *op_func, _context->module().getDataLayout());
     bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
     if (op_uses_sret) {
         auto* sret_dest = prepare_sret_for_op(args, true);
@@ -1472,6 +1475,8 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
     }
 
     // Direct call
+    if (has_redirect_contract(*op_func) && !args.empty())
+        args[0] = project_redirect_receiver(*_builder, args[0], *op_func, _context->module().getDataLayout());
     bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
     if (op_uses_sret) {
         auto* sret_tmp = prepare_sret_for_uop(args);
@@ -1673,6 +1678,8 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
 
     // Step 4: Handle virtual dispatch and sret return
     // Direct call
+    if (has_redirect_contract(*op_func) && !args.empty())
+        args[0] = project_redirect_receiver(*_builder, args[0], *op_func, _context->module().getDataLayout());
     bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
     if (op_uses_sret) {
         auto* sret_dest = prepare_sret_for_cast(args, true);

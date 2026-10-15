@@ -45,6 +45,7 @@
 namespace k::model {
 class unit;
 class context;
+class function;
 } // namespace k::model
 
 namespace k::model {
@@ -73,7 +74,10 @@ kdi_type_to_model_type(const kdi::kdi_type& kdi_t,
                        std::shared_ptr<context> ctx,
                        kdi_type_conversion mode = kdi_type_conversion::ordinary);
 
+/** Preserve symbolic provider identity separately from the imported source signature. */
+bool apply_kdi_redirect_target(function& fn, const kdi::kdi_redirect_target& target,
+                               unit& owner, const std::shared_ptr<context>& ctx);
+
 } // namespace k::model
 
 #endif // KLANG_KDI_TYPE_CONVERTER_HPP
-

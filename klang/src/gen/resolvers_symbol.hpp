@@ -206,21 +206,6 @@ protected:
     std::shared_ptr<expression> adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type);
 
     /**
-     * After initial redirect target resolution, follow chains transitively.
-     * For each redirected function, follow the chain to the final non-redirected target.
-     * Detects and reports circular redirect chains.
-     */
-    void resolve_redirect_chains(unit& unit);
-
-    /**
-     * Follow the redirect chain from a single function to its final target.
-     * @param fn The redirected function.
-     * @param visited Set of functions already in the current chain (for cycle detection).
-     * @return The final non-redirected target.
-     */
-    std::shared_ptr<function> resolve_redirect_chain(function& fn, std::unordered_set<function*>& visited);
-
-    /**
      * Resolve an enumeration's entries, base, underlying type and enum_type.
      * Handles recursive resolution for derived enums whose base may not yet be resolved.
      * @param en The enumeration to resolve.

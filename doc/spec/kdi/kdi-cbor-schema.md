@@ -300,6 +300,7 @@ Function = {
   "llvm_def"     : text,          -- mandatory LLVM IR prototype, e.g.
                                   -- "declare i32 @_ZN3foo3barEi(i32)"
   ?"doc"         : DocFunction
+  ?"redirect_target" : RedirectTarget
 }
 ```
 
@@ -335,6 +336,7 @@ Method = {
   "mangled_name"     : text,   -- may be empty when deleted
   "llvm_def"         : text,   -- empty for deleted methods; otherwise LLVM IR prototype
   ?"doc"             : DocFunction
+  ?"redirect_target" : RedirectTarget
 }
 ```
 
@@ -344,6 +346,28 @@ accept a deleted operation or fail during linking. Regenerate older descriptors
 and use an updated reader to enforce copy restrictions; the extension is not
 fail-closed for old readers. If present, `is_deleted` and `is_private` must be
 booleans; other values must be rejected.
+
+### RedirectTarget
+
+```
+RedirectTarget = {
+  "symbol"          : text,
+  "is_member"       : bool,
+  ?"receiver_type"  : Type
+}
+```
+
+Both `symbol` and the boolean `is_member` are mandatory when the object is
+present. `receiver_type` preserves a validated receiver binding at effective
+argument zero, including a first explicit argument of a free source and a
+flattened chain whose endpoints are both free. It must be an aggregate reference
+type and is required whenever either endpoint has an implicit receiver.
+The callable linkage `mangled_name` and matching `llvm_def` remain distinct from
+the actual provider identity. An imported re-export retains the existing entry
+symbol rather than creating an alias to an external declaration.
+These fields have identical JSON keys and semantics;
+see the abstract schema's redirect provider contract. Schema version `0.1`
+is unchanged.
 
 ---
 

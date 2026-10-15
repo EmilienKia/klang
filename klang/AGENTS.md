@@ -57,6 +57,10 @@ materialised: an aggregate can refer to a union or alias declared in a later
 namespace. Pointer return subtypes also need lexical signature resolution before
 any function body uses them; matching LLVM pointer shapes does not establish K
 type identity.
+Imported re-exports sharing a linkage entry must each be registered in the
+declaration pass's model-to-LLVM map. A symbol-only lookup is not registration:
+source declarations retain independent defaults and receiver ordinals. Preserve
+the provider prototype's calling convention and ABI attributes, including sret.
 Imported generic aggregate facades and their erased synthesis share a source
 name. Namespace lookup must retain the facade; the import cache retains the
 concrete synthesis. Nested template arguments can be semantically resolved

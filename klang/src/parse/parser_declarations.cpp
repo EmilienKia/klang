@@ -2646,6 +2646,10 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             decl->annotations = std::move(annotations);
             decl->template_params = std::move(template_params);
             decl->is_generic = fn_is_generic;
+            if (has_throws_clause) {
+                decl->has_throws_clause = true;
+                decl->throws_spec = std::move(throws_spec);
+            }
             if (fn_tilde) decl->set_tilde(*fn_tilde);
             if (fn_open_paren) decl->set_open_paren(*fn_open_paren);
             if (fn_close_paren) decl->set_close_paren(*fn_close_paren);

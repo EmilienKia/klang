@@ -91,6 +91,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_redirect.hpp"
 
 #include <stdexcept>
 #include <optional>
@@ -1496,6 +1497,23 @@ static llvm::Value* emit_receiver_adjustment(
 
 } // anonymous namespace
 
+llvm::Value* project_redirect_receiver(llvm::IRBuilder<>& builder, llvm::Value* receiver,
+                                      const function& fn, const llvm::DataLayout& layout) {
+    if (!has_redirect_contract(fn) || !implementation_receiver_type(fn)) return receiver;
+    auto source_type = source_receiver_type(fn);
+    auto source_object = source_type ? type::remove_const(source_type->get_subtype()) : nullptr;
+    auto source_struct = std::dynamic_pointer_cast<struct_type>(source_object);
+    auto source_owner = source_struct ? source_struct->get_struct() : nullptr;
+    auto provider_owner = implementation_receiver_owner(fn);
+    if (!source_owner || !provider_owner)
+        throw std::runtime_error("Redirect implementation has no resolved receiver aggregate");
+    const auto location = locate_subobject_in(*source_owner, *source_owner, layout);
+    const auto adjustment = resolve_subobject_adjustment_in(
+        *source_owner, *source_owner, *provider_owner, layout, location);
+    return emit_receiver_adjustment(builder, receiver,
+        llvm::PointerType::get(builder.getContext(), 0), adjustment);
+}
+
 llvm::Constant* materialize_annotation_array(
     annotation_holder& holder,
     const std::shared_ptr<context>& ctx,
@@ -2464,14 +2482,14 @@ void implementation_generator::visit_klass(klass& klass) {
                         && have_same_virtual_signature(*primary_entry.introducing_func,
                                                        *base_entry.introducing_func)) {
                         llvm_func = _context->lookup_llvm_function(primary_entry.func);
-                        if (primary_entry.func) implementation_owner = primary_entry.func->get_owner();
+                        if (primary_entry.func) implementation_owner = implementation_receiver_owner(*primary_entry.func);
                         break;
                     }
                 }
                 if (!llvm_func) {
                     // Fallback: try the base entry's own function
                     llvm_func = _context->lookup_llvm_function(base_entry.func);
-                    if (base_entry.func) implementation_owner = base_entry.func->get_owner();
+                    if (base_entry.func) implementation_owner = implementation_receiver_owner(*base_entry.func);
                 }
                 if (!llvm_func) {
                     sec_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
@@ -3387,7 +3405,7 @@ void implementation_generator::fill_primary_vtable(klass& klass) {
             // Inherited receivers use either a final physical offset or a
             // validated path through the live virtual-base pointer.
             if (entry.func) {
-                auto owner = entry.func->get_owner();
+                auto owner = implementation_receiver_owner(*entry.func);
                 if (owner && owner.get() != static_cast<const aggregate*>(&klass)) {
                     const auto location = locate_subobject_in(klass, *owner, dl);
                     if (!location.present || (!location.offset && !location.path)) {
@@ -3538,7 +3556,7 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
                 continue;
             }
 
-            auto owner = ti.real_func->get_owner();
+            auto owner = implementation_receiver_owner(*ti.real_func);
             if (!owner) {
                 throw std::runtime_error("Secondary vtable implementation has no declaring aggregate");
             }
@@ -3732,7 +3750,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                         if (overrides(entry.func, base_entry->func)
                             || overrides(entry.func, base_entry->introducing_func)) {
                             override_func = _context->lookup_llvm_function(entry.func);
-                            implementation_owner = entry.func->get_owner();
+                            implementation_owner = implementation_receiver_owner(*entry.func);
                             break;
                         }
                     }
@@ -3742,14 +3760,14 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                             if (entry.func && !entry.func->is_abstract_func()
                                 && have_same_virtual_signature(*entry.func, *base_entry->func)) {
                                 override_func = _context->lookup_llvm_function(entry.func);
-                                implementation_owner = entry.func->get_owner();
+                                implementation_owner = implementation_receiver_owner(*entry.func);
                                 break;
                             }
                         }
                     }
                     if (!override_func && base_entry && base_entry->func) {
                         override_func = _context->lookup_llvm_function(base_entry->func);
-                        implementation_owner = base_entry->func->get_owner();
+                        implementation_owner = implementation_receiver_owner(*base_entry->func);
                     }
 
                     if (!override_func) {

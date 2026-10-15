@@ -23,10 +23,13 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
 #include "../src/model/context.hpp"
 #include "../src/model/tools/kdi_exporter.hpp"
 
+#include <llvm/IR/GlobalAlias.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/Support/DynamicLibrary.h>
 #include <llvm/Support/raw_ostream.h>
 
@@ -35,6 +38,26 @@
 namespace fs = std::filesystem;
 
 namespace {
+
+constexpr const char* REDIRECT_LIB_SRC = R"K(
+    module redirect_import_provider;
+    public:
+    struct Prefix { padding : long = 91; }
+    struct Base {
+        value : int = 37;
+        body(offset : int) : int { return value + offset; }
+        freeBody(offset : int) : int -> baseFree;
+        const constBody(offset : int) : int { return value + offset; }
+    }
+    baseFree(object : Base&, offset : int) : int { return object.value + offset; }
+    struct Derived : public Prefix, public Base {
+        read(renamed : int = 5) : int -> Base::body;
+        viaFree(renamed : int = 3) : int -> Base::freeBody;
+        const constRead(renamed : int = 1) : int -> Base::constBody;
+    }
+    freeAlias(object : Derived&, renamed : int = 7) : int -> Derived::read;
+    chain(object : Derived&, renamed : int = 9) : int -> Derived::viaFree;
+)K";
 
 /// Library exporting a soft alias, two typedefs and a function typed with one
 /// of the typedefs.
@@ -174,6 +197,251 @@ TEST_CASE("KDI imported native aggregate-return callables use the K ABI",
             return result.value;
         }
     )K", false, false), Catch::Matchers::ContainsSubstring("not K sret"));
+}
+
+TEST_CASE("redirect KDI separates source signatures and actual data-alias providers",
+          "[import][redirect-contract][regression]") {
+    auto compiler = k::compiler::create(make_pic_target_machine());
+    compiler->parse_source("redirect-import-provider.k", REDIRECT_LIB_SRC, false, false);
+    auto context = compiler->get_context_for_test();
+    auto unit = compiler->get_unit();
+    k::model::kdi_builder builder(*context);
+    unit->accept(builder);
+    auto file = builder.take();
+    REQUIRE(kdi::kdi_validate(file).is_valid());
+    const auto& functions = file.unit.root_ns.functions;
+    auto chain = std::find_if(functions.begin(), functions.end(), [](const auto& fn) {
+        return fn.name == "chain";
+    });
+    REQUIRE(chain != functions.end());
+    REQUIRE(chain->redirect_target);
+    CHECK_FALSE(chain->redirect_target->is_member);
+    REQUIRE(chain->redirect_target->receiver_type);
+    CHECK(kdi::kdi_type_to_string(*chain->redirect_target->receiver_type)
+          .find("redirect_import_provider::Base") != std::string::npos);
+    REQUIRE(chain->params.size() == 2);
+    CHECK(chain->params[1].name == "renamed");
+    REQUIRE(chain->params[1].default_source);
+    CHECK(*chain->params[1].default_source == "9");
+    CHECK(chain->mangled_name != chain->redirect_target->symbol);
+    CHECK(chain->llvm_def.find("@" + chain->mangled_name + "(") != std::string::npos);
+    auto alias = context->module().getNamedAlias(chain->mangled_name);
+    REQUIRE(alias);
+    auto provider = context->module().getFunction(chain->redirect_target->symbol);
+    REQUIRE(provider);
+    CHECK(alias->getAliaseeObject() == provider);
+}
+
+TEST_CASE("imported provider prototypes preserve calling convention and ABI attributes",
+          "[import][redirect-contract][regression]") {
+    auto context = k::model::context::create();
+    context->init_module("redirect_import_provider_abi");
+    auto result_type = llvm::StructType::create(context->llvm_context(),
+        {llvm::Type::getInt32Ty(context->llvm_context())}, "redirect_import_result");
+    const std::string symbol = "redirect_import_provider_abi";
+    const std::string prototype = "declare fastcc void @" + symbol
+        + "(ptr noalias sret(%redirect_import_result) align 16,"
+          " ptr byval({ i64 }) align 8, i8 zeroext)";
+    auto native = context->declare_llvm_function_from_def(prototype, symbol);
+    REQUIRE(native);
+    CHECK(native->getCallingConv() == llvm::CallingConv::Fast);
+    CHECK(native->hasParamAttribute(0, llvm::Attribute::StructRet));
+    CHECK(native->getParamStructRetType(0) == result_type);
+    CHECK(native->hasParamAttribute(0, llvm::Attribute::NoAlias));
+    CHECK(native->getParamAlign(0).valueOrOne().value() == 16);
+    CHECK(native->hasParamAttribute(1, llvm::Attribute::ByVal));
+    CHECK(native->getParamAlign(1).valueOrOne().value() == 8);
+    CHECK(native->hasParamAttribute(2, llvm::Attribute::ZExt));
+    CHECK(context->declare_llvm_function_from_def(prototype, symbol) == native);
+    CHECK(context->module().getFunction(symbol + ".1") == nullptr);
+    CHECK(context->declare_llvm_function_from_def(
+        "declare void @" + symbol + "(ptr, ptr, i8)", symbol) == nullptr);
+    CHECK_FALSE(llvm::verifyModule(context->module(), &llvm::errs()));
+}
+
+TEST_CASE("imported redirect calls project implicit and explicit receiver bindings",
+          "[import][redirect-contract][e2e][regression]") {
+    auto result = build_exec_with_lib(REDIRECT_LIB_SRC, R"K(
+        module redirect_import_consumer;
+        import redirect_import_provider;
+        localAlias(object : redirect_import_provider::Derived&, offset : int = 11) : int
+            -> redirect_import_provider::Derived::read;
+        localChain(object : redirect_import_provider::Derived&, offset : int = 13) : int
+            -> redirect_import_provider::chain;
+        alias Renamed : redirect_import_provider::chain;
+        callMember(callback : redirect_import_provider::Base::*(int):int,
+                   object : redirect_import_provider::Base&, offset : int) : int {
+            return (object.*callback)(offset);
+        }
+        returnMember() : redirect_import_provider::Base::*(int):int {
+            return redirect_import_provider::Derived::read;
+        }
+        main() : int {
+            object : redirect_import_provider::Derived;
+            if (object.read() != 42) return 1;
+            if (redirect_import_provider::Derived::read(object) != 42) return 2;
+            if (object.viaFree() != 40) return 3;
+            if (object.constRead() != 38) return 4;
+            if (redirect_import_provider::freeAlias(object) != 44) return 5;
+            if (redirect_import_provider::chain(object) != 46) return 6;
+            callback : &(int):int = object.read;
+            if (callback(5) != 42) return 7;
+            unbound : redirect_import_provider::Base::*(int):int
+                = redirect_import_provider::Derived::read;
+            base : redirect_import_provider::Base;
+            if ((base.*unbound)(5) != 42) return 8;
+            freeCallback : &(redirect_import_provider::Base&, int):int
+                = redirect_import_provider::chain;
+            if (freeCallback(base, 5) != 42) return 9;
+            if (localAlias(object) != 48) return 10;
+            if (localChain(object) != 50) return 11;
+            if (Renamed(object) != 46) return 12;
+            returned : redirect_import_provider::Base::*(int):int = returnMember();
+            if (callMember(returned, base, 5) != 42) return 13;
+            return 42;
+        }
+    )K");
+    INFO(result.out);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("member callable owners still reject nonaggregate types",
+          "[import][redirect-contract][error][regression]") {
+    const char* owner = GENERATE("Scalar", "Choice");
+    INFO(owner);
+    auto compiler = k::compiler::create();
+    try {
+        compiler->parse_source("redirect-invalid-callable-owner.k",
+            std::string(R"K(
+                module k;
+                alias Scalar : int;
+                union Choice { value : int; }
+                test() {
+                    callback : )K") + owner + "::*(int):int; }", true, false);
+        FAIL("Expected a nonaggregate member callable owner diagnostic");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code
+            == static_cast<unsigned int>(k::diag::type_diag::ERR_SIGNATURE_STRUCT_WRONG_KIND));
+    }
+}
+
+TEST_CASE("consumer redirects preserve imported link parameter and result signatures",
+          "[import][redirect-contract][imported-link][e2e][regression]") {
+    auto result = build_exec_with_lib(R"K(
+        module redirect_import_links;
+        public accept(value : int+) : int { return *value; }
+        public keep(value : int+) : int+ { return value; }
+    )K", R"K(
+        module redirect_import_links_consumer;
+        import redirect_import_links;
+        acceptLink(value : int+) : int -> redirect_import_links::accept;
+        keepLink(value : int+) : int+ -> redirect_import_links::keep;
+        main() : int {
+            value : int = 41;
+            mutableLink : int+ = &value;
+            if (acceptLink(mutableLink) != 41) return 1;
+            returned : int+ = keepLink(mutableLink);
+            *returned = 42;
+            return acceptLink(mutableLink);
+        }
+    )K");
+    INFO(result.out);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("imported redirect reexports retain independent defaults and template source calls",
+          "[import][redirect-contract][e2e][regression]") {
+    std::vector<LibSpec> libraries = {
+        {REDIRECT_LIB_SRC},
+        {R"K(
+            module redirect_import_reexport;
+            import redirect_import_provider;
+            public:
+            alias Derived : redirect_import_provider::Derived;
+            forwarded(object : Derived&, renamed : int = 2) : int
+                -> redirect_import_provider::freeAlias;
+            chain(object : Derived&, renamed : int = 4) : int
+                -> redirect_import_provider::chain;
+            sibling(object : Derived&, independent : int = 6) : int
+                -> redirect_import_provider::chain;
+            template<typename T>
+            apply(object : T&) : int { return redirect_import_provider::chain(object); }
+        )K"}
+    };
+    auto result = build_exec_with_libs(libraries, R"K(
+        module redirect_import_reexport_consumer;
+        import redirect_import_reexport;
+        main() : int {
+            object : redirect_import_reexport::Derived;
+            if (redirect_import_reexport::forwarded(object) != 39) return 1;
+            if (redirect_import_reexport::chain(object) != 41) return 2;
+            if (redirect_import_reexport::apply(object) != 46) return 3;
+            if (redirect_import_reexport::sibling(object) != 43) return 4;
+            return 42;
+        }
+    )K");
+    INFO(result.out);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("consumer redirect homonyms select imported source overloads",
+          "[import][redirect-contract][e2e][regression]") {
+    auto result = build_exec_with_lib(R"K(
+        module redirect_import_overloads;
+        public:
+        target(value : long) : long { return value; }
+        target(value : int = 40) : int { return value + 2; }
+    )K", R"K(
+        module redirect_import_overloads_consumer;
+        import redirect_import_overloads;
+        target(source : int = 1) : int -> redirect_import_overloads::target(int);
+        other(independent : int = 2) : int -> redirect_import_overloads::target(int);
+        main() : int {
+            if (target() != 3) return 1;
+            if (other() != 4) return 2;
+            if (redirect_import_overloads::target() != 42) return 3;
+            return 42;
+        }
+    )K");
+    INFO(result.out);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("imported virtual redirect calls use the actual provider receiver",
+          "[import][redirect-contract][virtual][e2e][regression]") {
+    auto result = build_exec_with_lib(R"K(
+        module redirect_import_virtual;
+        public:
+        class Base {
+            value : int = 37;
+            read() : int { return value; }
+        }
+        class Derived : public Base { read() : int -> Base::read; }
+    )K", R"K(
+        module redirect_import_virtual_consumer;
+        import redirect_import_virtual;
+        dispatch(object : redirect_import_virtual::Base&) : int { return object.read(); }
+        main() : int {
+            object : redirect_import_virtual::Derived;
+            callback : &():int = object.read;
+            if (object.read() != 37) return 1;
+            if (redirect_import_virtual::Derived::read(object) != 37) return 2;
+            if (dispatch(object) != 37) return 3;
+            if (callback() != 37) return 4;
+            unbound : redirect_import_virtual::Base::*():int
+                = redirect_import_virtual::Derived::read;
+            base : redirect_import_virtual::Base;
+            if ((base.*unbound)() != 37) return 5;
+            return 42;
+        }
+    )K");
+    INFO(result.out);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -821,4 +1089,3 @@ TEST_CASE("import multi-lib — imported aliases do not collide across dependenc
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE(result.exit_code == 0);
 }
-

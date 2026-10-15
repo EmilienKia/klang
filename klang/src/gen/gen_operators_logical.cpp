@@ -19,6 +19,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_redirect.hpp"
 #include "gen_callable_helpers.hpp"
 #include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
@@ -1218,6 +1219,8 @@ llvm::Value* implementation_generator::call_comparison_source_operator(
             "Internal error: comparison source operator '{}' has no LLVM definition and is not dispatched virtually",
             {op_func->get_short_name()});
     }
+    if (has_redirect_contract(*op_func) && !args.empty())
+        args[0] = project_redirect_receiver(*_builder, args[0], *op_func, _context->module().getDataLayout());
     if (op_needs_sret) {
         auto* sret_dest = prepare_sret();
         create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args, "");

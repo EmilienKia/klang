@@ -24,6 +24,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_redirect.hpp"
 #include "gen_intrinsics.hpp"
 #include "ffi_validation.hpp"
 
@@ -502,7 +503,7 @@ void symbol_resolver::visit_function(function& fn) {
         } else {
             lex::opt_any_lexeme fn_lexeme;
             if (auto ast_fd = fn.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_FUNC_RETURN_UNRESOLVED), fn_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_TARGET_NOT_FOUND), fn_lexeme,
                 "Function redirector '{}' targets '{}', which could not be resolved to a function",
                 {fn.get_short_name(), target_name.to_string()});
         }
@@ -875,6 +876,154 @@ protected:
 
 } // namespace
 
+void type_reference_resolver::resolve_redirect(function& fn) {
+    lex::opt_any_lexeme location;
+    auto ast = fn.get_ast_function_decl();
+    if (ast) location = lex::any_lexeme{ast->name};
+    auto fail = [&](const std::string& reason) {
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_INCOMPATIBLE_SIG),
+            location, "Function redirector '{}' has an incompatible signature with target '{}': {}",
+            {fn.get_fq_name(), fn.get_redirect_target_name().to_string(), reason});
+    };
+    auto effective_parameters = [](function& function) {
+        std::vector<std::shared_ptr<parameter>> result;
+        if (function.is_member() && !function.is_static()) {
+            function.create_this_parameter();
+            result.push_back(function.get_this_parameter());
+        }
+        for (const auto& parameter : function.parameters()) result.push_back(parameter);
+        return result;
+    };
+    auto compatible_parameters = [&](function& target) {
+        auto source_parameters = effective_parameters(fn);
+        auto target_parameters = effective_parameters(target);
+        if (source_parameters.size() != target_parameters.size()) return false;
+        for (size_t i = 0; i < source_parameters.size(); ++i) {
+            auto source_type = source_parameters[i]->get_type();
+            auto target_type = target_parameters[i]->get_type();
+            if (type::are_equal(source_type, target_type)) continue;
+            // A documented member re-export may use an ancestor implementation.
+            // Only its implicit receiver is projected; explicit arguments remain exact.
+            if (i == 0 && fn.is_member() && !fn.is_static()
+                && target.is_member() && !target.is_static()
+                && can_project_redirect_receiver(source_type, target_type)) continue;
+            return false;
+        }
+        return true;
+    };
+
+    auto target = fn.get_redirect_target();
+    if (!target) {
+        symbol_resolver symbols(*this, _context, _unit);
+        fn.accept(symbols);
+        target = fn.get_redirect_target();
+    }
+    if (!target) {
+        fail("no resolved target");
+        return;
+    }
+
+    std::vector<std::shared_ptr<function>> candidates{target};
+    if (std::dynamic_pointer_cast<imported_function>(target)) {
+        // Imported free functions are parented to the consumer root, not their
+        // source namespace. Consumer homonyms are not source overloads.
+        for (const auto* imported : _unit.find_imported_functions(target->get_name().without_root_prefix())) {
+            auto candidate = _unit.get_or_create_imported_function(imported, _context);
+            if (std::find(candidates.begin(), candidates.end(), candidate) == candidates.end())
+                candidates.push_back(std::move(candidate));
+        }
+    } else if (auto holder = std::dynamic_pointer_cast<function_holder>(target->parent<element>())) {
+        candidates = holder->get_functions(target->get_short_name());
+    }
+    std::vector<std::shared_ptr<type>> disambiguation;
+    if (ast && ast->redirect_has_param_types) {
+        for (const auto& spec : ast->redirect_param_types) {
+            disambiguation.push_back(resolve_type_chain(_context->from_type_specifier(*spec), &fn));
+        }
+    }
+    std::vector<std::shared_ptr<function>> matching;
+    size_t best_receiver_score = 3;
+    const auto source_parameters = effective_parameters(fn);
+    for (auto& candidate : candidates) {
+        if (candidate->is_template()) continue;
+        for (auto& parameter : effective_parameters(*candidate)) resolve_parameter_type(*parameter);
+        bool matches = true;
+        if (ast && ast->redirect_has_param_types) {
+            matches = candidate->parameters().size() == disambiguation.size();
+            for (size_t i = 0; matches && i < disambiguation.size(); ++i) {
+                matches = type::are_equal(candidate->parameters()[i]->get_type(), disambiguation[i]);
+            }
+        } else {
+            matches = compatible_parameters(*candidate);
+        }
+        if (matches) {
+            const auto target_parameters = effective_parameters(*candidate);
+            size_t score = 0;
+            if (!source_parameters.empty() && !target_parameters.empty()
+                && !type::are_equal(source_parameters.front()->get_type(),
+                                    target_parameters.front()->get_type())) {
+                score = 1;
+                auto source_type = source_parameters.front()->get_type();
+                auto target_type = target_parameters.front()->get_type();
+                if (type::is_reference(source_type) && type::is_reference(target_type)
+                    && type::is_const(source_type->get_subtype()) != type::is_const(target_type->get_subtype()))
+                    score = 2;
+            }
+            if (score < best_receiver_score) {
+                matching.clear();
+                best_receiver_score = score;
+            }
+            if (score == best_receiver_score) matching.push_back(candidate);
+        }
+    }
+    if (matching.size() > 1) {
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_AMBIGUOUS),
+            location, "Function redirector '{}' has several matching targets named '{}'",
+            {fn.get_fq_name(), fn.get_redirect_target_name().to_string()});
+    }
+    if (matching.size() == 1) target = matching.front();
+    else if (ast && ast->redirect_has_param_types) {
+        fail("no overload matches the target parameter type list");
+    }
+    fn.set_redirect_target(target);
+    if (target->is_redirected() && _resolving_functions.contains(target.get())) {
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_CHAIN_CYCLE),
+            location, "Circular redirect chain detected involving function '{}'", {fn.get_short_name()});
+    }
+    if (target->is_abstract_func())
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_SELF_REF), location,
+            "Function redirector '{}' targets abstract function '{}', which has no implementation",
+            {fn.get_short_name(), target->get_short_name()});
+    if (target->is_deleted())
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_INCOMPATIBLE_SIG), location,
+            "Function redirector '{}' targets deleted function '{}'",
+            {fn.get_short_name(), target->get_short_name()});
+    target->accept(*this);
+    if (!compatible_parameters(*target)) fail("parameter types or arity differ");
+    auto target_parameters = effective_parameters(*target);
+    if (!type::are_equal(fn.get_return_type(), target->get_return_type()))
+        fail("return types differ");
+    auto receiver = implementation_receiver_type(*target);
+    if (!receiver && fn.is_member() && !fn.is_static() && !target_parameters.empty())
+        receiver = target_parameters.front()->get_type();
+    fn.set_redirect_receiver_type(receiver);
+    for (const auto& thrown : target->get_throws_spec()) {
+        bool covered = std::any_of(fn.get_throws_spec().begin(), fn.get_throws_spec().end(),
+            [&](const auto& allowed) {
+                if (type::are_equal(thrown, allowed)) return true;
+                auto thrown_struct = std::dynamic_pointer_cast<struct_type>(thrown);
+                auto allowed_struct = std::dynamic_pointer_cast<struct_type>(allowed);
+                return thrown_struct && allowed_struct && thrown_struct->get_struct()
+                    && allowed_struct->get_struct()
+                    && thrown_struct->get_struct()->is_derived_from(allowed_struct->get_struct());
+            });
+        if (!covered) fail("the target throws an exception not covered by the redirector");
+    }
+    // Validate every edge before flattening: a chain cannot hide an invalid
+    // intermediate declaration behind a compatible final implementation.
+    if (target->is_redirected()) fn.set_redirect_target(target->get_redirect_target());
+}
+
 void type_reference_resolver::visit_function(function& fn) {
     // Skip template definitions — they are not instantiated yet.
     if (fn.is_template()) {
@@ -1010,6 +1159,27 @@ void type_reference_resolver::visit_function(function& fn) {
         fn.set_return_type(_context->collapse_callable_addresser(fn.get_return_type()));
     }
 
+    if (auto imported = fn.get_imported_redirect_contract()) {
+        auto fail = [&](const std::string& reason) {
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_INCOMPATIBLE_SIG),
+                fn.get_interest_lexeme(), "Imported redirect '{}' has an invalid implementation contract: {}",
+                {fn.get_fq_name(), reason});
+        };
+        if (imported->symbol.empty()) fail("the provider symbol is empty");
+        const bool source_member = fn.is_member() && !fn.is_static();
+        if (imported->receiver_type) {
+            imported->receiver_type = resolve_type_chain(imported->receiver_type, &fn);
+            if (!imported->receiver_type || type::contains_unresolved(imported->receiver_type))
+                fail("the provider receiver type is unresolved");
+            auto source_receiver = source_receiver_type(fn);
+            if (!can_project_redirect_receiver(source_receiver, imported->receiver_type))
+                fail("the provider receiver is incompatible with the source signature");
+        } else if (source_member || imported->is_member) {
+            fail("the provider receiver type is missing");
+        }
+        fn.set_imported_redirect_contract(std::move(*imported));
+    }
+
     // Resolve throws spec types from raw names
     if (!fn.get_throws_spec_raw().empty()
         && fn.get_throws_spec_raw().size() != fn.get_throws_spec().size()) {
@@ -1033,6 +1203,7 @@ void type_reference_resolver::visit_function(function& fn) {
 
     // Redirected functions have no body to visit
     if (fn.is_redirected()) {
+        resolve_redirect(fn);
         if (auto target = fn.get_redirect_target()) {
             auto owner = scope_lookup::enclosing_namespace(*target);
             if (owner && owner->get_short_name().starts_with("__kdi_private_"))

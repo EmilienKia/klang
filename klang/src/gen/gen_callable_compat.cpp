@@ -36,6 +36,7 @@
  */
 
 #include "gen_callable_helpers.hpp"
+#include "gen_redirect.hpp"
 
 #include <algorithm>
 #include <unordered_set>
@@ -208,7 +209,9 @@ callable_signature_view callable_signature_view::of(const function& fn) {
     sig.return_type = std::const_pointer_cast<type>(fn.get_return_type());
     for (size_t i = 0; i < fn.get_parameter_size(); ++i) {
         auto p = fn.get_parameter(i);
-        sig.parameter_types.push_back(p ? p->get_type() : nullptr);
+        auto receiver = i == 0 && (!fn.is_member() || fn.is_static()) && has_redirect_contract(fn)
+            ? implementation_receiver_type(fn) : nullptr;
+        sig.parameter_types.push_back(receiver ? receiver : p ? p->get_type() : nullptr);
     }
     sig.throws = fn.get_throws_spec();
     sig.label  = fn.get_fq_name();

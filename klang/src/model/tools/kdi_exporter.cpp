@@ -32,6 +32,7 @@
 #include "../../gen/resolvers_scope_lookup.hpp"
 #include "../../gen/resolvers_symbol.hpp"
 #include "../../gen/resolvers_aggregate.hpp"
+#include "../../gen/gen_redirect.hpp"
 
 #include "../../compiler.hpp"
 
@@ -309,8 +310,16 @@ static bool is_synthetic_member_name(const std::string& name) {
  * without trailing newline, suitable for storage in kdi::*::llvm_def.
  * Returns an empty string if @p fn is null.
  */
-std::string llvm_fn_prototype(const llvm::Function* fn) {
+std::string llvm_fn_prototype(const llvm::Function* fn, const std::string& symbol = {}) {
     if (!fn) return {};
+    std::unique_ptr<llvm::Function> alias_prototype;
+    if (!symbol.empty() && symbol != fn->getName()) {
+        alias_prototype.reset(llvm::Function::Create(
+            fn->getFunctionType(), llvm::GlobalValue::ExternalLinkage, symbol));
+        alias_prototype->setAttributes(fn->getAttributes());
+        alias_prototype->setCallingConv(fn->getCallingConv());
+        fn = alias_prototype.get();
+    }
     std::string out;
     llvm::raw_string_ostream os(out);
     fn->print(os, /*AAW=*/nullptr, /*IsForDebug=*/false, /*IsDeclaration=*/true);
@@ -1989,6 +1998,20 @@ void kdi_builder::visit_function(function& fn) {
     if (fn.is_redirected() && fn.get_redirect_target()) {
         llvm_lookup_name = fn.get_redirect_target()->get_mangled_name();
     }
+    std::string linkage_name = fn.get_mangled_name();
+    if (fn.is_redirected() && gen::implementation_provider_is_external(fn)) {
+        auto* target = _ctx.module().getFunction(llvm_lookup_name);
+        if (target) linkage_name = target->getName().str();
+    }
+    std::optional<kdi::kdi_redirect_target> redirect_target;
+    if (gen::has_redirect_contract(fn)) {
+        kdi::kdi_redirect_target target;
+        target.symbol = gen::implementation_provider_symbol(fn);
+        target.is_member = gen::implementation_provider_is_member(fn);
+        if (auto receiver = gen::implementation_receiver_type(fn))
+            target.receiver_type = to_kdi_type(receiver);
+        redirect_target = std::move(target);
+    }
 
     // Build template origin for concrete instantiations
     std::optional<kdi::kdi_template_origin> tpl_origin;
@@ -2022,11 +2045,12 @@ void kdi_builder::visit_function(function& fn) {
         km.vtable_slot     = fn.get_vtable_slot();
         km.return_type     = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         km.params          = to_kdi_params(fn);
-        km.mangled_name    = fn.get_mangled_name();
+        km.mangled_name    = linkage_name;
         {
             auto* llvm_fn = _ctx.module().getFunction(llvm_lookup_name);
-            km.llvm_def = llvm_fn_prototype(llvm_fn);
+            km.llvm_def = llvm_fn_prototype(llvm_fn, km.mangled_name);
         }
+        km.redirect_target = redirect_target;
         km.template_origin = tpl_origin;
         // Export throws spec
         for (const auto& t : fn.get_throws_spec()) {
@@ -2046,11 +2070,12 @@ void kdi_builder::visit_function(function& fn) {
         kf.is_operator  = fn.is_operator();
         kf.return_type  = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         kf.params       = to_kdi_params(fn);
-        kf.mangled_name = fn.get_mangled_name();
+        kf.mangled_name = linkage_name;
         {
             auto* llvm_fn = _ctx.module().getFunction(llvm_lookup_name);
-            kf.llvm_def = llvm_fn_prototype(llvm_fn);
+            kf.llvm_def = llvm_fn_prototype(llvm_fn, kf.mangled_name);
         }
+        kf.redirect_target = redirect_target;
         kf.template_origin = tpl_origin;
         // Export throws spec
         for (const auto& t : fn.get_throws_spec()) {

@@ -220,9 +220,21 @@ protected:
     /**
      * Resolved redirect target function.
      * After chained resolution, this points to the final concrete implementation.
-     * Set by symbol_resolver (redirect resolution phase).
+     * Bound by symbol resolution; validated and flattened by type resolution.
      */
     std::shared_ptr<function> _redirect_target = nullptr;
+    /** Actual receiver at effective argument zero, retained across member/free edges. */
+    std::shared_ptr<type> _redirect_receiver_type;
+
+public:
+    struct imported_redirect_contract {
+        std::string symbol;
+        bool is_member = false;
+        std::shared_ptr<type> receiver_type;
+    };
+
+protected:
+    std::optional<imported_redirect_contract> _imported_redirect_contract;
 
     std::shared_ptr<type> _return_type;
     std::shared_ptr<generic_source_type> _generic_source_return_type;
@@ -437,6 +449,17 @@ public:
     std::shared_ptr<function> get_redirect_target() const { return _redirect_target; }
     /** Set the resolved redirect target function. */
     void set_redirect_target(std::shared_ptr<function> f) { _redirect_target = std::move(f); }
+    const std::shared_ptr<type>& get_redirect_receiver_type() const { return _redirect_receiver_type; }
+    void set_redirect_receiver_type(std::shared_ptr<type> receiver) {
+        _redirect_receiver_type = std::move(receiver);
+    }
+
+    const std::optional<imported_redirect_contract>& get_imported_redirect_contract() const {
+        return _imported_redirect_contract;
+    }
+    void set_imported_redirect_contract(imported_redirect_contract contract) {
+        _imported_redirect_contract = std::move(contract);
+    }
 
     /** True if this function is virtual (dispatched through vtable). Set by symbol_resolver. */
     bool is_virtual() const { return _is_virtual; }

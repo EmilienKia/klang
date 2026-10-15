@@ -185,90 +185,9 @@ void symbol_resolver::resolve()
     trace("[symbol_resolver::resolve] begin");
     visit_unit(_unit);
 
-    // Resolve chained redirects: follow redirect targets transitively.
-    trace("[symbol_resolver::resolve] resolving redirect chains");
-    // After visit_unit, each redirected function has its immediate target set.
-    // Now resolve chains: a -> b -> c becomes a -> c, b -> c.
-    resolve_redirect_chains(_unit);
+    // Keep immediate redirect edges until lexical signature resolution. Flattening
+    // here loses intermediate contracts and selects unresolved overloads too early.
     trace("[symbol_resolver::resolve] done");
-}
-
-static void collect_all_functions_from_aggregate(aggregate& agg, std::vector<std::shared_ptr<function>>& out) {
-    for (auto& fn : agg.functions()) {
-        out.push_back(fn);
-    }
-    // Recurse into nested aggregates
-    for (auto& [name, nested] : agg.aggregates()) {
-        collect_all_functions_from_aggregate(*nested, out);
-    }
-}
-
-static void collect_all_functions(const ns& nspc, std::vector<std::shared_ptr<function>>& out) {
-    for (auto& child : nspc.get_children()) {
-        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
-            out.push_back(fn);
-        } else if (auto agg = std::dynamic_pointer_cast<aggregate>(child)) {
-            collect_all_functions_from_aggregate(*agg, out);
-        } else if (auto child_ns = std::dynamic_pointer_cast<ns>(child)) {
-            collect_all_functions(*child_ns, out);
-        }
-    }
-}
-
-void symbol_resolver::resolve_redirect_chains(unit& unit) {
-    // Collect all functions from the unit
-    std::vector<std::shared_ptr<function>> all_functions;
-    if (auto root = unit.get_root_namespace()) {
-        collect_all_functions(*root, all_functions);
-    }
-
-    // For each redirected function, follow the chain to the final target
-    for (auto& fn : all_functions) {
-        if (fn->is_redirected() && fn->get_redirect_target()) {
-            std::unordered_set<function*> visited;
-            fn->set_redirect_target(resolve_redirect_chain(*fn, visited));
-        }
-    }
-}
-
-std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, std::unordered_set<function*>& visited) {
-    if (visited.count(&fn)) {
-        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_CHAIN_CYCLE), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
-            "Circular redirect chain detected involving function '{}'",
-            {fn.get_short_name()});
-    }
-    visited.insert(&fn);
-
-    auto target = fn.get_redirect_target();
-    if (!target) {
-        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_TARGET_NOT_FOUND), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
-            "Function redirector '{}' has no resolved target",
-            {fn.get_short_name()});
-    }
-
-    // If the target is itself a redirect, follow the chain
-    if (target->is_redirected()) {
-        if (!target->get_redirect_target()) {
-            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_AMBIGUOUS), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
-                "Function redirector '{}' targets '{}', which is itself a redirector with no resolved target",
-                {fn.get_short_name(), target->get_short_name()});
-        }
-        return resolve_redirect_chain(*target, visited);
-    }
-
-    // Target is a concrete function — check it's not abstract or deleted
-    if (target->is_abstract_func()) {
-        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_SELF_REF), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
-            "Function redirector '{}' targets abstract function '{}', which has no implementation",
-            {fn.get_short_name(), target->get_short_name()});
-    }
-    if (target->is_deleted()) {
-        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_INCOMPATIBLE_SIG), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
-            "Function redirector '{}' targets deleted function '{}'",
-            {fn.get_short_name(), target->get_short_name()});
-    }
-
-    return target;
 }
 
 std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>> // TODO Add traversal direction flag

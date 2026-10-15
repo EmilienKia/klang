@@ -809,7 +809,9 @@ unit::get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
 {
     if (!kdi_fn) return nullptr;
 
-    // Check cache
+    // Re-exports may share one native entry while retaining independent source
+    // signatures, names, defaults and receiver bindings; the descriptor
+    // pointer identifies each source declaration.
     auto it = _imported_functions.find(kdi_fn);
     if (it != _imported_functions.end()) return it->second;
 
@@ -831,6 +833,7 @@ unit::get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
 
     // Parameters
     attach_params(*fn, kdi_fn->params, *this, ctx);
+    if (kdi_fn->redirect_target) apply_kdi_redirect_target(*fn, *kdi_fn->redirect_target, *this, ctx);
 
     // Visibility
     fn->set_visibility(kdi_fn->visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
@@ -1241,6 +1244,7 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         auto ret = kdi_type_to_model_type(km.return_type, *this, ctx);
         if (ret) im->set_return_type(ret);
         attach_params(*im, km.params, *this, ctx);
+        if (km.redirect_target) apply_kdi_redirect_target(*im, *km.redirect_target, *this, ctx);
         im->set_visibility(km.is_private ? PRIVATE :
             (km.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED));
         if (km.is_virtual)     { im->set_virtual(true); }

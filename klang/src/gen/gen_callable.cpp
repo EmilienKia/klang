@@ -27,6 +27,7 @@
 #include "generators.hpp"
 #include "resolvers.hpp"
 #include "gen_helpers.hpp"
+#include "gen_redirect.hpp"
 #include "gen_callable_helpers.hpp"
 #include "../common/operator_names.hpp"
 
@@ -1227,6 +1228,13 @@ llvm::Value* implementation_generator::build_bound_callable(
         (expr.get_kind() == callable_bind_expression::kind::virtual_method
          || expr.get_kind() == callable_bind_expression::kind::functional_interface)
         && expr.get_vtable_slot() >= 0 && expr.get_dispatch_base() != nullptr;
+    auto build_direct = [&] {
+        auto target = expr.get_target();
+        auto* receiver = target
+            ? project_redirect_receiver(*_builder, ctx_ptr, *target, _context->module().getDataLayout())
+            : ctx_ptr;
+        return build_callable_from_function(target, receiver, expr.first_lexeme());
+    };
 
     // ── Null-propagating bind: `{null,null}` when the receiver is null ────────
     if (expr.is_null_propagating()) {
@@ -1250,7 +1258,7 @@ llvm::Value* implementation_generator::build_bound_callable(
             ? build_callable_value(*_builder, callable_ty,
                   load_vtable_slot(expr.get_dispatch_base(), ctx_ptr, expr.get_vtable_slot(), expr.first_lexeme()),
                   ctx_ptr)
-            : build_callable_from_function(expr.get_target(), ctx_ptr, expr.first_lexeme());
+            : build_direct();
         llvm::BasicBlock* bind_end_bb = _builder->GetInsertBlock();
         _builder->CreateBr(join_bb);
 
@@ -1266,7 +1274,7 @@ llvm::Value* implementation_generator::build_bound_callable(
                                                expr.get_vtable_slot(), expr.first_lexeme());
         return build_callable_value(*_builder, callable_ty, fn_ptr, ctx_ptr);
     }
-    return build_callable_from_function(expr.get_target(), ctx_ptr, expr.first_lexeme());
+    return build_direct();
 }
 
 void implementation_generator::emit_callable_nonnull_check(

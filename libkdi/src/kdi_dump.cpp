@@ -301,6 +301,13 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
         }
         if (m.vtable_slot >= 0) out << "  // slot=" << m.vtable_slot;
         out << "  // " << m.mangled_name << "\n";
+        if (m.redirect_target) {
+            out << indent(depth + 2) << "// redirect body: " << m.redirect_target->symbol
+                << (m.redirect_target->is_member ? " [member]" : " [free]");
+            if (m.redirect_target->receiver_type)
+                out << ", receiver: " << type_str(*m.redirect_target->receiver_type);
+            out << "\n";
+        }
         if (!m.llvm_def.empty())
             out << indent(depth + 2) << "// llvm: " << m.llvm_def << "\n";
     }
@@ -365,6 +372,13 @@ void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth) {
             out << "> */";
         }
         out << "  // " << f.mangled_name << "\n";
+        if (f.redirect_target) {
+            out << indent(d + 1) << "// redirect body: " << f.redirect_target->symbol
+                << (f.redirect_target->is_member ? " [member]" : " [free]");
+            if (f.redirect_target->receiver_type)
+                out << ", receiver: " << type_str(*f.redirect_target->receiver_type);
+            out << "\n";
+        }
         if (!f.llvm_def.empty())
             out << indent(d + 1) << "// llvm: " << f.llvm_def << "\n";
     }

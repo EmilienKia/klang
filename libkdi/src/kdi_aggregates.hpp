@@ -227,6 +227,7 @@ struct kdi_function {
     std::vector<kdi_type>    throws_spec;
     std::optional<kdi_doc_function> doc;
     bool                     is_extern = false; ///< Native C declaration, not a K ABI function.
+    std::optional<kdi_redirect_target> redirect_target;
 };
 
 /** Member method. */
@@ -255,6 +256,7 @@ struct kdi_method {
     std::vector<kdi_type>    throws_spec;
     std::optional<kdi_doc_function> doc;
     bool                     is_extern = false; ///< Native C declaration, not a K ABI method.
+    std::optional<kdi_redirect_target> redirect_target;
 };
 
 struct kdi_constructor {

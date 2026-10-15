@@ -31,6 +31,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -312,7 +313,14 @@ struct kdi_type {
     }
 };
 
+/** Symbolic implementation contract for a data-only function redirect alias. */
+struct kdi_redirect_target {
+    std::string symbol;
+    bool is_member = false;
+    /** Validated receiver binding at effective parameter zero, including through a chain. */
+    std::optional<kdi_type> receiver_type;
+};
+
 } // namespace kdi
 
 #endif // LIBKDI_TYPES_HPP
-

@@ -480,6 +480,20 @@ static std::vector<kdi_param> params_from_json(const json& j) {
     return ps;
 }
 
+static json to_json(const kdi_redirect_target& target) {
+    json j = {{"symbol", target.symbol}, {"is_member", target.is_member}};
+    if (target.receiver_type) j["receiver_type"] = to_json(*target.receiver_type);
+    return j;
+}
+
+static kdi_redirect_target from_json_redirect_target(const json& j) {
+    kdi_redirect_target target;
+    target.symbol = j.at("symbol");
+    target.is_member = j.at("is_member");
+    if (j.contains("receiver_type")) target.receiver_type = from_json_type(j.at("receiver_type"));
+    return target;
+}
+
 static json to_json(const kdi_function& f) {
     json j = {
         {"name",         f.name},
@@ -500,6 +514,7 @@ static json to_json(const kdi_function& f) {
         j["throws_spec"] = ts;
     }
     if (f.doc) j["doc"] = to_json(*f.doc);
+    if (f.redirect_target) j["redirect_target"] = to_json(*f.redirect_target);
     return j;
 }
 static kdi_function from_json_function(const json& j) {
@@ -519,6 +534,7 @@ static kdi_function from_json_function(const json& j) {
         for (auto& t : j.at("throws_spec")) f.throws_spec.push_back(from_json_type(t));
     }
     if (j.contains("doc")) f.doc = from_json_doc_function(j.at("doc"));
+    if (j.contains("redirect_target")) f.redirect_target = from_json_redirect_target(j.at("redirect_target"));
     return f;
 }
 
@@ -549,6 +565,7 @@ static json to_json(const kdi_method& m) {
         j["throws_spec"] = ts;
     }
     if (m.doc) j["doc"] = to_json(*m.doc);
+    if (m.redirect_target) j["redirect_target"] = to_json(*m.redirect_target);
     return j;
 }
 static kdi_method from_json_method(const json& j) {
@@ -575,6 +592,7 @@ static kdi_method from_json_method(const json& j) {
         for (auto& t : j.at("throws_spec")) m.throws_spec.push_back(from_json_type(t));
     }
     if (j.contains("doc")) m.doc = from_json_doc_function(j.at("doc"));
+    if (j.contains("redirect_target")) m.redirect_target = from_json_redirect_target(j.at("redirect_target"));
     return m;
 }
 

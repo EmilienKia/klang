@@ -21,6 +21,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_redirect.hpp"
 
 #include "../model/imported.hpp"
 #include "../model/expressions.hpp"
@@ -790,9 +791,9 @@ void declaration_generator::visit_unit(unit &unit) {
     auto declare_imported_fn = [&](const std::shared_ptr<function>& fn,
                                    const std::string& llvm_def,
                                    const std::string& mangled) {
-        if (fn->is_extern() ? _context->_functions.contains(fn)
-                            : _context->lookup_llvm_function(fn) != nullptr)
-            return;
+        // Registration is per source declaration: a shared native entry found
+        // by symbol name must not skip a re-export's own binding.
+        if (_context->_functions.contains(fn)) return;
         if (fn->is_extern()) {
             auto fail = [&](const std::string& reason) {
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_NATIVE_ABI_UNPROVEN),
@@ -867,8 +868,16 @@ void declaration_generator::visit_unit(unit &unit) {
         if (!llvm_def.empty() && !mangled.empty()) {
             auto* llvm_fn = _context->declare_llvm_function_from_def(llvm_def, mangled);
             if (llvm_fn) {
+                // A shared entry does not identify its source declaration:
+                // re-exports retain independent defaults and receiver bindings.
                 _context->_functions[fn] = llvm_fn;
                 return;
+            }
+            if (has_redirect_contract(*fn)) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                    fn->get_first_lexeme(),
+                    "Cannot declare imported redirect '{}' from provider prototype '{}'",
+                    {fn->get_fq_name(), mangled});
             }
         }
         // Fallback: derive signature from K types (old path)
@@ -1065,23 +1074,24 @@ void declaration_generator::emit_redirect_alias(function& fn) {
     // Find the LLVM function for the target
     auto target_it = _context->_functions.find(target);
     if (target_it == _context->_functions.end()) {
-        // Target not yet declared — shouldn't happen after full declaration pass
-        return;
+        throw std::runtime_error("Redirect target has no LLVM declaration: " + target->get_fq_name());
     }
     llvm::Function* target_llvm = target_it->second;
 
-    // Create GlobalAlias with the redirector's mangled name pointing to the target
-    auto* alias = llvm::GlobalAlias::create(
-        target_llvm->getValueType(),
-        target_llvm->getAddressSpace(),
-        llvm::GlobalValue::ExternalLinkage,
-        fn.get_mangled_name(),
-        target_llvm,
-        _context->_module.get());
+    // An imported entry already names the provider's data alias. ELF aliases
+    // cannot target an external declaration; preserve that linkage identity.
+    if (!implementation_provider_is_external(fn)) {
+        llvm::GlobalAlias::create(
+            target_llvm->getValueType(),
+            target_llvm->getAddressSpace(),
+            llvm::GlobalValue::ExternalLinkage,
+            fn.get_mangled_name(),
+            target_llvm,
+            _context->_module.get());
+    }
 
     // Register in the context so the alias can be found by symbol name
     _context->_functions.insert({fn.shared_as<k::model::function>(), target_llvm});
-    (void)alias; // alias is owned by the module
 }
 
 /**
