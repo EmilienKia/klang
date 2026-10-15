@@ -1255,6 +1255,7 @@ protected:
 
     /** Fully-qualified K name of the alias, kept for diagnostics and KDI export. */
     std::string _fq_name;
+    std::vector<std::shared_ptr<type>> _template_arguments;
 
     alias_type(std::weak_ptr<alias_definition> alias, std::shared_ptr<type> underlying,
                std::string fq_name)
@@ -1271,6 +1272,7 @@ public:
     std::shared_ptr<type> get_underlying() const { return _underlying; }
     std::shared_ptr<alias_definition> get_alias() const { return _alias.lock(); }
     const std::string& get_fq_name() const { return _fq_name; }
+    const std::vector<std::shared_ptr<type>>& get_template_arguments() const { return _template_arguments; }
 
     llvm::Type* get_llvm_type() const override {
         return _underlying ? _underlying->get_llvm_type() : nullptr;
@@ -1308,8 +1310,18 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
             if (!al1 || !al2) return false;
             auto d1 = al1->get_alias();
             auto d2 = al2->get_alias();
-            if (d1 && d2) return d1 == d2;
-            return al1->get_fq_name() == al2->get_fq_name();
+            if (d1 || d2) {
+                if (d1 != d2) return false;
+            } else if (al1->get_fq_name() != al2->get_fq_name()) {
+                return false;
+            }
+            const auto& args1 = al1->get_template_arguments();
+            const auto& args2 = al2->get_template_arguments();
+            if (args1.size() != args2.size()) return false;
+            for (size_t i = 0; i < args1.size(); ++i) {
+                if (!are_equal(args1[i], args2[i])) return false;
+            }
+            return true;
         }
     }
 

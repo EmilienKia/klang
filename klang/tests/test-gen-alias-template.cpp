@@ -31,6 +31,29 @@
 #include "../src/errors.hpp"
 #include "../src/model/model_builder.hpp"
 
+TEST_CASE("Strong template aliases compare their concrete nominal arguments",
+          "[model][alias][template][nominal-equality][regression]") {
+    auto compiler = compile_model(R"SRC(
+        module k;
+        template<typename T = int> typedef Token : int;
+        alias Integer : int;
+        inspect(a : Token<int>, b : Token<long>, c : Token<Integer>,
+                d : Token<>, e : Token<const int>) {}
+    )SRC");
+    REQUIRE(compiler);
+    auto inspect = compiler->get_unit()->get_root_namespace()->get_function("inspect");
+    REQUIRE(inspect);
+    const auto& params = inspect->parameters();
+    auto a = params[0]->get_type();
+    auto b = params[1]->get_type();
+    CHECK(k::model::type::are_equal(a, params[2]->get_type()));
+    CHECK(k::model::type::are_equal(a, params[3]->get_type()));
+    CHECK_FALSE(k::model::type::are_equal(a, b));
+    CHECK_FALSE(k::model::type::are_equal(b, a));
+    CHECK_FALSE(k::model::type::are_equal(a, params[4]->get_type()));
+    CHECK_FALSE(k::model::type::are_equal(a, compiler->get_context_for_test()->from_string("int")));
+}
+
 TEST_CASE("template substitution preserves caller provenance and scopes only fresh declaration references",
           "[gen][alias][template][type-provenance][regression]") {
     k::source source{R"K(

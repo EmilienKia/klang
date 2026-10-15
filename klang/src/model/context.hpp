@@ -303,7 +303,8 @@ public:
     std::shared_ptr<alias_type> create_template_alias_type(const std::shared_ptr<alias_definition>& alias,
                                                            const std::shared_ptr<type>& underlying,
                                                            const std::string& args_key,
-                                                           const std::string& display_name);
+                                                           const std::string& display_name,
+                                                           const std::vector<std::shared_ptr<type>>& arguments);
 
     /**
      * Push a set of template parameter names onto the scope stack.

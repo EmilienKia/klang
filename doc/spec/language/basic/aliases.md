@@ -256,6 +256,10 @@ A parameterised `alias` is transparent: `BoxOf<int>` *is* `Box<int>`.
 A parameterised `typedef` keeps a nominal identity, one distinct type per
 distinct argument list: `Id<int>` and `Id<long>` are unrelated, and `Id<int>` is
 distinct from `int` under the conversion rules of [§5](#5-conversions).
+The argument list is compared by semantic type identity after substitution and
+default completion. Transparent aliases do not distinguish arguments, but const
+qualification and strong aliases do. Arguments retain this identity even when
+the renamed type does not use them (`template<typename T> typedef Tag : int;`).
 
 ### Partial application
 

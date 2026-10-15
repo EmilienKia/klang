@@ -1636,6 +1636,7 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
     type_substitution_map subst;
     std::string args_key;
     std::string display_args;
+    std::vector<std::shared_ptr<type>> resolved_arguments;
     for (std::size_t i = 0; i < ti->params.size(); ++i) {
         const auto& param = ti->params[i];
         std::shared_ptr<type> arg_type;
@@ -1699,6 +1700,7 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
         }
 
         subst[param.name] = arg_type;
+        resolved_arguments.push_back(arg_type);
         if (!args_key.empty()) { args_key += ","; display_args += ", "; }
         args_key += arg_type->to_string();
         display_args += arg_type->to_string();
@@ -1731,7 +1733,7 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
 
     return ctx->create_template_alias_type(
         alias, substituted, args_key,
-        alias->get_short_name() + "<" + display_args + ">");
+        alias->get_short_name() + "<" + display_args + ">", resolved_arguments);
 }
 
 bool scope_lookup::is_base_union_of(const union_type_def& candidate_base,

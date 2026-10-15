@@ -1795,15 +1795,18 @@ std::shared_ptr<alias_type> context::create_alias_type(const std::shared_ptr<ali
 std::shared_ptr<alias_type> context::create_template_alias_type(const std::shared_ptr<alias_definition>& alias,
                                                                  const std::shared_ptr<type>& underlying,
                                                                  const std::string& args_key,
-                                                                 const std::string& display_name) {
+                                                                 const std::string& display_name,
+                                                                 const std::vector<std::shared_ptr<type>>& arguments) {
     if (!alias || !underlying) return nullptr;
 
     if (auto existing = alias->get_tpl_alias_type(args_key)) {
         existing->set_underlying(underlying);
+        existing->_template_arguments = arguments;
         return existing;
     }
 
     auto at = std::shared_ptr<alias_type>(new alias_type(alias, underlying, display_name));
+    at->_template_arguments = arguments;
     alias->set_tpl_alias_type(args_key, at);
     return at;
 }
