@@ -2549,6 +2549,28 @@ TEST_CASE("Union activation rejects its selected deleted copy overload",
     )K"));
 }
 
+TEST_CASE("Union nominal equality distinguishes ownerless canonical types",
+          "[model][union][nominal-equality][regression]") {
+    auto compiler = compile_model(R"SRC(
+        module k;
+        union First { value : int; }
+        union Second { value : int; }
+        inspect(first : First&, second : Second&) {}
+    )SRC");
+    REQUIRE(compiler);
+    auto inspect = compiler->get_unit()->get_root_namespace()->get_function("inspect");
+    REQUIRE(inspect);
+    auto first = inspect->parameters()[0]->get_type();
+    auto second = inspect->parameters()[1]->get_type();
+    REQUIRE(first->get_subtype());
+    REQUIRE(second->get_subtype());
+    CHECK(type::are_equal(first, first));
+    CHECK(type::are_equal(first->get_subtype(), first->get_subtype()));
+    CHECK_FALSE(type::are_equal(first, second));
+    CHECK_FALSE(type::are_equal(second, first));
+    CHECK_FALSE(type::are_equal(first->get_subtype(), second->get_subtype()));
+}
+
 TEST_CASE("Aggregate union members destroy only their active alternative",
           "[gen][union][lifecycle][regression]") {
     auto jit = gen_jit(R"(

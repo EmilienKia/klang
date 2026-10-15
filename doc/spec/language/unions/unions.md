@@ -53,6 +53,9 @@ union Value {
 
 - `union` is a keyword.
 - The identifier names the union type.
+- Distinct union declarations denote distinct types, even when their alternatives
+  and memory layouts are identical. References to the same declaration retain
+  that declaration's nominal identity.
 - An optional `: BaseUnion` clause introduces [union inheritance](#11-union-inheritance).
 - The body contains one or more *alternative* declarations.
 

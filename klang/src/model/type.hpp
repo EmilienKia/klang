@@ -1379,6 +1379,8 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
     if (auto s1 = std::dynamic_pointer_cast<struct_type>(type1)) {
         auto s2 = std::dynamic_pointer_cast<struct_type>(type2);
         if (!s2) return false;
+        // Unions have a canonical struct_type but no aggregate owner. Distinct
+        // ownerless nodes must not become equal because both owners are null.
         auto agg1 = s1->get_struct();
         auto agg2 = s2->get_struct();
         return agg1 && agg1 == agg2;
