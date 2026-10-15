@@ -19,6 +19,7 @@
 #include "generators.hpp"
 #include "gen_helpers.hpp"
 #include "resolvers_scope_lookup.hpp"
+#include "gen_redirect.hpp"
 
 #include "../model/imported.hpp"
 #include "../model/mangler.hpp"
@@ -3312,8 +3313,10 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                     auto cast_fn = funcs[0];
                     auto fn_it = _context->_functions.find(cast_fn);
                     if(fn_it != _context->_functions.end()) {
+                        auto receiver = project_redirect_receiver(*_builder, alloca, *cast_fn,
+                            _context->module().getDataLayout());
                         test_value = create_call_or_invoke(
-                            fn_it->second->getFunctionType(), fn_it->second, {alloca}, "if_cond_bool_cast");
+                            fn_it->second->getFunctionType(), fn_it->second, {receiver}, "if_cond_bool_cast");
                     }
                 }
             }

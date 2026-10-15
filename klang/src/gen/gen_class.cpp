@@ -92,6 +92,7 @@
 #include "generators.hpp"
 #include "gen_helpers.hpp"
 #include "gen_redirect.hpp"
+#include "gen_rtti.hpp"
 
 #include <stdexcept>
 #include <optional>
@@ -1514,6 +1515,28 @@ llvm::Value* project_redirect_receiver(llvm::IRBuilder<>& builder, llvm::Value* 
         llvm::PointerType::get(builder.getContext(), 0), adjustment);
 }
 
+rtti_receiver_projection describe_rtti_receiver_projection(
+    const aggregate& containing, const aggregate& receiver, const aggregate& owner,
+    const llvm::DataLayout& layout)
+{
+    const auto location = locate_subobject_in(containing, receiver, layout);
+    const auto adjustment = resolve_subobject_adjustment_in(
+        containing, receiver, owner, layout, location);
+    if (adjustment.offset) return {-static_cast<int64_t>(*adjustment.offset), false, {}};
+    if (!adjustment.path)
+        throw std::runtime_error("Missing finalized RTTI receiver projection");
+    rtti_receiver_projection result;
+    result.indirect = true;
+    for (const auto& step : *adjustment.path) {
+        if (!step.containing_type || !step.containing_type->isSized())
+            throw std::runtime_error("RTTI receiver projection has an unresolved storage type");
+        result.steps.push_back({
+            layout.getStructLayout(step.containing_type)->getElementOffset(step.field_index),
+            step.load_pointer});
+    }
+    return result;
+}
+
 llvm::Constant* materialize_annotation_array(
     annotation_holder& holder,
     const std::shared_ptr<context>& ctx,
@@ -2217,9 +2240,9 @@ void declaration_generator::visit_klass(klass& klass) {
     //
     // Each RTTI global is a genuine ::k::Class or ::k::Interface instance.
     //
-    // Classes and interfaces share the same 14-field flattened RTTI layout:
+    // Classes and interfaces share the same 15-field flattened RTTI layout:
     // four vptrs, name/fullName, bases/nested/enclosing, flags, annotations,
-    // cast map, functions, and constructors (null for interfaces).
+    // cast map, functions, constructors (null for interfaces), and semantic type.
     //
     // The __vptr__ and __vptr_TypeInfo__ point to the Class/Interface vtable and
     // its secondary vtable for the TypeInfo interface.  These vtables are defined
@@ -2258,8 +2281,8 @@ void declaration_generator::visit_klass(klass& klass) {
         //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
         //     ptr __vptr_Object__, ptr name, ptr fullName, ptr bases, ptr nested,
         //     ptr enclosing, i32 flags, ptr annotations, ptr castMap,
-        //     ptr functions, ptr constructors }
-        //   (13 ptr fields + 1 i32 field = 14 fields)
+        //     ptr functions, ptr constructors, ptr semanticType }
+        //   (14 ptr fields + 1 i32 field = 15 fields)
         //
         // The __vptr_Object__ field exists because ::k::TypeInfo (the root of
         // the AggregateType/TypeInfo interface chain that ::k::Class/::k::Interface
@@ -2330,7 +2353,8 @@ void declaration_generator::visit_klass(klass& klass) {
             null_ptr,       // field 10: annotations            → patched later
             null_ptr,       // field 11: cast map               → patched later
             null_ptr,       // field 12: functions              → patched later
-            null_ptr        // field 13: constructors           → patched later
+            null_ptr,       // field 13: constructors           → patched later
+            null_ptr        // field 14: exact semantic graph   → patched later
         };
         llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
         auto rtti_gv = new llvm::GlobalVariable(
@@ -2461,6 +2485,7 @@ void implementation_generator::visit_klass(klass& klass) {
             // Build secondary vtable: for each slot in the base's vtable,
             // find the overriding function in the primary vtable.
             std::vector<llvm::Constant*> sec_init;
+            std::vector<vtable_entry> sec_entries;
             // Slot 0: RTTI
             llvm::Constant* rtti_slot = vt->llvm_rtti_global
                 ? llvm::cast<llvm::Constant>(vt->llvm_rtti_global)
@@ -2476,12 +2501,14 @@ void implementation_generator::visit_klass(klass& klass) {
                 // leaving the other base slot pointing at the imported
                 // (anonymous) method.
                 llvm::Function* llvm_func = nullptr;
+                std::shared_ptr<function> implementation;
                 std::shared_ptr<aggregate> implementation_owner;
                 for (auto& primary_entry : vt->entries) {
                     if (primary_entry.introducing_func && base_entry.introducing_func
                         && have_same_virtual_signature(*primary_entry.introducing_func,
                                                        *base_entry.introducing_func)) {
                         llvm_func = _context->lookup_llvm_function(primary_entry.func);
+                        implementation = primary_entry.func;
                         if (primary_entry.func) implementation_owner = implementation_receiver_owner(*primary_entry.func);
                         break;
                     }
@@ -2489,8 +2516,10 @@ void implementation_generator::visit_klass(klass& klass) {
                 if (!llvm_func) {
                     // Fallback: try the base entry's own function
                     llvm_func = _context->lookup_llvm_function(base_entry.func);
+                    implementation = base_entry.func;
                     if (base_entry.func) implementation_owner = implementation_receiver_owner(*base_entry.func);
                 }
+                sec_entries.push_back({sec_entries.size(), implementation, base_entry.introducing_func});
                 if (!llvm_func) {
                     sec_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
                     continue;
@@ -2548,6 +2577,7 @@ void implementation_generator::visit_klass(klass& klass) {
             if (sec_init.size() == (size_t)(1 + base_vtable->slot_count())) {
                 llvm::Constant* new_init = llvm::ConstantStruct::get(sec_vt->llvm_type, sec_init);
                 sec_vt->llvm_global->setInitializer(new_init);
+                sec_vt->entries = std::move(sec_entries);
             }
         }
     }
@@ -2594,12 +2624,11 @@ void implementation_generator::patch_rtti_global(klass& klass) {
     //   f) Synthesize Function RTTI globals for public member functions.
     //   g) Synthesize Constructor RTTI globals for public constructors (classes only).
     //
-    // Both interfaces and classes share the same core layout, with the class
-    // descriptor adding its constructor list after the shared cast map:
+    // Both interfaces and classes share the same flattened layout:
     //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
     //     ptr __vptr_Object__, ptr name, ptr fullName, ptr bases, ptr nested,
     //     ptr enclosing, i32 flags, ptr annotations, ptr castMap, ptr functions,
-    //     [Class only: ptr constructors] }
+    //     ptr constructors (null for interfaces), ptr semanticType }
     //
     // When the vtable symbols are not available (e.g. standalone compilation
     // without libk), the RTTI global keeps null vptrs.  typeid comparison
@@ -3064,16 +3093,15 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                 }
             }
 
-            // Parameter struct: { ptr vptr, ptr vptr_Object, ptr name, ptr annotations }
-            llvm::StructType* param_rtti_type = llvm::StructType::get(
-                llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
+            // Preserve the Parameter prefix; append exact metadata in the shared emitter.
             std::vector<llvm::Constant*> param_init = {
                 param_vt_or_null,  // __vptr__ (Parameter primary vtable)
                 null_ptr,          // __vptr_Object__ (null)
                 name_gv,           // name
                 param_anns_gv      // annotations
             };
-            llvm::Constant* param_const = llvm::ConstantStruct::get(param_rtti_type, param_init);
+            auto* param_const = rtti_emitter(_context, _unit).parameter_record(param_init, param, idx);
+            auto* param_rtti_type = param_const->getType();
             auto* param_gv = new llvm::GlobalVariable(
                 _context->module(), param_rtti_type,
                 /*isConstant=*/true,
@@ -3101,7 +3129,8 @@ void implementation_generator::patch_rtti_global(klass& klass) {
         // For each public member function (non-constructor, non-destructor), emit
         // a ::k::Function RTTI global constant.
         // Function layout: { ptr __vptr__, ptr vptr_Object, ptr name, ptr fullName,
-        //                     ptr owner, i32 flags, ptr annotations, ptr parameters }
+        //                     ptr owner, i32 flags, ptr annotations, ptr parameters,
+        //                     ptr signature }
         llvm::Constant* functions_gv = null_ptr;
         {
             // Look up ::k::Function vtable symbol
@@ -3171,8 +3200,6 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                 // Build the Function struct: { ptr vptr, ptr vptr_Object, ptr name, ptr fullName, ptr owner, i32 flags, ptr annotations, ptr parameters }
                 // K implicitly adds Object as a base class for all classes, so Function
                 // has an Object sub-object at field 1 (containing the Object vptr).
-                llvm::StructType* fn_rtti_type = llvm::StructType::get(
-                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
                 std::vector<llvm::Constant*> fn_init = {
                     func_vt_or_null,                       // __vptr__ (Function primary vtable)
                     null_ptr,                              // __vptr_Object__ (Object sub-object; null — no Object dispatch needed)
@@ -3184,7 +3211,8 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                         *fn, _context, _unit, fn_rtti_name, &klass),
                     params_gv                              // parameters
                 };
-                llvm::Constant* fn_const = llvm::ConstantStruct::get(fn_rtti_type, fn_init);
+                auto* fn_const = rtti_emitter(_context, _unit).function_record(fn_init, fn);
+                auto* fn_rtti_type = fn_const->getType();
                 auto* fn_gv = new llvm::GlobalVariable(
                     _context->module(), fn_rtti_type,
                     /*isConstant=*/true,
@@ -3352,7 +3380,8 @@ void implementation_generator::patch_rtti_global(klass& klass) {
             annotations_gv,                    // field 10: annotations
             cast_map_gv ? cast_map_gv : null_ptr, // field 11: dynamic-cast map
             functions_gv,                      // field 12: functions
-            constructors_gv                    // field 13: constructors
+            constructors_gv,                   // field 13: constructors
+            rtti_emitter(_context, _unit).describe(klass.get_struct_type())
         };
 
         // Step 8: Create final ConstantStruct and set as initializer for RTTI global
@@ -3520,15 +3549,18 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
         if (!base_vt || !base_vt->llvm_type) continue;
 
         llvm::GlobalVariable* sec_gv = nullptr;
+        std::shared_ptr<vtable_layout> secondary;
         for (const auto& [base, layout] : klass.get_secondary_vtables()) {
             if (base.get() == spec.base_class.get() && layout) {
                 sec_gv = layout->llvm_global;
+                secondary = layout;
                 break;
             }
         }
         if (!sec_gv) continue; // should have been created in declaration pass
 
         std::vector<llvm::Constant*> sec_init;
+        std::vector<vtable_entry> sec_entries;
         // Slot 0 of secondary vtable: same RTTI global as the primary vtable
         // (the secondary vtable is part of the same concrete object)
         llvm::Constant* rtti_slot = vt->llvm_rtti_global
@@ -3545,6 +3577,10 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
         if (base_location.offset) spec.base_offset = static_cast<ptrdiff_t>(*base_location.offset);
 
         for (auto& ti : spec.slot_thunks) {
+            const auto slot = sec_entries.size();
+            auto introducing = slot < base_vt->entries.size()
+                ? base_vt->entries[slot].introducing_func : nullptr;
+            sec_entries.push_back({slot, ti.real_func, introducing});
             if (!ti.real_func) {
                 sec_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
                 continue;
@@ -3615,6 +3651,7 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
 
         llvm::Constant* sec_struct = llvm::ConstantStruct::get(base_vt->llvm_type, sec_init);
         sec_gv->setInitializer(sec_struct);
+        secondary->entries = std::move(sec_entries);
     }
 
 }
@@ -3679,9 +3716,11 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                 if (!kdi_agg || !kdi_agg->vtable.has_value()) continue;
 
                 llvm::GlobalVariable* sec_gv = nullptr;
+                std::shared_ptr<vtable_layout> secondary;
                 for (const auto& [base, layout] : klass.get_secondary_vtables()) {
                     if (base.get() == base_imp.get() && layout) {
                         sec_gv = layout->llvm_global;
+                        secondary = layout;
                         break;
                     }
                 }
@@ -3723,6 +3762,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                 }
 
                 std::vector<llvm::Constant*> sec_init;
+                std::vector<vtable_entry> sec_entries;
                 // Slot 0: RTTI
                 llvm::Constant* rtti_slot = vt->llvm_rtti_global
                     ? llvm::cast<llvm::Constant>(vt->llvm_rtti_global)
@@ -3744,12 +3784,14 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                     // Names do not distinguish overloaded methods. The imported
                     // model retains slot identity and the inherited override chain.
                     llvm::Function* override_func = nullptr;
+                    std::shared_ptr<function> implementation;
                     std::shared_ptr<aggregate> implementation_owner;
                     for (auto& entry : vt->entries) {
                         if (!entry.func || !base_entry) continue;
                         if (overrides(entry.func, base_entry->func)
                             || overrides(entry.func, base_entry->introducing_func)) {
                             override_func = _context->lookup_llvm_function(entry.func);
+                            implementation = entry.func;
                             implementation_owner = implementation_receiver_owner(*entry.func);
                             break;
                         }
@@ -3760,6 +3802,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                             if (entry.func && !entry.func->is_abstract_func()
                                 && have_same_virtual_signature(*entry.func, *base_entry->func)) {
                                 override_func = _context->lookup_llvm_function(entry.func);
+                                implementation = entry.func;
                                 implementation_owner = implementation_receiver_owner(*entry.func);
                                 break;
                             }
@@ -3767,9 +3810,12 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                     }
                     if (!override_func && base_entry && base_entry->func) {
                         override_func = _context->lookup_llvm_function(base_entry->func);
+                        implementation = base_entry->func;
                         implementation_owner = implementation_receiver_owner(*base_entry->func);
                     }
 
+                    sec_entries.push_back({slot_idx, implementation,
+                        base_entry ? base_entry->introducing_func : nullptr});
                     if (!override_func) {
                         sec_init.push_back(llvm::ConstantPointerNull::get(
                             llvm::cast<llvm::PointerType>(ptr_ty)));
@@ -3825,6 +3871,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                 if (sec_init.size() == kdi_vt.slots.size() + 1) { // +1 for RTTI
                     llvm::Constant* sec_struct = llvm::ConstantStruct::get(base_vt_type, sec_init);
                     sec_gv->setInitializer(sec_struct);
+                    if (secondary) secondary->entries = std::move(sec_entries);
                 }
 
                 // Recurse into this imported base's own imported bases (transitive chain/diamond support)

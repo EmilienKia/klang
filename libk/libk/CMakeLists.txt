@@ -887,6 +887,36 @@ target_link_options(libk-tests-k-ffi-abi PRIVATE -Wl,--export-dynamic)
 target_compile_options(libk-tests-k-ffi-abi PRIVATE
     -fexceptions -fasynchronous-unwind-tables)
 
+libk_add_test(libk-tests-rtti-signatures 120 tests/test-rtti-signatures.cpp)
+target_include_directories(libk-tests-rtti-signatures PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../klang/src)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux"
+   AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    set(RTTI_PRODUCER_FIXTURES_DIR "${LIBK_OUTPUT_DIR}/rtti-producer-fixtures")
+    set(RTTI_PRODUCER_FIXTURES "")
+    foreach(_producer first second)
+        set(_producer_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/modules/rtti_producer_${_producer}.k")
+        set(_producer_library "${RTTI_PRODUCER_FIXTURES_DIR}/${_producer}/librtti_image_local.so")
+        add_custom_command(
+            OUTPUT "${_producer_library}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "${RTTI_PRODUCER_FIXTURES_DIR}/${_producer}"
+            COMMAND $<TARGET_FILE:klangc> -I "${LIBK_OUTPUT_DIR}" -L "${LIBK_OUTPUT_DIR}"
+                    --dyn-lib -o "${_producer_library}" "${_producer_source}"
+            DEPENDS klangc libk_stdlib "${_producer_source}"
+            WORKING_DIRECTORY "${LIBK_OUTPUT_DIR}"
+            COMMENT "Building ${_producer} ELF RTTI producer fixture"
+            VERBATIM
+        )
+        list(APPEND RTTI_PRODUCER_FIXTURES "${_producer_library}")
+    endforeach()
+    add_custom_target(libk_rtti_producer_fixtures DEPENDS ${RTTI_PRODUCER_FIXTURES})
+    add_dependencies(libk-tests-rtti-signatures libk_rtti_producer_fixtures)
+    target_compile_definitions(libk-tests-rtti-signatures PRIVATE
+        LIBK_RTTI_PRODUCER_FIXTURES_DIR="${RTTI_PRODUCER_FIXTURES_DIR}"
+        LIBK_RTTI_PRODUCER_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/tests/modules/rtti_producer_first.k")
+endif()
+
 # ── Public K runtime C FFI tests ───────────────────────────────────────────
 add_library(klang-ffi-native-fixture SHARED tests/ffi/native_fixture.c)
 set_target_properties(klang-ffi-native-fixture PROPERTIES

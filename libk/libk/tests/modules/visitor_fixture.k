@@ -7,7 +7,7 @@ public annotation VisitTag {
 
 // Root-function traversal must depend on fixture declarations, not imported
 // execute templates that older KDI imports incorrectly homed in this unit.
-public rootThreeParameters(first : int, second : int, third : int) : int {
+public rootThreeParameters(first : int, second : int, third : int = 3) : int {
     return first + second + third;
 }
 

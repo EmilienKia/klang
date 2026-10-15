@@ -170,7 +170,8 @@ protected:
     std::vector<std::shared_ptr<kdi::kdi_file>> _transitive_kdis;
 
     /**
-     * Cache of imported_function model nodes keyed by their KDI declarations.
+     * Cache of imported_function model nodes keyed by their KDI declarations:
+     * re-exports sharing one native entry keep distinct source declarations.
      * Created lazily by get_or_create_imported_function().
      */
     std::unordered_map<const kdi::kdi_function*, std::shared_ptr<imported_function>>  _imported_functions;

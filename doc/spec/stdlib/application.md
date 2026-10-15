@@ -220,9 +220,9 @@ contributes no application-image unit descriptors.
 Constructing an `Application` throws an unchecked `ModuleManifestError` when a
 startup image has an invalid or incompatible K RTTI manifest. Its code is the
 corresponding `LoadModuleError` value. The `__k_rtti_manifest_v1` symbol names
-the generation-1 accessor; it returns a manifest record with ABI version 2.
-The accessor suffix does not mean that ABI-version-1 manifest records are
-accepted.
+the generation-1 accessor; it returns a manifest record with ABI version 3.
+The accessor suffix does not mean that older records are accepted: ABI versions
+1 and 2 are rejected before extended RTTI records are read.
 
 ### `loadModule(path: const String&) : Expected<Shared<Module>, LoadModuleError>`
 Load a dynamic library from a local file path. See [Module](module.md) for the

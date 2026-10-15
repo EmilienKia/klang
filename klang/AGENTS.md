@@ -332,9 +332,9 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-types-const` | const semantics (`test-gen-const.cpp`) |
 | `klang-tests-gen-types-null` | null semantics (`test-gen-null-semantics.cpp`) |
 | `klang-tests-gen-types-meta-designated` | annotations and designated init (`test-gen-annotation-meta.cpp`, `test-gen-designated-init.cpp`) |
-| `klang-tests-gen-aliases` | alias/typedef/callable-alias |
+| `klang-tests-gen-aliases` | alias/typedef/callable-alias; CTest shards 0–2 |
 | `klang-tests-gen-classes` | class basics/inheritance/upcasts |
-| `klang-tests-gen-virtuality` | virtual/interface/override/diamond |
+| `klang-tests-gen-virtuality` | virtual/interface/override/diamond; CTest shards 0–4 |
 | `klang-tests-gen-memory-ownership` | owner/drain/indirection; CTest shards 0–1 |
 | `klang-tests-gen-arrays` | fixed/dynamic arrays and foreach |
 | `klang-tests-gen-oop-lifecycle` | lifecycle and RVO; CTest shards 0–1 |
@@ -353,7 +353,7 @@ Grouping policy:
 - keep per-executable runtime under timeout budget,
 - register new/redistributed files with `klang_gen_test(<target> 120 ...)`.
 - `SHARD_COUNT 5` follows the same scheme with shards `0` to `4`
-  (`gen-types-enums-unions`, `gen-templates-deduction`).
+  (`gen-types-enums-unions`, `gen-templates-deduction`, `gen-virtuality`).
 - `SHARD_COUNT 4` likewise registers shards `0` to `3` (`import-core`).
 - `SHARD_COUNT 3` keeps heavy-suite executable names and build dependencies
   unchanged, but replaces their unsharded CTest entry with
@@ -364,6 +364,9 @@ Grouping policy:
 - `SHARD_COUNT 2` likewise registers `<target>-shard-0` and
   `<target>-shard-1`, preserving the executable/build target name and 120-second
   per-entry timeout while running each normally enabled Catch2 case once.
+- `SHARD_COUNT 5` gives the metadata-heavy virtuality suite five serial entries,
+  `<target>-shard-0` through `<target>-shard-4`, preserving its executable,
+  case selection, lexical order, RNG seed and 120-second timeout.
 - `SHARD_COUNT 15` gives the import-template suite fifteen serial entries,
   `<target>-shard-0` through `<target>-shard-14`, without changing its executable,
   dependencies, case selection, lexical order, RNG seed or 120-second timeout.

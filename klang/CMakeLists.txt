@@ -389,9 +389,9 @@ klang_gen_test(klang-tests-gen-types-meta-designated 120
 
 # ---------------------------------------------------------------------------
 # Group 5b — Alias, typedef, redirector, callable-alias
-# Estimated wall-clock: ~40s on a low-spec VM.
+# Catch2 shards bound the signature- and import-heavy alias matrix.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-aliases 120
+klang_gen_test(klang-tests-gen-aliases 120 SHARD_COUNT 3
         tests/test-gen-redirector.cpp
         tests/test-gen-alias-soft.cpp
         tests/test-gen-typedef.cpp
@@ -415,10 +415,9 @@ klang_gen_test(klang-tests-gen-classes 120 SHARD_COUNT 3
 
 # ---------------------------------------------------------------------------
 # Group 6b — Virtuality, interfaces, override, diamond inheritance
-# Estimated wall-clock: ~50s on a low-spec VM.
-# Catch2 shards bound the virtual inheritance matrix.
+# Catch2 shards bound the metadata-heavy virtual inheritance matrix.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-virtuality 120 SHARD_COUNT 3
+klang_gen_test(klang-tests-gen-virtuality 120 SHARD_COUNT 5
         tests/test-gen-class-virtuality.cpp
         tests/test-gen-virtual-inheritance.cpp
         tests/test-gen-virtuality-coverage.cpp
@@ -526,6 +525,7 @@ klang_gen_test(klang-tests-gen-generics 120
 # ---------------------------------------------------------------------------
 # Group 11 — KDI import, production libraries, multi-source
 # Split into core import, templates cross-module, and interop test executables.
+# Catch2 shards keep core import compilation below the 120-second budget.
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-import-core 120 SHARD_COUNT 4
         tests/test-import-core.cpp

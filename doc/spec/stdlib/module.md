@@ -193,8 +193,10 @@ descriptor currently being visited, including during nested walks. See
 [RTTI Visitor API](rtti.md#16-visitor-api) for callback order, pruning, and
 borrowed-descriptor rules.
 
-The Linux image-manifest record ABI is version 2. It is an immutable array of
-`KRTTIManifestEntryV2` records in the ELF section `k_rtti_units`. Each record
+### K RTTI manifest
+
+The Linux image-manifest record ABI is version 3. It is an immutable array of
+`KRTTIManifestEntryV3` records in the ELF section `k_rtti_units`. Each record
 contains an ABI version, record size, and pointer to a compiler-emitted `Unit`
 descriptor. The image-local `__k_rtti_manifest_v1` discovery accessor retains
 its historical symbol name and returns the
@@ -202,11 +204,14 @@ section's entry range. Compiler objects contribute records independently;
 archives retain contributions with their object members, so ordinary static
 link extraction rules remain unchanged: extracted members are discoverable,
 unextracted members are not. The runtime validates record ownership, image-section bounds, alignment, ABI,
-and the exact v2 record size before exposing descriptors. Version 1 records are
-rejected as incompatible because the Unit and Namespace descriptor layouts
-changed; v2 also includes the runtime annotation and RTTI visitor vtable
-contracts. Adding visitor callbacks did not change the manifest record shape,
-so it does not introduce another record-version increment. This ABI is versioned
+and the exact v3 record size before exposing descriptors. Version 1 and 2 records
+are rejected before reading their Unit, Function, Parameter or aggregate records.
+Version 3 extends callable/parameter records with exact semantic and native
+signature data, actual body relocations, and aggregate semantic graphs. The
+manifest's outer record shape and historical discovery symbol are unchanged;
+the version protects the descriptors reachable through it. A native image
+without its own K manifest remains a native image, even if it depends on a K
+library. This ABI is versioned
 separately from the KDI format. Constructing `Application` fails with an
 unchecked `ModuleManifestError` whose code is `INVALID_MANIFEST` or
 `INCOMPATIBLE_MANIFEST` if any startup image has such a manifest.

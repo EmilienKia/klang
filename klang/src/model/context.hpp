@@ -63,6 +63,7 @@ namespace gen {
     class implementation_generator;
     class type_reference_resolver;
     class aggregate_type_resolver;
+    class rtti_emitter;
 }
 
 
@@ -70,6 +71,8 @@ class context {
 protected:
     friend class k::model::gen::declaration_generator;
     friend class k::model::gen::implementation_generator;
+    friend class k::model::gen::rtti_emitter;
+    friend struct rtti_signature_test_access;
 
     std::unique_ptr<llvm::LLVMContext> _context;
 
@@ -101,6 +104,14 @@ protected:
     // Entities:
     std::map<std::shared_ptr<global_variable_definition>, llvm::GlobalVariable*> _global_vars;
     std::map<std::shared_ptr<function>, llvm::Function*> _functions;
+    // Filled alongside actual LLVM prototype construction. -1 = sret,
+    // -2 = receiver, nonnegative = declared parameter position.
+    std::map<const function*, std::vector<int>> _native_argument_sources;
+    // Pin semantic nodes as well as forward globals: recursive signatures may
+    // revisit freshly resolved wrappers that otherwise have only weak owners.
+    std::vector<std::pair<std::shared_ptr<type>, llvm::GlobalVariable*>> _rtti_types;
+    llvm::GlobalVariable* _rtti_void = nullptr;
+    std::map<const function*, llvm::GlobalVariable*> _rtti_signatures;
     std::map<std::shared_ptr<parameter>, llvm::AllocaInst*> _parameter_variables;
     std::map<std::shared_ptr<function>, llvm::AllocaInst*> _function_this_variables;
     std::map<std::shared_ptr<variable_statement>, llvm::AllocaInst*> _variables;

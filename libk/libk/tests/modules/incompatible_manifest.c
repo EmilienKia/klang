@@ -7,7 +7,7 @@ typedef struct {
 } ManifestEntry;
 
 static const ManifestEntry entry = {
-    .abi_version = 1,
+    .abi_version = 2,
     .entry_size = sizeof(ManifestEntry),
     .unit_descriptor = &entry
 };

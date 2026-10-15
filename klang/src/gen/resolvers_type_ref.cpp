@@ -4407,7 +4407,7 @@ type_reference_resolver::get_best_matching_constructor(
             auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
             template_instantiator::populate_constructor_from_template_public(
                 concrete, *ctor, subst, val_subst, pack_subst, ctor->is_generic());
-            concrete->set_tpl_instantiation_info(ctor->get_short_name(), deduction.deduced_args);
+            concrete->set_tpl_instantiation_info(ctor->get_short_name(), deduction.deduced_args, ti);
             concrete->mark_instantiation();
             ti->instantiations[key] = std::static_pointer_cast<function>(concrete);
             newly_instantiated = true;

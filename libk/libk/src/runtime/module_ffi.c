@@ -59,7 +59,7 @@ typedef struct {
     char* path;
     void* handle;
     struct link_map* identity;
-    const KRTTIManifestEntryV2* entries;
+    const KRTTIManifestEntryV3* entries;
     uint32_t entry_count;
     int manifest_status;
 } KModuleImage;
@@ -397,23 +397,23 @@ static void k_module_probe_manifest(KModuleImage* image) {
         return;
     }
 
-    const KRTTIManifestEntryV2* entries = NULL;
+    const KRTTIManifestEntryV3* entries = NULL;
     uint32_t count = 0;
     int result = ((KRTTIManifestAccessor) symbol)(&entries, &count);
     if (result != 0 || (count && !entries) || count > 1000000u) {
         image->manifest_status = K_MANIFEST_MALFORMED;
         return;
     }
-    if (count && (((uintptr_t) entries % _Alignof(KRTTIManifestEntryV2)) != 0
-                  || (size_t) count > SIZE_MAX / sizeof(KRTTIManifestEntryV2)
+    if (count && (((uintptr_t) entries % _Alignof(KRTTIManifestEntryV3)) != 0
+                  || (size_t) count > SIZE_MAX / sizeof(KRTTIManifestEntryV3)
                   || !k_module_range_in_image(
-                      entries, (size_t) count * sizeof(KRTTIManifestEntryV2),
+                      entries, (size_t) count * sizeof(KRTTIManifestEntryV3),
                       image->identity))) {
         image->manifest_status = K_MANIFEST_MALFORMED;
         return;
     }
     for (uint32_t i = 0; i < count; ++i) {
-        const KRTTIManifestEntryV2* entry = &entries[i];
+        const KRTTIManifestEntryV3* entry = &entries[i];
         if (!k_module_same_image((void*) entry, image->identity)
             || !k_module_same_image((void*) entry->unit_descriptor, image->identity)) {
             image->manifest_status = K_MANIFEST_MALFORMED;
@@ -423,7 +423,7 @@ static void k_module_probe_manifest(KModuleImage* image) {
             image->manifest_status = K_MANIFEST_INCOMPATIBLE;
             return;
         }
-        if (entry->entry_size != sizeof(KRTTIManifestEntryV2)) {
+        if (entry->entry_size != sizeof(KRTTIManifestEntryV3)) {
             image->manifest_status = K_MANIFEST_MALFORMED;
             return;
         }

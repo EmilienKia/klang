@@ -2403,7 +2403,7 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     concrete->_documentation = tpl_def.get_documentation();
 
     // Store template instantiation info for mangling (I…E encoding)
-    concrete->set_tpl_instantiation_info(base_name, args);
+    concrete->set_tpl_instantiation_info(base_name, args, ti);
     // Mark as a synthesised instantiation so codegen applies linkonce_odr + COMDAT.
     concrete->mark_instantiation();
 
@@ -2806,7 +2806,7 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
                                     source_bindings_for(*ti, subst, pack_subst));
 
     // Store template instantiation info for mangling (I…E encoding)
-    concrete->set_tpl_instantiation_info(base_name, args);
+    concrete->set_tpl_instantiation_info(base_name, args, ti);
     // Mark as a synthesised instantiation so codegen applies linkonce_odr + COMDAT.
     concrete->mark_instantiation();
 
@@ -2867,7 +2867,7 @@ std::shared_ptr<function> template_instantiator::synthesize_generic_function(
     }
 
     populate_function_from_template(concrete, tpl_def, subst, value_substitution_map{}, pack_substitution_map{});
-    concrete->set_tpl_instantiation_info(base_name, erased_args);
+    concrete->set_tpl_instantiation_info(base_name, erased_args, ti);
     concrete->mark_instantiation();
     concrete->set_tpl_instantiation_subst(subst);
 
@@ -3671,7 +3671,7 @@ std::shared_ptr<union_type_def> template_instantiator::instantiate_union(
     }
 
     // Store template instantiation info for mangling
-    concrete->set_tpl_instantiation_info(base_name, args);
+    concrete->set_tpl_instantiation_info(base_name, args, ti);
 
     // Cache the instantiation
     ti->instantiations[key] = concrete;

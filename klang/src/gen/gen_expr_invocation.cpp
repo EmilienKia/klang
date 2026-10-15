@@ -1093,7 +1093,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                             template_instantiator::populate_function_from_template_public(
                                 concrete, *tpl_func, subst, val_subst, pack_subst, tpl_func->is_generic());
-                            concrete->set_tpl_instantiation_info(base_name, final_args);
+                            concrete->set_tpl_instantiation_info(base_name, final_args, ti);
                             concrete->mark_instantiation();
                             ti->instantiations[key] = concrete;
                             newly_instantiated = true;
@@ -1230,7 +1230,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                                 template_instantiator::populate_function_from_template_public(
                                     concrete, *tpl_func, subst, val_subst, pack_subst, tpl_func->is_generic());
-                                concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args);
+                                concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args, ti);
                                 concrete->mark_instantiation();
                                 ti->instantiations[key] = concrete;
                                 newly_instantiated = true;
@@ -1896,7 +1896,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                     concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                                     template_instantiator::populate_function_from_template_public(
                                         concrete, *tpl_func, subst, val_subst, pack_subst, tpl_func->is_generic());
-                                    concrete->set_tpl_instantiation_info(base_name, model_args);
+                                    concrete->set_tpl_instantiation_info(base_name, model_args, ti);
                                     concrete->mark_instantiation();
                                     ti->instantiations[key] = concrete;
                                     newly_instantiated = true;
@@ -2027,7 +2027,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                 concrete->set_compiler_generated(tpl_func->is_compiler_generated());
                                 template_instantiator::populate_function_from_template_public(
                                     concrete, *tpl_func, subst, val_subst, pack_subst, tpl_func->is_generic());
-                                concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args);
+                                concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args, ti);
                                 concrete->mark_instantiation();
                                 ti->instantiations[key] = concrete;
                                 newly_instantiated = true;
@@ -2939,11 +2939,14 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         // declaration walk (e.g. template-instantiated methods).
         if (function) {
             std::vector<llvm::Type*> late_param_types;
+            std::vector<int> argument_sources;
+            int parameter_position = 0;
             if (function->is_member() && !function->is_static()) {
                 auto this_param = function->get_this_parameter();
                 if (this_param && this_param->get_type()) {
                     if (auto* this_ty = _context->get_llvm_type(this_param->get_type())) {
                         late_param_types.push_back(this_ty);
+                        argument_sources.push_back(-2);
                     }
                 }
             }
@@ -2955,6 +2958,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                     break;
                 }
                 late_param_types.push_back(pty);
+                argument_sources.push_back(parameter_position++);
             }
 
             // Fallback: derive the function signature directly from generated call args.
@@ -2979,6 +2983,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 if (function->has_return_type()) {
                     if (needs_sret_return(function->get_return_type())) {
                         late_param_types.insert(late_param_types.begin(), llvm::PointerType::get(**_context, 0));
+                        argument_sources.insert(argument_sources.begin(), -1);
                         late_ret_type = llvm::Type::getVoidTy(**_context);
                         late_use_sret = true;
                     } else {
@@ -3019,6 +3024,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                             _context->get_llvm_type(function->get_return_type())));
                     }
                     _context->_functions.insert({function, late_fn});
+                    _context->_native_argument_sources[function.get()] = std::move(argument_sources);
                     it = _context->_functions.find(function);
                 }
             }

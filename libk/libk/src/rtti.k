@@ -26,9 +26,320 @@ enum Visibility {
     PRIVATE = 2;
 }
 
+namespace rtti {
+    /** Exact semantic kinds; native pointer representation does not erase these distinctions. */
+    enum TypeKind {
+        VOID = 0; PRIMITIVE = 1; CONST = 2;
+        REFERENCE = 3; VIEW = 4; LINK = 5; POINTER = 6; OWNER = 7; DRAIN = 8;
+        ARRAY = 9; SIZED_ARRAY = 10; CALLABLE = 11; MEMBER_CALLABLE = 12;
+        STRUCT = 13; CLASS = 14; INTERFACE = 15; ANNOTATION = 16;
+        ENUM = 17; UNION = 18; ALIAS = 19; UNRESOLVED = 20; ERASED = 21;
+    }
+
+    enum Eligibility {
+        DIRECT = 0; VIRTUAL_ONLY = 1; DELETED = 2; UNRESOLVED = 3;
+        NO_ENTRY = 4; BY_VALUE_AGGREGATE_INPUT = 5;
+        UNSUPPORTED_NATIVE_TYPE = 6; UNSUPPORTED_ABI = 7; FOREIGN = 8;
+        PRODUCER_METADATA_REQUIRED = 9; INCOMPATIBLE_PROVIDER = 10;
+    }
+
+    enum NativeKind { VOID = 0; INTEGER = 1; FLOAT = 2; POINTER = 3; AGGREGATE = 4; UNSUPPORTED = 5; }
+    enum PrimitiveKind {
+        BOOL = 0; CHAR = 1; BYTE = 2; UNSIGNED_BYTE = 3; SHORT = 4;
+        UNSIGNED_SHORT = 5; INT = 6; UNSIGNED_INT = 7; LONG = 8;
+        UNSIGNED_LONG = 9; LONG_LONG = 10; UNSIGNED_LONG_LONG = 11; FLOAT = 12; DOUBLE = 13;
+    }
+
+    /** Immutable compiler-owned data. A null layout is represented by !hasLayout(), not size zero. */
+    struct Type {
+        private kind : unsigned int;
+        private detail : unsigned int;
+        private flags : unsigned int;
+        private byteSize : unsigned long;
+        private alignment : unsigned long;
+        private extent : unsigned long;
+        private element : const Type?;
+        private result : const Type?;
+        private parameters : const Type?[]?;
+        private throwsTypes : const Type?[]?;
+        private nominal : const k::TypeInfo?;
+        private identity : const char[]?;
+        private canonical : const Type?;
+        private templateOrigin : const TemplateOrigin?;
+        private lifecycle : const Lifecycle?[]?;
+        private virtualBodies : const VirtualBody?[]?;
+        private arrayDataOffset : unsigned long;
+        private memberOf : const Type?;
+        private projections : const Projection?[]?;
+        private alternatives : const UnionAlternative?[]?;
+        private tagOffset : unsigned long;
+        private payloadOffset : unsigned long;
+        private arrayLengthOffset : unsigned long;
+        private nominalIdentity : const NominalIdentity?;
+
+        const getKind() : TypeKind { return (TypeKind) kind; }
+        /** Primitive: compiler primitive ordinal; callable: addresser ordinal. */
+        const getDetail() : unsigned int { return detail; }
+        const getPrimitiveKind() : PrimitiveKind { return (PrimitiveKind) detail; }
+        /** Whether size/alignment describe a complete, fixed value allocation. */
+        const hasLayout() : bool { return (flags & 1u) != 0u; }
+        const isResolved() : bool { return (flags & 2u) != 0u; }
+        const hasTrivialAggregateDestruction() : bool { return (flags & 4u) != 0u; }
+        const hasExternalVirtualBodies() : bool { return (flags & 8u) != 0u; }
+        /** Abstract declarations have RTTI/bodies but need a concrete dispatch map. */
+        const isAbstractAggregate() : bool { return (flags & 16u) != 0u; }
+        const getSize() : unsigned long { return byteSize; }
+        const getAlignment() : unsigned long { return alignment; }
+        const getExtent() : unsigned long { return extent; }
+        const getElement() : const Type? { return element; }
+        const getReturnType() : const Type? { return result; }
+        const getParameterTypes() : const Type?[]? { return parameters; }
+        const getThrowsTypes() : const Type?[]? { return throwsTypes; }
+        const getNominalType() : const k::TypeInfo? { return nominal; }
+        const getIdentity() : const char[]? { return identity; }
+        /** Representation canonicalization; exact semantic identity still includes aliases. */
+        const getCanonical() : const Type? { return canonical; }
+        const getTemplateOrigin() : const TemplateOrigin? { return templateOrigin; }
+        const getLifecycle() : const Lifecycle?[]? { return lifecycle; }
+        const getVirtualBodies() : const VirtualBody?[]? { return virtualBodies; }
+        const getArrayDataOffset() : unsigned long { return arrayDataOffset; }
+        const getArrayLengthOffset() : unsigned long { return arrayLengthOffset; }
+        const getArrayLengthBitWidth() : unsigned int { return detail; }
+        const getMemberOf() : const Type? { return memberOf; }
+        const getProjections() : const Projection?[]? { return projections; }
+        const getAlternatives() : const UnionAlternative?[]? { return alternatives; }
+        const getTagOffset() : unsigned long { return tagOffset; }
+        const getPayloadOffset() : unsigned long { return payloadOffset; }
+        const getNominalIdentity() : const NominalIdentity? { return nominalIdentity; }
+    }
+
+    /** An address-significant immutable anchor owned by one compiled unit/image. */
+    struct Producer {
+        private unit : const k::Unit?;
+        private unitName : const char[]?;
+        private target : const char[]?;
+        private dataLayout : const char[]?;
+        private rttiAbi : unsigned int;
+        const getUnit() : const k::Unit? { return unit; }
+        const getUnitName() : const char[]? { return unitName; }
+        const getTarget() : const char[]? { return target; }
+        const getDataLayout() : const char[]? { return dataLayout; }
+        const getRttiAbi() : unsigned int { return rttiAbi; }
+    }
+
+    /** Symbolic keys require proven producer binding; they are not equality by name. */
+    struct NominalIdentity {
+        private owner : const Producer?;
+        private producer : const Producer?;
+        private declaration : const char[]?;
+        private templateOrigin : const TemplateOrigin?;
+        const getOwner() : const Producer? { return owner; }
+        /** Null for imported/re-instantiated declarations until producer resolution. */
+        const getProducer() : const Producer? { return producer; }
+        const hasResolvedProducer() : bool { return producer != null; }
+        const getDeclaration() : const char[]? { return declaration; }
+        const getTemplateOrigin() : const TemplateOrigin? { return templateOrigin; }
+    }
+
+    struct UnionAlternative {
+        private name : const char[]?;
+        private type : const Type?;
+        private tag : unsigned int;
+        private flags : unsigned int;
+        const getName() : const char[]? { return name; }
+        const getType() : const Type? { return type; }
+        const getTag() : unsigned int { return tag; }
+        const isConst() : bool { return (flags & 1u) != 0u; }
+    }
+
+    struct Projection {
+        private target : const Type?;
+        private recipe : const ReceiverProjection?;
+        private flags : unsigned int;
+        const getTarget() : const Type? { return target; }
+        const getRecipe() : const ReceiverProjection? { return recipe; }
+        /** Visibility in bits 0-1, virtual base=4. */
+        const getFlags() : unsigned int { return flags; }
+    }
+
+    struct ReceiverStep {
+        private offset : unsigned long;
+        private flags : unsigned int;
+        const getOffset() : unsigned long { return offset; }
+        const loadsPointer() : bool { return (flags & 1u) != 0u; }
+    }
+
+    struct ReceiverProjection {
+        private delta : long;
+        private steps : const ReceiverStep?[]?;
+        private flags : unsigned int;
+        /** Byte delta for a direct recipe; applied to the selected source subobject. */
+        const getDelta() : long { return delta; }
+        const getSteps() : const ReceiverStep?[]? { return steps; }
+        const isIndirect() : bool { return (flags & 1u) != 0u; }
+    }
+
+    struct TemplateArgument {
+        private kind : unsigned int;
+        private type : const Type?;
+        private value : const byte*;
+        private valueSize : unsigned long;
+        private valueAlignment : unsigned long;
+        private pack : const Type?[]?;
+        /** 0: type, 1: exact typed constant bytes, 2: type pack. */
+        const getKind() : unsigned int { return kind; }
+        const getType() : const Type? { return type; }
+        const getValueAddress() : const byte* { return value; }
+        const getValueSize() : unsigned long { return valueSize; }
+        const getValueAlignment() : unsigned long { return valueAlignment; }
+        const getPack() : const Type?[]? { return pack; }
+    }
+
+    struct TemplateOrigin {
+        private identity : const char[]?;
+        private arguments : const TemplateArgument?[]?;
+        private enclosing : const TemplateOrigin?;
+        const getIdentity() : const char[]? { return identity; }
+        const getArguments() : const TemplateArgument?[]? { return arguments; }
+        const getEnclosing() : const TemplateOrigin? { return enclosing; }
+    }
+
+    struct NativeValue {
+        private kind : unsigned int;
+        private bitWidth : unsigned int;
+        private byteSize : unsigned long;
+        private alignment : unsigned long;
+        private semanticType : const Type?;
+        private logicalIndex : int;
+        private flags : unsigned int;
+        private pointeeSize : unsigned long;
+        private pointeeAlignment : unsigned long;
+        private attributes : const char[]?;
+        private offset : unsigned long;
+        private fields : const NativeValue?[]?;
+        private extent : unsigned long;
+        const getKind() : NativeKind { return (NativeKind) kind; }
+        const getBitWidth() : unsigned int { return bitWidth; }
+        const getSize() : unsigned long { return byteSize; }
+        const getAlignment() : unsigned long { return alignment; }
+        const getType() : const Type? { return semanticType; }
+        /** -1: hidden result, -2: receiver, -3: physical return, -4: native field. */
+        const getLogicalIndex() : int { return logicalIndex; }
+        /** sret=1, byval=2, sext=4, zext=8, inreg=16, noalias=32, callee cleanup=64, receiver projection=128. */
+        const getFlags() : unsigned int { return flags; }
+        const requiresReceiverProjection() : bool { return (flags & 128u) != 0u; }
+        const getPointeeSize() : unsigned long { return pointeeSize; }
+        const getPointeeAlignment() : unsigned long { return pointeeAlignment; }
+        const getAttributes() : const char[]? { return attributes; }
+        /** Offset relative to the containing physical aggregate. */
+        const getOffset() : unsigned long { return offset; }
+        /** Struct fields in order, or one repeated element for an LLVM array. */
+        const getFields() : const NativeValue?[]? { return fields; }
+        /** Exact native array element count, including zero-sized elements. */
+        const getExtent() : unsigned long { return extent; }
+    }
+
+    struct NativeSignature {
+        private revision : unsigned int;
+        private callingConvention : unsigned int;
+        private target : const char[]?;
+        private dataLayout : const char[]?;
+        private result : const NativeValue?;
+        private arguments : const NativeValue?[]?;
+        private resultIndex : int;
+        private receiverIndex : int;
+        private resultSize : unsigned long;
+        private resultAlignment : unsigned long;
+        private flags : unsigned int;
+        private bodyReceiverIndex : int;
+        const getRevision() : unsigned int { return revision; }
+        const getCallingConvention() : unsigned int { return callingConvention; }
+        const getTarget() : const char[]? { return target; }
+        const getDataLayout() : const char[]? { return dataLayout; }
+        const getResult() : const NativeValue? { return result; }
+        const getArguments() : const NativeValue?[]? { return arguments; }
+        const getResultIndex() : int { return resultIndex; }
+        const getReceiverIndex() : int { return receiverIndex; }
+        /** Actual provider's implicit receiver; may instead be an explicit source argument. */
+        const getBodyReceiverIndex() : int { return bodyReceiverIndex; }
+        const getResultSize() : unsigned long { return resultSize; }
+        const getResultAlignment() : unsigned long { return resultAlignment; }
+        /** Callee owner cleanup=1, caller result cleanup=2, unverified import=4, native vararg=8. */
+        const getFlags() : unsigned int { return flags; }
+        const isVariadic() : bool { return (flags & 8u) != 0u; }
+    }
+
+    struct Receiver {
+        private type : const Type?;
+        private slot : int;
+        private flags : unsigned int;
+        const getType() : const Type? { return type; }
+        const getSlot() : int { return slot; }
+        /** const=1, virtual=2, project using dynamic cast map/body receiver identity=4. */
+        const getFlags() : unsigned int { return flags; }
+    }
+
+    struct Signature {
+        private returnType : const Type?;
+        private parameterTypes : const Type?[]?;
+        private arity : unsigned int;
+        private native : const NativeSignature?;
+        private receiver : const Receiver?;
+        private templateOrigin : const TemplateOrigin?;
+        private eligibility : unsigned int;
+        private symbol : const char[]?;
+        private entry : const byte*;
+        private throwsTypes : const Type?[]?;
+        private enclosingTemplateOrigin : const TemplateOrigin?;
+        const getReturnType() : const Type? { return returnType; }
+        const getParameterTypes() : const Type?[]? { return parameterTypes; }
+        /** All declared parameters are required, including source-defaulted parameters. */
+        const getArity() : unsigned int { return arity; }
+        const getNative() : const NativeSignature? { return native; }
+        const getReceiver() : const Receiver? { return receiver; }
+        const getTemplateOrigin() : const TemplateOrigin? { return templateOrigin; }
+        const getEligibility() : Eligibility { return (Eligibility) eligibility; }
+        const getSymbol() : const char[]? { return symbol; }
+        /** Producer-local existing body address; never public symbol lookup or an adapter. */
+        const getEntry() : const byte* { return entry; }
+        const getThrowsTypes() : const Type?[]? { return throwsTypes; }
+        const getEnclosingTemplateOrigin() : const TemplateOrigin? { return enclosingTemplateOrigin; }
+    }
+
+    struct Lifecycle {
+        private operation : unsigned int;
+        private flags : unsigned int;
+        private signature : const Signature?;
+        /** 0: destructor, 1: copy constructor, 2: drain constructor. */
+        const getOperation() : unsigned int { return operation; }
+        /** Visibility in bits 0-1, deleted=4, compiler-generated=8. */
+        const getFlags() : unsigned int { return flags; }
+        const getSignature() : const Signature? { return signature; }
+    }
+
+    struct VirtualBody {
+        private source : const Type?;
+        private slot : unsigned int;
+        private body : const Signature?;
+        private receiver : const Type?;
+        private vtable : const byte*;
+        private projection : const ReceiverProjection?;
+        /** Source subobject identity plus its concrete vtable disambiguate repeated bases. */
+        const getSource() : const Type? { return source; }
+        const getSlot() : unsigned int { return slot; }
+        const getBody() : const Signature? { return body; }
+        /** Project the complete object to this type using its producer cast map. */
+        const getReceiver() : const Type? { return receiver; }
+        /** Producer-local existing table, not a preempting public definition. */
+        const getVtable() : const byte* { return vtable; }
+        const getProjection() : const ReceiverProjection? { return projection; }
+    }
+}
+
 /**
  * Base RTTI type information descriptor.
- * All type descriptors will implement this interface.
+ * Nominal aggregate descriptors implement this interface. Exact semantic
+ * descriptors are separate immutable k::rtti::Type records.
  */
 const interface TypeInfo {
     /** Dispatch to the callback for the concrete descriptor kind. */
@@ -98,11 +409,21 @@ const interface AggregateType : public TypeInfo {
 /**
  * RTTI parameter descriptor.
  * This class describes a function or constructor parameter at runtime.
- * Exposes the parameter name and annotations.
+ * Preserves the parameter name/annotations and exact position/type/source markers.
  */
 final const class Parameter {
     name : const char[]?;
     annotations : const Annotation?[]?;
+    position : unsigned int;
+    constraints : unsigned int;
+    exactType : const rtti::Type?;
+
+    const getPosition() : unsigned int { return position; }
+    const getType() : const rtti::Type? { return exactType; }
+    /** Source-default=1, source-vararg=2, pack-expansion=4, foreign-C-string=8. */
+    const getConstraints() : unsigned int { return constraints; }
+    const hasSourceDefault() : bool { return (constraints & 1u) != 0u; }
+    const isVararg() : bool { return (constraints & 2u) != 0u; }
 
     /**
      * Return the name of the parameter.
@@ -140,6 +461,11 @@ final const class Function {
     flags : unsigned int;
     annotations : const Annotation?[]?;
     parameters : const Parameter?[]?;
+    signature : const rtti::Signature?;
+
+    const getSignature() : const rtti::Signature? { return signature; }
+    const getReturnType() : const rtti::Type? { return signature->getReturnType(); }
+    const getArity() : unsigned int { return signature->getArity(); }
 
     /**
      * Internal bit-flag layout for the 'flags' field.
@@ -289,6 +615,11 @@ final const class Interface : public AggregateType {
     annotations : const Annotation?[]?;
     _castMap : byte*;
     @ffi::Extern("C") private static __k_iface_get_functions(rtti : const Interface&) : const Function?[]?;
+    @ffi::Extern("C") private static __k_iface_get_semantic_type(rtti : const Interface&) : const rtti::Type?;
+
+    const getSemanticType() : const rtti::Type? {
+        return __k_iface_get_semantic_type(this);
+    }
 
     /**
      * Internal bit-flag layout for the 'flags' field.
@@ -395,6 +726,11 @@ final const class Class : public AggregateType {
     _castMap : byte*;
     @ffi::Extern("C") private static __k_class_get_functions(rtti : const Class&) : const Function?[]?;
     @ffi::Extern("C") private static __k_class_get_constructors(rtti : const Class&) : const Constructor?[]?;
+    @ffi::Extern("C") private static __k_class_get_semantic_type(rtti : const Class&) : const rtti::Type?;
+
+    const getSemanticType() : const rtti::Type? {
+        return __k_class_get_semantic_type(this);
+    }
 
     /**
      * Internal bit-flag layout for the 'flags' field.

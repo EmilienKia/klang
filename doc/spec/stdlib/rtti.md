@@ -28,6 +28,7 @@ allowing programs to inspect type metadata at runtime.
 12. [Usage examples](#12-usage-examples)
 13. [Meta-annotation types](#13-meta-annotation-types)
 14. [Visitor API](#16-visitor-api)
+15. [Exact semantic and native signatures](#17-exact-semantic-and-native-signatures)
 
 ---
 
@@ -54,6 +55,9 @@ The RTTI system supports:
 - **Image-owned unit views** — retrieve unit descriptors through
   `Module.units()` without assigning independent ownership to compiler-emitted
   RTTI globals.
+- **Exact signatures** — inspect semantic type graphs, declared parameter
+  positions/default markers, native argument mappings, and actual body
+  relocations. These are metadata APIs, not a public invocation API.
 
 ---
 
@@ -154,6 +158,7 @@ All methods from `AggregateType`, plus:
 |--------|---------|-------------|
 | `getAnnotations()` | `const Annotation?[]?` | Array of annotation instances, or `null` if unannotated. |
 | `getFunctions()` | `const Function?[]?` | Array of public member function descriptors, or `null` if the class has no public member functions. Constructors and destructors are excluded. |
+| `getSemanticType()` | `const rtti::Type?` | Exact semantic graph for this aggregate; see section 17. |
 
 ### Flags layout
 
@@ -186,7 +191,8 @@ Same as `Class`.
 
 ### Methods
 
-Same as `Class`, including `getAnnotations()` and `getFunctions()`.
+Same as `Class`, including `getAnnotations()`, `getFunctions()`, and
+`getSemanticType()`.
 
 ---
 
@@ -301,6 +307,10 @@ function, not a type.
 | `isStatic()` | `bool` | `true` if the function is declared `static`. |
 | `isMember()` | `bool` | `true` if the function is a member of a class or interface. |
 | `getAnnotations()` | `const Annotation?[]?` | Annotations applied to this function, or `null`. |
+| `getParameters()` | `const Parameter?[]?` | Declared parameters in source order, excluding the receiver. |
+| `getSignature()` | `const rtti::Signature?` | Exact semantic and native signature metadata. |
+| `getReturnType()` | `const rtti::Type?` | Exact return type, including an explicit `VOID` descriptor. |
+| `getArity()` | `unsigned int` | Full declared parameter count; source defaults do not reduce it. |
 
 ### Flags layout
 
@@ -985,6 +995,334 @@ collect(moduleHandle : k::Shared<k::Module>) {
     visitor.walkModule(moduleHandle);
 }
 ```
+
+---
+
+## 17. Exact semantic and native signatures
+
+`k::rtti` contains compiler-owned, immutable metadata records. They describe
+semantic types and the actual compiled K function ABI; they do not introduce
+a public `invoke` API, argument holder, or result container. Existing
+`TypeInfo`, `Class`, `Interface`, annotation, and visitor APIs remain available.
+The records require [module manifest ABI 3](module.md#k-rtti-manifest).
+
+### 17.1. Semantic type graphs
+
+`Function.getReturnType()`, `Parameter.getType()`, and
+`Class.getSemanticType()` / `Interface.getSemanticType()` lead to `rtti::Type`
+graphs. A descriptor preserves semantic distinctions even when multiple types
+lower to the same LLVM pointer or integer representation.
+
+| `TypeKind` | Meaning |
+|------------|---------|
+| `VOID`, `PRIMITIVE` | No value, or a primitive identified by `PrimitiveKind`. |
+| `CONST` | A const-qualified type. |
+| `REFERENCE`, `VIEW`, `LINK`, `POINTER`, `OWNER`, `DRAIN` | The six distinct K addressers; `getElement()` identifies the referent. |
+| `ARRAY`, `SIZED_ARRAY` | Unsized/sized arrays; `getElement()` identifies the element and `getExtent()` the fixed extent when sized. |
+| `CALLABLE`, `MEMBER_CALLABLE` | Callable prototype/addresser, parameter/return/throws types, and an unbound member's declaring type. |
+| `STRUCT`, `CLASS`, `INTERFACE`, `ANNOTATION` | Nominal aggregate identity and associated metadata. |
+| `ENUM`, `UNION`, `ALIAS` | Nominal enum, union, or strong-alias identity, without erasing it to its storage type. |
+| `UNRESOLVED`, `ERASED` | A recipe or erased parameter rather than a resolved concrete value type. |
+
+Important queries:
+
+| Methods | Contract |
+|---------|----------|
+| `getKind()`, `getPrimitiveKind()` | Exact kind; the primitive query is meaningful only for `PRIMITIVE`. |
+| `getIdentity()`, `getNominalType()` | Display/nominal identity and, where available, the existing aggregate `TypeInfo` descriptor. Names alone do not establish representation compatibility. |
+| `getNominalIdentity()` | Producer ownership, declaration key, and template origin for every nominal kind, including plain structs, enums, unions, and strong aliases. Null for structural/non-nominal kinds. |
+| `getCanonical()` | Representation-canonical graph, stripping strong aliases while preserving the exact graph separately. This is not permission for a semantic conversion. |
+| `isResolved()` | Whether the graph represents a resolved semantic type rather than an unresolved recipe. |
+| `hasLayout()`, `getSize()`, `getAlignment()` | Complete fixed value-layout availability and compiler DataLayout-derived size/alignment in bytes. Zero size alone does not mean unavailable layout. |
+| `getElement()`, `getExtent()` | Referent/element/underlying type and fixed array extent, as appropriate for the kind. |
+| `getReturnType()`, `getParameterTypes()`, `getThrowsTypes()`, `getMemberOf()` | A callable's complete prototype and unbound member owner. |
+| `getArrayLengthOffset()`, `getArrayLengthBitWidth()`, `getArrayDataOffset()` | Array header/data layout; an unsized array does not claim a fixed total allocation size. |
+| `getAlternatives()`, `getTagOffset()`, `getPayloadOffset()` | Union alternatives, exact alternative types/tags, and compiled discriminant/payload offsets. |
+| `getTemplateOrigin()` | Concrete template identity and arguments, including enclosing origin data. |
+| `getLifecycle()`, `getProjections()`, `getVirtualBodies()` | Lifecycle entries and receiver/dispatch recipes described below. |
+
+Const qualification and strong aliases do not make an unsized array's value
+allocation fixed. Such descriptors report `hasLayout() == false`, even when
+their size/alignment describe a native array-header prefix. Addressers to these
+values retain their own complete, fixed pointer storage and report its layout.
+
+Graphs may be recursive. Consumers must not assume that following every
+reference forms a tree. The recursive visitor retains its existing containment
+walk; it does not automatically traverse these graph edges. Ordinary public
+field-layout introspection is not part of this API.
+
+An erased generic synthesis can have compiled storage and ordinary executable
+bodies without identifying a concrete semantic instantiation. Its type remains
+unresolved; a finalized native storage layout may still be reported by
+`hasLayout()`, `getSize()` and `getAlignment()`. Its lifecycle, receiver-projection
+and virtual-body recipes are unavailable. Source base clauses do not establish
+physical receiver subobjects. Signatures depending on that receiver report
+`UNRESOLVED`, with no trusted entry or native call recipe. A concrete static
+signature independent of that receiver retains its actual native metadata and
+entry.
+
+Declarations lexically contained in an uninstantiated template remain recipes,
+even when they have no template parameters of their own. They must not publish
+concrete layout or receiver/dispatch recipes.
+
+A generic function's usage-site facade retains its concrete logical signature
+and identifies the erased implementation symbol, but reports `UNRESOLVED`
+without a trusted entry or native call recipe until that erasure binding is
+supported. Erased parameters retain `ERASED` even when their physical stand-in
+is pointer-shaped; they are not ordinary byte pointers. These metadata
+restrictions do not affect ordinary compiled generic calls.
+
+#### Producer-qualified nominal identity
+
+`NominalIdentity.getOwner()` references an address-significant, immutable
+`Producer` anchor for the unit/image that owns this descriptor's storage.
+`Producer.getUnit()` reuses the existing image-local `Unit` root when a
+producer-local relocation is supported;
+`getUnitName()`, `getTarget()`, `getDataLayout()`, and `getRttiAbi()` preserve
+the compiler's unit identity and ABI context. Two loaded definitions of the
+same unit name do not thereby share an anchor.
+
+`NominalIdentity.getProducer()` is the proven declaration producer for a local
+declaration. `hasResolvedProducer()` is false, and `getProducer()` is null,
+when an imported declaration or imported-template origin has not been bound
+to its producer. The descriptor owner must **not** be substituted for that
+missing declaration producer. Repeated references to the same imported model
+type retain its shared semantic graph and unresolved provenance.
+
+`getDeclaration()` is a kind-qualified symbolic declaration key, not an ABI
+classifier. `getTemplateOrigin()` preserves the exact concrete and enclosing
+template arguments; strong aliases keep their declaration and arguments even
+when their representation-canonical type is identical.
+
+Cross-unit/image nominal equality requires proven resolution to the same
+producer declaration/instantiation and compatible manifest ABI, target,
+DataLayout, and relevant native contract. Resolution must retain the owning
+image, validate the producer/unit association, and disambiguate declaration
+and template identity. Names, sizes, alignments, raw template-storage bytes,
+or private descriptor addresses alone are not proof. A symbolic key is a
+binding input, not a successful binding. These immutable records do not
+implement the cross-image resolver or mutate unresolved imports into resolved
+ones, and no general owning type registry is provided.
+
+### 17.2. Parameters and declared arity
+
+`Parameter` keeps `getName()`, `getAnnotations()`, and `accept()` and adds:
+
+| Method | Returns | Contract |
+|--------|---------|----------|
+| `getPosition()` | `unsigned int` | Zero-based position in the declared parameter list, excluding the receiver. |
+| `getType()` | `const rtti::Type?` | Exact semantic type, including const/addressing/ownership distinctions. |
+| `getConstraints()` | `unsigned int` | Source default=1, source vararg=2, template pack expansion=4, foreign C-string annotation=8. |
+| `hasSourceDefault()` | `bool` | A default was declared in source. No default expression evaluator is provided. |
+| `isVararg()` | `bool` | The existing typed-vararg source marker. |
+
+`Function.getArity()` and `Signature.getArity()` count **every** declared
+parameter, including source-defaulted parameters. Any future reflective call
+must supply all of them explicitly. The metadata does not copy source ASTs or
+generate default-evaluation helpers.
+
+The existing typed-vararg declaration is one declared array parameter. Its
+marker does not turn the actual K body into a native C variadic function and
+does not implement reflective argument packing.
+
+### 17.3. Function signatures and native entries
+
+`rtti::Signature` provides exact return, ordered parameter and throws types,
+full arity, receiver information, template origins, eligibility, and native
+metadata. `getSymbol()` identifies the actual compiled symbol and `getEntry()`
+is its producer-image relocation, not a generated invocation adapter.
+The relocation alone does not imply eligibility.
+
+On Linux x86-64 ELF, metadata references an existing local body through a
+private, non-preemptable symbol alias. The alias has exactly the existing
+definition's address and adds no executable code; it does not name a PLT entry.
+Loading another `RTLD_GLOBAL` image with the same public symbol must not
+substitute that image's body for the descriptor producer's body. Public symbols,
+ordinary calls, and ordinary vtable slot relocations retain their existing ELF
+interposition semantics and may consequently select a different image.
+An undefined/imported body must not acquire a local alias or a trusted entry.
+Other object formats have no verified producer-local relocation recipe here;
+their externally visible entries remain absent and cannot be `DIRECT`.
+
+`Signature.getNative()` returns a `NativeSignature` with:
+
+- a native-description revision, the actual LLVM calling convention, target
+  triple, and producer DataLayout string;
+- the physical return `NativeValue` and physical argument list;
+- explicit hidden-result, source-receiver, and actual body-receiver argument
+  indices (`-1` if absent);
+- semantic result storage size/alignment and cleanup responsibility flags.
+
+Each `NativeValue` records its LLVM shape, integer/floating/pointer width,
+allocation size/alignment, exact semantic type, attributes, and logical
+parameter mapping. Negative logical indices identify the hidden result
+(`-1`), receiver (`-2`), physical return (`-3`), or a nested native field
+(`-4`). Physical aggregate return shapes also retain field offsets and shapes;
+native arrays retain their exact extent, including zero-sized elements.
+The argument mapping is captured when the compiler constructs the actual
+LLVM declaration; it is not inferred from a C structure ABI.
+
+The existing K lowering places a hidden `sret` result first, then a non-static
+receiver, then declared arguments. An `sret` pointer describes transport, not
+the semantic return type: the latter remains the exact aggregate type.
+Static methods have no receiver entry. Primitive and addresser arguments keep
+their individual semantics even when their native storage shapes match.
+
+Redirects retain the alias's full declared parameter list and source receiver,
+but native semantic types and owner-cleanup flags describe the actual provider.
+`getReceiverIndex()` locates the source implicit receiver;
+`getBodyReceiverIndex()` locates the actual body's implicit receiver. A
+member-to-free redirect can therefore have indices `0` and `-1`; the inverse
+can have `-1` and `0`. The physical argument mapping preserves source parameter
+positions across both forms.
+
+A receiver projection binding is explicitly marked by native-value flag 128
+(`requiresReceiverProjection()`). It can apply to an implicit source receiver
+or explicit parameter zero, including transitively flattened aliases whose
+source and final provider are both free functions. The source semantic type,
+actual provider semantic type, and existing type projection graph describe
+the adjustment. Such bindings require the compiler's validated receiver
+contract; matching LLVM pointer shapes do not authorize them. Other parameters
+and return types remain semantically exact, and provider throws must be covered
+by the source declaration. Reflection emits no executable projection helper.
+
+Physical flags describe `sret` (1), `byval` (2), sign extension (4), zero
+extension (8), `inreg` (16), `noalias` (32), and transferred-owner callee
+cleanup (64), plus validated receiver projection (128). Native-signature flags describe callee owner cleanup (1),
+caller result cleanup (2), an unverified imported declaration (4), and native
+variadic status (8, also exposed by `isVariadic()`).
+Cleanup metadata does not grant access to private or deleted operations.
+
+### 17.4. Eligibility and unsupported shapes
+
+`Signature.getEligibility()` is explicit:
+
+| `Eligibility` | Meaning |
+|---------------|---------|
+| `DIRECT` | A concrete actual K entry and supported native recipe are described. |
+| `VIRTUAL_ONLY` | An abstract virtual declaration requires a concrete selected body; it is not a null raw-call target. |
+| `DELETED` | The declaration is deleted. |
+| `UNRESOLVED` | A template recipe, erased receiver, or generic facade has no supported concrete binding for this signature. |
+| `NO_ENTRY` | There is no actual compiled body available. |
+| `BY_VALUE_AGGREGATE_INPUT` | Aggregate-valued input preparation is deferred. |
+| `UNSUPPORTED_NATIVE_TYPE` | The actual native shape/attributes are described but are not supported by the current direct-call recipe. |
+| `UNSUPPORTED_ABI` | The target/calling convention is outside the verified native recipe. |
+| `FOREIGN` | A foreign-C declaration belongs to the separate public FFI contract. |
+| `PRODUCER_METADATA_REQUIRED` | A consumer-side imported declaration is not authoritative producer native metadata. |
+| `INCOMPATIBLE_PROVIDER` | The source/provider semantic or registered-entry contract cannot be verified; no callable entry is published. |
+
+The currently verified native recipe is Linux x86-64, little-endian,
+64-bit pointers and the ordinary LLVM C calling convention, with scalar and
+pointer physical arguments and `sret` aggregate results. This does **not**
+defer semantic aggregate returns or aggregate references, views, links,
+pointers, owners, or drains. By-value aggregate inputs, including existing
+fat callable values, remain explicitly ineligible. Existing unverified native
+shapes, such as 128-bit integer values and direct LLVM aggregate callable
+returns, retain their exact native descriptors and an unsupported reason;
+they must not be silently reclassified as pointer/scalar calls.
+This unsupported status describes provisional native-backend coverage, not a
+semantic exclusion. Direct invocation support must cover all primitive values,
+including 128-bit integers, and all aggregate returns, including direct native
+callable returns. Only by-value aggregate inputs are deferred.
+
+### 17.5. Receiver, dispatch, and lifecycle data
+
+`Signature.getReceiver()` identifies the declaring type, const qualification,
+virtual flag, and slot. A concrete type's `getVirtualBodies()` describes each
+selected actual body, its receiver type, source subobject/concrete vtable, and
+a `ReceiverProjection`. The concrete vtable disambiguates repeated base
+subobjects. An imported type can report `hasExternalVirtualBodies()` when the
+consumer requires the producer's complete body map.
+
+The published concrete-vtable address also references the producer's existing
+table through a private, non-preemptable data alias on Linux x86-64 ELF.
+Body-map signatures describe the producer's selected definitions, not replacements
+selected by ordinary public-symbol interposition. This does not rewrite the
+ordinary table's slots or change its dispatch behavior.
+
+`Type.isAbstractAggregate()` identifies an abstract class/interface declaration.
+It retains nominal RTTI, layout, method signatures, and lifecycle descriptions;
+implemented methods can retain actual native entries. Ordinary codegen does not
+emit an abstract instance vtable, so its body map is empty and virtual dispatch
+requires a concrete receiver's map. This does not make the declaration unresolved
+or imported. A missing concrete local vtable remains a compilation error.
+
+Body-map slots are zero-based function positions in the identified concrete
+vtable, excluding its leading RTTI pointer. Primary and secondary maps retain
+the selected source contract, including generated destructor slots and
+inherited implementations, rather than substituting a same-address alias.
+A populated slot without a verifiable semantic contract is a compilation
+error, not an omitted body-map entry.
+
+A projection is either a signed byte delta applied to the selected source
+subobject or an ordered path of byte offsets and pointer loads. These recipes
+come from the same finalized class layout and subobject locator as ordinary
+casts and virtual dispatch. They reuse existing cast maps and vtables.
+Existing language-required receiver-adjustment thunks are normalized to their
+actual K body and a data recipe; reflection adds no executable target thunk,
+projection wrapper, lifecycle wrapper, or JIT invocation stub.
+
+`Type.getLifecycle()` lists destructor, copy-constructor, and drain-constructor
+signatures where the finalized model provides them. Each entry records its
+operation, visibility, deletion/generated status, and actual native signature.
+Copy operations are identified from their exact resolved reference-to-self
+parameter, including private and deleted declarations; they do not depend on
+a body-generation marker. Deleted operations retain their semantic signature
+and deletion status but have no callable entry.
+Only cached name bindings and const qualifiers are transparent to same-type
+copy/drain classification. A strong alias of the aggregate, or of the complete
+reference/drain type, remains nominally distinct: a constructor taking that
+alias is reflected normally but is not a same-type lifecycle operation. Soft
+aliases remain transparent. Multiple distinct copy/drain overloads retain
+their individual signatures and access constraints; listing them does not
+perform overload selection.
+`hasTrivialAggregateDestruction()` identifies aggregates whose finalized model
+requires no aggregate destructor. Metadata is descriptive: it does not
+bypass access checks or implement construction, destruction, or result storage.
+
+### 17.6. Templates, imports, and lifetime
+
+`TemplateOrigin` preserves identity and ordered concrete arguments.
+Its identity and each nominal declaration key name the primary declaration,
+not a synthetic specialization namespace/name. Concrete arguments, including
+enclosing host arguments, remain separate structured origin data.
+Primary identities use their lexical namespace/aggregate scope and available
+import origin even when an uninstantiated recipe has no cached qualified name.
+Same-named declarations in different namespaces of one producer therefore have
+different declaration keys; nested declarations retain their primary host path
+and the host's concrete arguments separately.
+`TemplateArgument` distinguishes an exact type (kind 0), an exact typed
+constant stored in the producer image (kind 1), and a type pack (kind 2,
+including an empty pack). Constant arguments expose their semantic type,
+address, allocation size, and alignment, not debug-rendered substitutes.
+Enum constants retain the enum declaration's exact namespace and nominal identity,
+including through const qualifiers and strong aliases. Their stored values use
+the declared underlying integer width and signedness; a scalar constexpr payload
+does not replace the semantic enum type.
+Function member-template arguments and their enclosing host-template
+arguments are available separately through `getTemplateOrigin()` and
+`getEnclosingTemplateOrigin()`. Unresolved recipes remain explicitly
+ineligible and have no actual entry. Concrete strong aliases retain their
+resolved type arguments separately from the underlying representation;
+nested enum, union, and alias descriptors retain available host-template
+origins too.
+
+[KDI schema 0.1](../kdi/kdi-schema-abstract.md) continues to carry symbolic
+semantic signatures, source markers, and template origins. Runtime addresses
+are never serialized. A target triple and LLVM declaration text alone are
+not producer DataLayout/native-ABI proof: consumer reconstructions require
+producer metadata before direct reflective preparation. Module enumeration
+already exposes the producer-owned runtime descriptors and their relocations;
+no local imported invocation wrapper is generated.
+Symbolic redirect-provider/receiver contracts used by ordinary typed imports
+do not themselves prove the producer native ABI. Imported reflective entries
+remain unavailable until authoritative producer metadata is resolved.
+
+All descriptors, referenced arrays, template constant storage, symbols, and
+entry/vtable relocations are borrowed from their producer image. Keep the
+owning module handle or owner-retaining unit/namespace view alive throughout
+inspection and any later use. Copying a metadata pointer does not retain or
+pin the image.
 
 ---
 

@@ -22,6 +22,7 @@
 #include "generators.hpp"
 #include "gen_helpers.hpp"
 #include "gen_redirect.hpp"
+#include "gen_rtti.hpp"
 
 #include "../model/imported.hpp"
 #include "../model/expressions.hpp"
@@ -792,8 +793,14 @@ void declaration_generator::visit_unit(unit &unit) {
                                    const std::string& llvm_def,
                                    const std::string& mangled) {
         // Registration is per source declaration: a shared native entry found
-        // by symbol name must not skip a re-export's own binding.
-        if (_context->_functions.contains(fn)) return;
+        // by symbol name must not skip a re-export's own binding. Non-native
+        // entries also need their argument-source mapping (constructors may be
+        // registered earlier without one).
+        if (fn->is_extern()
+                ? _context->_functions.contains(fn)
+                : _context->_functions.contains(fn)
+                    && _context->_native_argument_sources.contains(fn.get()))
+            return;
         if (fn->is_extern()) {
             auto fail = [&](const std::string& reason) {
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_NATIVE_ABI_UNPROVEN),
@@ -871,6 +878,25 @@ void declaration_generator::visit_unit(unit &unit) {
                 // A shared entry does not identify its source declaration:
                 // re-exports retain independent defaults and receiver bindings.
                 _context->_functions[fn] = llvm_fn;
+                const bool source_receiver = fn->is_member() && !fn->is_static();
+                std::vector<int> argument_sources;
+                size_t ordinal = 0;
+                for (unsigned index = 0; index < llvm_fn->arg_size(); ++index) {
+                    if (llvm_fn->hasParamAttribute(index, llvm::Attribute::StructRet)) {
+                        argument_sources.push_back(-1);
+                    } else {
+                        argument_sources.push_back(source_receiver && ordinal == 0 ? -2
+                            : static_cast<int>(ordinal) - (source_receiver ? 1 : 0));
+                        ++ordinal;
+                    }
+                }
+                if (ordinal != fn->parameters().size() + (source_receiver ? 1 : 0)) {
+                    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                        fn->get_first_lexeme(),
+                        "Imported symbol '{}' has an incompatible parameter mapping for '{}'",
+                        {mangled, fn->get_fq_name()});
+                }
+                _context->_native_argument_sources[fn.get()] = std::move(argument_sources);
                 return;
             }
             if (has_redirect_contract(*fn)) {
@@ -1092,6 +1118,21 @@ void declaration_generator::emit_redirect_alias(function& fn) {
 
     // Register in the context so the alias can be found by symbol name
     _context->_functions.insert({fn.shared_as<k::model::function>(), target_llvm});
+    if (auto mapping = _context->_native_argument_sources.find(target.get());
+        mapping != _context->_native_argument_sources.end()) {
+        const bool source_receiver = fn.is_member() && !fn.is_static() && !fn.is_extern();
+        const bool target_receiver = target->is_member() && !target->is_static() && !target->is_extern();
+        std::vector<int> sources;
+        for (const int source : mapping->second) {
+            if (source == -1) sources.push_back(-1);
+            else {
+                const int ordinal = source == -2 ? 0 : source + (target_receiver ? 1 : 0);
+                sources.push_back(source_receiver && ordinal == 0 ? -2
+                    : ordinal - (source_receiver ? 1 : 0));
+            }
+        }
+        _context->_native_argument_sources[&fn] = std::move(sources);
+    }
 }
 
 /**
@@ -1214,9 +1255,8 @@ void implementation_generator::visit_unit(unit &unit) {
                     str_struct_init, prefix + "_param" + std::to_string(idx) + "_name");
                 name_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-                // Parameter struct: { ptr vptr, ptr vptr_Object, ptr name, ptr annotations }
-                llvm::StructType* param_rtti_type = llvm::StructType::get(
-                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
+                // Parameter prefix: vptr, Object vptr, name, annotations.
+                // The shared emitter appends position, constraints and exact type.
                 std::vector<llvm::Constant*> param_init = {
                     param_vt_or_null,  // __vptr__ (Parameter primary vtable)
                     null_ptr,          // __vptr_Object__ (null)
@@ -1226,7 +1266,8 @@ void implementation_generator::visit_unit(unit &unit) {
                         prefix + "_param" + std::to_string(idx),
                         nullptr)
                 };
-                llvm::Constant* param_const = llvm::ConstantStruct::get(param_rtti_type, param_init);
+                auto* param_const = rtti_emitter(_context, _unit).parameter_record(param_init, param, idx);
+                auto* param_rtti_type = param_const->getType();
                 auto* param_gv = new llvm::GlobalVariable(
                     _context->module(), param_rtti_type,
                     /*isConstant=*/true,
@@ -1295,11 +1336,9 @@ void implementation_generator::visit_unit(unit &unit) {
                     fn_params_gv = gv;
                 }
 
-                // Build the Function struct: { ptr vptr, ptr vptr_Object, ptr name, ptr fullName, ptr owner, i32 flags, ptr annotations, ptr parameters }
+                // Preserve the Function prefix; the shared emitter appends its signature.
                 // K implicitly adds Object as a base class for all classes, so Function
                 // has an Object sub-object at field 1 (containing the Object vptr).
-                llvm::StructType* fn_rtti_type = llvm::StructType::get(
-                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
                 std::vector<llvm::Constant*> fn_init = {
                     func_vt_or_null,                       // __vptr__ (Function primary vtable)
                     null_ptr,                              // __vptr_Object__ (Object sub-object; null — no Object dispatch needed)
@@ -1310,7 +1349,8 @@ void implementation_generator::visit_unit(unit &unit) {
                     materialize_annotation_array(*fn, _context, _unit, fn_rtti_name),
                     fn_params_gv                           // parameters
                 };
-                llvm::Constant* fn_const = llvm::ConstantStruct::get(fn_rtti_type, fn_init);
+                auto* fn_const = rtti_emitter(_context, _unit).function_record(fn_init, fn);
+                auto* fn_rtti_type = fn_const->getType();
                 auto* fn_gv = new llvm::GlobalVariable(
                     _context->module(), fn_rtti_type,
                     /*isConstant=*/true,
@@ -1552,6 +1592,7 @@ void implementation_generator::visit_unit(unit &unit) {
             unit_rtti_gv->setConstant(true);
         }
     }
+    rtti_emitter(_context, _unit).finalize_virtual_bodies();
 }
 
 //

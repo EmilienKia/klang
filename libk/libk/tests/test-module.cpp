@@ -1066,11 +1066,25 @@ TEST_CASE("RTTI visitor fixture inventories only its declared root functions",
                     || functionDescriptor->isMember()) { return 6; }
                 parameters : const Parameter?[]? = functionDescriptor->getParameters();
                 if (parameters == null || parameters->size != 3u - i) { return 7; }
+                signature : const rtti::Signature? = functionDescriptor->getSignature();
+                if (signature == null || signature->getArity() != parameters->size) { return 10; }
+                if (signature->getEligibility() != rtti::Eligibility::DIRECT) { return 11; }
+                if (signature->getReturnType()->getPrimitiveKind() != rtti::PrimitiveKind::INT) { return 12; }
+                native : const rtti::NativeSignature? = signature->getNative();
+                if (native == null || native->getArguments()->size != parameters->size) { return 13; }
+                if (native->getReceiverIndex() != -1 || native->getResultIndex() != -1) { return 14; }
+                found : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> =
+                    image.get()->lookupSymbol(String(signature->getSymbol()));
+                if (!found.hasResult()
+                    || found.getResult().rawAddress() != signature->getEntry()) { return 15; }
                 j : unsigned int = 0;
                 while (j < parameters->size) {
                     parameterDescriptor : const Parameter? = parameters[j];
                     if (parameterDescriptor == null) { return 8; }
                     if (String(parameterDescriptor->getName()) != parameterNames[j]) { return 9; }
+                    if (parameterDescriptor->getPosition() != j) { return 16; }
+                    if (parameterDescriptor->hasSourceDefault() != (i == 0u && j == 2u)) { return 17; }
+                    if (parameterDescriptor->getType()->getPrimitiveKind() != rtti::PrimitiveKind::INT) { return 18; }
                     ++j;
                 }
                 ++i;

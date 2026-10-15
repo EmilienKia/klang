@@ -659,6 +659,7 @@ void implementation_generator::visit_global_constructor_function(global_construc
         llvm::Function* llvm_func = llvm::Function::Create(
             ft, llvm::Function::InternalLinkage, func.get_mangled_name(), *_context->_module);
         _context->_functions.insert({func.shared_as<function>(), llvm_func});
+        _context->_native_argument_sources[&func] = {};
     }
 
     // Generate the function body (global variable constructor-invocation statements are in the block).
@@ -835,6 +836,7 @@ void implementation_generator::visit_global_destructor_function(global_destructo
     llvm::Function* llvm_func = llvm::Function::Create(func_type, llvm::Function::InternalLinkage,
                                                         func.get_mangled_name(), *_context->_module);
     _context->_functions.insert({func.shared_as<function>(), llvm_func});
+    _context->_native_argument_sources[&func] = {};
 
     // Step 2: Create entry basic block
     llvm::BasicBlock* entry = llvm::BasicBlock::Create(**_context, "entry", llvm_func);

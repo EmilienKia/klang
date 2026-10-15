@@ -49,6 +49,12 @@ inline bool is_enum_backing_const_reference(const std::shared_ptr<enum_type>& so
     return object && type::remove_const(ref->get_subtype()) == object;
 }
 
+inline bool callee_cleans_owner_parameter(const std::shared_ptr<type>& parameter_type) {
+    if (type::is_owner(parameter_type)) return true;
+    auto callable = std::dynamic_pointer_cast<callable_type>(parameter_type);
+    return callable && callable->is_owner();
+}
+
 /** Resolve a named ABI field against the final layout, not LLVM type identity. */
 inline std::optional<uint64_t> aggregate_field_offset(
     const aggregate& owner, const std::string& field_name,
@@ -76,7 +82,8 @@ inline std::vector<llvm::Type*> aggregate_rtti_fields(llvm::LLVMContext& context
         ptr_ty,                         // annotations (field 10)
         ptr_ty,                         // cast map (field 11)
         ptr_ty,                         // functions (field 12)
-        ptr_ty                          // constructors (field 13)
+        ptr_ty,                         // constructors (field 13)
+        ptr_ty                          // exact semantic type (field 14)
     };
 }
 

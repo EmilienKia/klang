@@ -124,7 +124,7 @@ type_reference_resolver::resolve_named_binary_operator_overload(
             auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
             template_instantiator::populate_function_from_template_public(
                 concrete, *func, subst, val_subst, pack_subst, func->is_generic());
-            concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args);
+            concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args, ti);
             concrete->mark_instantiation();
             ti->instantiations[key] = concrete;
             newly_instantiated = true;
@@ -232,7 +232,7 @@ type_reference_resolver::resolve_named_binary_operator_overload(
                 auto pack_subst = template_instantiator::build_pack_substitution_map_public(*ti, deduction.deduced_args);
                 template_instantiator::populate_function_from_template_public(
                     concrete, *func, subst, val_subst, pack_subst, true);
-                concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args);
+                concrete->set_tpl_instantiation_info(base_name, deduction.deduced_args, ti);
                 concrete->set_tpl_instantiation_subst(subst);
                 aggregate_type_resolver atr(*this, _context, _unit);
                 concrete->accept(atr);

@@ -17,6 +17,23 @@ The canonical on-disk format is **CBOR** (RFC 8949), file extension `.kdi`.
 A human-readable **JSON** equivalent can be produced with the `kdi` tool,
 extension `.kdi.json`.
 
+### Relationship to runtime RTTI signatures
+
+KDI signatures and `template_origin` remain symbolic interchange data, not a
+serialized runtime invocation plan. Schema `0.1` does not serialize function,
+vtable, lifecycle, receiver-projection, or typed-constant addresses.
+The separate [runtime RTTI manifest ABI 3](../stdlib/module.md) exposes
+producer-owned exact semantic graphs, native signatures, and body relocations.
+Module enumeration reads those producer descriptors directly.
+
+The header target triple and existing LLVM declaration text do not, alone,
+prove the producer DataLayout, physical argument mapping, or native ABI
+description revision. A locally reconstructed imported declaration must remain
+`PRODUCER_METADATA_REQUIRED` for direct reflective preparation until producer
+metadata is resolved. It must not synthesize an imported invocation wrapper or
+silently substitute the consumer ABI. This producer-runtime path adds no KDI
+wire fields or schema-version change.
+
 ---
 
 ## Top-level structure

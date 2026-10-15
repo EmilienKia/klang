@@ -65,7 +65,7 @@ void* __k_annotation_get_type(void* ann) {
  * The struct layout is:
  *   { ptr vptr, ptr vptr_at, ptr vptr_ti, ptr vptr_obj, ptr name, ptr fullName,
  *     ptr bases, ptr nested, ptr enclosing, i32 flags, ptr annotations,
- *     ptr castMap, ptr functions, ptr constructors }
+ *     ptr castMap, ptr functions, ptr constructors, ptr semanticType }
  *
  * IMPORTANT: this function takes a Class& (not AggregateType&) so that the K
  * compiler passes a pointer to the START of the RTTI struct, without any
@@ -74,7 +74,7 @@ void* __k_annotation_get_type(void* ann) {
  * helper read the wrong field.
  *
  * On 64-bit systems, fields 0-8 are ptrs (72 bytes), field 9 is i32 with
- * 4 bytes of padding (total 8 bytes), and fields 10-13 are ptrs.
+ * 4 bytes of padding (total 8 bytes), and fields 10-14 are ptrs.
  *
  * @param rtti  Pointer to the Class RTTI global (start of struct).
  * @return      Pointer to the functions K-array (Function?[]?), or null.
@@ -102,6 +102,16 @@ void* __k_iface_get_functions(void* rtti) {
     return fields[12];
 }
 
+/* ABI 3 appends the exact semantic graph after the existing aggregate fields.
+   Class and Interface share the flattened record, including the ctor slot. */
+const void* __k_class_get_semantic_type(const void* rtti) {
+    return rtti ? ((const void* const*)rtti)[14] : NULL;
+}
+
+const void* __k_iface_get_semantic_type(const void* rtti) {
+    return __k_class_get_semantic_type(rtti);
+}
+
 /**
  * __k_class_get_constructors — Extract the constructors array from a Class RTTI global.
  *
@@ -110,7 +120,7 @@ void* __k_iface_get_functions(void* rtti) {
  * The struct layout is:
  *   { ptr vptr, ptr vptr_at, ptr vptr_ti, ptr vptr_obj, ptr name, ptr fullName,
  *     ptr bases, ptr nested, ptr enclosing, i32 flags, ptr annotations,
- *     ptr castMap, ptr functions, ptr constructors }
+ *     ptr castMap, ptr functions, ptr constructors, ptr semanticType }
  *
  * IMPORTANT: this function takes a Class& (not AggregateType&) so that the K
  * compiler passes a pointer to the START of the RTTI struct, without any

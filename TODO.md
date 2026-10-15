@@ -641,6 +641,52 @@
       The new FFI guide/how-to use that byte-oriented pattern; this older
       reference discrepancy does not block them.
 
+- [ ] **Defaulted/deleted declarations discard explicit exception clauses.**
+      In `klang/src/parse/parser_declarations.cpp`, the `-> default` /
+      `-> delete` branch of function parsing records the `throws` keyword
+      location but does not copy `has_throws_clause` or `throws_spec` into
+      the AST declaration. Statically traced, not yet executed:
+      `module k; struct Item { Item() throws(MissingException) -> default; }`.
+      The unknown exception name is silently absent from the model, instead
+      of producing `ERR_THROWS_TYPE_NOT_FOUND` as the corresponding constructor
+      with a body does. Preserve the clause and add constructor/assignment
+      regressions when fixing this separate default/delete path.
+
+- [ ] **Template instantiation drops redirect target names.**
+      The aggregate/member clone paths in
+      `klang/src/model/template_instantiator.cpp` (around lines 1631, 1681,
+      2520 and 2580) copy function alias flags without copying the redirect
+      target name. Statically traced example, not yet executed:
+      ```k
+      module k;
+      template<typename T>
+      struct Box {
+          impl() : int { return 42; }
+          read() : int -> impl;
+      }
+      main() : int {
+          object : Box<int>;
+          return object.read();
+      }
+      ```
+      The concrete `read` should call `impl` and return 42. Its missing target
+      name instead reaches `ERR_REDIRECT_TARGET_NOT_FOUND` (`0x0509`) with
+      `Function redirector 'read' targets '', which could not be resolved to a
+      function`. Preserve targets through each clone path and add local,
+      imported and reexported template regressions.
+
+- [ ] **KDI concrete aggregate template values lack structural origin encoding.**
+      `kdi_builder::build_template_origin()` in
+      `klang/src/model/tools/kdi_exporter.cpp` writes `aggregate_value::dump()`
+      into `value_arg` and falls back to an integer `value_type`; its comment
+      explicitly calls the dump a placeholder. Add a producer/consumer roundtrip
+      for a concrete aggregate-valued template argument, preserving exact type
+      and fields, rather than parsing debug text. Audit template packs there
+      too: the exporter handles type/value branches but not `is_pack()`.
+      Runtime producer-owned S1 descriptors use exact typed constant storage
+      and do not rely on this wire representation; static-import preparation
+      remains ineligible pending producer metadata integration.
+
 - [ ] **External pkgconf 1.8.1 relocation escaping limitation.**
       The FFI distribution tests exposed tool-side handling of package paths
       containing spaces and apostrophes. Reproduce with the generated package

@@ -119,6 +119,7 @@ protected:
 
     /** For concrete instantiations: the concrete template arguments used. */
     std::vector<template_argument> _tpl_args;
+    std::vector<bool> _tpl_parameter_packs;
 
     /** True while this union is being resolved (cycle detection). */
     bool _resolving = false;
@@ -157,11 +158,16 @@ public:
 
     /** Concrete template arguments used to instantiate this union. */
     const std::vector<template_argument>& get_tpl_args() const { return _tpl_args; }
+    const std::vector<bool>& get_tpl_parameter_packs() const { return _tpl_parameter_packs; }
 
     /** Set template instantiation metadata. */
-    void set_tpl_instantiation_info(const std::string& base_name, std::vector<template_argument> args) {
+    void set_tpl_instantiation_info(const std::string& base_name, std::vector<template_argument> args,
+                                    const tpl_info* definition = nullptr) {
         _tpl_base_name = base_name;
         _tpl_args = std::move(args);
+        _tpl_parameter_packs.clear();
+        if (definition)
+            for (const auto& parameter : definition->params) _tpl_parameter_packs.push_back(parameter.is_pack);
     }
 
     //

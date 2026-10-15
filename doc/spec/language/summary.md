@@ -971,6 +971,12 @@ cross-casts when the target is present. It does not rely on RTTI identity alone
 or assume a zero subobject offset. If the target is absent or ambiguous, a
 nullable target yields null and a non-null target throws `NullCastError`.
 
+Exact native reflection metadata on Linux x86-64 ELF binds existing function
+bodies and published vtable identities to the descriptor's producer image,
+without executable adapters. These metadata-only local aliases do not change
+ordinary public-symbol interposition. Imported body declarations remain
+untrusted until their producer metadata is resolved.
+
 ---
 
 ## 13. Interfaces (`interface`)

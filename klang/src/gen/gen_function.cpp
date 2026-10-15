@@ -1290,6 +1290,7 @@ void declaration_generator::visit_function(function &function) {
     // at link time from an external library.
     if (function.is_extern()) {
         std::vector<llvm::Type*> param_types;
+        std::vector<int> argument_sources;
         for (const auto& param : function.parameters()) {
             auto ptype = _context->get_llvm_type(param->get_type());
             if (!ptype || !llvm::FunctionType::isValidArgumentType(ptype)) {
@@ -1300,6 +1301,7 @@ void declaration_generator::visit_function(function &function) {
                      param->get_type() ? param->get_type()->to_string() : "<null>"});
             }
             param_types.push_back(ptype);
+            argument_sources.push_back(static_cast<int>(argument_sources.size()));
         }
         llvm::Type* ret_type = nullptr;
         if (const auto& ret = function.get_return_type()) {
@@ -1331,6 +1333,7 @@ void declaration_generator::visit_function(function &function) {
                 function.get_mangled_name(), *_context->_module);
         }
         _context->_functions.insert({function.shared_as<k::model::function>(), func});
+        _context->_native_argument_sources[&function] = std::move(argument_sources);
         return;
     }
 
@@ -1353,6 +1356,8 @@ void declaration_generator::visit_function(function &function) {
 
     // Parameter types:
     std::vector<llvm::Type*> param_types;
+    std::vector<int> argument_sources;
+    int parameter_position = 0;
     if (function.is_member()  && !function.is_static()) {
         // Some synthesized/imported methods may bypass symbol_resolver.
         if (!function.get_this_parameter()) {
@@ -1376,6 +1381,7 @@ void declaration_generator::visit_function(function &function) {
                 {function.get_fq_name(), this_param->get_type()->to_string()});
         }
         param_types.push_back(this_type);
+        argument_sources.push_back(-2);
     }
     for(const auto& param : function.parameters()) {
         auto ptype = _context->get_llvm_type(param->get_type());
@@ -1387,6 +1393,7 @@ void declaration_generator::visit_function(function &function) {
                  param->get_type() ? param->get_type()->to_string() : "<null>"});
         }
         param_types.push_back(ptype);
+        argument_sources.push_back(parameter_position++);
     }
 
     // Return type, if any:
@@ -1406,6 +1413,7 @@ void declaration_generator::visit_function(function &function) {
             if (needs_sret_return(ret)) {
                 // sret ABI: prepend a pointer parameter for the return value, actual return is void
                 param_types.insert(param_types.begin(), llvm::PointerType::get(**_context, 0));
+                argument_sources.insert(argument_sources.begin(), -1);
                 ret_type = llvm::Type::getVoidTy(**_context);
                 use_sret = true;
             } else {
@@ -1461,6 +1469,7 @@ void declaration_generator::visit_function(function &function) {
     }
 
     _context->_functions.insert({function.shared_as<k::model::function>(), func});
+    _context->_native_argument_sources[&function] = std::move(argument_sources);
 
     // Declare content only when an explicit body already exists.
     // Do not call get_block() here, it would synthesize empty bodies for
@@ -1531,6 +1540,8 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
     // transitively-instantiated base constructors) can appear after the main
     // declaration walk. Build their LLVM declaration on-demand.
     std::vector<llvm::Type*> late_param_types;
+    std::vector<int> argument_sources;
+    int parameter_position = 0;
     if (function.is_member() && !function.is_static()) {
         if (!function.get_this_parameter()) {
             if (auto owner = function.get_owner(); owner && owner->get_struct_type()) {
@@ -1554,6 +1565,7 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
                 {function.get_fq_name()});
         }
         late_param_types.push_back(this_ty);
+        argument_sources.push_back(-2);
     }
     for (const auto& param : function.parameters()) {
         auto* ptype = _context->get_llvm_type(param->get_type());
@@ -1565,6 +1577,7 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
                 {function.get_fq_name()});
         }
         late_param_types.push_back(ptype);
+        argument_sources.push_back(parameter_position++);
     }
 
     llvm::Type* late_ret_type = nullptr;
@@ -1575,6 +1588,7 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
     } else if (const auto& ret = function.get_return_type()) {
         if (needs_sret_return(ret)) {
             late_param_types.insert(late_param_types.begin(), llvm::PointerType::get(**_context, 0));
+            argument_sources.insert(argument_sources.begin(), -1);
             late_ret_type = llvm::Type::getVoidTy(**_context);
             late_use_sret = true;
         } else {
@@ -1613,6 +1627,7 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
             _context->get_llvm_type(function.get_return_type())));
     }
     _context->_functions.insert({function.shared_as<k::model::function>(), late_fn});
+    _context->_native_argument_sources[&function] = std::move(argument_sources);
     return late_fn;
 }
 
@@ -1837,14 +1852,7 @@ void implementation_generator::visit_function(function &function) {
     {
         std::vector<std::shared_ptr<parameter>> owner_params;
         for (const auto& param : function.parameters()) {
-            auto pt = param->get_type();
-            if (type::is_owner(pt)) {
-                owner_params.push_back(param);
-            } else if (auto ct = std::dynamic_pointer_cast<callable_type>(pt)) {
-                if (ct->is_owner()) {
-                    owner_params.push_back(param);
-                }
-            }
+            if (callee_cleans_owner_parameter(param->get_type())) owner_params.push_back(param);
         }
         if (!owner_params.empty()) {
             _owner_params_stack.push(owner_params);

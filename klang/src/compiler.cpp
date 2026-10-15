@@ -959,7 +959,7 @@ bool compiler::emit_object_file(const std::string& output_file, bool position_in
             auto* i32 = llvm::Type::getInt32Ty(llvm_context);
             auto* ptr = llvm::PointerType::get(llvm_context, 0);
             auto* entry_type = llvm::StructType::get(llvm_context, {i32, i32, ptr});
-            constexpr uint32_t abi_version = 2;
+            constexpr uint32_t abi_version = 3;
             const uint32_t entry_size = static_cast<uint32_t>(
                 module.getDataLayout().getTypeAllocSize(entry_type).getFixedValue());
             auto* entry_value = llvm::ConstantStruct::get(entry_type, {
@@ -969,7 +969,7 @@ bool compiler::emit_object_file(const std::string& output_file, bool position_in
             });
             auto* entry = new llvm::GlobalVariable(
                 module, entry_type, true, llvm::GlobalValue::PrivateLinkage,
-                entry_value, unit_rtti_name + "_manifest_entry_v2");
+                entry_value, unit_rtti_name + "_manifest_entry_v3");
             entry->setSection("k_rtti_units");
             entry->setAlignment(module.getDataLayout().getABITypeAlign(entry_type));
             llvm::appendToUsed(module, {entry});
