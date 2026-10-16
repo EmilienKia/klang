@@ -303,7 +303,7 @@ void implementation_generator::emit_scope_variable_cleanup(
         if (var_it == _context->_variables.end()) continue;
         llvm::AllocaInst* alloca = var_it->second;
 
-        auto vt = type::canonical(type::remove_const(var_stmt->get_type()));
+        auto vt = type::canonical(type::remove_const(type::canonical(var_stmt->get_type())));
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
             if (auto agg = st_type->get_struct()) {
                 auto dtor = agg->get_destructor();
@@ -706,7 +706,7 @@ void implementation_generator::visit_block(block& blk) {
     std::vector<std::shared_ptr<variable_statement>> dtor_vars;
     for (auto& stmt : blk.get_statements()) {
         if (auto var_stmt = std::dynamic_pointer_cast<variable_statement>(stmt)) {
-            auto vt = type::canonical(type::remove_const(var_stmt->get_type()));
+            auto vt = type::canonical(type::remove_const(type::canonical(var_stmt->get_type())));
             // Struct with destructor
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
                 auto agg = st_type->get_struct();

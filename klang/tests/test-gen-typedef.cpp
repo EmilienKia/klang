@@ -285,3 +285,55 @@ TEST_CASE("Typedef owner initialization preserves the heap referent",
     CHECK(probe() == 42);
     CHECK(drops() == 1);
 }
+
+TEST_CASE("Typedef owned locals destroy resources on normal exit and unwind",
+          "[gen][typedef][owner][exceptions][typedef-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module typedef_owner_cleanup;
+        dropped : int = 0;
+        order : int = 0;
+        struct Resource {
+            value : int;
+            Resource(v : int) : value(v) {}
+            ~Resource() { ++dropped; order = order * 10 + value; }
+        }
+        typedef Owned : Resource!;
+        fail() { throw Exception(891); }
+        normal() : int {
+            dropped = 0;
+            order = 0;
+            {
+                a : Resource! = new Resource(1);
+                first : Owned = a;
+                b : Resource! = new Resource(2);
+                second : Owned = b;
+                if ((Resource*)a != null || (Resource*)b != null) return -1;
+                if (first.value != 1 || second.value != 2 || dropped != 0) return -2;
+            }
+            return dropped * 100 + order;
+        }
+        unwind(beforeDeclaration : bool) : int {
+            dropped = 0;
+            order = 0;
+            try {
+                if (beforeDeclaration) fail();
+                a : Resource! = new Resource(3);
+                first : Owned = a;
+                b : Resource! = new Resource(4);
+                second : Owned = b;
+                fail();
+            } catch (error : Throwable&) {
+                if (error.getCode() != 891) return -1;
+            }
+            return dropped * 100 + order;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto normal = jit->lookup_symbol<int(*)()>("normal");
+    auto unwind = jit->lookup_symbol<int(*)(bool)>("unwind");
+    REQUIRE(normal);
+    REQUIRE(unwind);
+    CHECK(normal() == 221);
+    CHECK(unwind(false) == 243);
+    CHECK(unwind(true) == 0);
+}
