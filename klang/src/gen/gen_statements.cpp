@@ -4501,7 +4501,7 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
             _value = nullptr;
             init->accept(*this);
             if (_value) {
-                auto init_type = init->get_type();
+                auto init_type = k::model::type::canonical(init->get_type());
                 llvm::Value* addr_val = _value;
                 if (k::model::type::is_reference(init_type)) {
                     auto sub = std::dynamic_pointer_cast<k::model::reference_type>(init_type);

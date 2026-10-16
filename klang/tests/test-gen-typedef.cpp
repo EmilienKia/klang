@@ -254,3 +254,34 @@ TEST_CASE("Typedef cast resolution preserves nominal explicit-cast types",
     }
     CHECK(nominal_casts == 1);
 }
+
+TEST_CASE("Typedef owner initialization preserves the heap referent",
+          "[gen][typedef][owner][typedef-owner-init][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module typedef_owner_initialization;
+        dropped : int = 0;
+        struct Resource {
+            value : int;
+            Resource(v : int) : value(v) {}
+            ~Resource() { ++dropped; }
+        }
+        typedef Owned : Resource!;
+        probe() : int {
+            dropped = 0;
+            source : Owned = new Resource(42);
+            if (source.value != 42 || (Resource*)source == null) return -1;
+            ordinary : Resource! = (Resource!)source;
+            if ((Resource*)source != null) return -2;
+            if (ordinary.value != 42 || dropped != 0) return -3;
+            return ordinary.value;
+        }
+        drops() : int { return dropped; }
+    )SRC");
+    REQUIRE(jit);
+    auto probe = jit->lookup_symbol<int(*)()>("probe");
+    auto drops = jit->lookup_symbol<int(*)()>("drops");
+    REQUIRE(probe);
+    REQUIRE(drops);
+    CHECK(probe() == 42);
+    CHECK(drops() == 1);
+}
