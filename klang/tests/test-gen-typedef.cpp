@@ -215,3 +215,42 @@ TEST_CASE("typedef — composite scenario mixing alias and typedef", "[gen][type
     REQUIRE(f != nullptr);
     CHECK(f() == 19);
 }
+
+TEST_CASE("Typedef cast resolution preserves nominal explicit-cast types",
+          "[gen][typedef][model][typedef-cast-stability][regression]") {
+    auto comp = compile_model(R"SRC(
+        module typedef_cast_stability;
+        typedef Token : int;
+        struct Box { Box(value : int) {} }
+        probe(value : int) { Box((Token)value); }
+    )SRC");
+    REQUIRE(comp);
+    auto root = comp->get_unit()->get_root_namespace();
+    auto token = root->get_alias("Token");
+    REQUIRE(token);
+    auto probe = root->get_function("probe");
+    REQUIRE(probe);
+    REQUIRE(probe->get_block());
+    std::shared_ptr<k::model::temporary_construction_expression> temporary;
+    for (const auto& stmt : probe->get_block()->get_statements()) {
+        if (auto expression = std::dynamic_pointer_cast<k::model::expression_statement>(stmt)) {
+            temporary = std::dynamic_pointer_cast<k::model::temporary_construction_expression>(
+                expression->get_expression());
+            if (temporary) break;
+        }
+    }
+    REQUIRE(temporary);
+    REQUIRE(temporary->size() == 1);
+    unsigned nominal_casts = 0;
+    auto argument = temporary->argument(0);
+    while (auto unary = std::dynamic_pointer_cast<k::model::unary_expression>(argument)) {
+        if (auto cast = std::dynamic_pointer_cast<k::model::cast_expression>(argument);
+            cast && k::model::type::are_equal(cast->get_type(), token->get_alias_type())) {
+            ++nominal_casts;
+            CHECK(k::model::type::are_equal(cast->get_cast_type(),
+                k::model::type::canonical(token->get_alias_type())));
+        }
+        argument = unary->sub_expr();
+    }
+    CHECK(nominal_casts == 1);
+}

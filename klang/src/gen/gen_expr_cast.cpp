@@ -138,6 +138,14 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
     {
         auto canon_tgt = type::canonical(target_type);
         auto canon_src = type::canonical(source_type);
+        // Adapted casts retain a nominal expression type over a canonical target.
+        // Repeated resolution must preserve that type without skipping validation.
+        auto expression_type = expr.get_type();
+        auto canon_expression = type::canonical(expression_type);
+        if (expression_type != canon_expression
+            && type::are_equal(canon_expression, canon_tgt)) {
+            declared_cast_type = expression_type;
+        }
         if (canon_tgt != target_type) {
             declared_cast_type = target_type;
             target_type = canon_tgt;
