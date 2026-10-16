@@ -277,7 +277,7 @@ klang_gen_test(klang-tests-gen-extern-intrinsics 120
 # Group 3d — Codegen: functions, callables, lambdas, func-refs
 # Keep the executable stable; serial execution shards fit the timeout budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-functions 120 SHARD_COUNT 3
+klang_gen_test(klang-tests-gen-functions 120 SHARD_COUNT 5
         tests/test-gen-func-ref.cpp
         tests/test-gen-callable-basic.cpp
         tests/test-gen-callable-member.cpp
@@ -308,7 +308,7 @@ klang_gen_test(klang-tests-gen-control 120 SHARD_COUNT 3
 # Group 3f — Exception model and throw contracts
 # Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-exceptions 120 SHARD_COUNT 2
+klang_gen_test(klang-tests-gen-exceptions 120 SHARD_COUNT 3
         tests/test-gen-exceptions.cpp
         tests/test-gen-main-uncaught.cpp
 )
@@ -444,7 +444,7 @@ klang_gen_test(klang-tests-gen-memory-ownership 120 SHARD_COUNT 3
 # Group 7b — Memory model: fixed/dynamic arrays and foreach iteration
 # Catch2 shards keep this broad suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arrays 120 SHARD_COUNT 3
+klang_gen_test(klang-tests-gen-arrays 120 SHARD_COUNT 5
         tests/test-gen-array-init.cpp
         tests/test-gen-new-array.cpp
         tests/test-gen-uniform-array-init.cpp
@@ -458,7 +458,7 @@ klang_gen_test(klang-tests-gen-arrays 120 SHARD_COUNT 3
 # Group 8a — OOP: lifecycle and RVO
 # Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-oop-lifecycle 120 SHARD_COUNT 2
+klang_gen_test(klang-tests-gen-oop-lifecycle 120 SHARD_COUNT 3
         tests/test-gen-lifecycle.cpp
         tests/test-gen-rvo.cpp
 )
@@ -466,7 +466,7 @@ klang_gen_test(klang-tests-gen-oop-lifecycle 120 SHARD_COUNT 2
 # ---------------------------------------------------------------------------
 # Group 8b — OOP: named return and temporaries
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-oop-temporary 120
+klang_gen_test(klang-tests-gen-oop-temporary 120 SHARD_COUNT 3
         tests/test-gen-named-return.cpp
         tests/test-gen-temporary-construction.cpp
         tests/test-gen-temporary-brace-init.cpp

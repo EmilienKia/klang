@@ -960,7 +960,7 @@ macro(libk_add_test_sharded TARGET TIMEOUT SHARDS)
 endmacro()
 
 # ── libk RTTI & Exception tests ──────────────────────────────────────────────
-libk_add_test_sharded(libk-tests-rtti-exceptions 120 2
+libk_add_test_sharded(libk-tests-rtti-exceptions 120 4
     tests/test-exceptions.cpp
     tests/test-rtti.cpp
     tests/test-rtti-constructors.cpp

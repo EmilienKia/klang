@@ -319,9 +319,9 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-core` | general codegen + literals + variable init |
 | `klang-tests-gen-resolution` | symbol resolution, visibility, multi-source; CTest shards 0–1 |
 | `klang-tests-gen-extern-intrinsics` | extern C, compiler intrinsics, varargs |
-| `klang-tests-gen-functions` | callables/lambda/func-ref; CTest shards 0–2 |
+| `klang-tests-gen-functions` | callables/lambda/func-ref; CTest shards 0-4 |
 | `klang-tests-gen-control` | statements/control-flow/init-order/static ctor-dtor |
-| `klang-tests-gen-exceptions` | throw/catch/contracts/rethrow/unwinding |
+| `klang-tests-gen-exceptions` | throw/catch/contracts/rethrow/unwinding; CTest shards 0-2 |
 | `klang-tests-gen-ternary` | ternary expression behavior matrix |
 | `klang-tests-gen-arithmetic-int8-16` | 8/16-bit integer arithmetic (byte..uint16); CTest shards 0–1 |
 | `klang-tests-gen-arithmetic-int32-64` | 32/64-bit integer arithmetic (int32..uint64) |
@@ -336,9 +336,9 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-classes` | class basics/inheritance/upcasts |
 | `klang-tests-gen-virtuality` | virtual/interface/override/diamond; CTest shards 0–4 |
 | `klang-tests-gen-memory-ownership` | owner/drain/indirection; CTest shards 0–2 |
-| `klang-tests-gen-arrays` | fixed/dynamic arrays and foreach |
-| `klang-tests-gen-oop-lifecycle` | lifecycle and RVO; CTest shards 0–1 |
-| `klang-tests-gen-oop-temporary` | named return + temporary construction |
+| `klang-tests-gen-arrays` | fixed/dynamic arrays and foreach; CTest shards 0–4 |
+| `klang-tests-gen-oop-lifecycle` | lifecycle and RVO; CTest shards 0–2 |
+| `klang-tests-gen-oop-temporary` | named return + temporary construction; CTest shards 0–2 |
 | `klang-tests-gen-scoping` | using/friend |
 | `klang-tests-gen-templates-core` | template functions/instantiation/mangling/members; CTest shards 0–1 |
 | `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params; CTest shards 0–4 |
@@ -353,7 +353,7 @@ Grouping policy:
 - keep per-executable runtime under timeout budget,
 - register new/redistributed files with `klang_gen_test(<target> 120 ...)`.
 - `SHARD_COUNT 5` follows the same scheme with shards `0` to `4`
-  (`gen-types-enums-unions`, `gen-templates-deduction`, `gen-virtuality`).
+  (`gen-types-enums-unions`, `gen-templates-deduction`, `gen-virtuality`, `gen-arrays`).
 - `SHARD_COUNT 4` likewise registers shards `0` to `3` (`import-core`).
 - `SHARD_COUNT 3` keeps heavy-suite executable names and build dependencies
   unchanged, but replaces their unsharded CTest entry with
