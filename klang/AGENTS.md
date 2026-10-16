@@ -335,7 +335,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-aliases` | alias/typedef/callable-alias; CTest shards 0–2 |
 | `klang-tests-gen-classes` | class basics/inheritance/upcasts |
 | `klang-tests-gen-virtuality` | virtual/interface/override/diamond; CTest shards 0–4 |
-| `klang-tests-gen-memory-ownership` | owner/drain/indirection; CTest shards 0–1 |
+| `klang-tests-gen-memory-ownership` | owner/drain/indirection; CTest shards 0–2 |
 | `klang-tests-gen-arrays` | fixed/dynamic arrays and foreach |
 | `klang-tests-gen-oop-lifecycle` | lifecycle and RVO; CTest shards 0–1 |
 | `klang-tests-gen-oop-temporary` | named return + temporary construction |

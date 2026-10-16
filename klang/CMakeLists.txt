@@ -432,7 +432,7 @@ klang_gen_test(klang-tests-gen-virtuality 120 SHARD_COUNT 5
 # Group 7a — Memory model: ownership, drain, and indirection
 # Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-memory-ownership 120 SHARD_COUNT 2
+klang_gen_test(klang-tests-gen-memory-ownership 120 SHARD_COUNT 3
         tests/test-gen-owner.cpp
         tests/test-gen-drain.cpp
         tests/test-gen-indirection.cpp
