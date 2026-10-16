@@ -156,8 +156,14 @@ private:
     /** Emit a function/method signature and body. */
     void emit_function(const function& fn);
 
-    /** Emit source annotations, returning whether the named FFI annotation was emitted. */
-    bool emit_annotations(const annotation_holder& holder, const std::string& ffi_name);
+    /** Emit source annotations, returning whether the named FFI annotation was emitted.
+     *  With a recipe owner, annotations other than the canonical `k::ffi::<ffi_name>`
+     *  (resolved against that function's scope) are skipped. */
+    bool emit_annotations(const annotation_holder& holder, const std::string& ffi_name,
+                          const function* recipe = nullptr);
+
+    /** Emit the annotations a reconstructed function recipe may carry. */
+    void emit_recipe_annotations(const function& fn);
 
     void emit_native_annotation(const function& fn);
     void emit_throws(const function& fn);
@@ -168,8 +174,8 @@ private:
     /** Emit a destructor signature and body. */
     void emit_destructor(const destructor& dtor);
 
-    /** Emit parameter list "(name : type, ...)". */
-    void emit_parameter_list(const function& fn, bool ffi_annotations = false);
+    /** Emit parameter list "(name : type, ...)". With recipe, only canonical CString is kept. */
+    void emit_parameter_list(const function& fn, bool ffi_annotations = false, bool recipe = false);
 
     // ── Statement emission ───────────────────────────────────────────────────
 

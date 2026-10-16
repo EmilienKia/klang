@@ -26,13 +26,65 @@
 #include "../operators.hpp"
 #include "../statements.hpp"
 #include "../../parse/ast.hpp"
+#include "../../gen/resolvers_aggregate.hpp"
 
 #include <cassert>
 #include <algorithm>
 #include <stdexcept>
 #include <variant>
+#include <string_view>
 
 namespace k::model {
+
+namespace {
+
+class annotation_lookup_diagnostics : public k::log::logger {
+public:
+    void report(const k::log::diagnostic& diagnostic) override {
+        if (diagnostic.level >= k::log::diagnostic::severity::error)
+            throw k::log::compiler_error(diagnostic);
+    }
+};
+
+// Whether the annotation designates the canonical declaration `canonical_name`
+// (without root prefix), whether or not the template recipe resolved it yet.
+// An unresolvable name is never canonical.
+bool is_canonical_annotation(const function& fn, const annotation_instance& annotation,
+                             const std::string& canonical_name) {
+    auto& mutable_fn = const_cast<function&>(fn);
+    auto owner = mutable_fn.ancestor<unit>();
+    auto context = mutable_fn.get_context();
+    if (!owner || !context) return false;
+    try {
+        annotation_lookup_diagnostics diagnostics;
+        gen::aggregate_type_resolver lookup(diagnostics, context, *owner);
+        auto declaration = annotation.resolved_type;
+        if (!declaration) {
+            auto name = k::name::from(annotation.raw_name);
+            if (name.empty() || (!name.has_root_prefix()
+                && gen::is_enclosing_template_param_name(fn, name.front()))) return false;
+            // Resolve only the annotation's declaration name, never dependent
+            // annotation arguments, function signatures or template bodies.
+            auto resolved = lookup.resolve_type_by_name(name, fn);
+            auto structure = std::dynamic_pointer_cast<struct_type>(resolved);
+            if (structure) declaration = structure->get_struct();
+        }
+        if (!declaration || !declaration->is_annotation()
+            || (declaration->get_fq_name() != canonical_name
+                && declaration->get_fq_name() != "::" + canonical_name)) return false;
+        auto canonical = std::dynamic_pointer_cast<struct_type>(
+            lookup.resolve_type_by_name(k::name::from("::" + canonical_name), fn));
+        return canonical && declaration == canonical->get_struct();
+    } catch (const k::log::compiler_error&) {
+        return false;
+    }
+}
+
+bool is_compiler_intrinsic_annotation(const function& fn, const annotation_instance& annotation) {
+    return is_canonical_annotation(fn, annotation, "k::annotations::Intrinsic");
+}
+
+} // namespace
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -897,10 +949,11 @@ void k_source_emitter::emit_block(const block& blk, int ind) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 bool k_source_emitter::emit_annotations(const annotation_holder& holder,
-                                        const std::string& ffi_name) {
+                                        const std::string& ffi_name, const function* recipe) {
     bool ffi_emitted = false;
     for (const auto& annotation : holder.get_annotations()) {
         if (!annotation.ast_node || !annotation.ast_node->name) continue;
+        if (recipe && !is_canonical_annotation(*recipe, annotation, "k::ffi::" + ffi_name)) continue;
         std::string name = annotation.ast_node->name->to_name().to_string();
         if (annotation.resolved_type) {
             name = annotation.resolved_type->get_fq_name();
@@ -977,7 +1030,7 @@ void k_source_emitter::emit_throws(const function& fn) {
     }
 }
 
-void k_source_emitter::emit_parameter_list(const function& fn, bool ffi_annotations) {
+void k_source_emitter::emit_parameter_list(const function& fn, bool ffi_annotations, bool recipe) {
     _os << "(";
     bool first = true;
     for (auto& param : fn.parameters()) {
@@ -986,7 +1039,7 @@ void k_source_emitter::emit_parameter_list(const function& fn, bool ffi_annotati
             continue;
         if (!first) _os << ", ";
         first = false;
-        const bool cstring_emitted = emit_annotations(*param, "CString");
+        const bool cstring_emitted = emit_annotations(*param, "CString", recipe ? &fn : nullptr);
         if (ffi_annotations && param->is_ffi_cstring() && !cstring_emitted)
             _os << "@k::ffi::CString ";
         _os << param->get_short_name();
@@ -1274,15 +1327,16 @@ std::string k_source_emitter::emit_template_function(const function& fn) {
     auto* ti = fn.get_tpl_info();
     if (!ti) return {};
 
-    const bool native_emitted = emit_annotations(fn, "Extern");
-    if (fn.is_extern() && !native_emitted) emit_native_annotation(fn);
+    emit_recipe_annotations(fn);
 
     // Template clause
     emit_template_clause(*ti);
 
     // Function name + parameters + return type + body
+    if (fn.is_static()) _os << "static ";
+    if (fn.is_const_member()) _os << "const ";
     _os << fn.get_short_name();
-    emit_parameter_list(fn, fn.is_extern());
+    emit_parameter_list(fn, fn.is_extern(), true);
 
     if (fn.has_return_type()) {
         _os << " : ";
@@ -1302,10 +1356,33 @@ std::string k_source_emitter::emit_template_function(const function& fn) {
     return _os.str();
 }
 
+// Every reconstructed function recipe, classic or generic, carries only native
+// declarations and the canonical compiler Intrinsic: other annotations may
+// reference private declarations or dependencies absent from the consumer.
+void k_source_emitter::emit_recipe_annotations(const function& fn) {
+    const bool native_emitted = emit_annotations(fn, "Extern", &fn);
+    if (fn.is_extern() && !native_emitted) emit_native_annotation(fn);
+    for (const auto& annotation : fn.get_annotations()) {
+        if (!annotation.ast_node || !annotation.ast_node->name
+            || !is_compiler_intrinsic_annotation(fn, annotation)) continue;
+        const auto name_end = annotation.ast_node->name->get_last_lexeme();
+        const auto last = annotation.ast_node->get_last_lexeme();
+        if (!name_end || !last) continue;
+        const char* begin = std::visit([](const auto& token) {
+            return token.content.data() + token.content.size();
+        }, *name_end);
+        const char* end = std::visit([](const auto& token) {
+            return token.content.data() + token.content.size();
+        }, *last);
+        _os << "@::k::annotations::Intrinsic";
+        if (end > begin) _os << std::string_view(begin, end - begin);
+        _os << '\n';
+    }
+}
+
 std::string k_source_emitter::emit_function_annotations(const function& fn) {
     reset();
-    const bool native_emitted = emit_annotations(fn, "Extern");
-    if (fn.is_extern() && !native_emitted) emit_native_annotation(fn);
+    emit_recipe_annotations(fn);
     return _os.str();
 }
 
@@ -1353,13 +1430,3 @@ void k_source_emitter::emit_bases(const aggregate& agg) {
 }
 
 } // namespace k::model
-
-
-
-
-
-
-
-
-
-

@@ -318,6 +318,20 @@ KdiTemplateDef {
 
 Rules:
 
+* Reconstructed function-template source recipes preserve `static` status,
+  const-member qualification and the canonical compiler
+  `::k::annotations::Intrinsic` annotation, including bodyless declarations.
+  Intrinsic annotation type names are resolved lexically, including `using`
+  aliases, and emitted fully qualified; their argument syntax is preserved
+  without evaluating dependent expressions or resolving template bodies.
+  Reconstruction of a function recipe, classic `template<...>` or `generic<...>`,
+  and of a verbatim recipe's leading annotations, does not copy arbitrary
+  annotations whose private declarations or dependencies may be absent from the
+  consumer. It keeps only the canonical Intrinsic, native (`@k::ffi::Extern`)
+  declarations and parameter `@k::ffi::CString` annotations, each resolved
+  against its canonical declaration.
+  The source-only intrinsic annotation remains source text, not a runtime applied
+  annotation record.
 * Classic `template<...>` definitions export their full `source` (the
   authoritative form used by the compiler to re-parse/re-instantiate the
   template cross-module) **and** a declaration-only `aggregate_signature` or

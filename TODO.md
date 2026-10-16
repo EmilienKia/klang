@@ -641,6 +641,38 @@
       The new FFI guide/how-to use that byte-oriented pattern; this older
       reference discrepancy does not block them.
 
+- [ ] **Imported container instantiations can retain an unresolved RTTI receiver base.**
+      Reproduced on unchanged `859fb06`, independently of intrinsic-template
+      recipe reconstruction, by the existing regression in
+      `klang/tests/test-import-templates.cpp`:
+      ```bash
+      ./cmake-build-debug/klang/klang-tests-import-templates \
+          'cross-module template*empty ListMap*nested returns*' \
+          --reporter console --success
+      ```
+      Compiling `listmap_lexical_consumer.k` fails with fatal `0F001`:
+      `Unresolved RTTI receiver base [aggregate=::k::Map__int__int,
+      base=Sequence<Entry<int,int>>]`. Investigate receiver-base completion
+      for imported concrete templates before emitting native RTTI metadata.
+      This is distinct from the repaired nested return-identity issue below.
+      Keep this regression enabled; do not hide the unresolved base with
+      incomplete metadata. Revisit during imported-template RTTI integration.
+
+- [ ] **An owner binding cannot upcast to an imported virtual interface link.**
+      Reproduced on unchanged `859fb06` and with the recipe fix present:
+      ```bash
+      ./cmake-build-debug/klang/klang-tests-import-templates \
+          'import virtual*void-returning imported virtual' \
+          --reporter console --success
+      ```
+      The existing local-override regression in `test-import-templates.cpp`
+      expects `e.emit(c, 7)` in `exec_voidvirt.k` to compile. Instead, `00510`
+      rejects `Collector!&` for `Emitter::emit(s : Sink+, v : int)` because
+      the owner binding cannot convert to the imported `Sink+` parameter.
+      Investigate owner-binding normalization and inheritance conversion at
+      the import boundary. Keep the regression enabled; no conversion rule
+      was weakened to accept the unrelated intrinsic-recipe prerequisite.
+
 - [ ] **Defaulted/deleted declarations discard explicit exception clauses.**
       In `klang/src/parse/parser_declarations.cpp`, the `-> default` /
       `-> delete` branch of function parsing records the `throws` keyword

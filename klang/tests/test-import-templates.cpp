@@ -37,17 +37,21 @@
 #include "../src/model/type.hpp"
 #include "../src/parse/ast.hpp"
 #include "../src/errors.hpp"
+#include "../src/gen/gen_intrinsics.hpp"
 #include "../../libk/libk/src/runtime/callable_abi.h"
 
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/Support/DynamicLibrary.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
+#include <atomic>
 #include <sstream>
+#include <string_view>
 
 namespace fs = std::filesystem;
 
@@ -208,6 +212,244 @@ TEST_CASE("Imported free array operator templates resolve for both operands",
     auto test = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test);
     CHECK(test() == -2);
+}
+
+TEST_CASE("import member template recipes preserve canonical intrinsics and qualifiers",
+          "[import][template][intrinsic][source-emitter][recipe-contract][regression]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module intrinsic_recipe_provider;
+        using CompilerIntrinsic = k::annotations::Intrinsic;
+        using namespace CompilerAnnotations = k::annotations;
+
+        @k::annotations::Retention(Policy::SOURCE)
+        private annotation PrivateMarker { value : int; }
+        @k::annotations::Retention(Policy::SOURCE)
+        private annotation Intrinsic { name : const char[]; }
+
+        public struct Slots {
+            public _data : int* = null;
+            public _capacity : int = 0;
+
+            @PrivateMarker(T::missing)
+            template<typename T>
+            public static identity(value : T) : T { return value; }
+
+            @PrivateMarker(T::missing)
+            @CompilerIntrinsic("MultiSlot::get")
+            template<typename T>
+            public const getAliased(index : int) : const int&;
+
+            @::k::annotations::Intrinsic{ .name = "MultiSlot::get" }
+            template<typename T>
+            public const getQualified(index : int) : const int&;
+
+            @CompilerAnnotations::Intrinsic("MultiSlot::get")
+            template<typename T>
+            public const getNamespaced(index : int) : const int&;
+
+            @Intrinsic("MultiSlot::get")
+            template<typename T>
+            public const ignored(index : int) : const int& { return _data[index]; }
+        }
+    )K");
+    REQUIRE(producer);
+    REQUIRE_FALSE(llvm::verifyModule(producer->get_context_for_test()->module(), &llvm::errs()));
+    auto host = producer->get_unit()->get_root_namespace()->get_aggregate("Slots");
+    REQUIRE(host);
+    auto marker = producer->get_unit()->get_root_namespace()->get_aggregate("PrivateMarker");
+    REQUIRE(marker);
+    CHECK(marker->get_visibility() == k::model::PRIVATE);
+    CHECK(marker->is_source_retention());
+    k::model::k_source_emitter emitter;
+    for (const auto* name : {"getAliased", "getQualified", "getNamespaced"}) {
+        INFO(name);
+        auto method = host->get_function(name);
+        REQUIRE(method);
+        REQUIRE(method->get_tpl_info());
+        CHECK(method->get_tpl_info()->source_text.empty());
+        CHECK_FALSE(method->get_existing_block());
+        REQUIRE(method->is_const_member());
+        const auto emitted = emitter.emit_template_function(*method);
+        INFO(emitted);
+        CHECK(emitted.find("@::k::annotations::Intrinsic") != std::string::npos);
+        CHECK(emitted.find("\"MultiSlot::get\"") != std::string::npos);
+        CHECK(emitted.find("const " + std::string(name)) != std::string::npos);
+        CHECK(emitted.find("PrivateMarker") == std::string::npos);
+        CHECK(emitted.find("T::missing") == std::string::npos);
+        CHECK(emitted.find("CompilerIntrinsic") == std::string::npos);
+        CHECK(emitted.find("CompilerAnnotations") == std::string::npos);
+        CHECK(emitted.ends_with(";\n"));
+        CHECK_FALSE(method->get_existing_block());
+        if (std::string_view(name) == "getQualified")
+            CHECK(emitted.find("{ .name = \"MultiSlot::get\" }") != std::string::npos);
+        else
+            CHECK(emitted.find("(\"MultiSlot::get\")") != std::string::npos);
+    }
+    auto identity = host->get_function("identity");
+    REQUIRE(identity);
+    auto identity_source = emitter.emit_template_function(*identity);
+    CHECK(identity_source.find("static identity") != std::string::npos);
+    CHECK(identity_source.find("PrivateMarker") == std::string::npos);
+    auto ignored = host->get_function("ignored");
+    REQUIRE(ignored);
+    REQUIRE(ignored->get_existing_block());
+    const auto ignored_source = emitter.emit_template_function(*ignored);
+    CHECK(ignored_source.find("@") == std::string::npos);
+    CHECK(ignored_source.find("return ") != std::string::npos);
+
+    k::model::kdi_builder builder(*producer->get_context_for_test());
+    producer->get_unit()->accept(builder);
+    auto file = builder.take();
+    const auto& definitions = file.unit.root_ns.template_defs;
+    REQUIRE(definitions.size() == 5);
+    for (const auto& definition : definitions) {
+        CAPTURE(definition.name);
+        CHECK(definition.host_fq_name == "intrinsic_recipe_provider::Slots");
+        CHECK(definition.source.find("PrivateMarker") == std::string::npos);
+        CHECK(definition.source.find("T::missing") == std::string::npos);
+        if (definition.name == "identity")
+            CHECK(definition.source.find("static identity") != std::string::npos);
+        else if (definition.name == "ignored") {
+            CHECK(definition.source.find("@") == std::string::npos);
+            CHECK(definition.source.find("return ") != std::string::npos);
+        } else
+            CHECK(definition.source.find("@::k::annotations::Intrinsic") != std::string::npos);
+    }
+    CHECK(std::none_of(file.unit.root_ns.aggregates.begin(), file.unit.root_ns.aggregates.end(),
+        [](const auto& aggregate) {
+            return aggregate.name == "PrivateMarker" || aggregate.name == "Intrinsic";
+        }));
+
+    struct Artifact {
+        fs::path directory;
+        ~Artifact() {
+            if (directory.empty()) return;
+            std::error_code error;
+            fs::remove_all(directory, error);
+        }
+    } artifact;
+    static std::atomic<unsigned> sequence{0};
+    while (artifact.directory.empty()) {
+        auto candidate = fs::current_path() /
+            (".klang-intrinsic-recipe-" + std::to_string(++sequence));
+        if (fs::exists(candidate)) continue;
+        if (fs::create_directory(candidate)) artifact.directory = std::move(candidate);
+    }
+    const auto path = artifact.directory / "intrinsic-recipe-provider.kdi";
+    REQUIRE(kdi::kdi_write_cbor_file(file, path.string()));
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("intrinsic_recipe_provider", path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    consumer->parse_source("intrinsic-recipe-consumer.k", R"K(
+        module intrinsic_recipe_consumer;
+        import intrinsic_recipe_provider;
+        identity() : int { return intrinsic_recipe_provider::Slots::identity<int>(42); }
+        aliased(slots : const intrinsic_recipe_provider::Slots&) : const int& {
+            return slots.getAliased<int>(0);
+        }
+        qualified(slots : const intrinsic_recipe_provider::Slots&) : const int& {
+            return slots.getQualified<int>(0);
+        }
+        namespaced(slots : const intrinsic_recipe_provider::Slots&) : const int& {
+            return slots.getNamespaced<int>(0);
+        }
+    )K", false, false);
+    REQUIRE_FALSE(consumer->has_compilation_error());
+    auto& module = consumer->get_context_for_test()->module();
+    REQUIRE_FALSE(llvm::verifyModule(module, &llvm::errs()));
+    auto imported_namespace = consumer->get_unit()->get_root_namespace()
+        ->get_child_namespace("intrinsic_recipe_provider");
+    REQUIRE(imported_namespace);
+    auto imported_host = imported_namespace->get_aggregate("Slots");
+    REQUIRE(imported_host);
+    unsigned instantiated = 0;
+    for (const auto& method : imported_host->functions()) {
+        if (!method->is_instantiation()) continue;
+        ++instantiated;
+        REQUIRE(method->get_tpl_args().size() == 1);
+        CHECK(k::model::type::are_equal(method->get_tpl_args().front().type_arg,
+            consumer->get_context_for_test()->from_string("int")));
+        auto* native = module.getFunction(method->get_mangled_name());
+        REQUIRE(native);
+        CHECK_FALSE(native->isDeclaration());
+        if (method->get_tpl_base_name() == "identity") {
+            CHECK(method->is_static());
+            CHECK(method->get_annotations().empty());
+            continue;
+        }
+        CHECK_FALSE(method->is_static());
+        CHECK(method->is_const_member());
+        REQUIRE(method->get_annotations().size() == 1);
+        const auto& annotation = method->get_annotations().front();
+        REQUIRE(annotation.resolved_type);
+        CHECK(annotation.resolved_type->get_fq_name() == "::k::annotations::Intrinsic");
+        CHECK(k::model::gen::get_intrinsic_name(*method) == "MultiSlot::get");
+        auto result = method->get_return_type();
+        REQUIRE(k::model::type::is_reference(result));
+        CHECK(k::model::type::is_const(result->get_subtype()));
+    }
+    CHECK(instantiated == 4);
+}
+
+TEST_CASE("import generic function recipes keep only native annotations",
+          "[import][template][generic][source-emitter][recipe-contract][regression]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module generic_recipe_provider;
+        @k::annotations::Retention(Policy::SOURCE)
+        private annotation PrivateMarker { value : int; }
+
+        @PrivateMarker(7)
+        @ffi::Extern("C", null, "__k_test_generic_recipe_length")
+        generic<typename T> length(@PrivateMarker(8) @ffi::CString text : const unsigned byte*) : int;
+
+        force() : int {
+            text : const unsigned byte[] = u8"ok";
+            return length<int>(&text[0]);
+        }
+    )K");
+    REQUIRE(producer);
+    REQUIRE_FALSE(llvm::verifyModule(producer->get_context_for_test()->module(), &llvm::errs()));
+    k::model::kdi_builder builder(*producer->get_context_for_test());
+    producer->get_unit()->accept(builder);
+    auto file = builder.take();
+    const auto& definitions = file.unit.root_ns.template_defs;
+    auto length = std::find_if(definitions.begin(), definitions.end(),
+        [](const auto& definition) { return definition.name == "length"; });
+    REQUIRE(length != definitions.end());
+    CHECK(length->is_generic);
+    CHECK(length->source.find("PrivateMarker") == std::string::npos);
+    CHECK(length->source.find("__k_test_generic_recipe_length") != std::string::npos);
+    CHECK(length->source.find("@k::ffi::Extern") != std::string::npos);
+    CHECK(length->source.find("@k::ffi::CString") != std::string::npos);
+    CHECK(std::count(length->source.begin(), length->source.end(), '@') == 2);
+
+    const auto path = fs::current_path() / "generic_recipe_provider.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code error; fs::remove(path, error); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(file, path.string()));
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("generic_recipe_provider", path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(consumer->parse_source("generic-recipe-consumer.k", R"K(
+        module generic_recipe_consumer;
+        import generic_recipe_provider;
+        run() : int {
+            text : const unsigned byte[] = u8"ok";
+            return generic_recipe_provider::length<int>(&text[0]);
+        }
+    )K", false, false));
+    auto& module = consumer->get_context_for_test()->module();
+    REQUIRE_FALSE(llvm::verifyModule(module, &llvm::errs()));
+    auto* native = module.getFunction("__k_test_generic_recipe_length");
+    REQUIRE(native);
+    CHECK(native->isDeclaration());
 }
 
 TEST_CASE("import template return prvalues adopt resources and clean intermediate getters",

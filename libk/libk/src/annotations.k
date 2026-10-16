@@ -103,7 +103,10 @@ annotation Target {
  * When `@Intrinsic` is applied, the compiler skips normal body generation and
  * dispatches to a built-in code-generation path identified by `name`.
  *
- * This annotation is source-only and is not exported in KDI or RTTI.
+ * This annotation is source-only and has no applied runtime/KDI annotation
+ * record. Reconstructed template recipes preserve this canonical compiler
+ * annotation with a fully qualified name for consumer compilation. This does
+ * not export arbitrary private SOURCE annotations or their dependencies.
  */
 @Retention(Policy::SOURCE)
 @Target({ElementType::FUNCTION, ElementType::CONSTRUCTOR})
