@@ -21,6 +21,9 @@
 #include "template.hpp"
 namespace k::model {
 
+bool value_type_needs_cleanup(const std::shared_ptr<type>& value_type);
+bool value_type_is_move_only(const std::shared_ptr<type>& value_type);
+
 /**
  * True when a struct without a destructor still owns resources that a union must
  * release by field: owner or owning-callable fields, reached through arrays and
@@ -294,7 +297,10 @@ public:
     //
 
     std::shared_ptr<struct_type> get_struct_type() const { return _type; }
-    void set_struct_type(std::shared_ptr<struct_type> t) { _type = std::move(t); }
+    void set_struct_type(std::shared_ptr<struct_type> t) {
+        _type = std::move(t);
+        if (_type) _type->set_union(shared_as<union_type_def>());
+    }
 
     //
     // Kind enum
@@ -314,6 +320,8 @@ public:
     bool has_nontrivial_destructor_alternative() const {
         for (const auto* alt_ptr : all_alternatives_ptrs()) {
             auto alt_type = type::canonical(type::remove_const(type::canonical(alt_ptr->resolved_type)));
+            // Every sized array and nested union keeps the union cleanup path: the
+            // live-state bookkeeping must run even when no element owns a resource.
             if (type::is_owner(alt_type) || type::is_sized_array(alt_type)) return true;
             if (auto callable = std::dynamic_pointer_cast<callable_type>(alt_type)) {
                 if (callable->is_owner()) return true;
@@ -347,6 +355,45 @@ public:
     }
 };
 
+inline bool value_type_needs_cleanup(const std::shared_ptr<type>& value_type) {
+    auto bare = type::canonical(type::remove_const(type::canonical(value_type)));
+    if (type::is_owner(bare)) return true;
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(bare)) return callable->is_owner();
+    if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare))
+        return value_type_needs_cleanup(array->get_subtype());
+    if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
+        if (auto agg = st->get_struct())
+            return agg->get_destructor() != nullptr || struct_releases_fields_without_destructor(*agg);
+        if (auto un = st->get_union()) return un->has_nontrivial_destructor_alternative();
+        return true;
+    }
+    return false;
+}
+
+inline bool value_type_is_move_only(const std::shared_ptr<type>& value_type) {
+    auto bare = type::canonical(type::remove_const(type::canonical(value_type)));
+    if (type::is_owner(bare)) return true;
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(bare)) return callable->is_owner();
+    if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare))
+        return value_type_is_move_only(array->get_subtype());
+    if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
+        if (auto un = st->get_union()) {
+            // Alternative 0 doubles as the default (zero-filled, unconstructed) state, which
+            // can be copied by value. Its resources are checked at runtime by the union copy;
+            // only resources held by the other alternatives make the union statically move-only.
+            for (const auto* alt : un->all_alternatives_ptrs())
+                if (alt->index != 0 && value_type_is_move_only(alt->resolved_type)) return true;
+        } else if (auto agg = st->get_struct()) {
+            if (agg->get_copy_constructor()) return false;
+            for (const auto& base : agg->get_bases())
+                if (base.base && value_type_is_move_only(base.base->get_struct_type())) return true;
+            for (const auto& [name, variable] : agg->variables())
+                if (auto member = std::dynamic_pointer_cast<member_variable_definition>(variable))
+                    if (value_type_is_move_only(member->get_type())) return true;
+        }
+    }
+    return false;
+}
 
 } // namespace k::model
 

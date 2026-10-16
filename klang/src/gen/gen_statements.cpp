@@ -591,12 +591,13 @@ void implementation_generator::emit_active_parameter_cleanup(const std::string& 
         auto& params = _struct_params_stack.top();
         for (auto it = params.rbegin(); it != params.rend(); ++it) {
             auto& param = *it;
-            auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
+            auto st_type = std::dynamic_pointer_cast<struct_type>(
+                type::remove_const(type::canonical(param->get_type())));
             if (!st_type) continue;
             auto agg = st_type->get_struct();
             auto un = agg ? nullptr : find_union_for_struct_type(_unit, st_type);
             auto dtor = agg ? agg->get_destructor() : nullptr;
-            if (!dtor && !un) continue;
+            if (!dtor && !(un && value_type_needs_cleanup(st_type))) continue;
             auto param_it = _context->_parameter_variables.find(param);
             if (param_it == _context->_parameter_variables.end()) continue;
             auto* fn = _builder->GetInsertBlock()->getParent();
@@ -4468,6 +4469,10 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     } else if (k::model::type::is_sized_array(var_type)) {
         // Unwinding before the declaration must see an empty constructed prefix.
         build.CreateStore(llvm::ConstantAggregateZero::get(type), alloca);
+    } else if (auto st = std::dynamic_pointer_cast<struct_type>(var_type); st && st->get_union()) {
+        build.CreateStore(llvm::ConstantAggregateZero::get(type), alloca);
+        auto* discriminant = build.CreateStructGEP(type, alloca, 0);
+        build.CreateStore(build.getInt32(-1), discriminant);
     }
 
     // Create construction flags before any exception can reach this scope.
@@ -4891,6 +4896,7 @@ void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_ty
 
 void implementation_generator::emit_union_cleanup_on_reassign(llvm::Value* union_base, union_type_def& udef, size_t new_alt_idx) {
     if (!udef.has_nontrivial_destructor_alternative()) return;
+    // An already-active object is assigned in place by the caller.
     auto* union_llvm_type = udef.get_struct_type()->get_llvm_type();
     auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_reassign_disc_ptr");
     auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(**_context), disc_ptr, "union_reassign_disc");

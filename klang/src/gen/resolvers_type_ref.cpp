@@ -2691,14 +2691,9 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
         // Resolve alternative types
         for (auto& alt : concrete_union->alternatives_mutable()) {
             if (alt.resolved_type && !type::is_resolved(alt.resolved_type)) {
-                auto resolved = _context->resolve_type(alt.resolved_type);
-                if (resolved && type::is_resolved(resolved)) {
+                auto resolved = resolve_type_chain(alt.resolved_type, concrete_union.get());
+                if (resolved && (type::is_resolved(resolved) || !type::contains_unresolved(resolved))) {
                     alt.resolved_type = resolved;
-                } else if (auto unres_alt = std::dynamic_pointer_cast<unresolved_type>(alt.resolved_type)) {
-                    auto by_name = resolve_type_by_name(unres_alt->type_id(), context_elem);
-                    if (by_name && type::is_resolved(by_name)) {
-                        alt.resolved_type = by_name;
-                    }
                 }
             }
         }

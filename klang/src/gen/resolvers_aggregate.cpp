@@ -864,14 +864,9 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         // Resolve alternative types
         for (auto& alt : concrete_union->alternatives_mutable()) {
             if (alt.resolved_type && !type::is_resolved(alt.resolved_type)) {
-                auto resolved = _context->resolve_type(alt.resolved_type);
-                if (resolved && type::is_resolved(resolved)) {
+                auto resolved = resolve_one_type(alt.resolved_type, *this, *concrete_union, _context);
+                if (resolved && (type::is_resolved(resolved) || !type::contains_unresolved(resolved))) {
                     alt.resolved_type = resolved;
-                } else if (auto unres_alt = std::dynamic_pointer_cast<unresolved_type>(alt.resolved_type)) {
-                    auto by_name = resolve_type_by_name(unres_alt->type_id(), context_elem);
-                    if (by_name && type::is_resolved(by_name)) {
-                        alt.resolved_type = by_name;
-                    }
                 }
             }
         }
@@ -2210,22 +2205,9 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
     // Resolve each own alternative's type
     for (auto& alt : un.alternatives_mutable()) {
         if (alt.resolved_type && !type::is_resolved(alt.resolved_type)) {
-            // First try context->resolve_type (handles primitive wrappers, pointers, etc.)
-            auto resolved = _context->resolve_type(alt.resolved_type);
-            if (resolved && type::is_resolved(resolved)) {
+            auto resolved = resolve_one_type(alt.resolved_type, *this, un, _context);
+            if (resolved && (type::is_resolved(resolved) || !type::contains_unresolved(resolved))) {
                 alt.resolved_type = resolved;
-            } else {
-                // Try resolve_type_by_name for aggregate/enum types
-                if (auto unres = std::dynamic_pointer_cast<unresolved_type>(alt.resolved_type)) {
-                    // Template parameter placeholders must remain unresolved until
-                    // instantiation — never bind them to an ambient same-named symbol.
-                    if (!unres->is_template_param_placeholder()) {
-                        auto by_name = resolve_type_by_name(unres->type_id(), un);
-                        if (by_name && type::is_resolved(by_name)) {
-                            alt.resolved_type = by_name;
-                        }
-                    }
-                }
             }
         }
     }

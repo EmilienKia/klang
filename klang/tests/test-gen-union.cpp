@@ -3887,3 +3887,767 @@ TEST_CASE("Default first owner array alternative element writes are released",
     REQUIRE(fn);
     CHECK(fn() == 42);
 }
+
+TEST_CASE("Escaped first class owner is released once when an exception unwinds the scope",
+          "[gen][union][reference][default][class][owner][exceptions][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_escaped_default_class_owner_unwind;
+        constructs: int = 0;
+        parentDrops: int = 0;
+        resourceDrops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++resourceDrops; }
+        }
+        class Payload {
+        public:
+            owned: Resource!;
+            Payload() { ++constructs; }
+            ~Payload() { ++parentDrops; }
+        }
+        union Storage { value: Payload; number: int; }
+        borrow(value: Storage&): Payload& { return value.value; }
+        install(value: Payload&) { value.owned = new Resource(); }
+        test(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            caught: bool = false;
+            try {
+                storage: Storage;
+                install(borrow(storage));
+                throw Exception(6);
+            } catch (error: Throwable&) {
+                caught = error.getCode() == 6;
+            }
+            if (!caught) return -1;
+            return constructs == 0 && parentDrops == 0 && resourceDrops == 1 ? 42 : -2;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Escaped first class owner in a local union array is released once",
+          "[gen][union][reference][default][class][owner][array][exceptions][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_escaped_default_class_owner_array;
+        constructs: int = 0;
+        parentDrops: int = 0;
+        resourceDrops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++resourceDrops; }
+        }
+        class Payload {
+        public:
+            owned: Resource!;
+            Payload() { ++constructs; }
+            ~Payload() { ++parentDrops; }
+        }
+        union Storage { value: Payload; number: int; }
+        borrow(value: Storage&): Payload& { return value.value; }
+        install(value: Payload&) { value.owned = new Resource(); }
+        normal(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            {
+                values: Storage[2];
+                install(borrow(values[1]));
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 0) return -1;
+            }
+            return constructs == 0 && parentDrops == 0 && resourceDrops == 1 ? 42 : -2;
+        }
+        unwinding(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            caught: bool = false;
+            try {
+                values: Storage[2];
+                install(borrow(values[0]));
+                throw Exception(7);
+            } catch (error: Throwable&) {
+                caught = error.getCode() == 7;
+            }
+            if (!caught) return -3;
+            return constructs == 0 && parentDrops == 0 && resourceDrops == 1 ? 42 : -4;
+        }
+    )K");
+    REQUIRE(jit);
+    auto normal = jit->lookup_symbol<int (*)()>("normal");
+    auto unwinding = jit->lookup_symbol<int (*)()>("unwinding");
+    REQUIRE(normal);
+    REQUIRE(unwinding);
+    CHECK(normal() == 42);
+    CHECK(unwinding() == 42);
+}
+
+TEST_CASE("Union ownership cleanup: direct owners leave scope exactly once",
+          "[gen][union][owner][lifecycle][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_owner_cleanup;
+        dropped : int = 0;
+        struct Resource {
+            Resource() {}
+            ~Resource() { dropped += 1; }
+        }
+        union Choice { owned : Resource!; empty : int; }
+        reproduce() : int {
+            dropped = 0;
+            { item : Choice; item.owned = new Resource(); }
+            return dropped;
+        }
+        overwrite() : int {
+            dropped = 0;
+            {
+                item : Choice;
+                item.owned = null;
+                item.owned = new Resource();
+                item.owned = item.owned;
+                if (dropped != 0) return -1;
+                item.owned = new Resource();
+                if (dropped != 1) return -2;
+                item.empty = 42;
+                if (dropped != 2) return -3;
+                item.owned = null;
+            }
+            return dropped;
+        }
+        fail() { throw Exception(801); }
+        unwind(beforeDeclaration : bool) : int {
+            dropped = 0;
+            try {
+                if (beforeDeclaration) fail();
+                item : Choice;
+                item.owned = new Resource();
+                fail();
+            } catch (error : Throwable&) {
+                if (error.getCode() != 801) return -1;
+            }
+            return dropped;
+        }
+        earlyReturn() { item : Choice; item.owned = new Resource(); return; }
+        exits() : int {
+            dropped = 0;
+            earlyReturn();
+            for (i : int = 0; i < 2; ++i) {
+                item : Choice;
+                item.owned = new Resource();
+                if (i == 0) continue;
+                break;
+            }
+            return dropped;
+        }
+        struct Holder {
+            item : Choice;
+            Holder() { item.owned = new Resource(); }
+        }
+        construction() : int {
+            dropped = 0;
+            {
+                source : Resource! = new Resource();
+                item : Choice = source;
+                if (source != null) return -1;
+            }
+            if (dropped != 1) return -2;
+            Choice(new Resource());
+            if (dropped != 2) return -3;
+            { holder : Holder; }
+            return dropped;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("reproduce")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("overwrite")() == 2);
+    auto unwind = jit->lookup_symbol<int(*)(bool)>("unwind");
+    REQUIRE(unwind);
+    CHECK(unwind(false) == 1);
+    CHECK(unwind(true) == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("exits")() == 3);
+    CHECK(jit->lookup_symbol<int(*)()>("construction")() == 3);
+}
+
+TEST_CASE("Union ownership cleanup: callable alternatives own only owning environments",
+          "[gen][union][callable][lifecycle][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_callable_cleanup;
+        dropped : int = 0;
+        struct Resource {
+            value : int;
+            Resource(v : int) : value(v) {}
+            ~Resource() { ++dropped; }
+        }
+        union Choice { empty : int; owned : !():int; borrowed : *():int; }
+        run(fail : bool) : int {
+            dropped = 0;
+            try {
+                item : Choice;
+                first : Resource! = new Resource(17);
+                callback : !():int = [first]() : int { return first.value; };
+                item.owned = callback;
+                {
+                    view : &():int = item.owned;
+                    if (callback != null || view() != 17) return -1;
+                }
+                second : Resource! = new Resource(23);
+                item.owned = [second]() : int { return second.value; };
+                {
+                    view : &():int = item.owned;
+                    if (dropped != 1 || view() != 23) return -2;
+                }
+                if (fail) throw Exception(802);
+                value : int = 42;
+                borrowed : *():int = [value]() : int { return value; };
+                item.borrowed = borrowed;
+                {
+                    view : *():int = item.borrowed;
+                    if (dropped != 2 || view() != 42 || borrowed() != 42) return -3;
+                }
+                item.empty = 0;
+                item.owned = null;
+            } catch (error : Throwable&) {
+                if (error.getCode() != 802) return -4;
+            }
+            return dropped;
+        }
+        transfer() : int {
+            dropped = 0;
+            {
+                source : Choice;
+                resource : Resource! = new Resource(42);
+                source.owned = [resource]() : int { return resource.value; };
+                destination : Choice = #source;
+                view : &():int = destination.owned;
+                if (source.index() == Choice::Kind::owned || view() != 42) return -1;
+            }
+            return dropped;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)(bool)>("run");
+    REQUIRE(run);
+    CHECK(run(false) == 2);
+    CHECK(run(true) == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("transfer")() == 1);
+}
+
+TEST_CASE("Union ownership cleanup: heap owner arrays destroy in reverse order",
+          "[gen][union][owner][array][lifecycle][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_owner_array_cleanup;
+        next : int = 0;
+        order : int = 0;
+        struct Resource {
+            id : int;
+            Resource() { id = ++next; }
+            ~Resource() { order = order * 10 + id; }
+        }
+        union Choice { empty : int; fixed : Resource[3]!; dynamic : Resource[]!; }
+        run(mode : int, count : unsigned int) : int {
+            next = 0; order = 0;
+            try {
+                item : Choice;
+                if (mode == 0 || mode == 3) item.fixed = new Resource[3];
+                else item.dynamic = new Resource[count];
+                if (mode == 3) item.fixed = new Resource[3];
+                if (mode == 1) item.empty = 0;
+                if (mode == 2) throw Exception(803);
+            } catch (error : Throwable&) {
+                if (error.getCode() != 803) return -1;
+            }
+            return order;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)(int, unsigned)>("run");
+    REQUIRE(run);
+    CHECK(run(0, 3) == 321);
+    CHECK(run(1, 3) == 321);
+    CHECK(run(2, 3) == 321);
+    CHECK(run(1, 0) == 0);
+    CHECK(run(3, 3) == 321654);
+}
+
+TEST_CASE("Union ownership cleanup: nested unions and sized owner arrays drain safely",
+          "[gen][union][owner][array][nested][lifecycle][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_nested_owner_cleanup;
+        order : int = 0;
+        struct Resource {
+            id : int;
+            Resource(i : int) : id(i) {}
+            ~Resource() { order = order * 10 + id; }
+        }
+        union Inner { empty : int; owned : Resource!; }
+        union Outer { empty : int; nested : Inner; owners : Resource![2]; values : Inner[2]; }
+        run(mode : int) : int {
+            order = 0;
+            try {
+                item : Outer;
+                if (mode == 0) {
+                    source : Inner;
+                    source.owned = new Resource(1);
+                    item.nested = #source;
+                    if (source.index() == Inner::Kind::owned) return -1;
+                    source.empty = 7;
+                } else if (mode == 1) {
+                    source : Resource![2] { new Resource(1), new Resource(2) };
+                    item.owners = #source;
+                    if (source.size != 0) return -2;
+                    item.owners = #item.owners;
+                } else {
+                    source : Inner[2];
+                    source[0].owned = new Resource(1);
+                    source[1].owned = new Resource(2);
+                    item.values = #source;
+                    if (source.size != 0) return -3;
+                }
+                if (mode == 3) throw Exception(804);
+                if (mode == 4) item.empty = 0;
+            } catch (error : Throwable&) {
+                if (error.getCode() != 804) return -4;
+            }
+            return order;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)(int)>("run");
+    REQUIRE(run);
+    CHECK(run(0) == 1);
+    for (int mode : {1, 2, 3, 4}) CHECK(run(mode) == 21);
+}
+
+TEST_CASE("Union ownership cleanup: transfer resets sources and by-value callees own payloads",
+          "[gen][union][owner][move][lifecycle][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_owner_transfer;
+        dropped : int = 0;
+        struct Resource {
+            Resource() {}
+            ~Resource() { ++dropped; }
+        }
+        union Base { empty : int; owned : Resource!; }
+        union Derived : Base { extra : long; }
+        make() : Base {
+            result : Base;
+            result.owned = new Resource();
+            return result;
+        }
+        consume(item : Base, fail : bool) {
+            if (fail) throw Exception(805);
+        }
+        failLater() : int { throw Exception(806); }
+        pending(item : Base, later : int) {}
+        temporaryTransfer() : int {
+            dropped = 0;
+            {
+                destination : Base;
+                destination = Derived(new Resource());
+                if (destination.index() != Base::Kind::owned || dropped != 0) return -1;
+                destination = Base(new Resource());
+                if (destination.index() != Base::Kind::owned || dropped != 1) return -2;
+            }
+            return dropped;
+        }
+        run() : int {
+            dropped = 0;
+            {
+                source : Base;
+                source.owned = new Resource();
+                destination : Base = #source;
+                if (source.index() == Base::Kind::owned) return -1;
+                source.empty = 0;
+                source.owned = new Resource();
+                destination = #source;
+                if (dropped != 1 || source.index() == Base::Kind::owned) return -2;
+                destination = #destination;
+                derived : Derived;
+                derived = #destination;
+                destination = #derived;
+                if (derived.index() == Derived::Kind::owned) return -3;
+                consume(#destination, false);
+                if (dropped != 2 || destination.index() == Base::Kind::owned) return -4;
+            }
+            make();
+            if (dropped != 3) return -5;
+            consume(make(), false);
+            if (dropped != 4) return -6;
+            try { consume(make(), true); }
+            catch (error : Throwable&) { if (error.getCode() != 805) return -7; }
+            if (dropped != 5) return -8;
+            try { pending(make(), failLater()); }
+            catch (error : Throwable&) { if (error.getCode() != 806) return -9; }
+            return dropped;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("run")() == 6);
+    CHECK(jit->lookup_symbol<int(*)()>("temporaryTransfer")() == 2);
+}
+
+TEST_CASE("Union ownership cleanup: copyable active aggregates use copy constructors",
+          "[gen][union][copy][lifecycle][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_payload_copy;
+        copies : int = 0;
+        dropped : int = 0;
+        struct Resource {
+            Resource() {}
+            Resource(other : const Resource&) { ++copies; }
+            ~Resource() { ++dropped; }
+        }
+        union Choice { empty : int; resource : Resource; }
+        run() : int {
+            copies = 0; dropped = 0;
+            {
+                resource : Resource;
+                source : Choice;
+                source.resource = resource;
+                destination : Choice = source;
+                destination = source;
+                if (copies != 3 || dropped != 1) return -1;
+            }
+            return dropped;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("run")() == 4);
+}
+
+TEST_CASE("Union ownership cleanup: owned alternatives make lvalue unions noncopyable",
+          "[gen][union][owner][copy][union-owner-cleanup][regression]") {
+    SECTION("owner initialization") {
+        CHECK(compile_should_fail(R"SRC(
+            module union_owner_copy_rejected;
+            union Choice { empty : int; owned : int!; }
+            test() { source : Choice; copy : Choice = source; }
+        )SRC", nullptr));
+    }
+    SECTION("owning callable assignment") {
+        CHECK(compile_should_fail(R"SRC(
+            module union_callable_copy_rejected;
+            union Choice { empty : int; callback : !(); }
+            test() { source : Choice; destination : Choice; destination = source; }
+        )SRC", nullptr));
+    }
+    SECTION("nested ownership") {
+        CHECK(compile_should_fail(R"SRC(
+            module union_nested_copy_rejected;
+            union Inner { empty : int; owned : int!; }
+            union Outer { empty : int; values : Inner[2]; }
+            test() { source : Outer; copy : Outer = source; }
+        )SRC", nullptr));
+    }
+    SECTION("related union assignment") {
+        CHECK(compile_should_fail(R"SRC(
+            module union_related_lvalue_copy_rejected;
+            union Base { empty : int; owned : int!; }
+            union Derived : Base { extra : long; }
+            test() { source : Derived; destination : Base; destination = source; }
+        )SRC", nullptr));
+    }
+    SECTION("different nominal union array elements") {
+        CHECK(compile_should_fail(R"SRC(
+            module union_array_element_identity_rejected;
+            union First { empty : int; owned : int!; }
+            union Second { empty : int; owned : int!; }
+            union Choice { empty : int; values : First[2]; }
+            test() { source : Second[2]; destination : Choice; destination.values = #source; }
+        )SRC", nullptr));
+    }
+}
+
+TEST_CASE("Union ownership cleanup: sized callable arrays release environments in reverse order",
+          "[gen][union][callable][array][lifecycle][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_callable_array_cleanup;
+        order : int = 0;
+        struct Resource {
+            id : int;
+            Resource(i : int) : id(i) {}
+            ~Resource() { order = order * 10 + id; }
+        }
+        alias Task : !():int;
+        union Choice { empty : int; tasks : Task[2]; }
+        run(fail : bool) : int {
+            order = 0;
+            try {
+                first : Resource! = new Resource(1);
+                second : Resource! = new Resource(2);
+                tasks : Task[2];
+                tasks[0] = [first]() : int { return first.id; };
+                tasks[1] = [second]() : int { return second.id; };
+                item : Choice;
+                item.tasks = #tasks;
+                if (tasks.size != 0 || item.tasks[0]() != 1 || item.tasks[1]() != 2) return -1;
+                if (fail) throw Exception(807);
+            } catch (error : Throwable&) {
+                if (error.getCode() != 807) return -2;
+            }
+            return order;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)(bool)>("run");
+    REQUIRE(run);
+    CHECK(run(false) == 21);
+    CHECK(run(true) == 21);
+}
+
+TEST_CASE("Union ownership cleanup: throwing destruction drains the remaining nested prefix",
+          "[gen][union][owner][array][exceptions][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_throwing_cleanup;
+        next : int = 0;
+        order : int = 0;
+        fail : bool = false;
+        throwId : int = 2;
+        struct Resource {
+            id : int;
+            Resource() { id = ++next; }
+            Resource(i : int) : id(i) {}
+            ~Resource() {
+                order = order * 10 + id;
+                if (id == throwId && fail) { fail = false; throw Exception(808); }
+            }
+        }
+        union Inner { empty : int; owned : Resource!; }
+        union Choice { empty : int; owners : Resource![3]; heap : Resource[3]!; nested : Inner[2]; single : Resource!; }
+        run(mode : int) : int {
+            next = 0; order = 0; fail = true;
+            throwId = mode >= 3 ? 1 : 2;
+            caught : int = 0;
+            try {
+                item : Choice;
+                if (mode == 0) {
+                    source : Resource![3] { new Resource(1), new Resource(2), new Resource(3) };
+                    item.owners = #source;
+                } else if (mode == 1) {
+                    item.heap = new Resource[3];
+                } else if (mode == 2) {
+                    source : Inner[2];
+                    source[0].owned = new Resource(1);
+                    source[1].owned = new Resource(2);
+                    item.nested = #source;
+                } else {
+                    item.single = new Resource(1);
+                    if (mode == 3) item.single = new Resource(2);
+                    else {
+                        source : Choice;
+                        source.single = new Resource(2);
+                        item = #source;
+                    }
+                }
+            } catch (error : Throwable&) { caught = error.getCode(); }
+            return caught == 808 ? order : -1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)(int)>("run");
+    REQUIRE(run);
+    CHECK(run(0) == 321);
+    CHECK(run(1) == 321);
+    CHECK(run(2) == 21);
+    CHECK(run(3) == 12);
+    CHECK(run(4) == 12);
+}
+
+TEST_CASE("Union ownership cleanup: failed array payload copies destroy their constructed prefix",
+          "[gen][union][copy][array][exceptions][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_array_copy_cleanup;
+        copies : int = 0;
+        dropped : int = 0;
+        failAt : int = 0;
+        struct Resource {
+            Resource() {}
+            Resource(other : const Resource&) {
+                ++copies;
+                if (copies == failAt) throw Exception(809);
+            }
+            ~Resource() { ++dropped; }
+        }
+        union Choice { empty : int; values : Resource[3]; }
+        run() : int {
+            copies = 0; dropped = 0; failAt = 0;
+            {
+                values : Resource[3];
+                source : Choice;
+                source.values = values;
+                destination : Choice;
+                copies = 0; failAt = 2;
+                caught : int = 0;
+                try { destination = source; }
+                catch (error : Throwable&) { caught = error.getCode(); }
+                if (caught != 809 || copies != 2 || dropped != 1) return -1;
+                if (source.index() != Choice::Kind::values
+                    || destination.index() == Choice::Kind::values) return -2;
+            }
+            return dropped;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("run")() == 7);
+}
+
+TEST_CASE("Union ownership cleanup: strong aliases select nominal alternatives",
+          "[gen][union][alias][owner][lifecycle][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_nominal_alternative_cleanup;
+        typedef Token : int;
+        typedef Other : int;
+        union Choice { first : Token; second : Other; }
+        inspectPrimitive(item : const Choice&) : int {
+            if (item.index() != Choice::Kind::second) return -1;
+            return (int)item.second;
+        }
+        primitiveDirect(value : int) : int {
+            item : Choice = (Other)value;
+            return inspectPrimitive(item);
+        }
+        primitiveTemporary(value : int) : int {
+            return inspectPrimitive(Choice((Other)value));
+        }
+        inspectUnderlying(item : const Choice&) : int {
+            if (item.index() != Choice::Kind::first) return -1;
+            return (int)item.first;
+        }
+        underlyingDirect(value : int) : int {
+            item : Choice = value;
+            return inspectUnderlying(item);
+        }
+        underlyingTemporary(value : int) : int {
+            return inspectUnderlying(Choice(value));
+        }
+        underlyingExplicit(value : int) : int {
+            source : Other = (Other)value;
+            return inspectUnderlying(Choice((int)source));
+        }
+        dropped : int = 0;
+        struct Resource {
+            value : int;
+            Resource(v : int) : value(v) {}
+            ~Resource() { ++dropped; }
+        }
+        typedef FirstOwner : Resource!;
+        typedef SecondOwner : Resource!;
+        union OwnedChoice { first : FirstOwner; second : SecondOwner; }
+        inspectOwned(item : const OwnedChoice&) : int {
+            if (item.index() != OwnedChoice::Kind::second) return -1;
+            return item.second.value;
+        }
+        ownerAliasInitialization() : int {
+            dropped = 0;
+            {
+                source : SecondOwner = new Resource(42);
+                if (source.value != 42 || (Resource*)source == null) return -1;
+                if (dropped != 0) return -2;
+            }
+            return dropped;
+        }
+        ownerDirect() : int {
+            dropped = 0;
+            {
+                source : SecondOwner = new Resource(42);
+                item : OwnedChoice = source;
+                if ((Resource*)source != null || inspectOwned(item) != 42) return -1;
+                if (dropped != 0) return -2;
+            }
+            return dropped;
+        }
+        ownerTemporary() : int {
+            dropped = 0;
+            {
+                source : SecondOwner = new Resource(42);
+                observed : int = inspectOwned(OwnedChoice(source));
+                if (observed != 42 || (Resource*)source != null) return -1;
+                if (dropped != 1) return -2;
+            }
+            return dropped;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)(int)>("primitiveDirect")(42) == 42);
+    CHECK(jit->lookup_symbol<int(*)(int)>("primitiveTemporary")(42) == 42);
+    CHECK(jit->lookup_symbol<int(*)(int)>("underlyingDirect")(42) == 42);
+    CHECK(jit->lookup_symbol<int(*)(int)>("underlyingTemporary")(42) == 42);
+    CHECK(jit->lookup_symbol<int(*)(int)>("underlyingExplicit")(42) == 42);
+    CHECK(jit->lookup_symbol<int(*)()>("ownerAliasInitialization")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("ownerDirect")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("ownerTemporary")() == 1);
+
+    CHECK(compile_should_fail(R"SRC(
+        module unrelated_union_construction_rejected;
+        union First { value : int; }
+        union Second { value : int; }
+        test() { source : First; destination : Second = #source; }
+    )SRC", nullptr));
+}
+
+TEST_CASE("Union ownership cleanup: aggregate prvalues preserve construction elision",
+          "[gen][union][owner][move][elision][lifecycle][union-owner-cleanup][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module union_aggregate_prvalue_elision;
+        dropped : int = 0;
+        holders : int = 0;
+        struct Resource {
+            Resource() {}
+            ~Resource() { ++dropped; }
+        }
+        union Choice { empty : int; owned : Resource!; }
+        struct Holder {
+            payload : Choice;
+            Holder() { payload.owned = new Resource(); }
+            ~Holder() { ++holders; }
+        }
+        classes : int = 0;
+        class ClassHolder {
+            payload : Choice;
+            ClassHolder(first : int, second : int) { payload.owned = new Resource(); }
+            ~ClassHolder() { ++classes; }
+        }
+        union Box { empty : int; holder : Holder; }
+        make() : Holder { return Holder(); }
+        makeClass() : ClassHolder { return ClassHolder(20, 22); }
+        run() : int {
+            dropped = 0; holders = 0;
+            { direct : Holder = Holder(); }
+            if (dropped != 1 || holders != 1) return -1;
+            { nested : Holder = Holder(Holder()); }
+            if (dropped != 2 || holders != 2) return -2;
+            { returned : Holder = make(); }
+            if (dropped != 3 || holders != 3) return -3;
+            { item : Box = Holder(); }
+            if (dropped != 4 || holders != 4) return -4;
+            Box(Holder());
+            if (holders != 5) return -5;
+            return dropped;
+        }
+        classPrvalues() : int {
+            dropped = 0; classes = 0;
+            { direct : ClassHolder = ClassHolder(20, 22); }
+            if (dropped != 1 || classes != 1) return -1;
+            { nested : ClassHolder = ClassHolder(ClassHolder(20, 22)); }
+            if (dropped != 2 || classes != 2) return -2;
+            { returned : ClassHolder = makeClass(); }
+            if (classes != 3) return -3;
+            return dropped;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("run")() == 5);
+    CHECK(jit->lookup_symbol<int(*)()>("classPrvalues")() == 3);
+
+    CHECK(compile_should_fail(R"SRC(
+        module union_aggregate_lvalue_copy_rejected;
+        union Choice { empty : int; owned : int!; }
+        struct Holder { payload : Choice; }
+        test() { source : Holder; copy : Holder = source; }
+    )SRC", nullptr));
+    CHECK(compile_should_fail(R"SRC(
+        module union_class_lvalue_copy_rejected;
+        union Choice { empty : int; owned : int!; }
+        class Holder { payload : Choice; Holder() {} }
+        test() { source : Holder; copy : Holder = source; }
+    )SRC", nullptr));
+}

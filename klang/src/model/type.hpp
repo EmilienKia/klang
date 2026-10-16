@@ -65,6 +65,7 @@ class ns;
 
 class aggregate;
 class structure;
+class union_type_def;
 
 class null_type;
 class reference_type;
@@ -883,6 +884,7 @@ protected:
     std::vector<field> _fields;
 
     std::weak_ptr<k::model::aggregate> _struct;
+    std::weak_ptr<union_type_def> _union;
 
     llvm::Constant* _default_init_constant = nullptr;
 
@@ -900,6 +902,8 @@ public:
 
     std::string to_string() const override;
     std::shared_ptr<aggregate> get_struct() const;
+    std::shared_ptr<union_type_def> get_union() const { return _union.lock(); }
+    void set_union(const std::shared_ptr<union_type_def>& definition) { _union = definition; }
 
     /**
      * Rebind the owning aggregate of this struct_type.

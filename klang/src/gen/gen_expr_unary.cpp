@@ -384,6 +384,24 @@ void implementation_generator::visit_load_value_expression(load_value_expression
         // constructor may transfer resources; a copy constructor must not alias them.
         auto st_type_nc = std::dynamic_pointer_cast<struct_type>(
             type::remove_const(type::canonical(load_type)));
+        if (st_type_nc && st_type_nc->get_union()) {
+            auto source_type = expr.sub_expr()->get_type();
+            const bool move = type::is_drain(source_type)
+                || std::dynamic_pointer_cast<temporary_construction_expression>(expr.sub_expr());
+            if (move) {
+                _value = _builder->CreateLoad(_context->get_llvm_type(st_type_nc), src_ptr);
+                emit_transferred_value_reset(_builder.get(), src_ptr, st_type_nc);
+                cancel_temporary_cleanup(src_ptr);
+            } else {
+                auto* fn = _builder->GetInsertBlock()->getParent();
+                llvm::IRBuilder<> entry(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+                auto* copy = entry.CreateAlloca(_context->get_llvm_type(st_type_nc), nullptr, "union_copy");
+                emit_value_copy_or_move(copy, src_ptr, st_type_nc, false,
+                    expr.first_lexeme(), "by-value union copy", false, false);
+                _value = _builder->CreateLoad(_context->get_llvm_type(st_type_nc), copy);
+            }
+            return;
+        }
         if (st_type_nc) {
             auto sub_type = expr.sub_expr()->get_type();
             bool src_is_lvalue_ref = type::is_reference(sub_type) || type::is_drain(sub_type);

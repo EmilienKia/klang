@@ -617,15 +617,9 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
         // Null constructor signals that codegen should handle default init (zero-init + discriminant=0).
         ctx.var.set_var_constructor(nullptr);
         if (ctx.init_expr) {
+            // The initializer visitor already resolved and adapted the payload.
+            // Revisiting representation casts erases their nominal expression types.
             ctx.init_expr->set_constructor(nullptr);
-            for (size_t i = 0; i < ctx.init_expr->size(); ++i) {
-                _replacement_expr = nullptr;
-                ctx.init_expr->argument(i)->accept(*this);
-                if (_replacement_expr) {
-                    ctx.init_expr->assign_argument(i, _replacement_expr);
-                    _replacement_expr = nullptr;
-                }
-            }
         }
         return;
     }
@@ -693,7 +687,9 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
             auto ref_sub = type::canonical(type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype()));
             if (type::are_equal(ref_sub, st_type)) {
                 is_direct_copy = true;
-                is_lvalue_copy = true;
+                // Constructed prvalues are addressable ref<T> expressions,
+                // not lvalues requiring a copy constructor.
+                is_lvalue_copy = !std::dynamic_pointer_cast<temporary_construction_expression>(ctor_args[0]);
             }
         }
         if (is_direct_copy) {

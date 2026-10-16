@@ -88,7 +88,10 @@ union Payload {
   A `const` alternative cannot be re-assigned through the union after initial
   construction.
 - Alternative types may be any valid K type: primitives, structs, classes,
-  pointers, references, owners, arrays — **except** the drain addresser (`#`).
+  pointers, references, owners, callables, arrays — **except** the drain addresser (`#`).
+- Type names in alternatives, including callable signatures and array elements,
+  are resolved in the union's declaration scope. Same-layout types from different
+  declarations are not interchangeable array element types.
 
 ---
 
@@ -209,6 +212,73 @@ an owner-element array in the escaped default state is rejected when the union
 is copied, and unwinding during its cleanup does not destroy the remaining
 elements.
 
+Assigning an owner or owning callable must release the previous active resource,
+including when the same alternative is assigned repeatedly. Assigning `null`
+releases that resource and leaves a null value in the selected alternative.
+Assigning a non-owning alternative must not retain ownership of the old payload.
+
+### Copy and ownership transfer
+
+Typed construction must select alternatives by semantic type identity, not by
+their representation. An exact nominal match takes precedence over implicit
+conversions: two strong typedefs of the same underlying type remain distinct
+alternatives, including when they rename owner types. This rule applies equally
+to variable initializers and temporary union construction.
+Underlying values may still use the ordinary implicit conversions to an
+alternative. Representation conversions must not change the selected nominal
+alternative during construction.
+Strong typedefs of owner types retain ordinary ownership semantics: transferring
+such a value into an alternative transfers the allocation and nulls the source
+owner without changing the selected alternative's nominal type.
+
+```k
+typedef Token : int;
+typedef Other : int;
+union Choice { first: Token; second: Other; }
+item: Choice = (Other)42; // activates second, not first
+```
+
+A union containing an owner, owning callable, or recursively move-only
+alternative other than the first one is move-only. Copying such a union from an
+lvalue must be rejected at compile time, even when its current alternative is
+non-owning. This rule also applies to owned elements in sized-array alternatives
+and ownership nested in other unions or aggregates without a copy constructor.
+
+The first alternative is excluded from this static rule because it is also the
+default, unconstructed state of the union (see "Default state of a
+resource-bearing first alternative"). Copying a union whose first alternative
+holds resources therefore compiles, succeeds while the union is still in its
+default or empty state, and raises the runtime copy failure as soon as a live
+owner would be duplicated.
+
+An explicit drain (`#source`) or a temporary may transfer the active payload.
+Addressable constructed temporaries remain prvalues: initializing an aggregate
+containing a move-only union from such a temporary must not require a copy
+constructor. Construction into the final destination must not copy or destroy
+that destination as an intermediate temporary.
+After transfer, the source union has no active alternative and must not destroy
+the transferred payload. It may be assigned a new alternative normally; reading
+an alternative before reactivation fails the ordinary discriminant check.
+Self-transfer leaves the value unchanged. Transferring a sized-array payload
+empties the source array (its runtime size becomes zero).
+
+```k
+union Result { empty: int; value: int!; }
+
+source: Result;
+source.value = new int(42);
+destination: Result = #source; // transfers ownership; source is inactive
+// invalid: duplicate: Result = destination; // lvalue copy is forbidden
+source.empty = 0;             // source may be reused
+```
+
+Copyable union alternatives must use their ordinary value-copy semantics,
+including an aggregate's copy constructor, rather than duplicating owned
+resources with a bytewise copy. Assignment must destroy the destination's old
+active payload before activating the copied or transferred payload.
+Transfers between related union types retain the inheritance compatibility and
+runtime discriminant-range checks described below.
+
 ---
 
 ## 5. Member Access
@@ -221,6 +291,11 @@ v.d = 2.71;        // write alternative 'd'
 - **Read**: returns a reference to the storage reinterpreted as the
   alternative's type.
 - **Write**: stores the value and updates the discriminant.
+
+Invoke a callable alternative through a callable variable. For example,
+`view: &():int = callbacks.task;` borrows a live owning `!():int` alternative;
+`view()` then invokes it without moving its environment. Direct union-method
+syntax supports only `index()`, not `callbacks.task()`.
 
 ### Runtime discriminant check on read
 
@@ -431,16 +506,24 @@ union Value {
 
 ## 9. Destruction
 
-When a union value goes out of scope:
+When a union value goes out of scope, including during exception unwinding:
 
-- The compiler emits a **switch** on the discriminant.
-- For each alternative that has a non-trivial destructor (e.g., a struct with a
-  destructor, a class, or an owner), the destructor is called.
-- Alternatives with trivial types (primitives, pointers, references) require no
-  cleanup.
+- Only the active alternative is destroyed, exactly once.
+- Struct and class alternatives use their ordinary destructor semantics.
+- An owner alternative destroys and frees its non-null allocation. An owning
+  callable releases its non-null closure environment; null values do nothing.
+- Sized-array alternatives destroy their live elements in reverse index order.
+  This applies recursively to owners, owning callables, nested arrays and nested
+  unions. An owner of an array also releases the array allocation.
+- Primitives, pointers, references and borrowed callables must not acquire
+  ownership cleanup merely because they are stored in a union.
+- Destruction disarms each leaf before invoking a potentially throwing
+  destructor. If normal destruction throws, remaining array/nested-union
+  payloads must still be cleaned up without destroying completed leaves again.
 
 This ensures correct resource management regardless of which alternative is
-active.
+active. The same rules apply when replacing an active alternative or destroying
+a union field inside an enclosing aggregate.
 
 ---
 
@@ -448,7 +531,11 @@ active.
 
 Unions can be passed to functions:
 
-- **By value**: the entire union (discriminant + storage) is copied.
+- **By value**: copyable lvalues are copied using their active payload's ordinary
+  copy semantics. A drain or temporary transfers its payload. Move-only lvalues
+  must not be implicitly copied. The callee owns and destroys its by-value
+  parameter on normal exit or unwinding. If a later argument fails before
+  entry, already-prepared by-value union arguments must be destroyed.
 - **By reference** (`&`, `+`, `?`, `*`): a pointer to the union is passed.
 
 ```k

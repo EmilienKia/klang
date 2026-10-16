@@ -35,6 +35,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <unordered_set>
 #include <vector>
 
@@ -47,6 +48,54 @@ inline bool is_enum_backing_const_reference(const std::shared_ptr<enum_type>& so
     if (!ref || !type::is_const(ref->get_subtype())) return false;
     auto object = source->get_object_type();
     return object && type::remove_const(ref->get_subtype()) == object;
+}
+
+/** Remove resolved/const wrappers without erasing strong typedef identity. */
+inline std::shared_ptr<type> unqualified_nominal_type(std::shared_ptr<type> value_type) {
+    while (value_type) {
+        auto next = type::remove_const(value_type);
+        if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(next);
+            unresolved && unresolved->is_resolved()) {
+            next = unresolved->get_resolved();
+        } else if (auto unresolved = std::dynamic_pointer_cast<unresolved_callable_type>(next);
+                   unresolved && unresolved->is_resolved()) {
+            next = unresolved->get_resolved();
+        }
+        if (next == value_type) break;
+        value_type = next;
+    }
+    return value_type;
+}
+
+inline const union_alternative* find_union_alternative_for_argument(
+    const union_type_def& definition, const std::shared_ptr<type>& argument_type) {
+    auto argument = unqualified_nominal_type(argument_type);
+    for (const auto* alternative : definition.all_alternatives_ptrs()) {
+        if (!alternative || !alternative->resolved_type) continue;
+        if (type::are_equal(unqualified_nominal_type(alternative->resolved_type), argument))
+            return alternative;
+    }
+    if (type::is_reference(argument) || type::is_drain(argument)) {
+        argument = unqualified_nominal_type(argument->get_subtype());
+        for (const auto* alternative : definition.all_alternatives_ptrs()) {
+            if (!alternative || !alternative->resolved_type) continue;
+            if (type::are_equal(unqualified_nominal_type(alternative->resolved_type), argument))
+                return alternative;
+        }
+    }
+    return nullptr;
+}
+
+inline bool same_union_declaration(const std::shared_ptr<type>& left,
+                                   const std::shared_ptr<type>& right) {
+    // A typedef may convert to its underlying union, but layout equality never
+    // establishes compatibility between distinct union declarations.
+    auto left_union = std::dynamic_pointer_cast<struct_type>(
+        type::remove_const(type::canonical(left)));
+    auto right_union = std::dynamic_pointer_cast<struct_type>(
+        type::remove_const(type::canonical(right)));
+    return left_union && right_union && left_union->get_union()
+        && left_union->get_union() == right_union->get_union();
 }
 
 inline bool callee_cleans_owner_parameter(const std::shared_ptr<type>& parameter_type) {
@@ -127,6 +176,23 @@ llvm::Constant* materialize_annotation_array(
  */
 using virtual_call_emitter = std::function<llvm::Value*(llvm::FunctionType*, llvm::Value*,
     const std::vector<llvm::Value*>&, const std::string&)>;
+
+inline void emit_value_cleanup(
+    llvm::IRBuilder<>* builder, llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* storage, const std::shared_ptr<type>& value_type,
+    const virtual_call_emitter& emit_call = {});
+
+inline void emit_array_elements_cleanup(
+    llvm::IRBuilder<>* builder, llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* storage, const std::shared_ptr<array_type>& array,
+    const virtual_call_emitter& emit_call);
+
+inline llvm::Function* get_or_create_owned_container_cleanup_function(
+    llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    const std::shared_ptr<type>& value_type);
 
 /**
  * Return true if the given aggregate is ::k::Object (the root base class).
@@ -344,89 +410,15 @@ inline void emit_owner_object_destroy(
     // Const qualifies access, not destruction; aliases may also hide it.
     auto object_type = type::remove_const(type::canonical(alloc_type));
 
-    // Handle array types: call destructors on each element in reverse order
-    if (auto sized_arr = std::dynamic_pointer_cast<sized_array_type>(object_type)) {
-        // ── Sized (static) array: unrolled destructor loop ──
-        auto elem_type = sized_arr->get_subtype();
-        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
-            auto st = st_type->get_struct();
-            auto dtor = st ? st->get_destructor() : nullptr;
-            if (dtor) {
-                auto dtor_it = functions.find(dtor->shared_as<function>());
-                if (dtor_it != functions.end()) {
-                    auto* struct_llvm = sized_arr->get_llvm_struct_type();
-                    auto* llvm_arr_type = sized_arr->get_llvm_data_array_type();
-                    llvm::Value* data_ptr = builder->CreateStructGEP(struct_llvm, ptr_value,
-                        sized_array_type::FIELD_DATA, "arr_dtor_data");
-                    size_t arr_size = sized_arr->get_size();
-                    // Call destructors in REVERSE order
-                    for (size_t ri = arr_size; ri > 0; --ri) {
-                        size_t i = ri - 1;
-                        llvm::Value* elem_ptr = builder->CreateConstInBoundsGEP2_32(
-                            llvm_arr_type, data_ptr, 0, i, "arr_dtor_elem_" + std::to_string(i));
-                        if (emit_call) emit_call(dtor_it->second->getFunctionType(),
-                            dtor_it->second, {elem_ptr}, "");
-                        else builder->CreateCall(dtor_it->second, {elem_ptr});
-                    }
-                }
-            }
-        }
-    } else if (auto unsized_arr = std::dynamic_pointer_cast<array_type>(object_type)) {
-        // ── Unsized (dynamic) array: IR loop for destructors ──
-        auto elem_type = unsized_arr->get_subtype();
-        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
-            auto st = st_type->get_struct();
-            auto dtor = st ? st->get_destructor() : nullptr;
-            if (dtor) {
-                auto dtor_it = functions.find(dtor->shared_as<function>());
-                if (dtor_it != functions.end()) {
-                    auto* struct_llvm = unsized_arr->get_llvm_struct_type();
-                    auto* llvm_arr_type = unsized_arr->get_llvm_data_array_type();
-                    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    if (type::is_array(object_type)
+        || (type::is_struct(object_type) && std::dynamic_pointer_cast<struct_type>(object_type)->get_union())) {
+        auto* cleanup = get_or_create_owned_container_cleanup_function(mod, functions, object_type);
+        if (emit_call) emit_call(cleanup->getFunctionType(), cleanup, {ptr_value}, "");
+        else builder->CreateCall(cleanup, {ptr_value});
+        return;
+    }
 
-                    // Load count from field 0
-                    llvm::Value* count_ptr = builder->CreateStructGEP(struct_llvm, ptr_value,
-                        array_type::FIELD_SIZE, "dynarr_dtor_count_ptr");
-                    llvm::Value* count_val = builder->CreateLoad(i32_ty, count_ptr, "dynarr_dtor_count");
-
-                    llvm::Value* data_ptr = builder->CreateStructGEP(struct_llvm, ptr_value,
-                        array_type::FIELD_DATA, "dynarr_dtor_data");
-
-                    // Emit reverse-order IR loop: for (i = count; i > 0; --i) dtor(&data[i-1])
-                    auto* fn = builder->GetInsertBlock()->getParent();
-                    auto* loop_header = llvm::BasicBlock::Create(llvm_ctx, "dynarr_dtor_hdr", fn);
-                    auto* loop_body   = llvm::BasicBlock::Create(llvm_ctx, "dynarr_dtor_body", fn);
-                    auto* loop_end    = llvm::BasicBlock::Create(llvm_ctx, "dynarr_dtor_end", fn);
-
-                    auto* pre_bb = builder->GetInsertBlock();
-                    builder->CreateBr(loop_header);
-
-                    // Header: %ri = phi [count, pre], [%ri_next, body]; if ri > 0 goto body else end
-                    builder->SetInsertPoint(loop_header);
-                    llvm::PHINode* ri_phi = builder->CreatePHI(i32_ty, 2, "dynarr_dtor_ri");
-                    ri_phi->addIncoming(count_val, pre_bb);
-                    llvm::Value* cmp = builder->CreateICmpUGT(ri_phi,
-                        llvm::ConstantInt::get(i32_ty, 0), "dynarr_dtor_cmp");
-                    builder->CreateCondBr(cmp, loop_body, loop_end);
-
-                    // Body: index = ri - 1; dtor(&data[index]); ri_next = index
-                    builder->SetInsertPoint(loop_body);
-                    llvm::Value* idx = builder->CreateSub(ri_phi,
-                        llvm::ConstantInt::get(i32_ty, 1), "dynarr_dtor_idx");
-                    llvm::Value* indices[] = {llvm::ConstantInt::get(i32_ty, 0), idx};
-                    llvm::Value* elem_ptr = builder->CreateGEP(
-                        llvm_arr_type, data_ptr, indices, "dynarr_dtor_elem");
-                    if (emit_call) emit_call(dtor_it->second->getFunctionType(),
-                        dtor_it->second, {elem_ptr}, "");
-                    else builder->CreateCall(dtor_it->second, {elem_ptr});
-                    ri_phi->addIncoming(idx, builder->GetInsertBlock());
-                    builder->CreateBr(loop_header);
-
-                    builder->SetInsertPoint(loop_end);
-                }
-            }
-        }
-    } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(object_type)) {
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(object_type)) {
         // Call destructor if struct (single object). If the static type has a
         // vtable (class/interface reaching ::k::Object), dispatch virtually so
         // the most-derived override runs even though the owner is statically
@@ -572,54 +564,275 @@ inline void emit_sized_array_elements_cleanup(
     const std::shared_ptr<sized_array_type>& arr_type,
     const virtual_call_emitter& emit_call = {})
 {
-    auto elem_type = type::canonical(type::remove_const(arr_type->get_subtype()));
-    auto* struct_llvm = arr_type->get_llvm_struct_type();
-    auto* llvm_arr_type = arr_type->get_llvm_data_array_type();
-    if (!struct_llvm || !llvm_arr_type) return;
-    size_t arr_size = arr_type->get_size();
+    emit_array_elements_cleanup(builder, mod, functions, arr_alloca, arr_type, emit_call);
+}
 
-    llvm::Value* data_ptr = builder->CreateStructGEP(struct_llvm, arr_alloca,
-        sized_array_type::FIELD_DATA, "arr_cleanup_data");
+inline bool value_cleanup_has_pending_children(const std::shared_ptr<type>& value_type) {
+    auto bare = type::remove_const(type::canonical(value_type));
+    if (type::is_sized_array(bare)) return true;
+    auto st = std::dynamic_pointer_cast<struct_type>(bare);
+    return st && st->get_union();
+}
 
-    if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
-        // Struct elements: call destructors in reverse order
-        auto st = st_type->get_struct();
-        auto dtor = st ? st->get_destructor() : nullptr;
-        if (!dtor) return;
-        auto dtor_it = functions.find(dtor->shared_as<function>());
-        if (dtor_it == functions.end()) return;
-        // The count tracks the successfully constructed prefix during initialization.
-        // Decrement before destruction so an unwinding destructor is not repeated.
-        auto* count_ptr = builder->CreateStructGEP(struct_llvm, arr_alloca,
-            sized_array_type::FIELD_SIZE, "arr_cleanup_count_ptr");
-        auto* fn = builder->GetInsertBlock()->getParent();
-        auto* test_bb = llvm::BasicBlock::Create(builder->getContext(), "arr_cleanup_test", fn);
-        auto* destroy_bb = llvm::BasicBlock::Create(builder->getContext(), "arr_cleanup_destroy", fn);
-        auto* done_bb = llvm::BasicBlock::Create(builder->getContext(), "arr_cleanup_done", fn);
-        builder->CreateBr(test_bb);
-        builder->SetInsertPoint(test_bb);
-        auto* count = builder->CreateLoad(builder->getInt32Ty(), count_ptr, "arr_cleanup_count");
-        builder->CreateCondBr(builder->CreateICmpNE(count, builder->getInt32(0)), destroy_bb, done_bb);
-        builder->SetInsertPoint(destroy_bb);
-        auto* index = builder->CreateSub(count, builder->getInt32(1), "arr_cleanup_index");
-        builder->CreateStore(index, count_ptr);
-        auto* elem_ptr = builder->CreateInBoundsGEP(llvm_arr_type, data_ptr,
-            {builder->getInt32(0), index}, "arr_dtor_element");
-        if (emit_call) emit_call(dtor_it->second->getFunctionType(),
-            dtor_it->second, {elem_ptr}, "");
-        else builder->CreateCall(dtor_it->second, {elem_ptr});
-        builder->CreateBr(test_bb);
-        builder->SetInsertPoint(done_bb);
-    } else if (auto own_elem = std::dynamic_pointer_cast<owner_type>(elem_type)) {
-        // Owner elements: conditional destroy+free each in reverse order
-        for (size_t ri = arr_size; ri > 0; --ri) {
-            size_t i = ri - 1;
-            llvm::Value* elem_ptr = builder->CreateConstInBoundsGEP2_32(
-                llvm_arr_type, data_ptr, 0, i, "arr_own_" + std::to_string(i));
-            emit_owner_cleanup_if_nonnull(builder, mod, functions,
-                elem_ptr, own_elem->get_owned_type(),
-                "arr_own_cleanup_" + std::to_string(i), emit_call);
+inline void emit_array_elements_cleanup(
+    llvm::IRBuilder<>* builder, llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* storage, const std::shared_ptr<array_type>& array,
+    const virtual_call_emitter& emit_call)
+{
+    auto element = type::remove_const(type::canonical(array->get_subtype()));
+    if (!value_type_needs_cleanup(element)) return;
+    auto* layout = array->get_llvm_struct_type();
+    auto* data_type = array->get_llvm_data_array_type();
+    auto* count_ptr = builder->CreateStructGEP(layout, storage, array_type::FIELD_SIZE);
+    auto* data = builder->CreateStructGEP(layout, storage, array_type::FIELD_DATA);
+    auto* fn = builder->GetInsertBlock()->getParent();
+    auto* test = llvm::BasicBlock::Create(builder->getContext(), "arr_cleanup_test", fn);
+    auto* destroy = llvm::BasicBlock::Create(builder->getContext(), "arr_cleanup_destroy", fn);
+    auto* done = llvm::BasicBlock::Create(builder->getContext(), "arr_cleanup_done", fn);
+    builder->CreateBr(test);
+    builder->SetInsertPoint(test);
+    auto* count = builder->CreateLoad(builder->getInt32Ty(), count_ptr);
+    builder->CreateCondBr(builder->CreateICmpNE(count, builder->getInt32(0)), destroy, done);
+    builder->SetInsertPoint(destroy);
+    auto* index = builder->CreateSub(count, builder->getInt32(1));
+    // Nested containers retain their own progress. Keep them reachable if a
+    // child's destructor throws; leaf slots are disarmed before destruction.
+    const bool pending_children = value_cleanup_has_pending_children(element);
+    if (!pending_children) builder->CreateStore(index, count_ptr);
+    auto* child = builder->CreateInBoundsGEP(data_type, data,
+        {builder->getInt32(0), index}, "arr_cleanup_element");
+    emit_value_cleanup(builder, mod, functions, child, element, emit_call);
+    if (pending_children) builder->CreateStore(index, count_ptr);
+    builder->CreateBr(test);
+    builder->SetInsertPoint(done);
+}
+
+// The live word of a union lives at byte 4 of its { i64, [N x i8] } header.
+inline llvm::Value* union_live_state_slot(llvm::IRBuilder<>* builder, llvm::Value* storage) {
+    return builder->CreateConstGEP1_64(builder->getInt8Ty(), storage, 4, "union_live_state");
+}
+
+inline void emit_union_value_cleanup(
+    llvm::IRBuilder<>* builder, llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* storage, union_type_def& definition,
+    const virtual_call_emitter& emit_call = {});
+inline void emit_value_cleanup(
+    llvm::IRBuilder<>* builder, llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* storage, const std::shared_ptr<type>& value_type,
+    const virtual_call_emitter& emit_call)
+{
+    auto bare = type::remove_const(type::canonical(value_type));
+    if (auto owner = std::dynamic_pointer_cast<owner_type>(bare)) {
+        emit_owner_cleanup_if_nonnull(builder, mod, functions, storage,
+            owner->get_owned_type(), "value_owner_cleanup", emit_call);
+    } else if (auto callable = std::dynamic_pointer_cast<callable_type>(bare)) {
+        if (callable->is_owner()) {
+            emit_owned_callable_cleanup_if_nonnull(builder, mod, storage,
+                llvm::cast<llvm::StructType>(callable->get_llvm_type()), "value_callable_cleanup", emit_call);
         }
+    } else if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+        emit_array_elements_cleanup(builder, mod, functions, storage, array, emit_call);
+    } else if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
+        if (auto un = st->get_union()) {
+            emit_union_value_cleanup(builder, mod, functions, storage, *un, emit_call);
+        } else if (auto agg = st->get_struct(); agg && agg->get_destructor()) {
+            auto dtor = functions.find(agg->get_destructor()->shared_as<function>());
+            if (dtor == functions.end())
+                throw std::runtime_error("Missing destructor declaration during value cleanup");
+            if (agg->has_vtable()) {
+                auto* fn = builder->GetInsertBlock()->getParent();
+                auto* destroy = llvm::BasicBlock::Create(builder->getContext(), "value_destroy", fn);
+                auto* done = llvm::BasicBlock::Create(builder->getContext(), "value_destroy_done", fn);
+                auto* ptr_type = llvm::PointerType::get(builder->getContext(), 0);
+                auto* vptr = builder->CreateLoad(ptr_type, storage);
+                builder->CreateCondBr(builder->CreateIsNotNull(vptr), destroy, done);
+                builder->SetInsertPoint(destroy);
+                emit_virtual_destructor_call(builder, *agg, storage, emit_call);
+                builder->CreateBr(done);
+                builder->SetInsertPoint(done);
+            } else if (emit_call) {
+                emit_call(dtor->second->getFunctionType(), dtor->second, {storage}, "");
+            } else {
+                builder->CreateCall(dtor->second, {storage});
+            }
+        } else if (auto agg = st->get_struct(); agg && struct_releases_fields_without_destructor(*agg)) {
+            // Owners of a destructor-less struct are released field by field, in reverse order.
+            std::vector<std::pair<unsigned, std::shared_ptr<type>>> fields;
+            for (const auto& entry : agg->variables()) {
+                auto member = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+                if (!member || !type_releases_fields_without_destructor(member->get_type())) continue;
+                if (auto field = st->get_member(member->get_short_name()))
+                    fields.emplace_back(static_cast<unsigned>(field->index), member->get_type());
+            }
+            std::sort(fields.begin(), fields.end(),
+                [](const auto& a, const auto& b) { return a.first < b.first; });
+            for (auto it = fields.rbegin(); it != fields.rend(); ++it) {
+                auto* field_ptr = builder->CreateStructGEP(st->get_llvm_type(), storage, it->first);
+                emit_value_cleanup(builder, mod, functions, field_ptr, it->second, emit_call);
+            }
+        }
+    }
+}
+
+inline llvm::Function* get_or_create_union_cleanup_function(
+    llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    union_type_def& definition)
+{
+    const auto name = "__klang_union_cleanup_" + definition.get_mangled_name();
+    if (auto* existing = mod.getFunction(name)) return existing;
+    auto& ctx = mod.getContext();
+    auto* ptr = llvm::PointerType::get(ctx, 0);
+    auto* signature = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {ptr}, false);
+    auto* cleanup = llvm::Function::Create(signature, llvm::Function::InternalLinkage, name, mod);
+    auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), true));
+    cleanup->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+    auto* entry = llvm::BasicBlock::Create(ctx, "entry", cleanup);
+    auto* unwind = llvm::BasicBlock::Create(ctx, "cleanup_unwind", cleanup);
+    llvm::IRBuilder<> builder(entry);
+    virtual_call_emitter invoke = [&](llvm::FunctionType* type, llvm::Value* callee,
+                                     const std::vector<llvm::Value*>& args, const std::string&) -> llvm::Value* {
+        auto* next = llvm::BasicBlock::Create(ctx, "cleanup_continue", cleanup);
+        auto* call = builder.CreateInvoke(type, callee, next, unwind, args);
+        builder.SetInsertPoint(next);
+        return call;
+    };
+    emit_union_value_cleanup(&builder, mod, functions, cleanup->getArg(0), definition, invoke);
+    builder.CreateRetVoid();
+    builder.SetInsertPoint(unwind);
+    auto* exception = builder.CreateLandingPad(llvm::StructType::get(ctx, {ptr, builder.getInt32Ty()}), 0);
+    exception->setCleanup(true);
+    // Finish a retained array/nested-union prefix without revisiting disarmed leaves.
+    emit_union_value_cleanup(&builder, mod, functions, cleanup->getArg(0), definition);
+    builder.CreateResume(exception);
+    return cleanup;
+}
+
+inline std::string value_cleanup_symbol_key(const std::shared_ptr<type>& value_type) {
+    auto bare = type::remove_const(type::canonical(value_type));
+    if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
+        if (auto un = st->get_union()) return un->get_mangled_name();
+        if (auto aggregate = st->get_struct()) return aggregate->get_mangled_name();
+    }
+    if (auto array = std::dynamic_pointer_cast<array_type>(bare)) {
+        auto sized = std::dynamic_pointer_cast<sized_array_type>(array);
+        return "array_" + (sized ? std::to_string(sized->get_size()) : "dynamic")
+            + "_" + value_cleanup_symbol_key(array->get_subtype());
+    }
+    if (auto owner = std::dynamic_pointer_cast<owner_type>(bare))
+        return "owner_" + value_cleanup_symbol_key(owner->get_owned_type());
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(bare)) {
+        if (callable->is_unbound_member()) return "unbound_callable";
+        return callable->is_owner() ? "owned_callable" : "borrowed_callable";
+    }
+    return bare->to_string();
+}
+
+inline llvm::Function* get_or_create_owned_container_cleanup_function(
+    llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    const std::shared_ptr<type>& value_type)
+{
+    const auto name = "__klang_owned_cleanup_" + value_cleanup_symbol_key(value_type);
+    if (auto* existing = mod.getFunction(name)) return existing;
+    auto& ctx = mod.getContext();
+    auto* ptr = llvm::PointerType::get(ctx, 0);
+    auto* signature = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {ptr}, false);
+    auto* cleanup = llvm::Function::Create(signature, llvm::Function::InternalLinkage, name, mod);
+    auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+        llvm::FunctionType::get(llvm::Type::getInt32Ty(ctx), true));
+    cleanup->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+    auto free = mod.getOrInsertFunction("free", signature);
+    auto* entry = llvm::BasicBlock::Create(ctx, "entry", cleanup);
+    auto* unwind = llvm::BasicBlock::Create(ctx, "cleanup_unwind", cleanup);
+    llvm::IRBuilder<> builder(entry);
+    virtual_call_emitter invoke = [&](llvm::FunctionType* type, llvm::Value* callee,
+                                     const std::vector<llvm::Value*>& args, const std::string&) -> llvm::Value* {
+        auto* next = llvm::BasicBlock::Create(ctx, "cleanup_continue", cleanup);
+        auto* call = builder.CreateInvoke(type, callee, next, unwind, args);
+        builder.SetInsertPoint(next);
+        return call;
+    };
+    auto destroy = [&](const virtual_call_emitter& emit_call) {
+        if (auto array = std::dynamic_pointer_cast<array_type>(value_type))
+            emit_array_elements_cleanup(&builder, mod, functions, cleanup->getArg(0), array, emit_call);
+        else
+            emit_value_cleanup(&builder, mod, functions, cleanup->getArg(0), value_type, emit_call);
+    };
+    destroy(invoke);
+    builder.CreateCall(free, {cleanup->getArg(0)});
+    builder.CreateRetVoid();
+    builder.SetInsertPoint(unwind);
+    auto* exception = builder.CreateLandingPad(llvm::StructType::get(ctx, {ptr, builder.getInt32Ty()}), 0);
+    exception->setCleanup(true);
+    destroy({});
+    builder.CreateCall(free, {cleanup->getArg(0)});
+    builder.CreateResume(exception);
+    return cleanup;
+}
+
+inline void emit_transferred_value_reset(
+    llvm::IRBuilder<>* builder, llvm::Value* storage, const std::shared_ptr<type>& value_type)
+{
+    auto bare = type::remove_const(type::canonical(value_type));
+    if (auto st = std::dynamic_pointer_cast<struct_type>(bare); st && st->get_union()) {
+        auto* disc = builder->CreateStructGEP(st->get_llvm_type(), storage, 0);
+        builder->CreateStore(builder->getInt32(-1), disc);
+        builder->CreateStore(builder->getInt32(0), union_live_state_slot(builder, storage));
+    } else if (type::is_sized_array(bare)) {
+        builder->CreateStore(llvm::Constant::getNullValue(bare->get_llvm_type()), storage);
+    }
+}
+
+inline void emit_union_value_transfer(
+    llvm::IRBuilder<>* builder, llvm::Value* destination, union_type_def& destination_type,
+    llvm::Value* source, union_type_def& source_type, bool move,
+    const std::function<void(llvm::Value*, llvm::Value*, const std::shared_ptr<type>&)>& copy_value)
+{
+    auto* source_layout = source_type.get_struct_type()->get_llvm_type();
+    auto* destination_layout = destination_type.get_struct_type()->get_llvm_type();
+    auto* source_disc = builder->CreateStructGEP(source_layout, source, 0);
+    auto* destination_disc = builder->CreateStructGEP(destination_layout, destination, 0);
+    auto* source_live = union_live_state_slot(builder, source);
+    auto* destination_live = union_live_state_slot(builder, destination);
+    auto* disc = builder->CreateLoad(builder->getInt32Ty(), source_disc);
+    llvm::Value* live = builder->CreateLoad(builder->getInt32Ty(), source_live);
+    if (!move) {
+        // A copied escaped default is a constructed value in the destination.
+        live = builder->CreateSelect(builder->CreateICmpEQ(live, builder->getInt32(2)),
+            builder->getInt32(1), live);
+    }
+    builder->CreateStore(builder->getInt32(-1), destination_disc);
+    builder->CreateStore(builder->getInt32(0), destination_live);
+    auto* fn = builder->GetInsertBlock()->getParent();
+    auto* done = llvm::BasicBlock::Create(builder->getContext(), "union_transfer_done", fn);
+    auto* dispatch = builder->CreateSwitch(disc, done);
+    for (const auto* alternative : destination_type.all_alternatives_ptrs()) {
+        if (!source_type.get_alternative_by_global_index(alternative->index)) continue;
+        auto* branch = llvm::BasicBlock::Create(builder->getContext(),
+            "union_transfer_" + alternative->name, fn);
+        dispatch->addCase(builder->getInt32(alternative->index), branch);
+        builder->SetInsertPoint(branch);
+        auto* source_payload = builder->CreateStructGEP(source_layout, source, 1);
+        auto* destination_payload = builder->CreateStructGEP(destination_layout, destination, 1);
+        if (move) {
+            auto* payload_type = alternative->resolved_type->get_llvm_type();
+            builder->CreateStore(builder->CreateLoad(payload_type, source_payload), destination_payload);
+        } else {
+            copy_value(destination_payload, source_payload, alternative->resolved_type);
+        }
+        builder->CreateStore(disc, destination_disc);
+        builder->CreateStore(live, destination_live);
+        builder->CreateBr(done);
+    }
+    builder->SetInsertPoint(done);
+    if (move) {
+        builder->CreateStore(builder->getInt32(-1), source_disc);
+        builder->CreateStore(builder->getInt32(0), source_live);
     }
 }
 
@@ -635,11 +848,13 @@ inline void emit_sized_array_elements_cleanup(
  * copy that has no copy constructor at all).
  */
 inline bool aggregate_type_is_trivially_copyable(const std::shared_ptr<type>& t) {
-    auto nt = type::remove_const(t);
+    auto nt = type::remove_const(type::canonical(t));
     if (!nt) return true;
 
     // An owner directly owns heap memory — never bytewise copyable.
     if (std::dynamic_pointer_cast<owner_type>(nt)) return false;
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(nt); callable && callable->is_owner())
+        return false;
 
     // A sized array is trivially copyable iff its element type is.
     if (auto arr = std::dynamic_pointer_cast<sized_array_type>(nt)) {
@@ -650,7 +865,12 @@ inline bool aggregate_type_is_trivially_copyable(const std::shared_ptr<type>& t)
     if (!st_type) return true; // primitives, pointers, references, ...
 
     auto st = st_type->get_struct();
-    if (!st) return true; // union / unresolved struct type: handled elsewhere
+    if (!st) {
+        if (auto un = st_type->get_union())
+            for (const auto* alternative : un->all_alternatives_ptrs())
+                if (!aggregate_type_is_trivially_copyable(alternative->resolved_type)) return false;
+        return true;
+    }
 
     // A user or intrinsic destructor, or a copy constructor, signals that the
     // type manages its own resources and must not be copied bytewise.
@@ -685,12 +905,14 @@ inline bool aggregate_type_is_trivially_copyable(const std::shared_ptr<type>& t)
  * bytewise-copy; a destructor that frees a raw pointer member is not).
  */
 inline bool aggregate_type_has_resource_field(const std::shared_ptr<type>& t) {
-    auto nt = type::remove_const(t);
+    auto nt = type::remove_const(type::canonical(t));
     if (!nt) return false;
 
     if (type::is_owner(nt) || type::is_pointer(nt) || type::is_link(nt) || type::is_view(nt)) {
         return true;
     }
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(nt); callable && callable->is_owner())
+        return true;
 
     if (auto arr = std::dynamic_pointer_cast<sized_array_type>(nt)) {
         return aggregate_type_has_resource_field(arr->get_subtype());
@@ -700,7 +922,13 @@ inline bool aggregate_type_has_resource_field(const std::shared_ptr<type>& t) {
     if (!st_type) return false;
 
     auto st = st_type->get_struct();
-    if (!st) return false;
+    if (!st) {
+        // Union resources follow the union copy policy: alternative 0 (also the default
+        // state) is checked at runtime, owners in other alternatives make the union
+        // statically move-only. Other noncopyable payloads are rejected by the runtime copy.
+        if (st_type->get_union()) return value_type_is_move_only(nt);
+        return false;
+    }
 
     // An explicitly deleted copy constructor makes every aggregate embedding the type
     // non-copyable: a bytewise copy would bypass the deletion.
@@ -1082,7 +1310,8 @@ inline void collect_zero_state_leaves(const std::shared_ptr<type>& t, const std:
     if (!st) { profile.valid = false; return; }
     auto agg = st->get_struct();
     if (!agg) {
-        auto nested = find_union_by_struct_type(root, st);
+        auto nested = st->get_union();
+        if (!nested) nested = find_union_by_struct_type(root, st);
         if (!nested) profile.valid = false;
         else if (nested->has_nontrivial_destructor_alternative()) profile.leaves.push_back({steps, bare});
         return;
@@ -1137,6 +1366,115 @@ inline bool union_first_alternative_tracks_default(
     if (!type::is_sized_array(bare) && !(st && st->get_struct())) return false;
     auto profile = zero_state_of(bare, root, true);
     return profile.valid && !profile.leaves.empty();
+}
+
+// Releases the resource slots of an unconstructed (zero-filled but escaped) union
+// alternative field by field, like the generator's default-state cleanup: neither the
+// constructor nor the destructor of the alternative ever ran.
+inline void emit_default_payload_cleanup(
+    llvm::IRBuilder<>* builder, llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* storage, const std::shared_ptr<type>& payload_type,
+    const virtual_call_emitter& emit_call)
+{
+    auto bare = type::canonical(type::remove_const(type::canonical(payload_type)));
+    if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+        auto element = type::remove_const(type::canonical(array->get_subtype()));
+        if (!value_type_needs_cleanup(element)) return;
+        auto* layout = array->get_llvm_struct_type();
+        auto* data_type = array->get_llvm_data_array_type();
+        auto* count_ptr = builder->CreateStructGEP(layout, storage, array_type::FIELD_SIZE);
+        auto* data = builder->CreateStructGEP(layout, storage, array_type::FIELD_DATA);
+        auto* fn = builder->GetInsertBlock()->getParent();
+        auto* test = llvm::BasicBlock::Create(builder->getContext(), "default_arr_test", fn);
+        auto* destroy = llvm::BasicBlock::Create(builder->getContext(), "default_arr_destroy", fn);
+        auto* done = llvm::BasicBlock::Create(builder->getContext(), "default_arr_done", fn);
+        builder->CreateBr(test);
+        builder->SetInsertPoint(test);
+        auto* count = builder->CreateLoad(builder->getInt32Ty(), count_ptr);
+        builder->CreateCondBr(builder->CreateICmpNE(count, builder->getInt32(0)), destroy, done);
+        builder->SetInsertPoint(destroy);
+        auto* index = builder->CreateSub(count, builder->getInt32(1));
+        builder->CreateStore(index, count_ptr);
+        auto* child = builder->CreateInBoundsGEP(data_type, data,
+            {builder->getInt32(0), index}, "default_arr_element");
+        emit_default_payload_cleanup(builder, mod, functions, child, element, emit_call);
+        builder->CreateBr(test);
+        builder->SetInsertPoint(done);
+        return;
+    }
+    auto st = std::dynamic_pointer_cast<struct_type>(bare);
+    if (st && st->get_struct()) {
+        auto profile = zero_state_of(st, nullptr, false);
+        if (!profile.valid)
+            throw std::runtime_error("Cannot release the default state of '" + st->to_string()
+                + "' field by field");
+        for (auto leaf = profile.leaves.rbegin(); leaf != profile.leaves.rend(); ++leaf) {
+            llvm::Value* slot = storage;
+            for (const auto& [step_type, index] : leaf->steps)
+                slot = builder->CreateStructGEP(step_type->get_llvm_type(), slot, index, "default_field");
+            emit_value_cleanup(builder, mod, functions, slot, leaf->leaf_type, emit_call);
+        }
+        return;
+    }
+    emit_value_cleanup(builder, mod, functions, storage, payload_type, emit_call);
+}
+
+// Mirrors the generator's union cleanup: a default (zero-filled) first alternative is not
+// an object, an escaped default one releases its owned slots field by field, and the
+// union is left inactive.
+inline void emit_union_value_cleanup(
+    llvm::IRBuilder<>* builder, llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* storage, union_type_def& definition,
+    const virtual_call_emitter& emit_call)
+{
+    auto* layout = definition.get_struct_type()->get_llvm_type();
+    auto* disc_ptr = builder->CreateStructGEP(layout, storage, 0);
+    auto* live_ptr = union_live_state_slot(builder, storage);
+    auto* disc = builder->CreateLoad(builder->getInt32Ty(), disc_ptr);
+    auto* fn = builder->GetInsertBlock()->getParent();
+    auto* done = llvm::BasicBlock::Create(builder->getContext(), "union_cleanup_done", fn);
+    const auto* first = definition.get_alternative_by_global_index(0);
+    auto first_type = first && first->resolved_type
+        ? type::canonical(type::remove_const(type::canonical(first->resolved_type))) : nullptr;
+    auto first_callable = std::dynamic_pointer_cast<callable_type>(first_type);
+    const bool first_is_resource = has_default_nested_union(definition) || type::is_owner(first_type)
+        || (first_callable && first_callable->is_owner());
+    const bool tracks_default = union_first_alternative_tracks_default(definition, nullptr);
+    auto* dispatch = builder->CreateSwitch(disc, done);
+    for (const auto* alternative : definition.all_alternatives_ptrs()) {
+        if (!value_type_needs_cleanup(alternative->resolved_type)) continue;
+        auto* branch = llvm::BasicBlock::Create(builder->getContext(),
+            "union_cleanup_" + alternative->name, fn);
+        dispatch->addCase(builder->getInt32(alternative->index), branch);
+        builder->SetInsertPoint(branch);
+        auto* payload = builder->CreateStructGEP(layout, storage, 1);
+        const bool pending_children = value_cleanup_has_pending_children(alternative->resolved_type);
+        if (alternative->index == 0 && !first_is_resource) {
+            auto* state = builder->CreateLoad(builder->getInt32Ty(), live_ptr);
+            if (tracks_default) {
+                auto* escaped = llvm::BasicBlock::Create(builder->getContext(), "union_cleanup_escaped", fn);
+                auto* regular = llvm::BasicBlock::Create(builder->getContext(), "union_cleanup_regular", fn);
+                builder->CreateCondBr(builder->CreateICmpEQ(state, builder->getInt32(2)), escaped, regular);
+                builder->SetInsertPoint(escaped);
+                emit_default_payload_cleanup(builder, mod, functions, payload,
+                    alternative->resolved_type, emit_call);
+                builder->CreateBr(done);
+                builder->SetInsertPoint(regular);
+            }
+            // A default, unconstructed first alternative owns nothing.
+            auto* live = llvm::BasicBlock::Create(builder->getContext(), "union_cleanup_live", fn);
+            builder->CreateCondBr(builder->CreateICmpEQ(state, builder->getInt32(0)), done, live);
+            builder->SetInsertPoint(live);
+        }
+        if (!pending_children) builder->CreateStore(builder->getInt32(-1), disc_ptr);
+        emit_value_cleanup(builder, mod, functions, payload, alternative->resolved_type, emit_call);
+        builder->CreateBr(done);
+    }
+    builder->SetInsertPoint(done);
+    builder->CreateStore(builder->getInt32(-1), disc_ptr);
+    builder->CreateStore(builder->getInt32(0), live_ptr);
 }
 
 // Copy-initialising an aggregate from an lvalue of its own type chooses among its

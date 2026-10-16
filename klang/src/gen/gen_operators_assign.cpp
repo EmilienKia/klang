@@ -446,6 +446,11 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
             _builder->SetInsertPoint(done);
             cancel_temporary_cleanup(src);
         } else {
+            if (value_type_is_move_only(nt)) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                    lexeme, "Type '{}' is not copyable during {}: owned payloads require a drain or a temporary",
+                    {nt->to_string(), copy_context ? copy_context : "copy"});
+            }
             emit_union_copy(dest, src, *un, *un, destroy_dest_first, source_const);
         }
         return;
@@ -504,6 +509,117 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
         }
         incoming.transfer();
         if (src_is_tracked_temp) cancel_temporary_cleanup(src);
+        return;
+    }
+
+    // Unions are transferred by the union branch above; sized arrays are copied element-wise.
+    auto array_type = std::dynamic_pointer_cast<sized_array_type>(nt);
+    if (array_type) {
+        if (!src_is_tracked_temp && value_type_is_move_only(nt)) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                lexeme, "Type '{}' is not copyable during {}: owned payloads require a drain or a temporary",
+                {nt->to_string(), copy_context ? copy_context : "copy"});
+        }
+        if (dest == src) return;
+        auto* fn = _builder->GetInsertBlock()->getParent();
+        auto* transfer = llvm::BasicBlock::Create(_builder->getContext(), "value_transfer", fn);
+        auto* done = llvm::BasicBlock::Create(_builder->getContext(), "value_transfer_done", fn);
+        _builder->CreateCondBr(_builder->CreateICmpEQ(dest, src), done, transfer);
+        _builder->SetInsertPoint(transfer);
+        if (destroy_dest_first) {
+            emit_value_cleanup(_builder.get(), get_module(), _context->_functions,
+                dest, nt, make_virtual_call_emitter());
+        }
+        if (src_is_tracked_temp) {
+            _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(), _builder->getInt64(sz));
+            emit_transferred_value_reset(_builder.get(), src, nt);
+            cancel_temporary_cleanup(src);
+        } else {
+            auto* layout = array_type->get_llvm_struct_type();
+            auto* data_type = array_type->get_llvm_data_array_type();
+            auto* target_data = _builder->CreateStructGEP(layout, dest, sized_array_type::FIELD_DATA);
+            auto* source_data = _builder->CreateStructGEP(layout, src, sized_array_type::FIELD_DATA);
+            auto* target_count = _builder->CreateStructGEP(layout, dest, sized_array_type::FIELD_SIZE);
+            auto* source_count_ptr = _builder->CreateStructGEP(layout, src, sized_array_type::FIELD_SIZE);
+            auto* source_count = _builder->CreateLoad(_builder->getInt32Ty(), source_count_ptr);
+            _builder->CreateStore(llvm::Constant::getNullValue(layout), dest);
+            auto element = type::remove_const(type::canonical(array_type->get_subtype()));
+            auto& ctx = _builder->getContext();
+            auto* ptr_type = llvm::PointerType::get(ctx, 0);
+            auto* exception_type = llvm::StructType::get(ctx, {ptr_type, _builder->getInt32Ty()});
+            cleanup_lpad_context cleanup;
+            cleanup.lpad_bb = llvm::BasicBlock::Create(ctx, "array_copy_lpad", fn);
+            cleanup.cleanup_code_bb = llvm::BasicBlock::Create(ctx, "array_copy_unwind", fn);
+            const unsigned cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
+            const unsigned catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
+            const bool has_catch = catch_depth != 0;
+            if (cleanup_depth > catch_depth) {
+                cleanup.continuation = cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP;
+                cleanup.chain_target_bb = _cleanup_lpad_stack.top().cleanup_code_bb;
+            } else if (has_catch) {
+                cleanup.continuation = cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH;
+                cleanup.chain_target_bb = _landing_pad_stack.top().dispatch_bb;
+                cleanup.catch_exc_alloca = _landing_pad_stack.top().exc_ptr_alloca;
+                cleanup.catch_exc_sel_alloca = _landing_pad_stack.top().exc_sel_alloca;
+            } else {
+                cleanup.continuation = cleanup_lpad_context::RESUME;
+            }
+            if (!fn->hasPersonalityFn()) {
+                auto personality = get_module().getOrInsertFunction("__gxx_personality_v0",
+                    llvm::FunctionType::get(_builder->getInt32Ty(), true));
+                fn->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+            }
+            if (!_exc_ptr_slot) {
+                llvm::IRBuilder<> entry(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+                _exc_ptr_slot = entry.CreateAlloca(ptr_type);
+                _exc_sel_slot = entry.CreateAlloca(entry.getInt32Ty());
+            }
+            cleanup.depth = ++_lpad_depth_counter;
+            _cleanup_lpad_stack.push(cleanup);
+            auto* test = llvm::BasicBlock::Create(ctx, "array_copy_test", fn);
+            auto* copy = llvm::BasicBlock::Create(ctx, "array_copy_element", fn);
+            auto* copied = llvm::BasicBlock::Create(ctx, "array_copied", fn);
+            _builder->CreateBr(test);
+            _builder->SetInsertPoint(test);
+            auto* index = _builder->CreateLoad(_builder->getInt32Ty(), target_count);
+            _builder->CreateCondBr(_builder->CreateICmpULT(index, source_count), copy, copied);
+            _builder->SetInsertPoint(copy);
+            auto* target = _builder->CreateInBoundsGEP(data_type, target_data, {_builder->getInt32(0), index});
+            auto* source = _builder->CreateInBoundsGEP(data_type, source_data, {_builder->getInt32(0), index});
+            if (type::is_struct(element) || type::is_sized_array(element))
+                emit_value_copy_or_move(target, source, element, false, lexeme, copy_context, false, false);
+            else
+                _builder->CreateStore(_builder->CreateLoad(_context->get_llvm_type(element), source), target);
+            _builder->CreateStore(_builder->CreateAdd(index, _builder->getInt32(1)), target_count);
+            _builder->CreateBr(test);
+            _cleanup_lpad_stack.pop();
+            _builder->SetInsertPoint(cleanup.lpad_bb);
+            auto* exception = _builder->CreateLandingPad(exception_type, has_catch ? 1 : 0);
+            exception->setCleanup(true);
+            if (has_catch) exception->addClause(llvm::ConstantPointerNull::get(ptr_type));
+            _builder->CreateStore(_builder->CreateExtractValue(exception, 0), _exc_ptr_slot);
+            _builder->CreateStore(_builder->CreateExtractValue(exception, 1), _exc_sel_slot);
+            _builder->CreateBr(cleanup.cleanup_code_bb);
+            _builder->SetInsertPoint(cleanup.cleanup_code_bb);
+            emit_value_cleanup(_builder.get(), get_module(), _context->_functions, dest, nt);
+            if (cleanup.continuation == cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP) {
+                _builder->CreateBr(cleanup.chain_target_bb);
+            } else {
+                auto* exception_ptr = _builder->CreateLoad(ptr_type, _exc_ptr_slot);
+                auto* selector = _builder->CreateLoad(_builder->getInt32Ty(), _exc_sel_slot);
+                if (cleanup.continuation == cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH) {
+                    _builder->CreateStore(exception_ptr, cleanup.catch_exc_alloca);
+                    _builder->CreateStore(selector, cleanup.catch_exc_sel_alloca);
+                    _builder->CreateBr(cleanup.chain_target_bb);
+                } else {
+                    auto* resume = _builder->CreateInsertValue(llvm::UndefValue::get(exception_type), exception_ptr, 0);
+                    _builder->CreateResume(_builder->CreateInsertValue(resume, selector, 1));
+                }
+            }
+            _builder->SetInsertPoint(copied);
+        }
+        _builder->CreateBr(done);
+        _builder->SetInsertPoint(done);
         return;
     }
 
@@ -923,8 +1039,8 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         // Source must be a reference to a sized array of the same element type.
         auto dest_arr = std::dynamic_pointer_cast<sized_array_type>(target_type);
         std::shared_ptr<type> src_inner_type = source_type;
-        if (type::is_reference(source_type)) {
-            src_inner_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+        if (type::is_reference(source_type) || type::is_drain(source_type)) {
+            src_inner_type = source_type->get_subtype();
         }
         if (!type::is_sized_array(src_inner_type)) {
             throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SHIFT_NOT_INT), expr.first_lexeme(),
@@ -954,7 +1070,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         // Type of the assignment expression is ref<dest array>
         expr.set_type(ref_target_type);
         // Ensure the source is referenced (if it isn't already)
-        if (!type::is_reference(source_type)) {
+        if (!type::is_reference(source_type) && !type::is_drain(source_type)) {
             right = load_value_expression::make_shared(right);
             right->set_type(source_type->get_reference());
             expr.assign_right(right);
@@ -1180,8 +1296,8 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 // Check if the source is also a union type and if there is an inheritance
                 // relationship (upcast: derived→base, or downcast: base→derived).
                 auto src_inner = source_type;
-                if (type::is_reference(src_inner)) {
-                    src_inner = std::dynamic_pointer_cast<reference_type>(src_inner)->get_subtype();
+                if (type::is_reference(src_inner) || type::is_drain(src_inner)) {
+                    src_inner = src_inner->get_subtype();
                 }
                 src_inner = type::canonical(type::remove_const(src_inner));
                 if (auto src_st = std::dynamic_pointer_cast<struct_type>(src_inner)) {
@@ -1191,7 +1307,13 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                         if (!std::dynamic_pointer_cast<temporary_construction_expression>(right)) {
                             const bool source_const = type::is_reference(source_type)
                                 && type::is_const(source_type->get_subtype());
+                            if (type::is_reference(source_type) && value_type_is_move_only(st_type)) {
+                                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                                    expr.first_lexeme(), "Union '{}' is not copyable: owned payloads require a drain",
+                                    {st_type->to_string()});
+                            }
                             check_union_payload_copy_contract(src_st, source_const, expr.first_lexeme());
+
                         }
                         expr.set_type(ref_target_type);
                         return;
@@ -1213,6 +1335,12 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                                     "Cannot assign union of type '{}' to union of type '{}': "
                                     "the two union types are unrelated (no inheritance relationship)",
                                     {src_inner->to_string(), target_type->to_string()});
+                            }
+                            if (type::is_reference(source_type) && value_type_is_move_only(src_st)
+                                && !std::dynamic_pointer_cast<temporary_construction_expression>(right)) {
+                                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                                    expr.first_lexeme(), "Union '{}' is not copyable: owned payloads require a drain",
+                                    {src_st->to_string()});
                             }
                             // Allow the assignment; do NOT wrap the source in load_value_expression
                             // so that codegen sees both as pointers (needed for field-by-field copy).
@@ -1393,10 +1521,179 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         }
     }
 
+    auto nested_union_type = union_alt_for_assign
+        ? std::dynamic_pointer_cast<struct_type>(
+            type::remove_const(type::canonical(union_alt_for_assign->resolved_type))) : nullptr;
+    if (!union_moe || (nested_union_type && nested_union_type->get_union())) {
+        auto left_type = expr.left()->get_type();
+        auto target = left_type && type::is_reference(left_type)
+            ? type::remove_const(type::canonical(left_type->get_subtype())) : nullptr;
+        auto target_struct = std::dynamic_pointer_cast<struct_type>(target);
+        auto source_type = type::remove_const(type::canonical(expr.right()->get_type()));
+        const bool source_reference = type::is_reference(source_type);
+        const bool source_drain = type::is_drain(source_type);
+        auto source_value_type = source_reference || source_drain
+            ? type::remove_const(type::canonical(source_type->get_subtype())) : source_type;
+        auto source_struct = std::dynamic_pointer_cast<struct_type>(source_value_type);
+        if (target_struct && target_struct->get_union() && source_struct && source_struct->get_union()) {
+            auto target_union = target_struct->get_union();
+            auto source_union = source_struct->get_union();
+            const bool compatible = target_union == source_union
+                || scope_lookup::is_base_union_of(*target_union, *source_union)
+                || scope_lookup::is_base_union_of(*source_union, *target_union);
+            if (!compatible) {
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_ASSIGN_TYPE_MISMATCH),
+                    expr.first_lexeme(), "Cannot assign unrelated union '{}' to '{}'",
+                    {source_struct->to_string(), target_struct->to_string()});
+            }
+            _skip_union_disc_check = false;
+            llvm::Value* parent_union = nullptr;
+            llvm::Value* parent_discriminant = nullptr;
+            llvm::Value* destination = nullptr;
+            if (union_moe) {
+                union_moe->sub_expr()->accept(*this);
+                parent_union = _value;
+                auto* layout = union_def_for_assign->get_struct_type()->get_llvm_type();
+                destination = _builder->CreateStructGEP(layout, parent_union, 1);
+                parent_discriminant = _builder->CreateStructGEP(layout, parent_union, 0);
+            } else {
+                destination = checked_legacy_result(evaluate_assignment_place(*expr.left()));
+            }
+            auto* saved_sret = _sret_destination;
+            _sret_destination = nullptr;
+            call_argument_cleanup_scope pending_source(*this, value_type_needs_cleanup(source_struct));
+            expr.right()->accept(*this);
+            _sret_destination = saved_sret;
+            auto* source = _value;
+            const bool move = source_drain || !source_reference || is_expression_temporary(source);
+            if (!move && value_type_is_move_only(source_struct)) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                    expr.first_lexeme(), "Union '{}' is not copyable: owned payloads require a drain",
+                    {source_struct->to_string()});
+            }
+            if (move) source = pending_source.track(source_struct, source);
+            if (!source->getType()->isPointerTy()) {
+                auto* fn = _builder->GetInsertBlock()->getParent();
+                llvm::IRBuilder<> entry(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+                auto* slot = entry.CreateAlloca(source_struct->get_llvm_type());
+                _builder->CreateStore(source, slot);
+                source = slot;
+            }
+            auto* fn = _builder->GetInsertBlock()->getParent();
+            auto* assign = llvm::BasicBlock::Create(**_context, "union_assign", fn);
+            auto* done = llvm::BasicBlock::Create(**_context, "union_assigned", fn);
+            _builder->CreateCondBr(_builder->CreateICmpEQ(destination, source), done, assign);
+            _builder->SetInsertPoint(assign);
+            if (target_union != source_union && scope_lookup::is_base_union_of(*target_union, *source_union)) {
+                auto* disc_ptr = _builder->CreateStructGEP(source_struct->get_llvm_type(), source, 0);
+                auto* disc = _builder->CreateLoad(_builder->getInt32Ty(), disc_ptr);
+                auto* in_range = _builder->CreateICmpULT(disc, _builder->getInt32(target_union->total_alternative_count()));
+                auto* valid = llvm::BasicBlock::Create(**_context, "union_assign_valid", fn);
+                auto* invalid = llvm::BasicBlock::Create(**_context, "union_assign_invalid", fn);
+                _builder->CreateCondBr(in_range, valid, invalid);
+                _builder->SetInsertPoint(invalid);
+                _builder->CreateCall(llvm::Intrinsic::getDeclaration(&get_module(), llvm::Intrinsic::trap));
+                _builder->CreateUnreachable();
+                _builder->SetInsertPoint(valid);
+            }
+            const bool source_const = source_reference && type::is_const(source_type->get_subtype());
+            if (parent_union) emit_union_cleanup(parent_union, *union_def_for_assign);
+            else if (move) emit_union_cleanup(destination, *target_union);
+            if (move) {
+                emit_union_value_transfer(_builder.get(), destination, *target_union, source, *source_union,
+                    true, [&](llvm::Value* dest, llvm::Value* src, const std::shared_ptr<type>& payload) {
+                        auto bare = type::remove_const(type::canonical(payload));
+                        if (type::is_struct(bare) || type::is_sized_array(bare))
+                            emit_value_copy_or_move(dest, src, bare, false, expr.first_lexeme(), "union assignment", false, false);
+                        else
+                            _builder->CreateStore(_builder->CreateLoad(_context->get_llvm_type(bare), src), dest);
+                    });
+                cancel_temporary_cleanup(source);
+            } else {
+                // The union copy validates the source, destroys the destination and keeps
+                // the default (unconstructed) and escaped live states.
+                emit_union_copy(destination, source, *target_union, *source_union,
+                    !parent_union, source_const);
+            }
+            if (parent_discriminant) {
+                _builder->CreateStore(_builder->getInt32(union_alt_for_assign->index), parent_discriminant);
+                set_union_live_state(parent_union, *union_def_for_assign, true);
+            }
+            pending_source.transfer();
+            _builder->CreateBr(done);
+            _builder->SetInsertPoint(done);
+            publish_expression_result(expr, place_result{destination});
+            return;
+        }
+    }
+
+    if (union_moe && union_def_for_assign && union_alt_for_assign
+        && !type::is_struct(type::remove_const(type::canonical(union_alt_for_assign->resolved_type)))) {
+        _skip_union_disc_check = false;
+        union_moe->sub_expr()->accept(*this);
+        auto* union_base = _value;
+        auto* layout = union_def_for_assign->get_struct_type()->get_llvm_type();
+        auto* destination = _builder->CreateStructGEP(layout, union_base, 1);
+        auto* discriminant = _builder->CreateStructGEP(layout, union_base, 0);
+        auto alternative_type = type::remove_const(type::canonical(union_alt_for_assign->resolved_type));
+        auto* saved_sret = _sret_destination;
+        _sret_destination = nullptr;
+        auto callable = std::dynamic_pointer_cast<callable_type>(alternative_type);
+        call_argument_cleanup_scope pending_source(*this,
+            type::is_owner(alternative_type) || (callable && callable->is_owner()));
+        expr.right()->accept(*this);
+        _sret_destination = saved_sret;
+        auto* source = pending_source.track(alternative_type, _value);
+        auto source_type = expr.right()->get_type();
+        const bool drain = type::is_drain(source_type);
+        if (type::is_sized_array(alternative_type) && value_type_is_move_only(alternative_type)
+            && !drain && !is_expression_temporary(source)) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                expr.first_lexeme(), "Array alternative '{}' is not copyable: owned elements require a drain",
+                {alternative_type->to_string()});
+        }
+        llvm::BasicBlock* array_done = nullptr;
+        if (type::is_sized_array(alternative_type)) {
+            auto* fn = _builder->GetInsertBlock()->getParent();
+            auto* assign = llvm::BasicBlock::Create(**_context, "union_array_assign", fn);
+            array_done = llvm::BasicBlock::Create(**_context, "union_array_assigned", fn);
+            _builder->CreateCondBr(_builder->CreateICmpEQ(destination, source), array_done, assign);
+            _builder->SetInsertPoint(assign);
+        }
+        emit_union_cleanup(union_base, *union_def_for_assign);
+        if (type::is_sized_array(alternative_type)) {
+            if (drain || is_expression_temporary(source)) {
+                auto* llvm_type = _context->get_llvm_type(alternative_type);
+                _builder->CreateStore(_builder->CreateLoad(llvm_type, source), destination);
+                emit_transferred_value_reset(_builder.get(), source, alternative_type);
+                cancel_temporary_cleanup(source);
+            } else {
+                emit_value_copy_or_move(destination, source, alternative_type, false,
+                    expr.first_lexeme(), "union alternative", false, false);
+            }
+        } else {
+            auto* llvm_type = _context->get_llvm_type(alternative_type);
+            if (!source) source = llvm::Constant::getNullValue(llvm_type);
+            else if (auto callable = std::dynamic_pointer_cast<callable_type>(alternative_type);
+                     callable && source->getType()->isPointerTy())
+                source = _builder->CreateLoad(llvm_type, source);
+            _builder->CreateStore(source, destination);
+        }
+        _builder->CreateStore(_builder->getInt32(union_alt_for_assign->index), discriminant);
+        set_union_live_state(union_base, *union_def_for_assign, true);
+        pending_source.transfer();
+        if (array_done) {
+            _builder->CreateBr(array_done);
+            _builder->SetInsertPoint(array_done);
+        }
+        publish_expression_result(expr, place_result{destination});
+        return;
+    }
+
     // A union alternative is an object only while its discriminant is active.
     // Inactive storage must be copy-constructed, never passed to operator=.
     if (union_moe && union_def_for_assign && union_alt_for_assign &&
-        type::is_struct(type::remove_const(union_alt_for_assign->resolved_type))) {
+        type::is_struct(type::remove_const(type::canonical(union_alt_for_assign->resolved_type)))) {
         _skip_union_disc_check = false;
         union_moe->sub_expr()->accept(*this);
         auto* union_base = _value;
@@ -1404,7 +1701,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_assign_disc");
         place_result destination{
             _builder->CreateStructGEP(union_llvm_type, union_base, 1, "union_assign_storage")};
-        auto alt_type = type::remove_const(union_alt_for_assign->resolved_type);
+        auto alt_type = type::remove_const(type::canonical(union_alt_for_assign->resolved_type));
         auto* new_disc = _builder->getInt32(union_alt_for_assign->index);
         call_argument_cleanup_scope incoming(*this, true);
 
@@ -1611,105 +1908,6 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
     }
 
-    // ── Union member assignment ─────────────────────────────────────────────
-    // If the LHS is a member access on a union, destroy the previously-active
-    // alternative, store the new value, and update the discriminant. This must
-    // run *before* the owner/array special cases below, otherwise an owner or
-    // array alternative would short-circuit (return) without updating the
-    // discriminant — leaving the union mistagged and crashing on the next read.
-    {
-        auto lhs_expr = expr.left();
-        while (auto lve = std::dynamic_pointer_cast<load_value_expression>(lhs_expr)) {
-            lhs_expr = lve->sub_expr();
-        }
-        if (auto moe = std::dynamic_pointer_cast<member_of_object_expression>(lhs_expr)) {
-            auto sub_type = moe->sub_expr()->get_type();
-            if (type::is_reference(sub_type)) {
-                sub_type = std::dynamic_pointer_cast<reference_type>(sub_type)->get_subtype();
-            }
-            if (auto st_type = std::dynamic_pointer_cast<struct_type>(sub_type)) {
-                if (!st_type->get_struct()) {
-                    // This is a union type — find the union_type_def
-                    std::shared_ptr<union_type_def> union_def;
-                    auto root_ns = _unit.get_root_namespace();
-                    if (root_ns) {
-                        union_def = find_union_by_struct_type(root_ns, st_type);
-                    }
-                    if (union_def) {
-                        const k::name& sym_name = moe->symbol().get_name();
-                        std::string alt_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
-                        auto* alt = union_def->get_alternative_by_name(alt_name);
-                        if (alt) {
-                            llvm::Value* union_base = union_base_once;
-                            if (union_base) {
-                                auto alt_type = alt->resolved_type;
-                                auto bare_alt = alt_type ? type::remove_const(alt_type) : nullptr;
-                                auto callable = std::dynamic_pointer_cast<callable_type>(bare_alt);
-                                const bool owning = type::is_owner(bare_alt)
-                                    || (callable && callable->is_owner());
-                                const bool array_temporary = type::is_sized_array(bare_alt)
-                                    && is_expression_temporary(right);
-                                call_argument_cleanup_scope incoming(*this, owning || array_temporary);
-                                if (owning) right = incoming.track(bare_alt, right);
-                                if (array_temporary) incoming.track_storage(bare_alt, right);
-                                if (type::is_sized_array(bare_alt) && right->getType()->isPointerTy()) {
-                                    auto* fn = _builder->GetInsertBlock()->getParent();
-                                    auto* copy = llvm::BasicBlock::Create(**_context, "union_array_assign", fn);
-                                    auto* done = llvm::BasicBlock::Create(**_context, "union_array_assigned", fn);
-                                    _builder->CreateCondBr(_builder->CreateICmpEQ(left, right), done, copy);
-                                    _builder->SetInsertPoint(copy);
-                                    emit_union_cleanup(union_base, *union_def);
-                                    auto* union_llvm_type = st_type->get_llvm_type();
-                                    auto* disc_ptr = _builder->CreateStructGEP(
-                                        union_llvm_type, union_base, 0, "union_array_disc");
-                                    _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
-                                    set_union_live_state(union_base, *union_def, false);
-                                    auto source_type = expr.right()->get_type();
-                                    const bool source_const = type::is_reference(source_type)
-                                        && type::is_const(source_type->get_subtype());
-                                    if (emit_union_payload_copy(left, right, bare_alt, source_const)) {
-                                        _builder->CreateStore(_builder->getInt32(alt->index), disc_ptr);
-                                        set_union_live_state(union_base, *union_def, true);
-                                        _builder->CreateBr(done);
-                                    }
-                                    _builder->SetInsertPoint(done);
-                                    incoming.transfer();
-                                    publish_expression_result(expr, destination);
-                                    return;
-                                }
-                                // Destroy the previously-active alternative (handles
-                                // owner alternatives — frees their buffer).
-                                emit_union_cleanup_on_reassign(union_base, *union_def, alt->index);
-                                // Store the new value.
-                                auto alt_st = std::dynamic_pointer_cast<struct_type>(bare_alt);
-                                if (alt_st && right->getType()->isPointerTy()) {
-                                    emit_value_copy_or_move(left, right, alt_st, /*destroy_dest_first=*/false, expr.first_lexeme(), "=");
-                                } else {
-                                    llvm::Value* store_val = right;
-                                    if (!store_val) {
-                                        store_val = llvm::ConstantPointerNull::get(
-                                            llvm::PointerType::get(_builder->getContext(), 0));
-                                    }
-                                    _builder->CreateStore(store_val, left);
-                                }
-                                // Update the discriminant.
-                                auto* union_llvm_type = st_type->get_llvm_type();
-                                auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_disc_upd");
-                                _builder->CreateStore(
-                                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), alt->index),
-                                    disc_ptr);
-                                set_union_live_state(union_base, *union_def, true);
-                                incoming.transfer();
-                            }
-                            publish_expression_result(expr, destination);
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // ------------------------------------------------------------------
     // Array assignment: element-wise copy (spec: partial copy, no resize)
     // ------------------------------------------------------------------
@@ -1861,41 +2059,6 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             emit_null_check(right, fatal, "link_rebind", _null_failure_bb);
         }
     }
-
-    // ── Union inherited assignment (upcast: derived→base, downcast: base→derived) ──
-    // Detected when both LHS and RHS are union struct types with different struct types.
-    // In this case `right` is still a pointer (the ref wrapper was NOT stripped by the type
-    // resolver), so we can use it directly for field-by-field copy.
-    {
-        auto lhs_type = target_type;
-        auto rhs_model_type = expr.right()->get_type();
-        // source is still ref<union_T> (the type resolver kept it as a reference)
-        auto rhs_inner = rhs_model_type;
-        if (type::is_reference(rhs_inner)) {
-            rhs_inner = std::dynamic_pointer_cast<reference_type>(rhs_inner)->get_subtype();
-        }
-        const bool source_const = type::is_const(rhs_inner);
-        rhs_inner = type::canonical(type::remove_const(rhs_inner));
-        if (auto lhs_st = std::dynamic_pointer_cast<struct_type>(lhs_type)) {
-            if (auto rhs_st = std::dynamic_pointer_cast<struct_type>(rhs_inner)) {
-                if (!lhs_st->get_struct() && !rhs_st->get_struct() && lhs_st != rhs_st) {
-                    // Both are union struct types and they differ — do inherited copy
-                    auto root_ns = _unit.get_root_namespace();
-                    std::shared_ptr<union_type_def> lhs_udef, rhs_udef;
-                    if (root_ns) {
-                        lhs_udef = find_union_by_struct_type(root_ns, lhs_st);
-                        rhs_udef = find_union_by_struct_type(root_ns, rhs_st);
-                    }
-                    if (lhs_udef && rhs_udef) {
-                        emit_union_copy(left, right, *lhs_udef, *rhs_udef, true, source_const);
-                        publish_expression_result(expr, destination);
-                        return;
-                    }
-                }
-            }
-        }
-    }
-    // ───────────────────────────────────────────────────────────────────────
 
      // ── Struct value copy/move (no operator= overload) ───────────────────────
     // K does not provide user-defined copy-assignment operators, so a plain

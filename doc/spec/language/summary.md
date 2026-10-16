@@ -1353,9 +1353,11 @@ A discriminated (tagged) union holds one active alternative at a time. A hidden
 | Operation | Behaviour |
 |-----------|-----------|
 | Default construction | Selects alternative 0 and zero-initializes storage without constructing a class/struct payload. |
+| Typed construction | An exact nominal alternative takes precedence over implicit conversions. Strong typedef alternatives remain distinct, even when their layouts match. |
 | Explicit member assignment (`u.alt = x`) | Constructs an inactive class/struct payload after destroying the old alternative; assigns an already-active payload. Updates discriminant only after successful construction. |
 | Member access (`u.alt`) | Runtime-checks the discriminant; mismatch traps by default. In classic `if-let`, mismatch soft-fails to the false branch. |
-| Destruction | Switch on discriminant; calls destructor of active alternative if non-trivial. |
+| Destruction | Destroys only the active payload on normal exit or unwinding; includes owners, owning callable environments, and nested/sized-array payloads (elements in reverse order). |
+| Ownership transfer | Unions with move-only alternatives cannot be copied from lvalues. A drain (`#source`) or temporary transfers the payload and leaves the source inactive; copyable alternatives retain ordinary copy-constructor semantics. Addressable constructed temporaries retain prvalue/elision semantics. |
 
 A failed alternative construction leaves no live payload to destroy. A later
 member assignment may activate a new alternative. Copying a live payload must

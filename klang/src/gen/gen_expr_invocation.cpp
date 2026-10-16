@@ -2323,7 +2323,7 @@ llvm::Value* implementation_generator::call_argument_cleanup_scope::track(
         auto agg = st->get_struct();
         auto un = agg ? nullptr : find_union_by_struct_type(_gen._unit.get_root_namespace(), st);
         needs_cleanup = (agg && agg->get_destructor())
-            || (un && un->has_nontrivial_destructor_alternative());
+            || (un && value_type_needs_cleanup(bare_type));
     }
     if (auto ct = std::dynamic_pointer_cast<callable_type>(bare_type)) {
         needs_cleanup = ct->is_owner();
@@ -2338,6 +2338,7 @@ llvm::Value* implementation_generator::call_argument_cleanup_scope::track(
     if (type::is_struct(bare_type) && value->getType()->isPointerTy()) {
         auto* source = value;
         value = _gen._builder->CreateLoad(llvm_type, source, "argument_value");
+        emit_transferred_value_reset(_gen._builder.get(), source, bare_type);
         _gen.cancel_temporary_cleanup(source);
     } else if (type::is_fat_callable(bare_type) && value->getType()->isPointerTy()) {
         value = _gen._builder->CreateLoad(llvm_type, value, "argument_callable");
@@ -2481,16 +2482,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     bool needs_argument_cleanup = false;
     for (const auto& arg : expr.arguments()) {
         auto arg_type = arg->get_type() ? type::canonical(type::remove_const(arg->get_type())) : nullptr;
-        if (type::is_owner(arg_type)) needs_argument_cleanup = true;
-        if (auto st = std::dynamic_pointer_cast<struct_type>(arg_type)) {
-            auto agg = st->get_struct();
-            auto un = agg ? nullptr : find_union_by_struct_type(_unit.get_root_namespace(), st);
-            if ((agg && agg->get_destructor())
-                || (un && un->has_nontrivial_destructor_alternative())) needs_argument_cleanup = true;
-        }
-        if (auto ct = std::dynamic_pointer_cast<callable_type>(arg_type)) {
-            if (ct->is_owner()) needs_argument_cleanup = true;
-        }
+        if (value_type_needs_cleanup(arg_type) && !type::is_sized_array(arg_type)) needs_argument_cleanup = true;
     }
     call_argument_cleanup_scope argument_cleanup(*this, needs_argument_cleanup);
 
@@ -2527,7 +2519,11 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
         if (!ret_st) return;
         auto st = ret_st->get_struct();
-        if (st) {
+        if (auto un = ret_st->get_union(); un && value_type_needs_cleanup(ret_st)) {
+            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(sret_ptr_val)) {
+                _expression_temporaries.push_back({alloca, nullptr, nullptr, un});
+            }
+        } else if (st) {
             auto dtor = st->get_destructor();
             if (dtor) {
                 auto dtor_fn = dtor->shared_as<k::model::function>();

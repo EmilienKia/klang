@@ -1864,7 +1864,7 @@ void implementation_generator::visit_function(function &function) {
     {
         std::vector<std::shared_ptr<parameter>> struct_params;
         for (const auto& param : function.parameters()) {
-            auto pt = param->get_type();
+            auto pt = type::remove_const(type::canonical(param->get_type()));
             // Skip reference, pointer, link, view, owner types — only plain struct by value
             if (type::is_reference(pt) || type::is_pointer(pt) || type::is_link(pt)
                 || type::is_view(pt) || type::is_owner(pt)) continue;
@@ -1872,7 +1872,7 @@ void implementation_generator::visit_function(function &function) {
                 auto agg = st_type->get_struct();
                 auto un = agg ? nullptr : find_union_by_struct_type(_unit.get_root_namespace(), st_type);
                 if ((agg && agg->get_destructor())
-                    || (un && un->has_nontrivial_destructor_alternative())) {
+                    || (un && value_type_needs_cleanup(st_type))) {
                     struct_params.push_back(param);
                     auto* flag = _builder->CreateAlloca(
                         llvm::Type::getInt1Ty(_context->llvm_context()), nullptr,
