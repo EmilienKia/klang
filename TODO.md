@@ -91,6 +91,56 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Deleted aggregate copy operations lose diagnostics or enforcement.**
+      While checking the FFI wrapping how-to, a wrapper declared as
+      `public final class Counter` with a module-level opaque handle and
+      `Counter(other : const Counter&) -> delete;`
+      plus `operator =(const other : Counter&) -> delete;` did not reject
+      assignment in an imported consumer. Build the tutorial's wrapper
+      with `Counter` changed from a struct to that class, then compile
+      `module copyprobe; import toy; main() : int { a : toy::Counter;
+      b : toy::Counter; b = a; return 0; }` against its KDI and binary.
+      Compilation succeeds despite the deleted assignment; do not run this
+      owning-handle probe because copying the pointer could double-free it.
+      With the tutorial's actual `public struct Counter`, local assignment
+      correctly reports `00C1F` (deleted operator), but the imported assignment
+      instead fails to link an undefined
+      `_KFMN3toy7CounteraSEKR_KN3toy7CounterE`.
+      The construction variant `b : toy::Counter(a);` is rejected for both
+      classes and structs, locally and after import, with
+      internal diagnostic `0F031`, "LLVM declaration not found for copy
+      constructor ... the declaration pass must register every emitted
+      constructor", rather than a deleted-constructor diagnostic.
+      Copy-initialization `b : toy::Counter = a;` has the same diagnostic.
+      Add class/struct deleted-operation and import regressions before fixing
+      this; the existing class copy tests are in
+      `klang/tests/test-gen-class-basic.cpp` and struct deleted-assignment
+      tests in `klang/tests/test-gen-assign-operator.cpp`.
+      The FFI how-to's struct wrapper rejects the copy probes, and its normal
+      shared/object/archive consumers and cleanup/error cases pass. It notes
+      the diagnostic limitation, so these pre-existing compiler issues do
+      not block the documentation.
+
+- [ ] **Language FFI reference still confuses UTF-32 characters with C byte strings.**
+      `doc/spec/language/functions/ffi.md`, sections 2-5, describes K
+      `const char*` as a direct C byte-string mapping and uses ordinary
+      UTF-32 literals in its `strlen`/`puts` examples. K `char` is 32-bit
+      (`klang/src/model/context.cpp`); `@CString` only validates/marks
+      parameters and does not transcode their storage
+      (`klang/src/gen/gen_function.cpp`, CString validation).
+      Passing `&text[0]` for `text : const char[] = "hello"` to C `strlen`
+      therefore does not measure the UTF-8 bytes of "hello"; on a typical
+      little-endian target it encounters a zero byte after the first letter.
+      The same page incorrectly calls signed K `byte` unsigned char and
+      assigns its warning to `0x0807`; the validator accepts
+      `UNSIGNED_BYTE` without a warning and warns for `BYTE` with
+      `WARN_PARAM_DEFAULT_NARROWING` (`0x0808`).
+      Correct the reference examples, compatibility table, and diagnostics
+      against `klang/tests/test-gen-extern.cpp`, especially the runtime
+      CString case using `const unsigned byte*` with `u8"hello"`.
+      The new FFI guide/how-to use that byte-oriented pattern; this older
+      reference discrepancy does not block them.
+
 - [ ] **External pkgconf 1.8.1 relocation escaping limitation.**
       The FFI distribution tests exposed tool-side handling of package paths
       containing spaces and apostrophes. Reproduce with the generated package
