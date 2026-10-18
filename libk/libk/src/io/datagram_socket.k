@@ -5,7 +5,20 @@
 module k;
 namespace io {
 
-/** One consumed packet. bytesTransferred counts copied bytes, not packet length. */
+/** Result of consuming one packet, with copied length and a retained source.
+ *
+ * bytesTransferred counts bytes copied into the buffer, not the original
+ * packet length. If the packet is too large, isTruncated is true and its excess
+ * bytes are discarded, not left for another receive. datagramLength reports
+ * the full packet length when available, or -1 otherwise. Buffer position and
+ * operation progress advance only by the copied count.
+ *
+ * A successful zero-byte receive is a valid empty packet, not EOF; a
+ * zero-capacity buffer can also consume and truncate a nonempty packet.
+ * Copies and source() retain address values independently of the operation
+ * and socket. A Unix source may be unnamed (an empty pathname), in which case
+ * it is not a usable destination. Holding an address never owns its pathname.
+ */
 public class DatagramReceive {
 private:
     _bytes : int;
@@ -41,7 +54,96 @@ public:
     const datagramLength() : long { return _length; }
 }
 
-/** Copyable value sharing one fd, one receive gate, and one send/connect gate. */
+/** Copyable IPv4/Unix packet socket preserving datagram message boundaries.
+ *
+ * Copies share one native descriptor, closed state, receive gate and
+ * send/connect gate. Closing one copy closes them all; destroying a copy only
+ * releases its reference. open binds an ephemeral IPv4 port immediately;
+ * bind accepts a numeric IPv4 address, wildcard or Unix pathname, not a hostname.
+ * localPort is IPv4-only. boundAddress returns a retained address snapshot.
+ *
+ * ## Packets, not a byte stream
+ *
+ * Each send/sendTo sends one packet from the buffer's remaining range,
+ * including an empty packet. Each receive consumes one packet into that range.
+ * There are no fully loops: a truncated packet's tail is discarded, not
+ * returned on the next receive. Inspect DatagramReceive::isTruncated and
+ * datagramLength when the complete packet matters. Zero copied bytes never
+ * denotes stream EOF.
+ *
+ * connect selects a peer for send; sendTo supplies an explicit destination
+ * without connecting the socket, including on an already connected socket.
+ * Hostname connect/sendTo use asynchronous resolution. A positive I/O timeout
+ * includes resolution and transport; nonpositive values disable the deadline.
+ * A Future.get timeout only bounds the wait, not the operation's lifetime.
+ * Source addresses in receive results remain usable as values after the
+ * socket closes; address values themselves do not own Unix paths.
+ *
+ * At most one receive and one send/connect may be active on the shared handle.
+ * Competing same-direction work fails with ResourceExhausted/EBUSY, including
+ * through another copy. Use distinct buffers for simultaneous send and receive:
+ * a buffer cannot be leased by two operations.
+ *
+ * ## Delivery, cancellation and lifetime
+ *
+ * Callback methods return IoOperation and later deliver IoResult on the
+ * selected executor, or the system executor by default. Async methods publish
+ * Futures independently of callback dispatch; Sync bridges use the same
+ * proactor. Linux kernel packet transport support is required: there is no
+ * blocking send/receive fallback.
+ *
+ * Submission retains native buffer backing, descriptor and address storage
+ * through drain, not borrowed K wrapper addresses. Keep K objects used by a
+ * callback or its capture cleanup alive until delivery/cleanup finishes.
+ * Native quiescence releases buffer leases, not queued callback captures.
+ * Cancellation suppresses callbacks not yet entered and does not undo a sent
+ * or copied packet. A cancellation request or cancelled primitive Future can
+ * precede native drain; do not access a still-leased buffer. Sync cancellation
+ * and interruption drain first, preserving actual partial-byte counts.
+ *
+ * Close rejects new work, cancels/drains active transport and accepted resolver
+ * work, then closes the shared descriptor. It is non-cancellable and has no
+ * I/O deadline; its completion does not join unrelated callback cleanup.
+ *
+ * ## Unix pathname ownership
+ *
+ * Unix bind does not remove an existing pathname. Only a successful bind owns
+ * the socket path it created, removing it on close or final native handle
+ * release after operations drain. Cleanup checks socket identity and does not
+ * remove a replacement file. Failed binds, adopted descriptors, and
+ * destination/source address values do not acquire pathname ownership.
+ *
+ * ## Example: observe truncation
+ *
+ * This module helper sends two bytes over numeric loopback to a one-byte
+ * receive buffer. The returned value reports one copied byte, truncation and
+ * packet length two; its source remains retained after both sockets close.
+ * It requires an available Linux proactor and uses ephemeral ports.
+ *
+ * ```k
+ * module datagram_packet_usage;
+ *
+ * truncatedPacket() : k::io::DatagramReceive throws(Throwable) {
+ *     deadline : Duration = Duration::ofSeconds(5L);
+ *     local : k::io::NetworkAddress("127.0.0.1", 0);
+ *     receiver : k::io::DatagramSocket! = k::io::DatagramSocket::bind(local);
+ *     sender : k::io::DatagramSocket! = k::io::DatagramSocket::bind(local);
+ *     remote : k::io::NetworkAddress("127.0.0.1", receiver->localPort());
+ *     output : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(2u);
+ *     input : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(1u);
+ *     output->put((byte) 79);
+ *     output->put((byte) 75);
+ *     output->flip();
+ *     sender->sendToSync(output, remote, deadline);
+ *     packet : k::io::DatagramReceive = receiver->receiveSync(input, deadline);
+ *     sender->closeSync();
+ *     receiver->closeSync();
+ *     delete output; delete input;
+ *     delete sender; delete receiver;
+ *     return packet;
+ * }
+ * ```
+ */
 public class DatagramSocket : public Channel {
 private:
     _native : NativeIoHandle*;

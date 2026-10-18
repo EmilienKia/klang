@@ -5,7 +5,78 @@
 module k;
 namespace io {
 
-/** Copyable value; all copies share one native descriptor and direction gates. */
+/** Copyable TCP/IPv4 or Unix byte-stream channel backed by the proactor.
+ *
+ * All copies share one native descriptor, closed state and direction gates;
+ * they are not independent connections. The default value is closed. Closing
+ * any copy closes the shared connection, whereas destroying a copy only
+ * releases its native reference.
+ *
+ * ## Partial transfers and framing
+ *
+ * TCP and Unix streams have no packet or application-message boundaries.
+ * Primitive read/write methods may transfer fewer bytes than the buffer's
+ * remaining range. A short positive read is not EOF; a nonempty primitive read
+ * returns zero on orderly EOF, not minus one. Define framing in your protocol
+ * instead of assuming one write matches one read.
+ *
+ * readFully/writeFully attempt the initial remaining range and produce one
+ * cumulative result. Fully success returns that requested count. An early EOF
+ * in readFully fails with EndOfStream and the number already received; Sync
+ * raises EndOfStreamException. A nonempty send making zero progress fails with
+ * System/EIO rather than spinning. Empty buffers complete with count zero.
+ * Native completion advances buffer position by actual bytes before result
+ * publication; flip the buffer after a read to drain only its filled prefix.
+ *
+ * One read and one write may run concurrently on a shared handle, using
+ * distinct buffers. A competing request in the same direction fails with
+ * ResourceExhausted/EBUSY, even through another copy. A fully transfer reserves
+ * its direction through all partial transfers, with one continuous buffer
+ * lease and one positive I/O deadline. Nonpositive I/O timeouts disable the
+ * deadline; Future.get timeouts only limit the observer's wait.
+ *
+ * ## Delivery and lifetime
+ *
+ * Callback forms return an IoOperation and deliver IoResult on the selected
+ * executor (the system executor by default). Async forms publish a Future
+ * independently of that executor; Sync waits on the same proactor. Avoid
+ * blocking a serial event loop, even though publication needs no loop task.
+ * Linux kernel transport support is required; no blocking socket fallback is
+ * selected when it is unavailable.
+ *
+ * Submitted operations retain native descriptor and buffer storage, not K
+ * wrapper addresses. A callback that dereferences a buffer/channel or other
+ * borrowed state must keep that K object alive through delivery and cleanup.
+ * Cancellation before callback entry suppresses delivery; during a callback it
+ * requests cooperative interruption. Neither cancellation nor a timed-out
+ * Future wait grants access to a still-leased buffer. Sync interruption and
+ * cancellation drain first and preserve actual partial-byte counts.
+ *
+ * Close rejects new work, cancels/drains active directions, then closes the
+ * descriptor. It has no I/O deadline and cannot be cancelled. It is a whole
+ * connection close, not a write-half shutdown; this API has no half-close
+ * method. Native drain/close does not join unrelated user callback cleanup.
+ *
+ * ## Example: read a fixed-size frame
+ *
+ * The helper borrows a connected channel whose peer sends two bytes within
+ * five seconds. It returns a copied frame, or throws on early EOF, timeout or
+ * other failure. It leaves connection ownership and close to the caller.
+ *
+ * ```k
+ * module stream_frame_usage;
+ *
+ * readPair(channel: k::io::SocketChannel&) : byte[]! throws(Throwable) {
+ *     buffer : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(2u);
+ *     deadline : Duration = Duration::ofSeconds(5L);
+ *     channel.readFullySync(buffer, deadline);
+ *     buffer->flip();
+ *     frame : byte[]! = buffer->toArray();
+ *     delete buffer;
+ *     return frame;
+ * }
+ * ```
+ */
 public class SocketChannel : public ReadableChannel, public WritableChannel {
 private:
     _native : NativeIoHandle*;
@@ -257,6 +328,11 @@ public:
     }
     override close() { closeSync(); }
 
+    /** Submit one possibly short stream read into the remaining buffer range.
+     *
+     * For a nonempty buffer, success zero denotes orderly EOF. Use readFully
+     * for a fixed-size frame whose short EOF must be reported as an error.
+     */
     override read(buffer: ByteBuffer+, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
         return read(buffer, IO_NO_TIMEOUT, completion, executor);
     }
@@ -333,6 +409,12 @@ public:
     override write(buffer: ByteBuffer+) : int { return writeSync(buffer); }
     write(buffer: ByteBuffer+, timeoutNanos: long) : int { return writeSync(buffer, timeoutNanos); }
 
+    /** Fill the initial remaining range, reserving the read direction until drain.
+     *
+     * One final completion reports the requested count or an error with
+     * cumulative bytes. A positive timeout covers the entire operation, not
+     * each partial read separately.
+     */
     readFully(buffer: ByteBuffer+, timeoutNanos: long, completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
         return transfer(3, buffer, true, timeoutNanos, completion, executor);
     }

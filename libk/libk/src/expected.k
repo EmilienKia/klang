@@ -19,44 +19,62 @@
 module k;
 
 /**
- * Expected<R, E> — a discriminated union wrapper representing either
+ * Expected<R, E> - a discriminated union wrapper representing either
  * a successful result of type R or an error of type E.
  *
  * Inspired by C++23's std::expected and Rust's Result<T, E>.
  *
+ * ## States
+ *
  * The underlying storage is a nested union with an empty state and two values:
+ *
  * - `undefined`: no result or error has been constructed
  * - `result`: holds the success value of type R
  * - `error`: holds the error value of type E
  *
- * The active alternative is tracked by the union's built-in discriminant,
- * queryable via _storage.index().
+ * The active alternative is tracked by the union's built-in discriminant.
+ * Default construction leaves both hasResult() and hasError() false. An
+ * undefined Expected is not an error result.
  *
- * Usage:
- *   // Create a successful Expected via static factory
- *   ok : Expected<int, int> = Expected<int, int>::expected(42);
+ * ## Usage
  *
- *   // Create an error Expected via static factory
- *   err : Expected<int, int> = Expected<int, int>::unexpected(-1);
- *   // or, using the alias:
- *   err2 : Expected<int, int> = Expected<int, int>::error(-1);
+ * Static factories choose the state even when R and E are the same type.
+ * Inside a function, using only the implicit base library:
  *
- *   // Manual construction
- *   e : Expected<int, int>;
- *   e.setResult(42);
+ * ```k
+ * ok : Expected<int, int> = Expected<int, int>::expected(42);
+ * err : Expected<int, int> = Expected<int, int>::unexpected(-1);
+ * if (ok.hasResult()) {
+ *     value : int = ok.getResult();
+ * }
+ * if (err.hasError()) {
+ *     code : int = err.getError();
+ * }
+ * pending : Expected<int, int>;
+ * fallback : int = pending.getResultOr(0); // 0, also for undefined.
+ * pending.setResult(7);
+ * pending.setError(-2); // Replaces the result with an error.
+ * ```
  *
- *   // Query and access
- *   if (ok.hasResult()) {
- *       val : int = ok.getResult();
- *   }
- *   if (err.hasError()) {
- *       e : int = err.getError();
- *   }
+ * expected(value) wraps success, unexpected(value) wraps an error, and
+ * error(value) is an alias for unexpected().
  *
- * Static factory methods (preferred over direct construction):
- *   Expected<R,E>::expected(value)    — wraps a successful result
- *   Expected<R,E>::unexpected(value)  — wraps an error
- *   Expected<R,E>::error(value)       — alias for unexpected()
+ * ## Ownership and lifetime
+ *
+ * Only the active result or error is live in the inline union storage. Copy
+ * construction copies the active value using its type's copy semantics and
+ * preserves an undefined source as undefined. Switching alternatives destroys
+ * the old value; assigning the already-active alternative assigns its value.
+ * Getters return values rather than borrowed references to the union.
+ *
+ * ## Pitfalls
+ *
+ * > Test the matching state before using getResult() or getError().
+ *
+ * Inactive-alternative reads follow the union's fatal-check behavior, not an
+ * error return. `!hasError()` does not imply hasResult(), because the object
+ * may be undefined. The getResultOr()/getErrorOr() fallbacks cover both the
+ * opposite alternative and the undefined state.
  */
 template<typename R, typename E>
 struct Expected {
@@ -90,6 +108,7 @@ struct Expected {
 
     /**
      * Copy constructor. Creates an Expected with the same state as other.
+     *
      * - If other holds a result, this holds the same result value.
      * - If other holds an error, this holds the same error value.
      * - If other is in an undefined state, this is also left undefined.
@@ -148,8 +167,9 @@ struct Expected {
 
     /**
      * Return the result value.
+     *
      * Precondition: hasResult() must be true.
-     * Behavior is undefined if called when hasError() is true.
+     * An error or undefined state fails the union's runtime discriminant check.
      *
      * @return The stored result value.
      */
@@ -159,8 +179,9 @@ struct Expected {
 
     /**
      * Return the error value.
+     *
      * Precondition: hasError() must be true.
-     * Behavior is undefined if called when hasResult() is true.
+     * A result or undefined state fails the union's runtime discriminant check.
      *
      * @return The stored error value.
      */
@@ -169,7 +190,7 @@ struct Expected {
     }
 
     /**
-     * Return the result value, or the provided default if this holds an error.
+     * Return the result value, or the provided default if no result is active.
      *
      * @param defaultValue Value returned when this object does not hold a result.
      * @return The stored result value, or `defaultValue`.
@@ -182,7 +203,7 @@ struct Expected {
     }
 
     /**
-     * Return the error value, or the provided default if this holds a result.
+     * Return the error value, or the provided default if no error is active.
      *
      * @param defaultValue Value returned when this object does not hold an error.
      * @return The stored error value, or `defaultValue`.

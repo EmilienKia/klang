@@ -54,6 +54,12 @@ public enum ModuleKind {
     NATIVE_LIBRARY = 2;
 }
 
+/**
+ * Residency classification of a loaded native image.
+ *
+ * POTENTIALLY_RELEASABLE describes the image's classification, not an unload
+ * capability: the current public API keeps loaded images resident until exit.
+ */
 public enum ModuleResidency {
     PROCESS_PINNED = 0;
     POTENTIALLY_RELEASABLE = 1;
@@ -78,6 +84,11 @@ public enum ModuleResidency {
  *
  * The view retains its owning Module. Descriptor references returned by
  * getDescriptor() are borrowed and must not outlive this view.
+ *
+ * Copying the view copies its ownership lease, not the descriptor. A default
+ * view is empty: check isNull() before descriptor access. getDescriptor(),
+ * accept(), and rootNamespace() throw NullDereferenceError on an empty view.
+ * A rootNamespace() result retains the owner independently of this view.
  */
 public final class UnitView {
     friend Module;
@@ -144,7 +155,18 @@ public:
     }
 }
 
-/** Owner-retaining lease on a borrowed compiler-emitted namespace descriptor. */
+/**
+ * Owner-retaining lease on a borrowed compiler-emitted namespace descriptor.
+ *
+ * Copies, children(), and a non-empty parent() each retain the same Module
+ * independently. They can outlive the UnitView or NamespaceView used to
+ * obtain them. The descriptor itself is not copied or owned by the view.
+ *
+ * A default view and the parent of a root namespace are empty. Check isNull()
+ * before access: descriptor access, visitation, and navigation on an empty
+ * view throw NullDereferenceError. A raw reference from getDescriptor() must
+ * not outlive an owner-retaining view that protects its image.
+ */
 public final class NamespaceView {
     friend UnitView;
 
@@ -231,6 +253,42 @@ public:
  * Instances are created by ::k::Application and shared between the
  * application, its module registry, and callers. Images remain resident until
  * process exit; there is currently no unload operation.
+ *
+ * ### Handles, descriptors, and symbols
+ *
+ * - Keep Shared<Module> values rather than borrowing the registry's elements.
+ *   Repeated loads of the same native image share its ownership group.
+ * - units() describes only this image, not its dependencies. A native image
+ *   without K metadata can have no units.
+ * - UnitView and NamespaceView are copyable owner-retaining leases. Returning
+ *   a view from a helper is safe; returning only its borrowed descriptor
+ *   reference loses that lifetime protection.
+ * - lookupSymbol() uses the loader scope, so dependencies can provide an exact
+ *   native symbol name. Its NativeSymbol result retains this Module; a raw
+ *   address extracted from it does not carry that ownership.
+ *
+ * Residency is not a request to unload, and this API provides no general
+ * synchronisation for application data or code reached through a symbol.
+ *
+ * ### Example: keep a namespace after dropping the unit snapshot
+ *
+ * linkedUnits() is available in the compiler-generated Application main.
+ * The namespace view below retains its image after the vector is cleared.
+ *
+ * ```k
+ * module module_view_example;
+ *
+ * main() : int {
+ *     units : Vector<UnitView> = linkedUnits();
+ *     if (units.size() == 0u) {
+ *         return 1;
+ *     }
+ *     root : NamespaceView = units.get(0).rootNamespace();
+ *     units.clear();
+ *     root.getDescriptor();
+ *     return 0;
+ * }
+ * ```
  */
 public abstract class Module : public Object {
     // Only Application (friend) can build a Module: friends have access to
@@ -302,7 +360,10 @@ public:
 
     /**
      * Look up an exact native symbol name in this handle's loader scope.
+     *
      * Dependencies may provide the symbol; the result retains this Module.
+     * A successful lookup can contain a zero address. Check the Expected
+     * outcome rather than treating the address alone as the lookup status.
      */
     public const lookupSymbol(name : const String&)
         : Expected<ffi::NativeSymbol, ffi::SymbolLookupError> {
@@ -393,6 +454,10 @@ public:
 
 /**
  * The executable image hosting the current Application.
+ *
+ * linkedModules() returns this image followed by the startup-linked images;
+ * linkedUnits() flattens their owner-retaining unit views. These are startup
+ * snapshots, unlike the Application registry that also records later loads.
  */
 public final class ApplicationModule : public Module {
     friend Application;

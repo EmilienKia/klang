@@ -124,22 +124,19 @@ private __k_bytes_to_string(bytes: unsigned byte[]!): String {
 // ── EnvironmentMap — minimal read-only String→String map for env() ───────────
 
 /**
- * EnvironmentMap — a minimal, read-only key/value map of Strings, backed by two
- * parallel vectors with linear lookup.
+ * Snapshot of environment-variable names and values exposed by Application.
  *
- * Used exclusively to back ::k::Application::env(). A dedicated, minimal type
- * is used here (rather than the generic k::Map<K,V>/HashMap<K,V>/TreeMap<K,V>
- * hierarchy) to sidestep an unrelated, deep, pre-existing runtime memory
- * corruption bug affecting HashMapNode<K,V>/MapEntry<K,V> when BOTH K and V are
- * the SAME class type (e.g. HashMap<String,String>): constructing/populating
- * such a map reliably corrupts the heap (glibc "malloc(): invalid ..."/
- * "free(): invalid pointer" aborts), even with no iteration or destructor
- * logic exercised beyond put(). This is unrelated to Application/env() and is
- * worth root-causing separately; environment variable lists are always small
- * (typically well under a hundred entries), so linear lookup here is not a
- * performance concern in practice.
+ * Application exposes this map through a const reference. It is populated
+ * once, not a live view of subsequent OS environment changes. Lookup is linear
+ * and returns a borrowed OptionalConstRef<String>: keep the map alive while
+ * using a returned value. An absent key is distinct from a present empty value.
+ *
+ * Independently constructed maps can be populated with put(); that operation
+ * appends rather than replaces, and get() returns the first matching entry.
  */
 public final class EnvironmentMap : public Object {
+    // Parallel vectors avoid the previously identified HashMap<String,String>
+    // heap-corruption issue when key and value use the same class type.
     private _keys : Vector<String>!;
     private _values : Vector<String>!;
 
@@ -221,26 +218,58 @@ private __k_module_error_from_code(code: int): LoadModuleError {
  * executable module (a module that defines a top-level `main` function or an
  * explicit `class Application`).
  *
- * Applications inherit from ::k::Object (via Application) and always have
- * access to:
- * - `env()` — a read-only map of environment variables
+ * Applications inherit from ::k::Object (via Application). The instance owns
+ * the standard-stream adapters and the startup environment snapshot.
  *
  * `applicationModule()` exposes a shared representation of the process image,
  * while `modules()` returns a stable snapshot of the registered image handles.
  *
- * The concrete subclass must implement one of the four standard `main`
- * overloads:
- *   main()
- *   main() : int
- *   main(args : const String[])
- *   main(args : const String[]) : int
+ * The concrete subclass must implement one of the four standard main overloads:
+ * - main()
+ * - main() : int
+ * - main(args : const String[])
+ * - main(args : const String[]) : int
  *
- * or any other `main` overload declared by an intermediate abstract
- * Application base (see language spec §Application chain).
+ * An intermediate abstract Application base can declare other main overloads.
  *
- * The generated entry point drains the process I/O runtime and callback
- * carriers before destroying this object, including when main unwinds.
- * This must precede the concrete destructor, not merely this base's cleanup.
+ * ### Active instance and borrowed access
+ *
+ * getApplication() is populated only after construction and is withdrawn
+ * before the concrete destructor. Its optional reference, env() references,
+ * and standard-stream references do not extend this object's lifetime.
+ * Module handles and RTTI views instead retain their own shared owners.
+ *
+ * ### Process-exit I/O barrier
+ *
+ * On both normal return and exception unwinding from main, the generated entry
+ * point completes shutdown of any started process I/O runtime and releases its
+ * callback carriers before entering the concrete Application destructor.
+ * A callback capturing Application fields therefore cannot outlive that
+ * barrier. This is entry-point work, not a responsibility delegated to this
+ * base destructor, and it does not wait for arbitrary user-created threads.
+ *
+ * Critical: finish work that needs asynchronous I/O before main exits.
+ * Destructors must not submit new asynchronous I/O or try to reactivate a
+ * stopped runtime; shutdown is permanent. The barrier does not initialise an
+ * otherwise unused runtime. Application-owned synchronous standard streams
+ * are flushed separately by the entry point before Application destruction.
+ *
+ * ### Example: read the startup environment
+ *
+ * A top-level main uses the compiler-generated Application; no explicit
+ * Application subclass or import k statement is needed.
+ *
+ * ```k
+ * module application_example;
+ *
+ * main() : int {
+ *     home : OptionalConstRef<String> = env().get(String("HOME"));
+ *     if (home.hasValue()) {
+ *         return 0;
+ *     }
+ *     return 1;
+ * }
+ * ```
  */
 public abstract class Application : public Object {
 
@@ -447,7 +476,11 @@ public abstract class Application : public Object {
 
     /**
      * Return a borrowed reference to the active process Application, if any.
+     *
      * The result is empty before entry-point activation and after it ends.
+     * In particular, construction and destruction cannot use this accessor to
+     * recover the Application being constructed or destroyed. Copying the
+     * optional does not retain the Application.
      */
     public static getApplication() : OptionalRef<Application> {
         application : Application* = __k_application_current();

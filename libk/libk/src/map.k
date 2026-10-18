@@ -24,6 +24,13 @@ module k;
  * Returned (as OptionalConstRef<Entry<K,V>>/via ConstIterator<Entry<K,V>>) by read-only
  * map traversal and lookup. Concrete map implementations back this interface with a
  * node that stores both the key and the value.
+ *
+ * ## Lifetime
+ *
+ * An entry reference, and the references returned by key()/value(), borrow
+ * storage owned by the map. Keeping a reference wrapper does not keep the
+ * entry or map alive. See the concrete map's mutation rules before retaining
+ * a reference across an insertion or removal.
  */
 template<typename K, typename V>
 interface Entry {
@@ -50,6 +57,20 @@ interface MutableEntry : public Entry<K,V> {
  * A Map<K,V> associates at most one value with each key. It is not a Collection<T>:
  * unlike sets/lists, membership testing is split between containsKey (indexed,
  * typically fast) and containsValue (always a linear scan of the values).
+ *
+ * ## Ownership and lifetime
+ *
+ * - get() returns an optional borrowed value, not an independent copy.
+ * - constIterator() returns an owned iterator, but that iterator still borrows
+ *   the map. Keep the map alive until traversal is finished.
+ * - An empty lookup means the key was absent at lookup time. A nonempty
+ *   wrapper does not detect subsequent removal of its referent.
+ *
+ * ## Pitfalls
+ *
+ * Concrete maps choose their own key comparison and traversal order:
+ * ListMap uses `==` and insertion order, TreeMap uses `<` and sorted order,
+ * and HashMap uses hash() plus `==` with unspecified traversal order.
  */
 template<typename K, typename V>
 interface Map : public Sequence<Entry<K,V>>, public Sized {
@@ -97,6 +118,22 @@ interface SortedMap : public OrderedMap<K,V> {
  *
  * Adds insertion, removal, in-place value mutation (mutable get()/iterator()) and
  * the value-returning replace() on top of the read-only Map<K,V> contract.
+ *
+ * ## Usage
+ *
+ * - put() overwrites without returning the old value.
+ * - putIfAbsent() returns a borrowed existing value when no insertion occurs;
+ *   an empty return means a new entry was inserted.
+ * - replace() returns an Optional<V> copy of the previous value, independent
+ *   of the entry's storage. `insertIfAbsent = false` suppresses insertion.
+ *
+ * ## Lifetime and pitfalls
+ *
+ * For ListMap, TreeMap and HashMap, finish an iterator or forEach() traversal
+ * before inserting, removing or clearing entries. These iterators are live
+ * views, not snapshots, and do not check for concurrent structural changes.
+ * Updating values through MutableEntry::value() or a live mutable get()
+ * reference does not change keys or structure.
  */
 template<typename K, typename V>
 interface MutableMap : public Map<K,V> {
@@ -111,6 +148,7 @@ interface MutableMap : public Map<K,V> {
 
   /**
    * Associate value with key only if key is not already present.
+   *
    * @return A reference to the existing value if key was already present (map
    * unchanged), or empty if key was absent (value was inserted).
    */
@@ -118,6 +156,7 @@ interface MutableMap : public Map<K,V> {
 
   /**
    * Associate value with key and return the previous value, if any.
+   *
    * @param insertIfAbsent If true (default), key is inserted even if it was absent.
    * If false, the map is left unchanged when key is absent.
    * @return A copy of the previous value associated with key, or empty if key had
@@ -125,7 +164,11 @@ interface MutableMap : public Map<K,V> {
    */
   replace(key: const K&, value: const V&, insertIfAbsent: bool = true) : Optional<V>;
 
-  /** Remove the entry for key. @return true if key was found and removed. */
+  /**
+   * Remove the entry for key.
+   *
+   * @return true if key was found and removed.
+   */
   remove(key: const K&) : bool;
 
   /** Remove every entry from the map. */
@@ -136,6 +179,7 @@ interface MutableMap : public Map<K,V> {
 
   /**
    * Consume a mutable reference of each entry in sequence order.
+   *
    * @param consumer A callable consuming each entry.
    */
   default forEach(consumer : functional::Consumer<MutableEntry<K,V>&>) {
@@ -246,13 +290,31 @@ class MapEntry : public MutableEntry<K,V> {
  * entry in iteration order: first() always returns the oldest surviving key, last()
  * the most recently inserted one.
  *
- * Usage:
- *   m : ListMap<int, int>;
- *   m.put(1, 10);
- *   m.put(2, 20);
- *   m.get(1);            // OptionalConstRef holding 10
- *   m.containsKey(2);     // true
- *   m.remove(1);
+ * ## Usage
+ *
+ * Inside a function, using only the implicit base library:
+ *
+ * ```k
+ * m : ListMap<int, int>;
+ * m.put(1, 10);
+ * m.put(2, 20);
+ * m.put(1, 11); // Key 1 is still first.
+ * old : Optional<int> = m.replace(1, 99);
+ * m.remove(1);
+ * previous : int = old.getOr(0); // 11, independent of the removed entry.
+ * ```
+ *
+ * ## Ownership and lifetime
+ *
+ * Keys and values are stored by value in list nodes. get(), first(), last()
+ * and iterators borrow those nodes. Removing an entry ends its lifetime;
+ * clear() and destruction end every entry's lifetime.
+ *
+ * ## Pitfalls
+ *
+ * Removing then reinserting a key appends a new entry at the end. Iteration
+ * uses positions in the backing list, not a snapshot: removals can shift
+ * those positions. Follow MutableMap's no-structural-change traversal rule.
  */
 template<typename K, typename V>
 class ListMap : public MutableOrderedMap<K, V> {
@@ -554,6 +616,7 @@ struct TreeMapNode {
 
 /**
  * TreeMap<K,V> — a concrete implementation of a mutable map sorted by key.
+ *
  * Guarantees entries are visited in ascending key order according to K's '<' operator.
  * Lookup, insertion and removal are O(log n).
  *
@@ -561,13 +624,36 @@ struct TreeMapNode {
  * TreeSet<T>'s algorithm (see set.k): every insertion/removal rebalances the tree so
  * the height stays O(log n).
  *
- * Usage:
- *   m : TreeMap<int, int>;
- *   m.put(5, 50);
- *   m.put(1, 10);
- *   m.put(3, 30);
- *   m.first();     // Entry (1, 10)
- *   m.last();       // Entry (5, 50)
+ * ## Usage
+ *
+ * Inside a function, using only the implicit base library:
+ *
+ * ```k
+ * m : TreeMap<int, int>;
+ * m.put(5, 50);
+ * m.put(1, 10);
+ * m.put(3, 30);
+ * smallest : int = m.first().get().key(); // 1
+ * largest : int = m.last().get().key(); // 5
+ * ```
+ *
+ * ## Key comparison
+ *
+ * A key matches when neither `key < storedKey` nor `storedKey < key` holds;
+ * lookup does not call `==`. Keys must have a consistent strict ordering,
+ * and ordering-relevant state must not change while a key is stored.
+ *
+ * ## Lifetime and pitfalls
+ *
+ * - Keys and values live in owned tree nodes; returned references borrow the
+ *   map, and clearing or destroying it invalidates them.
+ * - Treat removal as invalidating retained entry/value references and look
+ *   them up again afterward. Removing a node with two children copies its
+ *   successor's key/value into that node and deletes the successor, so even
+ *   a reference associated with a different key may be affected.
+ * - Iterators retain a stack of node pointers. Rotations change traversal
+ *   structure and removals may delete queued nodes; do not structurally
+ *   mutate during traversal. Updating a value does not change the key order.
  */
 template<typename K, typename V>
 class TreeMap : public MutableSortedMap<K, V> {
@@ -956,7 +1042,10 @@ class TreeMap : public MutableSortedMap<K, V> {
 
 /**
  * TreeMapConstIterator<K,V> — a read-only ascending (in-order) iterator over a TreeMap<K,V>.
+ *
  * See TreeSetConstIterator<T> (set.k) for the traversal technique.
+ * The node stack borrows the map and is not a snapshot; the TreeMap lifetime
+ * and structural-mutation rules apply to this iterator.
  */
 template<typename K, typename V>
 class TreeMapConstIterator : public ConstIterator<Entry<K,V>> {
@@ -991,7 +1080,9 @@ class TreeMapConstIterator : public ConstIterator<Entry<K,V>> {
 
 /**
  * TreeMapIterator<K,V> — a mutable ascending (in-order) iterator over a TreeMap<K,V>.
+ *
  * The key cannot be changed through this iterator, only the value (see MutableEntry<K,V>).
+ * The node stack borrows the map and is not repaired after structural mutation.
  */
 template<typename K, typename V>
 class TreeMapIterator : public Iterator<MutableEntry<K,V>> {
@@ -1088,6 +1179,7 @@ struct HashMapChain {
 
 /**
  * HashMap<K,V> — a concrete implementation of a mutable map using a hash table.
+ *
  * Unordered: keys are indexed by their `const hash() : int` method result. Average
  * O(1) lookup, insertion and removal.
  *
@@ -1100,12 +1192,29 @@ struct HashMapChain {
  * K must provide a `const hash() : int` method (inherited from Object, or overridden)
  * and support the '==' operator, used to resolve collisions within a bucket.
  *
- * Usage:
- *   m : HashMap<int, int>;
- *   m.put(1, 10);
- *   m.put(2, 20);
- *   m.containsKey(1);   // true
- *   m.remove(2);
+ * ## Usage and key requirements
+ *
+ * Use a key type providing the hash() and equality operations above; do not
+ * assume a primitive type supplies a hash() member. Equal keys must have equal
+ * hash results. Hash- and equality-relevant state must remain stable while a
+ * key is stored, including state reached through references inside that key.
+ *
+ * ## Ownership and lifetime
+ *
+ * Keys and values are stored by value in owned collision-chain nodes. Lookup
+ * results and iterator entries borrow these nodes. Rehashing relinks existing
+ * nodes instead of copying their entries, but changes bucket traversal.
+ * Removal invalidates references to the removed entry; clear() and destruction
+ * invalidate all entry/value references.
+ *
+ * ## Pitfalls
+ *
+ * > HashMap does not promise insertion order or sorted order.
+ *
+ * Growing the map may rehash it and change traversal order. Iterators keep
+ * bucket positions and node pointers, not an independent entry list, so
+ * follow MutableMap's no-structural-change traversal rule. Values may be
+ * updated in place without changing keys.
  */
 template<typename K, typename V>
 class HashMap : public MutableMap<K, V> {
@@ -1431,7 +1540,10 @@ class HashMap : public MutableMap<K, V> {
 
 /**
  * HashMapConstIterator<K,V> — a read-only iterator over a HashMap<K,V>.
+ *
  * See HashSetConstIterator<T> (set.k) for the bucket-walking technique.
+ * Borrows the map's buckets and nodes; it neither extends their lifetime nor
+ * detects structural changes. See HashMap's traversal rules.
  */
 template<typename K, typename V>
 class HashMapConstIterator : public ConstIterator<Entry<K,V>> {
@@ -1471,7 +1583,9 @@ class HashMapConstIterator : public ConstIterator<Entry<K,V>> {
 
 /**
  * HashMapIterator<K,V> — a mutable iterator over a HashMap<K,V>.
+ *
  * The key cannot be changed through this iterator, only the value (see MutableEntry<K,V>).
+ * Borrows the map's buckets and nodes and must not span structural mutation.
  */
 template<typename K, typename V>
 class HashMapIterator : public Iterator<MutableEntry<K,V>> {
@@ -1508,4 +1622,3 @@ class HashMapIterator : public Iterator<MutableEntry<K,V>> {
         return result;
     }
 }
-

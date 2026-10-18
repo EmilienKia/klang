@@ -30,10 +30,13 @@ public struct NativeThread {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Runnable — a task that can be submitted for execution in a Thread.
+ * Task body that a Thread invokes when started.
  *
  * Implement this interface and pass the object to Thread() to create a thread
- * that calls run() when started.
+ * that calls run() when started. Thread borrows the task: it neither deletes it
+ * nor extends its lifetime. Keep the task and everything it borrows alive
+ * until the thread has terminated. Other consumers, such as Executor, have
+ * their own execution and lifetime contracts.
  */
 public interface Runnable {
     /**
@@ -53,26 +56,66 @@ public interface Runnable {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Thread — represents a language-level thread backed by one OS thread.
+ * Handle for a language-level thread backed by one OS thread.
  *
- * Usage:
- *   t : Thread!(myRunnable);
- *   t.start();
- *   // ... do other work ...
- *   t.join();
+ * ### Start, join, and ownership
  *
- * Interruption model:
- *   - Thread.interrupt() sets the interrupted flag and wakes any blocking
- *     point (sleep, join, future wait, condition wait, lock acquisition).
- *   - Interruptible blocking methods throw ThreadInterruptionException if
- *     the flag is set when they are called or while they are waiting.
- *   - The flag persists until explicitly cleared by Thread.interrupted().
+ * Construction creates an unstarted handle, not a running task. Call start()
+ * at most once, then join() to wait for termination. The lifecycle is NEW,
+ * RUNNABLE, RUNNING, then TERMINATED; a terminated Thread is not restartable.
+ * The one-start rule is a caller precondition, not a checked guard.
  *
- * Lifecycle:
- *   NEW → RUNNABLE (after start()) → RUNNING → TERMINATED
+ * The Thread and its borrowed Runnable must both remain alive while run() is
+ * executing. A join observes termination, not a task result: an uncaught
+ * Throwable is contained by the thread entry wrapper and is not rethrown by
+ * join(). Use a Promise/Future when the caller needs a value or failure.
  *
- * This class is not thread-safe with respect to start(): start() must be
- * called at most once per Thread instance.
+ * An owning Thread destructor waits uninterruptibly for a started thread to
+ * terminate before releasing its native state. It does not request
+ * interruption or delete the Runnable, and it may block indefinitely.
+ * Never destroy the owning Thread from its own task. Do not copy a Thread's
+ * owning native handle; use references or pointers to the same live object.
+ *
+ * Thread::current() instead returns a newly allocated, non-owning wrapper
+ * for the caller's native handle. Deleting that wrapper neither joins nor
+ * destroys the current thread; it does not keep the native thread alive.
+ *
+ * ### Cooperative interruption
+ *
+ * interrupt() sets the target flag and wakes supported interruptible waits;
+ * it does not forcibly stop run(), cancel its work, or release its locks.
+ * Code doing computation must explicitly check for interruption.
+ *
+ * Flag consumption is method-specific. Thread sleep/join and Future get do
+ * not clear it when reporting interruption; Thread::interrupted() reads and
+ * clears it, and checkInterrupted() clears it before throwing. Mutex and
+ * Condition interruptible methods also clear it when they throw.
+ * Uninterruptible waits do not become interruptible merely because the flag
+ * is set. This class provides no general synchronisation for task data.
+ *
+ * ### Example: keep the task alive until after the thread is joined
+ *
+ * Declaration order also ensures that unwinding destroys the Thread before
+ * its borrowed task, even if join() is interrupted.
+ *
+ * ```k
+ * module thread_example;
+ *
+ * class Work : public Runnable {
+ * public:
+ *     override run() : void {
+ *         Thread::yield();
+ *     }
+ * }
+ *
+ * main() : int throws(ThreadInterruptionException) {
+ *     task : Work! = new Work();
+ *     thread : Thread! = new Thread(task);
+ *     thread->start();
+ *     thread->join();
+ *     return 0;
+ * }
+ * ```
  */
 public class Thread {
 private:
@@ -122,9 +165,10 @@ public:
 
     /**
      * Create a new Thread that will execute the given Runnable when started.
+     *
      * The Thread is in the NEW state until start() is called.
      *
-     * @param task The runnable task to execute.
+     * @param task Borrowed runnable; keep it alive until thread termination.
      */
     Thread(task: Runnable*) {
         _task   = task;
@@ -144,6 +188,12 @@ public:
         _owned  = owned;
     }
 
+    /**
+     * Release an owned native handle after waiting for termination.
+     *
+     * Waiting during destruction is uninterruptible and never interrupts the
+     * task. A wrapper returned by current() does not own the native handle.
+     */
     ~Thread() {
         // Only destroy the native RuntimeThread if this Thread owns it.
         // Threads returned by Thread::current() borrow the native handle
@@ -158,8 +208,9 @@ public:
 
     /**
      * Start the thread.
+     *
      * The Runnable.run() method will be called from a new OS thread.
-     * Must be called at most once.
+     * Must be called at most once; start() exposes no native failure status.
      */
     start() : void {
         __k_thread_start(_native);
@@ -168,8 +219,12 @@ public:
     /**
      * Wait for this thread to terminate.
      *
+     * Call only after start(). Waiting does not start a NEW thread and does
+     * not propagate exceptions thrown by the task. Interruption concerns the
+     * caller waiting here, not the target being joined.
+     *
      * @throws ThreadInterruptionException if the calling thread is interrupted
-     *         while waiting.
+     *         before or while waiting; its interrupted flag is not cleared.
      */
     join() : void throws(ThreadInterruptionException) {
         const result : int = __k_thread_join(_native);
@@ -181,7 +236,11 @@ public:
     /**
      * Wait for this thread to terminate, with a timeout.
      *
-     * @param timeout Maximum time to wait.
+     * A timeout or interruption does not stop the target or release this
+     * handle. As with join(), the target must already have been started.
+     *
+     * @param timeout Positive wait duration. A non-positive duration currently
+     *                waits without a deadline; it is not a polling operation.
      * @throws ThreadInterruptionException if the calling thread is interrupted.
      * @throws TimeoutException if the timeout elapses before termination.
      */

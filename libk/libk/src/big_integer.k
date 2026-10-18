@@ -11,6 +11,43 @@ struct NativeBigInteger {}
  *
  * Copies are deep; draining leaves the source as a valid zero. Division and
  * remainder truncate towards zero. Bounded integer casts are checked.
+ *
+ * ## Usage
+ *
+ * Parsing and arithmetic can exceed the primitive integer range. Inside a
+ * function, using only the implicit base library:
+ *
+ * ```k
+ * huge : BigInteger = BigInteger::fromString("0x10000000000000000");
+ * saved : BigInteger(huge);
+ * huge += 1;
+ * difference : int = (int) (huge - saved); // 1; saved is unchanged.
+ * text : String = saved.toString(); // "18446744073709551616"
+ * ```
+ *
+ * ## Pitfalls
+ *
+ * Arbitrary precision does not make a bounded cast safe for every value.
+ * Casts to `byte`, `short`, `int`, `long` and `unsigned byte` run checked
+ * conversions: out-of-range values throw NumericOverflowError, and negative
+ * values cast to `unsigned byte` throw InvalidSignedToUnsignedError.
+ *
+ * The declared `unsigned short`, `unsigned int` and `unsigned long`
+ * conversions currently fail compiler lookup (diagnostic `00945`), before
+ * their checked conversion helpers can run.
+ *
+ * Division or remainder by zero throws DivisionByZeroError. These arithmetic
+ * errors are exceptions, not sentinel values returned by the operators.
+ *
+ * This function-body example makes truncating signed division explicit:
+ *
+ * ```k
+ * number : BigInteger(-17);
+ * quotient : BigInteger = number / 5; // -3
+ * remainder : BigInteger = number % 5; // -2
+ * moved : BigInteger(#number);
+ * number += 3; // Reuses the drained zero; moved remains -17.
+ * ```
  */
 public final class BigInteger {
 private:
@@ -116,7 +153,16 @@ public:
 
     ~BigInteger() { __k_big_integer_release(_native); _native = null; }
 
-    /** Parse decimal text, with optional signed 0b, 0o, or 0x prefixes. */
+    /**
+     * Parse decimal text, with optional signed 0b, 0o, or 0x prefixes.
+     *
+     * Leading zeroes alone do not select octal. Whitespace, separators and
+     * trailing junk are rejected. The input is borrowed only during parsing.
+     *
+     * @param str ASCII integer text; an array may have one trailing NUL.
+     * @return An independent integer value.
+     * @throws NumberFormatError If the text is empty or malformed.
+     */
     static fromString(str: const char[]) : BigInteger {
         return parseArray(str, 0);
     }

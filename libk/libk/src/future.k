@@ -104,30 +104,73 @@ public final struct FutureBox {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Future<T> — the read side of a value produced asynchronously.
+ * Read handle for a value, failure, or cancellation produced asynchronously.
  *
  * A Future is obtained from a Promise<T> and observes the same shared state.
  * It never produces the value itself; it only waits for it and reports the
  * outcome.
  *
- * Usage:
- *   p : Promise<int>;
- *   f : Future<int>! = p.future();
- *   // ... another thread ...
- *   p.trySuccess(42);
- *   // ... consumer ...
- *   v : int = f->get();
+ * ### Terminal outcomes
  *
- * Blocking: get() and get(Duration) are interruptible. A thread blocked in
+ * A shared state starts PENDING and can publish one terminal outcome:
+ * - SUCCESS: get() returns a copy of the value.
+ * - FAILED: get() throws ExecutionException with the stored cause, if any.
+ * - CANCELLED: get() throws CancellationException.
+ *
+ * isDone() covers all three outcomes, not just success. Reading a result does
+ * not consume it; independent handles can observe the same terminal outcome.
+ *
+ * ### Cancellation is not necessarily completion
+ *
+ * cancel() requests cancellation through the producer's hook when present.
+ * A true result means the request was accepted, not that work has stopped or
+ * isDone() must already be true. Deferred I/O producers may finish draining
+ * before publishing, and may report InterruptedIOException rather than the
+ * CANCELLED state. Inspect the final outcome through get() and state queries.
+ *
+ * Even terminal publication need not mean an underlying I/O operation is
+ * quiescent. waitQuiescent() is a separate producer-defined drain operation;
+ * without a registered hook it succeeds immediately. It is not a replacement
+ * for get(), and does not itself produce a value.
+ *
+ * ### Waiting and lifetime
+ *
+ * get() and get(Duration) are interruptible. A thread blocked in
  * either of them and interrupted through Thread.interrupt() throws
  * ThreadInterruptionException. Completion always wins over interruption, so a
- * value published before the interrupt request is never lost.
+ * value published before the interrupt request is never lost. A timeout or
+ * ThreadInterruptionException ends only this wait: neither cancels the
+ * producer, consumes the result, nor clears the thread's interrupted flag.
  *
- * Copying: a Future must not be copied by assignment; use share() to obtain an
- * additional independent handle on the same result.
+ * A Future must not be copied by assignment; use share() to obtain an
+ * additional independent handle on the same result. Future and Promise
+ * handles retain the shared state; destroying a handle is not cancellation.
+ * A Future may outlive its Promise, including remaining pending forever if
+ * that Promise was destroyed without publishing.
  *
  * Thread safety: all methods are safe to call concurrently from several
  * threads on distinct handles. A single handle must not be used concurrently.
+ * Sharing the result does not synchronise unrelated objects reachable from T.
+ *
+ * ### Example: publish once and read through independent handles
+ *
+ * This example publishes inline for clarity; an asynchronous producer must
+ * keep its Promise alive until it finishes using it.
+ *
+ * ```k
+ * module future_example;
+ *
+ * main() : int throws(Throwable) {
+ *     producer : Promise<int>;
+ *     first : Future<int>! = producer.future();
+ *     second : Future<int>! = first->share();
+ *     producer.trySuccess(42);
+ *     if (producer.trySuccess(7)) {
+ *         return 1;
+ *     }
+ *     return first->get() - second->get();
+ * }
+ * ```
  *
  * @param T The produced value type. It must be default-constructible and
  *          copyable.
@@ -229,6 +272,9 @@ public final struct Future {
     /**
      * Wait for quiescence on the underlying asynchronous operation.
      *
+     * This waits through the producer's quiescence hook, if supplied. It does
+     * not wait for ordinary Promise publication when no hook is installed.
+     *
      * @param timeout Maximum duration to wait.
      * @return 0 on success, or non-zero error/timeout code.
      */
@@ -242,6 +288,8 @@ public final struct Future {
 
     /**
      * Wait indefinitely for quiescence on the underlying asynchronous operation.
+     *
+     * Without a producer hook this returns immediately, even while pending.
      *
      * @return 0 on success.
      */
@@ -330,7 +378,7 @@ public final struct Future {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Promise<T> — the write side of a value produced asynchronously.
+ * Producer handle that publishes one terminal outcome to its Futures.
  *
  * A Promise creates a shared state, hands out Future<T> handles observing it,
  * and publishes exactly one terminal outcome: a value, a failure or a
@@ -338,13 +386,26 @@ public final struct Future {
  * reported by a `false` return value, so competing producers never corrupt the
  * result.
  *
- * Usage:
- *   p : Promise<int>;
- *   f : Future<int>! = p.future();
- *   p.trySuccess(42);
+ * ### Producer responsibilities
  *
- * Thread safety: all methods are safe to call concurrently from several
- * threads on distinct handles. A single handle must not be used concurrently.
+ * Keep this object alive until all producer access has ended. Do not copy it
+ * by assignment to manufacture another producer handle. future() can be
+ * called repeatedly to create independently owned readers of the same state.
+ * Retaining the state through a Future does not retain this Promise object.
+ *
+ * Destruction releases a handle; it does not automatically cancel or publish
+ * a broken-promise failure. If the last producer disappears while still
+ * pending, surviving Futures can wait forever. Arrange a terminal outcome on
+ * every producer exit path that is meant to release readers.
+ *
+ * tryCancel() directly publishes CANCELLED for this Promise's result; it does
+ * not interrupt a worker thread. Future.cancel() is the consumer-facing
+ * request path and can involve a producer hook for runtime-backed operations.
+ * Neither API forcibly stops arbitrary producer code.
+ *
+ * Publication serialises the shared result, not unrelated application data.
+ * Callers must still manage producer-object lifetime and any shared payload
+ * objects themselves. See Future for a complete Promise/Future example.
  *
  * @param T The produced value type. It must be default-constructible and
  *          copyable.

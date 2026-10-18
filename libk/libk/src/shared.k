@@ -103,7 +103,7 @@ protected:
 }
 
 /**
- * Shared<T> — shared ownership of a dynamically allocated class object.
+ * Shared<T> - shared ownership of a dynamically allocated class object.
  *
  * Copies retain the same object; drains transfer a handle and leave the source
  * empty. The last Shared destroys the object. Weak handles keep only the
@@ -112,6 +112,45 @@ protected:
  * Reference counting is atomic. Distinct handles may be used concurrently.
  * Modifying the same handle concurrently, or accessing T concurrently,
  * requires external synchronisation. T's destructor must not throw.
+ *
+ * ## Usage
+ *
+ * Copy a handle to retain the object independently of the original handle.
+ * The declarations below belong at module scope; no explicit base-library
+ * import is needed.
+ *
+ * ```k
+ * class SharedExampleBox {
+ *     public:
+ *     value : int;
+ *     SharedExampleBox(v : int) : value(v) {}
+ * }
+ *
+ * sharedExample() : int {
+ *     original : Shared<SharedExampleBox>(new SharedExampleBox(42));
+ *     copy : Shared<SharedExampleBox>(original);
+ *     moved : Shared<SharedExampleBox>(#original);
+ *     moved.reset();
+ *     return copy.get()->value; // 42; original is empty.
+ * }
+ * ```
+ *
+ * ## Ownership and lifetime
+ *
+ * - Construction from `T!`, acquire() and reset(owner) transfer the owner into
+ *   the ownership group. They do not copy the managed object.
+ * - get() borrows the typed view. Keep a strong handle alive for the entire
+ *   use of that pointer; neither delete it nor adopt it into another owner.
+ * - Weak back-references can break ownership cycles. A cycle made only of
+ *   Shared handles keeps its objects alive even after outside handles go away.
+ *
+ * ## Pitfalls
+ *
+ * - A checked cross-type conversion can yield an empty destination even when
+ *   the source is nonempty. Failed cross-type drains leave the source intact;
+ *   drain assignment still replaces the destination with the empty result.
+ * - useCount() is a snapshot, not a lock or a guarantee of exclusive access
+ *   to the managed object.
  */
 template<typename T>
 public final struct Shared {
@@ -206,7 +245,14 @@ public:
         throw BadWeakReferenceException();
     }
 
-    /** Promote a compatible weak view; mismatched live objects yield empty. */
+    /**
+     * Promote a compatible weak view; mismatched live objects yield empty.
+     *
+     * Promotion happens before the checked cast. A live but incompatible
+     * object does not throw BadWeakReferenceException.
+     *
+     * @throws BadWeakReferenceException If the source is empty or expired.
+     */
     template<typename U>
     Shared(other : const ::k::Weak<U>&) : _block(null), _view(null)
         throws(BadWeakReferenceException) {
@@ -329,8 +375,12 @@ public:
         }
     }
 
-    /** Return a borrowed pointer, or null. Constness of the handle does not
-     * make the managed object const. */
+    /**
+     * Return a borrowed pointer, or null.
+     *
+     * Constness of the handle does not make the managed object const.
+     * The pointer does not retain ownership; see the class lifetime rules.
+     */
     const get() : T* {
         return _view;
     }
@@ -389,7 +439,7 @@ public:
 }
 
 /**
- * Weak<T> — non-owning observation of a Shared ownership group.
+ * Weak<T> - non-owning observation of a Shared ownership group.
  *
  * A Weak never extends T's lifetime. lock() atomically acquires a Shared if
  * the object is still alive, or returns an empty Shared otherwise. An expired
@@ -397,6 +447,46 @@ public:
  *
  * Distinct handles may be used concurrently. Concurrent modification of the
  * same handle requires external synchronisation.
+ *
+ * ## Usage
+ *
+ * Keep the result of lock() alive while accessing the object. These are
+ * module-scope declarations using only the implicit base library.
+ *
+ * ```k
+ * class WeakExampleBox {
+ *     public:
+ *     value : int;
+ *     WeakExampleBox(v : int) : value(v) {}
+ * }
+ *
+ * weakExample() : bool {
+ *     owner : Shared<WeakExampleBox>(new WeakExampleBox(7));
+ *     observer : Weak<WeakExampleBox>(owner);
+ *     held : Shared<WeakExampleBox> = observer.lock();
+ *     owner.reset();
+ *     if (!held || held.get()->value != 7) return false;
+ *     held.reset();
+ *     missing : Shared<WeakExampleBox> = observer.lock();
+ *     return !missing && observer.expired();
+ * }
+ * ```
+ *
+ * ## Lifetime
+ *
+ * A Weak retains the control block, not the object. Replacing a Shared with
+ * another allocation does not redirect existing Weak observers to the new
+ * object. Shared construction from an empty or expired Weak throws
+ * BadWeakReferenceException; lock() instead returns an empty Shared.
+ *
+ * ## Pitfalls
+ *
+ * > An expired() check cannot reserve the object's lifetime. Use lock() and
+ * > test the returned Shared, rather than checking expired() before access.
+ *
+ * Static upcasts can preserve an expired ownership group. Dynamic conversions
+ * require a live object for the checked cast and otherwise produce an empty
+ * observation; a failed dynamic drain leaves its source unchanged.
  */
 template<typename T>
 public final struct Weak {
@@ -618,7 +708,12 @@ public:
         return useCount() == 0;
     }
 
-    /** Atomically acquire ownership, or return an empty Shared. */
+    /**
+     * Atomically acquire ownership, or return an empty Shared.
+     *
+     * @return A strong handle that keeps the object alive until released, or
+     * an empty handle if this observation is empty or expired.
+     */
     const lock() result : Shared<T> {
         block : SharedControlBlock* = _block;
         if (block != null) {

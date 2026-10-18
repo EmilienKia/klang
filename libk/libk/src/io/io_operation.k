@@ -66,9 +66,35 @@ public struct NativeIoHandle {}
 @ffi::Extern("C") private __k_io_runtime_init() : int;
 @ffi::Extern("C") private __k_io_runtime_request_shutdown() : int;
 
-/** Linux proactor lifecycle. Reinitialization and post-fork use are rejected. */
+/** Process-wide Linux proactor initialization and permanent shutdown.
+ *
+ * ## Availability
+ *
+ * Channel operations initialize the runtime on demand; initialize can be used
+ * to check availability explicitly. The backend requires Linux io_uring and
+ * the required kernel transport opcodes. Unavailable kernel support is an
+ * error, not a request to fall back to blocking file or socket transfers.
+ * Inherited post-fork use is rejected.
+ *
+ * ## Completed stop
+ *
+ * Shutdown is an idempotent, completed process-wide barrier, not a pause or a
+ * channel close. It rejects new work, cancels and drains accepted I/O and
+ * resolver work, suppresses queued I/O callbacks, and finishes their capture
+ * cleanup. Running callbacks receive a cooperative interruption request and
+ * must return before shutdown can finish. This includes callbacks selected
+ * onto a custom executor; a queued no-op shell may remain there after cleanup.
+ *
+ * Stop is permanent even when requested before initialization. Neither later
+ * initialize calls nor new channel operations restart the runtime. Do not call
+ * shutdown from runtime workers, I/O callbacks or their cleanup: it would wait
+ * for itself and raises IllegalStateException instead. The Application exit
+ * barrier performs runtime shutdown before Application fields are destroyed;
+ * it does not extend the lifetime of ordinary local variables.
+ */
 public class IoRuntime {
 public:
+    /** Initialize or observe the existing runtime; raise IOException on failure. */
     static initialize() {
         rc : int = __k_io_runtime_init();
         if (rc != 0) throw IOException(-rc);
@@ -82,11 +108,47 @@ public:
     }
 }
 
-/**
- * IoOperation — handle to an active or completed asynchronous I/O operation.
+/** Owning observer of an active or completed asynchronous I/O operation.
  *
  * Wraps an atomically refcounted native operation handle. Destroying this K
  * wrapper only detaches the observer and does not cancel the underlying operation.
+ * share creates another observer of the same operation, not another submission.
+ *
+ * ## I/O completion versus user delivery
+ *
+ * Native completion updates byte counts and buffer/channel positions and
+ * releases I/O leases before publishing the Future or dispatching a callback.
+ * Future publication does not require the selected callback executor to run.
+ * Callback forms instead deliver an IoResult on that executor, which can
+ * reject delivery. A returned observer alone is not evidence of I/O success.
+ *
+ * isIoDone describes native I/O, while isCallbackRunning and stage distinguish
+ * queued/running user delivery. isDone describes terminal I/O/callback state;
+ * it is not a join on callback capture destruction. waitQuiescent waits for
+ * native drain, not queued callback execution or running callback completion.
+ * Keep K objects borrowed by callback code or capture cleanup alive until that
+ * delivery/cleanup has finished, even if native drain already succeeded.
+ *
+ * ## Cancellation and progress
+ *
+ * cancel requests native cancellation and suppresses callbacks that have not
+ * started. If a callback is already running, it requests cooperative
+ * interruption through ExecutionContext instead of preempting its thread.
+ * Accepted cancellation can race with completed bytes and never rolls back
+ * buffer or file-position progress. bytesTransferred reports that progress;
+ * fully operations accumulate it across children, including on failure.
+ *
+ * A true cancel result is not quiescence. Drain before reusing a leased buffer;
+ * a nonzero timed drain result is not permission to access it. Primitive Future
+ * cancellation can become observable before native drain, whereas fully
+ * Futures defer their cancellation outcome until drain. An observation timeout
+ * from Future.get likewise does not cancel I/O. Sync bridges request and drain
+ * cancellation/interruption before returning control.
+ *
+ * Closing a channel rejects new work and drains that handle's I/O before
+ * descriptor close; it does not join unrelated queued user callback cleanup.
+ * Close operations themselves are not cancellable. Process-wide completed
+ * user-delivery cleanup belongs to IoRuntime::shutdown, not waitQuiescent.
  */
 public class IoOperation : public ExecutionContext {
 private:
@@ -187,8 +249,10 @@ public:
         return IoError(kind, errCode, transferred);
     }
 
-    /**
-     * Request cancellation of this operation.
+    /** Request cancellation of this operation without waiting for drain.
+     *
+     * Before callback entry this suppresses delivery; during execution it only
+     * requests cooperation. It does not wait for native drain or callback exit.
      *
      * @return true if the cancellation was accepted or cooperative interruption was requested.
      */
@@ -197,11 +261,15 @@ public:
         return __k_io_op_cancel(_native) != 0;
     }
 
-    /**
-     * Wait for this operation to reach quiescent state.
+    /** Wait for native I/O to drain, without joining user callback execution.
      *
      * @param timeout Maximum duration to wait.
-     * @return 0 on success.
+     * @return 0 after drain; nonzero on timeout or a forbidden wait.
+     *
+     * Negative durations are treated as zero. A failed wait does not release
+     * the caller from buffer lifetime/access obligations. Waiting on the
+     * native completion thread or through an inherited post-fork operation is
+     * rejected.
      */
     waitQuiescent(timeout: Duration&) : int {
         if (_native == null) return 0;
@@ -212,10 +280,9 @@ public:
         return __k_io_op_wait_quiescent(_native, nanos);
     }
 
-    /**
-     * Wait indefinitely for this operation to reach quiescent state.
+    /** Wait indefinitely for native drain, not callback execution or cleanup.
      *
-     * @return 0 on success.
+     * @return 0 after drain; nonzero if the wait is forbidden.
      */
     waitQuiescent() : int {
         if (_native == null) return 0;

@@ -61,13 +61,64 @@ public struct NativeByteBuffer {
 @ffi::Extern("C") private __k_io_buffer_get_relative(native: NativeByteBuffer*, dst: byte*, length: unsigned int) : int;
 @ffi::Extern("C") private __k_io_buffer_put_relative(native: NativeByteBuffer*, src: const byte*, length: unsigned int) : int;
 
-/**
- * ByteBuffer — a fixed-capacity byte container with an explicit cursor backed
- * by a reference-counted NativeByteBuffer.
+/** Fixed-capacity native byte storage with an explicit position and limit.
  *
- * Backed by native storage (heap, direct, or memory-mapped).
- * Supports in-flight lease tracking: any attempt to mutate position, limit,
- * content, compact or remap while leases are active throws BufferInUseException.
+ * ## Filling and draining
+ *
+ * The invariant is `0 <= position <= limit <= capacity`. The remaining range
+ * is `[position, limit)`, not the whole allocation. Allocation starts with
+ * position zero and limit equal to capacity. Relative get/put and channel
+ * transfers advance position; absolute get/put leave it unchanged.
+ *
+ * - After filling, `flip()` makes the filled prefix available for draining:
+ *   limit becomes the old position and position becomes zero.
+ * - `clear()` prepares the whole allocation for filling again. It resets
+ *   cursors, but does not erase bytes or preserve an unread suffix for you.
+ * - After consuming a prefix, `compact()` moves remaining bytes to the front
+ *   and positions the cursor after them, ready to append more bytes.
+ *   `rewind()` only resets position.
+ *
+ * `wrap(array)` copies the array; it is not a view of its storage. Likewise,
+ * `toArray()` copies the remaining range. A borrowed K reference, link or view
+ * of this buffer refers to the same object and cursors, not an independent
+ * cursor over shared bytes. A pointer from `dataAt()` is borrowed native
+ * storage, not an owning buffer view.
+ *
+ * ## In-flight use and lifetime
+ *
+ * Preparing channel I/O snapshots the remaining range and leases native
+ * backing storage. Do not access its bytes, move its cursors, compact it, or
+ * use a previously obtained raw pointer while leased. Even absolute reads
+ * reject an active lease with `BufferInUseException`. Completion accounts for
+ * actual transferred bytes before releasing the lease and publishing results.
+ *
+ * Native leases retain backing storage, not this K object's address. Destroying
+ * the wrapper after submission does not invalidate native I/O, but a callback
+ * that uses the wrapper must keep it alive separately. Cancellation requests
+ * and Future wait timeouts do not prove that a lease has drained; check a
+ * successful `IoOperation::waitQuiescent()` before reusing a cancelled buffer.
+ * A lease is a lifetime/access guard, not permission for concurrent buffer use.
+ * Direct allocation promises alignment, not io_uring registration.
+ *
+ * ## Example
+ *
+ * This module helper fills two bytes, drains one, then resets the same storage
+ * for reuse. The returned byte is 79; `clear()` does not zero the allocation.
+ *
+ * ```k
+ * module buffer_usage;
+ *
+ * bufferCycle() : byte throws(Throwable) {
+ *     buffer : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
+ *     buffer->put((byte) 79);
+ *     buffer->put((byte) 75);
+ *     buffer->flip();
+ *     first : byte = buffer->get();
+ *     buffer->clear();
+ *     delete buffer;
+ *     return first;
+ * }
+ * ```
  */
 public class ByteBuffer {
 protected:
@@ -253,8 +304,11 @@ public:
         return this;
     }
 
-    /**
-     * Switch to fill mode over the whole capacity, discarding any content.
+    /** Switch to fill mode over the whole capacity without erasing stored bytes.
+     *
+     * Position becomes zero and limit becomes capacity. Previously valid data
+     * is no longer delimited by the cursors; after consuming a prefix, use
+     * compact to retain unread bytes while preparing to append.
      *
      * @return This buffer.
      */
@@ -475,8 +529,12 @@ public:
 
     // ── Raw & Internal access ────────────────────────────────────────────
 
-    /**
-     * Return pointer to byte at index in backing storage.
+    /** Borrow a pointer into backing storage without moving position.
+     *
+     * The pointer does not retain storage and must not outlive its native
+     * backing owner. Bounds are against capacity, not limit; a non-null pointer
+     * at capacity is one-past-end and must not be dereferenced. Do not use a
+     * saved pointer to bypass an in-flight lease or a read-only mapping.
      *
      * @param index Absolute index.
      * @return Pointer to byte.
@@ -528,8 +586,11 @@ public:
         return __k_io_buffer_get_lease_count(_native);
     }
 
-    /**
-     * Manually acquire a lease on this buffer.
+    /** Manually acquire a native backing-storage lease.
+     *
+     * Channel operations manage their own leases. A manually acquired lease
+     * must be paired with releaseLease; never release an operation's lease to
+     * make a busy buffer accessible.
      */
     acquireLease() : void {
         if (_native != null) {
@@ -537,8 +598,10 @@ public:
         }
     }
 
-    /**
-     * Manually release a lease on this buffer.
+    /** Release a lease acquired manually by the caller.
+     *
+     * This does not cancel or drain I/O and must not release a channel-owned
+     * lease.
      */
     releaseLease() : void {
         if (_native != null) {

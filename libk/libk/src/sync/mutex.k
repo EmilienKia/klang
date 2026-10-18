@@ -94,13 +94,33 @@ public interface Lock {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Mutex — a plain, non-reentrant lock.
+ * Non-reentrant lock with thread ownership and an owned native state.
  *
  * Re-locking a mutex from the thread that already owns it deadlocks; use
  * ReentrantLock when reentrancy is required.
  *
- * A Mutex owns its native state and is **not** copyable: pass it around by
- * pointer, link or reference.
+ * ### Ownership and lifetime
+ *
+ * Only the owning thread can unlock the mutex. A successful tryLock() is an
+ * acquisition just like lock() and must be paired with unlock(); failure does
+ * not give access to the protected data. Use MutexLocker to release a lock on
+ * both normal scope exit and exception unwinding.
+ *
+ * A Mutex is not copyable: pass it around by pointer, link or reference. Keep
+ * it alive until there are no holders, waiters, or associated Conditions.
+ * A Condition borrows its native mutex; destroy Conditions before the Mutex.
+ * Destruction does not release other threads or wait for them to finish.
+ *
+ * ### Blocking and interruption
+ *
+ * lock() is uninterruptible and leaves interruption pending.
+ * lockInterruptibly() and timed tryLock() can throw and clear the interrupted
+ * flag when they report interruption; the caller has not acquired the lock
+ * on that outcome. No fairness or acquisition ordering is promised.
+ *
+ * Protect each shared predicate and the data it describes with the same lock
+ * on both readers and writers. Locking one method does not make all accesses
+ * to an object automatically safe. See Condition for the wait/predicate pattern.
  */
 public class Mutex : public Lock {
     protected:
@@ -171,7 +191,9 @@ public class Mutex : public Lock {
 
     /**
      * Try to acquire the lock, giving up after `timeout`.
-     * A non-positive timeout behaves like tryLock().
+     *
+     * Zero polls without blocking, but can report interruption when acquisition
+     * fails. A negative duration waits without a deadline.
      *
      * @param timeout Maximum time to wait.
      * @return true if the lock was acquired.
@@ -228,6 +250,11 @@ public class Mutex : public Lock {
  *
  * Each acquisition must be matched by one `unlock()`; the lock is released
  * only when the hold count drops back to zero.
+ *
+ * Conditions created from this lock release all recursive holds while
+ * waiting, then restore the original hold count on reacquisition. Reentrancy
+ * is a property of the owning thread, not permission for another thread to
+ * unlock it. The Mutex lifetime and non-copying rules still apply.
  */
 public class ReentrantLock : public Mutex {
     public:
@@ -240,18 +267,29 @@ public class ReentrantLock : public Mutex {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * MutexLocker — a scoped RAII helper for locking and unlocking a Lock/Mutex.
+ * Scoped guard pairing one Lock acquisition with one release.
  *
  * Acquires the lock upon construction and automatically releases it upon
  * destruction when leaving scope (normal return or exception unwinding).
  * Holds a non-null, immutable reference to the lock throughout its lifetime.
+ * The lock must outlive the guard. Do not copy the guard, transfer it to
+ * another thread, or manually unlock the managed acquisition while it lives.
+ * Construction uses uninterruptible lock(), not lockInterruptibly().
  *
- * Usage:
+ * ### Example: limit the critical section to an inner scope
+ *
  * ```k
- * {
- *     locker : MutexLocker(mutex);
- *     // critical section
- * } // automatically unlocked here
+ * module mutex_example;
+ *
+ * main() : int {
+ *     mutex : Mutex;
+ *     {
+ *         locker : MutexLocker(mutex);
+ *         // Access data protected by mutex here.
+ *     }
+ *     // The guard released mutex before this point.
+ *     return 0;
+ * }
  * ```
  */
 public struct MutexLocker {
@@ -283,25 +321,75 @@ public:
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Condition — a wait queue attached to a Mutex.
+ * Predicate-wait queue borrowing a particular Mutex or ReentrantLock.
  *
- * The lock must be held when calling any method. `await()` atomically releases
- * the lock and blocks; the lock is always re-acquired before the call returns,
- * whatever the outcome, including when an exception is thrown.
+ * Obtain instances through Mutex.newCondition(). The Condition owns its wait
+ * queue but not the associated mutex. Do not copy it, destroy it with active
+ * waiters, or keep it alive after its mutex is destroyed.
  *
- * Because wake-ups can be spurious, always wait inside a loop:
+ * ### Lock ownership and reacquisition
+ *
+ * Hold the associated lock before awaiting or signalling; otherwise these
+ * operations throw IllegalMonitorStateException without acquiring it for you.
+ * A valid await registers the wait and releases the mutex without a gap in
+ * which another owner could signal unnoticed. Before returning or reporting
+ * timeout/interruption it reacquires the mutex, restoring the original hold
+ * count for a ReentrantLock.
+ *
+ * Reacquisition is uninterruptible and may take longer than the requested
+ * timeout. An interrupted await clears the thread's flag before throwing.
+ * awaitUninterruptibly() instead leaves interruption pending.
+ *
+ * ### The predicate, not the notification, is the condition
+ *
+ * Always test application state in a while loop under the associated mutex.
+ * A wakeup or a true timed-await return is not proof that this state is ready:
+ * another thread may have changed it before reacquisition. The signalling
+ * thread should update the protected predicate before signal() or signalAll().
+ * Signalling does not release the mutex or hand it directly to a waiter.
+ *
+ * ### Example: a persistent readiness predicate
+ *
+ * The helper can be shared by a producer calling publish() and a consumer
+ * calling awaitReady(), provided it outlives both. main shows the already-ready
+ * path; the while loop also handles a producer that publishes after waiting
+ * begins. The Condition is destroyed before its borrowed Mutex.
  *
  * ```k
- * m.lock();
- * try {
- *     while (!condition) { c->await(); }
- *     // condition holds here
- * } finally {
- *     m.unlock();
+ * module condition_example;
+ *
+ * class ReadySignal {
+ * private:
+ *     _mutex : Mutex;
+ *     _changed : Condition!;
+ *     _ready : bool = false;
+ * public:
+ *     ReadySignal() {
+ *         _changed = _mutex.newCondition();
+ *     }
+ *     ~ReadySignal() {
+ *         delete _changed;
+ *     }
+ *     publish() : void throws(IllegalMonitorStateException) {
+ *         locker : MutexLocker(_mutex);
+ *         _ready = true;
+ *         _changed->signalAll();
+ *     }
+ *     awaitReady() : void throws(Throwable) {
+ *         locker : MutexLocker(_mutex);
+ *         while (!_ready) {
+ *             _changed->await();
+ *         }
+ *     }
+ * }
+ *
+ * main() : int throws(Throwable) {
+ *     ready : ReadySignal;
+ *     ready.publish();
+ *     ready.awaitReady();
+ *     return 0;
  * }
  * ```
- *
- * Obtain instances through `Mutex.newCondition()`.
  */
 public class Condition {
     private:
@@ -352,6 +440,9 @@ public class Condition {
 
     /**
      * Release the lock and wait until signalled or until `timeout` elapses.
+     *
+     * The mutex is reacquired before either outcome is returned. A true result
+     * does not establish the caller's predicate; test it again while locked.
      *
      * @param timeout Maximum time to wait.
      * @return true if the wait ended with a signal, false on timeout.

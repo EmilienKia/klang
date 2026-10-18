@@ -121,10 +121,46 @@ struct KTaskCarrier {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * ExecutorLease — encapsulates a refcounted native handle to an executor
- * endpoint that remains valid even if the originating K wrapper is destroyed.
+ * Retained native execution endpoint, independent of its originating K wrapper.
+ *
+ * ### Endpoint lifetime is not executor availability
+ *
+ * A lease retains endpoint state, not the K Executor object or borrowed task
+ * data. A pool or event loop can close while leases still exist; subsequent
+ * submissions then throw RejectedExecutionException instead of accessing a
+ * destroyed wrapper. Retaining a lease does not restart workers, keep an
+ * executor accepting work, or reactivate a stopped process I/O runtime.
+ *
+ * Use share() for an independently owned lease; do not copy its native handle
+ * as an ownership substitute. A default-constructed lease has no endpoint
+ * and rejects submissions. system() selects the process-managed callback
+ * executor and can itself reject when that endpoint is unavailable.
+ *
+ * ### Task and borrowed-command ownership
+ *
+ * execute(task) transfers the owned callable for execution and cleanup.
+ * Rejection also disposes of it; do not retry by reusing the transferred owner.
+ * execute(Runnable+) borrows its command, which must outlive queued execution.
+ * A lease does not retain that Runnable.
+ *
  * Task and cleanup failures cannot unwind through C: they are diagnosed on
  * native stderr with their boundary origin and Throwable code.
+ *
+ * ### Example: an inline endpoint outlives its DirectExecutor wrapper
+ *
+ * ```k
+ * module executor_lease_example;
+ *
+ * main() : int throws(Throwable) {
+ *     lease : ExecutorLease!;
+ *     {
+ *         executor : DirectExecutor;
+ *         lease = executor.acquireLease();
+ *     }
+ *     lease->execute([]() { Thread::yield(); });
+ *     return 0;
+ * }
+ * ```
  */
 public class ExecutorLease {
 private:
@@ -189,10 +225,33 @@ public:
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Executor — an object that executes submitted callable tasks.
+ * Execution policy for owned callable tasks and borrowed Runnable commands.
  *
  * Decouples task submission from the mechanics of how each task will be run,
- * including details of thread use, scheduling, etc.
+ * including details of thread use and scheduling.
+ *
+ * ### Submission is not necessarily asynchronous
+ *
+ * DirectExecutor runs inline before execute() returns. Pool executors enqueue
+ * work for their workers; a submitted task can start before submission
+ * returns, and return from execute() does not imply completion.
+ *
+ * A successful submission transfers responsibility for the owned callable.
+ * Any pointers or references captured by it still borrow their targets: keep
+ * those targets alive until execution or task cleanup has ended. The
+ * Runnable overload likewise borrows its command rather than taking ownership.
+ *
+ * ### Scheduling and rejection
+ *
+ * Priority is an implementation policy: the default overload ignores it.
+ * ThreadPoolExecutor chooses higher priorities first among queued tasks and
+ * FIFO among equal priorities; this does not preempt running tasks or order
+ * completion across several workers. Closed or full native queues can reject
+ * submissions. Code must handle RejectedExecutionException even when it
+ * previously observed a live executor or acquired a lease.
+ *
+ * acquireLease() retains a native endpoint for deferred users, not this
+ * wrapper. Its lifetime and shutdown contract is described by ExecutorLease.
  */
 public interface Executor {
     /**
@@ -218,7 +277,7 @@ public interface Executor {
     /**
      * Executes the given Runnable command.
      *
-     * @param command The Runnable command to execute.
+     * @param command Borrowed command; keep it alive through task execution.
      * @throws RejectedExecutionException if the executor cannot accept the task.
      */
     default execute(command: Runnable+) : void throws(RejectedExecutionException) {
@@ -236,7 +295,7 @@ public interface Executor {
     /**
      * Acquires a lease to this executor.
      *
-     * @return A valid ExecutorLease.
+     * @return An owned endpoint lease; later submissions can still be rejected.
      */
     acquireLease() : ExecutorLease! throws(RejectedExecutionException);
 }
@@ -244,6 +303,14 @@ public interface Executor {
 /**
  * Submits a value-returning task with an explicit priority and returns a Future
  * representing the pending result of the task.
+ *
+ * A task Throwable becomes an ExecutionException when the Future is read;
+ * its stored cause is currently an Exception carrying the task's error code,
+ * not the original throwable object or concrete type. Dropping a queued task
+ * before it runs cancels its still-pending result.
+ *
+ * Cancelling the Future does not remove or interrupt this task: the task can
+ * still run, with any later publication rejected by the terminal state.
  *
  * @param executor The executor to execute the task on.
  * @param task The owned value-returning task callable to execute.
@@ -282,7 +349,15 @@ execute(executor: const Executor&, task: !():R) : Future<R>! throws(RejectedExec
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * DirectExecutor — executes each submitted task synchronously in the calling thread.
+ * Runs each submitted task synchronously in the calling thread.
+ *
+ * No worker or queue is created; priority is ignored and a null callable is
+ * a no-op. Direct execute(task) calls the callable normally, so its exceptions
+ * propagate to the caller. By contrast, native lease execution contains and
+ * diagnoses task failures at the native boundary. Value-returning execute<R>
+ * captures task failure into its returned Future.
+ *
+ * Nested submission is ordinary nested execution, not a later queue turn.
  */
 public class DirectExecutor : public Executor {
 public:
@@ -520,10 +595,55 @@ struct WorkerNode {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * ThreadPoolExecutor — manages a pool of worker threads to execute tasks.
+ * Fixed pool of worker threads consuming an owned priority-task queue.
  *
  * Submitted tasks are held in an internal thread-safe priority queue.
  * Idle worker threads pull tasks from the queue as soon as they become available.
+ * Higher priority is selected first among pending tasks; equal priorities are
+ * FIFO. Several workers can run concurrently, so completion order can differ.
+ * A requested pool size of zero is treated as one worker.
+ *
+ * ### Lifetime and failure boundaries
+ *
+ * Task callables are owned by the queue while pending and cleaned up after
+ * execution or removal. Borrowed captures and Runnable commands are not kept
+ * alive by the queue. Worker task failures are contained and diagnosed on
+ * native stderr; use execute<R> and its Future to observe a value-task failure.
+ *
+ * ### Shutdown
+ *
+ * - shutdown() closes admission and allows already queued tasks to drain.
+ * - shutdownNow() closes admission, drops pending tasks, and requests worker
+ *   loops to stop. It does not interrupt or forcibly terminate a running
+ *   callable; work already taken by a worker can still execute.
+ * - awaitTermination() waits for worker exit; call shutdown first if orderly
+ *   termination is intended. It does not initiate shutdown.
+ * - Destruction requests orderly shutdown and joins workers before releasing
+ *   their state. A task that never returns can therefore block destruction.
+ *
+ * Critical: do not destroy the pool from one of its own tasks, or block all
+ * workers on results that only tasks queued to this same pool can produce.
+ * Retained leases remain memory-valid after shutdown but cannot reopen the
+ * closed queue. No lifecycle guarantee here extends borrowed application data.
+ *
+ * ### Example: consume a result, then stop accepting work
+ *
+ * ```k
+ * module executor_example;
+ *
+ * main() : int throws(Throwable) {
+ *     executor : SingleThreadExecutor;
+ *     result : Future<int>! = executor.execute<int>(
+ *         []() : int { return 42; });
+ *     value : int = result->get();
+ *     executor.shutdown();
+ *     timeout : Duration = Duration::ofSeconds(2L);
+ *     if (!executor.awaitTermination(timeout)) {
+ *         return 1;
+ *     }
+ *     return value - 42;
+ * }
+ * ```
  */
 public class ThreadPoolExecutor : public Executor {
 protected:
@@ -591,7 +711,8 @@ public:
     /**
      * Execute a task with default priority (0).
      *
-     * @throws RejectedExecutionException if the executor has been shut down.
+     * @throws RejectedExecutionException if the executor is shut down or the
+     *         native queue cannot accept the task.
      */
     override const execute(task: !()) : void throws(RejectedExecutionException) {
         execute(task, 0);
@@ -601,7 +722,8 @@ public:
      * Execute a task with an explicit priority.
      * Higher integer values indicate higher priority.
      *
-     * @throws RejectedExecutionException if the executor has been shut down.
+     * @throws RejectedExecutionException if the executor is shut down or the
+     *         native queue cannot accept the task.
      */
     override const execute(task: !(), priority: int) : void throws(RejectedExecutionException) {
         if (task == null) {
@@ -644,8 +766,10 @@ public:
     }
 
     /**
-     * Attempt to stop all actively executing tasks and halt the processing
-     * of waiting tasks.
+     * Close admission, discard pending tasks, and request worker loops to stop.
+     *
+     * Running tasks are neither interrupted nor forcibly terminated. A task
+     * already dequeued can still run; this method does not wait for worker exit.
      */
     shutdownNow() : void {
         if (_queue != null) {
@@ -676,10 +800,12 @@ public:
     }
 
     /**
-     * Block until all tasks have completed execution after a shutdown request,
-     * or the timeout occurs, or the current thread is interrupted, whichever happens first.
+     * Wait for worker exit, timeout, or interruption of the calling thread.
      *
-     * @param timeout Maximum duration to wait.
+     * Does not initiate shutdown. The supplied duration is used for each
+     * condition wait; repeated wakeups can extend the total elapsed wait.
+     *
+     * @param timeout Duration supplied to each condition wait.
      * @return true if this executor terminated, false if the timeout elapsed before termination.
      * @throws ThreadInterruptionException if interrupted while waiting.
      */

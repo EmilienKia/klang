@@ -19,36 +19,45 @@
 module k;
 
 /**
- * Optional<T> — a type-safe container for an optional value.
+ * Optional<T> - a type-safe container for an optional value.
  *
  * An Optional<T> either holds a value of type T or is empty (no value).
- * Storage is stack-allocated via UniSlot<T> — no heap allocation occurs.
+ * Storage is inline via UniSlot<T>; the wrapper does not allocate separate
+ * storage for T. T's own construction and copying may allocate resources.
  *
  * Inspired by C++17's std::optional<T>.
  *
- * Usage:
- *   // Create an empty optional
- *   opt : Optional<int>;
- *   // opt.hasValue() == false
+ * ## Usage
  *
- *   // Create an optional with a value
- *   opt2 : Optional<int>(42);
- *   // opt2.hasValue() == true, opt2.get() == 42
+ * Inside a function, using only the implicit base library:
  *
- *   // Set / replace a value
- *   opt.set(10);
- *   // opt.hasValue() == true, opt.get() == 10
+ * ```k
+ * opt : Optional<int>;
+ * opt.set(10);
+ * if (opt.hasValue()) {
+ *     value : int = opt.get(); // 10
+ * }
+ * opt.reset();
+ * fallback : int = opt.getOr(0); // 0
+ * filled : Optional<int>(42);
+ * empty : Optional<int> = Optional<int>::empty();
+ * ```
  *
- *   // Clear the value
- *   opt.reset();
- *   // opt.hasValue() == false
+ * ## Ownership and lifetime
  *
- *   // Safe access with default
- *   val : int = opt.getOr(0);  // returns 0 since opt is empty
+ * - The contained T is owned by the Optional. Copy construction copies its
+ *   value using T's copy semantics, rather than borrowing the source's slot.
+ * - reset(), replacement by set(), and destruction end the contained value's
+ *   lifetime. References obtained from get() must not outlive that value.
+ * - Use OptionalRef<T> or OptionalConstRef<T> to borrow an existing object
+ *   instead of storing a value.
  *
- * Static factory:
- *   filled : Optional<int>(42);
- *   empty  : Optional<int> = Optional<int>::empty();
+ * ## Pitfalls
+ *
+ * > get() requires hasValue(). Use getOr() when a copied fallback is wanted.
+ *
+ * Unlike OptionalRef::getOr(), getOr() returns a value, not a reference to
+ * either the slot or the fallback.
  */
 template<typename T>
 final struct Optional {
@@ -73,6 +82,7 @@ public:
 
     /**
      * Copy constructor. Copies the state of other:
+     *
      * - If other holds a value, this holds a copy of that value.
      * - If other is empty, this is also empty.
      */
@@ -103,6 +113,7 @@ public:
 
     /**
      * Return a reference to the contained value.
+     *
      * Precondition: hasValue() must be true.
      * Behavior is undefined if called on an empty Optional.
      */
@@ -146,9 +157,6 @@ public:
     /**
      * Static factory: create an empty Optional<T>.
      * Equivalent to the default constructor; provided for expressiveness.
-     *
-     * Usage:
-     *   opt : Optional<int> = Optional<int>::empty();
      */
     static empty() : Optional<T> {
         return Optional<T>();
@@ -156,12 +164,36 @@ public:
 }
 
 /**
- * OptionalRef<T> — a type-safe container for an optional mutable reference.
+ * OptionalRef<T> - a type-safe container for an optional mutable reference.
  *
  * Wraps a nullable mutable pointer to T. Does not own the referenced object.
  * Rebind with set(); read or write through get() / operator*().
  *
  * An OptionalRef<T> can be implicitly widened to an OptionalConstRef<T>.
+ *
+ * ## Usage
+ *
+ * Inside a function, using only the implicit base library:
+ *
+ * ```k
+ * value : int = 3;
+ * replacement : int = 9;
+ * ref : OptionalRef<int>(value);
+ * ref.get() = 7; // Changes value, not the binding.
+ * ref.set(replacement);
+ * ref.get() = 10; // Changes replacement; value is still 7.
+ * ```
+ *
+ * ## Lifetime and pitfalls
+ *
+ * - The referent must remain alive while accessed. Copying or widening this
+ *   wrapper copies only the pointer and never extends the referent's lifetime.
+ * - hasValue() checks for a non-null pointer, not for a still-live referent.
+ *   A reference invalidated by its owner does not become empty automatically.
+ * - get() and operator*() require hasValue(). getOr() returns a borrowed
+ *   reference to either the referent or the supplied fallback; that fallback
+ *   must also remain alive for any later use of the returned reference.
+ * - set() rebinds without changing or destroying the old referent.
  */
 template<typename T>
 final struct OptionalRef {
@@ -207,6 +239,7 @@ public:
 
     /**
      * Return a mutable reference to the referenced object.
+     *
      * Precondition: hasValue() must be true.
      */
     const get() : T& {
@@ -239,13 +272,24 @@ public:
 }
 
 /**
- * OptionalConstRef<T> — a type-safe container for an optional read-only reference.
+ * OptionalConstRef<T> - a type-safe container for an optional read-only reference.
  *
  * Wraps a nullable pointer to const T, exposing only immutable (const) access.
- * Does not own the referenced object. Rebinding is not supported by design.
+ * Does not own the referenced object. set() rebinds the wrapper without
+ * modifying the referent.
  *
  * Can be constructed from a const or mutable reference to T (mutable-to-const
  * widening), including from an OptionalRef<T>.
+ *
+ * ## Lifetime and pitfalls
+ *
+ * The same borrowed-lifetime rules as OptionalRef<T> apply: neither copying
+ * nor widening keeps the referent alive, and hasValue() cannot detect a
+ * dangling pointer. get() and operator*() require a nonempty, live reference;
+ * getOr() borrows its fallback when empty.
+ *
+ * Read-only access prevents mutation through this wrapper, but another
+ * mutable reference can still change the underlying object.
  */
 template<typename T>
 final struct OptionalConstRef {
@@ -291,6 +335,7 @@ public:
 
     /**
      * Return an immutable reference to the referenced object.
+     *
      * Precondition: hasValue() must be true.
      */
     const get() : const T& {
@@ -324,4 +369,3 @@ public:
         return defaultValue;
     }
 }
-

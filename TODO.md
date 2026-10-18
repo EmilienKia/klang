@@ -91,6 +91,52 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Generated template API pages omit class-level in-code documentation.**
+      Rich class comments in `libk/libk/src/shared.k`, `optional.k`,
+      `expected.k`, `map.k` and `future.k` are not rendered on their template
+      API pages. This is separate from template declarations or member
+      documentation being present: fresh KDI contains template records, and
+      the corresponding pages are generated, but the class prose is absent.
+      Reproduce with `ninja -C cmake-build-debug -j3 libk_stdlib_doc`, then
+      inspect `cmake-build-debug/libk/libk/doc/md/k/Shared.md` and
+      `cmake-build-debug/libk/libk/doc/html/k/Shared.html`.
+      The source's "Ownership and lifetime" section and "Weak back-references
+      can break ownership cycles" paragraph are absent from both outputs,
+      including declaration-source blocks. Equivalent checks fail for
+      Expected's "States" and Future's "Cancellation is not necessarily
+      completion" sections. Concrete-class rich documentation renders.
+      Trace class documentation through template KDI export and template page
+      generation, preserving class/member distinctions. A regression must
+      check the actual class text and rendered headings outside code blocks,
+      not merely page existence or generic template/member headings.
+      The in-code documentation pass retains the template comments in source
+      without changing the compiler, KDI schema, or documentation generators.
+
+- [ ] **ByteBuffer.compact() leaves the cursor at zero when no prefix was consumed.**
+      Source inspection of `k_io_buffer_compact()` in
+      `libk/libk/src/runtime/io_buffer.c:545-575` shows that the remaining count
+      is assigned to `position` only when `position > 0 && position < limit`.
+      With `position == 0` and `0 < limit < capacity`, neither branch updates
+      the position before the limit is reset to capacity.
+      Reproduction for a future buffer regression:
+      ```k
+      module buffer_compact_zero_position;
+      main() : int throws(Throwable) {
+          buffer : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(8u);
+          buffer->put((byte) 79);
+          buffer->put((byte) 75);
+          buffer->flip(); // position 0, limit 2
+          buffer->compact();
+          return (int) buffer->position();
+      }
+      ```
+      Expected position: 2, ready to append after both remaining bytes.
+      The current branch logic leaves position 0, so a subsequent relative
+      put overwrites unread data. This is a source-inspected issue; runtime
+      reproduction is pending. The documentation pass does not change buffer
+      behavior. Cover the zero-position case alongside consumed-prefix,
+      empty-range, and in-flight-lease cases when fixing it.
+
 - [ ] **Unsigned conversion-operator lookup omits short/int/long targets (blocks BigInteger casts).**
       The BigInteger standard library now builds after the frozen-observer
       fix, but its public cast cases fail with diagnostic `00945`:

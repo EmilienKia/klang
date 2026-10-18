@@ -14,13 +14,88 @@ public const OPEN_CREATE : int = 8;
 public const OPEN_TRUNCATE : int = 16;
 public const OPEN_EXCLUSIVE : int = 32;
 
-/**
- * Copyable descriptor value. Copies retain the same native handle and share
+/** Copyable proactor file descriptor with a synchronized shared position.
+ *
+ * Copies retain the same native handle and share
  * its synchronized position and closed state. A default value is closed.
  * Native operations own handles and buffer leases, never this K wrapper.
  * Implicit transfers and truncate use a bounded native FIFO; positional
- * transfers do not change its cursor. Completion advances both cursors before
- * publishing a Future or dispatching a callback, even after cancellation.
+ * transfers do not change its cursor. Implicit completion advances both cursors
+ * before publishing a Future or dispatching a callback, even after cancellation.
+ *
+ * ## Selecting an operation form
+ *
+ * Callback methods return an IoOperation and later deliver IoResult on the
+ * selected ExecutorLease, or on the system executor when omitted. Async
+ * methods publish a Future independently of callback execution. Sync methods
+ * wait interruptibly on the same proactor, not on a separate blocking data
+ * path. Keep blocking joins out of a serial event loop when other tasks must
+ * remain responsive; waits on the native completion thread are forbidden.
+ * Linux kernel proactor availability is required; there is no blocking
+ * read/write fallback.
+ *
+ * ## File position and buffer position
+ *
+ * An implicit transfer takes its file offset when it reaches the FIFO head,
+ * not when called. Its actual transferred count advances both the shared file
+ * position and buffer position. Channel copies therefore cannot be used as
+ * independent sequential readers. Repositioning while implicit work is queued
+ * raises BufferInUseException.
+ *
+ * An explicit offset is independent of the shared file position and does not
+ * advance it, but still advances the buffer position. Use distinct unleased
+ * buffers for concurrent positional work. OPEN_APPEND writes land at file end;
+ * an explicit write offset does not override that open option.
+ *
+ * Primitive reads/writes may complete short. A positive short read is not EOF;
+ * a nonempty primitive read returns zero at EOF. readFully/writeFully instead
+ * attempt the entire remaining buffer range. Fully success returns its initial
+ * remaining count; early EOF fails with EndOfStream and cumulative progress.
+ * A nonempty fully write making zero progress fails rather than retrying forever.
+ *
+ * An implicit fully transfer reserves the FIFO for the whole operation, so
+ * other implicit transfers and truncate cannot interleave between its partial
+ * transfers. Positional fully operations leave that FIFO cursor untouched.
+ * One positive I/O deadline covers queue wait and every partial transfer; it
+ * is not renewed after progress. Nonpositive I/O timeouts disable the deadline.
+ * A Future.get timeout only bounds the observer's wait.
+ *
+ * ## Ownership and cancellation
+ *
+ * Buffer arguments are borrowed, not consumed. Native operations retain the
+ * backing storage and descriptor through drain, even if their K wrappers are
+ * destroyed. They do not keep arbitrary K objects referenced by a callback
+ * alive: retain those objects through callback execution and capture cleanup.
+ * Do not access a leased buffer or reuse it merely because cancel returned.
+ * Cancellation can leave irreversible bytes and cursor movement. Fully
+ * Futures defer their cancellation result until drain; Sync cancellation and
+ * interruption drain before propagating, reporting partial bytes through
+ * InterruptedIOException when appropriate.
+ *
+ * Closing any channel copy closes the shared handle after cancelling/draining
+ * its requests. Close has no I/O deadline and is not cancellable; its completion
+ * does not join queued callback cleanup. Destroying one copy only releases its
+ * reference, leaving other copies and in-flight native operations valid.
+ *
+ * ## Example: a positional header read
+ *
+ * This helper borrows an already open readable channel whose file has at least
+ * two bytes. It returns a copy of those bytes without changing the channel's
+ * shared position and does not close the caller's channel. An early EOF throws.
+ *
+ * ```k
+ * module file_header_usage;
+ *
+ * readHeader(channel: k::io::file::FileChannel&) : byte[]! throws(Throwable) {
+ *     buffer : k::io::ByteBuffer! = k::io::ByteBuffer::allocate(2u);
+ *     deadline : Duration = Duration::ofSeconds(5L);
+ *     channel.readFullySync(buffer, 0L, deadline);
+ *     buffer->flip();
+ *     header : byte[]! = buffer->toArray();
+ *     delete buffer;
+ *     return header;
+ * }
+ * ```
  */
 public class FileChannel : public ReadableChannel, public WritableChannel {
 private:
@@ -312,7 +387,12 @@ public:
     override const isOpen() : bool { return __k_io_handle_is_open(_native) != 0; }
     const nativeDescriptor() : int { return __k_io_handle_fd(_native); }
     const position() : long { return __k_io_handle_position(_native); }
-    /** Setting the cursor while implicit requests are queued raises BufferInUseException. */
+    /** Set the position shared by all copies of this channel.
+     *
+     * Setting the cursor while implicit requests are queued raises
+     * BufferInUseException. Negative positions are invalid. This does not move
+     * a ByteBuffer's cursor or change offsets of positional requests.
+     */
     position(newPosition: long) : FileChannel& {
         rc : int = __k_io_handle_set_position(_native, newPosition);
         if (rc == -16) throw BufferInUseException(16);
@@ -574,7 +654,18 @@ public:
     }
     override writeSync(src: ByteBuffer+) : int { return transferSync(2, src, 0L, true, IO_NO_TIMEOUT); }
 
-    /** Composite transfers retain one native lease and one implicit FIFO slot. */
+    /** Read the entire remaining range starting at an explicit file offset.
+     *
+     * All fully overloads report one cumulative result and retain one continuous
+     * buffer lease. An early EOF is an error with partial progress, not short
+     * success. The explicit offset does not alter the shared file position.
+     * Implicit variants reserve one FIFO slot for the whole composite.
+     *
+     * For implicit operations prefer Duration overloads: a single long after
+     * the buffer denotes an offset, not a timeout. Raw implicit callback
+     * timeouts follow completion; raw implicit Future/Sync convenience names
+     * are readFullyAsyncWithTimeout and readFullySyncWithTimeout.
+     */
     readFully(dst: ByteBuffer+, offset: long, timeoutNanos: long,
         completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
         return fullyTransfer(1, dst, offset, false, timeoutNanos, completion, executor);
@@ -679,6 +770,14 @@ public:
         return readFullySyncWithTimeout(dst, IO_NO_TIMEOUT);
     }
 
+    /** Write the entire remaining range as one cumulative operation.
+     *
+     * Explicit-offset overloads leave the shared cursor unchanged. Implicit
+     * overloads reserve it through all partial transfers. The buffer position
+     * advances by actual bytes even on failure or cancellation; no rollback is
+     * implied. Raw implicit timeout placement follows the readFully convention,
+     * with writeFullyAsyncWithTimeout and writeFullySyncWithTimeout helpers.
+     */
     writeFully(src: ByteBuffer+, offset: long, timeoutNanos: long,
         completion: IoCompletion<int>, executor: ExecutorLease&) : IoOperation! {
         return fullyTransfer(2, src, offset, false, timeoutNanos, completion, executor);
