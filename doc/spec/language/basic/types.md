@@ -1702,6 +1702,12 @@ For all four indirection kinds, `const` applies to the **pointed-at object**, no
 > on the binding itself (they are already immutable by design), but `const` still restricts modifications
 > to the pointed object.
 
+Reading an observer field through a const aggregate is different from declaring
+the field with a const pointee. The aggregate freezes the **stored binding**:
+it must not be rebound or exposed through a writable alias. Loading a pointer,
+link, or view field by value removes only this binding restriction; it does not
+add or remove `const` on the pointed-at object.
+
 ---
 
 ### 14.4 Const pointer/link compatibility rules
@@ -1713,6 +1719,23 @@ x  : int  = 5;
 p  : int* = &x;
 cp : const int* = p;  // OK — widening: mutable → const
 ```
+
+The same widening applies after loading an observer field from a const aggregate,
+including when passing it to a by-value parameter:
+
+```k
+struct Box {
+    native : int* = null;
+}
+read(value : const int*) {}
+inspect(box : const Box&) {
+    read(box.native);       // OK: load int*, then widen to const int*
+    // box.native = null;  // Error: the stored binding is read-only
+}
+```
+
+These rules do not permit recursive pointer covariance: `T**` must not convert
+to `const T**`.
 
 The reverse is **forbidden** — assigning a `const T*` to a `T*` would allow modification of a const object:
 
@@ -1778,7 +1801,9 @@ A function `f(const n : int) : int` has its parameter encoded as `Ki` instead of
 A member function declared with the `const` specifier receives its implicit `this` parameter as a **const reference** (`const Struct&`) instead of a mutable reference.
 
 Inside a const member function:
-- All fields (direct and inherited) are implicitly const — read-only.
+- All fields (direct and inherited) have read-only stored bindings. For pointer,
+  link, and view fields, this does not make the pointee const; their values may
+  be passed to compatible by-value observer parameters, preserving pointee const.
 - Only other const member functions may be called on `this`.
 - `++` / `--` on any field is a compile-time error.
 

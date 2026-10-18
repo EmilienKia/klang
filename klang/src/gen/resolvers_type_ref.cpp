@@ -3112,10 +3112,18 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         auto inner = ref_src->get_subtype();
-        if (type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)) {
+        auto inner_value = type::remove_const(inner);
+        if (type::is_pointer(inner_value) || type::is_link(inner_value) || type::is_view(inner_value)) {
             if (type::is_pointer(tgt_nc) || type::is_link(tgt_nc) || type::is_view(tgt_nc)) {
-                auto src_sub = inner->get_subtype();
+                auto src_sub = inner_value->get_subtype();
                 auto tgt_sub = tgt_nc->get_subtype();
+                if (type::is_const(inner)) {
+                    // A frozen observer slot may be loaded, but must retain pointee const
+                    // and use only conversions supported by the observer value adapter.
+                    if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
+                    if ((type::is_pointer(inner_value) && type::is_view(tgt_nc)) ||
+                        (type::is_view(inner_value) && type::is_link(tgt_nc))) return CAST_IMPOSSIBLE;
+                }
                 auto src_sub_nc = type::remove_const(src_sub);
                 auto tgt_sub_nc = type::remove_const(tgt_sub);
                 if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
@@ -3134,6 +3142,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 }
                 return CAST_IMPOSSIBLE;
             }
+        }
+        if (type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)) {
             // ref<ptr/lnk/view<T>> → ref<T>: load indirection value, use as reference
             if (type::is_reference(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());

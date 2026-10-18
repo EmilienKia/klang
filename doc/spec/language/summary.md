@@ -238,7 +238,7 @@ Owner follows the same rules as indirections for upcast/downcast, with the same 
 ### 3.8 Const
 
 - `const` on a variable: immutable after initialization. No assignment, no increment/decrement.
-- Reading a pointer field through a const aggregate makes the stored pointer immutable, not its pointee. Its value may still upcast normally; pointee `const` remains enforced.
+- Reading a pointer, link, or view field through a const aggregate freezes the stored binding, not its pointee. Passing it by value loads the observer, then applies the usual conversions, including pointee-const widening and upcasting without removing pointee `const`. This does not permit rebinding or a writable alias to the frozen slot.
 - `const T*`, `const T&`, etc.: the pointed-to value cannot be modified.
 - `const` on a member function: `this` is `const T&`, the function cannot modify fields.
 - `const struct`: all non-static member functions are implicitly `const`.

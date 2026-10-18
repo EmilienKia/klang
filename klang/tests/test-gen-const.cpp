@@ -23,6 +23,187 @@
 #include <catch2/catch_test_macros.hpp>
 #include "helpers.hpp"
 
+#include <string>
+#include <string_view>
+
+TEST_CASE("Const aggregate observer fields are loaded for calls",
+          "[gen][const][stored-observer][regression]") {
+    std::string aggregate;
+    SECTION("struct") { aggregate = "struct"; }
+    SECTION("class") { aggregate = "class"; }
+
+    auto jit = gen_jit(std::string(R"SRC(
+        module k;
+        selections : int = 0;
+        struct Native { value : int = 7; }
+        read_link(value : const Native+) : int { return value->value; }
+        read_view(value : const Native?) : int { return value->value; }
+        write_pointer(value : Native*) { value->value += 1; }
+        write_link(value : Native+) { value->value += 1; }
+        write_view(value : Native?) { value->value += 1; }
+    )SRC") + aggregate + R"SRC( Box {
+        private:
+            native : Native*;
+            frozen : const Native*;
+            link : Native+;
+            view : Native?;
+            static read_pointer(value : const Native*) : int { return value->value; }
+        public:
+            Box(value : Native&) : native(&value), frozen(&value), link(&value), view(&value) {}
+            const selected() : const Box& {
+                ++selections;
+                return this;
+            }
+            const inspect(other : const Box&) : int {
+                result : int = read_pointer(other.selected().native)
+                    + read_pointer(other.frozen)
+                    + read_link(other.link) + read_view(other.view)
+                    + read_pointer(other.link) + read_pointer(other.view);
+                write_pointer(other.native);
+                write_link(other.link);
+                write_view(other.view);
+                return result;
+            }
+            const read_self() : int { return read_pointer(native); }
+        }
+        test() : int {
+            value : Native;
+            box : Box(value);
+            if (box.inspect(box) != 42) return -1;
+            if (selections != 1) return -2;
+            return box.read_self();
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 10);
+}
+
+TEST_CASE("Const aggregate observer upcasts preserve null and base offsets",
+          "[gen][const][stored-observer][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module k;
+        struct Prefix { padding : long = 7; }
+        struct Base { value : int = 42; }
+        struct Derived : public Prefix, public Base {}
+        struct Box {
+            native : Derived*;
+            frozen : const Derived*;
+            Box(value : Derived*) : native(value), frozen(value) {}
+        }
+        read(value : const Base*) : int {
+            if (value == null) return 11;
+            return value->value;
+        }
+        inspect(box : const Box&) : int {
+            return read(box.native) + read(box.frozen);
+        }
+        test() : int {
+            value : Derived;
+            box : Box(&value);
+            empty : Box(null);
+            return inspect(box) + inspect(empty);
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 106);
+}
+
+TEST_CASE("Const aggregate observer reads reject unsafe conversions",
+          "[gen][const][stored-observer][regression][error]") {
+    std::string_view source;
+    SECTION("pointer pointee const removal") {
+        source = R"SRC(
+            module k;
+            struct Native {}
+            struct Box { native : const Native* = null; }
+            write(value : Native*) {}
+            inspect(box : const Box&) { write(box.native); }
+        )SRC";
+    }
+    SECTION("link pointee const removal") {
+        source = R"SRC(
+            module k;
+            struct Native {}
+            struct Box {
+                native : const Native+;
+                Box(value : Native&) : native(&value) {}
+            }
+            write(value : Native+) {}
+            inspect(box : const Box&) { write(box.native); }
+        )SRC";
+    }
+    SECTION("view pointee const removal") {
+        source = R"SRC(
+            module k;
+            struct Native {}
+            struct Box { native : const Native? = null; }
+            write(value : Native?) {}
+            inspect(box : const Box&) { write(box.native); }
+        )SRC";
+    }
+    SECTION("upcast must not remove pointee const") {
+        source = R"SRC(
+            module k;
+            struct Base {}
+            struct Derived : public Base {}
+            struct Box { native : const Derived* = null; }
+            write(value : Base*) {}
+            inspect(box : const Box&) { write(box.native); }
+        )SRC";
+    }
+    SECTION("field rebinding") {
+        source = R"SRC(
+            module k;
+            struct Native {}
+            struct Box { native : Native* = null; }
+            inspect(box : const Box&) { box.native = null; }
+        )SRC";
+    }
+    SECTION("writable slot reference") {
+        source = R"SRC(
+            module k;
+            struct Native {}
+            struct Box { native : Native* = null; }
+            rebind(slot : Native*&) { slot = null; }
+            inspect(box : const Box&) { rebind(box.native); }
+        )SRC";
+    }
+    SECTION("writable slot address") {
+        source = R"SRC(
+            module k;
+            struct Native {}
+            struct Box { native : Native* = null; }
+            rebind(slot : Native*+) { *slot = null; }
+            inspect(box : const Box&) { rebind(&box.native); }
+        )SRC";
+    }
+    SECTION("nested pointer covariance") {
+        source = R"SRC(
+            module k;
+            struct Native {}
+            struct Box { native : Native** = null; }
+            read(value : const Native**) {}
+            inspect(box : const Box&) { read(box.native); }
+        )SRC";
+    }
+    SECTION("observer overloads retain reference-conversion ties") {
+        source = R"SRC(
+            module k;
+            struct Native {}
+            struct Box { native : Native* = null; }
+            pick(value : Native*) {}
+            pick(value : const Native*) {}
+            inspect(box : const Box&) { pick(box.native); }
+        )SRC";
+    }
+    REQUIRE_FALSE(source.empty());
+    REQUIRE_THROWS_AS(gen_jit_throws(source, false, false), k::log::compiler_error);
+}
+
 // =============================================================================
 // CONST LOCAL VARIABLES
 // =============================================================================

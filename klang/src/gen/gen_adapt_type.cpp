@@ -943,13 +943,17 @@ type_reference_resolver::adapt_from_reference(
     if (!type::is_reference(type_nc)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         auto inner = ref_src->get_subtype();
-        if ((type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)) &&
+        auto inner_value = type::remove_const(inner);
+        if ((type::is_pointer(inner_value) || type::is_link(inner_value) || type::is_view(inner_value)) &&
             (type::is_pointer(type_nc) || type::is_link(type_nc) || type::is_view(type_nc))) {
-            // Load the pointer value stored in the ref slot
-            auto loaded = load_value_expression::make_shared(expr);
-            loaded->set_type(inner);
+            // Keep newly supported frozen-slot loads within the scorer's safe conversions.
+            if (type::is_const(inner) && compute_cast_weight(expr, type_nc) == CAST_IMPOSSIBLE) return {};
+            auto parent = expr->parent<element>();
+            auto loaded = adapt_reference_load_value(expr);
             // Now adapt the loaded indirection to the target indirection type
-            return adapt_type(loaded, type_nc);
+            auto adapted = adapt_type(loaded, type_nc);
+            if (adapted) adapted->set_parent(parent);
+            return adapted;
         }
     } else {
         // ref<ptr/lnk/view<T>> → ref<T>: load indirection value, reinterpret as reference
